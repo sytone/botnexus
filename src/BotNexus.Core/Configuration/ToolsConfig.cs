@@ -21,6 +21,7 @@ public class ToolsConfig
     public bool RestrictToWorkspace { get; set; } = false;
     public ExecConfig Exec { get; set; } = new();
     public WebConfig Web { get; set; } = new();
+    public Dictionary<string, Dictionary<string, object>> Extensions { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Named MCP server configurations, keyed by a logical server name.</summary>
     public Dictionary<string, McpServerConfig> McpServers { get; set; } = [];

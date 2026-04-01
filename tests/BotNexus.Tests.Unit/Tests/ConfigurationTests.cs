@@ -35,9 +35,9 @@ public class ConfigurationTests
             ["BotNexus:Agents:Model"] = "claude-3-5-sonnet",
             ["BotNexus:Agents:MaxTokens"] = "16384",
             ["BotNexus:Gateway:Port"] = "9000",
-            ["BotNexus:Providers:OpenAI:ApiKey"] = "sk-test123",
-            ["BotNexus:Channels:Telegram:Enabled"] = "true",
-            ["BotNexus:Channels:Telegram:BotToken"] = "bot-token-123"
+            ["BotNexus:Providers:openai:ApiKey"] = "sk-test123",
+            ["BotNexus:Channels:Instances:telegram:Enabled"] = "true",
+            ["BotNexus:Channels:Instances:telegram:BotToken"] = "bot-token-123"
         });
 
         var botNexusConfig = new BotNexusConfig();
@@ -46,9 +46,9 @@ public class ConfigurationTests
         botNexusConfig.Agents.Model.Should().Be("claude-3-5-sonnet");
         botNexusConfig.Agents.MaxTokens.Should().Be(16384);
         botNexusConfig.Gateway.Port.Should().Be(9000);
-        botNexusConfig.Providers.OpenAI.ApiKey.Should().Be("sk-test123");
-        botNexusConfig.Channels.Telegram.Enabled.Should().BeTrue();
-        botNexusConfig.Channels.Telegram.BotToken.Should().Be("bot-token-123");
+        botNexusConfig.Providers["openai"].ApiKey.Should().Be("sk-test123");
+        botNexusConfig.Channels.Instances["telegram"].Enabled.Should().BeTrue();
+        botNexusConfig.Channels.Instances["telegram"].BotToken.Should().Be("bot-token-123");
     }
 
     [Fact]
@@ -56,16 +56,16 @@ public class ConfigurationTests
     {
         var config = BuildConfig(new Dictionary<string, string?>
         {
-            ["BotNexus:Channels:Telegram:AllowFrom:0"] = "user1",
-            ["BotNexus:Channels:Telegram:AllowFrom:1"] = "user2",
-            ["BotNexus:Channels:Telegram:AllowFrom:2"] = "user3"
+            ["BotNexus:Channels:Instances:telegram:AllowFrom:0"] = "user1",
+            ["BotNexus:Channels:Instances:telegram:AllowFrom:1"] = "user2",
+            ["BotNexus:Channels:Instances:telegram:AllowFrom:2"] = "user3"
         });
 
         var botNexusConfig = new BotNexusConfig();
         config.GetSection(BotNexusConfig.SectionName).Bind(botNexusConfig);
 
-        botNexusConfig.Channels.Telegram.AllowFrom.Should().HaveCount(3);
-        botNexusConfig.Channels.Telegram.AllowFrom.Should().Contain("user1");
+        botNexusConfig.Channels.Instances["telegram"].AllowFrom.Should().HaveCount(3);
+        botNexusConfig.Channels.Instances["telegram"].AllowFrom.Should().Contain("user1");
     }
 
     [Fact]
@@ -84,5 +84,6 @@ public class ConfigurationTests
         config.Exec.Enable.Should().BeTrue();
         config.Exec.Timeout.Should().Be(60);
         config.Web.Search.MaxResults.Should().Be(5);
+        config.Extensions.Should().BeEmpty();
     }
 }

@@ -14,7 +14,5 @@ public class ChannelsConfig
     public bool SendProgress { get; set; } = true;
     public bool SendToolHints { get; set; } = false;
     public int SendMaxRetries { get; set; } = 3;
-    public ChannelConfig Telegram { get; set; } = new();
-    public ChannelConfig Discord { get; set; } = new();
-    public ChannelConfig Slack { get; set; } = new();
+    public Dictionary<string, ChannelConfig> Instances { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }

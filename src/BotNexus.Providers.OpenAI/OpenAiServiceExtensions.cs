@@ -15,7 +15,11 @@ public static class OpenAiServiceExtensions
         services.AddSingleton<ILlmProvider>(sp =>
         {
             var config = sp.GetRequiredService<IOptions<BotNexusConfig>>().Value;
-            var providerConfig = config.Providers.OpenAI;
+            if (!config.Providers.TryGetValue("openai", out var providerConfig))
+            {
+                throw new InvalidOperationException("Provider configuration for 'openai' was not found.");
+            }
+
             var logger = sp.GetRequiredService<ILogger<OpenAiProvider>>();
 
             return new OpenAiProvider(

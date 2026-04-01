@@ -5,6 +5,7 @@ public class BotNexusConfig
 {
     public const string SectionName = "BotNexus";
 
+    public string ExtensionsPath { get; set; } = "./extensions";
     public AgentDefaults Agents { get; set; } = new();
     public ProvidersConfig Providers { get; set; } = new();
     public ChannelsConfig Channels { get; set; } = new();
