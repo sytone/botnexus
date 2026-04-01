@@ -1,5 +1,7 @@
 using BotNexus.Core.Abstractions;
 using BotNexus.Core.Extensions;
+using BotNexus.Cron.Actions;
+using BotNexus.Gateway;
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -48,6 +50,27 @@ public class SystemActionRegistryTests
         var second = provider.GetRequiredService<ISystemActionRegistry>();
 
         first.Should().BeSameAs(second);
+    }
+
+    [Fact]
+    public void AddBotNexus_RegistersBuiltInSystemActions()
+    {
+        var services = new ServiceCollection();
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>())
+            .Build();
+
+        services.AddBotNexus(config);
+
+        services.Should().Contain(descriptor =>
+            descriptor.ServiceType == typeof(ISystemAction) &&
+            descriptor.ImplementationType == typeof(CheckUpdatesAction));
+        services.Should().Contain(descriptor =>
+            descriptor.ServiceType == typeof(ISystemAction) &&
+            descriptor.ImplementationType == typeof(HealthAuditAction));
+        services.Should().Contain(descriptor =>
+            descriptor.ServiceType == typeof(ISystemAction) &&
+            descriptor.ImplementationType == typeof(ExtensionScanAction));
     }
 
     private sealed class TestSystemAction(string name, string description) : ISystemAction

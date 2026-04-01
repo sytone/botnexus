@@ -10,6 +10,16 @@ public sealed class SystemActionRegistry : ISystemActionRegistry
 {
     private readonly ConcurrentDictionary<string, ISystemAction> _actions = new(StringComparer.OrdinalIgnoreCase);
 
+    public SystemActionRegistry()
+    {
+    }
+
+    public SystemActionRegistry(IEnumerable<ISystemAction> actions)
+    {
+        foreach (var action in actions)
+            Register(action);
+    }
+
     /// <inheritdoc />
     public void Register(ISystemAction action)
     {

@@ -3,6 +3,7 @@ using BotNexus.Core.Abstractions;
 using BotNexus.Core.Extensions;
 using BotNexus.Channels.Base;
 using BotNexus.Cron;
+using BotNexus.Cron.Actions;
 using BotNexus.Heartbeat;
 using BotNexus.Gateway.HealthChecks;
 using BotNexus.Core.Configuration;
@@ -67,6 +68,9 @@ public static class BotNexusServiceExtensions
         });
 
         // Cron
+        services.AddSingleton<ISystemAction, CheckUpdatesAction>();
+        services.AddSingleton<ISystemAction, HealthAuditAction>();
+        services.AddSingleton<ISystemAction, ExtensionScanAction>();
         services.AddSingleton<ICronService, CronService>();
         services.AddHostedService(sp => (CronService)sp.GetRequiredService<ICronService>());
 
