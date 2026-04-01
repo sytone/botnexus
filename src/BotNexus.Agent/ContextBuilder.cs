@@ -34,27 +34,18 @@ public sealed class ContextBuilder
         var userMessage = new ChatMessage("user", inboundMessage.Content);
         var budget = maxChars - userMessage.Content.Length;
 
-        // Add history in reverse until we run out of budget
-        var historyToInclude = new List<ChatMessage>();
-        foreach (var entry in Enumerable.Reverse(session.History))
-        {
-            var role = entry.Role switch
+        var historyMessages = session.History
+            .Select(entry => new ChatMessage(entry.Role switch
             {
                 MessageRole.User => "user",
                 MessageRole.Assistant => "assistant",
                 MessageRole.System => "system",
                 MessageRole.Tool => "tool",
                 _ => "user"
-            };
-            var msg = new ChatMessage(role, entry.Content);
-            if (budget - msg.Content.Length < 0)
-            {
-                _logger.LogDebug("Context window budget exhausted at {Count} history entries", historyToInclude.Count);
-                break;
-            }
-            budget -= msg.Content.Length;
-            historyToInclude.Insert(0, msg);
-        }
+            }, entry.Content))
+            .ToList();
+
+        var historyToInclude = AgentContextBuilder.TrimHistoryToBudget(historyMessages, budget, _logger);
 
         messages.AddRange(historyToInclude);
         messages.Add(userMessage);

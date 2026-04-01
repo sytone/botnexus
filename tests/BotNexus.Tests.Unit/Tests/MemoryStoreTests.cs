@@ -6,6 +6,7 @@ using Xunit;
 
 namespace BotNexus.Tests.Unit.Tests;
 
+[Collection("BotNexusHomeEnvVar")]
 public class MemoryStoreTests : IDisposable
 {
     private const string HomeOverrideEnvVar = "BOTNEXUS_HOME";
