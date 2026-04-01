@@ -19,4 +19,10 @@ public class GatewayConfig
 
     /// <summary>Path at which the WebSocket endpoint is mounted.</summary>
     public string WebSocketPath { get; set; } = "/ws";
+
+    /// <summary>Default agent name used when no agent is specified on an inbound message.</summary>
+    public string? DefaultAgent { get; set; }
+
+    /// <summary>When true, routes inbound messages with no explicit agent to all registered agents.</summary>
+    public bool BroadcastWhenAgentUnspecified { get; set; }
 }

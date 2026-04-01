@@ -18,6 +18,8 @@ namespace BotNexus.Gateway;
 /// <remarks>
 /// Message format (client → gateway):
 /// <code>{"type":"message","content":"hello","session_id":"optional-override"}</code>
+/// <code>{"type":"message","content":"hello","agent":"planner"}</code>
+/// <code>{"type":"message","content":"hello","agent":"all"}</code>
 /// <code>{"type":"subscribe"}</code>
 /// Message format (gateway → client):
 /// <code>{"type":"connected","connection_id":"abc123"}</code>
@@ -218,8 +220,17 @@ public sealed class GatewayWebSocketHandler
             Content: dto.Content,
             Timestamp: DateTimeOffset.UtcNow,
             Media: [],
-            Metadata: new Dictionary<string, object>(),
+            Metadata: BuildMetadata(dto),
             SessionKeyOverride: string.IsNullOrEmpty(dto.SessionId) ? null : dto.SessionId);
+    }
+
+    private static IReadOnlyDictionary<string, object> BuildMetadata(WsInboundMessage dto)
+    {
+        var metadata = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+        var agentName = string.IsNullOrWhiteSpace(dto.AgentName) ? dto.Agent : dto.AgentName;
+        if (!string.IsNullOrWhiteSpace(agentName))
+            metadata["agent"] = agentName;
+        return metadata;
     }
 
     private static readonly JsonSerializerOptions _jsonOptions = new()
@@ -240,7 +251,9 @@ public sealed class GatewayWebSocketHandler
 internal sealed record WsInboundMessage(
     [property: JsonPropertyName("type")] string? Type,
     [property: JsonPropertyName("content")] string? Content,
-    [property: JsonPropertyName("session_id")] string? SessionId);
+    [property: JsonPropertyName("session_id")] string? SessionId,
+    [property: JsonPropertyName("agent")] string? Agent,
+    [property: JsonPropertyName("agent_name")] string? AgentName);
 
 /// <summary>Initial "connected" event sent to a WebSocket client on connection.</summary>
 internal sealed record WsConnectedMessage(

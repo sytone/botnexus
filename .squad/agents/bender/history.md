@@ -45,3 +45,10 @@
 Build is clean, tests pass. ProviderRegistry exists but is unused — evaluate integration or removal.
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
+
+### 2026-04-01 — Gateway Multi-Agent Routing Implemented
+
+- Gateway dispatch now resolves targets via an injectable `IAgentRouter` instead of hardcoding `runners[0]`.
+- Agent targeting is metadata-driven (`agent`, `agent_name`, `agentName`), supports explicit broadcast (`all`/`*`), and logs per-agent dispatch.
+- `IAgentRunner` now carries `AgentName`, enabling deterministic name-to-runner resolution for multi-agent environments.
+- Gateway config now includes routing controls: `DefaultAgent` and `BroadcastWhenAgentUnspecified`.

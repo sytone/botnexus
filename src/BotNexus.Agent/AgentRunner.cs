@@ -11,16 +11,19 @@ namespace BotNexus.Agent;
 public sealed class AgentRunner : IAgentRunner
 {
     private readonly AgentLoop _agentLoop;
+    public string AgentName { get; }
     private readonly IChannel? _responseChannel;
     private readonly ICommandRouter? _commandRouter;
     private readonly ILogger<AgentRunner> _logger;
 
     public AgentRunner(
+        string agentName,
         AgentLoop agentLoop,
         ILogger<AgentRunner> logger,
         IChannel? responseChannel = null,
         ICommandRouter? commandRouter = null)
     {
+        AgentName = agentName;
         _agentLoop = agentLoop;
         _logger = logger;
         _responseChannel = responseChannel;

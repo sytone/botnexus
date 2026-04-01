@@ -18,7 +18,7 @@ public sealed class Gateway : BackgroundService
     private readonly IMessageBus _messageBus;
     private readonly IActivityStream _activityStream;
     private readonly ChannelManager _channelManager;
-    private readonly IEnumerable<IAgentRunner> _agentRunners;
+    private readonly IAgentRouter _agentRouter;
     private readonly ILogger<Gateway> _logger;
     private readonly BotNexusConfig _config;
 
@@ -26,14 +26,14 @@ public sealed class Gateway : BackgroundService
         IMessageBus messageBus,
         IActivityStream activityStream,
         ChannelManager channelManager,
-        IEnumerable<IAgentRunner> agentRunners,
+        IAgentRouter agentRouter,
         ILogger<Gateway> logger,
         IOptions<BotNexusConfig> config)
     {
         _messageBus = messageBus;
         _activityStream = activityStream;
         _channelManager = channelManager;
-        _agentRunners = agentRunners;
+        _agentRouter = agentRouter;
         _logger = logger;
         _config = config.Value;
     }
@@ -59,9 +59,8 @@ public sealed class Gateway : BackgroundService
                 message.Content,
                 message.Timestamp), stoppingToken).ConfigureAwait(false);
 
-            // Dispatch concurrently to all agent runners
-            var runners = _agentRunners.ToList();
-            if (runners.Count == 0)
+            var targetRunners = _agentRouter.ResolveTargets(message);
+            if (targetRunners.Count == 0)
             {
                 _logger.LogWarning("No agent runners registered, dropping message");
                 continue;
@@ -70,12 +69,21 @@ public sealed class Gateway : BackgroundService
             // Capture activity stream for the closure
             var activityStream = _activityStream;
 
-            // Run the first matching runner (could be extended for per-agent routing)
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await runners[0].RunAsync(message, stoppingToken).ConfigureAwait(false);
+                    var runTasks = targetRunners.Select(async runner =>
+                    {
+                        _logger.LogInformation(
+                            "Dispatching message from {Channel}/{ChatId} to agent {AgentName}",
+                            message.Channel,
+                            message.ChatId,
+                            runner.AgentName);
+                        await runner.RunAsync(message, stoppingToken).ConfigureAwait(false);
+                    });
+
+                    await Task.WhenAll(runTasks).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
