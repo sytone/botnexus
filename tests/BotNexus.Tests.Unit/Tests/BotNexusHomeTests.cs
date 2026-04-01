@@ -3,6 +3,7 @@ using FluentAssertions;
 
 namespace BotNexus.Tests.Unit.Tests;
 
+[Collection("BotNexusHomeEnvVar")]
 public sealed class BotNexusHomeTests : IDisposable
 {
     private const string HomeOverrideEnvVar = "BOTNEXUS_HOME";
