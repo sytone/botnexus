@@ -29,6 +29,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\BotNexus.Core\BotNexus.Core.csproj" />
+    <ProjectReference Include="..\..\src\BotNexus.Cron\BotNexus.Cron.csproj" />
     <ProjectReference Include="..\..\src\BotNexus.Session\BotNexus.Session.csproj" />
     <ProjectReference Include="..\..\src\BotNexus.Agent\BotNexus.Agent.csproj" />
     <ProjectReference Include="..\..\src\BotNexus.Command\BotNexus.Command.csproj" />
