@@ -1,20 +1,22 @@
 using BotNexus.Core.Abstractions;
 using BotNexus.Core.Models;
+using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Agent.Tools;
 
 /// <summary>Tool for managing cron jobs from within an agent.</summary>
-public sealed class CronTool : ITool
+public sealed class CronTool : ToolBase
 {
     private readonly ICronService? _cronService;
 
-    public CronTool(ICronService? cronService = null)
+    public CronTool(ICronService? cronService = null, ILogger? logger = null)
+        : base(logger)
     {
         _cronService = cronService;
     }
 
     /// <inheritdoc/>
-    public ToolDefinition Definition => new(
+    public override ToolDefinition Definition => new(
         "cron",
         "Schedule or manage cron jobs. Actions: schedule, remove, list.",
         new Dictionary<string, ToolParameterSchema>
@@ -27,44 +29,34 @@ public sealed class CronTool : ITool
         });
 
     /// <inheritdoc/>
-    public Task<string> ExecuteAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken = default)
+    protected override Task<string> ExecuteCoreAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken)
     {
         if (_cronService is null)
             return Task.FromResult("Error: Cron service not available");
 
-        var action = arguments.GetValueOrDefault("action")?.ToString() ?? "list";
+        var action = GetOptionalString(arguments, "action", "list");
 
         return action.ToLowerInvariant() switch
         {
             "list" => Task.FromResult(string.Join("\n", _cronService.GetScheduledJobs())),
             "remove" => RemoveJob(arguments),
             "schedule" => ScheduleJob(arguments),
-            _ => Task.FromResult($"Error: Unknown action '{action}'")
+            _ => throw new ToolArgumentException($"Unknown action '{action}'")
         };
     }
 
     private Task<string> ScheduleJob(IReadOnlyDictionary<string, object?> args)
     {
-        var name = args.GetValueOrDefault("name")?.ToString();
-        var expression = args.GetValueOrDefault("expression")?.ToString();
-        var message = args.GetValueOrDefault("message")?.ToString() ?? string.Empty;
+        var name = GetRequiredString(args, "name");
+        var expression = GetRequiredString(args, "expression");
 
-        if (string.IsNullOrEmpty(name)) return Task.FromResult("Error: name is required");
-        if (string.IsNullOrEmpty(expression)) return Task.FromResult("Error: expression is required");
-
-        _cronService!.Schedule(name, expression, ct =>
-        {
-            // In a real implementation, this would publish to the message bus
-            return Task.CompletedTask;
-        });
-
+        _cronService!.Schedule(name, expression, _ => Task.CompletedTask);
         return Task.FromResult($"Cron job '{name}' scheduled with expression '{expression}'");
     }
 
     private Task<string> RemoveJob(IReadOnlyDictionary<string, object?> args)
     {
-        var name = args.GetValueOrDefault("name")?.ToString();
-        if (string.IsNullOrEmpty(name)) return Task.FromResult("Error: name is required");
+        var name = GetRequiredString(args, "name");
         _cronService!.Remove(name);
         return Task.FromResult($"Cron job '{name}' removed");
     }

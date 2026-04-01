@@ -1,22 +1,23 @@
-using BotNexus.Core.Abstractions;
 using BotNexus.Core.Models;
+using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Agent.Tools;
 
 /// <summary>Tool for reading and writing files in the agent workspace.</summary>
-public sealed class FilesystemTool : ITool
+public sealed class FilesystemTool : ToolBase
 {
     private readonly string _workspacePath;
     private readonly bool _restrictToWorkspace;
 
-    public FilesystemTool(string workspacePath, bool restrictToWorkspace = true)
+    public FilesystemTool(string workspacePath, bool restrictToWorkspace = true, ILogger? logger = null)
+        : base(logger)
     {
         _workspacePath = workspacePath;
         _restrictToWorkspace = restrictToWorkspace;
     }
 
     /// <inheritdoc/>
-    public ToolDefinition Definition => new(
+    public override ToolDefinition Definition => new(
         "filesystem",
         "Read, write, list, or delete files. Use action='read', 'write', 'list', or 'delete'.",
         new Dictionary<string, ToolParameterSchema>
@@ -28,22 +29,22 @@ public sealed class FilesystemTool : ITool
         });
 
     /// <inheritdoc/>
-    public async Task<string> ExecuteAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken = default)
+    protected override async Task<string> ExecuteCoreAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken)
     {
-        var action = arguments.GetValueOrDefault("action")?.ToString() ?? "read";
-        var path = arguments.GetValueOrDefault("path")?.ToString() ?? string.Empty;
+        var action = GetOptionalString(arguments, "action", "read");
+        var path = GetRequiredString(arguments, "path");
         var resolvedPath = ResolvePath(path);
 
         if (_restrictToWorkspace && !resolvedPath.StartsWith(_workspacePath, StringComparison.OrdinalIgnoreCase))
-            return $"Error: Access denied. Path must be within workspace: {_workspacePath}";
+            throw new ToolArgumentException($"Access denied. Path must be within workspace: {_workspacePath}");
 
         return action.ToLowerInvariant() switch
         {
             "read" => await ReadFileAsync(resolvedPath, cancellationToken),
-            "write" => await WriteFileAsync(resolvedPath, arguments.GetValueOrDefault("content")?.ToString() ?? string.Empty, cancellationToken),
+            "write" => await WriteFileAsync(resolvedPath, GetOptionalString(arguments, "content"), cancellationToken),
             "list" => ListDirectory(resolvedPath),
             "delete" => DeleteFile(resolvedPath),
-            _ => $"Error: Unknown action '{action}'"
+            _ => throw new ToolArgumentException($"Unknown action '{action}'")
         };
     }
 

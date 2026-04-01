@@ -8,17 +8,33 @@ public sealed class ToolRegistry
 {
     private readonly Dictionary<string, ITool> _tools = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Registers a tool.</summary>
+    /// <summary>Registers a tool, replacing any existing tool with the same name.</summary>
     public void Register(ITool tool) => _tools[tool.Definition.Name] = tool;
 
-    /// <summary>Gets a tool by name.</summary>
+    /// <summary>Registers multiple tools at once.</summary>
+    public void RegisterRange(IEnumerable<ITool> tools)
+    {
+        foreach (var tool in tools) Register(tool);
+    }
+
+    /// <summary>Gets a tool by name, or <c>null</c> if not found.</summary>
     public ITool? Get(string name) => _tools.GetValueOrDefault(name);
 
-    /// <summary>Returns all tool definitions (for the LLM).</summary>
+    /// <summary>Returns <c>true</c> when a tool with the given name is registered.</summary>
+    public bool Contains(string name) => _tools.ContainsKey(name);
+
+    /// <summary>Returns all registered tool definitions (for the LLM function-calling payload).</summary>
     public IReadOnlyList<ToolDefinition> GetDefinitions()
         => [.. _tools.Values.Select(t => t.Definition)];
 
-    /// <summary>Executes a tool call and returns the result.</summary>
+    /// <summary>Returns all registered tool names.</summary>
+    public IReadOnlyList<string> GetNames()
+        => [.. _tools.Keys];
+
+    /// <summary>Removes a tool by name. Returns <c>true</c> if it was present.</summary>
+    public bool Remove(string name) => _tools.Remove(name);
+
+    /// <summary>Executes a tool call and returns the result string.</summary>
     public async Task<string> ExecuteAsync(ToolCallRequest toolCall, CancellationToken cancellationToken = default)
     {
         if (!_tools.TryGetValue(toolCall.ToolName, out var tool))

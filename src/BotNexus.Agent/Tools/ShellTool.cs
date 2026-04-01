@@ -1,23 +1,24 @@
 using System.Diagnostics;
-using BotNexus.Core.Abstractions;
 using BotNexus.Core.Models;
+using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Agent.Tools;
 
 /// <summary>Tool for executing shell commands in the agent workspace.</summary>
-public sealed class ShellTool : ITool
+public sealed class ShellTool : ToolBase
 {
     private readonly string _workspacePath;
     private readonly int _timeoutSeconds;
 
-    public ShellTool(string workspacePath, int timeoutSeconds = 60)
+    public ShellTool(string workspacePath, int timeoutSeconds = 60, ILogger? logger = null)
+        : base(logger)
     {
         _workspacePath = workspacePath;
         _timeoutSeconds = timeoutSeconds;
     }
 
     /// <inheritdoc/>
-    public ToolDefinition Definition => new(
+    public override ToolDefinition Definition => new(
         "shell",
         "Execute a shell command and return the output.",
         new Dictionary<string, ToolParameterSchema>
@@ -27,13 +28,10 @@ public sealed class ShellTool : ITool
         });
 
     /// <inheritdoc/>
-    public async Task<string> ExecuteAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken = default)
+    protected override async Task<string> ExecuteCoreAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken)
     {
-        var command = arguments.GetValueOrDefault("command")?.ToString() ?? string.Empty;
-        var workdir = arguments.GetValueOrDefault("workdir")?.ToString() ?? _workspacePath;
-
-        if (string.IsNullOrWhiteSpace(command))
-            return "Error: command is required";
+        var command = GetRequiredString(arguments, "command");
+        var workdir = GetOptionalString(arguments, "workdir", _workspacePath);
 
         Directory.CreateDirectory(workdir);
 

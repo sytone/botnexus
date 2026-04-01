@@ -1,20 +1,22 @@
 using BotNexus.Core.Abstractions;
 using BotNexus.Core.Models;
+using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Agent.Tools;
 
 /// <summary>Tool for sending messages back to a channel from within an agent.</summary>
-public sealed class MessageTool : ITool
+public sealed class MessageTool : ToolBase
 {
     private readonly IChannel? _channel;
 
-    public MessageTool(IChannel? channel = null)
+    public MessageTool(IChannel? channel = null, ILogger? logger = null)
+        : base(logger)
     {
         _channel = channel;
     }
 
     /// <inheritdoc/>
-    public ToolDefinition Definition => new(
+    public override ToolDefinition Definition => new(
         "send_message",
         "Send a message to a specific chat or channel.",
         new Dictionary<string, ToolParameterSchema>
@@ -25,16 +27,16 @@ public sealed class MessageTool : ITool
         });
 
     /// <inheritdoc/>
-    public async Task<string> ExecuteAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken = default)
+    protected override async Task<string> ExecuteCoreAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken)
     {
-        var chatId = arguments.GetValueOrDefault("chat_id")?.ToString() ?? string.Empty;
-        var content = arguments.GetValueOrDefault("content")?.ToString() ?? string.Empty;
-        var channelName = arguments.GetValueOrDefault("channel")?.ToString();
-
         if (_channel is null)
             return "Error: No channel available";
 
-        var message = new OutboundMessage(channelName ?? _channel.Name, chatId, content);
+        var chatId = GetRequiredString(arguments, "chat_id");
+        var content = GetRequiredString(arguments, "content");
+        var channelName = GetOptionalString(arguments, "channel", _channel.Name);
+
+        var message = new OutboundMessage(channelName, chatId, content);
         await _channel.SendAsync(message, cancellationToken).ConfigureAwait(false);
         return "Message sent successfully";
     }
