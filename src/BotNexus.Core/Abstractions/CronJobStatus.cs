@@ -6,7 +6,8 @@ public sealed record CronJobStatus(
     CronJobType Type,
     string Schedule,
     bool Enabled,
-    DateTimeOffset? LastRun,
-    DateTimeOffset? NextRun,
+    DateTimeOffset? LastRunStartedAt,
+    DateTimeOffset? NextOccurrence,
     bool? LastRunSuccess,
-    TimeSpan? LastRunDuration);
+    TimeSpan? LastRunDuration,
+    int ConsecutiveFailures = 0);

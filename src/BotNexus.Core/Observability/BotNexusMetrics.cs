@@ -10,6 +10,10 @@ public sealed class BotNexusMetrics : IBotNexusMetrics, IDisposable
     private readonly Counter<long> _toolCallsExecuted;
     private readonly Histogram<double> _providerLatency;
     private readonly ObservableGauge<int> _extensionsLoaded;
+    private readonly Counter<long> _cronJobsExecuted;
+    private readonly Counter<long> _cronJobsFailed;
+    private readonly Histogram<double> _cronJobDuration;
+    private readonly Counter<long> _cronJobsSkipped;
     private int _loadedExtensions;
 
     public BotNexusMetrics()
@@ -19,6 +23,10 @@ public sealed class BotNexusMetrics : IBotNexusMetrics, IDisposable
         _providerLatency = _meter.CreateHistogram<double>("botnexus.provider.latency", unit: "ms");
         _extensionsLoaded = _meter.CreateObservableGauge<int>("botnexus.extensions.loaded",
             () => Volatile.Read(ref _loadedExtensions));
+        _cronJobsExecuted = _meter.CreateCounter<long>("botnexus.cron.jobs.executed");
+        _cronJobsFailed = _meter.CreateCounter<long>("botnexus.cron.jobs.failed");
+        _cronJobDuration = _meter.CreateHistogram<double>("botnexus.cron.job.duration", unit: "ms");
+        _cronJobsSkipped = _meter.CreateCounter<long>("botnexus.cron.jobs.skipped");
     }
 
     public void IncrementMessagesProcessed(string channel)
@@ -32,6 +40,20 @@ public sealed class BotNexusMetrics : IBotNexusMetrics, IDisposable
 
     public void UpdateExtensionsLoaded(int loadedCount)
         => Interlocked.Exchange(ref _loadedExtensions, loadedCount);
+
+    public void IncrementCronJobsExecuted(string jobName)
+        => _cronJobsExecuted.Add(1, new KeyValuePair<string, object?>("job", jobName));
+
+    public void IncrementCronJobsFailed(string jobName)
+        => _cronJobsFailed.Add(1, new KeyValuePair<string, object?>("job", jobName));
+
+    public void RecordCronJobDuration(string jobName, double elapsedMilliseconds)
+        => _cronJobDuration.Record(elapsedMilliseconds, new KeyValuePair<string, object?>("job", jobName));
+
+    public void IncrementCronJobsSkipped(string jobName, string reason)
+        => _cronJobsSkipped.Add(1,
+            new KeyValuePair<string, object?>("job", jobName),
+            new KeyValuePair<string, object?>("reason", reason));
 
     public void Dispose()
     {

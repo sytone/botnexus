@@ -88,7 +88,8 @@ public static class BotNexusServiceExtensions
             .AddCheck<ProviderRegistrationHealthCheck>("provider_registration")
             .AddCheck<ExtensionLoaderHealthCheck>("extension_loader")
             .AddCheck<ChannelReadinessHealthCheck>("channel_readiness", tags: ["ready"])
-            .AddCheck<ProviderReadinessHealthCheck>("provider_readiness", tags: ["ready"]);
+            .AddCheck<ProviderReadinessHealthCheck>("provider_readiness", tags: ["ready"])
+            .AddCheck<CronServiceHealthCheck>("cron_service");
 
         return services;
     }
