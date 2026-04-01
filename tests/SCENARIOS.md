@@ -3,7 +3,7 @@
 > **Living document** — the single source of truth for "what do we test end-to-end?"
 >
 > Maintained by **Zapp** (E2E & Simulation Engineer).
-> Last updated: 2026-04-01
+> Last updated: 2026-04-02
 
 ---
 
@@ -19,9 +19,10 @@
 | Channel Integration | 4 | 2 | 1 | 1 |
 | Security & Auth | 5 | 5 | 0 | 0 |
 | Observability | 4 | 2 | 2 | 0 |
-| **TOTAL** | **56** | **48** | **6** | **2** |
+| Cron & Scheduling | 8 | 8 | 0 | 0 |
+| **TOTAL** | **64** | **56** | **6** | **2** |
 
-**Coverage: 86% covered, 4% partial, 10% planned.**
+**Coverage: 88% covered, 3% partial, 9% planned.**
 
 ---
 
@@ -846,6 +847,121 @@ Health checks, readiness probes, correlation IDs, and metrics.
 
 ---
 
+## 9. Cron & Scheduling
+
+E2E tests for the cron system covering the full lifecycle: config → startup → scheduled execution → channel output. Uses `WebApplicationFactory` with cron enabled, mock channels, and deterministic LLM provider.
+
+---
+
+### SC-CRN-001: Jobs Registered at Startup
+
+- **Category:** Cron & Scheduling
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.E2E/Tests/CronTests.cs`
+- **Description:** Gateway starts with cron jobs configured → all jobs (agent, system, maintenance, legacy-migrated) are registered and visible via GET /api/cron.
+- **Steps:**
+  1. Start Gateway with 4 central cron jobs + 1 legacy AgentConfig cron job.
+  2. GET /api/cron.
+  3. Verify all 5 expected jobs appear with correct names, schedules, and enabled flags.
+
+---
+
+### SC-CRN-002: Agent Cron Job Fires and Routes to Channel
+
+- **Category:** Cron & Scheduling
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.E2E/Tests/CronTests.cs`
+- **Description:** Agent cron job fires → prompt sent through agent → response routed to mock channel. Full pipeline: CronService trigger → AgentRunner → LLM → session history → OutputChannel routing.
+- **Steps:**
+  1. POST /api/cron/nova-briefing/trigger.
+  2. Wait for mock-web channel to receive the routed response.
+  3. Verify response is non-empty, channel is "mock-web", metadata contains source=cron.
+  4. Verify execution recorded in history with success=true.
+
+---
+
+### SC-CRN-003: System Cron Job Executes Action
+
+- **Category:** Cron & Scheduling
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.E2E/Tests/CronTests.cs`
+- **Description:** System cron job fires → action executed → result recorded in history. The health-audit action runs HealthCheckService and reports status.
+- **Steps:**
+  1. POST /api/cron/system:health-audit/trigger.
+  2. Poll GET /api/cron/system:health-audit until history appears.
+  3. Verify execution success=true and output contains "health-audit".
+
+---
+
+### SC-CRN-004: Maintenance Cron Job Consolidates Memory
+
+- **Category:** Cron & Scheduling
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.E2E/Tests/CronTests.cs`
+- **Description:** Maintenance cron job fires → memory consolidation triggered for configured agents. MockMemoryConsolidator verifies the call was made.
+- **Steps:**
+  1. POST /api/cron/maintenance:consolidate-memory/trigger.
+  2. Poll history until execution appears.
+  3. Verify success=true and output references the "nova" agent.
+  4. Assert MockMemoryConsolidator.ConsolidatedAgents contains "nova".
+
+---
+
+### SC-CRN-005: Manual Trigger Executes Immediately
+
+- **Category:** Cron & Scheduling
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.E2E/Tests/CronTests.cs`
+- **Description:** Manual trigger via POST /api/cron/{name}/trigger → job executes immediately outside its schedule. Validates response shape and history recording.
+- **Steps:**
+  1. POST /api/cron/system:check-updates/trigger.
+  2. Verify response contains triggered=true and correct jobName.
+  3. Poll history to confirm execution was recorded.
+
+---
+
+### SC-CRN-006: Enable/Disable via API
+
+- **Category:** Cron & Scheduling
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.E2E/Tests/CronTests.cs`
+- **Description:** Enable/disable via PUT /api/cron/{name}/enable → disabled jobs reflect correct state. Tests the full cycle: disable → verify → re-enable → verify.
+- **Steps:**
+  1. PUT /api/cron/system:check-updates/enable with {enabled: false}.
+  2. Verify response shows enabled=false.
+  3. GET /api/cron/system:check-updates → confirm disabled.
+  4. PUT enable with {enabled: true} → verify re-enabled.
+  5. GET again → confirm enabled=true.
+
+---
+
+### SC-CRN-007: Execution History with Correct Fields
+
+- **Category:** Cron & Scheduling
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.E2E/Tests/CronTests.cs`
+- **Description:** GET /api/cron/history returns execution records with all required fields: jobName, correlationId, startedAt, completedAt, success.
+- **Steps:**
+  1. Trigger a job to ensure history exists.
+  2. GET /api/cron/history?limit=50.
+  3. Verify entries are non-empty.
+  4. Find a health-audit entry; validate all fields are present and non-empty.
+
+---
+
+### SC-CRN-008: Legacy AgentConfig.CronJobs Migration
+
+- **Category:** Cron & Scheduling
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.E2E/Tests/CronTests.cs`
+- **Description:** Legacy AgentConfig.CronJobs migration → old per-agent config converted to central cron jobs. The deprecated echo agent CronJobs list is migrated at startup.
+- **Steps:**
+  1. Configure echo agent with legacy CronJobs[0] in config.
+  2. Start Gateway (CronJobFactory performs migration).
+  3. GET /api/cron → verify "echo" job exists with correct schedule and enabled=true.
+
+---
+
 ## Appendix: Test File Index
 
 Quick reference mapping test files to the scenarios they cover.
@@ -882,3 +998,4 @@ Quick reference mapping test files to the scenarios they cover.
 | `tests/BotNexus.Tests.Deployment/Tests/ConfigChangeTests.cs` | SC-DPL-008 |
 | `tests/BotNexus.Tests.Deployment/Tests/HealthDuringStartupTests.cs` | SC-DPL-009 |
 | `tests/BotNexus.Tests.Deployment/Tests/ConcurrentHandlingTests.cs` | SC-DPL-010 |
+| `tests/BotNexus.Tests.E2E/Tests/CronTests.cs` | SC-CRN-001, SC-CRN-002, SC-CRN-003, SC-CRN-004, SC-CRN-005, SC-CRN-006, SC-CRN-007, SC-CRN-008 |
