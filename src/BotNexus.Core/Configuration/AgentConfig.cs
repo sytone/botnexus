@@ -20,5 +20,6 @@ public class AgentConfig
     public bool AutoLoadMemory { get; set; } = true;
     public List<McpServerConfig> McpServers { get; set; } = [];
     public List<string> Skills { get; set; } = [];
+    [Obsolete("Per-agent CronJobs are deprecated. Define jobs centrally in BotNexusConfig.Cron.Jobs instead.")]
     public List<CronJobConfig> CronJobs { get; set; } = [];
 }

@@ -13,4 +13,5 @@ public class BotNexusConfig
     public GatewayConfig Gateway { get; set; } = new();
     public ToolsConfig Tools { get; set; } = new();
     public ApiConfig Api { get; set; } = new();
+    public CronConfig Cron { get; set; } = new();
 }
