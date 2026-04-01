@@ -3,7 +3,7 @@ namespace BotNexus.Core.Abstractions;
 /// <summary>Contract for persistent memory/notes storage.</summary>
 public interface IMemoryStore
 {
-    /// <summary>Reads memory content for a given agent and key.</summary>
+    /// <summary>Reads memory content for a given agent and key. Supports special key <c>MEMORY</c>.</summary>
     Task<string?> ReadAsync(string agentName, string key, CancellationToken cancellationToken = default);
 
     /// <summary>Writes memory content for a given agent and key.</summary>
