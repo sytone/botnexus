@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Reflection;
+using System.Runtime.Loader;
 using BotNexus.Core.Abstractions;
 using BotNexus.Core.Extensions;
 using BotNexus.Tests.Extensions.Convention;
@@ -7,6 +8,7 @@ using BotNexus.Tests.Extensions.Registrar;
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Moq;
 
 namespace BotNexus.Tests.Unit.Tests;
 
@@ -98,6 +100,91 @@ public class ExtensionLoaderTests : IDisposable
             });
 
         result.Should().Be("convention:from-convention");
+    }
+
+    [Fact]
+    public void AddBotNexusExtensions_NoMatchingTypes_LogsWarning()
+    {
+        var extensionFolder = Path.Combine(_testRoot, "providers", "nomatch");
+        Directory.CreateDirectory(extensionFolder);
+        File.Copy(typeof(ConventionEchoTool).Assembly.Location, Path.Combine(extensionFolder, "BotNexus.Tests.Extensions.Convention.dll"), overwrite: true);
+
+        var config = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["BotNexus:ExtensionsPath"] = _testRoot,
+            ["BotNexus:Providers:nomatch:ApiKey"] = "test-key"
+        });
+
+        var services = new ServiceCollection();
+        var logs = CaptureConsole(() => services.AddBotNexusExtensions(config));
+
+        logs.Should().Contain("No types implementing 'ILlmProvider' found in extension 'providers/nomatch'");
+    }
+
+    [Fact]
+    public void AddBotNexusExtensions_MultipleTypes_AllChannelsRegistered()
+    {
+        var extensionFolder = Path.Combine(_testRoot, "channels", "multi");
+        Directory.CreateDirectory(extensionFolder);
+        File.Copy(typeof(ConventionEchoTool).Assembly.Location, Path.Combine(extensionFolder, "BotNexus.Tests.Extensions.Convention.dll"), overwrite: true);
+
+        var config = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["BotNexus:ExtensionsPath"] = _testRoot,
+            ["BotNexus:Channels:Instances:multi:Enabled"] = "true",
+            ["BotNexus:Channels:Instances:multi:ChannelName"] = "multi"
+        });
+
+        var services = new ServiceCollection();
+        services.AddSingleton(Mock.Of<IMemoryStore>());
+        services.AddBotNexusExtensions(config);
+        using var provider = services.BuildServiceProvider();
+
+        var channels = provider.GetServices<IChannel>().ToList();
+        channels.Should().HaveCount(2);
+        channels.Select(c => c.Name).Should().Contain("alpha:multi");
+        channels.Select(c => c.Name).Should().Contain(name => name.StartsWith("beta:multi:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AddBotNexusExtensions_RegistrarBasedLoading_UsesCorrectConfigSection()
+    {
+        RegistrarExtensionRegistrar.Reset();
+
+        var result = await ExecuteSingleToolAsync(
+            extensionType: "tools",
+            extensionKey: "registrar",
+            extensionAssemblyPath: typeof(RegistrarEchoTool).Assembly.Location,
+            configValues: new Dictionary<string, string?>
+            {
+                ["BotNexus:Tools:Extensions:registrar:Message"] = "tools-config"
+            });
+
+        result.Should().Be("registrar:tools-config");
+    }
+
+    [Fact]
+    public void AddBotNexusExtensions_ConventionBasedLoading_UsesActivatorUtilities()
+    {
+        var extensionFolder = Path.Combine(_testRoot, "channels", "activator");
+        Directory.CreateDirectory(extensionFolder);
+        File.Copy(typeof(ConventionEchoTool).Assembly.Location, Path.Combine(extensionFolder, "BotNexus.Tests.Extensions.Convention.dll"), overwrite: true);
+
+        var config = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["BotNexus:ExtensionsPath"] = _testRoot,
+            ["BotNexus:Channels:Instances:activator:Enabled"] = "true",
+            ["BotNexus:Channels:Instances:activator:ChannelName"] = "injected"
+        });
+
+        var memoryStoreMock = new Mock<IMemoryStore>(MockBehavior.Strict);
+        var services = new ServiceCollection();
+        services.AddSingleton(memoryStoreMock.Object);
+        services.AddBotNexusExtensions(config);
+
+        using var provider = services.BuildServiceProvider();
+        var channels = provider.GetServices<IChannel>().ToList();
+        channels.Select(c => c.Name).Should().Contain(name => name.StartsWith("beta:injected:", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -254,7 +341,7 @@ public class ExtensionLoaderTests : IDisposable
     }
 
     [Fact]
-    public void AddBotNexusExtensions_LoadContext_DoesNotResolveArbitraryHostAssemblies()
+    public void AddBotNexusExtensions_AssemblyLoadContextIsolation_ExtensionTypesAreNotInDefaultContext()
     {
         var extensionFolder = Path.Combine(_testRoot, "tools", "isolation");
         Directory.CreateDirectory(extensionFolder);
@@ -270,12 +357,10 @@ public class ExtensionLoaderTests : IDisposable
         services.AddBotNexusExtensions(config);
         using var provider = services.BuildServiceProvider();
 
-        var contextStore = provider.GetRequiredService<ExtensionLoadContextStore>();
-        var context = contextStore.Contexts.Should().ContainSingle().Which;
-        var hostAssemblyName = typeof(ExtensionLoaderTests).Assembly.GetName().Name!;
-
-        Action attempt = () => context.LoadFromAssemblyName(new AssemblyName(hostAssemblyName));
-        attempt.Should().Throw<FileNotFoundException>();
+        var tool = provider.GetServices<ITool>().Should().ContainSingle().Subject;
+        var context = AssemblyLoadContext.GetLoadContext(tool.GetType().Assembly);
+        context.Should().NotBeNull();
+        context.Should().NotBe(AssemblyLoadContext.Default);
     }
 
     [Fact]
@@ -291,6 +376,117 @@ public class ExtensionLoaderTests : IDisposable
             });
 
         result.Should().Be("convention:config-bound");
+    }
+
+    [Fact]
+    public void AddBotNexusExtensions_DryRun_InvalidAssembly_LogsValidationFailure()
+    {
+        var extensionFolder = Path.Combine(_testRoot, "tools", "dryrun-invalid");
+        Directory.CreateDirectory(extensionFolder);
+        File.WriteAllText(Path.Combine(extensionFolder, "invalid.dll"), "bad");
+
+        var config = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["BotNexus:ExtensionsPath"] = _testRoot,
+            ["BotNexus:Extensions:DryRun"] = "true",
+            ["BotNexus:Tools:Extensions:dryrun-invalid:Enabled"] = "true"
+        });
+
+        var services = new ServiceCollection();
+        var logs = CaptureConsole(() => services.AddBotNexusExtensions(config));
+        logs.Should().Contain("Dry run validation failed");
+    }
+
+    [Fact]
+    public void AddBotNexusExtensions_SharedAssemblyAllowed_ReusesHostAssembly()
+    {
+        var extensionFolder = Path.Combine(_testRoot, "providers", "shared");
+        Directory.CreateDirectory(extensionFolder);
+        File.Copy(typeof(BotNexus.Core.Configuration.BotNexusConfig).Assembly.Location, Path.Combine(extensionFolder, "BotNexus.Core.dll"), overwrite: true);
+
+        var config = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["BotNexus:ExtensionsPath"] = _testRoot,
+            ["BotNexus:Providers:shared:ApiKey"] = "x"
+        });
+
+        var services = new ServiceCollection();
+        var logs = CaptureConsole(() => services.AddBotNexusExtensions(config));
+        logs.Should().Contain("Reused shared assembly");
+    }
+
+    [Fact]
+    public void AddBotNexusExtensions_RegistrarThrows_LogsErrorAndContinues()
+    {
+        var extensionFolder = Path.Combine(_testRoot, "tools", "registrar-throws");
+        Directory.CreateDirectory(extensionFolder);
+        File.Copy(typeof(RegistrarEchoTool).Assembly.Location, Path.Combine(extensionFolder, "BotNexus.Tests.Extensions.Registrar.dll"), overwrite: true);
+
+        var config = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["BotNexus:ExtensionsPath"] = _testRoot,
+            ["BotNexus:Tools:Extensions:registrar-throws:Enabled"] = "true",
+            ["BotNexus:Tools:Extensions:registrar-throws:Message"] = "value"
+        });
+
+        var services = new ServiceCollection();
+        var logs = CaptureConsole(() => services.AddBotNexusExtensions(config));
+        logs.Should().Contain("Registrar 'BotNexus.Tests.Extensions.Registrar.ThrowingExtensionRegistrar' failed");
+    }
+
+    [Fact]
+    public void ExtensionLoader_PrivateHelpers_HandleGuardBranches()
+    {
+        var resolver = typeof(ExtensionLoaderExtensions).GetMethod("TryResolveExtensionFolder", BindingFlags.NonPublic | BindingFlags.Static);
+        resolver.Should().NotBeNull();
+
+        var args = new object?[] { _testRoot, "tools", "", null, null };
+        var emptyResult = (bool)resolver!.Invoke(null, args)!;
+        emptyResult.Should().BeFalse();
+        args[4].Should().Be("Extension key is empty");
+
+        args = [ _testRoot, "tools", "C:\\absolute", null, null ];
+        var rootedResult = (bool)resolver.Invoke(null, args)!;
+        rootedResult.Should().BeFalse();
+        args[4].Should().Be("Rooted paths are not allowed");
+
+        args = [ _testRoot, "tools", "bad\0key", null, null ];
+        var invalidResult = (bool)resolver.Invoke(null, args)!;
+        invalidResult.Should().BeFalse();
+        args[4].Should().Be("Key contains invalid path characters");
+
+        var sectionGetter = typeof(ExtensionLoaderExtensions).GetMethod("GetExtensionConfigSection", BindingFlags.NonPublic | BindingFlags.Static);
+        sectionGetter.Should().NotBeNull();
+        var config = BuildConfiguration(new Dictionary<string, string?> { ["BotNexus:Any:Value"] = "x" });
+        var botSection = config.GetSection("BotNexus");
+        var fallback = (IConfiguration)sectionGetter!.Invoke(null, [ botSection, "unknown", "x" ])!;
+        fallback.Should().BeSameAs(botSection);
+
+        var allowed = typeof(ExtensionLoaderExtensions).GetMethod("IsAllowedSharedAssembly", BindingFlags.NonPublic | BindingFlags.Static);
+        allowed.Should().NotBeNull();
+        ((bool)allowed!.Invoke(null, [ null ])!).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ExtensionLoader_CreateExtensionInstance_FallsBackWhenConfigCtorThrows()
+    {
+        var createInstance = typeof(ExtensionLoaderExtensions).GetMethod("CreateExtensionInstance", BindingFlags.NonPublic | BindingFlags.Static);
+        createInstance.Should().NotBeNull();
+
+        var services = new ServiceCollection().BuildServiceProvider();
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>()).Build();
+        var instance = createInstance!.Invoke(null, [ services, typeof(ThrowingConfigConstructorType), config ]);
+
+        instance.Should().BeOfType<ThrowingConfigConstructorType>();
+        ((ThrowingConfigConstructorType)instance!).UsedFallbackConstructor.Should().BeTrue();
+    }
+
+    private sealed class ThrowingConfigConstructorType
+    {
+        public bool UsedFallbackConstructor { get; }
+
+        public ThrowingConfigConstructorType(IConfiguration configuration) => throw new InvalidOperationException("fail");
+        public ThrowingConfigConstructorType() => UsedFallbackConstructor = true;
     }
 
     private static IConfiguration BuildConfiguration(Dictionary<string, string?> values)

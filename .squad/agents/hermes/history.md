@@ -83,3 +83,10 @@
 Baseline: build is clean, all 124 tests pass. Ready for implementation.
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
+
+### 2026-04-01 — ExtensionLoader test strategy and quality gate
+
+- ExtensionLoader now has a high-fidelity unit suite in `tests/BotNexus.Tests.Unit/Tests/ExtensionLoaderTests.cs` covering happy path, missing/empty folders, invalid assemblies, no-match assemblies, multiple implementation registration, registrar/convention flows, path traversal/junction hardening, config binding, and AssemblyLoadContext isolation behavior.
+- Fixture extension assemblies are in `tests/BotNexus.Tests.Extensions.Convention` and `tests/BotNexus.Tests.Extensions.Registrar`; they are intentionally used as test plugin payloads to exercise real dynamic loading paths.
+- Focused coverage run confirms `BotNexus.Core.Extensions.ExtensionLoaderExtensions` line coverage at **92.05%** (`coverage.cobertura.xml` from filtered ExtensionLoader tests).
+- Full solution test run currently has an unrelated pre-existing integration failure in `GatewayApiKeyAuthTests.HealthEndpoint_BypassesAuthentication` (503 vs expected 200), independent of loader unit test changes.
