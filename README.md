@@ -2,6 +2,12 @@
 
 A modular, extensible AI agent execution platform built in C#/.NET. BotNexus enables running multiple AI agents concurrently, each powered by configurable LLM providers, receiving messages from multiple channels, and executing tools dynamically.
 
+## 📖 [Getting Started Guide →](docs/getting-started.md)
+
+New to BotNexus? The **Getting Started** guide walks you from clone → build → running with AI agents in minutes. If you're migrating from OpenClaw, it covers that too.
+
+---
+
 ## Key Features
 
 - **Multi-Agent** — Run multiple agents with independent configs (model, provider, system prompt, tools)
@@ -70,9 +76,12 @@ On first run, BotNexus creates `~/.botnexus/` with a default `config.json`. Edit
 
 ## Documentation
 
+- **[Getting Started](docs/getting-started.md)** ← Start here
 - [Architecture Overview](docs/architecture.md)
 - [Configuration Guide](docs/configuration.md)
 - [Extension Development](docs/extension-development.md)
+- [Workspace & Memory](docs/workspace-and-memory.md)
+- [Cron & Scheduling](docs/cron-and-scheduling.md)
 
 ## Project Structure
 
