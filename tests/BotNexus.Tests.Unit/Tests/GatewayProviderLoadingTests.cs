@@ -35,6 +35,8 @@ public class GatewayProviderLoadingTests
         var workspaceFactory = provider.GetRequiredService<IAgentWorkspaceFactory>();
         var contextBuilder = provider.GetRequiredService<IContextBuilder>();
         var contextBuilderFactory = provider.GetRequiredService<IContextBuilderFactory>();
+        var runnerFactory = provider.GetRequiredService<IAgentRunnerFactory>();
+        var runner = runnerFactory.Create("farnsworth");
 
         loadedProvider.GetType().Name.Should().Be("OpenAiProvider");
         registry.GetProviderNames().Should().Contain("openai");
@@ -42,6 +44,7 @@ public class GatewayProviderLoadingTests
         workspaceFactory.Create("farnsworth").AgentName.Should().Be("farnsworth");
         contextBuilder.Should().NotBeNull();
         contextBuilderFactory.Create("farnsworth").Should().NotBeNull();
+        runner.AgentName.Should().Be("farnsworth");
     }
 
     private static string FindRepositoryRoot()
@@ -57,4 +60,5 @@ public class GatewayProviderLoadingTests
 
         throw new InvalidOperationException("Could not locate repository root from test execution directory.");
     }
+
 }

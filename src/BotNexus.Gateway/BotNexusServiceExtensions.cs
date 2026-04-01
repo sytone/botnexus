@@ -75,6 +75,7 @@ public static class BotNexusServiceExtensions
         services.AddHostedService(sp => (HeartbeatService)sp.GetRequiredService<IHeartbeatService>());
 
         // Gateway
+        services.AddSingleton<IAgentRunnerFactory, AgentRunnerFactory>();
         services.AddSingleton<IAgentRouter, AgentRouter>();
         services.AddHostedService<Gateway>();
         services.AddHealthChecks()
