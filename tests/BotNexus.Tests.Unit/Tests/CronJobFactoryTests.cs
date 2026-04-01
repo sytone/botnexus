@@ -50,7 +50,11 @@ public sealed class CronJobFactoryTests
         };
 
         var serviceProvider = BuildServiceProvider();
-        var factory = new CronJobFactory(Options.Create(cronConfig), serviceProvider, NullLogger<CronJobFactory>.Instance);
+        var factory = new CronJobFactory(
+            Options.Create(cronConfig),
+            Options.Create(new BotNexusConfig()),
+            serviceProvider,
+            NullLogger<CronJobFactory>.Instance);
         var cronService = new Mock<ICronService>();
 
         factory.CreateAndRegisterAll(cronService.Object);
@@ -78,13 +82,64 @@ public sealed class CronJobFactoryTests
         };
 
         var serviceProvider = BuildServiceProvider();
-        var factory = new CronJobFactory(Options.Create(cronConfig), serviceProvider, NullLogger<CronJobFactory>.Instance);
+        var factory = new CronJobFactory(
+            Options.Create(cronConfig),
+            Options.Create(new BotNexusConfig()),
+            serviceProvider,
+            NullLogger<CronJobFactory>.Instance);
         var cronService = new Mock<ICronService>();
 
         var act = () => factory.CreateAndRegisterAll(cronService.Object);
 
         act.Should().NotThrow();
         cronService.Verify(x => x.Register(It.IsAny<ICronJob>()), Times.Never);
+    }
+
+    [Fact]
+    public void CreateAndRegisterAll_MigratesLegacyAgentCronJobsIntoCentralizedRegistration()
+    {
+        var cronConfig = new CronConfig();
+        var botNexusConfig = new BotNexusConfig
+        {
+            Agents = new AgentDefaults
+            {
+                Named = new Dictionary<string, AgentConfig>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["farnsworth"] = new()
+                    {
+#pragma warning disable CS0618
+                        CronJobs =
+                        [
+                            new CronJobConfig
+                            {
+                                Type = "agent",
+                                Schedule = "0 7 * * *",
+                                Prompt = "Daily platform check."
+                            }
+                        ]
+#pragma warning restore CS0618
+                    }
+                }
+            }
+        };
+
+        var serviceProvider = BuildServiceProvider();
+        var factory = new CronJobFactory(
+            Options.Create(cronConfig),
+            Options.Create(botNexusConfig),
+            serviceProvider,
+            NullLogger<CronJobFactory>.Instance);
+        var cronService = new Mock<ICronService>();
+        ICronJob? registeredJob = null;
+        cronService
+            .Setup(x => x.Register(It.IsAny<ICronJob>()))
+            .Callback<ICronJob>(job => registeredJob = job);
+
+        factory.CreateAndRegisterAll(cronService.Object);
+
+        cronService.Verify(x => x.Register(It.IsAny<AgentCronJob>()), Times.Once);
+        registeredJob.Should().NotBeNull();
+        registeredJob!.Name.Should().Be("farnsworth");
     }
 
     private static IServiceProvider BuildServiceProvider()

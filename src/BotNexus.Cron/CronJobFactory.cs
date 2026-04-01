@@ -10,10 +10,12 @@ namespace BotNexus.Cron;
 
 public sealed class CronJobFactory(
     IOptions<CronConfig> options,
+    IOptions<BotNexusConfig> botNexusOptions,
     IServiceProvider serviceProvider,
     ILogger<CronJobFactory> logger)
 {
     private readonly CronConfig _config = options?.Value ?? new CronConfig();
+    private readonly BotNexusConfig _botNexusConfig = botNexusOptions?.Value ?? new BotNexusConfig();
     private readonly IServiceProvider _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
     private readonly ILogger<CronJobFactory> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
@@ -21,13 +23,14 @@ public sealed class CronJobFactory(
     {
         ArgumentNullException.ThrowIfNull(cronService);
 
-        if (_config.Jobs.Count == 0)
+        var jobsToRegister = BuildCentralizedJobMapWithLegacyMigration();
+        if (jobsToRegister.Count == 0)
         {
             _logger.LogInformation("No cron jobs configured under BotNexus:Cron:Jobs.");
             return;
         }
 
-        foreach (var (jobKey, jobConfig) in _config.Jobs)
+        foreach (var (jobKey, jobConfig) in jobsToRegister)
         {
             if (jobConfig is null)
             {
@@ -55,6 +58,88 @@ public sealed class CronJobFactory(
                 _logger.LogWarning(ex, "Skipping invalid cron job '{JobKey}' (type='{Type}')", jobKey, jobConfig.Type);
             }
         }
+    }
+
+    private Dictionary<string, CronJobConfig> BuildCentralizedJobMapWithLegacyMigration()
+    {
+        var jobs = new Dictionary<string, CronJobConfig>(_config.Jobs, StringComparer.OrdinalIgnoreCase);
+        var migratedJobs = MigrateLegacyAgentCronJobs(jobs);
+        if (migratedJobs == 0)
+            return jobs;
+
+        _logger.LogWarning("AgentConfig.CronJobs is deprecated. Migrate to Cron.Jobs in config.json.");
+        return jobs;
+    }
+
+    private int MigrateLegacyAgentCronJobs(Dictionary<string, CronJobConfig> targetJobs)
+    {
+        var migrated = 0;
+        foreach (var (agentName, agentConfig) in _botNexusConfig.Agents.Named)
+        {
+#pragma warning disable CS0618
+            if (agentConfig.CronJobs.Count == 0)
+                continue;
+
+            for (var index = 0; index < agentConfig.CronJobs.Count; index++)
+            {
+                var legacyJob = agentConfig.CronJobs[index];
+#pragma warning restore CS0618
+                var migratedJob = CloneLegacyJob(agentName, legacyJob);
+                var jobKey = GetUniqueMigratedKey(targetJobs, agentName, index);
+                targetJobs[jobKey] = migratedJob;
+                migrated++;
+
+                _logger.LogInformation(
+                    "Migrated legacy cron job for agent '{AgentName}' to Cron.Jobs key '{JobKey}' (type='{Type}', schedule='{Schedule}')",
+                    agentName,
+                    jobKey,
+                    migratedJob.Type,
+                    migratedJob.Schedule);
+            }
+        }
+
+        return migrated;
+    }
+
+    private static CronJobConfig CloneLegacyJob(string agentName, CronJobConfig legacyJob)
+    {
+        var migrated = new CronJobConfig
+        {
+            Schedule = legacyJob.Schedule,
+            Type = legacyJob.Type,
+            Enabled = legacyJob.Enabled,
+            Timezone = legacyJob.Timezone,
+            Agent = legacyJob.Agent,
+            Prompt = legacyJob.Prompt,
+            Session = legacyJob.Session,
+            Action = legacyJob.Action,
+            Agents = legacyJob.Agents.ToList(),
+            SessionCleanupDays = legacyJob.SessionCleanupDays,
+            LogRetentionDays = legacyJob.LogRetentionDays,
+            LogsPath = legacyJob.LogsPath,
+            OutputChannels = legacyJob.OutputChannels.ToList()
+        };
+
+        if (string.Equals(migrated.Type, "agent", StringComparison.OrdinalIgnoreCase) &&
+            string.IsNullOrWhiteSpace(migrated.Agent))
+        {
+            migrated.Agent = agentName;
+        }
+
+        return migrated;
+    }
+
+    private static string GetUniqueMigratedKey(Dictionary<string, CronJobConfig> jobs, string agentName, int index)
+    {
+        var baseKey = $"{agentName}-legacy-{index + 1}";
+        if (!jobs.ContainsKey(baseKey))
+            return baseKey;
+
+        var suffix = 2;
+        while (jobs.ContainsKey($"{baseKey}-{suffix}"))
+            suffix++;
+
+        return $"{baseKey}-{suffix}";
     }
 
     private ICronJob? CreateJob(string jobKey, CronJobConfig jobConfig)
