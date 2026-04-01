@@ -20,6 +20,9 @@ public class CronJobConfig
     // System/Maintenance job properties
     public string? Action { get; set; }
     public List<string> Agents { get; set; } = [];
+    public int SessionCleanupDays { get; set; } = 30;
+    public int LogRetentionDays { get; set; } = 30;
+    public string? LogsPath { get; set; }
 
     // Output routing
     public List<string> OutputChannels { get; set; } = [];
