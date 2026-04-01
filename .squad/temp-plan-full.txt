@@ -1,0 +1,1099 @@
+# BotNexus Implementation Plan — Dynamic Extension Architecture
+
+**Author:** Leela (Lead/Architect)
+**Date:** 2026-04-01 (revised 2026-04-01)
+**Status:** Proposed (Rev 2 — incorporates Copilot P0, OAuth, and conventional commits directives)
+**Requested by:** Jon Bullen
+
+---
+
+## Executive Summary
+
+Jon's directive fundamentally reshapes our roadmap. The original P2 item — "Design plugin architecture" — is now the foundation that everything else builds on. Channels, providers, and tools must be dynamically loaded from folder-based extension assemblies, referenced by configuration. Nothing loads unless explicitly configured.
+
+This plan re-examines all P0/P1/P2 items through that lens, merges what overlaps, reorders by dependency, and maps every work item to a team member.
+
+**Rev 2 additions:** Jon's directive makes the Copilot provider **P0 — higher priority than all other providers**. Copilot is OpenAI-compatible (base URL: `https://api.githubcopilot.com`) but authenticates via OAuth device code flow, not API key. This introduces new OAuth abstractions in Core and a dedicated `BotNexus.Providers.Copilot` extension project. Provider priority is now: Copilot (P0) > OpenAI (P1) > Anthropic (P2). All work follows conventional commit format.
+
+---
+
+## Part 1: Dynamic Assembly Loading — Architecture Design
+
+### 1.1 Folder Structure Convention
+
+```
+{AppRoot}/
+  extensions/
+    channels/
+      discord/        → BotNexus.Channels.Discord.dll + dependencies
+      telegram/       → BotNexus.Channels.Telegram.dll + dependencies
+      slack/          → BotNexus.Channels.Slack.dll + dependencies
+    providers/
+      copilot/        → BotNexus.Providers.Copilot.dll + dependencies
+      openai/         → BotNexus.Providers.OpenAI.dll + dependencies
+      anthropic/      → BotNexus.Providers.Anthropic.dll + dependencies
+    tools/
+      github/         → BotNexus.Tools.GitHub.dll + dependencies
+```
+
+Each sub-folder is a self-contained deployment unit. It contains the extension assembly and any third-party dependencies not shared with the host (e.g., Discord.Net, Telegram.Bot).
+
+The `extensions/` root path is configurable via `ExtensionsPath` in `BotNexusConfig`. Default: `./extensions` (relative to app base directory).
+
+### 1.2 Configuration Model
+
+The current config has hard-coded typed properties (`ProvidersConfig.OpenAI`, `ChannelsConfig.Telegram`, etc.). These must become **dictionary-based** so the set of extensions is driven entirely by config, not by compiled types.
+
+**New appsettings.json shape:**
+
+```json
+{
+  "BotNexus": {
+    "ExtensionsPath": "./extensions",
+    "Agents": { "..." : "unchanged" },
+    "Providers": {
+      "copilot": { "Auth": "oauth", "DefaultModel": "gpt-4o", "ApiBase": "https://api.githubcopilot.com" },
+      "openai": { "ApiKey": "sk-...", "DefaultModel": "gpt-4o", "ApiBase": null, "MaxRetries": 3 },
+      "anthropic": { "ApiKey": "sk-ant-...", "DefaultModel": "claude-sonnet-4-20250514" }
+    },
+    "Channels": {
+      "SendProgress": true,
+      "SendToolHints": false,
+      "SendMaxRetries": 3,
+      "Instances": {
+        "discord": { "Enabled": true, "BotToken": "...", "AllowFrom": [] },
+        "telegram": { "Enabled": true, "BotToken": "...", "AllowFrom": [] }
+      }
+    },
+    "Tools": {
+      "RestrictToWorkspace": false,
+      "Exec": { "Enable": true, "Timeout": 60 },
+      "Web": { "Search": { "Provider": "brave", "ApiKey": "", "MaxResults": 5 } },
+      "Extensions": {
+        "github": { "Token": "..." }
+      },
+      "McpServers": { "..." : "unchanged" }
+    },
+    "Gateway": { "..." : "unchanged" },
+    "Api": { "..." : "unchanged" }
+  }
+}
+```
+
+**Key changes:**
+- `ProvidersConfig` changes from `{ OpenAI: ProviderConfig, Anthropic: ProviderConfig }` to `Dictionary<string, ProviderConfig>`. Each key is the folder name under `extensions/providers/`. `ProviderConfig` gains an `Auth` discriminator (`"apikey"` default, `"oauth"` for providers like Copilot) so the loader knows whether to expect an API key or delegate to `IOAuthProvider`.
+- `ChannelsConfig` keeps its global settings (`SendProgress`, etc.) but moves per-channel config into `Instances: Dictionary<string, ChannelConfig>`. Each key is the folder name under `extensions/channels/`.
+- `ToolsConfig` adds `Extensions: Dictionary<string, Dictionary<string, object>>` for dynamically-loaded tool config. Built-in tools (Exec, Web, MCP) remain as-is.
+- Root config adds `ExtensionsPath: string`.
+
+### 1.3 Discovery and Loading Process
+
+**Core class:** `ExtensionLoader` (in `BotNexus.Core` or new `BotNexus.Extensions` project)
+
+**Loading sequence (at startup):**
+
+1. **Read config** — Enumerate keys under `Providers`, `Channels.Instances`, `Tools.Extensions`.
+2. **Resolve folders** — For each key, compute `{ExtensionsPath}/{type}/{key}/` (e.g., `./extensions/providers/openai/`).
+3. **Validate folder** — Confirm folder exists. Log warning and skip if missing.
+4. **Load assemblies** — Create an `AssemblyLoadContext` per extension (collectible for future hot-reload). Load all `.dll` files from the folder.
+5. **Scan for types** — Search loaded assemblies for concrete (non-abstract) types implementing the target interface:
+   - `extensions/providers/*` → `ILlmProvider`
+   - `extensions/channels/*` → `IChannel`
+   - `extensions/tools/*` → `ITool`
+6. **Check for registrar** — If the assembly contains a type implementing `IExtensionRegistrar` (new interface in Core), call its `Register(IServiceCollection, IConfiguration)` method. This lets extensions control their own DI setup.
+7. **Fallback to convention** — If no registrar found, register discovered types using `ActivatorUtilities.CreateInstance()`, passing the extension's config section.
+8. **Register in DI** — All discovered `IChannel`, `ILlmProvider`, `ITool` instances registered as their interface type (multiple registrations allowed via `IEnumerable<T>`).
+
+### 1.4 New Interfaces
+
+```csharp
+// In BotNexus.Core.Abstractions
+
+/// <summary>
+/// Optional interface that extension assemblies can implement to control
+/// their own DI registration. If absent, the loader uses convention-based
+/// registration by scanning for IChannel/ILlmProvider/ITool implementations.
+/// </summary>
+public interface IExtensionRegistrar
+{
+    /// <summary>
+    /// Registers extension services into the DI container.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="configuration">The configuration section for this extension
+    /// (e.g., the "openai" section under "Providers").</param>
+    void Register(IServiceCollection services, IConfiguration configuration);
+}
+```
+
+```csharp
+// In BotNexus.Core.Abstractions
+
+/// <summary>
+/// Interface for providers that authenticate via OAuth instead of API keys.
+/// Implementations handle the full OAuth flow (e.g., GitHub device code flow for Copilot).
+/// The extension loader skips API key validation for providers that implement this interface.
+/// </summary>
+public interface IOAuthProvider
+{
+    /// <summary>
+    /// Acquires a valid access token, performing the OAuth flow if needed.
+    /// Implementations should cache tokens and handle refresh.
+    /// </summary>
+    Task<string> GetAccessTokenAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Returns true if a cached token exists and is still valid.
+    /// </summary>
+    bool HasValidToken { get; }
+}
+
+/// <summary>
+/// Abstraction for secure OAuth token persistence.
+/// Implementations may store tokens in OS keychain, encrypted files, or other secure storage.
+/// </summary>
+public interface IOAuthTokenStore
+{
+    Task<OAuthToken?> LoadTokenAsync(string providerName, CancellationToken cancellationToken = default);
+    Task SaveTokenAsync(string providerName, OAuthToken token, CancellationToken cancellationToken = default);
+    Task ClearTokenAsync(string providerName, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Represents a cached OAuth token with expiry metadata.
+/// </summary>
+public record OAuthToken(string AccessToken, DateTimeOffset ExpiresAt, string? RefreshToken = null);
+```
+
+### 1.5 Security Considerations
+
+- **Nothing loads by default.** Only assemblies referenced in config are loaded.
+- **Folder isolation.** Each extension loads from its own folder — no path traversal.
+- **Assembly validation.** Before loading, verify the assembly is a valid .NET assembly. Optionally validate strong-name signatures (configurable, off by default in dev).
+- **Interface gate.** Only types implementing known Core interfaces are instantiated. No arbitrary code execution from reflection.
+- **Logging.** Every load/scan/register step is logged at Information level. Failures logged at Warning/Error.
+- **Isolated AssemblyLoadContext.** Extensions don't pollute the host's type space. Dependency conflicts between extensions are contained.
+
+### 1.6 Development vs. Deployment
+
+**Development (dotnet run / F5):**
+- MSBuild targets in each extension project publish output to `{SolutionRoot}/extensions/{type}/{name}/` on build.
+- The Gateway project's `ExtensionsPath` defaults to `../../extensions` (relative to output directory) or is overridden via `appsettings.Development.json`.
+- Developer adds extension project to solution, builds, config references it, it loads.
+
+**Deployment (dotnet publish):**
+- Publish script/target copies extension folders into the publish output under `extensions/`.
+- Docker: `COPY extensions/ /app/extensions/`
+- Config in production points to `./extensions` (default).
+
+---
+
+## Part 2: Work Items
+
+### Mapping from Original Review Items
+
+| Original Item | Original Priority | New Status |
+|---|---|---|
+| P0-1: Register channel implementations in DI | P0 | **REPLACED** → `channel-dynamic-loading` |
+| P0-2: Add Anthropic DI extension | P0 | **REPLACED** → `provider-dynamic-loading` |
+| P0-3: Remove sync-over-async wrapper | P0 | **KEPT** → `fix-sync-over-async` |
+| P0-4: Basic config documentation | P0 | **MOVED** → Phase 4 `config-documentation` |
+| P1-5: Add authentication | P1 | **KEPT** → `api-key-auth` |
+| P1-6: Anthropic tool calling | P1 | **DEPRIORITIZED to P2** → `anthropic-tool-calling` (Copilot is now P0 provider) |
+| P1-7: Fix first-runner dispatch | P1 | **KEPT** → `fix-runner-dispatch` |
+| P1-8: Slack webhook endpoint | P1 | **KEPT** → `slack-webhook-endpoint` |
+| P1-9: Fix CA2024 warning | P1 | **KEPT** → `anthropic-streaming-fix` |
+| P2-10: Design plugin architecture | P2 | **PROMOTED to P0** → Phase 1 foundation |
+| P2-11: Add observability | P2 | **KEPT** → `observability-foundation` |
+| P2-12: Documentation | P2 | **KEPT** → Phase 4 |
+| P2-13: Evaluate ProviderRegistry | P2 | **MERGED** → `provider-registry-integration` |
+
+---
+
+### Phase 1: Foundation (Must Build First)
+
+These items establish the dynamic loading infrastructure and fix blockers. Nothing in Phase 2+ can start until the relevant Phase 1 items are complete.
+
+---
+
+#### `config-model-refactor`
+
+- **Title:** Refactor configuration models for dynamic extensions
+- **Phase:** 1
+- **Priority:** P0
+- **Assigned to:** Farnsworth
+- **Size:** M
+- **Dependencies:** none
+- **Description:**
+  Refactor the configuration POCOs in `src/BotNexus.Core/Configuration/` to support dictionary-based extension config instead of hard-coded typed properties.
+
+  **Changes required:**
+  1. Add `ExtensionsPath` property to `BotNexusConfig` (default: `"./extensions"`).
+  2. Change `ProvidersConfig` from typed properties (`OpenAI`, `Anthropic`, `AzureOpenAI`) to `Dictionary<string, ProviderConfig>`. Each key is the extension folder name.
+  3. Change `ChannelsConfig`: keep global settings (`SendProgress`, `SendToolHints`, `SendMaxRetries`) but move per-channel config from typed properties (`Telegram`, `Discord`, `Slack`) to `Dictionary<string, ChannelConfig> Instances`.
+  4. Add `Dictionary<string, Dictionary<string, object>> Extensions` to `ToolsConfig` for dynamically-loaded tool config. Keep existing built-in tool config (`Exec`, `Web`, `McpServers`).
+  5. Update `appsettings.json` in Gateway and Api projects to match the new shape.
+  6. Update all code that reads the old config shape (search for `.Providers.OpenAI`, `.Channels.Telegram`, etc.).
+  7. Update all existing unit tests that reference the old config shape.
+
+  **Acceptance criteria:** Solution builds. All existing tests pass (possibly with updated config references). Config binds correctly from the new appsettings.json shape.
+
+---
+
+#### `extension-registrar-interface`
+
+- **Title:** Define IExtensionRegistrar contract in Core
+- **Phase:** 1
+- **Priority:** P0
+- **Assigned to:** Farnsworth
+- **Size:** S
+- **Dependencies:** none
+- **Description:**
+  Add the `IExtensionRegistrar` interface to `src/BotNexus.Core/Abstractions/`. This is the optional interface that extension assemblies can implement to control their own DI registration.
+
+  ```csharp
+  public interface IExtensionRegistrar
+  {
+      void Register(IServiceCollection services, IConfiguration configuration);
+  }
+  ```
+
+  Also add a marker attribute `[BotNexusExtension]` that can optionally be applied to assemblies for metadata (display name, version, author). This is informational only — the loader does not require it.
+
+  **Acceptance criteria:** Interface and attribute compile. No existing code breaks.
+
+---
+
+#### `oauth-core-abstractions`
+
+- **Title:** Define IOAuthProvider and IOAuthTokenStore contracts in Core
+- **Phase:** 1
+- **Priority:** P0
+- **Assigned to:** Farnsworth
+- **Size:** S
+- **Dependencies:** none
+- **Description:**
+  Add OAuth abstractions to `src/BotNexus.Core/Abstractions/` to support providers that authenticate via OAuth instead of API keys (e.g., GitHub Copilot).
+
+  **New types:**
+  1. `IOAuthProvider` — interface for providers that acquire tokens via OAuth. Exposes `GetAccessTokenAsync()` and `HasValidToken`. The extension loader and `ProviderRegistry` use this to skip API key validation for OAuth providers.
+  2. `IOAuthTokenStore` — abstraction for secure token persistence. Default implementation stores encrypted tokens in `{UserProfile}/.botnexus/tokens/`. Future implementations could use OS keychain.
+  3. `OAuthToken` — record holding `AccessToken`, `ExpiresAt`, and optional `RefreshToken`.
+  4. Add `Auth` discriminator to `ProviderConfig` (`"apikey"` or `"oauth"`, default `"apikey"`).
+  5. Update `ProviderRegistry` to recognize OAuth providers and skip API key checks.
+
+  **Acceptance criteria:** Interfaces compile. `ProviderConfig.Auth` binds from config. Providers implementing `IOAuthProvider` can be registered without an API key. No existing tests break.
+
+  **Commit:** `feat(core): add IOAuthProvider and IOAuthTokenStore abstractions`
+
+---
+
+#### `dynamic-assembly-loader`
+
+- **Title:** Build the dynamic extension assembly loader
+- **Phase:** 1
+- **Priority:** P0
+- **Assigned to:** Bender
+- **Size:** XL
+- **Dependencies:** `config-model-refactor`, `extension-registrar-interface`
+- **Description:**
+  Implement `ExtensionLoader` in `src/BotNexus.Core/Extensions/` (or a new `BotNexus.Extensions` project if Core should stay pure).
+
+  **Core responsibilities:**
+  1. Read `ExtensionsPath` from `BotNexusConfig`.
+  2. Enumerate configured extension keys from `Providers` (dictionary keys), `Channels.Instances` (dictionary keys), and `Tools.Extensions` (dictionary keys).
+  3. For each configured key, resolve the folder path: `{ExtensionsPath}/{type}/{key}/` where type is `providers`, `channels`, or `tools`.
+  4. Validate folder exists. Log warning if missing. Skip gracefully.
+  5. Create an `AssemblyLoadContext` (collectible) per extension folder. Load all `.dll` files.
+  6. Scan loaded assemblies for:
+     - Types implementing `IExtensionRegistrar` → call `Register(services, extensionConfigSection)`
+     - If no registrar: types implementing `IChannel`, `ILlmProvider`, or `ITool` → register via `ActivatorUtilities.CreateInstance()`
+  7. For convention-based registration, bind the extension's config section (e.g., `BotNexus:Providers:openai`) and register it as `IOptions<ProviderConfig>` (or similar) before constructing the type.
+  8. Register all discovered types as their interface types in DI (`IChannel`, `ILlmProvider`, `ITool`).
+  9. Log every step: folder scanned, assembly loaded, type discovered, registration completed, errors.
+
+  **Public API:**
+  ```csharp
+  public static class ExtensionLoaderExtensions
+  {
+      public static IServiceCollection AddBotNexusExtensions(
+          this IServiceCollection services,
+          IConfiguration configuration);
+  }
+  ```
+
+  **Security:**
+  - Validate folder paths don't escape the extensions root (no `..` traversal).
+  - Only instantiate types that implement known Core interfaces.
+  - Catch and log all reflection/loading exceptions — never crash the host.
+
+  **Testing:** Create a test extension assembly (in `tests/`) that implements `IChannel` with minimal behavior. Verify it loads and registers correctly. Verify missing folders are handled gracefully. Verify invalid assemblies don't crash the host.
+
+  **Acceptance criteria:** `AddBotNexusExtensions()` can be called from Gateway `Program.cs`. Extensions in configured folders are loaded and registered. Missing/invalid folders produce warnings, not crashes. Unit tests cover happy path, missing folder, invalid assembly, registrar-based and convention-based loading.
+
+---
+
+#### `fix-sync-over-async`
+
+- **Title:** Remove sync-over-async deadlock hazard in MessageBusExtensions
+- **Phase:** 1
+- **Priority:** P0
+- **Assigned to:** Farnsworth
+- **Size:** S
+- **Dependencies:** none
+- **Description:**
+  The `MessageBusExtensions.Publish()` method in `src/BotNexus.Core/Bus/MessageBusExtensions.cs` wraps an async call with `.GetAwaiter().GetResult()`. This is a deadlock risk in ASP.NET Core's synchronization context.
+
+  **Options (pick one):**
+  1. **Delete the method entirely** if all callers can be made async. Search for all call sites of `Publish(` (the sync overload) and replace with `await PublishAsync(`.
+  2. **If a sync path is genuinely needed**, use `Task.Run(() => bus.PublishAsync(message)).GetAwaiter().GetResult()` to avoid deadlocks (still not ideal, but safe).
+
+  Preferred: Option 1. Grep for all usages and make them async.
+
+  **Acceptance criteria:** No `.GetAwaiter().GetResult()` calls remain in the codebase on async paths. All existing tests pass. Solution builds cleanly.
+
+---
+
+#### `fix-runner-dispatch`
+
+- **Title:** Fix Gateway to dispatch to correct agent runner
+- **Phase:** 1
+- **Priority:** P1
+- **Assigned to:** Bender
+- **Size:** S
+- **Dependencies:** none
+- **Description:**
+  In `src/BotNexus.Gateway/Gateway.cs`, the message dispatch loop uses `runners[0].RunAsync()` — only the first registered `IAgentRunner` is ever invoked. If multiple runners are registered, all but the first are ignored.
+
+  **Fix:**
+  - If the design intent is single-runner, remove the `IEnumerable<IAgentRunner>` and inject a single `IAgentRunner`. Document this decision.
+  - If multiple runners should be supported, route messages to the appropriate runner based on agent name from the inbound message or config.
+  - Recommended: inject single `IAgentRunner` for now (YAGNI). Add routing later if needed.
+
+  **Acceptance criteria:** Gateway dispatches messages correctly. If single-runner, the DI registration and Gateway code are consistent. If multi-runner, routing logic is tested.
+
+---
+
+#### `provider-registry-integration`
+
+- **Title:** Integrate ProviderRegistry into DI and the dynamic loading flow
+- **Phase:** 1
+- **Priority:** P1
+- **Assigned to:** Farnsworth
+- **Size:** S
+- **Dependencies:** `config-model-refactor`
+- **Description:**
+  `ProviderRegistry` in `src/BotNexus.Providers.Base/ProviderRegistry.cs` exists but is never registered in DI or used. It has a clean design — case-insensitive lookup by provider name.
+
+  **Changes:**
+  1. Register `ProviderRegistry` as a singleton in `AddBotNexusCore()` (or the new extension loader).
+  2. After dynamic provider loading, populate the registry with all registered `ILlmProvider` instances keyed by their config key (e.g., "openai", "anthropic").
+  3. Update `AgentRunner`/`AgentLoop` to resolve providers through `ProviderRegistry` instead of taking a single `ILlmProvider`. This enables per-agent provider selection based on the agent's `Model` config.
+
+  **Acceptance criteria:** `ProviderRegistry` is registered in DI. It contains all dynamically-loaded providers. Agent code can look up providers by name. Existing tests pass.
+
+---
+
+### Phase 2: Wiring (Connect Everything Through Dynamic Loading)
+
+These items replace the old hard-coded registration patterns with the new dynamic loading system.
+
+---
+
+#### `channel-dynamic-loading`
+
+- **Title:** Load channel implementations through the extension system
+- **Phase:** 2
+- **Priority:** P0
+- **Assigned to:** Bender
+- **Size:** M
+- **Dependencies:** `dynamic-assembly-loader`, `config-model-refactor`
+- **Description:**
+  Wire up channel loading through the dynamic extension system. This replaces the original P0-1 item ("Register channel implementations in DI").
+
+  **Changes:**
+  1. Each channel project (Discord, Telegram, Slack) implements `IExtensionRegistrar` to handle its own DI registration (it needs to create the channel with the correct config, SDK clients, etc.).
+  2. Remove any hard-coded channel references from `BotNexusServiceExtensions.AddBotNexus()`. The WebSocket channel stays — it's core infrastructure, not an extension.
+  3. Update channel project `.csproj` files: remove `<ProjectReference>` from Gateway. These are no longer compile-time dependencies.
+  4. Add MSBuild targets to each channel project to publish output to `extensions/channels/{name}/`.
+  5. Update Gateway's `AddBotNexus()` to call `AddBotNexusExtensions()` after core registration.
+
+  **Key design point:** The WebSocket channel (`WebSocketChannel` + `GatewayWebSocketHandler`) remains hard-coded in Gateway. It's the built-in communication channel for the WebUI and is not an extension.
+
+  **Acceptance criteria:** Gateway starts with no channel projects referenced at compile time. Channels load from extension folders when configured. WebSocket channel still works. Channel API endpoint (`/api/channels`) shows dynamically-loaded channels.
+
+---
+
+#### `provider-dynamic-loading`
+
+- **Title:** Load LLM providers through the extension system
+- **Phase:** 2
+- **Priority:** P0
+- **Assigned to:** Farnsworth
+- **Size:** M
+- **Dependencies:** `dynamic-assembly-loader`, `config-model-refactor`, `provider-registry-integration`
+- **Description:**
+  Wire up provider loading through the dynamic extension system. This replaces the original P0-2 item ("Add Anthropic DI extension").
+
+  **Changes:**
+  1. Each provider project (OpenAI, Anthropic) implements `IExtensionRegistrar`. The existing `AddOpenAiProvider()` logic moves into the registrar.
+  2. Remove the `AddOpenAiProvider()` extension method (or keep as internal to the extension).
+  3. Remove any hard-coded provider references from Gateway.
+  4. The extension loader discovers provider assemblies, calls their registrar, and populates `ProviderRegistry`.
+  5. Update provider project `.csproj` files: remove `<ProjectReference>` from Gateway.
+  6. Add MSBuild targets to publish to `extensions/providers/{name}/`.
+
+  **Acceptance criteria:** Providers load from extension folders. `ProviderRegistry` contains all configured providers. Agent can resolve the correct provider by model name. No compile-time dependency from Gateway to provider projects.
+
+---
+
+#### `tool-dynamic-loading`
+
+- **Title:** Load tool implementations through the extension system
+- **Phase:** 2
+- **Priority:** P1
+- **Assigned to:** Bender
+- **Size:** M
+- **Dependencies:** `dynamic-assembly-loader`, `config-model-refactor`
+- **Description:**
+  Wire up tool loading through the dynamic extension system.
+
+  **Changes:**
+  1. The GitHub tools project (`BotNexus.Tools.GitHub`) implements `IExtensionRegistrar` or exposes `ITool` implementations discoverable by convention.
+  2. Built-in tools (exec, web search, MCP tools) remain in the Agent project — they're core, not extensions.
+  3. Remove any hard-coded tool references from Gateway/Agent.
+  4. The extension loader discovers tool assemblies and registers `ITool` implementations.
+  5. Add MSBuild targets to publish to `extensions/tools/{name}/`.
+  6. Update `AgentLoop`/tool resolution to include dynamically-loaded tools.
+
+  **Acceptance criteria:** External tools load from extension folders. Built-in tools still work. Agent loop can invoke dynamically-loaded tools. No compile-time dependency from Gateway to external tool projects.
+
+---
+
+#### `extension-build-pipeline`
+
+- **Title:** MSBuild targets for extension output and development workflow
+- **Phase:** 2
+- **Priority:** P0
+- **Assigned to:** Bender
+- **Size:** M
+- **Dependencies:** `dynamic-assembly-loader`
+- **Description:**
+  Create MSBuild infrastructure so extension projects automatically publish their output to the correct extension folder structure during build (for development) and publish (for deployment).
+
+  **Changes:**
+  1. Create a shared `.props` or `.targets` file (e.g., `Directory.Build.targets` or `Extension.targets`) that extension projects import.
+  2. The target copies build output to `{SolutionRoot}/extensions/{type}/{name}/` on build.
+  3. The target copies publish output to the publish directory's `extensions/{type}/{name}/` on publish.
+  4. Each extension project includes metadata properties: `<ExtensionType>channels</ExtensionType>` and `<ExtensionName>discord</ExtensionName>`.
+  5. Add `appsettings.Development.json` to Gateway with `ExtensionsPath` pointing to the dev output.
+  6. Update `.gitignore` to exclude `extensions/` output folder.
+  7. Document the build workflow.
+
+  **Acceptance criteria:** `dotnet build BotNexus.slnx` produces extension folders with correct structure. `dotnet publish` produces a self-contained deployment with extensions. Developer can add a new extension project, set the metadata, and it Just Works.
+
+---
+
+#### `copilot-provider`
+
+- **Title:** Implement GitHub Copilot LLM provider with OAuth device code flow
+- **Phase:** 2
+- **Priority:** P0 ⚡ (highest-priority provider — the only one Jon uses)
+- **Assigned to:** Farnsworth
+- **Size:** L
+- **Dependencies:** `provider-dynamic-loading`, `oauth-core-abstractions`
+- **Description:**
+  Create a new `BotNexus.Providers.Copilot` extension project that connects to GitHub Copilot's LLM API. Copilot uses the OpenAI-compatible HTTP format (same as OpenAI provider) but authenticates via GitHub OAuth device code flow instead of an API key.
+
+  **Reference:** Nanobot's `github_copilot` provider spec:
+  ```python
+  ProviderSpec(
+      name="github_copilot",
+      backend="openai_compat",
+      default_api_base="https://api.githubcopilot.com",
+      is_oauth=True,
+  )
+  ```
+
+  **Architecture:**
+  - The provider implements both `ILlmProvider` and `IOAuthProvider`.
+  - HTTP requests use the same OpenAI-compatible format as the OpenAI provider (chat completions, streaming, tool calls). The `LlmProviderBase` retry/backoff logic is reused.
+  - The `AsyncHttpClient` sends requests to `https://api.githubcopilot.com` with `Authorization: Bearer {oauth_token}`.
+  - Token is obtained via GitHub OAuth device code flow: POST to `https://github.com/login/device/code`, user approves in browser, poll `https://github.com/login/oauth/access_token` until approved.
+  - Token is cached via `IOAuthTokenStore`. On each request, check `HasValidToken`; if expired, refresh or re-auth.
+  - The Copilot OAuth token grants access to Copilot's model catalog. The default model should be configurable (default: `gpt-4o`).
+
+  **Changes:**
+  1. Create `src/BotNexus.Providers.Copilot/` project targeting net10.0.
+  2. Add `CopilotProvider : LlmProviderBase, ILlmProvider, IOAuthProvider` — implements ChatAsync/ChatStreamAsync using OpenAI-compatible HTTP format against `https://api.githubcopilot.com`.
+  3. Add `GitHubDeviceCodeFlow` — handles the OAuth device code flow: request code → prompt user → poll for token → return access token.
+  4. Add `CopilotExtensionRegistrar : IExtensionRegistrar` — registers the provider and its `IOAuthTokenStore` dependency.
+  5. Reuse OpenAI provider's HTTP client patterns (request/response DTOs, streaming SSE parsing) — extract shared code to `BotNexus.Providers.Base` if duplication is significant.
+  6. Add `CopilotConfig` with `ApiBase` (default: `https://api.githubcopilot.com`), `DefaultModel`, `OAuthClientId`.
+  7. Add unit tests with mocked HTTP: chat completion, streaming, tool calling, token refresh, device code flow.
+  8. Add MSBuild metadata: `<ExtensionType>providers</ExtensionType>`, `<ExtensionName>copilot</ExtensionName>`.
+
+  **OAuth Device Code Flow detail:**
+  ```
+  1. POST https://github.com/login/device/code
+     → { device_code, user_code, verification_uri, interval }
+  2. Display to user: "Go to {verification_uri} and enter code {user_code}"
+  3. Poll POST https://github.com/login/oauth/access_token
+     with { client_id, device_code, grant_type=urn:ietf:params:oauth:grant-type:device_code }
+     every {interval} seconds until token returned or timeout.
+  4. Cache token via IOAuthTokenStore.
+  ```
+
+  **Acceptance criteria:** Copilot provider loads as a dynamic extension. OAuth device code flow completes and produces a valid token. Chat completions and streaming work against `api.githubcopilot.com`. Tool calling works (OpenAI-compatible format). Token caching and refresh work correctly. Unit tests cover all scenarios.
+
+  **Commit:** `feat(copilot): add GitHub Copilot provider with OAuth device code flow`
+
+---
+
+#### `anthropic-tool-calling`
+
+- **Title:** Implement tool calling support for the Anthropic provider
+- **Phase:** 2
+- **Priority:** P2 (deprioritized — Copilot and OpenAI are higher priority)
+- **Assigned to:** Farnsworth
+- **Size:** L
+- **Dependencies:** `provider-dynamic-loading` (should be done in the context of the new extension model)
+- **Description:**
+  The Anthropic provider in `src/BotNexus.Providers.Anthropic/` does not support tool calling. The OpenAI provider does. This is a feature gap that blocks using Anthropic models for agentic workflows.
+
+  **Changes:**
+  1. Implement tool call request/response mapping in `AnthropicProvider.ChatAsync()` — map `ToolDefinition` to Anthropic's tool format, parse tool_use content blocks from responses.
+  2. Implement tool call support in `AnthropicProvider.ChatStreamAsync()` — handle streaming tool_use blocks.
+  3. Map BotNexus `ChatRequest.Tools` to Anthropic API `tools` parameter.
+  4. Map Anthropic `tool_use` response blocks back to BotNexus `ToolCall` model.
+  5. Handle `tool_result` content blocks for multi-turn tool conversations.
+  6. Add unit tests with mocked HTTP responses covering: simple chat, single tool call, multiple tool calls, streaming with tools.
+
+  **Acceptance criteria:** Anthropic provider supports tool calling at feature parity with OpenAI. Unit tests cover all tool calling scenarios. The provider works correctly when loaded as a dynamic extension.
+
+---
+
+#### `anthropic-streaming-fix`
+
+- **Title:** Fix CA2024 async stream warning in Anthropic provider
+- **Phase:** 2
+- **Priority:** P2
+- **Assigned to:** Farnsworth
+- **Size:** S
+- **Dependencies:** none
+- **Description:**
+  Fix the CA2024 warning in the Anthropic provider's streaming implementation. This is likely a missing `[EnumeratorCancellation]` attribute on the `CancellationToken` parameter of `ChatStreamAsync()`.
+
+  **Changes:**
+  1. Add `[EnumeratorCancellation]` attribute to the `cancellationToken` parameter.
+  2. Verify the CS8425 warning is also resolved (same root cause).
+  3. Confirm zero warnings in build output.
+
+  **Acceptance criteria:** `dotnet build` produces zero warnings. Streaming still works correctly.
+
+---
+
+### Phase 3: Hardening (Auth, Security, Observability)
+
+These items secure and harden the platform now that the core architecture is in place.
+
+---
+
+#### `api-key-auth`
+
+- **Title:** Add API key authentication to all endpoints
+- **Phase:** 3
+- **Priority:** P0
+- **Assigned to:** Bender
+- **Size:** M
+- **Dependencies:** `channel-dynamic-loading`, `provider-dynamic-loading`
+- **Description:**
+  No endpoint in Gateway or Api has any authentication. This is a security requirement before any deployment.
+
+  **Changes:**
+  1. Add API key authentication middleware to Gateway. Config: `BotNexus:Gateway:ApiKey`.
+  2. Apply to all REST API endpoints (`/api/*`).
+  3. Apply to WebSocket upgrade (`/ws`). Key passed as query parameter or header.
+  4. Health endpoint (`/health`) remains unauthenticated.
+  5. If `ApiKey` is not configured, log a warning but allow unauthenticated access (dev mode).
+  6. Return 401 with standard error body for invalid/missing keys.
+  7. Add the same auth to the Api project if enabled.
+
+  **Acceptance criteria:** Requests without valid API key get 401. Health endpoint is always accessible. Dev mode (no key configured) works without auth. Tests cover auth success, auth failure, and dev mode.
+
+---
+
+#### `slack-webhook-endpoint`
+
+- **Title:** Add webhook endpoint for Slack Events API
+- **Phase:** 3
+- **Priority:** P1
+- **Assigned to:** Bender
+- **Size:** M
+- **Dependencies:** `channel-dynamic-loading`
+- **Description:**
+  The Slack channel implementation uses webhook mode, but Gateway has no incoming webhook endpoint to receive Slack events.
+
+  **Changes:**
+  1. Add `POST /webhooks/slack` endpoint to Gateway.
+  2. Implement Slack URL verification challenge handling.
+  3. Parse Slack event payloads and route to the Slack channel via `IMessageBus`.
+  4. Apply Slack request signature verification (using signing secret from config).
+  5. This endpoint is registered by the Slack extension's `IExtensionRegistrar` — it adds the endpoint mapping when the Slack channel is loaded.
+
+  **Design question:** How do dynamically-loaded extensions add HTTP endpoints? Options:
+  - Extension registrar registers an `IWebhookHandler` that Gateway maps.
+  - Extension uses `IEndpointRouteBuilder` passed during registration.
+  - Recommended: Define `IWebhookHandler` interface in Core; Gateway maps all registered handlers.
+
+  **Acceptance criteria:** Slack events reach the Slack channel. URL verification works. Request signature is validated. Endpoint only exists when Slack extension is loaded.
+
+---
+
+#### `extension-security`
+
+- **Title:** Assembly validation and security hardening for extension loading
+- **Phase:** 3
+- **Priority:** P1
+- **Assigned to:** Bender
+- **Size:** M
+- **Dependencies:** `dynamic-assembly-loader`
+- **Description:**
+  Harden the extension loader with security validation.
+
+  **Changes:**
+  1. Validate that extension folder paths don't escape the extensions root (reject `..`, symlinks pointing outside).
+  2. Validate loaded assemblies are valid .NET assemblies before scanning types.
+  3. Add optional strong-name signature verification (config: `BotNexus:Extensions:RequireSignedAssemblies`, default: false).
+  4. Log all loaded assemblies with their full paths, versions, and discovered types at Information level.
+  5. Add rate limiting or size limits on extension folders (prevent loading hundreds of assemblies).
+  6. Ensure extension `AssemblyLoadContext` isolation prevents extensions from accessing host internals they shouldn't.
+  7. Add a "dry run" mode that logs what would be loaded without actually loading.
+
+  **Acceptance criteria:** Path traversal attempts are rejected. Invalid assemblies don't crash the host. Logging is comprehensive. Security validation is configurable.
+
+---
+
+#### `observability-foundation`
+
+- **Title:** Add health checks, metrics, and structured logging foundation
+- **Phase:** 3
+- **Priority:** P2
+- **Assigned to:** Farnsworth
+- **Size:** M
+- **Dependencies:** none
+- **Description:**
+  Add baseline observability to the platform.
+
+  **Changes:**
+  1. Add `/health` endpoint with detailed health check (currently returns static "healthy"). Check: MessageBus alive, at least one provider registered, extension loader completed.
+  2. Add `/ready` endpoint (readiness probe) — all channels started, all providers initialized.
+  3. Add structured logging with correlation IDs for message processing (from inbound to response).
+  4. Add basic metrics: messages processed, tool calls executed, provider latency, extension load times.
+  5. Use `System.Diagnostics.Metrics` for .NET-native metrics (OpenTelemetry compatible).
+
+  **Acceptance criteria:** Health and readiness endpoints return meaningful status. Structured logs include correlation IDs. Metrics are emitted and observable with `dotnet-counters`.
+
+---
+
+#### `unit-tests-loader`
+
+- **Title:** Comprehensive unit tests for extension loader
+- **Phase:** 3
+- **Priority:** P0
+- **Assigned to:** Hermes
+- **Size:** M
+- **Dependencies:** `dynamic-assembly-loader`
+- **Description:**
+  Write thorough unit tests for the extension loader. The loader is security-critical and must be well-tested.
+
+  **Test cases:**
+  1. Happy path: valid extension folder → assembly loaded → type discovered → registered in DI.
+  2. Missing folder: configured but folder doesn't exist → warning logged, no crash.
+  3. Empty folder: folder exists but no DLLs → warning logged, no crash.
+  4. Invalid assembly: non-.NET DLL in folder → error logged, no crash.
+  5. No matching types: valid assembly but no types implementing required interface → warning logged.
+  6. Multiple types: assembly has multiple `IChannel` implementations → all registered.
+  7. Registrar-based: extension has `IExtensionRegistrar` → registrar called with correct config section.
+  8. Convention-based: extension has no registrar → types registered via `ActivatorUtilities`.
+  9. Path traversal: config key contains `..` → rejected with error.
+  10. Config binding: extension config section correctly bound and accessible.
+  11. AssemblyLoadContext isolation: extension types don't leak into host context.
+
+  **Acceptance criteria:** All test cases above are implemented and pass. Code coverage on `ExtensionLoader` ≥ 90%.
+
+---
+
+#### `integration-tests-extensions`
+
+- **Title:** E2E integration tests for dynamic extension loading
+- **Phase:** 3
+- **Priority:** P1
+- **Assigned to:** Hermes
+- **Size:** L
+- **Dependencies:** `channel-dynamic-loading`, `provider-dynamic-loading`, `tool-dynamic-loading`
+- **Description:**
+  Write integration tests that verify the full extension loading flow from config → discovery → DI → runtime.
+
+  **Test cases:**
+  1. Gateway starts with test extensions configured → channels, providers, tools loaded and functional.
+  2. Gateway starts with no extensions configured → starts cleanly with only WebSocket channel.
+  3. Gateway starts with partial extensions (some folders missing) → loads what's available, logs warnings.
+  4. End-to-end message flow: WebSocket → Gateway → Agent (with dynamically-loaded provider) → tool call (with dynamically-loaded tool) → response.
+  5. Channel API (`/api/channels`) includes dynamically-loaded channels.
+  6. Provider selection by model name works through `ProviderRegistry`.
+
+  Create test fixture extensions in `tests/BotNexus.Tests.Integration/TestExtensions/` — simple mock implementations of `IChannel`, `ILlmProvider`, `ITool`.
+
+  **Acceptance criteria:** Integration tests pass in CI. Test extensions are lightweight and don't require external services.
+
+---
+
+### Phase 4: Documentation & Developer Experience
+
+---
+
+#### `config-documentation`
+
+- **Title:** Comprehensive appsettings.json configuration guide
+- **Phase:** 4
+- **Priority:** P0
+- **Assigned to:** Farnsworth
+- **Size:** M
+- **Dependencies:** `config-model-refactor`, `dynamic-assembly-loader`
+- **Description:**
+  Write a configuration reference document covering the new dynamic config model.
+
+  **Contents:**
+  1. Full annotated `appsettings.json` example with all sections.
+  2. Explanation of each config section and property.
+  3. How extension config keys map to folder names.
+  4. Provider config: API keys, models, base URLs.
+  5. Channel config: enable/disable, tokens, allow lists.
+  6. Tool config: built-in vs. extension tools, MCP servers.
+  7. Gateway config: host, port, WebSocket, heartbeat.
+  8. Agent config: defaults and named overrides.
+  9. Environment variable overrides (standard .NET config).
+  10. Security: keeping secrets out of config files (user secrets, env vars).
+
+  **Output:** `docs/configuration.md`
+
+  **Acceptance criteria:** A new developer can configure BotNexus for their use case by reading this document alone.
+
+---
+
+#### `extension-dev-guide`
+
+- **Title:** Guide for developing BotNexus extensions
+- **Phase:** 4
+- **Priority:** P1
+- **Assigned to:** Leela
+- **Size:** M
+- **Dependencies:** `channel-dynamic-loading`, `provider-dynamic-loading`, `tool-dynamic-loading`
+- **Description:**
+  Write a developer guide for creating new extensions (channels, providers, tools).
+
+  **Contents:**
+  1. Extension project structure and conventions.
+  2. How to create a new channel extension (step-by-step with code).
+  3. How to create a new provider extension (step-by-step with code).
+  4. How to create a new tool extension (step-by-step with code).
+  5. Using `IExtensionRegistrar` vs. convention-based registration.
+  6. Accessing config from extensions.
+  7. Testing extensions in isolation.
+  8. Publishing and deploying extensions.
+  9. Troubleshooting: common loading errors and how to fix them.
+
+  **Output:** `docs/extension-development.md`
+
+  **Acceptance criteria:** A developer can create and deploy a new extension by following this guide.
+
+---
+
+#### `architecture-documentation`
+
+- **Title:** Architecture overview documentation
+- **Phase:** 4
+- **Priority:** P1
+- **Assigned to:** Leela
+- **Size:** M
+- **Dependencies:** Phase 2 completion
+- **Description:**
+  Write an architecture overview document covering the system's design, component responsibilities, and data flow.
+
+  **Contents:**
+  1. System overview and component diagram.
+  2. Message flow: Channel → MessageBus → Gateway → Agent → Provider/Tools → Response.
+  3. Dynamic extension loading architecture.
+  4. DI container structure and service lifetimes.
+  5. Core abstractions and their implementations.
+  6. Session management and persistence.
+  7. Security model.
+  8. Deployment architecture.
+
+  **Output:** `docs/architecture.md`
+
+  **Acceptance criteria:** A new team member can understand the system's architecture by reading this document.
+
+---
+
+#### `webui-extension-visibility`
+
+- **Title:** Show loaded extensions in WebUI
+- **Phase:** 4
+- **Priority:** P2
+- **Assigned to:** Fry
+- **Size:** M
+- **Dependencies:** `channel-dynamic-loading`, `provider-dynamic-loading`
+- **Description:**
+  Update the WebUI to display information about dynamically-loaded extensions.
+
+  **Changes:**
+  1. Add a "System" or "Extensions" panel showing loaded channels, providers, and tools.
+  2. Show extension status (loaded, running, error).
+  3. Use existing REST API endpoints (`/api/channels`, etc.) — add `/api/providers` and `/api/tools` endpoints if not present.
+  4. Display provider names and default models.
+  5. Display tool definitions and descriptions.
+
+  **Acceptance criteria:** WebUI shows all loaded extensions with status information.
+
+---
+
+#### `webui-ux-review`
+
+- **Title:** UX review and design improvements for WebUI
+- **Phase:** 4
+- **Priority:** P2
+- **Assigned to:** Amy
+- **Size:** M
+- **Dependencies:** `webui-extension-visibility`
+- **Description:**
+  Review the WebUI for UX improvements. The current UI is vanilla JS with no framework.
+
+  **Focus areas:**
+  1. Layout and visual hierarchy of the chat interface.
+  2. Extension/system status visibility and information design.
+  3. Accessibility basics (keyboard navigation, screen reader, contrast).
+  4. Responsive design for different screen sizes.
+  5. Loading and error states.
+  6. Provide design recommendations as a design spec (mockups or annotated screenshots).
+
+  **Acceptance criteria:** Design spec produced with actionable recommendations. Prioritized list of UX improvements.
+
+---
+
+#### `api-reference`
+
+- **Title:** REST API reference documentation
+- **Phase:** 4
+- **Priority:** P2
+- **Assigned to:** Farnsworth
+- **Size:** S
+- **Dependencies:** `api-key-auth`
+- **Description:**
+  Document all REST API and WebSocket endpoints.
+
+  **Contents:**
+  1. Authentication (API key).
+  2. All REST endpoints: method, path, request/response schema, examples.
+  3. WebSocket protocol: connection, message format, events.
+  4. Error response format.
+
+  **Output:** `docs/api-reference.md`
+
+  **Acceptance criteria:** All endpoints are documented with examples.
+
+---
+
+## Part 3: Dependency Graph
+
+```
+Phase 1 (Foundation):
+  config-model-refactor ──────────┐
+  extension-registrar-interface ──┤
+  oauth-core-abstractions ────────┤
+                                  ├──→ dynamic-assembly-loader
+                                  │
+  fix-sync-over-async             │    (independent)
+  fix-runner-dispatch             │    (independent)
+  provider-registry-integration ──┘    (depends on config-model-refactor)
+
+Phase 2 (Wiring):
+  dynamic-assembly-loader ────┬──→ channel-dynamic-loading
+  config-model-refactor ──────┤
+                              ├──→ provider-dynamic-loading
+  provider-registry-integration┘
+                              ├──→ tool-dynamic-loading
+                              └──→ extension-build-pipeline
+
+  provider-dynamic-loading ───┬──→ copilot-provider (P0 ⚡)
+  oauth-core-abstractions ────┘
+                              ├──→ anthropic-tool-calling (P2)
+  anthropic-streaming-fix         (independent)
+
+Phase 3 (Hardening):
+  channel-dynamic-loading ────┬──→ api-key-auth
+  provider-dynamic-loading ───┘
+                              ├──→ slack-webhook-endpoint
+  dynamic-assembly-loader ────┤
+                              ├──→ extension-security
+                              ├──→ unit-tests-loader
+  Phase 2 complete ───────────┼──→ integration-tests-extensions
+                              └──→ observability-foundation (independent)
+
+Phase 4 (Docs & DX):
+  Phase 2 complete ───────────┬──→ config-documentation
+                              ├──→ extension-dev-guide
+                              ├──→ architecture-documentation
+                              ├──→ webui-extension-visibility
+                              ├──→ webui-ux-review (depends on webui-extension-visibility)
+                              └──→ api-reference
+```
+
+---
+
+## Part 4: Summary by Team Member
+
+### Farnsworth (Platform Dev)
+| ID | Phase | Size | Priority |
+|---|---|---|---|
+| `config-model-refactor` | 1 | M | P0 |
+| `extension-registrar-interface` | 1 | S | P0 |
+| `oauth-core-abstractions` | 1 | S | P0 |
+| `fix-sync-over-async` | 1 | S | P0 |
+| `provider-registry-integration` | 1 | S | P1 |
+| `provider-dynamic-loading` | 2 | M | P0 |
+| `copilot-provider` | 2 | L | P0 ⚡ |
+| `anthropic-tool-calling` | 2 | L | P2 |
+| `anthropic-streaming-fix` | 2 | S | P2 |
+| `observability-foundation` | 3 | M | P2 |
+| `config-documentation` | 4 | M | P0 |
+| `api-reference` | 4 | S | P2 |
+
+### Bender (Runtime Dev)
+| ID | Phase | Size | Priority |
+|---|---|---|---|
+| `dynamic-assembly-loader` | 1 | XL | P0 |
+| `fix-runner-dispatch` | 1 | S | P1 |
+| `channel-dynamic-loading` | 2 | M | P0 |
+| `tool-dynamic-loading` | 2 | M | P1 |
+| `extension-build-pipeline` | 2 | M | P0 |
+| `api-key-auth` | 3 | M | P0 |
+| `slack-webhook-endpoint` | 3 | M | P1 |
+| `extension-security` | 3 | M | P1 |
+
+### Fry (Web Dev)
+| ID | Phase | Size | Priority |
+|---|---|---|---|
+| `webui-extension-visibility` | 4 | M | P2 |
+
+### Amy (UI Designer)
+| ID | Phase | Size | Priority |
+|---|---|---|---|
+| `webui-ux-review` | 4 | M | P2 |
+
+### Hermes (Tester)
+| ID | Phase | Size | Priority |
+|---|---|---|---|
+| `unit-tests-loader` | 3 | M | P0 |
+| `integration-tests-extensions` | 3 | L | P1 |
+
+### Leela (Architect)
+| ID | Phase | Size | Priority |
+|---|---|---|---|
+| `extension-dev-guide` | 4 | M | P1 |
+| `architecture-documentation` | 4 | M | P1 |
+| Architecture review gates | All | — | — |
+
+---
+
+## Part 5: Recommended Execution Order
+
+**Sprint 1 — Foundation (parallel tracks):**
+- Track A: Farnsworth → `config-model-refactor` → `extension-registrar-interface` → `oauth-core-abstractions` → `fix-sync-over-async`
+- Track B: Bender → `fix-runner-dispatch` (while waiting for Track A)
+- Track B: Bender → `dynamic-assembly-loader` (after `config-model-refactor` + `extension-registrar-interface` + `oauth-core-abstractions` complete)
+- Farnsworth → `provider-registry-integration` (after `config-model-refactor`)
+- **Gate:** Leela reviews `dynamic-assembly-loader` before Phase 2 begins.
+- **Commits:** `feat(config):`, `feat(core):`, `fix(bus):`, `fix(gateway):`, `feat(loader):`
+
+**Sprint 2 — Wiring (parallel tracks, Copilot-first):**
+- Track A: Farnsworth → `provider-dynamic-loading` → **`copilot-provider`** (P0 ⚡ — first provider to wire end-to-end)
+- Track B: Bender → `extension-build-pipeline` → `channel-dynamic-loading` → `tool-dynamic-loading`
+- Farnsworth → `anthropic-tool-calling` + `anthropic-streaming-fix` (P2 — only if time permits after Copilot)
+- **Gate:** Leela reviews Copilot provider OAuth flow and extension loading E2E before Phase 3.
+- **Commits:** `feat(providers):`, `feat(copilot):`, `feat(channels):`, `feat(tools):`, `feat(build):`
+
+**Sprint 3 — Hardening:**
+- Bender → `api-key-auth` → `extension-security` → `slack-webhook-endpoint`
+- Hermes → `unit-tests-loader` → `integration-tests-extensions`
+- Farnsworth → `observability-foundation`
+- **Commits:** `feat(auth):`, `feat(security):`, `test(loader):`, `test(e2e):`, `feat(observability):`
+
+**Sprint 4 — Docs & DX:**
+- Farnsworth → `config-documentation` → `api-reference`
+- Leela → `extension-dev-guide` → `architecture-documentation`
+- Fry → `webui-extension-visibility`
+- Amy → `webui-ux-review`
+- **Commits:** `docs(config):`, `docs(api):`, `docs(extensions):`, `docs(architecture):`, `feat(webui):`
+
+---
+
+## Part 6: Process Guidelines
+
+### Conventional Commits (Mandatory)
+
+All commits must use [Conventional Commits](https://www.conventionalcommits.org/) format. Commit changes as each area of work is completed — not one big commit at the end. This keeps history clean and makes it easy to see what changed and roll back if needed.
+
+**Format:** `<type>(<scope>): <description>`
+
+**Types:**
+- `feat` — new feature or capability
+- `fix` — bug fix
+- `refactor` — code restructuring without behavior change
+- `test` — adding or updating tests
+- `docs` — documentation only
+- `chore` — build, CI, tooling, dependencies
+- `perf` — performance improvement
+
+**Scopes** (match project/area): `core`, `config`, `loader`, `gateway`, `bus`, `copilot`, `openai`, `anthropic`, `providers`, `channels`, `tools`, `auth`, `security`, `webui`, `build`, `observability`
+
+**Examples:**
+```
+feat(core): add IOAuthProvider and IOAuthTokenStore abstractions
+feat(config): refactor config models for dictionary-based extensions
+feat(loader): implement dynamic assembly loader with ALC isolation
+feat(copilot): add GitHub Copilot provider with OAuth device code flow
+fix(bus): remove sync-over-async wrapper in MessageBusExtensions
+fix(gateway): dispatch to correct agent runner
+test(loader): add comprehensive unit tests for extension loader
+docs(config): add configuration reference guide
+```
+
+**Rule:** Every work item in this plan should result in at least one commit. Large items may produce multiple commits as logical units are completed. The commit scope annotations in each sprint above indicate the expected patterns.
+
+---
+
+## Decision Needed
+
+This plan requires team consensus before execution begins. Key decisions embedded in this plan:
+
+1. **IExtensionRegistrar approach** — Extensions can optionally provide a registrar class for complex DI setup, with convention-based fallback for simple cases.
+2. **WebSocket channel stays hard-coded** — It's core infrastructure, not an extension.
+3. **Config model is dictionary-based** — Breaking change from the current typed-property model.
+4. **AssemblyLoadContext per extension** — Isolation at the cost of some complexity.
+5. **Extensions folder at app root** — `./extensions/{type}/{name}/` convention.
+6. **Built-in tools stay in Agent project** — Only external tools are extensions.
+
+**Status:** Awaiting team review and approval.
+
+**New decisions in Rev 2:**
+
+7. **Copilot is P0 provider** — Jon's directive. Copilot provider takes priority over OpenAI (P1) and Anthropic (P2). Sprint 2 leads with Copilot.
+8. **OAuth device code flow for Copilot** — Following Nanobot's approach. No API key; runtime acquires token via GitHub OAuth device code flow. Token cached and refreshed automatically.
+9. **IOAuthProvider interface in Core** — Providers implementing this skip API key validation. The extension loader and ProviderRegistry must handle both auth modes.
+10. **IOAuthTokenStore for secure persistence** — Default implementation uses encrypted file storage. Interface allows future OS keychain integration.
+11. **OpenAI-compatible HTTP format reuse** — Copilot uses the same request/response format as OpenAI. Shared HTTP client code should be extracted to Providers.Base to avoid duplication.
+12. **Conventional commits enforced** — All agents must use conventional commit format. Commit granularly as work completes, not in bulk.
+13. **ProviderConfig Auth discriminator** — Config model needs `Auth` field to distinguish API key vs OAuth providers.
+

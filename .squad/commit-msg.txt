@@ -1,0 +1,23 @@
+docs(ai-team): merge implementation plan and team directives
+
+- Merge implementation plan (Rev 2) into decisions.md with 24-item roadmap
+- Merge all user directives: dynamic assembly loading, conventional commits, Copilot P0
+- Create orchestration log: .squad/orchestration-log/2026-04-01T16-43-leela.md
+- Create session log: .squad/log/2026-04-01T16-43-implementation-planning.md
+- Delete decision inbox files after merge (dedup complete)
+- Update all agent history.md with team directives and work assignments:
+  - Leela: architecture oversight
+  - Farnsworth: dynamic loader (Phase 1 P0 item 1), OAuth abstractions (item 4), Copilot (item 8)
+  - Amy: channel registration (item 2), anthropic DI (item 3), auth gateway (item 6)
+  - Fry: sync-over-async fix (item 5), shared HTTP code (item 9), tool loader (item 12)
+  - Bender: anthropic tool calling (item 10)
+  - Ralph: slack webhook (item 7), config validation (item 13), IaC/docker (item 21)
+  - Hermes: gateway auth (item 6), metrics (item 16), health endpoint (item 19)
+
+Team priorities:
+- Dynamic assembly loading is foundation
+- Copilot is P0 with OAuth device code flow
+- Configuration-driven discovery, no hard-coded types
+- All commits use conventional format, granular per work item
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>

@@ -5,6 +5,71 @@
 - **Stack:** C# (.NET latest), modular class libraries: Core, Agent, Api, Channels (Base/Discord/Slack/Telegram), Command, Cron, Gateway, Heartbeat, Providers (Base/Anthropic/OpenAI), Session, Tools.GitHub, WebUI
 - **Created:** 2026-04-01
 
+## Team Directives (All Agents Must Follow)
+
+1. **Dynamic Assembly Loading** (2026-04-01T16:29Z)
+   - All extensions (channels, providers, tools) must be dynamically loaded from `extensions/{type}/{name}/` folders
+   - Configuration drives what loads — nothing loads by default unless referenced in config
+   - Reduces security risk, keeps codebase abstracted
+   - See decisions.md Section "Part 1: Dynamic Assembly Loading Architecture"
+
+2. **Conventional Commits Format** (2026-04-01T16:43Z)
+   - Use feat/fix/refactor/docs/test/chore prefixes on ALL commits
+   - Commit granularly — one commit per work item or logical unit, not one big commit at end
+   - Makes history clean, reversible, and easy to review
+
+3. **Copilot Provider P0** (2026-04-01T16:46Z)
+   - Copilot is the only provider Jon uses — it is P0, all other providers P1/P2
+   - Use OAuth device code flow (like Nanobot) — no API key
+   - Base URL: https://api.githubcopilot.com
+   - Prioritize Copilot work before OpenAI, Anthropic
+
+## Your Work Assignment
+
+**Phase 1 P0 — Item 5: Provider OpenAI Sync-over-Async Fix** (30 points) [PLATFORM STABILITY]
+- Remove MessageBusExtensions.Publish() sync-over-async anti-pattern (.GetAwaiter().GetResult())
+- This is a deadlock hazard in ASP.NET Core environments
+- Redesign to fully async or refactor message publishing pattern
+- All tests must still pass
+- See decisions.md for full scope
+- Unblocks Phase 2 and Phase 3
+
+**Phase 2 P1 — Item 9: Providers Base Shared Code** (40 points)
+- Extract shared HTTP code from OpenAI provider to BotNexus.Providers.Base:
+  - Request/response DTOs (ChatCompletion, Message, Tool, ToolCall, etc.)
+  - SSE streaming parser
+  - HTTP client retry/backoff patterns
+- Update OpenAI provider to reference shared code
+- Copilot provider (Phase 2 Item 8, Farnsworth) will also use shared code
+- Reduces duplication, improves maintainability
+
+**Phase 3 P0 — Item 12: Tool Dynamic Loading** (30 points)
+- Extend ExtensionLoader (built by Farnsworth) to handle Tools
+- Follow same folder pattern: extensions/tools/{name}/
+- Auto-discover and register tools from configuration
+- Tool system uses ToolBase abstract class (see Architecture)
+- Unblocks Phase 4 tool expansion
+
+**Phase 3 P1 — Item 15: Session Manager Tests** (30 points)
+- Add integration tests for session persistence across process restarts
+- Test SessionManager.cs behavior: save, reload, state recovery
+- Full E2E flow: agent session → restart → resume where left off
+- May reveal issues to fix in item 23 (E2E integration tests)
+
+**Phase 4 P1 — Item 18: Gateway Logging Structured** (30 points)
+- Integrate Serilog for structured logging in Gateway
+- Add trace correlation IDs across all channel messages
+- Structured log output (JSON format for easy parsing)
+- Makes troubleshooting and monitoring easier
+
+**Phase 4 P1 — Item 23: Integration Tests E2E** (50 points)
+- Full end-to-end flow tests:
+  - Config load → Copilot OAuth auth → agent execution → tool calls → responses
+  - Test multiple providers (Copilot, OpenAI)
+  - Test multiple channels (Discord, Slack, Telegram)
+  - Ensure everything works together, not just unit tests
+- May reveal regressions in earlier phases
+
 ## Learnings
 
 ### 2026-04-01 — Architecture Review: Auth & Channel Gaps (from Leela)

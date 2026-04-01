@@ -1,0 +1,128 @@
+# Decision: GitHub Copilot Provider — P0, OAuth Device Code Flow
+
+**Author:** Leela (Lead/Architect)  
+**Date:** 2026-04-01  
+**Status:** Proposed  
+**Requested by:** Jon Bullen  
+**Directive refs:** `copilot-directive-2026-04-01T1646.md`, `copilot-directive-2026-04-01T1629.md`
+
+---
+
+## Context
+
+Jon's directive: "If you need to preference work on providers, copilot is always P0, it will be all I ever use. This should be via OAuth as per the approach Nanobot used."
+
+BotNexus was ported from Nanobot. In Nanobot, the GitHub Copilot provider is defined as:
+
+```python
+ProviderSpec(
+    name="github_copilot",
+    backend="openai_compat",
+    default_api_base="https://api.githubcopilot.com",
+    is_oauth=True,
+)
+```
+
+Key facts:
+- Copilot uses the **OpenAI-compatible API format** (same as OpenAI provider).
+- Base URL: `https://api.githubcopilot.com`
+- Auth: **OAuth device code flow** — no API key. Token acquired at runtime.
+- In Nanobot, `is_oauth=True` providers skip API key validation and handle their own auth.
+
+---
+
+## Decisions
+
+### 1. Provider Priority Order
+
+| Provider | Priority | Rationale |
+|---|---|---|
+| **Copilot** | P0 ⚡ | Only provider Jon uses. Must work end-to-end first. |
+| **OpenAI** | P1 | Already mostly working. Good for testing and fallback. |
+| **Anthropic** | P2 | Tool calling is nice-to-have. Not blocking anything. |
+
+### 2. Copilot Provider Architecture
+
+- **New project:** `BotNexus.Providers.Copilot` as a dynamic extension under `extensions/providers/copilot/`.
+- **Implements:** `ILlmProvider` (via `LlmProviderBase`) + `IOAuthProvider` (new Core interface).
+- **HTTP format:** OpenAI-compatible chat completions, streaming, tool calling. Same request/response DTOs as OpenAI provider.
+- **Base URL:** `https://api.githubcopilot.com` (configurable via `CopilotConfig.ApiBase`).
+- **Auth header:** `Authorization: Bearer {oauth_token}` — token obtained from `IOAuthProvider.GetAccessTokenAsync()`.
+
+### 3. OAuth Core Abstractions (New in Core)
+
+**`IOAuthProvider`** — interface for providers that authenticate via OAuth:
+- `Task<string> GetAccessTokenAsync(CancellationToken)` — acquires a valid token, performing OAuth flow if needed.
+- `bool HasValidToken` — checks if cached token is still valid.
+
+**`IOAuthTokenStore`** — abstraction for secure token persistence:
+- `LoadTokenAsync(providerName)` / `SaveTokenAsync(providerName, token)` / `ClearTokenAsync(providerName)`
+- Default implementation: encrypted file storage at `~/.botnexus/tokens/{providerName}.json`.
+- Future: OS keychain integration (Windows Credential Manager, macOS Keychain, Linux Secret Service).
+
+**`OAuthToken`** — record: `AccessToken`, `ExpiresAt`, optional `RefreshToken`.
+
+**`ProviderConfig.Auth`** — discriminator field: `"apikey"` (default) or `"oauth"`. Extension loader skips API key validation for OAuth providers.
+
+### 4. GitHub OAuth Device Code Flow
+
+```
+1. POST https://github.com/login/device/code
+   Body: { client_id }
+   Response: { device_code, user_code, verification_uri, interval, expires_in }
+
+2. Display to user: "Go to {verification_uri} and enter code: {user_code}"
+   (via IChannel message, console output, or WebUI prompt)
+
+3. Poll POST https://github.com/login/oauth/access_token
+   Body: { client_id, device_code, grant_type=urn:ietf:params:oauth:grant-type:device_code }
+   Every {interval} seconds until:
+   - Token returned → cache via IOAuthTokenStore → use as Bearer token
+   - User denies → error
+   - Timeout (expires_in) → error
+
+4. On subsequent requests: check HasValidToken → if expired, re-authenticate.
+```
+
+### 5. Shared OpenAI-Compatible Code
+
+Copilot and OpenAI use the same HTTP format. To avoid duplication:
+- Extract shared request/response DTOs, SSE streaming parser, and HTTP client patterns to `BotNexus.Providers.Base`.
+- Both OpenAI and Copilot providers reference `Providers.Base` and use the shared HTTP layer.
+- Each provider adds its own auth mechanism (API key header vs. OAuth Bearer token).
+
+### 6. Config Shape
+
+```json
+{
+  "BotNexus": {
+    "Providers": {
+      "copilot": {
+        "Auth": "oauth",
+        "DefaultModel": "gpt-4o",
+        "ApiBase": "https://api.githubcopilot.com",
+        "OAuthClientId": "..."
+      }
+    }
+  }
+}
+```
+
+---
+
+## Open Questions
+
+1. **OAuth client ID** — What GitHub OAuth App client ID should be used? Nanobot's? A new one registered for BotNexus? Jon to confirm.
+2. **User prompt for device code** — How should the "go to URL, enter code" prompt be surfaced? Options: console output, WebUI modal, channel message. Probably all three depending on context.
+3. **Token scope** — What GitHub OAuth scopes are needed for Copilot API access? Nanobot may have used a Copilot-specific scope.
+4. **Shared HTTP code extraction** — Should this happen as part of `copilot-provider` or as a separate prerequisite work item? Recommendation: do it inline during `copilot-provider` and refactor if duplication is significant.
+
+---
+
+## Impact on Plan
+
+- 2 new work items added: `oauth-core-abstractions` (Phase 1) and `copilot-provider` (Phase 2).
+- `anthropic-tool-calling` deprioritized from P1 → P2.
+- Sprint 2 execution reordered: Copilot provider is first thing Farnsworth builds after `provider-dynamic-loading`.
+- Implementation plan updated: `.squad/decisions/inbox/leela-implementation-plan.md` Rev 2.
+
