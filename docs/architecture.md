@@ -16,10 +16,11 @@
 6. [Core Abstractions](#core-abstractions)
 7. [Multi-Agent Routing](#multi-agent-routing)
 8. [Provider Architecture](#provider-architecture)
-9. [Session Management](#session-management)
-10. [Security Model](#security-model)
-11. [Observability](#observability)
-12. [Installation Layout](#installation-layout)
+9. [Agent Workspace and Memory](#agent-workspace-and-memory)
+10. [Session Management](#session-management)
+11. [Security Model](#security-model)
+12. [Observability](#observability)
+13. [Installation Layout](#installation-layout)
 
 ---
 
@@ -783,7 +784,152 @@ Example:
 
 ---
 
-## 9. Session Management
+## 9. Agent Workspace and Memory
+
+Each agent has a persistent workspace for storing identity, personality, memory, and configuration. This enables agents to maintain state across deployments and builds system context from curated personality files and learned patterns.
+
+### Workspace Overview
+
+**Location**: `~/.botnexus/agents/{agentName}/`
+
+An agent workspace contains:
+- **Identity Files** (manually edited):
+  - `SOUL.md` — Core personality, values, and boundaries
+  - `IDENTITY.md` — Professional role, communication style, constraints
+  - `USER.md` — User preferences and collaboration expectations
+- **Auto-Generated Files** (regenerated each session):
+  - `AGENTS.md` — List of configured agents and their roles
+  - `TOOLS.md` — List of available tools
+- **Memory Files**:
+  - `MEMORY.md` — Long-term distilled learnings
+  - `memory/daily/YYYY-MM-DD.md` — Daily timestamped notes (one per day)
+- **Configuration**:
+  - `HEARTBEAT.md` — Periodic tasks and consolidation cadence
+
+### Context Builder
+
+**File**: `AgentContextBuilder.cs`
+
+The context builder assembles the full system prompt from workspace files at session start:
+
+1. Auto-generated identity block (agent name, platform, workspace path, UTC time)
+2. SOUL.md (if exists)
+3. IDENTITY.md (if exists)
+4. USER.md (if exists)
+5. AGENTS.md (auto-generated)
+6. TOOLS.md (auto-generated)
+7. MEMORY.md (if exists)
+8. Today's daily notes (if exists)
+9. Yesterday's daily notes (if exists)
+
+Each section is separated by `\n\n---\n\n` and truncated to `MaxContextFileChars` (default: 8000) per section.
+
+**Key Methods**:
+- `BuildSystemPromptAsync(agentName)` — Assembles full system prompt
+- `BuildMessagesAsync(agentName, history, currentMessage, channel, chatId)` — Builds system prompt + trimmed history + runtime context
+
+### Memory Store
+
+**File**: `MemoryStore.cs`
+
+Handles reading/writing memory files under the agent workspace:
+
+- **Storage Path**: `~/.botnexus/agents/{agentName}/memory/`
+- **Long-Term**: `MEMORY.md` (persistent learnings)
+- **Daily**: `memory/daily/YYYY-MM-DD.md` (timestamped daily notes)
+- **Format**: Markdown (.md), UTF-8 encoding
+- **Backward Compatibility**: Falls back to legacy paths if new paths don't exist
+
+### Memory Tools
+
+Three tools enable agent memory interaction:
+
+1. **memory_search(query, max_results=10)**
+   - Keyword-based search across MEMORY.md and daily notes
+   - Returns up to 10 results with context (2 lines before/after)
+   - Ranks by recency (today first, then yesterday, then older, then long-term)
+
+2. **memory_save(content, target="daily")**
+   - Saves to daily notes (default): appends `[HH:mm] {content}` to today's file
+   - Saves to long-term: appends `- {content}` to `MEMORY.md` under `## Notes`
+
+3. **memory_get(file="memory", lines=null)**
+   - Reads full file or line range
+   - File targets: `"memory"` (MEMORY.md) or `"YYYY-MM-DD"` (daily notes)
+   - Returns numbered output for easy reference
+
+### Auto-Loading Strategy
+
+At system prompt assembly:
+- **Always included**: `MEMORY.md` (long-term memory)
+- **Today's daily notes**: If exists (today's date in UTC)
+- **Yesterday's daily notes**: If exists (yesterday's date in UTC)
+- **Older notes**: Accessible via `memory_search` tool
+
+This balances recent context with system prompt size.
+
+### Workspace Initialization
+
+First-run behavior (when workspace doesn't exist):
+
+1. `AgentContextBuilder.BuildSystemPromptAsync()` calls `IAgentWorkspace.InitializeAsync()`
+2. Creates directories: `~/.botnexus/agents/{agentName}/`, `memory/`, `memory/daily/`
+3. Creates bootstrap files (if missing):
+   - SOUL.md (with placeholder comment)
+   - IDENTITY.md (with placeholder comment)
+   - USER.md (with placeholder comment)
+   - MEMORY.md (with placeholder comment)
+   - HEARTBEAT.md (with placeholder comment)
+4. Idempotent — safe to call multiple times
+5. Human edits files between sessions — no restart required
+
+### Configuration
+
+Per-agent memory configuration:
+
+```json
+{
+  "BotNexus": {
+    "Agents": {
+      "Named": {
+        "agentName": {
+          "EnableMemory": true,                         // Enable/disable memory system
+          "MaxContextFileChars": 8000,                  // Max chars per file in system prompt
+          "AutoLoadMemory": true,                       // Auto-load today+yesterday in system prompt
+          "ConsolidationModel": "gpt-3.5-turbo",       // LLM for memory consolidation (optional)
+          "MemoryConsolidationIntervalHours": 24       // Consolidation interval
+        }
+      }
+    }
+  }
+}
+```
+
+### Memory Consolidation (Planned)
+
+Phase 3 of the workspace/memory roadmap includes:
+
+- **IMemoryConsolidator** interface for pluggable consolidation strategies
+- **LLM-based consolidation**: Call a model to distill daily notes into long-term memory
+- **Heartbeat trigger**: Automatically trigger consolidation on schedule
+- **Configurable model**: `ConsolidationModel` can differ from agent's primary LLM
+
+### Implementation
+
+- **IAgentWorkspace**: `BotNexus.Core.Abstractions`
+- **IContextBuilder**: `BotNexus.Core.Abstractions`
+- **IMemoryStore**: `BotNexus.Core.Abstractions`
+- **AgentWorkspace**: `BotNexus.Agent.AgentWorkspace.cs`
+- **AgentContextBuilder**: `BotNexus.Agent.AgentContextBuilder.cs`
+- **MemoryStore**: `BotNexus.Agent.MemoryStore.cs`
+- **Memory Tools**: `BotNexus.Agent.Tools.Memory{Search,Save,Get}Tool.cs`
+- **Config**: `BotNexus.Core.Configuration.AgentConfig.cs`
+
+For detailed workspace and memory documentation, see [Agent Workspace and Memory Model](./workspace-and-memory.md).
+
+---
+
+## 10. Session Management
 
 Conversations are persisted to disk in a structured format, enabling session recovery and history inspection.
 
@@ -853,7 +999,7 @@ Each line is a `SessionEntry` JSON object:
 
 ---
 
-## 10. Security Model
+## 11. Security Model
 
 ### Authentication
 
@@ -905,7 +1051,7 @@ Currently not implemented. Future consideration:
 
 ---
 
-## 11. Observability
+## 12. Observability
 
 BotNexus provides multiple observability mechanisms to monitor health and behavior.
 
@@ -976,7 +1122,7 @@ public enum ActivityEventType
 
 ---
 
-## 12. Installation Layout
+## 13. Installation Layout
 
 ### Runtime Directory Structure
 
@@ -1029,7 +1175,7 @@ On first run:
 
 ---
 
-## 13. Component Reference
+## 14. Component Reference
 
 ### Class Hierarchy
 
