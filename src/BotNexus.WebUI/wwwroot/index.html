@@ -54,6 +54,30 @@
             </div>
 
             <div class="sidebar-section">
+                <div class="section-header" data-toggle="extensions-panel">
+                    <span>🧩 Extensions</span>
+                    <button id="btn-refresh-extensions" class="btn-icon" title="Refresh">↻</button>
+                </div>
+                <div id="extensions-panel" class="section-content">
+                    <div id="extensions-summary" class="extensions-summary">
+                        <div class="loading">Loading extensions...</div>
+                    </div>
+                    <div class="extension-group">
+                        <div class="extension-group-header">Providers</div>
+                        <div id="providers-list">
+                            <div class="loading">Loading...</div>
+                        </div>
+                    </div>
+                    <div class="extension-group">
+                        <div class="extension-group-header">Tools</div>
+                        <div id="tools-list">
+                            <div class="loading">Loading...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
                 <div class="section-header">
                     <span>📊 Activity Monitor</span>
                     <label class="toggle-switch">

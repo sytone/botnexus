@@ -3,9 +3,11 @@ using System.Text.Json.Serialization;
 using BotNexus.Channels.Base;
 using BotNexus.Core.Abstractions;
 using BotNexus.Core.Configuration;
+using BotNexus.Core.Extensions;
 using BotNexus.Core.Models;
 using BotNexus.Gateway;
 using BotNexus.Gateway.HealthChecks;
+using BotNexus.Providers.Base;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
@@ -161,6 +163,63 @@ app.MapGet("/api/agents", (IOptions<BotNexusConfig> config) =>
     }
 
     return Results.Json(agents, jsonOptions);
+});
+
+// --- REST API: Providers ---
+app.MapGet("/api/providers", (ProviderRegistry providerRegistry) =>
+{
+    var names = providerRegistry.GetProviderNames();
+    var providers = names.Select(name =>
+    {
+        var provider = providerRegistry.Get(name);
+        return new
+        {
+            name,
+            defaultModel = provider?.DefaultModel,
+            model = provider?.Generation.Model,
+            maxTokens = provider?.Generation.MaxTokens,
+            temperature = provider?.Generation.Temperature
+        };
+    });
+    return Results.Json(providers, jsonOptions);
+});
+
+// --- REST API: Tools ---
+app.MapGet("/api/tools", (IEnumerable<ITool> tools) =>
+{
+    var toolList = tools.Select(t => new
+    {
+        name = t.Definition.Name,
+        description = t.Definition.Description,
+        parameterCount = t.Definition.Parameters.Count
+    });
+    return Results.Json(toolList, jsonOptions);
+});
+
+// --- REST API: Extensions summary ---
+app.MapGet("/api/extensions", (
+    ExtensionLoadReport report,
+    ChannelManager channelManager,
+    ProviderRegistry providerRegistry,
+    IEnumerable<ITool> tools) =>
+{
+    return Results.Json(new
+    {
+        loaded = report.LoadedCount,
+        failed = report.FailedCount,
+        completed = report.Completed,
+        healthy = report.CompletedSuccessfully,
+        channels = channelManager.Channels.Count,
+        providers = providerRegistry.GetProviderNames().Count,
+        tools = tools.Count(),
+        results = report.Results.Select(r => new
+        {
+            type = r.Type,
+            key = r.Key,
+            success = r.Success,
+            message = r.Message
+        })
+    }, jsonOptions);
 });
 
 // --- WebSocket endpoint ---

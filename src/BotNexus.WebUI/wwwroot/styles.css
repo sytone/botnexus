@@ -229,6 +229,77 @@ body {
 .channel-badge.running { background: rgba(76,175,80,0.2); color: var(--success); }
 .channel-badge.stopped { background: rgba(244,67,54,0.2); color: var(--error); }
 
+/* === Extensions Panel === */
+.extensions-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+.ext-stat {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.04);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+.ext-stat .ext-count {
+    font-weight: 700;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+}
+.ext-stat.healthy { border-left: 3px solid var(--success); }
+.ext-stat.unhealthy { border-left: 3px solid var(--error); }
+
+.extension-group {
+    margin-bottom: 8px;
+}
+.extension-group-header {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 4px 4px 2px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 4px;
+}
+.ext-item {
+    padding: 5px 8px;
+    border-radius: 4px;
+    font-size: 0.78rem;
+    margin-bottom: 3px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+.ext-item:hover {
+    background: rgba(255,255,255,0.04);
+}
+.ext-item .ext-name {
+    font-weight: 500;
+    color: var(--text-primary);
+}
+.ext-item .ext-detail {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ext-badge {
+    display: inline-block;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.65rem;
+    font-weight: 600;
+}
+.ext-badge.success { background: rgba(76,175,80,0.15); color: var(--success); }
+.ext-badge.fail { background: rgba(244,67,54,0.15); color: var(--error); }
+
 /* === Activity Feed === */
 .activity-feed {
     max-height: 250px;

@@ -22,6 +22,9 @@
     const elSessionsList = $('#sessions-list');
     const elChannelsList = $('#channels-list');
     const elAgentsList = $('#agents-list');
+    const elExtensionsSummary = $('#extensions-summary');
+    const elProvidersList = $('#providers-list');
+    const elToolsList = $('#tools-list');
     const elActivityFeed = $('#activity-feed');
     const elConnectionStatus = $('#connection-status');
     const elStatusText = elConnectionStatus.querySelector('.status-text');
@@ -295,6 +298,74 @@
         }
     }
 
+    // --- Extensions ---
+    async function loadExtensions() {
+        elExtensionsSummary.innerHTML = '<div class="loading">Loading...</div>';
+        const ext = await fetchJson('/extensions');
+        if (!ext) {
+            elExtensionsSummary.innerHTML = '<div class="empty-state">Unavailable</div>';
+            return;
+        }
+        const healthClass = ext.healthy ? 'healthy' : 'unhealthy';
+        const healthLabel = ext.healthy ? 'Healthy' : 'Issues';
+        elExtensionsSummary.innerHTML = `
+            <div class="ext-stat ${healthClass}">
+                <span class="ext-count">${ext.loaded}</span> loaded
+            </div>
+            <div class="ext-stat ${ext.failed > 0 ? 'unhealthy' : 'healthy'}">
+                <span class="ext-count">${ext.failed}</span> failed
+            </div>
+            <div class="ext-stat">
+                <span class="ext-count">${ext.channels}</span> channels
+            </div>
+            <div class="ext-stat">
+                <span class="ext-count">${ext.providers}</span> providers
+            </div>
+            <div class="ext-stat">
+                <span class="ext-count">${ext.tools}</span> tools
+            </div>
+        `;
+    }
+
+    async function loadProviders() {
+        elProvidersList.innerHTML = '<div class="loading">Loading...</div>';
+        const providers = await fetchJson('/providers');
+        if (!providers || providers.length === 0) {
+            elProvidersList.innerHTML = '<div class="empty-state">No providers</div>';
+            return;
+        }
+        elProvidersList.innerHTML = '';
+        for (const p of providers) {
+            const el = document.createElement('div');
+            el.className = 'ext-item';
+            el.innerHTML = `
+                <span class="ext-name">${escapeHtml(p.name)}</span>
+                <span class="ext-detail">Model: ${escapeHtml(p.defaultModel || p.model || 'N/A')}</span>
+            `;
+            elProvidersList.appendChild(el);
+        }
+    }
+
+    async function loadTools() {
+        elToolsList.innerHTML = '<div class="loading">Loading...</div>';
+        const tools = await fetchJson('/tools');
+        if (!tools || tools.length === 0) {
+            elToolsList.innerHTML = '<div class="empty-state">No tools</div>';
+            return;
+        }
+        elToolsList.innerHTML = '';
+        for (const t of tools) {
+            const el = document.createElement('div');
+            el.className = 'ext-item';
+            const desc = (t.description || '').substring(0, 60);
+            el.innerHTML = `
+                <span class="ext-name">${escapeHtml(t.name)}</span>
+                <span class="ext-detail">${escapeHtml(desc)}${t.description && t.description.length > 60 ? '...' : ''}</span>
+            `;
+            elToolsList.appendChild(el);
+        }
+    }
+
     // --- Activity Feed ---
     function addActivityItem(evt) {
         const el = document.createElement('div');
@@ -400,6 +471,12 @@
         e.stopPropagation();
         loadAgents();
     });
+    $('#btn-refresh-extensions').addEventListener('click', (e) => {
+        e.stopPropagation();
+        loadExtensions();
+        loadProviders();
+        loadTools();
+    });
 
     elToggleActivity.addEventListener('change', () => {
         isSubscribed = elToggleActivity.checked;
@@ -423,6 +500,9 @@
         loadSessions();
         loadChannels();
         loadAgents();
+        loadExtensions();
+        loadProviders();
+        loadTools();
     }
 
     init();
