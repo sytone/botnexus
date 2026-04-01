@@ -16,10 +16,11 @@
 6. [Channel Output Routing](#channel-output-routing)
 7. [Built-in System Actions](#built-in-system-actions)
 8. [Built-in Maintenance Actions](#built-in-maintenance-actions)
-9. [CronTool — Runtime Job Management](#cronstool--runtime-job-management)
-10. [Migration from HeartbeatService](#migration-from-heartbeatservice)
-11. [Observability](#observability)
-12. [Examples](#examples)
+9. [CronTool — Runtime Job Management](#crontool--runtime-job-management)
+10. [REST API Endpoints](#rest-api-endpoints)
+11. [Migration from HeartbeatService](#migration-from-heartbeatservice)
+12. [Observability](#observability)
+13. [Examples](#examples)
 
 ---
 
@@ -674,7 +675,78 @@ Agent cron job 'dynamic-report' scheduled with expression '*/30 * * * *'
 
 ---
 
-## 10. Migration from HeartbeatService
+## 10. REST API Endpoints
+
+The gateway exposes cron management endpoints under `/api/cron`. All endpoints require API key authentication.
+
+### `GET /api/cron`
+
+List all registered jobs with current status.
+
+**Response:**
+```json
+[
+  {
+    "name": "morning-briefing",
+    "type": "Agent",
+    "schedule": "0 9 * * MON-FRI",
+    "enabled": true,
+    "lastRun": "2026-04-02T09:00:05Z",
+    "nextRun": "2026-04-03T09:00:00Z",
+    "lastResult": "success"
+  }
+]
+```
+
+### `GET /api/cron/history?limit=50`
+
+Aggregated execution history across all jobs (default limit: 50, max: 500).
+
+**Response:**
+```json
+[
+  {
+    "jobName": "morning-briefing",
+    "correlationId": "a1b2c3d4",
+    "startedAt": "2026-04-02T09:00:05Z",
+    "completedAt": "2026-04-02T09:00:12Z",
+    "success": true,
+    "output": "Morning briefing generated.",
+    "error": null
+  }
+]
+```
+
+### `GET /api/cron/{name}`
+
+Get detailed status and execution history for a specific job. Returns `404` if not found.
+
+### `POST /api/cron/{name}/trigger`
+
+Manually trigger a job outside its schedule. Returns `404` if not found.
+
+**Response:**
+```json
+{ "triggered": true, "jobName": "morning-briefing" }
+```
+
+### `PUT /api/cron/{name}/enable`
+
+Enable or disable a job at runtime. Returns `400` for invalid body, `404` if not found.
+
+**Request body:**
+```json
+{ "enabled": false }
+```
+
+**Response:**
+```json
+{ "jobName": "morning-briefing", "enabled": false }
+```
+
+---
+
+## 11. Migration from HeartbeatService
 
 The legacy `HeartbeatService` and `AgentConfig.CronJobs` have been replaced by the centralized `CronService`.
 
@@ -754,9 +826,9 @@ This maintains backwards compatibility while encouraging migration.
 
 ---
 
-## 11. Observability
+## 12. Observability
 
-### 11.1 Logging
+### 12.1 Logging
 
 The `CronService` logs at the following levels:
 
@@ -773,7 +845,7 @@ The `CronService` logs at the following levels:
 [Error] Cron job 'morning-briefing' failed unexpectedly: ...
 ```
 
-### 11.2 Activity Events
+### 12.2 Activity Events
 
 Every job execution publishes activity events to the `IActivityStream`:
 
@@ -794,7 +866,7 @@ Every job execution publishes activity events to the `IActivityStream`:
 }
 ```
 
-### 11.3 Execution History
+### 12.3 Execution History
 
 Access execution history via `ICronService.GetHistory(jobName, limit)`:
 
@@ -804,13 +876,13 @@ foreach (var execution in history)
 {
     Console.WriteLine($"{execution.StartedAt:O} - {execution.CorrelationId}");
     Console.WriteLine($"  Success: {execution.Success}");
-    Console.WriteLine($"  Duration: {execution.Duration}ms");
+    Console.WriteLine($"  Duration: {(execution.CompletedAt - execution.StartedAt).TotalMilliseconds}ms");
     if (execution.Error != null)
         Console.WriteLine($"  Error: {execution.Error}");
 }
 ```
 
-### 11.4 Job Status Query
+### 12.4 Job Status Query
 
 Get real-time job status via `ICronService.GetJobs()`:
 
@@ -822,12 +894,12 @@ foreach (var job in jobs)
     Console.WriteLine($"  Schedule: {job.Schedule}");
     Console.WriteLine($"  Enabled: {job.Enabled}");
     Console.WriteLine($"  Next: {job.NextOccurrence:O}");
-    Console.WriteLine($"  Last Run: {job.LastRun:O}");
-    Console.WriteLine($"  Last Success: {job.LastSuccess}");
+    Console.WriteLine($"  Last Run: {job.LastRunStartedAt:O}");
+    Console.WriteLine($"  Last Success: {job.LastRunSuccess}");
 }
 ```
 
-### 11.5 Health Check Integration
+### 12.5 Health Check Integration
 
 The `HeartbeatService` (now a thin adapter) delegates to the cron service:
 
@@ -836,7 +908,7 @@ The `HeartbeatService` (now a thin adapter) delegates to the cron service:
 
 ---
 
-## 12. Examples
+## 13. Examples
 
 ### Example 1: Morning Briefing Agent Job
 

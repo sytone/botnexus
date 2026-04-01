@@ -172,7 +172,7 @@ Override any default for a specific agent:
         "McpServers": [
           { "Name": "filesystem", "Command": "npx", ... }
         ],
-        "CronJobs": [
+        "CronJobs": [                                              // ⚠️ Deprecated — use Cron.Jobs
           { "Name": "daily-briefing", "Schedule": "0 9 * * *", ... }
         ]
       }
@@ -196,7 +196,7 @@ Override any default for a specific agent:
 | `EnableMemory` | bool | Enable persistent memory for this agent |
 | `McpServers` | list | MCP servers enabled for this agent (see [MCP Servers](#mcp-servers)) |
 | `Skills` | list | Named skill references (plugin extension names) |
-| `CronJobs` | list | Scheduled tasks for this agent (see [Cron Jobs](#cron-jobs)) |
+| `CronJobs` | list | **Deprecated.** Use centralized `Cron.Jobs` instead (see [Cron and Scheduling Guide](./cron-and-scheduling.md)). Legacy entries are auto-migrated at startup. |
 
 ---
 

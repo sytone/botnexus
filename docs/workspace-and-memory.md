@@ -303,7 +303,7 @@ Configured agents:
 - File: `{workspace}/HEARTBEAT.md`
 - Encoding: UTF-8 (no BOM)
 - Max chars included in system prompt: per `MaxContextFileChars` config (default: 8000)
-- Loaded but not actively used by current implementation — provided for future heartbeat integration
+- Loaded into system prompt for reference by the cron-based memory consolidation system (see [Cron and Scheduling Guide](./cron-and-scheduling.md))
 
 ### MEMORY.md — Long-Term Distilled Memory
 
@@ -566,7 +566,7 @@ Memory consolidation is the process of distilling daily notes into long-term mem
 ### Consolidation Trigger
 
 - **Interval**: Configurable via `MemoryConsolidationIntervalHours` (default: 24)
-- **Mechanism**: Heartbeat system (planned integration)
+- **Mechanism**: Cron service — runs as a `maintenance` job with `consolidate-memory` action (see [Cron and Scheduling Guide](./cron-and-scheduling.md))
 - **Manual**: Via `memory_save(content, target="memory")`
 
 ### Consolidation Process (Current Manual Approach)
@@ -598,7 +598,7 @@ Phase 3 of the workspace/memory initiative includes:
 
 - **IMemoryConsolidator** interface for pluggable consolidation strategies
 - **LLM-based consolidation**: Call a model to distill daily notes
-- **Heartbeat trigger**: Automatically trigger consolidation on schedule
+- **Cron-based trigger**: Consolidation runs on schedule via the centralized cron service (`consolidate-memory` maintenance action)
 - **Configurable model**: `ConsolidationModel` config for consolidation LLM (can differ from agent's primary model)
 
 ---

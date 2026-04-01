@@ -444,7 +444,7 @@ BotNexus uses Microsoft.Extensions.DependencyInjection (standard .NET DI contain
 | `ITool` implementations | Singleton | Stateless tools |
 | `Gateway` | Singleton, BackgroundService | Main orchestrator |
 | `CronService` | Singleton, BackgroundService | Scheduled jobs |
-| `HeartbeatService` | Singleton, BackgroundService | Keep-alives |
+| `IHeartbeatService` (`CronHeartbeatAdapter`) | Singleton | Thin adapter over CronService |
 | `IAgentHook` implementations | Transient | Fresh per request |
 | Per-request objects | Scoped | HTTP request context |
 
@@ -493,8 +493,9 @@ public static IServiceCollection AddBotNexus(
     services.AddSingleton(new ProviderRegistry(providers));
     services.AddSingleton<IAgentRouter, AgentRouter>();
     services.AddSingleton<ChannelManager>();
-    services.AddSingleton<CronService>();
-    services.AddSingleton<HeartbeatService>();
+    services.AddSingleton<ICronService, CronService>();
+    services.AddHostedService(sp => (CronService)sp.GetRequiredService<ICronService>());
+    services.AddSingleton<IHeartbeatService, CronHeartbeatAdapter>();
     
     // Add Gateway as BackgroundService
     services.AddHostedService<Gateway>();
@@ -502,10 +503,11 @@ public static IServiceCollection AddBotNexus(
     // Add health checks
     services.AddHealthChecks()
         .AddCheck<MessageBusHealthCheck>("message_bus")
-        .AddCheck<ProviderRegistryHealthCheck>("provider_registration")
+        .AddCheck<ProviderRegistrationHealthCheck>("provider_registration")
         .AddCheck<ExtensionLoaderHealthCheck>("extension_loader")
-        .AddReadinessCheck<ChannelReadinessCheck>("channel_readiness")
-        .AddReadinessCheck<ProviderReadinessCheck>("provider_readiness");
+        .AddCheck<ChannelReadinessHealthCheck>("channel_readiness", tags: ["ready"])
+        .AddCheck<ProviderReadinessHealthCheck>("provider_readiness", tags: ["ready"])
+        .AddCheck<CronServiceHealthCheck>("cron_service");
     
     return services;
 }
@@ -912,7 +914,7 @@ Phase 3 of the workspace/memory roadmap includes:
 
 - **IMemoryConsolidator** interface for pluggable consolidation strategies
 - **LLM-based consolidation**: Call a model to distill daily notes into long-term memory
-- **Heartbeat trigger**: Automatically trigger consolidation on schedule
+- **Cron-based trigger**: Consolidation runs as a `maintenance` cron job (`consolidate-memory` action); see [Cron and Scheduling Guide](./cron-and-scheduling.md)
 - **Configurable model**: `ConsolidationModel` can differ from agent's primary LLM
 
 ### Implementation
