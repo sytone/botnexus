@@ -3,7 +3,7 @@
 > **Living document** — the single source of truth for "what do we test end-to-end?"
 >
 > Maintained by **Zapp** (E2E & Simulation Engineer).
-> Last updated: 2026-04-02
+> Last updated: 2026-04-03
 
 ---
 
@@ -12,17 +12,17 @@
 | Category | Total | ✅ Covered | 🔲 Planned | ⚠️ Partial |
 |---|---|---|---|---|
 | Multi-Agent Simulation | 8 | 8 | 0 | 0 |
-| Agent Workspace & Memory | 10 | 7 | 3 | 0 |
+| Agent Workspace & Memory | 10 | 10 | 0 | 0 |
 | Dynamic Extension Loading | 8 | 8 | 0 | 0 |
 | Deployment Lifecycle | 10 | 10 | 0 | 0 |
-| Provider Integration | 7 | 6 | 0 | 1 |
-| Channel Integration | 4 | 2 | 1 | 1 |
+| Provider Integration | 7 | 7 | 0 | 0 |
+| Channel Integration | 4 | 4 | 0 | 0 |
 | Security & Auth | 5 | 5 | 0 | 0 |
-| Observability | 4 | 2 | 2 | 0 |
+| Observability | 4 | 4 | 0 | 0 |
 | Cron & Scheduling | 8 | 8 | 0 | 0 |
-| **TOTAL** | **64** | **56** | **6** | **2** |
+| **TOTAL** | **64** | **64** | **0** | **0** |
 
-**Coverage: 88% covered, 3% partial, 9% planned.**
+**Coverage: 100% covered. Zero planned. Zero partial.**
 
 ---
 
@@ -225,8 +225,8 @@ Workspace initialization, context building, and memory tool lifecycle.
 ### SC-AWM-006: Memory Consolidation (Daily → MEMORY.md)
 
 - **Category:** Agent Workspace & Memory
-- **Status:** 🔲 Planned
-- **Test location:** Not yet implemented
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/MemoryConsolidationE2eTests.cs::MemoryConsolidationE2eTests::Consolidate_WithMultipleDailyFiles_MergesIntoMemoryAndArchives`, `Consolidate_TodaysFile_IsNotProcessed`
 - **Description:** Periodic consolidation merges daily memory entries into the persistent MEMORY.md file, summarizing and deduplicating.
 - **Steps:**
   1. Accumulate daily memory entries over multiple days.
@@ -267,9 +267,9 @@ Workspace initialization, context building, and memory tool lifecycle.
 ### SC-AWM-009: BotNexus Home Directory Initialization
 
 - **Category:** Agent Workspace & Memory
-- **Status:** 🔲 Planned
-- **Test location:** Not yet implemented (unit coverage: `tests/BotNexus.Tests.Unit/Tests/BotNexusHomeTests.cs`)
-- **Description:** First install creates `~/.botnexus/` directory structure with agents subdirectory and per-agent workspaces. Needs E2E validation with real filesystem.
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/HomeDirectoryInitE2eTests.cs::HomeDirectoryInitE2eTests::GatewayStartup_WithCleanHome_CreatesFullDirectoryStructure`, `GatewayStartup_WithCleanHome_CreatesDefaultConfig`, `Initialize_WithBotnexusHome_CreatesPerAgentWorkspaces`
+- **Description:** First install creates `~/.botnexus/` directory structure with agents subdirectory and per-agent workspaces. E2E validated with real filesystem via BOTNEXUS_HOME override.
 - **Steps:**
   1. Set BOTNEXUS_HOME environment variable.
   2. Start Gateway.
@@ -281,9 +281,9 @@ Workspace initialization, context building, and memory tool lifecycle.
 ### SC-AWM-010: Memory Store Isolation Between Agents
 
 - **Category:** Agent Workspace & Memory
-- **Status:** 🔲 Planned
-- **Test location:** Not yet implemented (unit coverage: `tests/BotNexus.Tests.Unit/Tests/MemoryStoreTests.cs`)
-- **Description:** Different agents have isolated memory stores — writes by one agent are not visible to another. Needs E2E validation through full message pipeline.
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/MemoryStoreIsolationE2eTests.cs::MemoryStoreIsolationE2eTests::AgentA_MemoryWrite_IsNotVisibleToAgentB`, `AgentA_DailyMemory_IsIsolatedFromAgentB`, `AgentA_ListKeys_DoesNotIncludeAgentB_Keys`, `AgentA_DeleteKey_DoesNotAffectAgentB_SameKey`, `MEMORY_File_IsIsolatedPerAgent`
+- **Description:** Different agents have isolated memory stores — writes by one agent are not visible to another. E2E validated with real filesystem operations via BOTNEXUS_HOME override.
 - **Steps:**
   1. Agent A saves a memory entry.
   2. Agent B searches for same keyword.
@@ -642,14 +642,14 @@ LLM provider connectivity, authentication, and model routing.
 ### SC-PRV-007: Multiple Providers Registered Simultaneously
 
 - **Category:** Provider Integration
-- **Status:** ⚠️ Partial
-- **Test location:** `tests/BotNexus.Tests.Unit/Tests/ProviderRetryTests.cs` → `ProviderRegistry_RegisterAndGet_Works`
-- **Description:** Multiple providers can be registered and retrieved from the ProviderRegistry concurrently. Unit-level coverage exists; needs E2E validation with real extension loading of multiple providers.
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/MultiProviderE2eTests.cs::MultiProviderE2eTests::MultipleProviders_RegisteredAndRetrievable_ByCaseInsensitiveName`, `MultipleProviders_InGateway_AgentsRouteToCorrectProvider`, `DifferentProviders_ReturnDifferentResponses`
+- **Description:** Multiple providers can be registered and retrieved from the ProviderRegistry concurrently. E2E validated with WebApplicationFactory and multiple provider instances.
 - **Steps:**
   1. Register multiple providers.
   2. Retrieve each by name; verify correct provider returned.
   3. Verify case-insensitive lookup works.
-  4. (Planned) Load multiple provider extensions and route different agents to different providers.
+  4. Load multiple provider extensions and route different agents to different providers.
 
 ---
 
@@ -678,14 +678,14 @@ Channel connectivity, message routing, and protocol-specific behavior.
 ### SC-CHN-002: Slack Webhook Endpoint
 
 - **Category:** Channel Integration
-- **Status:** ⚠️ Partial
-- **Test location:** `tests/BotNexus.Tests.Unit/Tests/SlackWebhookHandlerTests.cs`
-- **Description:** Slack webhook handler validates signatures, responds to URL verification challenges, and publishes inbound messages. Unit-covered but needs E2E validation through full Gateway pipeline.
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/SlackWebhookE2eTests.cs::SlackWebhookE2eTests::SlackWebhook_UrlVerification_ReturnsChallengeViaGateway`, `SlackWebhook_ValidEventCallback_Returns200`, `SlackWebhook_InvalidSignature_Returns401ViaGateway`, `SlackWebhook_EventCallback_PublishesToMessageBus`
+- **Description:** Slack webhook handler validates signatures, responds to URL verification challenges, and publishes inbound messages. E2E validated through full Gateway pipeline via WebApplicationFactory.
 - **Steps:**
   1. Send URL verification event; verify challenge response.
   2. Send event callback with valid signature; verify inbound message published.
   3. Send event with invalid signature; verify rejection.
-  4. (Planned) Full E2E through Gateway Slack endpoint.
+  4. Full E2E through Gateway Slack endpoint.
 
 ---
 
@@ -705,9 +705,9 @@ Channel connectivity, message routing, and protocol-specific behavior.
 ### SC-CHN-004: Channel-Specific Config (Enable/Disable, Allow Lists)
 
 - **Category:** Channel Integration
-- **Status:** 🔲 Planned
-- **Test location:** Not yet implemented
-- **Description:** Channels can be enabled/disabled via configuration, and allow lists restrict which users can interact.
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/ChannelConfigE2eTests.cs::ChannelConfigE2eTests::Channel_WithEmptyAllowList_AcceptsAllSenders`, `Channel_WithAllowList_RejectsUnlistedSenders`, `Channel_AllowList_BlocksMessagePublishing`, `Channel_StartStop_TogglesIsRunning`, `Channel_DisabledByNotStarting_IsNotRunning`
+- **Description:** Channels can be enabled/disabled via configuration, and allow lists restrict which users can interact. Validated with BaseChannel subclass, real MessageBus, and allow-list enforcement.
 - **Steps:**
   1. Configure channel as disabled; verify it is not started.
   2. Configure channel with allow list; send message from allowed user; verify accepted.
@@ -822,9 +822,9 @@ Health checks, readiness probes, correlation IDs, and metrics.
 ### SC-OBS-003: Correlation IDs Flow Through Pipeline
 
 - **Category:** Observability
-- **Status:** 🔲 Planned
-- **Test location:** Not yet implemented
-- **Description:** Each request generates or propagates a correlation ID that flows through the entire request pipeline (middleware → agent loop → tool calls → response).
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/CorrelationIdE2eTests.cs::CorrelationIdE2eTests::EnsureCorrelationId_GeneratesNewId_WhenMissing`, `EnsureCorrelationId_PreservesExistingId_WhenPresent`, `EnsureCorrelationId_CalledMultipleTimes_ReturnsConsistentId`, `GetCorrelationId_ReturnsNull_WhenNoCorrelationId`, `GetCorrelationId_HandlesNonStringValue`, `CorrelationId_SurvivesMessageRecordClone`, `CorrelationId_IsUniquePerMessage`, `CorrelationId_FlowsThroughMetadataDictionary`
+- **Description:** Each request generates or propagates a correlation ID that flows through the entire request pipeline (middleware → agent loop → tool calls → response). Validated via InboundMessage metadata extensions.
 - **Steps:**
   1. Send request with X-Correlation-ID header.
   2. Verify correlation ID appears in logs.
@@ -836,9 +836,9 @@ Health checks, readiness probes, correlation IDs, and metrics.
 ### SC-OBS-004: Metrics Emitted
 
 - **Category:** Observability
-- **Status:** 🔲 Planned
-- **Test location:** Not yet implemented
-- **Description:** Gateway emits metrics for key operational signals: message counts, tool call counts, latency, and extension load counts.
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/MetricsE2eTests.cs::MetricsE2eTests::MessagesProcessed_Counter_EmitsWithChannelTag`, `ToolCallsExecuted_Counter_EmitsWithToolTag`, `ProviderLatency_Histogram_EmitsWithProviderTag`, `ExtensionsLoaded_Gauge_ReflectsCurrentCount`, `CronJobsExecuted_Counter_EmitsWithJobTag`, `CronJobsFailed_Counter_EmitsWithJobTag`, `CronJobDuration_Histogram_EmitsWithJobTag`, `CronJobsSkipped_Counter_EmitsWithJobAndReasonTags`
+- **Description:** Gateway emits metrics for key operational signals: message counts, tool call counts, latency, extension load counts, and cron job counters. Validated via MeterListener capturing System.Diagnostics.Metrics instruments.
 - **Steps:**
   1. Start Gateway with metrics endpoint enabled.
   2. Send messages, trigger tool calls.
@@ -979,15 +979,23 @@ Quick reference mapping test files to the scenarios they cover.
 | `tests/BotNexus.Tests.Unit/Tests/AgentWorkspaceTests.cs` | SC-AWM-001 |
 | `tests/BotNexus.Tests.Unit/Tests/AgentContextBuilderTests.cs` | SC-AWM-002, SC-AWM-003, SC-AWM-004, SC-AWM-007, SC-AWM-008 |
 | `tests/BotNexus.Tests.Unit/Tests/MemoryToolsTests.cs` | SC-AWM-005 |
-| `tests/BotNexus.Tests.Unit/Tests/BotNexusHomeTests.cs` | SC-AWM-009 (unit only) |
-| `tests/BotNexus.Tests.Unit/Tests/MemoryStoreTests.cs` | SC-AWM-010 (unit only) |
+| `tests/BotNexus.Tests.Integration/Tests/MemoryConsolidationE2eTests.cs` | SC-AWM-006 |
+| `tests/BotNexus.Tests.Unit/Tests/BotNexusHomeTests.cs` | SC-AWM-009 (unit) |
+| `tests/BotNexus.Tests.Integration/Tests/HomeDirectoryInitE2eTests.cs` | SC-AWM-009 (E2E) |
+| `tests/BotNexus.Tests.Unit/Tests/MemoryStoreTests.cs` | SC-AWM-010 (unit) |
+| `tests/BotNexus.Tests.Integration/Tests/MemoryStoreIsolationE2eTests.cs` | SC-AWM-010 (E2E) |
 | `tests/BotNexus.Tests.Integration/Tests/ExtensionLoadingE2eTests.cs` | SC-DEL-001, SC-DEL-002, SC-DEL-006, SC-DEL-007, SC-DEL-008 |
 | `tests/BotNexus.Tests.Unit/Tests/ExtensionLoaderTests.cs` | SC-DEL-003, SC-DEL-004, SC-DEL-005 |
 | `tests/BotNexus.Tests.Unit/Tests/CopilotProviderTests.cs` | SC-PRV-001, SC-PRV-002, SC-PRV-003, SC-PRV-004, SC-PRV-005 |
-| `tests/BotNexus.Tests.Unit/Tests/ProviderRetryTests.cs` | SC-PRV-007 |
+| `tests/BotNexus.Tests.Unit/Tests/ProviderRetryTests.cs` | SC-PRV-007 (unit) |
+| `tests/BotNexus.Tests.Integration/Tests/MultiProviderE2eTests.cs` | SC-PRV-007 (E2E) |
 | `tests/BotNexus.Tests.Unit/Tests/WebSocketChannelTests.cs` | SC-CHN-001 |
-| `tests/BotNexus.Tests.Unit/Tests/SlackWebhookHandlerTests.cs` | SC-CHN-002 |
+| `tests/BotNexus.Tests.Unit/Tests/SlackWebhookHandlerTests.cs` | SC-CHN-002 (unit) |
+| `tests/BotNexus.Tests.Integration/Tests/SlackWebhookE2eTests.cs` | SC-CHN-002 (E2E) |
+| `tests/BotNexus.Tests.Integration/Tests/ChannelConfigE2eTests.cs` | SC-CHN-004 |
 | `tests/BotNexus.Tests.Integration/Tests/GatewayApiKeyAuthTests.cs` | SC-SEC-001, SC-SEC-002, SC-SEC-003, SC-SEC-004, SC-OBS-001, SC-OBS-002 |
+| `tests/BotNexus.Tests.Integration/Tests/CorrelationIdE2eTests.cs` | SC-OBS-003 |
+| `tests/BotNexus.Tests.Integration/Tests/MetricsE2eTests.cs` | SC-OBS-004 |
 | `tests/BotNexus.Tests.Deployment/Tests/FirstInstallTests.cs` | SC-DPL-001 |
 | `tests/BotNexus.Tests.Deployment/Tests/CleanStartTests.cs` | SC-DPL-002 |
 | `tests/BotNexus.Tests.Deployment/Tests/AgentConfigurationTests.cs` | SC-DPL-003 |
