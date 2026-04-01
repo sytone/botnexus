@@ -11,6 +11,7 @@ using BotNexus.Providers.Base;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
+using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 var botNexusHome = BotNexusHome.Initialize();
@@ -19,8 +20,20 @@ builder.Configuration.AddJsonFile(
     optional: true,
     reloadOnChange: false);
 builder.Configuration.AddEnvironmentVariables();
-builder.Logging.ClearProviders();
-builder.Logging.AddSimpleConsole(options => options.IncludeScopes = true);
+var logFilePath = Path.Combine(botNexusHome, "logs", "botnexus-.log");
+builder.Host.UseSerilog((context, _, loggerConfiguration) =>
+{
+    loggerConfiguration
+        .ReadFrom.Configuration(context.Configuration)
+        .Enrich.FromLogContext()
+        .WriteTo.Console()
+        .WriteTo.File(
+            path: logFilePath,
+            rollingInterval: RollingInterval.Day,
+            retainedFileCountLimit: 14,
+            shared: true);
+});
+
 builder.Services.AddBotNexus(builder.Configuration);
 
 // Bind Kestrel to the configured gateway address
@@ -327,6 +340,7 @@ app.MapGet("/api/extensions", (
     {
         loaded = report.LoadedCount,
         failed = report.FailedCount,
+        warnings = report.WarningCount,
         completed = report.Completed,
         healthy = report.CompletedSuccessfully,
         channels = channelManager.Channels.Count,
@@ -377,7 +391,14 @@ foreach (var webhookHandler in app.Services.GetServices<IWebhookHandler>())
     });
 }
 
-await app.RunAsync();
+try
+{
+    await app.RunAsync();
+}
+finally
+{
+    Log.CloseAndFlush();
+}
 
 // Expose Program for WebApplicationFactory<Program> in integration tests
 public partial class Program { }
