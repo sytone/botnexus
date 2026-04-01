@@ -76,6 +76,7 @@
 - **ProviderConfig auth discriminator** (2026-04-01): `ProviderConfig` includes an `Auth` property defaulting to `"apikey"` for selecting API key vs OAuth provider auth behavior.
 - **Config binding is now extension-keyed and case-insensitive** (2026-04-01): `ProvidersConfig` and `ChannelsConfig.Instances` are dictionary-based with `StringComparer.OrdinalIgnoreCase`, enabling folder-name keys (e.g., `openai`, `telegram`) without casing fragility.
 - 2026-04-01: `ProviderRegistry` now infers provider keys from provider namespaces/types (e.g., OpenAI -> `openai`) and is DI-registered so agent loops can resolve provider per agent model/provider config with default fallback.
+- 2026-04-01: Extension assemblies may carry their own copies of `BotNexus.Core`/`BotNexus.Providers.Base`; the loader must reuse host-loaded shared assemblies to avoid type-identity mismatches that break `IExtensionRegistrar`/`ILlmProvider` discovery.
 
 ## Sprint 1 Summary — 2026-04-01T17:33Z
 

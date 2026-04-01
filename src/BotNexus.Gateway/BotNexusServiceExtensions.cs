@@ -1,5 +1,4 @@
 using BotNexus.Core.Abstractions;
-using BotNexus.Core.Configuration;
 using BotNexus.Core.Extensions;
 using BotNexus.Channels.Base;
 using BotNexus.Cron;
@@ -20,7 +19,21 @@ public static class BotNexusServiceExtensions
         // Core
         services.AddBotNexusCore(configuration);
         services.AddBotNexusExtensions(configuration);
-        services.AddSingleton<ProviderRegistry>();
+        services.AddSingleton<ProviderRegistry>(sp =>
+        {
+            var providers = sp.GetServices<ILlmProvider>().ToList();
+            var registrationKeys = sp.GetServices<ExtensionServiceRegistration>()
+                .Where(r => r.ServiceType == typeof(ILlmProvider))
+                .Select(r => r.Key)
+                .ToList();
+
+            var registry = new ProviderRegistry(providers);
+            var registrationsToApply = Math.Min(providers.Count, registrationKeys.Count);
+            for (var i = 0; i < registrationsToApply; i++)
+                registry.Register(registrationKeys[i], providers[i]);
+
+            return registry;
+        });
 
         // Session
         services.AddBotNexusSession();

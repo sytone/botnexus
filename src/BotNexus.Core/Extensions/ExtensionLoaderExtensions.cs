@@ -46,6 +46,10 @@ public static class ExtensionLoaderExtensions
             }
 
             var loadContext = new AssemblyLoadContext($"BotNexus.Extension.{spec.TypeFolder}.{spec.Key}", isCollectible: true);
+            loadContext.Resolving += static (_, assemblyName) =>
+                AppDomain.CurrentDomain
+                    .GetAssemblies()
+                    .FirstOrDefault(a => string.Equals(a.GetName().Name, assemblyName.Name, StringComparison.OrdinalIgnoreCase));
             contexts.Add(loadContext);
 
             var loadedAssemblies = new List<Assembly>();
@@ -53,6 +57,18 @@ public static class ExtensionLoaderExtensions
             {
                 try
                 {
+                    var assemblyName = AssemblyName.GetAssemblyName(dll);
+                    var sharedAssembly = AppDomain.CurrentDomain
+                        .GetAssemblies()
+                        .FirstOrDefault(a => string.Equals(a.GetName().Name, assemblyName.Name, StringComparison.OrdinalIgnoreCase));
+
+                    if (sharedAssembly is not null)
+                    {
+                        loadedAssemblies.Add(sharedAssembly);
+                        LogInfo($"Reused host assembly: {sharedAssembly.FullName}");
+                        continue;
+                    }
+
                     var assembly = loadContext.LoadFromAssemblyPath(Path.GetFullPath(dll));
                     loadedAssemblies.Add(assembly);
                     LogInfo($"Loaded assembly: {assembly.FullName}");
@@ -70,13 +86,16 @@ public static class ExtensionLoaderExtensions
             }
 
             var extensionConfigSection = GetExtensionConfigSection(botSection, spec.TypeFolder, spec.Key);
+            var registrationCountBefore = CountServiceRegistrations(services, spec.InterfaceType);
             if (TryRegisterWithRegistrar(services, extensionConfigSection, loadedAssemblies))
             {
+                RegisterServiceKeyMappings(services, spec, registrationCountBefore);
                 LogInfo($"Registrar-based registration completed for '{spec.TypeFolder}/{spec.Key}'");
                 continue;
             }
 
             RegisterByConvention(services, extensionConfigSection, spec.InterfaceType, loadedAssemblies, spec.TypeFolder, spec.Key);
+            RegisterServiceKeyMappings(services, spec, registrationCountBefore);
         }
 
         services.AddSingleton(new ExtensionLoadContextStore(contexts));
@@ -191,6 +210,20 @@ public static class ExtensionLoaderExtensions
         }
     }
 
+    private static int CountServiceRegistrations(IServiceCollection services, Type serviceType)
+        => services.Count(d => d.ServiceType == serviceType);
+
+    private static void RegisterServiceKeyMappings(
+        IServiceCollection services,
+        ConfiguredExtension extension,
+        int registrationCountBefore)
+    {
+        var registrationCountAfter = CountServiceRegistrations(services, extension.InterfaceType);
+        var added = registrationCountAfter - registrationCountBefore;
+        for (var i = 0; i < added; i++)
+            services.AddSingleton(new ExtensionServiceRegistration(extension.InterfaceType, extension.Key));
+    }
+
     private static bool TryResolveExtensionFolder(
         string rootPath,
         string typeFolder,
@@ -253,3 +286,5 @@ public sealed class ExtensionLoadContextStore(IReadOnlyList<AssemblyLoadContext>
 {
     public IReadOnlyList<AssemblyLoadContext> Contexts { get; } = contexts;
 }
+
+public sealed record ExtensionServiceRegistration(Type ServiceType, string Key);

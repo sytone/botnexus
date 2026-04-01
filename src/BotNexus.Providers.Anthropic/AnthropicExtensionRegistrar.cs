@@ -5,10 +5,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
-namespace BotNexus.Providers.OpenAI;
+namespace BotNexus.Providers.Anthropic;
 
-/// <summary>Registers OpenAI provider services when loaded as an extension.</summary>
-public sealed class OpenAiExtensionRegistrar : IExtensionRegistrar
+/// <summary>Registers Anthropic provider services when loaded as an extension.</summary>
+public sealed class AnthropicExtensionRegistrar : IExtensionRegistrar
 {
     public void Register(IServiceCollection services, IConfiguration configuration)
     {
@@ -16,9 +16,9 @@ public sealed class OpenAiExtensionRegistrar : IExtensionRegistrar
         {
             var botConfig = sp.GetRequiredService<IOptions<BotNexusConfig>>().Value;
             var providerConfig = configuration.Get<ProviderConfig>() ?? new ProviderConfig();
-            var logger = sp.GetRequiredService<ILogger<OpenAiProvider>>();
+            var logger = sp.GetRequiredService<ILogger<AnthropicProvider>>();
 
-            return new OpenAiProvider(
+            return new AnthropicProvider(
                 apiKey: providerConfig.ApiKey,
                 model: providerConfig.DefaultModel ?? botConfig.Agents.Model,
                 apiBase: providerConfig.ApiBase,
