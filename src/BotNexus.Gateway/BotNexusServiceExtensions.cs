@@ -23,6 +23,7 @@ public static class BotNexusServiceExtensions
     {
         // Core
         services.AddBotNexusCore(configuration);
+        services.AddAgentContextBuilder();
         services.AddBotNexusExtensions(configuration);
         services.AddSingleton<ProviderRegistry>(sp =>
         {
