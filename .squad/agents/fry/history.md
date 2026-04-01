@@ -141,3 +141,32 @@ See decisions.md "Part 4: Implementation Phases & Work Items" for full roadmap w
 - 2 P2 items deferred to next sprint: Anthropic tool-calling feature parity, plugin architecture deep-dive
 - Hearbeat service still needs HealthCheck.AggregateAsync() implementation (minor gap)
 - Plugin discovery (AssemblyLoadContext per extension) not yet fully tested with real extension deployments
+
+## 2026-04-02 — Cron Observability (cron-metrics + cron-health-check + cron-activity-events)
+
+**Commit:** 3fb995e — `feat(observability): add cron metrics, health check, and activity events`
+
+### Deliverables
+
+1. **Cron Metrics** — Added 4 metrics to `IBotNexusMetrics`/`BotNexusMetrics`:
+   - `botnexus.cron.jobs.executed` (counter, tagged by job name)
+   - `botnexus.cron.jobs.failed` (counter, tagged by job name)
+   - `botnexus.cron.job.duration` (histogram, ms, tagged by job name)
+   - `botnexus.cron.jobs.skipped` (counter, tagged by job name + reason: disabled/overlapping)
+
+2. **CronServiceHealthCheck** — New `IHealthCheck` implementation:
+   - Healthy when tick loop running with no degraded jobs
+   - Degraded when any job has 3+ consecutive failures
+   - Unhealthy when tick loop stopped
+   - Registered in health check pipeline as `cron_service`
+   - `ConsecutiveFailures` added to `CronJobStatus` record
+
+3. **Activity Events** — Enhanced cron activity stream events:
+   - `cron.job.started` — published with job name, type, correlation ID
+   - `cron.job.completed` — includes duration_ms and success in metadata
+   - `cron.job.failed` — includes duration_ms, success, and error in metadata
+   - All visible in WebUI via activity stream WebSocket
+
+### Tests
+- 5 new `CronServiceHealthCheckTests`: disabled, not-running, healthy, degraded threshold, below-threshold
+- All 339 tests passing (285 unit + 29 integration + 15 E2E + 10 deployment)
