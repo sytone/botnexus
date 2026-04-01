@@ -38,7 +38,7 @@ public sealed class CronTool : ToolBase
 
         return action.ToLowerInvariant() switch
         {
-            "list" => Task.FromResult(string.Join("\n", _cronService.GetScheduledJobs())),
+            "list" => Task.FromResult(string.Join("\n", _cronService.GetJobs().Select(j => j.Name))),
             "remove" => RemoveJob(arguments),
             "schedule" => ScheduleJob(arguments),
             _ => throw new ToolArgumentException($"Unknown action '{action}'")
@@ -50,7 +50,8 @@ public sealed class CronTool : ToolBase
         var name = GetRequiredString(args, "name");
         var expression = GetRequiredString(args, "expression");
 
-        _cronService!.Schedule(name, expression, _ => Task.CompletedTask);
+        var message = GetOptionalString(args, "message", $"Cron job '{name}' executed.");
+        _cronService!.Register(new ToolCronJob(name, expression, message));
         return Task.FromResult($"Cron job '{name}' scheduled with expression '{expression}'");
     }
 
@@ -59,5 +60,20 @@ public sealed class CronTool : ToolBase
         var name = GetRequiredString(args, "name");
         _cronService!.Remove(name);
         return Task.FromResult($"Cron job '{name}' removed");
+    }
+
+    private sealed class ToolCronJob(string name, string schedule, string message) : ICronJob
+    {
+        public string Name { get; } = name;
+        public CronJobType Type => CronJobType.System;
+        public string Schedule { get; } = schedule;
+        public TimeZoneInfo? TimeZone => TimeZoneInfo.Utc;
+        public bool Enabled { get; set; } = true;
+
+        public Task<CronJobResult> ExecuteAsync(CronJobContext context, CancellationToken cancellationToken)
+            => Task.FromResult(new CronJobResult(
+                Success: true,
+                Output: message,
+                Duration: TimeSpan.Zero));
     }
 }
