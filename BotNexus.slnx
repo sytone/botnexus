@@ -1,0 +1,25 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/BotNexus.Agent/BotNexus.Agent.csproj" />
+    <Project Path="src/BotNexus.Api/BotNexus.Api.csproj" />
+    <Project Path="src/BotNexus.Channels.Base/BotNexus.Channels.Base.csproj" />
+    <Project Path="src/BotNexus.Channels.Discord/BotNexus.Channels.Discord.csproj" />
+    <Project Path="src/BotNexus.Channels.Slack/BotNexus.Channels.Slack.csproj" />
+    <Project Path="src/BotNexus.Channels.Telegram/BotNexus.Channels.Telegram.csproj" />
+    <Project Path="src/BotNexus.Command/BotNexus.Command.csproj" />
+    <Project Path="src/BotNexus.Core/BotNexus.Core.csproj" />
+    <Project Path="src/BotNexus.Cron/BotNexus.Cron.csproj" />
+    <Project Path="src/BotNexus.Gateway/BotNexus.Gateway.csproj" />
+    <Project Path="src/BotNexus.Heartbeat/BotNexus.Heartbeat.csproj" />
+    <Project Path="src/BotNexus.Providers.Anthropic/BotNexus.Providers.Anthropic.csproj" />
+    <Project Path="src/BotNexus.Providers.Base/BotNexus.Providers.Base.csproj" />
+    <Project Path="src/BotNexus.Providers.OpenAI/BotNexus.Providers.OpenAI.csproj" />
+    <Project Path="src/BotNexus.Session/BotNexus.Session.csproj" />
+    <Project Path="src/BotNexus.Tools.GitHub/BotNexus.Tools.GitHub.csproj" />
+    <Project Path="src/BotNexus.WebUI/BotNexus.WebUI.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/BotNexus.Tests.Integration/BotNexus.Tests.Integration.csproj" />
+    <Project Path="tests/BotNexus.Tests.Unit/BotNexus.Tests.Unit.csproj" />
+  </Folder>
+</Solution>

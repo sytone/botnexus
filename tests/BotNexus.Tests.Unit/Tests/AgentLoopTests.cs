@@ -1,0 +1,152 @@
+using BotNexus.Agent;
+using BotNexus.Agent.Tools;
+using BotNexus.Core.Abstractions;
+using BotNexus.Core.Models;
+using BotNexus.Session;
+using FluentAssertions;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using Xunit;
+
+namespace BotNexus.Tests.Unit.Tests;
+
+public class AgentLoopTests : IDisposable
+{
+    private readonly string _tempPath;
+    private readonly SessionManager _sessionManager;
+
+    public AgentLoopTests()
+    {
+        _tempPath = Path.Combine(Path.GetTempPath(), $"botnexus-agent-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_tempPath);
+        _sessionManager = new SessionManager(_tempPath, NullLogger<SessionManager>.Instance);
+    }
+
+    private static InboundMessage MakeMessage(string content = "hello") =>
+        new("telegram", "user1", "chat1", content, DateTimeOffset.UtcNow, [], new Dictionary<string, object>());
+
+    [Fact]
+    public async Task ProcessAsync_SimpleResponse_ReturnsContent()
+    {
+        var mockProvider = new Mock<ILlmProvider>();
+        mockProvider.Setup(p => p.Generation).Returns(new GenerationSettings());
+        mockProvider.Setup(p => p.ChatAsync(It.IsAny<ChatRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LlmResponse("Hello back!", FinishReason.Stop));
+
+        var loop = CreateLoop(mockProvider.Object);
+        var result = await loop.ProcessAsync(MakeMessage("hello"));
+
+        result.Should().Be("Hello back!");
+    }
+
+    [Fact]
+    public async Task ProcessAsync_AddsUserMessageToSession()
+    {
+        var mockProvider = new Mock<ILlmProvider>();
+        mockProvider.Setup(p => p.Generation).Returns(new GenerationSettings());
+        mockProvider.Setup(p => p.ChatAsync(It.IsAny<ChatRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LlmResponse("reply", FinishReason.Stop));
+
+        var loop = CreateLoop(mockProvider.Object);
+        var message = MakeMessage("test input");
+        await loop.ProcessAsync(message);
+
+        var session = await _sessionManager.GetOrCreateAsync(message.SessionKey, "test-agent");
+        session.History.Should().Contain(e => e.Content == "test input" && e.Role == MessageRole.User);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_AddsAssistantResponseToSession()
+    {
+        var mockProvider = new Mock<ILlmProvider>();
+        mockProvider.Setup(p => p.Generation).Returns(new GenerationSettings());
+        mockProvider.Setup(p => p.ChatAsync(It.IsAny<ChatRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LlmResponse("assistant response", FinishReason.Stop));
+
+        var loop = CreateLoop(mockProvider.Object);
+        var message = MakeMessage("hello");
+        await loop.ProcessAsync(message);
+
+        var session = await _sessionManager.GetOrCreateAsync(message.SessionKey, "test-agent");
+        session.History.Should().Contain(e => e.Content == "assistant response" && e.Role == MessageRole.Assistant);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_ExecutesToolCalls_AddsToolResultToSession()
+    {
+        var toolRegistry = new ToolRegistry();
+        var mockTool = new Mock<ITool>();
+        mockTool.Setup(t => t.Definition).Returns(
+            new ToolDefinition("test_tool", "Test tool", new Dictionary<string, ToolParameterSchema>()));
+        mockTool.Setup(t => t.ExecuteAsync(It.IsAny<IReadOnlyDictionary<string, object?>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("tool output");
+        toolRegistry.Register(mockTool.Object);
+
+        var mockProvider = new Mock<ILlmProvider>();
+        mockProvider.Setup(p => p.Generation).Returns(new GenerationSettings());
+        var callCount = 0;
+        mockProvider.Setup(p => p.ChatAsync(It.IsAny<ChatRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                if (callCount == 1)
+                    return new LlmResponse("", FinishReason.ToolCalls,
+                        [new ToolCallRequest("id1", "test_tool", new Dictionary<string, object?>())]);
+                return new LlmResponse("final answer", FinishReason.Stop);
+            });
+
+        var loop = CreateLoop(mockProvider.Object, toolRegistry);
+        var message = new InboundMessage("telegram", "u", "toolchat", "use tool",
+            DateTimeOffset.UtcNow, [], new Dictionary<string, object>());
+        var result = await loop.ProcessAsync(message);
+
+        result.Should().Be("final answer");
+        var session = await _sessionManager.GetOrCreateAsync(message.SessionKey, "test-agent");
+        session.History.Should().Contain(e => e.Role == MessageRole.Tool && e.Content == "tool output");
+    }
+
+    [Fact]
+    public async Task ProcessAsync_CallsHooks()
+    {
+        var mockHook = new Mock<IAgentHook>();
+        mockHook.Setup(h => h.OnBeforeAsync(It.IsAny<AgentHookContext>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mockHook.Setup(h => h.OnAfterAsync(It.IsAny<AgentHookContext>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var mockProvider = new Mock<ILlmProvider>();
+        mockProvider.Setup(p => p.Generation).Returns(new GenerationSettings());
+        mockProvider.Setup(p => p.ChatAsync(It.IsAny<ChatRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LlmResponse("ok", FinishReason.Stop));
+
+        var loop = CreateLoop(mockProvider.Object, hooks: [mockHook.Object]);
+        await loop.ProcessAsync(MakeMessage("hello"));
+
+        mockHook.Verify(h => h.OnBeforeAsync(It.IsAny<AgentHookContext>(), It.IsAny<CancellationToken>()), Times.Once);
+        mockHook.Verify(h => h.OnAfterAsync(It.IsAny<AgentHookContext>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    private AgentLoop CreateLoop(
+        ILlmProvider provider,
+        ToolRegistry? toolRegistry = null,
+        IReadOnlyList<IAgentHook>? hooks = null)
+    {
+        return new AgentLoop(
+            agentName: "test-agent",
+            systemPrompt: null,
+            provider: provider,
+            sessionManager: _sessionManager,
+            contextBuilder: new ContextBuilder(NullLogger<ContextBuilder>.Instance),
+            toolRegistry: toolRegistry ?? new ToolRegistry(),
+            settings: new GenerationSettings(),
+            hooks: hooks,
+            logger: NullLogger<AgentLoop>.Instance,
+            maxToolIterations: 5);
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_tempPath))
+            Directory.Delete(_tempPath, recursive: true);
+    }
+}

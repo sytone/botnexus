@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>dotnet-BotNexus.Gateway-9dcb1719-1ba6-4115-887c-ff61cdfb10e9</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BotNexus.Core\BotNexus.Core.csproj" />
+    <ProjectReference Include="..\BotNexus.Agent\BotNexus.Agent.csproj" />
+    <ProjectReference Include="..\BotNexus.Session\BotNexus.Session.csproj" />
+    <ProjectReference Include="..\BotNexus.Channels.Base\BotNexus.Channels.Base.csproj" />
+    <ProjectReference Include="..\BotNexus.Providers.Base\BotNexus.Providers.Base.csproj" />
+    <ProjectReference Include="..\BotNexus.Command\BotNexus.Command.csproj" />
+    <ProjectReference Include="..\BotNexus.Cron\BotNexus.Cron.csproj" />
+    <ProjectReference Include="..\BotNexus.Heartbeat\BotNexus.Heartbeat.csproj" />
+    <ProjectReference Include="..\BotNexus.WebUI\BotNexus.WebUI.csproj" />
+  </ItemGroup>
+
+  <!-- Copy WebUI static files to wwwroot on build -->
+  <Target Name="CopyWebUI" AfterTargets="Build">
+    <ItemGroup>
+      <WebUIFiles Include="..\BotNexus.WebUI\wwwroot\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WebUIFiles)"
+          DestinationFolder="$(OutputPath)wwwroot\%(RecursiveDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyWebUIPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <WebUIFilesPublish Include="..\BotNexus.WebUI\wwwroot\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WebUIFilesPublish)"
+          DestinationFolder="$(PublishDir)wwwroot\%(RecursiveDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>
