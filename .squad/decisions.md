@@ -503,6 +503,87 @@ All Phase 1 P0 foundation work delivered:
 
 ---
 
+### 6. Sprint 3 Completion — Security & Observability Hardening (2026-04-01T18:17Z)
+
+**Status:** Complete  
+**Completed by:** Bender (3 items), Farnsworth (1 item), Hermes (2 items)  
+
+All Phase 1-2 P1-P2 hardening and testing work delivered:
+
+1. ✅ **api-key-auth** (Bender, 74e4085)
+   - API key authentication on Gateway REST and WebSocket endpoints
+   - ApiKeyAuthenticationHandler with configurable header validation
+   - X-API-Key header, WebSocket query parameter fallback
+   - Configuration-driven API key storage in appsettings.json
+
+2. ✅ **extension-security** (Bender, 64c3545)
+   - Assembly validation and cryptographic signature verification
+   - Manifest metadata checks and dependency whitelisting
+   - Configuration-driven security modes (permissive, strict)
+   - Blocks untrusted code injection at extension load time
+
+3. ✅ **observability-foundation** (Farnsworth, 7beda23)
+   - Serilog structured logging integration with correlation IDs
+   - Health check endpoints: /health (liveness), /health/ready (readiness)
+   - Agent execution metrics: request count, latency, success rate
+   - Extension loader metrics: load time, assembly count, registrar performance
+   - OpenTelemetry instrumentation hooks for APM integration (Datadog, App Insights)
+
+4. ✅ **unit-tests-loader** (Hermes, e153b67)
+   - 95%+ test coverage for ExtensionLoader (50+ new test cases)
+   - Comprehensive scenarios: folder discovery, validation, error handling, isolation
+   - Registrar pattern verification with mock implementations
+   - Performance baseline: <500ms per extension load
+
+5. ✅ **slack-webhook-endpoint** (Bender, 9473ee7)
+   - POST /api/slack/events webhook endpoint with HMAC-SHA256 signature validation
+   - Slack request timestamp validation prevents replay attacks
+   - Event subscription handling (url_verification)
+   - Inbound message routing to Slack channel
+   - Supports message, app_mention, reaction events
+
+6. ✅ **integration-tests-extensions** (Hermes, 392f08f)
+   - E2E extension loading lifecycle validation (discovery → registration → activation)
+   - Multi-channel agent simulation: Discord + Slack + Telegram + WebSocket
+   - Provider integration test: Copilot through dynamic loading
+   - Tool execution test: GitHub tool loaded dynamically and invoked
+   - Session state persistence and agent handoff validation
+   - Mock channels for reproducible testing (10+ integration scenarios)
+
+**Build Status:** ✅ Green, 140+ tests passing, 0 errors, 0 warnings
+
+**Unblocks:** Production deployment, release validation, Sprint 4 user-facing features
+
+---
+
+### 7. User Directive — Multi-Agent E2E Simulation Environment (2026-04-01T18:12Z)
+
+**By:** Jon Bullen (via Copilot CLI)  
+**Status:** Captured for Sprint 4 planning
+
+**What:** Hermes should design an E2E test environment that simulates multiple agents and channels working together. The tests should validate communication, handoff, session details, WebUI, etc. Use multiple mock channels as part of validation. Agents should use Copilot with small models — we're testing the ENVIRONMENT, not the LLM. Use simple, controlled questions that are easy to verify:
+- Example: Ask note-taking agent "Quill" to list favourite pizzas
+- Ask main agent "Nova" for a list of pizzas in California to try
+- Tell Quill to make a list in notes for later access
+- Test agent-to-agent handoff, session state, channel routing, WebUI display
+
+The simulated environment needs a config that sets up these multi-agent scenarios with mock channels so the full flow can be validated end-to-end.
+
+**Why:** User request — captured for team memory. This ensures BotNexus is validated as a real multi-agent platform with inter-agent communication, not just single-agent request/response.
+
+---
+
+### 8. User Directive — Single Config File at ~/.botnexus (2026-04-01T18:22Z)
+
+**By:** Jon Bullen (via Copilot CLI)  
+**Status:** Captured for Sprint 4 planning
+
+**What:** All settings should be in ONE config file at `{USERPROFILE}/.botnexus/config.json` (or similar). No scattered appsettings.json files across projects. Follow the pattern used by other platforms (e.g., Nanobot uses `~/.nanobot/`). The default install location is `~/.botnexus/` with a single config file in the root for the entire environment. Extensions folder, tokens, and all runtime state live under this directory.
+
+**Why:** User request — captured for team memory. This is an installation/deployment architecture decision that affects config loading, documentation, and the user experience.
+
+---
+
 ## Governance
 
 - All meaningful changes require team consensus
