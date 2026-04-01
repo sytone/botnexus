@@ -15,6 +15,7 @@ How to decide who handles what.
 | Testing | Hermes | Write unit tests, integration tests, E2E tests, verify fixes |
 | Consistency review | Nibbler | Cross-check docs ↔ code ↔ comments, stale reference detection, post-sprint audit |
 | E2E simulation & deployment | Zapp | Multi-agent simulation, deployment lifecycle tests, scenario registry |
+| Documentation | Kif | All docs — user guides, dev guides, API reference, GitHub Pages, style consistency |
 | Scope & priorities | Leela | What to build next, trade-offs, decisions |
 | Session logging | Scribe | Automatic — never needs routing |
 

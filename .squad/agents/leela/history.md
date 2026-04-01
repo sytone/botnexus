@@ -247,6 +247,42 @@
 - Phase 4: Testing (5 items) — Unit tests for all new components + integration tests
 - Phase 5: Documentation (1 item) — Workspace/memory docs + architecture.md updates
 
+### 2026-04-02 — Centralized Cron Service Architecture Design
+
+**Trigger:** Jon directive (2026-04-01T20:35Z) — cron must be a first-class independent service managing ALL scheduled work centrally, not a per-agent helper or embedded in heartbeat.
+
+**Codebase Analysis (what exists today):**
+- `CronService` is a generic scheduler: `Schedule(name, cron, action)` with `Func<CancellationToken, Task>` callbacks. No awareness of agents, channels, sessions, or job types.
+- `HeartbeatService` is a separate `BackgroundService` that records health beats and triggers memory consolidation per agent on interval.
+- `AgentConfig.CronJobs` exists in config as `List<CronJobConfig>` but is **never wired** to execution — dead configuration.
+- `CronTool` lets agents schedule/remove jobs at runtime but payloads aren't processed.
+- **Critical gap:** `IAgentRunnerFactory` does not exist. No way to create `IAgentRunner` instances on demand. The `AgentRouter` expects `IEnumerable<IAgentRunner>` from DI but nothing registers them. Factory pattern exists for `IContextBuilder` and `IAgentWorkspace` but not for runners.
+- `ChannelManager.GetChannel(name)` provides case-insensitive channel lookup — ready for cron output routing.
+- `IActivityStream` provides pub/sub for `ActivityEvent` — ready for cron observability.
+
+**Key Architectural Decisions:**
+1. Central `Cron.Jobs` config replaces per-agent `AgentConfig.CronJobs` — single place to manage all scheduled work
+2. Three job types: `AgentCronJob` (runs agent via AgentRunner), `SystemCronJob` (no LLM, direct actions), `MaintenanceCronJob` (consolidation, cleanup, health)
+3. `AgentCronJob` uses new `IAgentRunnerFactory` → full context/memory/workspace pipeline, consistent with interactive flow
+4. `IAgentRunnerFactory` is a prerequisite that also fixes an existing gap (no runner creation mechanism in codebase)
+5. HeartbeatService replaced entirely — consolidation becomes a cron MaintenanceJob, health beat is implicit from cron tick
+6. `IHeartbeatService` kept as thin adapter during transition for backward compatibility
+7. Session modes: `new` (fresh per run), `persistent` (same session across runs), `named:{key}` (explicit key)
+8. Channel output routing via existing `ChannelManager.GetChannel()` — no new abstractions
+9. `ISystemActionRegistry` for extensible non-agent actions — extensions can register custom system actions
+10. Correlation IDs flow end-to-end: cron tick → job → agent run → channel output → activity stream
+11. Cronos library retained for cron expression parsing
+12. Execution history bounded to 1000 entries with LRU eviction
+
+**Plan Output:** `.squad/decisions/inbox/leela-cron-service-plan.md` — 22 work items across 5 phases, ~17-23 days estimated, mapped to team members with full dependency graph.
+
+**Phase Summary:**
+- Phase 1 (Sprint A): Foundation — 4 items: Core interfaces, config model, agent runner factory, system action registry
+- Phase 2 (Sprint B): Implementation — 5 items: CronService, AgentCronJob, SystemCronJob, MaintenanceCronJob, CronJobFactory
+- Phase 3 (Sprint C): Integration — 4 items: DI wiring, heartbeat migration, CronTool update, legacy config migration
+- Phase 4 (Sprint D): Observability — 4 items: API endpoints, metrics, health check, activity events
+- Phase 5 (Sprint E): Testing & Docs — 5 items: Unit tests, integration tests, E2E tests, documentation, consistency review
+
 
 
 ### 2026-04-02 — Sprint 5 Complete: Agent Workspace, Memory, Deployment Lifecycle
@@ -298,3 +334,33 @@
 - 2 P2 items deferred to next sprint: Anthropic tool-calling feature parity, plugin architecture deep-dive
 - Hearbeat service still needs HealthCheck.AggregateAsync() implementation (minor gap)
 - Plugin discovery (AssemblyLoadContext per extension) not yet fully tested with real extension deployments
+
+## Session Completion: 2026-04-02
+
+**Sprints Completed:** 1-6  
+**Items Done:** 71 of 73 (97.3%)  
+**Tests Passing:** 395  
+**Scenario Coverage:** 64/64 (100%)  
+**Team Size:** 12 agents  
+
+**Major Achievements:**
+- Dynamic extension loading fully operational
+- Copilot OAuth integration complete and tested
+- Multi-agent routing with assistant classification deployed
+- Agent workspaces with durable file storage working
+- Centralized memory system with consolidation running
+- Centralized cron service architecture finalized (pending implementation)
+- Authentication/authorization layer deployed across Gateway, WebSocket, REST
+- Security hardening: ~/.botnexus/ live environment fully protected
+- Observability framework (metrics, tracing, health checks) integrated
+- WebUI deployed with real-time status feeds
+- Full E2E scenario coverage: 64/64 scenarios passing
+
+**Deferred (P2):** 2 Anthropic items awaiting clarification
+
+**Decisions Merged:**
+1. Cron service as independent first-class scheduler
+2. Live environment protection (~/.botnexus/ isolation)
+
+**Next Steps:** Production deployment readiness, Sprint 7 planning for P2 items.
+

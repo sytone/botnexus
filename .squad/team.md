@@ -20,6 +20,7 @@
 | Hermes | Tester | `.squad/agents/hermes/charter.md` | 🧪 Active |
 | Nibbler | Consistency Reviewer | `.squad/agents/nibbler/charter.md` | 🔍 Active |
 | Zapp | E2E & Simulation Engineer | `.squad/agents/zapp/charter.md` | 🚀 Active |
+| Kif | Documentation Engineer | `.squad/agents/kif/charter.md` | 📝 Active |
 | Scribe | Scribe | `.squad/agents/scribe/charter.md` | 📋 Active |
 | Ralph | Work Monitor | `.squad/agents/ralph/charter.md` | 🔄 Active |
 

@@ -1389,3 +1389,1059 @@ Phase 5 (Docs):
 | 2026-04-02 | Keyword search first, hybrid later | YAGNI. Grep-based search is sufficient for initial deployment. Vector search is a future enhancement. |
 | 2026-04-02 | Preserve `SystemPrompt`/`SystemPromptFile` backward compat | Simple agents shouldn't need workspace files. Inline prompts are a valid configuration path. |
 
+
+
+## Session 2026-04-02 Merges
+
+### 2026-04-01T20:35Z: User directive — Cron as independent service, not per-agent
+**By:** Jon Bullen (via Copilot)
+**What:** The cron/scheduled task system must be a SEPARATE service that manages ALL cron jobs centrally, not embedded per-agent. The cron service should:
+1. Manage all scheduled jobs in one place (not scattered across agent configs)
+2. For each job, determine: should an agent be called? Which agent? New session or existing? Which channel(s) get the output?
+3. Use the existing AgentRunner so context building, memory, and workspace are handled consistently — not a separate execution path
+4. Support non-agent jobs too: update/release checks, maintenance actions, cleanup tasks, health monitoring
+5. Channel routing for cron output: results can be sent to specific channels (e.g., Slack, Discord, WebSocket)
+6. Session management: cron can specify whether to create a new session or load an existing one
+
+This means BotNexus.Cron becomes a first-class service, not a helper. It's the scheduler for the entire ecosystem.
+**Why:** User request — this is an architectural decision that affects how scheduled work is managed. Centralizing cron makes it manageable, observable, and extensible beyond just agent tasks.
+
+
+---
+
+### 2026-04-01T22:39Z: User directive — ~/.botnexus/ is LIVE, do NOT touch
+**By:** Jon Bullen (via Copilot)
+**What:** Jon is installing BotNexus on this machine and migrating from OpenClaw. The `~/.botnexus/` folder in his user profile is his LIVE RUNNING ENVIRONMENT. NO agent may read, write, modify, or delete anything in `%USERPROFILE%\.botnexus\`. This applies to ALL team members — Farnsworth, Bender, Hermes, Zapp, Leela, everyone. Tests must use temp directories or BOTNEXUS_HOME overrides, never the real user profile path.
+**Why:** User request — this is a safety-critical directive. The team must never interfere with Jon's live environment. All test isolation must use temp dirs or env var overrides.
+
+
+---
+
+## Cron Service Architecture Plan
+
+# Centralized Cron Service Architecture
+
+**Author:** Leela (Lead/Architect)
+**Date:** 2026-04-02
+**Status:** Proposed
+**Requested by:** Jon Bullen (directive 2026-04-01T20:35Z)
+**Supersedes:** Current per-agent `CronJobs` in `AgentConfig`, `HeartbeatService` scheduled consolidation
+
+---
+
+## 1. Problem Statement
+
+BotNexus currently has two overlapping scheduling mechanisms:
+
+1. **CronService** — generic scheduler with `Schedule(name, cron, action)` API. Jobs are registered imperatively at runtime. No config-driven job definition. No channel routing. No agent integration. The `CronTool` lets agents schedule jobs, but payloads aren't processed.
+
+2. **HeartbeatService** — `BackgroundService` that records health beats and triggers memory consolidation per agent. Hardcoded to one concern (consolidation), not extensible.
+
+3. **AgentConfig.CronJobs** — per-agent cron job list exists in config but is **never wired** to execution. Dead configuration.
+
+Jon's directive: Cron must be a **first-class independent service** that centrally manages ALL scheduled work — agent jobs, system jobs, and maintenance. Not a per-agent helper. Not a heartbeat wrapper.
+
+---
+
+## 2. Architecture Design
+
+### 2.1 Core Interfaces
+
+#### ICronService (Enhanced)
+
+Replaces the current `ICronService` interface. The existing `Schedule(name, cron, action)` API is too primitive — it knows nothing about agents, channels, sessions, or job types.
+
+```csharp
+namespace BotNexus.Core.Abstractions;
+
+/// <summary>
+/// Central scheduler for all recurring work in the BotNexus ecosystem.
+/// Manages agent jobs, system jobs, and maintenance jobs from configuration.
+/// </summary>
+public interface ICronService
+{
+    /// <summary>Register a job from configuration or at runtime.</summary>
+    void Register(ICronJob job);
+
+    /// <summary>Remove a registered job by name.</summary>
+    void Remove(string jobName);
+
+    /// <summary>Get all registered jobs and their current status.</summary>
+    IReadOnlyList<CronJobStatus> GetJobs();
+
+    /// <summary>Get execution history for a specific job.</summary>
+    IReadOnlyList<CronJobExecution> GetHistory(string jobName, int limit = 10);
+
+    /// <summary>Manually trigger a job outside its schedule.</summary>
+    Task TriggerAsync(string jobName, CancellationToken cancellationToken = default);
+
+    /// <summary>Enable or disable a job at runtime.</summary>
+    void SetEnabled(string jobName, bool enabled);
+}
+```
+
+#### ICronJob
+
+Each job is a self-contained unit of work with its own schedule, type, and execution logic.
+
+```csharp
+namespace BotNexus.Core.Abstractions;
+
+public interface ICronJob
+{
+    /// <summary>Unique job name (e.g., "morning-briefing", "memory-consolidation").</summary>
+    string Name { get; }
+
+    /// <summary>Job type discriminator: Agent, System, or Maintenance.</summary>
+    CronJobType Type { get; }
+
+    /// <summary>Cron expression (standard 5-field or 6-field with seconds).</summary>
+    string Schedule { get; }
+
+    /// <summary>Timezone for schedule evaluation. Null = UTC.</summary>
+    TimeZoneInfo? TimeZone { get; }
+
+    /// <summary>Whether this job is enabled.</summary>
+    bool Enabled { get; set; }
+
+    /// <summary>Execute the job. Returns result for tracking.</summary>
+    Task<CronJobResult> ExecuteAsync(CronJobContext context, CancellationToken cancellationToken);
+}
+
+public enum CronJobType
+{
+    Agent,       // Runs a prompt through an agent via AgentRunner
+    System,      // Runs a system action (update check, health audit)
+    Maintenance  // Runs internal maintenance (memory consolidation, log rotation, session cleanup)
+}
+```
+
+#### CronJobContext & CronJobResult
+
+```csharp
+/// <summary>Execution context provided to each job at runtime.</summary>
+public sealed class CronJobContext
+{
+    public required string JobName { get; init; }
+    public required string CorrelationId { get; init; }
+    public required DateTimeOffset ScheduledTime { get; init; }
+    public required DateTimeOffset ActualTime { get; init; }
+    public required IServiceProvider Services { get; init; }
+}
+
+/// <summary>Result of a cron job execution.</summary>
+public sealed record CronJobResult(
+    bool Success,
+    string? Output = null,
+    string? Error = null,
+    TimeSpan Duration = default,
+    IReadOnlyDictionary<string, object>? Metadata = null);
+```
+
+#### CronJobStatus & CronJobExecution (Observability Models)
+
+```csharp
+public sealed record CronJobStatus(
+    string Name,
+    CronJobType Type,
+    string Schedule,
+    bool Enabled,
+    DateTimeOffset? LastRun,
+    DateTimeOffset? NextRun,
+    bool? LastRunSuccess,
+    TimeSpan? LastRunDuration);
+
+public sealed record CronJobExecution(
+    string JobName,
+    string CorrelationId,
+    DateTimeOffset StartedAt,
+    DateTimeOffset CompletedAt,
+    bool Success,
+    string? Output,
+    string? Error);
+```
+
+### 2.2 Job Type Implementations
+
+#### AgentCronJob
+
+Runs a prompt through an agent via `IAgentRunnerFactory` → `AgentRunner` → full context/memory/workspace pipeline.
+
+```csharp
+public sealed class AgentCronJob : ICronJob
+{
+    public string Name { get; }
+    public CronJobType Type => CronJobType.Agent;
+    public string Schedule { get; }
+    public TimeZoneInfo? TimeZone { get; }
+    public bool Enabled { get; set; }
+
+    // Agent-specific config
+    public required string AgentName { get; init; }
+    public required string Prompt { get; init; }
+    public CronSessionMode SessionMode { get; init; } = CronSessionMode.New;
+    public string? SessionKey { get; init; }
+    public IReadOnlyList<string> OutputChannels { get; init; } = [];
+
+    public async Task<CronJobResult> ExecuteAsync(CronJobContext context, CancellationToken ct)
+    {
+        var factory = context.Services.GetRequiredService<IAgentRunnerFactory>();
+        var channelManager = context.Services.GetRequiredService<ChannelManager>();
+        var sessionManager = context.Services.GetRequiredService<ISessionManager>();
+
+        // 1. Resolve session key
+        var sessionKey = ResolveSessionKey(context);
+
+        // 2. Build synthetic InboundMessage
+        var message = new InboundMessage(
+            Channel: "cron",
+            SenderId: $"cron:{Name}",
+            ChatId: sessionKey,
+            Content: Prompt,
+            Timestamp: context.ActualTime,
+            Media: [],
+            Metadata: new Dictionary<string, object>
+            {
+                ["cron_job"] = Name,
+                ["correlation_id"] = context.CorrelationId,
+                ["agent"] = AgentName
+            },
+            SessionKeyOverride: sessionKey);
+
+        // 3. Create runner (no response channel — we route output ourselves)
+        var runner = factory.Create(AgentName);
+
+        // 4. Run agent (captures response via session)
+        await runner.RunAsync(message, ct);
+
+        // 5. Get response from session
+        var session = await sessionManager.GetOrCreateAsync(sessionKey, AgentName, ct);
+        var lastResponse = session.History
+            .LastOrDefault(e => e.Role == MessageRole.Assistant)?.Content;
+
+        // 6. Route output to specified channels
+        if (lastResponse is not null && OutputChannels.Count > 0)
+        {
+            await RouteOutputAsync(channelManager, sessionKey, lastResponse, ct);
+        }
+
+        return new CronJobResult(Success: true, Output: lastResponse);
+    }
+
+    private string ResolveSessionKey(CronJobContext context) => SessionMode switch
+    {
+        CronSessionMode.New => $"cron:{Name}:{context.ScheduledTime:yyyyMMddHHmm}",
+        CronSessionMode.Persistent => $"cron:{Name}",
+        CronSessionMode.Named => SessionKey ?? $"cron:{Name}",
+        _ => $"cron:{Name}:{context.ScheduledTime:yyyyMMddHHmm}"
+    };
+
+    private async Task RouteOutputAsync(
+        ChannelManager channelManager, string sessionKey, string content, CancellationToken ct)
+    {
+        foreach (var channelName in OutputChannels)
+        {
+            var channel = channelManager.GetChannel(channelName);
+            if (channel is null) continue;
+
+            await channel.SendAsync(new OutboundMessage(
+                Channel: channelName,
+                ChatId: sessionKey,
+                Content: content,
+                Metadata: new Dictionary<string, object> { ["source"] = "cron" }), ct);
+        }
+    }
+}
+
+public enum CronSessionMode
+{
+    New,        // Fresh session each run: cron:{jobName}:{timestamp}
+    Persistent, // Same session across runs: cron:{jobName}
+    Named       // Explicit session key from config
+}
+```
+
+#### SystemCronJob
+
+Executes system actions directly — no agent, no LLM.
+
+```csharp
+public sealed class SystemCronJob : ICronJob
+{
+    public string Name { get; }
+    public CronJobType Type => CronJobType.System;
+    public string Schedule { get; }
+    public TimeZoneInfo? TimeZone { get; }
+    public bool Enabled { get; set; }
+
+    public required string Action { get; init; }
+    public IReadOnlyList<string> OutputChannels { get; init; } = [];
+
+    public async Task<CronJobResult> ExecuteAsync(CronJobContext context, CancellationToken ct)
+    {
+        var actionRegistry = context.Services.GetRequiredService<ISystemActionRegistry>();
+        var result = await actionRegistry.ExecuteAsync(Action, context, ct);
+
+        // Route output to channels if specified
+        if (result.Output is not null && OutputChannels.Count > 0)
+        {
+            var channelManager = context.Services.GetRequiredService<ChannelManager>();
+            foreach (var channelName in OutputChannels)
+            {
+                var channel = channelManager.GetChannel(channelName);
+                if (channel is null) continue;
+
+                await channel.SendAsync(new OutboundMessage(
+                    Channel: channelName,
+                    ChatId: $"system:{Name}",
+                    Content: result.Output), ct);
+            }
+        }
+
+        return result;
+    }
+}
+```
+
+#### MaintenanceCronJob
+
+Runs internal maintenance operations via typed actions.
+
+```csharp
+public sealed class MaintenanceCronJob : ICronJob
+{
+    public string Name { get; }
+    public CronJobType Type => CronJobType.Maintenance;
+    public string Schedule { get; }
+    public TimeZoneInfo? TimeZone { get; }
+    public bool Enabled { get; set; }
+
+    public required string Action { get; init; }
+    public IReadOnlyList<string> TargetAgents { get; init; } = [];
+
+    public async Task<CronJobResult> ExecuteAsync(CronJobContext context, CancellationToken ct)
+    {
+        return Action switch
+        {
+            "consolidate-memory" => await ConsolidateMemoryAsync(context, ct),
+            "cleanup-sessions" => await CleanupSessionsAsync(context, ct),
+            "rotate-logs" => await RotateLogsAsync(context, ct),
+            "health-audit" => await HealthAuditAsync(context, ct),
+            _ => new CronJobResult(false, Error: $"Unknown maintenance action: {Action}")
+        };
+    }
+
+    private async Task<CronJobResult> ConsolidateMemoryAsync(
+        CronJobContext context, CancellationToken ct)
+    {
+        var consolidator = context.Services.GetRequiredService<IMemoryConsolidator>();
+        var results = new List<string>();
+
+        foreach (var agentName in TargetAgents)
+        {
+            var result = await consolidator.ConsolidateAsync(agentName, ct);
+            results.Add($"{agentName}: {result.DailyFilesProcessed} files, " +
+                        $"{result.EntriesConsolidated} entries, success={result.Success}");
+        }
+
+        return new CronJobResult(true, Output: string.Join("\n", results));
+    }
+
+    // Other maintenance actions follow same pattern...
+}
+```
+
+### 2.3 CronService Implementation
+
+The new `CronService` replaces both the current `CronService` and `HeartbeatService`.
+
+```csharp
+public sealed class CronService : BackgroundService, ICronService
+{
+    private readonly ConcurrentDictionary<string, CronJobEntry> _jobs = new();
+    private readonly ConcurrentQueue<CronJobExecution> _executionHistory = new();
+    private readonly IServiceProvider _services;
+    private readonly IActivityStream _activityStream;
+    private readonly ILogger<CronService> _logger;
+    private readonly IBotNexusMetrics? _metrics;
+    private static readonly TimeSpan TickInterval = TimeSpan.FromSeconds(10);
+    private const int MaxHistoryEntries = 1000;
+
+    // Register, Remove, GetJobs, GetHistory, TriggerAsync, SetEnabled
+    // (implement ICronService interface)
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        _logger.LogInformation("Cron service started with {Count} jobs", _jobs.Count);
+
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            await TickAsync(stoppingToken);
+            await Task.Delay(TickInterval, stoppingToken);
+        }
+    }
+
+    private async Task TickAsync(CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        foreach (var entry in _jobs.Values)
+        {
+            if (!entry.Job.Enabled) continue;
+            if (entry.NextOccurrence is null || entry.NextOccurrence > now) continue;
+            if (entry.IsRunning) continue; // Skip if previous execution still running
+
+            entry.IsRunning = true;
+            var correlationId = Guid.NewGuid().ToString("N")[..12];
+
+            // Fire on background task — don't block the tick loop
+            _ = Task.Run(async () =>
+            {
+                var context = new CronJobContext
+                {
+                    JobName = entry.Job.Name,
+                    CorrelationId = correlationId,
+                    ScheduledTime = entry.NextOccurrence.Value,
+                    ActualTime = DateTimeOffset.UtcNow,
+                    Services = _services
+                };
+
+                var sw = Stopwatch.StartNew();
+                CronJobResult result;
+
+                try
+                {
+                    // Publish activity: job starting
+                    await _activityStream.PublishAsync(new ActivityEvent(
+                        ActivityEventType.AgentProcessing,
+                        "cron", $"cron:{entry.Job.Name}", null, "cron",
+                        $"Cron job '{entry.Job.Name}' starting",
+                        context.ActualTime,
+                        new Dictionary<string, object>
+                        {
+                            ["cron_job"] = entry.Job.Name,
+                            ["correlation_id"] = correlationId,
+                            ["job_type"] = entry.Job.Type.ToString()
+                        }), ct);
+
+                    result = await entry.Job.ExecuteAsync(context, ct);
+                    sw.Stop();
+
+                    _logger.LogInformation(
+                        "Cron job '{Job}' completed in {Duration}ms (success={Success})",
+                        entry.Job.Name, sw.ElapsedMilliseconds, result.Success);
+
+                    _metrics?.RecordCronJobExecution(entry.Job.Name, result.Success, sw.Elapsed);
+                }
+                catch (Exception ex)
+                {
+                    sw.Stop();
+                    result = new CronJobResult(false, Error: ex.Message, Duration: sw.Elapsed);
+                    _logger.LogError(ex, "Cron job '{Job}' failed", entry.Job.Name);
+                    _metrics?.RecordCronJobExecution(entry.Job.Name, false, sw.Elapsed);
+                }
+                finally
+                {
+                    entry.LastRun = DateTimeOffset.UtcNow;
+                    entry.LastResult = result;
+                    entry.IsRunning = false;
+                    entry.RecalculateNext(now);
+
+                    RecordExecution(new CronJobExecution(
+                        entry.Job.Name, correlationId,
+                        context.ActualTime, DateTimeOffset.UtcNow,
+                        result.Success, result.Output, result.Error));
+                }
+            }, ct);
+        }
+    }
+
+    private sealed class CronJobEntry
+    {
+        public ICronJob Job { get; init; }
+        public CronExpression Expression { get; init; }
+        public DateTimeOffset? NextOccurrence { get; set; }
+        public DateTimeOffset? LastRun { get; set; }
+        public CronJobResult? LastResult { get; set; }
+        public bool IsRunning { get; set; }
+
+        public void RecalculateNext(DateTimeOffset from)
+        {
+            NextOccurrence = Expression.GetNextOccurrence(
+                from, Job.TimeZone ?? TimeZoneInfo.Utc);
+        }
+    }
+}
+```
+
+### 2.4 IAgentRunnerFactory (New — Required Dependency)
+
+The cron service needs to create `IAgentRunner` instances on demand. This factory is **also needed independently** (the current codebase has no runner creation mechanism — see analysis).
+
+```csharp
+namespace BotNexus.Core.Abstractions;
+
+public interface IAgentRunnerFactory
+{
+    /// <summary>Create an IAgentRunner for the named agent, using its config.</summary>
+    IAgentRunner Create(string agentName);
+
+    /// <summary>Create an IAgentRunner with an explicit response channel.</summary>
+    IAgentRunner Create(string agentName, IChannel? responseChannel);
+}
+```
+
+Implementation in `BotNexus.Agent`:
+
+```csharp
+public sealed class AgentRunnerFactory : IAgentRunnerFactory
+{
+    private readonly ProviderRegistry _providerRegistry;
+    private readonly ISessionManager _sessionManager;
+    private readonly IContextBuilderFactory _contextBuilderFactory;
+    private readonly IOptions<BotNexusConfig> _config;
+    private readonly ILoggerFactory _loggerFactory;
+    private readonly IEnumerable<ITool> _tools;
+    private readonly IMemoryStore _memoryStore;
+    private readonly IBotNexusMetrics? _metrics;
+    private readonly IEnumerable<IAgentHook> _hooks;
+
+    public IAgentRunner Create(string agentName)
+        => Create(agentName, responseChannel: null);
+
+    public IAgentRunner Create(string agentName, IChannel? responseChannel)
+    {
+        var agentConfig = ResolveAgentConfig(agentName);
+        var contextBuilder = _contextBuilderFactory.Create(agentName);
+        var toolRegistry = new ToolRegistry(_metrics);
+        toolRegistry.RegisterRange(_tools);
+
+        var settings = new GenerationSettings(
+            MaxTokens: agentConfig.MaxTokens ?? _config.Value.Agents.MaxTokens,
+            Temperature: agentConfig.Temperature ?? _config.Value.Agents.Temperature);
+
+        var agentLoop = new AgentLoop(
+            agentName, _providerRegistry, _sessionManager, contextBuilder,
+            toolRegistry, settings,
+            model: agentConfig.Model ?? _config.Value.Agents.Model,
+            providerName: agentConfig.Provider,
+            enableMemory: agentConfig.EnableMemory ?? false,
+            memoryStore: _memoryStore,
+            hooks: _hooks.ToList(),
+            logger: _loggerFactory.CreateLogger<AgentLoop>(),
+            metrics: _metrics,
+            maxToolIterations: agentConfig.MaxToolIterations
+                ?? _config.Value.Agents.MaxToolIterations);
+
+        return new AgentRunner(
+            agentName, agentLoop,
+            _loggerFactory.CreateLogger<AgentRunner>(),
+            responseChannel);
+    }
+
+    private AgentConfig ResolveAgentConfig(string agentName)
+    {
+        return _config.Value.Agents.Named.TryGetValue(agentName, out var cfg)
+            ? cfg
+            : new AgentConfig { Name = agentName };
+    }
+}
+```
+
+### 2.5 ISystemActionRegistry (New — System Job Actions)
+
+Pluggable registry for non-agent system actions. Extensions can register custom actions.
+
+```csharp
+namespace BotNexus.Core.Abstractions;
+
+public interface ISystemActionRegistry
+{
+    void Register(string actionName, ISystemAction action);
+    Task<CronJobResult> ExecuteAsync(string actionName, CronJobContext context, CancellationToken ct);
+    IReadOnlyList<string> GetRegisteredActions();
+}
+
+public interface ISystemAction
+{
+    Task<CronJobResult> ExecuteAsync(CronJobContext context, CancellationToken ct);
+}
+```
+
+Built-in actions:
+- `check-updates` — check for BotNexus updates (HTTP call to release endpoint)
+- `health-audit` — run all health checks and report status
+- `extension-scan` — scan extensions directory for new/updated extensions
+
+---
+
+## 3. Configuration Model
+
+### 3.1 Central CronJobs Section
+
+Jobs are defined centrally in `BotNexusConfig`, not per-agent. This is the key architectural shift.
+
+```csharp
+// In BotNexusConfig.cs
+public class BotNexusConfig
+{
+    // ... existing properties ...
+    public CronConfig Cron { get; set; } = new();
+}
+
+public class CronConfig
+{
+    public bool Enabled { get; set; } = true;
+    public int TickIntervalSeconds { get; set; } = 10;
+    public Dictionary<string, CronJobConfig> Jobs { get; set; } = [];
+}
+
+public class CronJobConfig   // Enhanced — replaces current CronJobConfig
+{
+    public string Schedule { get; set; } = string.Empty;  // Cron expression
+    public string Type { get; set; } = "agent";           // "agent" | "system" | "maintenance"
+    public bool Enabled { get; set; } = true;
+    public string? Timezone { get; set; }
+
+    // Agent job properties
+    public string? Agent { get; set; }
+    public string? Prompt { get; set; }
+    public string? Session { get; set; }          // "new" | "persistent" | "named:{key}"
+
+    // System/Maintenance job properties
+    public string? Action { get; set; }
+    public List<string> Agents { get; set; } = [];
+
+    // Output routing
+    public List<string> OutputChannels { get; set; } = [];
+}
+```
+
+### 3.2 JSON Configuration Examples
+
+```jsonc
+{
+  "BotNexus": {
+    "Cron": {
+      "Enabled": true,
+      "TickIntervalSeconds": 10,
+      "Jobs": {
+        "morning-briefing": {
+          "Schedule": "0 8 * * 1-5",
+          "Type": "agent",
+          "Agent": "nova",
+          "Prompt": "Good morning! Give me a briefing: calendar, priorities, overnight alerts.",
+          "Session": "new",
+          "OutputChannels": ["discord", "websocket"],
+          "Enabled": true
+        },
+        "daily-standup-reminder": {
+          "Schedule": "45 9 * * 1-5",
+          "Type": "agent",
+          "Agent": "nova",
+          "Prompt": "Remind me about standup in 15 minutes. What should I mention?",
+          "Session": "persistent",
+          "OutputChannels": ["slack"],
+          "Enabled": true
+        },
+        "memory-consolidation": {
+          "Schedule": "0 2 * * *",
+          "Type": "maintenance",
+          "Action": "consolidate-memory",
+          "Agents": ["nova", "quill", "atlas"],
+          "Enabled": true
+        },
+        "session-cleanup": {
+          "Schedule": "0 3 * * 0",
+          "Type": "maintenance",
+          "Action": "cleanup-sessions",
+          "Enabled": true
+        },
+        "update-check": {
+          "Schedule": "0 12 * * 1",
+          "Type": "system",
+          "Action": "check-updates",
+          "OutputChannels": ["websocket"],
+          "Enabled": true
+        },
+        "health-audit": {
+          "Schedule": "*/30 * * * *",
+          "Type": "system",
+          "Action": "health-audit",
+          "Enabled": true
+        }
+      }
+    }
+  }
+}
+```
+
+### 3.3 Migration: Per-Agent CronJobs → Central Config
+
+The existing `AgentConfig.CronJobs` property becomes **deprecated**. During a transition period, the cron service will:
+
+1. Load central `Cron.Jobs` config (primary)
+2. Scan `Agents.Named[*].CronJobs[]` for legacy per-agent entries
+3. Convert legacy entries to central format with a deprecation warning log
+4. After one release cycle, remove `AgentConfig.CronJobs`
+
+---
+
+## 4. Execution Flows
+
+### 4.1 AgentJob Flow
+
+```
+Cron tick → AgentCronJob.ExecuteAsync()
+  ├─ Resolve session key (new/persistent/named)
+  ├─ Build synthetic InboundMessage (channel="cron", sender="cron:{jobName}")
+  ├─ IAgentRunnerFactory.Create(agentName)
+  │   ├─ Resolve AgentConfig from BotNexusConfig.Agents.Named
+  │   ├─ IContextBuilderFactory.Create(agentName)
+  │   │   ├─ Load IDENTITY.md, SOUL.md, USER.md, AGENTS.md, TOOLS.md
+  │   │   ├─ Load MEMORY.md + daily notes
+  │   │   └─ Assemble full system prompt
+  │   ├─ Build AgentLoop (provider, session, tools, memory)
+  │   └─ Return AgentRunner instance
+  ├─ AgentRunner.RunAsync(syntheticMessage)
+  │   ├─ ISessionManager.GetOrCreateAsync(sessionKey, agentName)
+  │   ├─ AgentLoop.ProcessAsync()
+  │   │   ├─ IContextBuilder.BuildMessagesAsync()
+  │   │   ├─ LLM provider call (with tool execution loop)
+  │   │   └─ Session saved
+  │   └─ Response captured (no channel send — cron handles routing)
+  ├─ Read last assistant response from session
+  └─ Route output to OutputChannels via ChannelManager.GetChannel()
+```
+
+### 4.2 SystemJob Flow
+
+```
+Cron tick → SystemCronJob.ExecuteAsync()
+  ├─ ISystemActionRegistry.ExecuteAsync(actionName)
+  │   ├─ Resolve ISystemAction by name
+  │   └─ Execute action (HTTP calls, health checks, file ops — no LLM)
+  ├─ Capture result
+  └─ Route output to OutputChannels (if specified)
+```
+
+### 4.3 MaintenanceJob Flow
+
+```
+Cron tick → MaintenanceCronJob.ExecuteAsync()
+  ├─ Switch on action name:
+  │   ├─ "consolidate-memory":
+  │   │   └─ For each agent in TargetAgents:
+  │   │       └─ IMemoryConsolidator.ConsolidateAsync(agentName)
+  │   ├─ "cleanup-sessions":
+  │   │   └─ ISessionManager: delete sessions older than threshold
+  │   ├─ "rotate-logs":
+  │   │   └─ Archive/delete old log files
+  │   └─ "health-audit":
+  │       └─ Run IHealthCheck collection, aggregate results
+  └─ Return result with summary
+```
+
+---
+
+## 5. Channel Output Routing
+
+### Rules
+
+1. **OutputChannels specified** → Send to each named channel via `ChannelManager.GetChannel(name)`. Channel must exist and be running.
+2. **No OutputChannels** → Log-only execution (background/silent). Result stored in execution history.
+3. **Channel not found** → Log warning, skip that channel, continue with others. Job still succeeds.
+4. **Multiple channels** → Fan-out: send same content to all specified channels in parallel.
+
+### OutboundMessage for Cron
+
+Cron output uses a recognizable format:
+
+```csharp
+new OutboundMessage(
+    Channel: channelName,
+    ChatId: $"cron:{jobName}",    // Dedicated chat ID for cron output
+    Content: responseContent,
+    Metadata: new Dictionary<string, object>
+    {
+        ["source"] = "cron",
+        ["job_name"] = jobName,
+        ["job_type"] = jobType.ToString(),
+        ["correlation_id"] = correlationId,
+        ["scheduled_time"] = scheduledTime.ToString("O")
+    });
+```
+
+---
+
+## 6. Session Management
+
+| Mode | Session Key Format | Behavior |
+|------|-------------------|----------|
+| `new` (default) | `cron:{jobName}:{yyyyMMddHHmm}` | Fresh session per execution. No history carry-over. |
+| `persistent` | `cron:{jobName}` | Same session key every run. Agent sees full conversation history across runs. |
+| `named:{key}` | `{key}` | Explicit session key. Can share sessions with interactive conversations. |
+
+### Config Examples
+
+```jsonc
+{ "Session": "new" }            // → cron:morning-briefing:202604021530
+{ "Session": "persistent" }     // → cron:morning-briefing
+{ "Session": "named:ops-log" }  // → ops-log
+```
+
+---
+
+## 7. Heartbeat → Cron Migration
+
+### What HeartbeatService Currently Does
+
+1. **Beat()** — records last heartbeat time, used by `IsHealthy` property
+2. **Memory consolidation trigger** — for each agent with `EnableMemory`, calls `IMemoryConsolidator.ConsolidateAsync()` on interval
+
+### Migration Plan
+
+| HeartbeatService Responsibility | Cron Replacement |
+|------|------|
+| `Beat()` / `IsHealthy` | New `CronHealthCheck` — the cron service tick itself becomes the heartbeat. If cron ticks are running, the system is alive. `IHeartbeatService` interface remains for backward compat, implemented as a thin wrapper reading cron service health. |
+| Memory consolidation trigger | `MaintenanceCronJob` with action `consolidate-memory`, configured in central `Cron.Jobs` |
+| `HeartbeatConfig.Enabled` | `CronConfig.Enabled` |
+| `HeartbeatConfig.IntervalSeconds` | Individual job schedules (more granular) |
+
+### HeartbeatService Deprecation Steps
+
+1. **Phase 1:** New CronService runs alongside HeartbeatService. Both registered. Consolidation runs from cron only if cron has a consolidation job configured; otherwise falls back to heartbeat.
+2. **Phase 2:** HeartbeatService gutted to a thin `IHeartbeatService` adapter that reads from CronService. `Beat()` becomes a no-op. `IsHealthy` delegates to cron tick health.
+3. **Phase 3:** Remove HeartbeatService entirely. `IHeartbeatService` interface either removed or kept as a compatibility shim.
+
+---
+
+## 8. Observability
+
+### 8.1 API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/cron` | GET | List all jobs with status (next run, last run, enabled, success) |
+| `/api/cron/{name}` | GET | Get single job details + recent execution history |
+| `/api/cron/{name}/trigger` | POST | Manually trigger a job |
+| `/api/cron/{name}/enable` | PUT | Enable/disable a job |
+| `/api/cron/history` | GET | Recent execution history across all jobs |
+
+### 8.2 Activity Stream Integration
+
+Cron publishes `ActivityEvent` entries for:
+- Job started (`ActivityEventType.AgentProcessing` with `source=cron`)
+- Job completed (`ActivityEventType.AgentCompleted`)
+- Job failed (`ActivityEventType.Error`)
+
+WebUI and any activity subscribers see cron activity in real-time.
+
+### 8.3 Metrics
+
+Extend `IBotNexusMetrics`:
+
+```csharp
+void RecordCronJobExecution(string jobName, bool success, TimeSpan duration);
+void RecordCronJobSkipped(string jobName, string reason);
+```
+
+### 8.4 Correlation IDs
+
+Each cron execution generates a correlation ID (`Guid.NewGuid().ToString("N")[..12]`). This ID flows through:
+- `CronJobContext.CorrelationId`
+- `InboundMessage.Metadata["correlation_id"]` (for agent jobs)
+- `OutboundMessage.Metadata["correlation_id"]`
+- `ActivityEvent.Metadata["correlation_id"]`
+- Logging scope via `ILogger.BeginScope`
+
+End-to-end tracing: Cron tick → Job execution → Agent run → Channel output.
+
+---
+
+## 9. Extension Points
+
+### Custom ICronJob Implementations
+
+Extensions can ship their own `ICronJob` implementations:
+
+```csharp
+// In an extension assembly
+public class GitHubReleaseScanJob : ICronJob
+{
+    public string Name => "github-release-scan";
+    public CronJobType Type => CronJobType.System;
+    // ...
+}
+```
+
+The extension loader discovers `ICronJob` implementations and registers them with the cron service at startup.
+
+### Custom ISystemAction Implementations
+
+Extensions can register system actions:
+
+```csharp
+public class NuGetUpdateCheckAction : ISystemAction
+{
+    public async Task<CronJobResult> ExecuteAsync(CronJobContext context, CancellationToken ct)
+    {
+        // Check NuGet feeds for updates
+    }
+}
+```
+
+### CronTool Update
+
+The existing `CronTool` (agent-callable tool) should be updated to work with the new `ICronService` API. Agents can still schedule/remove jobs at runtime, but the tool now creates proper `ICronJob` instances.
+
+---
+
+## 10. Work Items
+
+### Phase 1: Foundation (Core Interfaces & Config)
+
+| ID | Title | Size | Owner | Dependencies |
+|----|-------|------|-------|-------------|
+| `cron-core-interfaces` | Define ICronJob, CronJobType, CronJobContext, CronJobResult, CronJobStatus, CronJobExecution in Core | S | Leela | — |
+| `cron-config-model` | Add CronConfig, enhanced CronJobConfig to BotNexusConfig; deprecate AgentConfig.CronJobs | S | Leela | — |
+| `agent-runner-factory` | Create IAgentRunnerFactory interface (Core) + AgentRunnerFactory impl (Agent) + DI registration | M | Farnsworth | — |
+| `system-action-registry` | Define ISystemActionRegistry + ISystemAction interfaces (Core), implement SystemActionRegistry | S | Farnsworth | — |
+
+### Phase 2: Cron Service Implementation
+
+| ID | Title | Size | Owner | Dependencies |
+|----|-------|------|-------|-------------|
+| `cron-service-impl` | New CronService implementation: tick loop, job registration, execution, history tracking, activity stream integration | L | Farnsworth | `cron-core-interfaces` |
+| `agent-cron-job` | AgentCronJob implementation: synthetic message, runner factory, session resolution, channel routing | M | Bender | `cron-core-interfaces`, `agent-runner-factory` |
+| `system-cron-job` | SystemCronJob implementation + built-in system actions (check-updates, health-audit, extension-scan) | M | Bender | `cron-core-interfaces`, `system-action-registry` |
+| `maintenance-cron-job` | MaintenanceCronJob implementation: consolidate-memory, cleanup-sessions, rotate-logs, health-audit | M | Bender | `cron-core-interfaces` |
+| `cron-job-factory` | CronJobFactory: reads CronConfig.Jobs, instantiates correct ICronJob subtype, registers with CronService at startup | M | Farnsworth | `cron-service-impl`, `agent-cron-job`, `system-cron-job`, `maintenance-cron-job` |
+
+### Phase 3: Integration & Migration
+
+| ID | Title | Size | Owner | Dependencies |
+|----|-------|------|-------|-------------|
+| `cron-di-registration` | Wire CronService, CronJobFactory, AgentRunnerFactory, SystemActionRegistry into Gateway DI. Replace old CronService + HeartbeatService registration. | M | Farnsworth | `cron-job-factory` |
+| `heartbeat-migration` | Implement IHeartbeatService adapter over CronService. Gut HeartbeatService to thin shim. Move consolidation to cron config. | M | Bender | `cron-di-registration` |
+| `cron-tool-update` | Update CronTool to use new ICronService.Register(ICronJob) API. Support creating AgentCronJob from tool arguments. | S | Amy | `cron-service-impl` |
+| `legacy-config-migration` | Migration logic: read AgentConfig.CronJobs[], convert to central Cron.Jobs, log deprecation warnings | S | Amy | `cron-job-factory` |
+
+### Phase 4: API & Observability
+
+| ID | Title | Size | Owner | Dependencies |
+|----|-------|------|-------|-------------|
+| `cron-api-endpoints` | REST endpoints: GET /api/cron, GET /api/cron/{name}, POST /api/cron/{name}/trigger, PUT /api/cron/{name}/enable, GET /api/cron/history | M | Fry | `cron-service-impl` |
+| `cron-metrics` | Add RecordCronJobExecution/Skipped to IBotNexusMetrics + implementation | S | Fry | `cron-service-impl` |
+| `cron-health-check` | CronServiceHealthCheck: reports healthy if tick loop running and no catastrophic failures | S | Fry | `cron-service-impl` |
+| `cron-activity-events` | Publish cron start/complete/error events to IActivityStream with correlation IDs | S | Fry | `cron-service-impl` |
+
+### Phase 5: Testing & Documentation
+
+| ID | Title | Size | Owner | Dependencies |
+|----|-------|------|-------|-------------|
+| `cron-unit-tests` | Unit tests: CronService tick logic, job type execution, config parsing, session key resolution, channel routing | L | Hermes | Phase 2 complete |
+| `cron-integration-tests` | Integration tests: end-to-end agent cron job, maintenance consolidation via cron, API endpoints | L | Hermes | Phase 3 complete |
+| `cron-e2e-tests` | E2E tests: full lifecycle — config → startup → scheduled execution → channel output | M | Hermes | Phase 4 complete |
+| `cron-documentation` | Architecture docs update, configuration guide, cron job examples, migration guide from heartbeat | M | Leela | Phase 3 complete |
+| `cron-consistency-review` | Post-implementation consistency audit (Nibbler ceremony) | S | Nibbler | `cron-documentation` |
+
+---
+
+## 11. Phased Execution Order
+
+### Sprint A: Foundation (3-4 days)
+
+```
+cron-core-interfaces ──┐
+cron-config-model ─────┤
+agent-runner-factory ──┤  (all parallel)
+system-action-registry ┘
+```
+
+**Gate:** All Core interfaces defined, config model ready, runner factory works.
+
+### Sprint B: Implementation (5-7 days)
+
+```
+cron-service-impl ─────────────────────┐
+agent-cron-job ─────┐                  │
+system-cron-job ────┤ (parallel)       │
+maintenance-cron-job┘                  │
+                    └── cron-job-factory ┘ (after job types done)
+```
+
+**Gate:** All job types execute correctly in isolation. CronService schedules and fires jobs.
+
+### Sprint C: Integration (3-4 days)
+
+```
+cron-di-registration ──┐
+                       ├── heartbeat-migration
+cron-tool-update ──────┘
+legacy-config-migration ─── (parallel with above)
+```
+
+**Gate:** Gateway starts with cron service. HeartbeatService replaced. Old config migrated.
+
+### Sprint D: Observability (2-3 days)
+
+```
+cron-api-endpoints ─────┐
+cron-metrics ───────────┤ (all parallel)
+cron-health-check ──────┤
+cron-activity-events ───┘
+```
+
+**Gate:** /api/cron returns job list. Activity stream shows cron events.
+
+### Sprint E: Testing & Docs (4-5 days)
+
+```
+cron-unit-tests ────────┐
+cron-integration-tests ─┤ (sequential dependency)
+cron-e2e-tests ─────────┘
+cron-documentation ──────── (parallel with tests)
+cron-consistency-review ─── (after docs)
+```
+
+**Gate:** All tests green. Docs reviewed. Consistency audit clean.
+
+**Total estimated effort: 17-23 days across 5 sprints.**
+
+---
+
+## 12. Decision Summary
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| 1 | Central `Cron.Jobs` config replaces per-agent `CronJobs` | Jon's directive: centralized management, not scattered across agents |
+| 2 | Three job types: Agent, System, Maintenance | Clean separation of concerns. Each type has different execution semantics. |
+| 3 | AgentCronJob uses IAgentRunnerFactory → AgentRunner | Consistent with interactive message flow. Full context/memory/workspace. |
+| 4 | IAgentRunnerFactory is a prerequisite (currently missing from codebase) | Cron can't invoke agents without it. Also fixes a gap in the existing architecture. |
+| 5 | HeartbeatService replaced, not extended | Heartbeat's only unique feature (consolidation) becomes a cron MaintenanceJob. Health beat is implicit from cron tick. |
+| 6 | IHeartbeatService kept as thin adapter during transition | Backward compatibility for anything depending on `IsHealthy` or `Beat()`. |
+| 7 | Channel routing via ChannelManager.GetChannel() | Existing infrastructure. No new channel abstractions needed. |
+| 8 | Session modes: new / persistent / named | Covers all use cases: stateless one-shots, ongoing conversations, shared sessions. |
+| 9 | Activity stream integration for observability | Existing pub/sub pattern. WebUI and subscribers see cron activity without new infrastructure. |
+| 10 | ISystemActionRegistry for extensibility | Extensions can register custom system actions. Config references them by name. |
+| 11 | Cronos library retained | Already in use. Standard 5-field cron expressions. No reason to change. |
+| 12 | 10-second tick interval (configurable) | Same as current CronService. Balances responsiveness with overhead. |
+
+---
+
+## 13. Risks & Mitigations
+
+| Risk | Impact | Mitigation |
+|------|--------|-----------|
+| AgentRunnerFactory is a significant new dependency | Could delay Phase 2 if factory is complex | Factory pattern already established (IContextBuilderFactory). Follow same pattern. |
+| Concurrent agent jobs could overwhelm LLM providers | Rate limiting, provider throttling | Add `MaxConcurrentJobs` config option. Use SemaphoreSlim for throttling. |
+| Session key collisions between cron and interactive | Confusing history mix | `cron:` prefix on all cron session keys prevents collision. |
+| HeartbeatService consumers break during migration | Existing health checks fail | IHeartbeatService adapter maintained throughout transition. |
+| Large execution history memory growth | Memory pressure | Bounded history (default 1000 entries). LRU eviction. |
+
+---
+
+*Leela — BotNexus Lead/Architect*
+*Plan version: 1.0 — 2026-04-02*
+
