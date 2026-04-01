@@ -51,8 +51,12 @@ public class ExtensionLoaderTests : IDisposable
 
         var services = new ServiceCollection();
         var logs = CaptureConsole(() => services.AddBotNexusExtensions(config));
+        using var provider = services.BuildServiceProvider();
+        var report = provider.GetRequiredService<ExtensionLoadReport>();
 
         logs.Should().Contain("Extension folder not found");
+        report.FailedCount.Should().Be(0);
+        report.WarningCount.Should().Be(1);
     }
 
     [Fact]
@@ -68,8 +72,12 @@ public class ExtensionLoaderTests : IDisposable
 
         var services = new ServiceCollection();
         var logs = CaptureConsole(() => services.AddBotNexusExtensions(config));
+        using var provider = services.BuildServiceProvider();
+        var report = provider.GetRequiredService<ExtensionLoadReport>();
 
         logs.Should().Contain("No assemblies found in extension folder");
+        report.FailedCount.Should().Be(0);
+        report.WarningCount.Should().Be(1);
     }
 
     [Fact]

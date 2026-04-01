@@ -39,7 +39,7 @@ public static class ExtensionLoaderExtensions
             if (!Directory.Exists(extensionFolder))
             {
                 LogWarning($"Extension folder not found: {extensionFolder}");
-                results.Add(new ExtensionLoadResult(spec.TypeFolder, spec.Key, false, "Extension folder not found"));
+                results.Add(new ExtensionLoadResult(spec.TypeFolder, spec.Key, false, "Extension folder not found", CountsAsFailure: false));
                 continue;
             }
 
@@ -47,7 +47,7 @@ public static class ExtensionLoaderExtensions
             if (dllFiles.Length == 0)
             {
                 LogWarning($"No assemblies found in extension folder: {extensionFolder}");
-                results.Add(new ExtensionLoadResult(spec.TypeFolder, spec.Key, false, "No assemblies found"));
+                results.Add(new ExtensionLoadResult(spec.TypeFolder, spec.Key, false, "No assemblies found", CountsAsFailure: false));
                 continue;
             }
 
@@ -149,12 +149,14 @@ public static class ExtensionLoaderExtensions
         }
 
         var loadedCount = results.Count(r => r.Success);
-        var failedCount = results.Count(r => !r.Success);
+        var failedCount = results.Count(r => !r.Success && r.CountsAsFailure);
+        var warningCount = results.Count(r => !r.Success && !r.CountsAsFailure);
         services.AddSingleton(new ExtensionLoadReport
         {
             Results = results.AsReadOnly(),
             LoadedCount = loadedCount,
             FailedCount = failedCount,
+            WarningCount = warningCount,
             Completed = true
         });
         services.AddSingleton(new ExtensionLoadContextStore(contexts));
@@ -175,8 +177,11 @@ public static class ExtensionLoaderExtensions
         foreach (var key in config.Providers.Keys)
             yield return new ConfiguredExtension("providers", key, typeof(ILlmProvider));
 
-        foreach (var key in config.Channels.Instances.Keys)
-            yield return new ConfiguredExtension("channels", key, typeof(IChannel));
+        foreach (var (key, channelConfig) in config.Channels.Instances)
+        {
+            if (channelConfig.Enabled)
+                yield return new ConfiguredExtension("channels", key, typeof(IChannel));
+        }
 
         foreach (var key in config.Tools.Extensions.Keys)
             yield return new ConfiguredExtension("tools", key, typeof(ITool));
