@@ -4,6 +4,7 @@
     "BotNexus.Gateway": {
       "commandName": "Project",
       "dotnetRunMessages": true,
+      "applicationUrl": "http://0.0.0.0:18790",
       "environmentVariables": {
         "DOTNET_ENVIRONMENT": "Development"
       }

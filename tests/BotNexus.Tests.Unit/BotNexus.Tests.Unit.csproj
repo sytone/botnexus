@@ -8,6 +8,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="8.0.1">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
@@ -31,6 +35,7 @@
     <ProjectReference Include="..\..\src\BotNexus.Channels.Base\BotNexus.Channels.Base.csproj" />
     <ProjectReference Include="..\..\src\BotNexus.Providers.Base\BotNexus.Providers.Base.csproj" />
     <ProjectReference Include="..\..\src\BotNexus.Tools.GitHub\BotNexus.Tools.GitHub.csproj" />
+    <ProjectReference Include="..\..\src\BotNexus.Gateway\BotNexus.Gateway.csproj" />
   </ItemGroup>
 
 </Project>

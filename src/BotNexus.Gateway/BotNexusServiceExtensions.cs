@@ -22,7 +22,13 @@ public static class BotNexusServiceExtensions
         // Session
         services.AddBotNexusSession();
 
-        // Channel manager (no channels registered by default - added by channel extensions)
+        // WebSocket channel (singleton registered as both concrete type and IChannel so the
+        // handler can manage connections while AgentRunner can route responses through it)
+        services.AddSingleton<WebSocketChannel>();
+        services.AddSingleton<IChannel>(sp => sp.GetRequiredService<WebSocketChannel>());
+        services.AddSingleton<GatewayWebSocketHandler>();
+
+        // Channel manager (includes WebSocketChannel; external channels added by channel extensions)
         services.AddSingleton<ChannelManager>(sp =>
         {
             var channels = sp.GetServices<IChannel>();
