@@ -1,4 +1,5 @@
 using System.Text.Json;
+using BotNexus.Core.Bus;
 using BotNexus.Core.Models;
 using BotNexus.Gateway;
 using FluentAssertions;
@@ -10,7 +11,7 @@ namespace BotNexus.Tests.Unit.Tests;
 public class WebSocketChannelTests
 {
     private static WebSocketChannel CreateChannel() =>
-        new(NullLogger<WebSocketChannel>.Instance);
+        new(new ActivityStream(), NullLogger<WebSocketChannel>.Instance);
 
     private static OutboundMessage Outbound(string chatId, string content) =>
         new("websocket", chatId, content);

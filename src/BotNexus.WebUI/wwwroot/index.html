@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BotNexus</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Sidebar -->
+        <aside id="sidebar">
+            <div class="sidebar-header">
+                <h1>🤖 BotNexus</h1>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="section-header" data-toggle="new-chat-section">
+                    <span>💬 New Chat</span>
+                </div>
+                <div id="new-chat-section" class="section-content">
+                    <button id="btn-new-chat" class="btn btn-primary">Start New Chat</button>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="section-header" data-toggle="sessions-list">
+                    <span>📋 Sessions</span>
+                    <button id="btn-refresh-sessions" class="btn-icon" title="Refresh">↻</button>
+                </div>
+                <div id="sessions-list" class="section-content">
+                    <div class="loading">Loading sessions...</div>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="section-header" data-toggle="channels-list">
+                    <span>📡 Channels</span>
+                    <button id="btn-refresh-channels" class="btn-icon" title="Refresh">↻</button>
+                </div>
+                <div id="channels-list" class="section-content">
+                    <div class="loading">Loading channels...</div>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="section-header" data-toggle="agents-list">
+                    <span>🧠 Agents</span>
+                    <button id="btn-refresh-agents" class="btn-icon" title="Refresh">↻</button>
+                </div>
+                <div id="agents-list" class="section-content">
+                    <div class="loading">Loading agents...</div>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="section-header">
+                    <span>📊 Activity Monitor</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="toggle-activity">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div id="activity-feed" class="section-content activity-feed">
+                </div>
+            </div>
+
+            <div class="sidebar-footer">
+                <div id="connection-status" class="status disconnected">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Disconnected</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main content -->
+        <main id="main-content">
+            <!-- Welcome screen -->
+            <div id="welcome-screen" class="welcome">
+                <div class="welcome-inner">
+                    <h2>🤖 BotNexus</h2>
+                    <p>Select a session from the sidebar or start a new chat.</p>
+                    <p class="text-muted">The activity monitor shows real-time messages across all channels.</p>
+                </div>
+            </div>
+
+            <!-- Chat view -->
+            <div id="chat-view" class="chat-view hidden">
+                <div class="chat-header">
+                    <div class="chat-info">
+                        <h2 id="chat-title">Chat</h2>
+                        <span id="chat-meta" class="text-muted"></span>
+                    </div>
+                </div>
+                <div id="chat-messages" class="chat-messages">
+                </div>
+                <div class="chat-input-area">
+                    <div class="input-row">
+                        <textarea id="chat-input" placeholder="Type a message..." rows="1"></textarea>
+                        <button id="btn-send" class="btn btn-primary" disabled>Send</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

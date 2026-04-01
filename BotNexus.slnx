@@ -16,6 +16,7 @@
     <Project Path="src/BotNexus.Providers.OpenAI/BotNexus.Providers.OpenAI.csproj" />
     <Project Path="src/BotNexus.Session/BotNexus.Session.csproj" />
     <Project Path="src/BotNexus.Tools.GitHub/BotNexus.Tools.GitHub.csproj" />
+    <Project Path="src/BotNexus.WebUI/BotNexus.WebUI.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/BotNexus.Tests.Integration/BotNexus.Tests.Integration.csproj" />

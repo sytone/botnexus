@@ -14,6 +14,7 @@ public static class ServiceCollectionExtensions
     {
         services.Configure<BotNexusConfig>(configuration.GetSection(BotNexusConfig.SectionName));
         services.AddSingleton<IMessageBus>(sp => new MessageBus(capacity: 1000));
+        services.AddSingleton<IActivityStream, ActivityStream>();
         return services;
     }
 }

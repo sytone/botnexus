@@ -11,14 +11,17 @@ namespace BotNexus.Gateway;
 /// <summary>
 /// An <see cref="IChannel"/> that routes agent responses back to connected WebSocket clients.
 /// Each active connection has its own response queue that is drained by the WebSocket write loop.
+/// Also publishes outbound events to the activity stream so the web UI can monitor all traffic.
 /// </summary>
 public sealed class WebSocketChannel : IChannel
 {
     private readonly ConcurrentDictionary<string, Channel<string>> _connections = new();
+    private readonly IActivityStream _activityStream;
     private readonly ILogger<WebSocketChannel> _logger;
 
-    public WebSocketChannel(ILogger<WebSocketChannel> logger)
+    public WebSocketChannel(IActivityStream activityStream, ILogger<WebSocketChannel> logger)
     {
+        _activityStream = activityStream;
         _logger = logger;
     }
 
@@ -82,30 +85,47 @@ public sealed class WebSocketChannel : IChannel
     }
 
     /// <inheritdoc/>
-    public Task SendAsync(OutboundMessage message, CancellationToken cancellationToken = default)
+    public async Task SendAsync(OutboundMessage message, CancellationToken cancellationToken = default)
     {
         if (!_connections.TryGetValue(message.ChatId, out var ch))
         {
             _logger.LogDebug("WebSocket connection {ChatId} not found, dropping response", message.ChatId);
-            return Task.CompletedTask;
+            return;
         }
 
         var json = JsonSerializer.Serialize(new WsOutboundMessage("response", message.Content));
         ch.Writer.TryWrite(json);
-        return Task.CompletedTask;
+
+        // Broadcast to activity stream
+        await _activityStream.PublishAsync(new ActivityEvent(
+            ActivityEventType.ResponseSent,
+            "websocket",
+            $"websocket:{message.ChatId}",
+            message.ChatId,
+            null,
+            message.Content,
+            DateTimeOffset.UtcNow), cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
-    public Task SendDeltaAsync(string chatId, string delta,
+    public async Task SendDeltaAsync(string chatId, string delta,
         IReadOnlyDictionary<string, object>? metadata = null,
         CancellationToken cancellationToken = default)
     {
         if (!_connections.TryGetValue(chatId, out var ch))
-            return Task.CompletedTask;
+            return;
 
         var json = JsonSerializer.Serialize(new WsOutboundMessage("delta", delta));
         ch.Writer.TryWrite(json);
-        return Task.CompletedTask;
+
+        await _activityStream.PublishAsync(new ActivityEvent(
+            ActivityEventType.DeltaSent,
+            "websocket",
+            $"websocket:{chatId}",
+            chatId,
+            null,
+            delta,
+            DateTimeOffset.UtcNow), cancellationToken).ConfigureAwait(false);
     }
 }
 

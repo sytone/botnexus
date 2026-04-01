@@ -1,5 +1,6 @@
 using BotNexus.Core.Abstractions;
 using BotNexus.Core.Configuration;
+using BotNexus.Core.Models;
 using BotNexus.Channels.Base;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -10,10 +11,12 @@ namespace BotNexus.Gateway;
 /// <summary>
 /// The main gateway hosted service. Starts all channels and dispatches
 /// inbound messages from the message bus to registered agent runners.
+/// Publishes activity events so the web UI can observe all traffic.
 /// </summary>
 public sealed class Gateway : BackgroundService
 {
     private readonly IMessageBus _messageBus;
+    private readonly IActivityStream _activityStream;
     private readonly ChannelManager _channelManager;
     private readonly IEnumerable<IAgentRunner> _agentRunners;
     private readonly ILogger<Gateway> _logger;
@@ -21,12 +24,14 @@ public sealed class Gateway : BackgroundService
 
     public Gateway(
         IMessageBus messageBus,
+        IActivityStream activityStream,
         ChannelManager channelManager,
         IEnumerable<IAgentRunner> agentRunners,
         ILogger<Gateway> logger,
         IOptions<BotNexusConfig> config)
     {
         _messageBus = messageBus;
+        _activityStream = activityStream;
         _channelManager = channelManager;
         _agentRunners = agentRunners;
         _logger = logger;
@@ -44,6 +49,16 @@ public sealed class Gateway : BackgroundService
 
         await foreach (var message in _messageBus.ReadAllAsync(stoppingToken).ConfigureAwait(false))
         {
+            // Broadcast inbound message to activity stream
+            await _activityStream.PublishAsync(new ActivityEvent(
+                ActivityEventType.MessageReceived,
+                message.Channel,
+                message.SessionKey,
+                message.ChatId,
+                message.SenderId,
+                message.Content,
+                message.Timestamp), stoppingToken).ConfigureAwait(false);
+
             // Dispatch concurrently to all agent runners
             var runners = _agentRunners.ToList();
             if (runners.Count == 0)
@@ -51,6 +66,9 @@ public sealed class Gateway : BackgroundService
                 _logger.LogWarning("No agent runners registered, dropping message");
                 continue;
             }
+
+            // Capture activity stream for the closure
+            var activityStream = _activityStream;
 
             // Run the first matching runner (could be extended for per-agent routing)
             _ = Task.Run(async () =>
@@ -63,6 +81,15 @@ public sealed class Gateway : BackgroundService
                 {
                     _logger.LogError(ex, "Error processing message from {Channel}/{ChatId}",
                         message.Channel, message.ChatId);
+
+                    await activityStream.PublishAsync(new ActivityEvent(
+                        ActivityEventType.Error,
+                        message.Channel,
+                        message.SessionKey,
+                        message.ChatId,
+                        message.SenderId,
+                        ex.Message,
+                        DateTimeOffset.UtcNow), CancellationToken.None).ConfigureAwait(false);
                 }
             }, stoppingToken);
         }
