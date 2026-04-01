@@ -59,3 +59,23 @@ Build is clean, tests pass. ProviderRegistry exists but is unused — evaluate i
 - Loader creates one collectible `AssemblyLoadContext` per extension folder, supports `IExtensionRegistrar` first, and falls back to convention registration for `ILlmProvider`, `IChannel`, and `ITool`.
 - Security gates are in place for extension keys (reject rooted paths, invalid chars, `.`/`..` traversal), and failures are warning/error logged without crashing startup.
 - Gateway DI now invokes extension loading during service registration so configured extensions are wired automatically at startup.
+
+## Sprint 1 Summary — 2026-04-01T17:33Z
+
+✅ **COMPLETE** — All 2 Foundation Items Delivered (5 more from Farnsworth)
+
+### Your Deliverables (Bender)
+
+1. ✅ **fix-runner-dispatch** — Multi-agent routing via `IAgentRouter`, metadata-driven targeting, broadcast support
+2. ✅ **dynamic-assembly-loader** (8fe66db) — Complete ExtensionLoader with folder discovery, AssemblyLoadContext isolation, registrar + convention registration
+
+### Build Status
+- ✅ Green, all tests passing
+- ✅ Zero errors, warnings resolved
+
+### Next Phase (Phase 2 P0)
+- **Item 8: Copilot Provider** (Farnsworth, 60pt) — Implement OAuth device code flow, OpenAI-compatible HTTP
+- **Item 9: Providers Base** (Fry, 40pt) — Extract shared HTTP code to Providers.Base
+
+### Team Status
+All 7 foundation items completed (Farnsworth: 5, Bender: 2). Decisions merged and deduplicated. Ready for Phase 2.

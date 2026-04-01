@@ -76,3 +76,26 @@
 - **ProviderConfig auth discriminator** (2026-04-01): `ProviderConfig` includes an `Auth` property defaulting to `"apikey"` for selecting API key vs OAuth provider auth behavior.
 - **Config binding is now extension-keyed and case-insensitive** (2026-04-01): `ProvidersConfig` and `ChannelsConfig.Instances` are dictionary-based with `StringComparer.OrdinalIgnoreCase`, enabling folder-name keys (e.g., `openai`, `telegram`) without casing fragility.
 - 2026-04-01: `ProviderRegistry` now infers provider keys from provider namespaces/types (e.g., OpenAI -> `openai`) and is DI-registered so agent loops can resolve provider per agent model/provider config with default fallback.
+
+## Sprint 1 Summary — 2026-04-01T17:33Z
+
+✅ **COMPLETE** — All 5 Foundation Items Delivered (with 2 more from Bender)
+
+### Your Deliverables (Farnsworth)
+
+1. ✅ **config-model-refactor** (5c6f777) — Dictionary-based provider/channel config, case-insensitive keys
+2. ✅ **extension-registrar-interface** — `IExtensionRegistrar` contract, enables extension self-registration
+3. ✅ **oauth-core-abstractions** (96c2c08) — `IOAuthProvider`, `IOAuthTokenStore`, `OAuthToken` in Core.OAuth
+4. ✅ **fix-sync-over-async** — Removed `MessageBusExtensions.Publish()` sync-over-async hazard
+5. ✅ **provider-registry-integration** (4cfd246) — ProviderRegistry now DI-registered, runtime provider resolution
+
+### Build Status
+- ✅ Green, all tests passing
+- ✅ Zero errors, warnings resolved
+
+### Next Phase (Phase 2 P0)
+- **Item 8: Copilot Provider** (Farnsworth, 60pt) — Implement OAuth device code flow, OpenAI-compatible HTTP
+- **Item 9: Providers Base** (Fry, 40pt) — Extract shared HTTP code to Providers.Base
+
+### Team Status
+All 7 foundation items completed (Farnsworth: 5, Bender: 2). Decisions merged and deduplicated. Ready for Phase 2.

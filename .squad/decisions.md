@@ -378,6 +378,61 @@ Granular history makes it easy to see what changed and roll back if needed.
 
 **Ready for implementation.** First work: Farnsworth starts on provider-dynamic-loading (Phase 1 P0 item 1).
 
+---
+
+### 5. Sprint 1 Completion — 7 Foundation Items Done (2026-04-01T17:33Z)
+
+**Status:** Complete  
+**Completed by:** Farnsworth (5 items), Bender (2 items)  
+
+All Phase 1 P0 foundation work delivered:
+
+1. ✅ **config-model-refactor** (Farnsworth, 5c6f777)
+   - Dictionary-based provider/channel config
+   - Case-insensitive key matching via `StringComparer.OrdinalIgnoreCase`
+   - Enables configuration-driven extension discovery
+
+2. ✅ **extension-registrar-interface** (Farnsworth)
+   - `IExtensionRegistrar` contract in Core.Abstractions
+   - Extensions provide own registration logic
+   - Loader discovers and invokes registrars automatically
+
+3. ✅ **oauth-core-abstractions** (Farnsworth, 96c2c08)
+   - `IOAuthProvider`, `IOAuthTokenStore`, `OAuthToken` in Core.OAuth
+   - Default: encrypted file storage at `~/.botnexus/tokens/{providerName}.json`
+   - Integrated with ExtensionLoader auth discriminator
+
+4. ✅ **fix-sync-over-async** (Farnsworth)
+   - Removed `MessageBusExtensions.Publish()` sync-over-async wrapper
+   - All message bus publishing now fully async
+   - Eliminates deadlock hazard
+
+5. ✅ **provider-registry-integration** (Farnsworth, 4cfd246)
+   - ProviderRegistry now DI-registered
+   - Runtime provider resolution by model/provider key
+   - Eliminates dead code, enables multi-provider dispatch
+
+6. ✅ **fix-runner-dispatch** (Bender)
+   - `IAgentRouter` injectable routing layer in Gateway
+   - Multi-agent routing: metadata-driven (`agent`, `agent_name`), broadcast support (`all`, `*`)
+   - `IAgentRunner.AgentName` enables deterministic routing
+   - Config: `DefaultAgent`, `BroadcastWhenAgentUnspecified`
+
+7. ✅ **dynamic-assembly-loader** (Bender, 8fe66db)
+   - `ExtensionLoader` in Core + `ExtensionLoaderExtensions.AddBotNexusExtensions()`
+   - Configuration-driven discovery: `BotNexus:Providers`, `BotNexus:Channels:Instances`, `BotNexus:Tools:Extensions`
+   - Folder convention: `{ExtensionsPath}/{type}/{key}/`
+   - One collectible `AssemblyLoadContext` per extension (isolation, future hot-reload)
+   - Registrar-first, fallback to convention registration (`ILlmProvider`, `IChannel`, `ITool`)
+   - Path validation (reject rooted paths, `.`/`..`, traversal)
+   - Comprehensive logging, continues on missing/empty folders
+
+**Build Status:** ✅ Green, all tests passing, 0 errors
+
+**Unblocks:** Phase 2 P0 — Copilot Provider (item 8, Farnsworth 60pt), Providers Base (item 9, Fry 40pt)
+
+---
+
 ## Governance
 
 - All meaningful changes require team consensus
