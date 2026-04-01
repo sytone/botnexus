@@ -5,6 +5,7 @@ public class ChannelConfig
 {
     public bool Enabled { get; set; } = false;
     public string BotToken { get; set; } = string.Empty;
+    public string SigningSecret { get; set; } = string.Empty;
     public List<string> AllowFrom { get; set; } = [];
 }
 

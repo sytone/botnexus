@@ -154,3 +154,10 @@ All 7 foundation items completed (Farnsworth: 5, Bender: 2). Decisions merged an
 - Loader now validates assembly metadata before load, optionally enforces strong-name signature presence, logs full assembly path/version/discovered types, and supports dry-run validation without runtime loading.
 - Extension AssemblyLoadContext now only shares approved contract assemblies (BotNexus.Core*, Microsoft.Extensions.*) to reduce host-internal exposure.
 - Added unit coverage for invalid assemblies, strong-name enforcement, folder assembly cap, dry-run behavior, reparse-point escape rejection, detailed assembly logging, and host assembly isolation behavior.
+
+### 2026-04-01 — Slack Events API Webhook Endpoint
+- Added a Core-level `IWebhookHandler` contract and Gateway webhook route mapping for registered handlers.
+- Slack channel registrar now registers `/webhooks/slack` only when Slack is enabled/configured, including required signing secret.
+- Slack webhook handling now validates Slack request signatures, responds to URL verification challenges, and publishes message events onto `IMessageBus` for normal channel processing flow.
+- Added unit coverage for URL verification, event callback parsing, valid/invalid signature handling, and conditional Slack webhook registration.
+
