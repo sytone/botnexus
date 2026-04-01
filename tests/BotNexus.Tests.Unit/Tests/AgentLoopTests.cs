@@ -107,6 +107,48 @@ public class AgentLoopTests : IDisposable
     }
 
     [Fact]
+    public async Task ProcessAsync_ExecutesToolCalls_FromAdditionalTools()
+    {
+        var dynamicTool = new Mock<ITool>();
+        dynamicTool.Setup(t => t.Definition).Returns(
+            new ToolDefinition("dynamic_tool", "Dynamic tool", new Dictionary<string, ToolParameterSchema>()));
+        dynamicTool.Setup(t => t.ExecuteAsync(It.IsAny<IReadOnlyDictionary<string, object?>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("dynamic output");
+
+        var mockProvider = new Mock<ILlmProvider>();
+        mockProvider.Setup(p => p.Generation).Returns(new GenerationSettings());
+        var callCount = 0;
+        mockProvider.Setup(p => p.ChatAsync(It.IsAny<ChatRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                if (callCount == 1)
+                    return new LlmResponse("", FinishReason.ToolCalls,
+                        [new ToolCallRequest("id1", "dynamic_tool", new Dictionary<string, object?>())]);
+                return new LlmResponse("done", FinishReason.Stop);
+            });
+
+        var registry = new ProviderRegistry();
+        registry.Register("test", mockProvider.Object);
+        var loop = new AgentLoop(
+            agentName: "test-agent",
+            systemPrompt: null,
+            providerRegistry: registry,
+            sessionManager: _sessionManager,
+            contextBuilder: new ContextBuilder(NullLogger<ContextBuilder>.Instance),
+            toolRegistry: new ToolRegistry(),
+            settings: new GenerationSettings(),
+            additionalTools: [dynamicTool.Object],
+            logger: NullLogger<AgentLoop>.Instance,
+            maxToolIterations: 5);
+
+        var result = await loop.ProcessAsync(MakeMessage("use dynamic tool"));
+
+        result.Should().Be("done");
+        dynamicTool.Verify(t => t.ExecuteAsync(It.IsAny<IReadOnlyDictionary<string, object?>>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task ProcessAsync_CallsHooks()
     {
         var mockHook = new Mock<IAgentHook>();

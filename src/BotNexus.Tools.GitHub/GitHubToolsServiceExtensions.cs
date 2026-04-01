@@ -1,5 +1,5 @@
-using BotNexus.Agent.Tools;
 using BotNexus.Core.Abstractions;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -45,13 +45,29 @@ public static class GitHubToolsServiceExtensions
     }
 
     /// <summary>
-    /// Registers tools from all <see cref="ITool"/> services into the provided <see cref="ToolRegistry"/>.
-    /// Call this after building the service provider to wire extension tools into an agent registry.
+    /// Registers the GitHub tool by binding its options from an extension configuration section.
     /// </summary>
-    public static ToolRegistry RegisterFromServices(this ToolRegistry registry, IServiceProvider services)
+    public static IServiceCollection AddGitHubTools(
+        this IServiceCollection services,
+        IConfiguration configuration)
     {
-        var tools = services.GetServices<ITool>();
-        registry.RegisterRange(tools);
-        return registry;
+        services.Configure<GitHubToolsConfig>(configuration);
+        services.AddSingleton<ITool>(sp =>
+        {
+            var config = sp.GetRequiredService<IOptions<GitHubToolsConfig>>().Value;
+            var logger = sp.GetService<ILogger<GitHubTool>>();
+            return new GitHubTool(config, logger: logger);
+        });
+
+        return services;
     }
+}
+
+/// <summary>
+/// Extension registrar used by the dynamic extension loader.
+/// </summary>
+public sealed class GitHubExtensionRegistrar : IExtensionRegistrar
+{
+    public void Register(IServiceCollection services, IConfiguration configuration)
+        => services.AddGitHubTools(configuration);
 }

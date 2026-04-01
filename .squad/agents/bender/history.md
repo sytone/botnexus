@@ -60,6 +60,12 @@ Build is clean, tests pass. ProviderRegistry exists but is unused — evaluate i
 - Security gates are in place for extension keys (reject rooted paths, invalid chars, `.`/`..` traversal), and failures are warning/error logged without crashing startup.
 - Gateway DI now invokes extension loading during service registration so configured extensions are wired automatically at startup.
 
+### 2026-04-01 — Tool Extensions Now Register via Registrar + Core Interface
+
+- `BotNexus.Tools.GitHub` now exposes a dynamic-loading registrar (`GitHubExtensionRegistrar : IExtensionRegistrar`) so extension config under `Tools:Extensions:{key}` binds and registers `ITool` services through the extension loader.
+- `GitHubTool` now implements `BotNexus.Core.Abstractions.ITool` directly, removing the project’s compile-time dependency on `BotNexus.Agent` and keeping extension contracts rooted in Core.
+- `AgentLoop` now accepts optional additional tools (`IEnumerable<ITool>`) and merges them into the runtime `ToolRegistry`, enabling built-in and dynamically-loaded tools to coexist in invocation flow.
+
 ### 2026-04-01 — Extension Build/Publish Pipeline via MSBuild Metadata
 
 - Added shared `src/Extension.targets` that extension projects can import and activate with `<ExtensionType>` + `<ExtensionName>` metadata.

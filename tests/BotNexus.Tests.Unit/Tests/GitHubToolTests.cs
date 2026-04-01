@@ -1,10 +1,10 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
-using BotNexus.Agent.Tools;
 using BotNexus.Core.Models;
 using BotNexus.Tools.GitHub;
 using FluentAssertions;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Moq.Protected;
@@ -141,19 +141,28 @@ public class GitHubToolTests
         result.Should().StartWith("Error");
     }
 
-    // ── RegisterFromServices ──────────────────────────────────────────────────
+    // ── Registrar/config binding ──────────────────────────────────────────────
 
     [Fact]
-    public void RegisterFromServices_AddsGitHubToolToRegistry()
+    public void GitHubExtensionRegistrar_RegistersToolFromConfiguration()
     {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Token"] = "test-token",
+                ["DefaultOwner"] = "octocat",
+                ["ApiBase"] = "https://api.github.com"
+            })
+            .Build();
+
         var services = new ServiceCollection();
-        services.AddGitHubTools();
+        var registrar = new GitHubExtensionRegistrar();
+        registrar.Register(services, config);
+
         var provider = services.BuildServiceProvider();
+        var tool = provider.GetServices<BotNexus.Core.Abstractions.ITool>().Single();
 
-        var registry = new ToolRegistry();
-        registry.RegisterFromServices(provider);
-
-        registry.Contains("github").Should().BeTrue();
+        tool.Should().BeOfType<GitHubTool>();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

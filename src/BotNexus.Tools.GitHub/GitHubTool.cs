@@ -1,7 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using BotNexus.Agent.Tools;
+using BotNexus.Core.Abstractions;
 using BotNexus.Core.Models;
 using Microsoft.Extensions.Logging;
 
@@ -20,16 +20,17 @@ namespace BotNexus.Tools.GitHub;
 ///   <item><c>search_code</c> — search code in a repository</item>
 /// </list>
 /// </summary>
-public sealed class GitHubTool : ToolBase
+public sealed class GitHubTool : ITool
 {
     private readonly HttpClient _http;
+    private readonly ILogger _logger;
     private readonly string? _defaultOwner;
 
     private static readonly JsonSerializerOptions s_jsonOptions = new() { WriteIndented = true };
 
     public GitHubTool(GitHubToolsConfig config, HttpClient? httpClient = null, ILogger? logger = null)
-        : base(logger)
     {
+        _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
         _defaultOwner = config.DefaultOwner;
         _http = httpClient ?? new HttpClient();
         _http.BaseAddress = new Uri(config.ApiBase.TrimEnd('/') + '/');
@@ -42,7 +43,7 @@ public sealed class GitHubTool : ToolBase
     }
 
     /// <inheritdoc/>
-    public override ToolDefinition Definition => new(
+    public ToolDefinition Definition { get; } = new(
         "github",
         "Interact with GitHub repositories (read-only). Actions: get_repo, list_issues, get_issue, list_prs, search_code.",
         new Dictionary<string, ToolParameterSchema>
@@ -60,25 +61,45 @@ public sealed class GitHubTool : ToolBase
         });
 
     /// <inheritdoc/>
-    protected override async Task<string> ExecuteCoreAsync(
+    public async Task<string> ExecuteAsync(
         IReadOnlyDictionary<string, object?> arguments,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken = default)
     {
-        var action = GetRequiredString(arguments, "action");
-        var owner = GetOptionalString(arguments, "owner", _defaultOwner ?? string.Empty);
-        var repo = GetOptionalString(arguments, "repo");
-        var state = GetOptionalString(arguments, "state", "open");
-        var perPage = GetOptionalInt(arguments, "per_page", 10);
+        _logger.LogDebug("Executing tool '{ToolName}'", Definition.Name);
 
-        return action.ToLowerInvariant() switch
+        try
         {
-            "get_repo" => await GetRepoAsync(owner, repo, cancellationToken),
-            "list_issues" => await ListIssuesAsync(owner, repo, state, perPage, cancellationToken),
-            "get_issue" => await GetIssueAsync(owner, repo, GetRequiredString(arguments, "number"), cancellationToken),
-            "list_prs" => await ListPrsAsync(owner, repo, state, perPage, cancellationToken),
-            "search_code" => await SearchCodeAsync(owner, repo, GetRequiredString(arguments, "query"), perPage, cancellationToken),
-            _ => throw new ToolArgumentException($"Unknown action '{action}'")
-        };
+            var action = GetRequiredString(arguments, "action");
+            var owner = GetOptionalString(arguments, "owner", _defaultOwner ?? string.Empty);
+            var repo = GetOptionalString(arguments, "repo");
+            var state = GetOptionalString(arguments, "state", "open");
+            var perPage = GetOptionalInt(arguments, "per_page", 10);
+
+            return await (action.ToLowerInvariant() switch
+            {
+                "get_repo" => GetRepoAsync(owner, repo, cancellationToken),
+                "list_issues" => ListIssuesAsync(owner, repo, state, perPage, cancellationToken),
+                "get_issue" => GetIssueAsync(owner, repo, GetRequiredString(arguments, "number"), cancellationToken),
+                "list_prs" => ListPrsAsync(owner, repo, state, perPage, cancellationToken),
+                "search_code" => SearchCodeAsync(owner, repo, GetRequiredString(arguments, "query"), perPage, cancellationToken),
+                _ => throw new ToolArgumentException($"Unknown action '{action}'")
+            }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("Tool '{ToolName}' was cancelled", Definition.Name);
+            throw;
+        }
+        catch (ToolArgumentException ex)
+        {
+            _logger.LogWarning("Tool '{ToolName}' argument error: {Message}", Definition.Name, ex.Message);
+            return $"Error: {ex.Message}";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Tool '{ToolName}' threw an unexpected error", Definition.Name);
+            return $"Error executing tool '{Definition.Name}': {ex.Message}";
+        }
     }
 
     private async Task<string> GetRepoAsync(string owner, string repo, CancellationToken ct)
@@ -198,4 +219,26 @@ public sealed class GitHubTool : ToolBase
 
     private static string FormatJson(object? value) =>
         JsonSerializer.Serialize(value, s_jsonOptions);
+
+    private static string GetRequiredString(IReadOnlyDictionary<string, object?> args, string key)
+    {
+        var value = args.GetValueOrDefault(key)?.ToString();
+        if (string.IsNullOrWhiteSpace(value))
+            throw new ToolArgumentException($"'{key}' is required and must be a non-empty string.");
+        return value;
+    }
+
+    private static string GetOptionalString(IReadOnlyDictionary<string, object?> args, string key, string defaultValue = "")
+        => args.GetValueOrDefault(key)?.ToString() ?? defaultValue;
+
+    private static int GetOptionalInt(IReadOnlyDictionary<string, object?> args, string key, int defaultValue = 0)
+    {
+        var raw = args.GetValueOrDefault(key);
+        if (raw is null) return defaultValue;
+        if (raw is int i) return i;
+        if (raw is long l) return (int)l;
+        return int.TryParse(raw.ToString(), out var parsed) ? parsed : defaultValue;
+    }
 }
+
+internal sealed class ToolArgumentException(string message) : Exception(message);

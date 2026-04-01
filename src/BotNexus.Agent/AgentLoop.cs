@@ -24,6 +24,7 @@ public sealed class AgentLoop
     private readonly ISessionManager _sessionManager;
     private readonly ContextBuilder _contextBuilder;
     private readonly ToolRegistry _toolRegistry;
+    private readonly IReadOnlyList<ITool> _additionalTools;
     private readonly IReadOnlyList<IAgentHook> _hooks;
     private readonly ILogger<AgentLoop> _logger;
     private readonly GenerationSettings _settings;
@@ -39,6 +40,7 @@ public sealed class AgentLoop
         GenerationSettings settings,
         string? model = null,
         string? providerName = null,
+        IEnumerable<ITool>? additionalTools = null,
         IReadOnlyList<IAgentHook>? hooks = null,
         ILogger<AgentLoop>? logger = null,
         int maxToolIterations = 40)
@@ -52,6 +54,7 @@ public sealed class AgentLoop
         _settings = settings;
         _model = model;
         _providerName = providerName;
+        _additionalTools = [.. (additionalTools ?? [])];
         _hooks = hooks ?? [];
         _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentLoop>.Instance;
         _maxToolIterations = maxToolIterations;
@@ -70,6 +73,9 @@ public sealed class AgentLoop
         {
             // Add user message to history
             session.AddEntry(new SessionEntry(MessageRole.User, message.Content, message.Timestamp));
+
+            if (_additionalTools.Count > 0)
+                _toolRegistry.RegisterRange(_additionalTools);
 
             var tools = _toolRegistry.GetDefinitions();
             var response = string.Empty;
