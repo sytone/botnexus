@@ -72,6 +72,12 @@ Build is clean, tests pass. ProviderRegistry exists but is unused — evaluate i
 - `Build` now copies extension outputs into solution-root `extensions/{type}/{name}/`, and `Publish` mirrors outputs into `{PublishDir}/extensions/{type}/{name}/`.
 - Applied metadata/imports to Discord, Slack, Telegram, OpenAI, Anthropic, and GitHub extension projects; gateway development config now points `BotNexus:ExtensionsPath` at `../../extensions`.
 
+### 2026-04-01 — Channel Extensions Self-Register via Registrar, WebSocket Remains Core
+
+- Discord, Slack, and Telegram now expose `IExtensionRegistrar` implementations that bind `ChannelConfig` and register `IChannel` only when the instance is enabled and configured.
+- Gateway service registration remains hard-coded only for `WebSocketChannel` + `GatewayWebSocketHandler`; external channels are loaded exclusively through `AddBotNexusExtensions()`.
+- Runtime verification: `/api/channels` still reports the built-in `websocket` channel with no external channels enabled, while channel registrars are discovered and executed from `extensions/channels/*`.
+
 ## Sprint 1 Summary — 2026-04-01T17:33Z
 
 ✅ **COMPLETE** — All 2 Foundation Items Delivered (5 more from Farnsworth)
