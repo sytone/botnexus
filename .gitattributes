@@ -1,0 +1,12 @@
+# Normalize text files to LF in the repository for cross-platform consistency.
+* text=auto eol=lf
+
+# Windows command scripts should keep CRLF for native execution behavior.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Squad: union merge for append-only team state files
+.squad/decisions.md merge=union
+.squad/agents/*/history.md merge=union
+.squad/log/** merge=union
+.squad/orchestration-log/** merge=union
