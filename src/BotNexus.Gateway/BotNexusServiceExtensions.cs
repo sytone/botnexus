@@ -50,6 +50,7 @@ public static class BotNexusServiceExtensions
             var logger = sp.GetRequiredService<ILogger<MemoryStore>>();
             return new MemoryStore(legacyBasePath, logger);
         });
+        services.AddSingleton<IMemoryConsolidator, MemoryConsolidator>();
 
         // WebSocket channel (singleton registered as both concrete type and IChannel so the
         // handler can manage connections while AgentRunner can route responses through it)
