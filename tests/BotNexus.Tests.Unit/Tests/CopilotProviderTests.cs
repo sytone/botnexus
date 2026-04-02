@@ -14,11 +14,15 @@ public class CopilotProviderTests
     [Fact]
     public async Task ChatAsync_ReturnsCompletionPayload()
     {
-        var tokenStore = new InMemoryTokenStore(new OAuthToken("cached-token", DateTimeOffset.UtcNow.AddMinutes(10)));
+        var tokenStore = new InMemoryTokenStore(new OAuthToken("github-oauth-token", DateTimeOffset.UtcNow.AddMinutes(10)));
         var providerHttpClient = new HttpClient(new StubHttpMessageHandler((request, _) =>
         {
+            if (request.RequestUri!.Host == "api.github.com")
+            {
+                return JsonResponse("""{"token":"copilot-token","expires_at":9999999999}""");
+            }
             request.RequestUri!.AbsolutePath.Should().Be("/chat/completions");
-            request.Headers.Authorization.Should().BeEquivalentTo(new AuthenticationHeaderValue("Bearer", "cached-token"));
+            request.Headers.Authorization.Should().BeEquivalentTo(new AuthenticationHeaderValue("Bearer", "copilot-token"));
             return JsonResponse("""
             {
               "choices": [
@@ -51,9 +55,13 @@ public class CopilotProviderTests
     [Fact]
     public async Task ChatStreamAsync_ParsesSseChunks()
     {
-        var tokenStore = new InMemoryTokenStore(new OAuthToken("cached-token", DateTimeOffset.UtcNow.AddMinutes(10)));
-        var providerHttpClient = new HttpClient(new StubHttpMessageHandler((_, _) =>
+        var tokenStore = new InMemoryTokenStore(new OAuthToken("github-oauth-token", DateTimeOffset.UtcNow.AddMinutes(10)));
+        var providerHttpClient = new HttpClient(new StubHttpMessageHandler((request, _) =>
         {
+            if (request.RequestUri!.Host == "api.github.com")
+            {
+                return JsonResponse("""{"token":"copilot-token","expires_at":9999999999}""");
+            }
             var sse = """
             data: {"choices":[{"delta":{"content":"Hello"}}]}
             
@@ -87,8 +95,14 @@ public class CopilotProviderTests
     [Fact]
     public async Task ChatAsync_MapsToolCalls()
     {
-        var tokenStore = new InMemoryTokenStore(new OAuthToken("cached-token", DateTimeOffset.UtcNow.AddMinutes(10)));
-        var providerHttpClient = new HttpClient(new StubHttpMessageHandler((_, _) => JsonResponse("""
+        var tokenStore = new InMemoryTokenStore(new OAuthToken("github-oauth-token", DateTimeOffset.UtcNow.AddMinutes(10)));
+        var providerHttpClient = new HttpClient(new StubHttpMessageHandler((request, _) =>
+        {
+            if (request.RequestUri!.Host == "api.github.com")
+            {
+                return JsonResponse("""{"token":"copilot-token","expires_at":9999999999}""");
+            }
+            return JsonResponse("""
         {
           "choices": [
             {
@@ -107,7 +121,8 @@ public class CopilotProviderTests
             }
           ]
         }
-        """)))
+        """);
+        }))
         {
             BaseAddress = new Uri("https://api.githubcopilot.com")
         };
@@ -162,6 +177,7 @@ public class CopilotProviderTests
     {
         var oauthCalls = 0;
         var apiCalls = 0;
+        var exchangeCalls = 0;
         var oauthHttpClient = new HttpClient(new StubHttpMessageHandler((request, _) =>
         {
             oauthCalls++;
@@ -178,13 +194,18 @@ public class CopilotProviderTests
                 """);
             }
 
-            return JsonResponse("""{ "access_token":"oauth-token","expires_in":3600 }""");
+            return JsonResponse("""{ "access_token":"github-oauth-token","expires_in":3600 }""");
         }));
 
         var providerHttpClient = new HttpClient(new StubHttpMessageHandler((request, _) =>
         {
+            if (request.RequestUri!.Host == "api.github.com")
+            {
+                exchangeCalls++;
+                return JsonResponse("""{"token":"copilot-token","expires_at":9999999999}""");
+            }
             apiCalls++;
-            request.Headers.Authorization.Should().BeEquivalentTo(new AuthenticationHeaderValue("Bearer", "oauth-token"));
+            request.Headers.Authorization.Should().BeEquivalentTo(new AuthenticationHeaderValue("Bearer", "copilot-token"));
             return JsonResponse("""
             {
               "choices": [
@@ -211,6 +232,7 @@ public class CopilotProviderTests
 
         apiCalls.Should().Be(2);
         oauthCalls.Should().Be(2); // device code + first token exchange
+        exchangeCalls.Should().Be(1); // Copilot token cached across calls
         tokenStore.SavedToken.Should().NotBeNull();
     }
 
@@ -234,12 +256,16 @@ public class CopilotProviderTests
                 """);
             }
 
-            return JsonResponse("""{ "access_token":"fresh-token","expires_in":3600 }""");
+            return JsonResponse("""{ "access_token":"fresh-github-token","expires_in":3600 }""");
         }));
 
         var providerHttpClient = new HttpClient(new StubHttpMessageHandler((request, _) =>
         {
-            request.Headers.Authorization.Should().BeEquivalentTo(new AuthenticationHeaderValue("Bearer", "fresh-token"));
+            if (request.RequestUri!.Host == "api.github.com")
+            {
+                return JsonResponse("""{"token":"fresh-copilot-token","expires_at":9999999999}""");
+            }
+            request.Headers.Authorization.Should().BeEquivalentTo(new AuthenticationHeaderValue("Bearer", "fresh-copilot-token"));
             return JsonResponse("""
             {
               "choices": [
@@ -265,7 +291,7 @@ public class CopilotProviderTests
 
         response.Content.Should().Be("reauth");
         tokenStore.Cleared.Should().BeTrue();
-        tokenStore.SavedToken!.AccessToken.Should().Be("fresh-token");
+        tokenStore.SavedToken!.AccessToken.Should().Be("fresh-github-token");
     }
 
     private static HttpResponseMessage JsonResponse(string json) => new(HttpStatusCode.OK)

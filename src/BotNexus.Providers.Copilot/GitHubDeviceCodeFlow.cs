@@ -35,7 +35,7 @@ public class GitHubDeviceCodeFlow
         using var response = await PostFormAsync(DeviceCodeEndpoint, new Dictionary<string, string>
         {
             ["client_id"] = clientId,
-            ["scope"] = "copilot"
+            ["scope"] = "read:user"
         }, cancellationToken).ConfigureAwait(false);
 
         var payload = await ReadJsonAsync(response, cancellationToken).ConfigureAwait(false);
