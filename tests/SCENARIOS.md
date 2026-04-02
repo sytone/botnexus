@@ -3,7 +3,7 @@
 > **Living document** — the single source of truth for "what do we test end-to-end?"
 >
 > Maintained by **Zapp** (E2E & Simulation Engineer).
-> Last updated: 2026-04-03
+> Last updated: 2026-04-10
 
 ---
 
@@ -20,8 +20,11 @@
 | Security & Auth | 5 | 5 | 0 | 0 |
 | Observability | 4 | 4 | 0 | 0 |
 | Cron & Scheduling | 8 | 8 | 0 | 0 |
+| CLI Tool | 12 | 12 | 0 | 0 |
+| Doctor & Diagnostics | 13 | 13 | 0 | 0 |
+| Config Hot Reload | 8 | 8 | 0 | 0 |
 | Getting Started Guide | 1 | 1 | 0 | 0 |
-| **TOTAL** | **65** | **65** | **0** | **0** |
+| **TOTAL** | **98** | **98** | **0** | **0** |
 
 **Coverage: 100% covered. Zero planned. Zero partial.**
 
@@ -963,7 +966,488 @@ E2E tests for the cron system covering the full lifecycle: config → startup �
 
 ---
 
-## 10. Getting Started Guide
+## 10. CLI Tool
+
+Command-line interface for configuration, agent management, diagnostics, status checks, and log viewing.
+
+---
+
+### SC-CLI-001: Help Command Shows All Subcommands
+
+- **Category:** CLI Tool
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/CliIntegrationTests.cs::CliIntegrationTests::Help_ShowsSubcommands_AndReturnsZero`
+- **Description:** Running `botnexus --help` displays all available subcommands (config, agent, provider, extension, doctor, status, logs) and exits with code 0.
+- **Steps:**
+  1. Run `botnexus --help`.
+  2. Verify exit code is 0.
+  3. Verify output contains: "config", "agent", "provider", "extension", "doctor", "status", "logs".
+
+---
+
+### SC-CLI-002: Config Init Creates Configuration
+
+- **Category:** CLI Tool
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/CliIntegrationTests.cs::CliIntegrationTests::ConfigInit_CreatesConfigJson_AndReturnsZero`
+- **Description:** Running `botnexus config init` with standard input creates config.json in the home directory.
+- **Steps:**
+  1. Run `botnexus config init` with stdin: "\n\n\n".
+  2. Verify exit code is 0.
+  3. Verify stdout contains "Initialized config".
+  4. Verify config.json exists in BOTNEXUS_HOME.
+
+---
+
+### SC-CLI-003: Config Validate Passes with Valid JSON
+
+- **Category:** CLI Tool
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/CliIntegrationTests.cs::CliIntegrationTests::ConfigValidate_WithValidConfig_ReturnsPassAndZero`
+- **Description:** Validating a well-formed config.json returns exit code 0 and success message.
+- **Steps:**
+  1. Create valid config.json via `botnexus config init`.
+  2. Run `botnexus config validate`.
+  3. Verify exit code is 0.
+  4. Verify output contains "Config is valid JSON and binds to BotNexusConfig".
+
+---
+
+### SC-CLI-004: Config Validate Fails with Invalid JSON
+
+- **Category:** CLI Tool
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/CliIntegrationTests.cs::CliIntegrationTests::ConfigValidate_WithInvalidConfig_ReturnsFailAndOne`
+- **Description:** Validating malformed JSON returns exit code 1 and error message.
+- **Steps:**
+  1. Write invalid JSON to config.json: "{ invalid json".
+  2. Run `botnexus config validate`.
+  3. Verify exit code is 1.
+  4. Verify output contains "Invalid JSON".
+
+---
+
+### SC-CLI-005: Config Show Outputs Current Configuration
+
+- **Category:** CLI Tool
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/CliIntegrationTests.cs::CliIntegrationTests::ConfigShow_OutputsJson_AndReturnsZero`
+- **Description:** Running `botnexus config show` outputs the current configuration as JSON.
+- **Steps:**
+  1. Initialize config via `botnexus config init`.
+  2. Run `botnexus config show`.
+  3. Verify exit code is 0.
+  4. Verify stdout is valid JSON containing "BotNexus".
+
+---
+
+### SC-CLI-006: Agent List Shows Configured Agents
+
+- **Category:** CLI Tool
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/CliIntegrationTests.cs::CliIntegrationTests::AgentList_ShowsConfiguredAgentsOrEmpty_AndReturnsZero`
+- **Description:** Running `botnexus agent list` displays configured agents or empty message.
+- **Steps:**
+  1. Initialize config.
+  2. Run `botnexus agent list`.
+  3. Verify exit code is 0.
+  4. Verify output is either "No named agents configured." or contains agent names.
+
+---
+
+### SC-CLI-007: Provider List Shows Configured Providers
+
+- **Category:** CLI Tool
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/CliIntegrationTests.cs::CliIntegrationTests::ProviderList_ShowsProvidersOrEmpty_AndReturnsZero`
+- **Description:** Running `botnexus provider list` displays configured providers or empty message.
+- **Steps:**
+  1. Initialize config.
+  2. Run `botnexus provider list`.
+  3. Verify exit code is 0.
+  4. Verify output is either "No providers configured." or contains provider auth types.
+
+---
+
+### SC-CLI-008: Extension List Shows Installed Extensions
+
+- **Category:** CLI Tool
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/CliIntegrationTests.cs::CliIntegrationTests::ExtensionList_ListsExtensionsOrEmpty_AndReturnsZero`
+- **Description:** Running `botnexus extension list` displays installed extensions or empty message.
+- **Steps:**
+  1. Initialize config.
+  2. Run `botnexus extension list`.
+  3. Verify exit code is 0.
+  4. Verify output is either "No installed extensions found." or contains extension types.
+
+---
+
+### SC-CLI-009: Doctor Runs Checkups and Shows Summary
+
+- **Category:** CLI Tool
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/CliIntegrationTests.cs::CliIntegrationTests::Doctor_RunsCheckups_AndShowsSummary`
+- **Description:** Running `botnexus doctor` executes all diagnostic checkups and displays a summary.
+- **Steps:**
+  1. Initialize config.
+  2. Run `botnexus doctor`.
+  3. Verify exit code is 0 or 1 (depending on checkup results).
+  4. Verify stdout contains "Summary:".
+
+---
+
+### SC-CLI-010: Doctor Filters by Category
+
+- **Category:** CLI Tool
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/CliIntegrationTests.cs::CliIntegrationTests::Doctor_WithConfigurationCategory_ShowsFilteredResults`
+- **Description:** Running `botnexus doctor --category configuration` shows only category-filtered checkup results.
+- **Steps:**
+  1. Initialize config.
+  2. Run `botnexus doctor --category configuration`.
+  3. Verify exit code is 0 or 1.
+  4. Verify output contains "Configuration/ConfigValid".
+
+---
+
+### SC-CLI-011: Status Shows Gateway Offline When Not Running
+
+- **Category:** CLI Tool
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/CliIntegrationTests.cs::CliIntegrationTests::Status_ShowsOffline_WhenGatewayNotRunning`
+- **Description:** Running `botnexus status` when Gateway is not running returns "offline" status.
+- **Steps:**
+  1. Initialize config.
+  2. Run `botnexus status` (without starting Gateway).
+  3. Verify exit code is 0.
+  4. Verify stdout contains "Gateway offline".
+
+---
+
+### SC-CLI-012: Logs Command Shows Log File Content
+
+- **Category:** CLI Tool
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/CliIntegrationTests.cs::CliIntegrationTests::Logs_ShowsLogContentOrNoLogsMessage`
+- **Description:** Running `botnexus logs --lines N` displays the last N log lines from the logs directory.
+- **Steps:**
+  1. Initialize config and create logs directory with test log file.
+  2. Write three lines: "line 1", "line 2", "line 3".
+  3. Run `botnexus logs --lines 2`.
+  4. Verify exit code is 0.
+  5. Verify output contains "line 2" and "line 3" (last 2 lines).
+
+---
+
+## 11. Doctor & Diagnostics
+
+Comprehensive health checks covering configuration, security, permissions, resources, connectivity, and extensions with auto-fix capabilities.
+
+---
+
+### SC-DOC-001: Config Valid Checkup Passes for Valid JSON
+
+- **Category:** Doctor & Diagnostics
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Unit/Tests/DiagnosticsCheckupsTests.cs::DiagnosticsCheckupsTests::ConfigValidCheckup_ReturnsPass_ForValidConfigJson`
+- **Description:** ConfigValidCheckup returns Pass status when config.json contains valid JSON with required structure.
+- **Steps:**
+  1. Create config.json with valid BotNexus section.
+  2. Run ConfigValidCheckup.
+  3. Verify CheckupStatus is Pass.
+
+---
+
+### SC-DOC-002: Config Valid Checkup Fails for Invalid JSON
+
+- **Category:** Doctor & Diagnostics
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Unit/Tests/DiagnosticsCheckupsTests.cs::DiagnosticsCheckupsTests::ConfigValidCheckup_ReturnsFail_ForInvalidJson`
+- **Description:** ConfigValidCheckup returns Fail status when config.json contains malformed JSON.
+- **Steps:**
+  1. Write incomplete JSON: '{"BotNexus":', to config.json.
+  2. Run ConfigValidCheckup.
+  3. Verify CheckupStatus is Fail.
+
+---
+
+### SC-DOC-003: Agent Config Checkup Passes for Valid Agents
+
+- **Category:** Doctor & Diagnostics
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Unit/Tests/DiagnosticsCheckupsTests.cs::DiagnosticsCheckupsTests::AgentConfigCheckup_ReturnsPass_ForValidNamedAgents`
+- **Description:** AgentConfigCheckup returns Pass when all named agents have required fields (Name, Provider).
+- **Steps:**
+  1. Create config with agent "default" having Name and Provider.
+  2. Run AgentConfigCheckup.
+  3. Verify CheckupStatus is Pass.
+
+---
+
+### SC-DOC-004: Agent Config Checkup Fails for Missing Fields
+
+- **Category:** Doctor & Diagnostics
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Unit/Tests/DiagnosticsCheckupsTests.cs::DiagnosticsCheckupsTests::AgentConfigCheckup_ReturnsFail_WhenRequiredFieldsMissing`
+- **Description:** AgentConfigCheckup returns Fail when an agent is missing Name or Provider.
+- **Steps:**
+  1. Create config with agent "broken" having empty Provider.
+  2. Run AgentConfigCheckup.
+  3. Verify CheckupStatus is Fail.
+
+---
+
+### SC-DOC-005: Provider Config Checkup Passes for Valid Auth
+
+- **Category:** Doctor & Diagnostics
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Unit/Tests/DiagnosticsCheckupsTests.cs::DiagnosticsCheckupsTests::ProviderConfigCheckup_ReturnsPass_ForValidProviderAuth`
+- **Description:** ProviderConfigCheckup returns Pass when all providers have complete auth configuration.
+- **Steps:**
+  1. Create config with provider "openai" (Auth: apikey, ApiKey present) and provider "copilot" (Auth: oauth, OAuthClientId in env).
+  2. Run ProviderConfigCheckup.
+  3. Verify CheckupStatus is Pass.
+
+---
+
+### SC-DOC-006: Provider Config Checkup Fails for Missing Auth
+
+- **Category:** Doctor & Diagnostics
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Unit/Tests/DiagnosticsCheckupsTests.cs::DiagnosticsCheckupsTests::ProviderConfigCheckup_ReturnsFail_WhenAuthFieldsMissing`
+- **Description:** ProviderConfigCheckup returns Fail when required auth fields are missing.
+- **Steps:**
+  1. Create config with provider "openai" (Auth: apikey but empty ApiKey).
+  2. Run ProviderConfigCheckup.
+  3. Verify CheckupStatus is Fail.
+
+---
+
+### SC-DOC-007: API Key Strength Checkup Passes for Strong Keys
+
+- **Category:** Doctor & Diagnostics
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Unit/Tests/DiagnosticsCheckupsTests.cs::DiagnosticsCheckupsTests::ApiKeyStrengthCheckup_ReturnsPass_ForStrongKeys`
+- **Description:** ApiKeyStrengthCheckup returns Pass when all API keys meet minimum length requirements in Production.
+- **Steps:**
+  1. Set DOTNET_ENVIRONMENT to "Production".
+  2. Create config with API key of sufficient length (16+ chars).
+  3. Run ApiKeyStrengthCheckup.
+  4. Verify CheckupStatus is Pass.
+
+---
+
+### SC-DOC-008: API Key Strength Checkup Warns for Weak Keys
+
+- **Category:** Doctor & Diagnostics
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Unit/Tests/DiagnosticsCheckupsTests.cs::DiagnosticsCheckupsTests::ApiKeyStrengthCheckup_ReturnsWarn_ForWeakKeys`
+- **Description:** ApiKeyStrengthCheckup returns Warn when API keys are below recommended length in Production.
+- **Steps:**
+  1. Set DOTNET_ENVIRONMENT to "Production".
+  2. Create config with API key "short" (< 16 chars).
+  3. Run ApiKeyStrengthCheckup.
+  4. Verify CheckupStatus is Warn.
+
+---
+
+### SC-DOC-009: Token Permissions Checkup Passes for Valid Directory
+
+- **Category:** Doctor & Diagnostics
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Unit/Tests/DiagnosticsCheckupsTests.cs::DiagnosticsCheckupsTests::TokenPermissionsCheckup_ReturnsPass_ForLocalTokensDirectory`
+- **Description:** TokenPermissionsCheckup returns Pass when tokens directory exists with correct permissions.
+- **Steps:**
+  1. Create tokens directory.
+  2. Run TokenPermissionsCheckup.
+  3. Verify CheckupStatus is Pass.
+
+---
+
+### SC-DOC-010: Token Permissions Checkup Warns for Missing Directory
+
+- **Category:** Doctor & Diagnostics
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Unit/Tests/DiagnosticsCheckupsTests.cs::DiagnosticsCheckupsTests::TokenPermissionsCheckup_ReturnsWarn_WhenTokensDirectoryMissing`
+- **Description:** TokenPermissionsCheckup returns Warn when tokens directory does not exist.
+- **Steps:**
+  1. Ensure tokens directory does not exist.
+  2. Run TokenPermissionsCheckup.
+  3. Verify CheckupStatus is Warn.
+
+---
+
+### SC-DOC-011: Extension Signed Checkup Passes When Not Required
+
+- **Category:** Doctor & Diagnostics
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Unit/Tests/DiagnosticsCheckupsTests.cs::DiagnosticsCheckupsTests::ExtensionSignedCheckup_ReturnsPass_WhenSigningNotRequired`
+- **Description:** ExtensionSignedCheckup returns Pass when config disables signature requirement.
+- **Steps:**
+  1. Set config.Extensions.RequireSignedAssemblies = false.
+  2. Run ExtensionSignedCheckup.
+  3. Verify CheckupStatus is Pass.
+
+---
+
+### SC-DOC-012: Port Available Checkup Passes When Port Free
+
+- **Category:** Doctor & Diagnostics
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Unit/Tests/DiagnosticsCheckupsTests.cs::DiagnosticsCheckupsTests::PortAvailableCheckup_ReturnsPass_WhenPortIsAvailable`
+- **Description:** PortAvailableCheckup returns Pass when the configured Gateway port is available.
+- **Steps:**
+  1. Find a free TCP port.
+  2. Set config.Gateway.Port to that port.
+  3. Run PortAvailableCheckup.
+  4. Verify CheckupStatus is Pass.
+
+---
+
+### SC-DOC-013: Checkup Runner Filters by Category
+
+- **Category:** Doctor & Diagnostics
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Unit/Tests/DiagnosticsCheckupsTests.cs::DiagnosticsCheckupsTests::CheckupRunner_FiltersByCategory_AndCollectsResults`
+- **Description:** CheckupRunner filters checkups by category (case-insensitive) and collects results in execution order.
+- **Steps:**
+  1. Create CheckupRunner with checkups in categories "Configuration", "Security", "configuration".
+  2. Run with filter "CONFIGURATION".
+  3. Verify only "Configuration" and "configuration" checkups execute (case-insensitive match).
+  4. Verify results are collected in execution order.
+
+---
+
+## 12. Config Hot Reload
+
+Dynamic configuration reloading without Gateway restart for agents, providers, API keys, cron jobs, with debouncing and error resilience.
+
+---
+
+### SC-CHR-001: Agent Config Change Hot Reloads Without Restart
+
+- **Category:** Config Hot Reload
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/ConfigHotReloadIntegrationTests.cs::ConfigHotReloadIntegrationTests::AgentConfigChange_AddingNamedAgent_MakesAgentAvailableWithoutRestart`
+- **Description:** Adding a new named agent to config.json is reflected in AgentRouter without Gateway restart.
+- **Steps:**
+  1. Start Gateway with agent "agent-a" configured.
+  2. Verify agent-a is resolvable via router.
+  3. Add agent "agent-b" to config.json.
+  4. Wait for hot reload to complete.
+  5. Verify agent-b is now resolvable; no restart required.
+
+---
+
+### SC-CHR-002: API Key Change Hot Reloads Without Restart
+
+- **Category:** Config Hot Reload
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/ConfigHotReloadIntegrationTests.cs::ConfigHotReloadIntegrationTests::ApiKeyChange_RejectsOldKeyAndAcceptsNewKeyWithoutRestart`
+- **Description:** Changing the Gateway API key in config.json immediately invalidates the old key and activates the new one without restart.
+- **Steps:**
+  1. Start Gateway with API key "old-key".
+  2. Verify request with "old-key" returns 200 (OK).
+  3. Change config.json to API key "new-key".
+  4. Wait for hot reload.
+  5. Verify request with "old-key" returns 401 (Unauthorized).
+  6. Verify request with "new-key" returns 200 (OK).
+
+---
+
+### SC-CHR-003: Cron Job Added Hot Reloads Without Restart
+
+- **Category:** Config Hot Reload
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/ConfigHotReloadIntegrationTests.cs::ConfigHotReloadIntegrationTests::CronJobAdded_AppearsOnCronApiWithoutRestart`
+- **Description:** Adding a cron job to config.json makes it immediately available via /api/cron without Gateway restart.
+- **Steps:**
+  1. Start Gateway with empty cron jobs.
+  2. Verify "reload-job" is not in GET /api/cron.
+  3. Add "reload-job" to config.json.
+  4. Wait for hot reload.
+  5. Verify "reload-job" appears in GET /api/cron.
+
+---
+
+### SC-CHR-004: Cron Job Removed Hot Reloads Without Restart
+
+- **Category:** Config Hot Reload
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/ConfigHotReloadIntegrationTests.cs::ConfigHotReloadIntegrationTests::CronJobRemoved_DisappearsFromCronApiWithoutRestart`
+- **Description:** Removing a cron job from config.json immediately removes it from the /api/cron endpoint without Gateway restart.
+- **Steps:**
+  1. Start Gateway with "reload-job" configured.
+  2. Verify "reload-job" is in GET /api/cron.
+  3. Remove "reload-job" from config.json.
+  4. Wait for hot reload.
+  5. Verify "reload-job" is gone from GET /api/cron.
+
+---
+
+### SC-CHR-005: Provider Config Change Hot Reloads Without Restart
+
+- **Category:** Config Hot Reload
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/ConfigHotReloadIntegrationTests.cs::ConfigHotReloadIntegrationTests::ProviderConfigChange_UpdatesProviderRegistryWithoutRestart`
+- **Description:** Changing provider configuration (e.g., switching from provider-a to provider-b) immediately updates the ProviderRegistry without restart.
+- **Steps:**
+  1. Start Gateway with provider "provider-a" registered.
+  2. Verify provider-a is in GET /api/providers.
+  3. Modify config.json to replace provider-a with provider-b.
+  4. Wait for hot reload.
+  5. Verify provider-b is now in GET /api/providers; provider-a is gone.
+
+---
+
+### SC-CHR-006: Restart Required Change Logs Warning and Stays Running
+
+- **Category:** Config Hot Reload
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/ConfigHotReloadIntegrationTests.cs::ConfigHotReloadIntegrationTests::RestartRequiredChange_HostOrPortUpdate_LogsWarningAndGatewayStaysRunning`
+- **Description:** Changes that cannot be hot-reloaded (e.g., host/port) are detected, logged as restart-required, and Gateway continues running.
+- **Steps:**
+  1. Start Gateway with Port 18790.
+  2. Change config.json to Port 18791.
+  3. Wait for hot reload attempt.
+  4. Verify Gateway remains running (GET /health returns 200).
+  5. Verify activity event contains "restart-required:host-port" action.
+
+---
+
+### SC-CHR-007: Debounce Rapid Config Changes to Single Reload
+
+- **Category:** Config Hot Reload
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/ConfigHotReloadIntegrationTests.cs::ConfigHotReloadIntegrationTests::Debounce_RapidConfigChanges_TriggersSingleReload`
+- **Description:** Rapid successive config.json changes (within debounce window) trigger only a single reload instead of multiple.
+- **Steps:**
+  1. Start Gateway with API key "start-key".
+  2. Rapidly change config.json to "key-1", "key-2", "key-3" with 30ms delays.
+  3. Wait for debounce to settle.
+  4. Verify only one reload event was logged (not three).
+  5. Verify final API key "key-3" is active.
+
+---
+
+### SC-CHR-008: Invalid Config Does Not Interrupt Hot Reload
+
+- **Category:** Config Hot Reload
+- **Status:** ✅ Covered
+- **Test location:** `tests/BotNexus.Tests.Integration/Tests/ConfigHotReloadIntegrationTests.cs::ConfigHotReloadIntegrationTests::InvalidConfig_WritingInvalidJson_LogsErrorAndGatewayStaysRunning`
+- **Description:** Writing invalid JSON to config.json is detected, logged as error, and Gateway continues running with previous valid config.
+- **Steps:**
+  1. Start Gateway with valid config and API key "stable-key".
+  2. Write invalid JSON: "{ invalid json" to config.json.
+  3. Wait 1.2+ seconds for attempted reload.
+  4. Verify GET /health still returns 200.
+  5. Verify request with "stable-key" still works (old config retained).
+  6. Verify no reload event was logged (error prevented reload).
+
+---
+
+## 13. Getting Started Guide
 
 End-to-end validation of `docs/getting-started.md` — simulates a real user's first experience via real process starts with isolated `BOTNEXUS_HOME`.
 
@@ -1033,4 +1517,7 @@ Quick reference mapping test files to the scenarios they cover.
 | `tests/BotNexus.Tests.Deployment/Tests/HealthDuringStartupTests.cs` | SC-DPL-009 |
 | `tests/BotNexus.Tests.Deployment/Tests/ConcurrentHandlingTests.cs` | SC-DPL-010 |
 | `tests/BotNexus.Tests.E2E/Tests/CronTests.cs` | SC-CRN-001, SC-CRN-002, SC-CRN-003, SC-CRN-004, SC-CRN-005, SC-CRN-006, SC-CRN-007, SC-CRN-008 |
+| `tests/BotNexus.Tests.Integration/Tests/CliIntegrationTests.cs` | SC-CLI-001, SC-CLI-002, SC-CLI-003, SC-CLI-004, SC-CLI-005, SC-CLI-006, SC-CLI-007, SC-CLI-008, SC-CLI-009, SC-CLI-010, SC-CLI-011, SC-CLI-012 |
+| `tests/BotNexus.Tests.Unit/Tests/DiagnosticsCheckupsTests.cs` | SC-DOC-001, SC-DOC-002, SC-DOC-003, SC-DOC-004, SC-DOC-005, SC-DOC-006, SC-DOC-007, SC-DOC-008, SC-DOC-009, SC-DOC-010, SC-DOC-011, SC-DOC-012, SC-DOC-013 |
+| `tests/BotNexus.Tests.Integration/Tests/ConfigHotReloadIntegrationTests.cs` | SC-CHR-001, SC-CHR-002, SC-CHR-003, SC-CHR-004, SC-CHR-005, SC-CHR-006, SC-CHR-007, SC-CHR-008 |
 | `tests/BotNexus.Tests.Deployment/Tests/GettingStartedGuideTests.cs` | SC-GSG-001 |
