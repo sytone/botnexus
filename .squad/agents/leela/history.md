@@ -375,3 +375,40 @@
 
 **Next Steps:** Production deployment readiness, Sprint 7 planning for P2 items.
 
+
+
+### 2026-04-02 — CLI Tool, Config Hot Reload & Doctor Command Architecture
+
+**Directive:** copilot-directive-2026-04-02T0008 (Jon Bullen)
+
+**Deliverable:** .squad/decisions/inbox/leela-cli-doctor-plan.md
+
+**Three capabilities designed:**
+
+1. **CLI Tool (otnexus command):** New src/BotNexus.Cli/ project as a dotnet tool (installable via dotnet tool install). Uses System.CommandLine for parsing. 16 commands across 6 groups: lifecycle (start/stop/restart/status), config (validate/show/init), agent (add/list/workspace), provider (add/list), channel (add), extension (list), doctor, and logs. Two operating modes: offline (reads config.json directly) and online (queries Gateway REST API). Process management via PID file + health endpoint polling.
+
+2. **Config Hot Reload:** eloadOnChange: true + ConfigReloadOrchestrator hosted service using IOptionsMonitor<BotNexusConfig>.OnChange() with 500ms debounce. Defined what CAN hot reload (agents, cron jobs, API key) vs what REQUIRES restart (Kestrel binding, extension loading, new channels/providers). ApiKeyAuthenticationMiddleware migrated from IOptions to IOptionsMonitor for live API key updates.
+
+3. **Doctor Command:** IHealthCheckup interface in Core. 13 built-in checkups across 6 categories (configuration, security, connectivity, extensions, permissions, resources). Implementations in new BotNexus.Diagnostics project. CheckupRunner executes sequentially with timing. Supports offline (CLI) and online (Gateway /api/doctor endpoint) modes. --category filtering and --json output.
+
+**Work Items:** 28 items across 4 phases:
+- Phase 1 (Foundation): 9 items — Core interface, Diagnostics project, all 13 checkups, tests
+- Phase 2 (CLI Commands): 13 items — CLI project scaffold, all commands, integration tests
+- Phase 3 (Hot Reload): 5 items — reloadOnChange, orchestrator, IOptionsMonitor migration, cron reload, tests
+- Phase 4 (Gateway API): 1 item — /api/status, /api/doctor, /api/shutdown endpoints
+
+**Key Decisions:**
+- CLI is separate dotnet tool, not embedded in Gateway (separation of concerns)
+- IHealthCheckup in Core; implementations in Diagnostics (keeps Core dependency-free)
+- Hot reload via IOptionsMonitor.OnChange() with debounce, not custom file watcher
+- Kestrel binding + extension loading are restart-only (immutable after Build())
+- PID file + health endpoint for process management
+- Config mutations via direct JSON manipulation (CLI writes, hot reload picks up)
+
+**Team Assignments:** Amy (Core/Diagnostics/Gateway), Bender (CLI), Fry (Tests)
+
+### 2026-04-02 — Sprint 7 Complete: CLI Tool, Doctor Diagnostics, Config Hot Reload
+
+**Cross-Agent Update:** Sprint 7 was a major infrastructure sprint combining three interconnected capabilities: the otnexus CLI tool, pluggable doctor diagnostics system, and config hot reload. The CLI tool added 16 commands via System.CommandLine framework for managing BotNexus. The doctor system provides 13 diagnostic checkups across 6 categories (config, security, connectivity, extensions, providers, permissions, resources) with optional auto-fix capability and two fix modes (interactive --fix, force --fix --force). Config hot reload lets the Gateway watch ~/.botnexus/config.json and automatically reload without restart using IOptionsMonitor + FileSystemWatcher. Also deployed three Gateway REST endpoints (/api/status, /api/doctor, /api/shutdown) and fixed a P0 first-run bug where extensions failed to load. Test coverage grew to 443 tests (322 unit + 98 integration + 23 E2E). Kif (Documentation Engineer) joined the team. See .squad/log/2026-04-02T00-34-sprint7-complete.md and .squad/decisions.md Sprint 7 section for full details.
+
+---

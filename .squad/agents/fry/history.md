@@ -200,3 +200,48 @@ See decisions.md "Part 4: Implementation Phases & Work Items" for full roadmap w
 
 **Next Steps:** Production deployment readiness, Sprint 7 planning for P2 items.
 
+## cli-28 — Gateway /api/status, /api/doctor, /api/shutdown endpoints
+
+**Commit:** 1d1bc34 — `feat(api): add status, doctor, and shutdown Gateway endpoints`
+
+### Deliverables
+
+1. **GET /api/status** — Comprehensive status endpoint combining:
+   - Gateway uptime, version, startedAt timestamp
+   - Health check summary (status, healthy/degraded/unhealthy counts)
+   - Loaded extensions count (providers, channels, tools)
+   - Configured agents count (default + named)
+   - Registered cron jobs count (enabled, running state)
+   - Active sessions count
+   - Memory consolidation state (configured, enabled, last run, success)
+
+2. **GET /api/doctor** — Diagnostic checkup endpoint:
+   - Runs all checkups via `CheckupRunner.RunAndFixAsync` (read-only, no auto-fix)
+   - Returns summary (passed/warnings/failed counts) and per-checkup results
+   - Each result includes: name, category, status, message, advice, canAutoFix
+   - Supports `?category=` query param for filtering (e.g., `?category=security`)
+
+3. **POST /api/shutdown** — Graceful shutdown endpoint:
+   - Accepts optional `{ "reason": "..." }` JSON body
+   - Logs shutdown reason via ILogger
+   - Returns 202 Accepted immediately
+   - Calls `IHostApplicationLifetime.StopApplication()` after 500ms delay
+   - Protected by API key auth
+
+### Infrastructure Changes
+- Added `BotNexus.Diagnostics` project reference to Gateway
+- Registered `AddBotNexusDiagnostics()` in DI via `BotNexusServiceExtensions`
+- Fixed pre-existing `volatile TimeSpan` build error in CronService
+
+### Build Status
+- ✅ Solution builds: 0 errors
+- ✅ All 322 unit tests passing
+- ⚠️ Integration tests have pre-existing failures (CronJobFactory/AgentRouter ambiguous constructor issues from other agents' changes)
+
+
+
+### 2026-04-02 — Sprint 7 Complete: CLI Tool, Doctor Diagnostics, Config Hot Reload
+
+**Cross-Agent Update:** Sprint 7 was a major infrastructure sprint combining three interconnected capabilities: the otnexus CLI tool, pluggable doctor diagnostics system, and config hot reload. The CLI tool added 16 commands via System.CommandLine framework for managing BotNexus. The doctor system provides 13 diagnostic checkups across 6 categories (config, security, connectivity, extensions, providers, permissions, resources) with optional auto-fix capability and two fix modes (interactive --fix, force --fix --force). Config hot reload lets the Gateway watch ~/.botnexus/config.json and automatically reload without restart using IOptionsMonitor + FileSystemWatcher. Also deployed three Gateway REST endpoints (/api/status, /api/doctor, /api/shutdown) and fixed a P0 first-run bug where extensions failed to load. Test coverage grew to 443 tests (322 unit + 98 integration + 23 E2E). Kif (Documentation Engineer) joined the team. See .squad/log/2026-04-02T00-34-sprint7-complete.md and .squad/decisions.md Sprint 7 section for full details.
+
+---

@@ -2445,3 +2445,75 @@ cron-consistency-review ─── (after docs)
 *Leela — BotNexus Lead/Architect*
 *Plan version: 1.0 — 2026-04-02*
 
+
+
+---
+
+### 2026-04-01T23:44Z: PRODUCTION BUG — Gateway unhealthy on first run
+**By:** Jon Bullen (via Copilot)
+**What:** Gateway starts but health returns Unhealthy. Extension loader failed to load all 7 extensions (0 loaded, 7 failed). No providers registered. Providers not ready: anthropic, azure-openai, copilot, openai. No logs in logs directory. Getting started guide didn't catch this — need a scenario test that follows the guide exactly.
+**Health response:** provider_registration: Unhealthy (no providers), extension_loader: Unhealthy (0 loaded, 7 failed), provider_readiness: Unhealthy (anthropic, azure-openai, copilot, openai missing)
+**Root causes to investigate:** (1) Extensions not built to extensions/ folder on first run? (2) Config references providers that don't exist as extensions? (3) Log output not going to ~/.botnexus/logs/? (4) Default config too aggressive — references 4 providers but user only configured copilot?
+**Why:** This is a P0 production bug. The getting started experience is broken.
+
+### 2026-04-02T00:08Z: User directive — CLI tool, config hot reload, doctor command
+**By:** Jon Bullen (via Copilot)
+**What:** Three requirements:
+1. **CLI Tool** — A otnexus CLI for managing the environment:
+   - Validate configuration (syntax, completeness, references)
+   - Add agents, providers, channels interactively
+   - Start/stop/restart the gateway
+   - Status checks
+   - Manage extensions
+
+2. **Config Hot Reload** — Gateway should watch ~/.botnexus/config.json and automatically reload when it changes. No manual restart needed for config changes. Use .NET's eloadOnChange: true + IOptionsMonitor<T>.
+
+3. **Doctor Command** — otnexus doctor that validates the environment:
+   - Pluggable check system: IHealthCheckup base interface with properties (type, category, description)
+   - Check types: configuration, security, connectivity, extensions, providers, permissions
+   - Each checkup can pass/warn/fail with advice
+   - Can filter by category: otnexus doctor --category security
+   - Example checks: config.json valid, extensions folder permissions, provider connectivity, OAuth token valid, API key strength, port availability, disk space for logs/sessions
+   - Rules-based, not AI — deterministic checks with clear advice
+
+**Why:** User request — DX and operational tooling. Users need CLI management and self-service diagnostics, not just raw config file editing.
+
+### 2026-04-02T00:29Z: User directive — Doctor checkups should have optional auto-fix
+**By:** Jon Bullen (via Copilot)
+**What:** Each IHealthCheckup should optionally support an auto-fix capability. Not all checkups can auto-fix (e.g., "set your API key" requires user action), but many can (e.g., "create missing logs directory", "fix file permissions", "create default config"). The interface should have an optional FixAsync() method or a CanAutoFix property. The doctor command should support otnexus doctor --fix to attempt auto-fixes for failing checkups.
+**Why:** User request — reduces friction for common environment issues. Users shouldn't have to manually fix things the tool can fix for them.
+
+### 2026-04-02T00:31Z: User directive — Doctor --fix prompts before fixing, --force skips prompts
+**By:** Jon Bullen (via Copilot)
+**What:** The otnexus doctor --fix command must ASK the user before applying each fix (e.g., "Create missing logs directory? [y/N]"). If the user wants to skip prompts and auto-fix everything, they use otnexus doctor --fix --force. Without --fix, doctor only diagnoses. This gives users control: diagnose-only → interactive fix → full auto-fix.
+**Why:** User request — safety and control. Users should see what's being fixed before it happens, unless they explicitly opt into force mode.
+
+### 2026-04-02T00:34Z: Sprint 7 Completion Summary
+**By:** Team (Sprint Complete)
+**What:** Sprint 7 delivered:
+- **CLI Tool:** 16 commands via System.CommandLine (start/stop/restart/status, config validate/show/init, agent list, provider list, channel add, extension list, logs, shutdown)
+- **Doctor Diagnostics:** 13 diagnostic checkups across categories (config, security, connectivity, extensions, providers, permissions, resources) with auto-fix support
+- **Config Hot Reload:** ConfigReloadOrchestrator + IOptionsMonitor watching ~/.botnexus/config.json for changes; Cron reload cycle
+- **Gateway Endpoints:** /api/status, /api/doctor, /api/shutdown REST endpoints
+- **Test Coverage:** 443 tests passing (322 unit + 98 integration + 23 E2E)
+- **Team Expansion:** Kif (Documentation Engineer) added to team roster
+- **P0 Bug Fix:** First-run extension loader + health checks + default config issues resolved
+
+**Architecture Decisions Embedded:**
+| Component | Decision |
+|-----------|----------|
+| CLI Framework | System.CommandLine (standard .NET tool pattern) |
+| Doctor Plugins | IHealthCheckup interface, CheckupRunner orchestrator |
+| Auto-fix Model | Optional FixAsync() with CanAutoFix property, --fix (interactive) vs --force |
+| Config Reload | IOptionsMonitor + FileSystemWatcher + IHostedService in Gateway |
+| Gateway API | REST endpoints (/api/status, /api/doctor, /api/shutdown) |
+| Extension Loader | Auto-scan extensions/ folder, validate assemblies, report failures |
+| Logging | ~/.botnexus/logs/ with structured output, health-aware logging |
+
+**Sprint Metrics:**
+- 28 work items completed
+- 4 agent-sprints coordinated
+- 3 cron scheduling phases completed
+- 11 team agents active, 1 new (Kif)
+- 0 production incidents (fixed 1 P0 pre-release)
+

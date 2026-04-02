@@ -128,3 +128,33 @@
 
 **Next Steps:** Production deployment readiness, Sprint 7 planning for P2 items.
 
+### 2026-04-03 — Getting-Started Guide Scenario Test (SC-GSG-001)
+
+**Task:** Jon followed getting-started.md and the Gateway was unhealthy. Added scenario test to catch this.
+
+**Root cause found:** `IAgentRunner` instances were never registered in DI at startup. `AgentRunnerFactory` existed but was only called by cron jobs. `AgentRouter` received an empty `IEnumerable<IAgentRunner>`, so all WebSocket messages were silently dropped ("No agent runners registered, dropping message").
+
+**Fixes:**
+- `AgentRunnerFactory`: Now injects `IEnumerable<IChannel>` and wires `WebSocketChannel` as default response channel into created runners.
+- `BotNexusServiceExtensions`: Registers an `IAgentRunner` singleton for each named agent from `BotNexus:Agents:Named` config at startup.
+
+**Test:** `GettingStartedGuideTests.GettingStartedGuide_FullJourney_SucceedsOnCleanInstall` — real process test that follows the guide step by step:
+1. Verify build (Gateway DLL exists)
+2. First run with empty BOTNEXUS_HOME → verify dir structure
+3. Health check → Healthy or Degraded (NOT Unhealthy)
+4. Ready check → 200 OK
+5. Deploy fixture provider extension → restart → verify loaded via /api/extensions
+6. Add "assistant" agent to config → restart → verify via /api/agents
+7. WebSocket connect → send message → verify fixture provider echoes response
+8. Verify lazy-created workspace (SOUL.md, IDENTITY.md)
+9. Final /api/extensions and /api/agents validation
+
+**Result:** 11/11 deployment tests pass, 77/77 integration pass, 23/23 E2E pass. SCENARIOS.md updated to 65/65.
+
+
+
+### 2026-04-02 — Sprint 7 Complete: CLI Tool, Doctor Diagnostics, Config Hot Reload
+
+**Cross-Agent Update:** Sprint 7 was a major infrastructure sprint combining three interconnected capabilities: the otnexus CLI tool, pluggable doctor diagnostics system, and config hot reload. The CLI tool added 16 commands via System.CommandLine framework for managing BotNexus. The doctor system provides 13 diagnostic checkups across 6 categories (config, security, connectivity, extensions, providers, permissions, resources) with optional auto-fix capability and two fix modes (interactive --fix, force --fix --force). Config hot reload lets the Gateway watch ~/.botnexus/config.json and automatically reload without restart using IOptionsMonitor + FileSystemWatcher. Also deployed three Gateway REST endpoints (/api/status, /api/doctor, /api/shutdown) and fixed a P0 first-run bug where extensions failed to load. Test coverage grew to 443 tests (322 unit + 98 integration + 23 E2E). Kif (Documentation Engineer) joined the team. See .squad/log/2026-04-02T00-34-sprint7-complete.md and .squad/decisions.md Sprint 7 section for full details.
+
+---
