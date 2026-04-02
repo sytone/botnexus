@@ -6,6 +6,7 @@
     <Project Path="src/BotNexus.Channels.Discord/BotNexus.Channels.Discord.csproj" />
     <Project Path="src/BotNexus.Channels.Slack/BotNexus.Channels.Slack.csproj" />
     <Project Path="src/BotNexus.Channels.Telegram/BotNexus.Channels.Telegram.csproj" />
+    <Project Path="src/BotNexus.Cli/BotNexus.Cli.csproj" />
     <Project Path="src/BotNexus.Command/BotNexus.Command.csproj" />
     <Project Path="src/BotNexus.Core/BotNexus.Core.csproj" />
     <Project Path="src/BotNexus.Diagnostics/BotNexus.Diagnostics.csproj" />
