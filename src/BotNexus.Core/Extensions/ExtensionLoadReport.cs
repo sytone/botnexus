@@ -5,6 +5,7 @@ public sealed record ExtensionLoadResult(
     string Key,
     bool Success,
     string Message,
+    string? Version = null,
     bool CountsAsFailure = true);
 
 public sealed class ExtensionLoadReport

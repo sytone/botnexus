@@ -118,6 +118,9 @@ public static class ExtensionLoaderExtensions
                 continue;
             }
 
+            var extensionVersion = loadedAssemblies[0].GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                ?? loadedAssemblies[0].GetName().Version?.ToString();
+
             var extensionConfigSection = GetExtensionConfigSection(botSection, spec.TypeFolder, spec.Key);
             var registrationCountBefore = CountServiceRegistrations(services, spec.InterfaceType);
             if (TryRegisterWithRegistrar(services, extensionConfigSection, loadedAssemblies))
@@ -130,7 +133,8 @@ public static class ExtensionLoaderExtensions
                     spec.TypeFolder,
                     spec.Key,
                     succeeded,
-                    succeeded ? $"Registered {addedRegistrations} service(s)" : "Registrar did not register matching services"));
+                    succeeded ? $"Registered {addedRegistrations} service(s)" : "Registrar did not register matching services",
+                    extensionVersion));
                 LogInfo($"Registrar-based registration completed for '{spec.TypeFolder}/{spec.Key}'");
                 continue;
             }
@@ -145,7 +149,8 @@ public static class ExtensionLoaderExtensions
                 spec.TypeFolder,
                 spec.Key,
                 finalSucceeded,
-                finalSucceeded ? $"Registered {finalAddedRegistrations} service(s)" : "No matching services registered"));
+                finalSucceeded ? $"Registered {finalAddedRegistrations} service(s)" : "No matching services registered",
+                extensionVersion));
         }
 
         var loadedCount = results.Count(r => r.Success);

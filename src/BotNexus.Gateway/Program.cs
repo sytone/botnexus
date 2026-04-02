@@ -357,7 +357,8 @@ app.MapGet("/api/extensions", (
             type = r.Type,
             key = r.Key,
             success = r.Success,
-            message = r.Message
+            message = r.Message,
+            version = r.Version
         })
     }, jsonOptions);
 });

@@ -337,9 +337,24 @@ static Command BuildExtensionCommand(Option<string?> homeOption, ConfigFileManag
                     .Select(Path.GetFileName)
                     .Where(name => !string.IsNullOrWhiteSpace(name))
                     .ToList();
+
+                var mainDll = Directory.EnumerateFiles(extensionDirectory, "BotNexus.*.dll", SearchOption.TopDirectoryOnly)
+                    .FirstOrDefault();
+                var version = "-";
+                if (mainDll is not null)
+                {
+                    try
+                    {
+                        var assemblyName = System.Reflection.AssemblyName.GetAssemblyName(mainDll);
+                        version = assemblyName.Version?.ToString() ?? "-";
+                    }
+                    catch { }
+                }
+
                 rows.Add([
                     type,
                     Path.GetFileName(extensionDirectory),
+                    version,
                     extensionDirectory,
                     files.Count == 0 ? "-" : string.Join(", ", files.Take(4))
                 ]);
@@ -352,7 +367,7 @@ static Command BuildExtensionCommand(Option<string?> homeOption, ConfigFileManag
             return 0;
         }
 
-        ConsoleOutput.WriteTable(["type", "name", "path", "files"], rows);
+        ConsoleOutput.WriteTable(["type", "name", "version", "path", "files"], rows);
         return 0;
     });
 
@@ -1121,7 +1136,20 @@ static int RunInstall(string homePath, string installPath, string packagesPath)
                 entry.ExtractToFile(destinationPath, overwrite: true);
             }
 
-            installed.Add(new PackageInstallResult(Path.GetFileName(packageFile), target.Kind, target.TargetPath, "installed"));
+            string? packageVersion = null;
+            var extractedDll = Directory.EnumerateFiles(target.TargetPath, "BotNexus.*.dll", SearchOption.AllDirectories)
+                .FirstOrDefault();
+            if (extractedDll is not null)
+            {
+                try
+                {
+                    var assemblyName = AssemblyName.GetAssemblyName(extractedDll);
+                    packageVersion = assemblyName.Version?.ToString();
+                }
+                catch { }
+            }
+
+            installed.Add(new PackageInstallResult(Path.GetFileName(packageFile), target.Kind, target.TargetPath, "installed", packageVersion));
         }
     }
     catch (Exception ex)
@@ -1130,13 +1158,13 @@ static int RunInstall(string homePath, string installPath, string packagesPath)
         return 1;
     }
 
-    var versionPath = WriteVersionManifest(installPath, packagesPath, installed.Select(item => item.Package).ToList());
+    var versionPath = WriteVersionManifest(installPath, packagesPath, installed);
     UpdateExtensionsPathInConfig(homePath, Path.Combine(installPath, "extensions"));
 
     ConsoleOutput.WriteStatus(ConsoleStatus.Success, $"Installed {installed.Count(item => item.Status == "installed")} package(s).");
     ConsoleOutput.WriteTable(
-        ["package", "kind", "status", "target"],
-        installed.Select(item => new[] { item.Package, item.Kind, item.Status, item.Target }));
+        ["package", "kind", "version", "status", "target"],
+        installed.Select(item => new[] { item.Package, item.Kind, item.Version ?? "-", item.Status, item.Target }));
     AnsiConsole.MarkupLine($"[dim]version.json written to {Markup.Escape(versionPath)}[/]");
     return 0;
 }
@@ -1176,7 +1204,7 @@ static bool IsNuGetMetadataEntry(string entryPath)
     return false;
 }
 
-static string WriteVersionManifest(string installPath, string packagesPath, IReadOnlyCollection<string> packages)
+static string WriteVersionManifest(string installPath, string packagesPath, IReadOnlyList<PackageInstallResult> packages)
 {
     var version = ResolveCliVersion();
     var isRelease = version.Contains("-dev") is false;
@@ -1188,7 +1216,13 @@ static string WriteVersionManifest(string installPath, string packagesPath, IRea
         Source = isRelease ? "release" : "dev",
         PackagesPath = packagesPath,
         InstallPath = installPath,
-        Packages = packages
+        Packages = packages.Select(p => new
+        {
+            name = p.Package,
+            version = p.Version ?? "unknown",
+            kind = p.Kind,
+            status = p.Status
+        })
     };
 
     var versionPath = Path.Combine(installPath, "version.json");
@@ -1640,7 +1674,7 @@ static string BuildGatewayUrl(GatewayConfig gateway)
 
 readonly record struct BackupResult(string ArchivePath, long ArchiveSizeBytes, BackupSummary Summary);
 readonly record struct InstallTarget(string Kind, string TargetPath);
-readonly record struct PackageInstallResult(string Package, string Kind, string Target, string Status);
+readonly record struct PackageInstallResult(string Package, string Kind, string Target, string Status, string? Version = null);
 readonly record struct InstalledVersionInfo(string Version, string? InstalledAtUtc, string? Commit, string? Source, string? PackagesPath);
 
 readonly record struct BackupSummary(
