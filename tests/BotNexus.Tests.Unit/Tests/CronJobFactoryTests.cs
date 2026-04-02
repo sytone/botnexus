@@ -51,8 +51,8 @@ public sealed class CronJobFactoryTests
 
         var serviceProvider = BuildServiceProvider();
         var factory = new CronJobFactory(
-            Options.Create(cronConfig),
-            Options.Create(new BotNexusConfig()),
+            new TestOptionsMonitor<CronConfig>(cronConfig),
+            new TestOptionsMonitor<BotNexusConfig>(new BotNexusConfig()),
             serviceProvider,
             NullLogger<CronJobFactory>.Instance);
         var cronService = new Mock<ICronService>();
@@ -83,8 +83,8 @@ public sealed class CronJobFactoryTests
 
         var serviceProvider = BuildServiceProvider();
         var factory = new CronJobFactory(
-            Options.Create(cronConfig),
-            Options.Create(new BotNexusConfig()),
+            new TestOptionsMonitor<CronConfig>(cronConfig),
+            new TestOptionsMonitor<BotNexusConfig>(new BotNexusConfig()),
             serviceProvider,
             NullLogger<CronJobFactory>.Instance);
         var cronService = new Mock<ICronService>();
@@ -125,8 +125,8 @@ public sealed class CronJobFactoryTests
 
         var serviceProvider = BuildServiceProvider();
         var factory = new CronJobFactory(
-            Options.Create(cronConfig),
-            Options.Create(botNexusConfig),
+            new TestOptionsMonitor<CronConfig>(cronConfig),
+            new TestOptionsMonitor<BotNexusConfig>(botNexusConfig),
             serviceProvider,
             NullLogger<CronJobFactory>.Instance);
         var cronService = new Mock<ICronService>();
@@ -162,8 +162,8 @@ public sealed class CronJobFactoryTests
 
         var serviceProvider = BuildServiceProvider();
         var factory = new CronJobFactory(
-            Options.Create(cronConfig),
-            Options.Create(new BotNexusConfig()),
+            new TestOptionsMonitor<CronConfig>(cronConfig),
+            new TestOptionsMonitor<BotNexusConfig>(new BotNexusConfig()),
             serviceProvider,
             NullLogger<CronJobFactory>.Instance);
         var cronService = new Mock<ICronService>();
@@ -198,8 +198,8 @@ public sealed class CronJobFactoryTests
 
         var serviceProvider = BuildServiceProvider();
         var factory = new CronJobFactory(
-            Options.Create(cronConfig),
-            Options.Create(new BotNexusConfig()),
+            new TestOptionsMonitor<CronConfig>(cronConfig),
+            new TestOptionsMonitor<BotNexusConfig>(new BotNexusConfig()),
             serviceProvider,
             NullLogger<CronJobFactory>.Instance);
         var cronService = new Mock<ICronService>();
@@ -247,8 +247,8 @@ public sealed class CronJobFactoryTests
 
         var serviceProvider = BuildServiceProvider();
         var factory = new CronJobFactory(
-            Options.Create(cronConfig),
-            Options.Create(botNexusConfig),
+            new TestOptionsMonitor<CronConfig>(cronConfig),
+            new TestOptionsMonitor<BotNexusConfig>(botNexusConfig),
             serviceProvider,
             NullLogger<CronJobFactory>.Instance);
         var cronService = new Mock<ICronService>();
@@ -287,5 +287,18 @@ public sealed class CronJobFactoryTests
         public Task SendAsync(OutboundMessage message, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task SendDeltaAsync(string chatId, string delta, IReadOnlyDictionary<string, object>? metadata = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public bool IsAllowed(string senderId) => true;
+    }
+
+    private sealed class TestOptionsMonitor<T>(T value) : IOptionsMonitor<T>
+    {
+        public T CurrentValue { get; private set; } = value;
+        public T Get(string? name) => CurrentValue;
+        public IDisposable OnChange(Action<T, string?> listener) => NullDisposable.Instance;
+    }
+
+    private sealed class NullDisposable : IDisposable
+    {
+        public static readonly NullDisposable Instance = new();
+        public void Dispose() { }
     }
 }

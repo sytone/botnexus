@@ -5,6 +5,7 @@ namespace BotNexus.Providers.Base;
 /// <summary>Registry of available LLM providers keyed by name.</summary>
 public sealed class ProviderRegistry
 {
+    private readonly object _sync = new();
     private readonly Dictionary<string, ILlmProvider> _providers = new(StringComparer.OrdinalIgnoreCase);
 
     public ProviderRegistry(IEnumerable<ILlmProvider>? providers = null)
@@ -16,23 +17,71 @@ public sealed class ProviderRegistry
 
     /// <summary>Registers a provider under the given name.</summary>
     public void Register(string name, ILlmProvider provider)
-        => _providers[name] = provider;
+    {
+        lock (_sync)
+        {
+            _providers[name] = provider;
+        }
+    }
+
+    /// <summary>Removes a provider by name.</summary>
+    public bool Remove(string name)
+    {
+        lock (_sync)
+        {
+            return _providers.Remove(name);
+        }
+    }
+
+    /// <summary>Replaces all provider registrations.</summary>
+    public void ReplaceAll(IEnumerable<KeyValuePair<string, ILlmProvider>> providers)
+    {
+        ArgumentNullException.ThrowIfNull(providers);
+
+        lock (_sync)
+        {
+            _providers.Clear();
+            foreach (var (name, provider) in providers)
+                _providers[name] = provider;
+        }
+    }
 
     /// <summary>Gets a provider by name, or null if not found.</summary>
     public ILlmProvider? Get(string name)
-        => _providers.GetValueOrDefault(name);
+    {
+        lock (_sync)
+        {
+            return _providers.GetValueOrDefault(name);
+        }
+    }
 
     /// <summary>Gets a provider by name, throwing if not found.</summary>
     public ILlmProvider GetRequired(string name)
-        => _providers.TryGetValue(name, out var p) ? p
-            : throw new InvalidOperationException($"Provider '{name}' is not registered.");
+    {
+        lock (_sync)
+        {
+            return _providers.TryGetValue(name, out var p) ? p
+                : throw new InvalidOperationException($"Provider '{name}' is not registered.");
+        }
+    }
 
     /// <summary>Gets the first registered provider, or null if none are registered.</summary>
     public ILlmProvider? GetDefault()
-        => _providers.Values.FirstOrDefault();
+    {
+        lock (_sync)
+        {
+            return _providers.Values.FirstOrDefault();
+        }
+    }
 
     /// <summary>Returns all registered provider names.</summary>
-    public IReadOnlyList<string> GetProviderNames() => [.. _providers.Keys];
+    public IReadOnlyList<string> GetProviderNames()
+    {
+        lock (_sync)
+        {
+            return [.. _providers.Keys];
+        }
+    }
 
     private static string GetProviderKey(ILlmProvider provider)
     {

@@ -23,4 +23,7 @@ public interface ICronService
 
     /// <summary>Enable or disable a job at runtime.</summary>
     void SetEnabled(string jobName, bool enabled);
+
+    /// <summary>Reload registered cron jobs from current configuration.</summary>
+    Task ReloadFromConfigAsync(CancellationToken cancellationToken = default);
 }

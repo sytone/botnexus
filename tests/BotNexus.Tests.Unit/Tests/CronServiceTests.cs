@@ -1,5 +1,6 @@
 using BotNexus.Core.Abstractions;
 using BotNexus.Core.Configuration;
+using BotNexus.Core.Extensions;
 using BotNexus.Core.Models;
 using BotNexus.Core.Observability;
 using BotNexus.Cron;
@@ -137,6 +138,74 @@ public sealed class CronServiceTests
         history.Should().HaveCount(2);
     }
 
+    [Fact]
+    public async Task ReloadFromConfigAsync_ReconcilesAddedUpdatedAndRemovedJobs()
+    {
+        var initialCronConfig = new CronConfig
+        {
+            Jobs = new Dictionary<string, CronJobConfig>
+            {
+                ["alpha"] = new()
+                {
+                    Name = "alpha",
+                    Type = "system",
+                    Action = "check-updates",
+                    Schedule = "0 */5 * * *"
+                }
+            }
+        };
+
+        var currentBotConfig = new BotNexusConfig { Cron = initialCronConfig };
+        var cronConfigMonitor = new MutableOptionsMonitor<CronConfig>(initialCronConfig);
+        var botConfigMonitor = new MutableOptionsMonitor<BotNexusConfig>(currentBotConfig);
+
+        var services = new ServiceCollection();
+        services.AddSingleton<ISystemActionRegistry>(new SystemActionRegistry());
+        services.AddSingleton(Mock.Of<IMemoryConsolidator>());
+        services.AddSingleton(Mock.Of<ISessionManager>());
+        var serviceProvider = services.BuildServiceProvider();
+        var factory = new CronJobFactory(cronConfigMonitor, botConfigMonitor, serviceProvider, NullLogger<CronJobFactory>.Instance);
+        var service = new CronService(
+            NullLogger<CronService>.Instance,
+            serviceProvider,
+            new TestActivityStream(),
+            Mock.Of<IBotNexusMetrics>(),
+            botConfigMonitor,
+            factory);
+
+        await service.ReloadFromConfigAsync();
+        service.GetJobs().Select(j => j.Name).Should().Contain("system:check-updates");
+
+        var updatedCronConfig = new CronConfig
+        {
+            Jobs = new Dictionary<string, CronJobConfig>
+            {
+                ["alpha"] = new()
+                {
+                    Name = "alpha",
+                    Type = "system",
+                    Action = "check-updates",
+                    Schedule = "*/1 * * * *"
+                },
+                ["beta"] = new()
+                {
+                    Name = "beta",
+                    Type = "maintenance",
+                    Action = "cleanup-sessions",
+                    Schedule = "0 2 * * *"
+                }
+            }
+        };
+
+        cronConfigMonitor.Update(updatedCronConfig);
+        botConfigMonitor.Update(new BotNexusConfig { Cron = updatedCronConfig });
+        await service.ReloadFromConfigAsync();
+
+        var jobs = service.GetJobs();
+        jobs.Select(j => j.Name).Should().BeEquivalentTo(["system:check-updates", "maintenance:cleanup-sessions"]);
+        jobs.Should().ContainSingle(j => j.Name == "system:check-updates" && j.Schedule == "*/1 * * * *");
+    }
+
     private static CronService CreateService(
         bool enabled = true,
         int tickSeconds = 10,
@@ -158,7 +227,7 @@ public sealed class CronServiceTests
             new ServiceCollection().BuildServiceProvider(),
             activityStream ?? new TestActivityStream(),
             Mock.Of<IBotNexusMetrics>(),
-            Options.Create(config));
+            new MutableOptionsMonitor<BotNexusConfig>(config));
     }
 
     private static async Task WaitForAsync(Func<bool> condition, int timeoutMs = 5000)
@@ -204,5 +273,22 @@ public sealed class CronServiceTests
         }
 
         public IActivitySubscription Subscribe() => throw new NotSupportedException();
+    }
+
+    private sealed class MutableOptionsMonitor<T>(T initialValue) : IOptionsMonitor<T>
+    {
+        public T CurrentValue { get; private set; } = initialValue;
+
+        public T Get(string? name) => CurrentValue;
+
+        public IDisposable OnChange(Action<T, string?> listener) => NullDisposable.Instance;
+
+        public void Update(T newValue) => CurrentValue = newValue;
+    }
+
+    private sealed class NullDisposable : IDisposable
+    {
+        public static readonly NullDisposable Instance = new();
+        public void Dispose() { }
     }
 }

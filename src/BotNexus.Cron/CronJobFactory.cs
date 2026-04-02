@@ -9,27 +9,42 @@ using Microsoft.Extensions.Options;
 namespace BotNexus.Cron;
 
 public sealed class CronJobFactory(
-    IOptions<CronConfig> options,
-    IOptions<BotNexusConfig> botNexusOptions,
+    IOptionsMonitor<CronConfig> options,
+    IOptionsMonitor<BotNexusConfig> botNexusOptions,
     IServiceProvider serviceProvider,
     ILogger<CronJobFactory> logger)
 {
-    private readonly CronConfig _config = options?.Value ?? new CronConfig();
-    private readonly BotNexusConfig _botNexusConfig = botNexusOptions?.Value ?? new BotNexusConfig();
+    private readonly IOptionsMonitor<CronConfig> _options = options ?? throw new ArgumentNullException(nameof(options));
+    private readonly IOptionsMonitor<BotNexusConfig> _botNexusOptions = botNexusOptions ?? throw new ArgumentNullException(nameof(botNexusOptions));
     private readonly IServiceProvider _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
     private readonly ILogger<CronJobFactory> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+
 
     public void CreateAndRegisterAll(ICronService cronService)
     {
         ArgumentNullException.ThrowIfNull(cronService);
 
-        var jobsToRegister = BuildCentralizedJobMapWithLegacyMigration();
-        if (jobsToRegister.Count == 0)
+        var jobs = CreateJobs();
+        if (jobs.Count == 0)
         {
             _logger.LogInformation("No cron jobs configured under BotNexus:Cron:Jobs.");
             return;
         }
 
+        foreach (var job in jobs.Values)
+            cronService.Register(job);
+    }
+
+    public IReadOnlyDictionary<string, ICronJob> CreateJobs()
+    {
+        var jobsToRegister = BuildCentralizedJobMapWithLegacyMigration();
+        if (jobsToRegister.Count == 0)
+        {
+            _logger.LogInformation("No cron jobs configured under BotNexus:Cron:Jobs.");
+            return new Dictionary<string, ICronJob>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        var jobs = new Dictionary<string, ICronJob>(StringComparer.OrdinalIgnoreCase);
         foreach (var (jobKey, jobConfig) in jobsToRegister)
         {
             if (jobConfig is null)
@@ -44,9 +59,9 @@ public sealed class CronJobFactory(
                 if (job is null)
                     continue;
 
-                cronService.Register(job);
+                jobs[job.Name] = job;
                 _logger.LogInformation(
-                    "Registered cron job '{JobKey}' (name='{JobName}', type='{Type}', schedule='{Schedule}', enabled={Enabled})",
+                    "Prepared cron job '{JobKey}' (name='{JobName}', type='{Type}', schedule='{Schedule}', enabled={Enabled})",
                     jobKey,
                     job.Name,
                     jobConfig.Type,
@@ -58,11 +73,14 @@ public sealed class CronJobFactory(
                 _logger.LogWarning(ex, "Skipping invalid cron job '{JobKey}' (type='{Type}')", jobKey, jobConfig.Type);
             }
         }
+
+        return jobs;
     }
 
     private Dictionary<string, CronJobConfig> BuildCentralizedJobMapWithLegacyMigration()
     {
-        var jobs = new Dictionary<string, CronJobConfig>(_config.Jobs, StringComparer.OrdinalIgnoreCase);
+        var config = _options.CurrentValue ?? new CronConfig();
+        var jobs = new Dictionary<string, CronJobConfig>(config.Jobs, StringComparer.OrdinalIgnoreCase);
         var migratedJobs = MigrateLegacyAgentCronJobs(jobs);
         if (migratedJobs == 0)
             return jobs;
@@ -74,7 +92,8 @@ public sealed class CronJobFactory(
     private int MigrateLegacyAgentCronJobs(Dictionary<string, CronJobConfig> targetJobs)
     {
         var migrated = 0;
-        foreach (var (agentName, agentConfig) in _botNexusConfig.Agents.Named)
+        var botNexusConfig = _botNexusOptions.CurrentValue ?? new BotNexusConfig();
+        foreach (var (agentName, agentConfig) in botNexusConfig.Agents.Named)
         {
 #pragma warning disable CS0618
             if (agentConfig.CronJobs.Count == 0)
@@ -188,6 +207,7 @@ public sealed class CronJobFactory(
             configuredType ?? "<null>");
         return null;
     }
+
 }
 
 public sealed class CronJobRegistrationHostedService(

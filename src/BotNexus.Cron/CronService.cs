@@ -35,22 +35,6 @@ public sealed class CronService : BackgroundService, ICronService
         IServiceProvider services,
         IActivityStream activityStream,
         IBotNexusMetrics metrics,
-        IOptions<BotNexusConfig> options)
-        : this(
-            logger,
-            services,
-            activityStream,
-            metrics,
-            new StaticOptionsMonitor(options.Value),
-            cronJobFactory: null)
-    {
-    }
-
-    public CronService(
-        ILogger<CronService> logger,
-        IServiceProvider services,
-        IActivityStream activityStream,
-        IBotNexusMetrics metrics,
         IOptionsMonitor<BotNexusConfig> optionsMonitor,
         CronJobFactory? cronJobFactory = null)
     {
@@ -571,18 +555,4 @@ public sealed class CronService : BackgroundService, ICronService
             && existingJob.Enabled == desiredJob.Enabled;
     }
 
-    private sealed class StaticOptionsMonitor(BotNexusConfig currentValue) : IOptionsMonitor<BotNexusConfig>
-    {
-        public BotNexusConfig CurrentValue { get; private set; } = currentValue;
-
-        public BotNexusConfig Get(string? name) => CurrentValue;
-
-        public IDisposable OnChange(Action<BotNexusConfig, string?> listener) => NullChangeToken.Instance;
-    }
-
-    private sealed class NullChangeToken : IDisposable
-    {
-        public static readonly NullChangeToken Instance = new();
-        public void Dispose() { }
-    }
 }

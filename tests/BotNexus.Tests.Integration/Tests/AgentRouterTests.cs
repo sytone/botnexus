@@ -72,6 +72,38 @@ public class AgentRouterTests
         targets.Select(t => t.AgentName).Should().BeEquivalentTo(["default", "planner", "writer"]);
     }
 
+    [Fact]
+    public void ReloadFromConfig_RecreatesAffectedAgents_AndRemovesDeletedAgents()
+    {
+        var previous = new BotNexusConfig();
+        previous.Agents.Named["planner"] = new AgentConfig { Model = "gpt-4o-mini" };
+        previous.Agents.Named["writer"] = new AgentConfig { Model = "gpt-4o" };
+
+        var current = new BotNexusConfig();
+        current.Agents.Named["planner"] = new AgentConfig { Model = "gpt-5" };
+        current.Agents.Named["reviewer"] = new AgentConfig { Model = "gpt-4.1" };
+        current.Gateway.DefaultAgent = "reviewer";
+
+        var created = new List<string>();
+        var runnerFactory = new TestRunnerFactory(created);
+
+        var router = new AgentRouter(
+            runners: [new FakeRunner("planner"), new FakeRunner("writer")],
+            config: new TestOptionsMonitor(previous),
+            logger: NullLogger<AgentRouter>.Instance,
+            runnerFactory: runnerFactory);
+
+        router.ReloadFromConfig(previous, current, ["planner", "reviewer"]);
+
+        created.Should().BeEquivalentTo(["planner", "reviewer"]);
+        var fallback = router.ResolveTargets(MessageWithMetadata(("agent", "writer")));
+        fallback.Should().ContainSingle();
+        fallback[0].AgentName.Should().Be("reviewer");
+        var reviewer = router.ResolveTargets(MessageWithMetadata(("agent", "reviewer")));
+        reviewer.Should().ContainSingle();
+        reviewer[0].AgentName.Should().Be("reviewer");
+    }
+
     private static AgentRouter CreateRouter(
         IReadOnlyList<IAgentRunner> runners,
         Action<BotNexusConfig>? configure = null)
@@ -80,7 +112,7 @@ public class AgentRouterTests
         configure?.Invoke(cfg);
         return new AgentRouter(
             runners,
-            Options.Create(cfg),
+            new TestOptionsMonitor(cfg),
             NullLogger<AgentRouter>.Instance);
     }
 
@@ -103,5 +135,27 @@ public class AgentRouterTests
 
         public Task RunAsync(InboundMessage message, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
+    }
+
+    private sealed class TestRunnerFactory(List<string> created) : IAgentRunnerFactory
+    {
+        public IAgentRunner Create(string agentName)
+        {
+            created.Add(agentName);
+            return new FakeRunner(agentName);
+        }
+    }
+
+    private sealed class TestOptionsMonitor(BotNexusConfig value) : IOptionsMonitor<BotNexusConfig>
+    {
+        public BotNexusConfig CurrentValue { get; private set; } = value;
+        public BotNexusConfig Get(string? name) => CurrentValue;
+        public IDisposable OnChange(Action<BotNexusConfig, string?> listener) => NullDisposable.Instance;
+    }
+
+    private sealed class NullDisposable : IDisposable
+    {
+        public static readonly NullDisposable Instance = new();
+        public void Dispose() { }
     }
 }

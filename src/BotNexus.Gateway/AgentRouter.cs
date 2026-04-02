@@ -12,18 +12,31 @@ public sealed class AgentRouter : IAgentRouter
 {
     private static readonly StringComparer NameComparer = StringComparer.OrdinalIgnoreCase;
     private static readonly HashSet<string> BroadcastTokens = new(NameComparer) { "all", "*" };
-    private readonly IReadOnlyList<IAgentRunner> _allRunners;
+    private readonly object _sync = new();
+    private readonly List<IAgentRunner> _allRunners;
     private readonly Dictionary<string, IAgentRunner> _runnerByName;
     private readonly ILogger<AgentRouter> _logger;
-    private readonly string? _defaultAgentName;
-    private readonly bool _broadcastWhenUnspecified;
+    private readonly IAgentRunnerFactory? _runnerFactory;
+    private string? _defaultAgentName;
+    private bool _broadcastWhenUnspecified;
 
     public AgentRouter(
         IEnumerable<IAgentRunner> runners,
-        IOptions<BotNexusConfig> config,
-        ILogger<AgentRouter> logger)
+        IOptionsMonitor<BotNexusConfig> config,
+        ILogger<AgentRouter> logger,
+        IAgentRunnerFactory? runnerFactory = null)
+        : this(runners, config.CurrentValue, logger, runnerFactory)
+    {
+    }
+
+    private AgentRouter(
+        IEnumerable<IAgentRunner> runners,
+        BotNexusConfig cfg,
+        ILogger<AgentRouter> logger,
+        IAgentRunnerFactory? runnerFactory)
     {
         _logger = logger;
+        _runnerFactory = runnerFactory;
         _allRunners = [.. runners];
         _runnerByName = new Dictionary<string, IAgentRunner>(NameComparer);
 
@@ -38,51 +51,92 @@ public sealed class AgentRouter : IAgentRouter
             _runnerByName[runner.AgentName] = runner;
         }
 
-        var cfg = config.Value;
         _broadcastWhenUnspecified = cfg.Gateway.BroadcastWhenAgentUnspecified;
         _defaultAgentName = string.IsNullOrWhiteSpace(cfg.Gateway.DefaultAgent)
             ? (cfg.Agents.Named.Keys.FirstOrDefault() ?? "default")
             : cfg.Gateway.DefaultAgent;
     }
 
-    public IReadOnlyList<IAgentRunner> ResolveTargets(InboundMessage message)
+    public void ReloadFromConfig(BotNexusConfig previous, BotNexusConfig current, IReadOnlyCollection<string> affectedAgents)
     {
-        if (_allRunners.Count == 0)
-            return [];
+        ArgumentNullException.ThrowIfNull(previous);
+        ArgumentNullException.ThrowIfNull(current);
 
-        var requestedAgents = GetRequestedAgents(message);
-        if (requestedAgents.Count > 0)
+        if (_runnerFactory is null)
         {
-            if (requestedAgents.Any(agent => BroadcastTokens.Contains(agent)))
-                return _allRunners;
+            _logger.LogWarning("Agent config changed but router cannot rebuild runners without a runner factory.");
+            return;
+        }
 
-            var selected = new List<IAgentRunner>();
-            foreach (var requestedAgent in requestedAgents)
+        var allAgentNames = new HashSet<string>(current.Agents.Named.Keys, NameComparer);
+        var removedAgents = previous.Agents.Named.Keys
+            .Where(agent => !allAgentNames.Contains(agent))
+            .ToList();
+
+        lock (_sync)
+        {
+            foreach (var removedAgent in removedAgents)
             {
-                if (_runnerByName.TryGetValue(requestedAgent, out var runner))
-                {
-                    selected.Add(runner);
-                }
-                else
-                {
-                    _logger.LogWarning("No registered agent runner found for agent {AgentName}", requestedAgent);
-                }
+                _runnerByName.Remove(removedAgent);
+                _allRunners.RemoveAll(r => NameComparer.Equals(r.AgentName, removedAgent));
             }
 
-            if (selected.Count > 0)
-                return selected;
+            foreach (var agentName in affectedAgents.Where(allAgentNames.Contains))
+            {
+                var runner = _runnerFactory.Create(agentName);
+                _runnerByName[agentName] = runner;
+                _allRunners.RemoveAll(r => NameComparer.Equals(r.AgentName, agentName));
+                _allRunners.Add(runner);
+            }
+
+            _broadcastWhenUnspecified = current.Gateway.BroadcastWhenAgentUnspecified;
+            _defaultAgentName = string.IsNullOrWhiteSpace(current.Gateway.DefaultAgent)
+                ? (current.Agents.Named.Keys.FirstOrDefault() ?? "default")
+                : current.Gateway.DefaultAgent;
         }
+    }
 
-        if (_broadcastWhenUnspecified)
-            return _allRunners;
-
-        if (!string.IsNullOrWhiteSpace(_defaultAgentName) &&
-            _runnerByName.TryGetValue(_defaultAgentName, out var defaultRunner))
+    public IReadOnlyList<IAgentRunner> ResolveTargets(InboundMessage message)
+    {
+        lock (_sync)
         {
-            return [defaultRunner];
-        }
+            if (_allRunners.Count == 0)
+                return [];
 
-        return _allRunners;
+            var requestedAgents = GetRequestedAgents(message);
+            if (requestedAgents.Count > 0)
+            {
+                if (requestedAgents.Any(agent => BroadcastTokens.Contains(agent)))
+                    return [.. _allRunners];
+
+                var selected = new List<IAgentRunner>();
+                foreach (var requestedAgent in requestedAgents)
+                {
+                    if (_runnerByName.TryGetValue(requestedAgent, out var runner))
+                    {
+                        selected.Add(runner);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("No registered agent runner found for agent {AgentName}", requestedAgent);
+                    }
+                }
+
+                if (selected.Count > 0)
+                    return selected;
+            }
+
+            if (_broadcastWhenUnspecified)
+                return [.. _allRunners];
+
+            if (!string.IsNullOrWhiteSpace(_defaultAgentName) &&
+                _runnerByName.TryGetValue(_defaultAgentName, out var defaultRunner))
+            {
+                return [defaultRunner];
+            }
+
+            return [.. _allRunners];
+        }
     }
 
     private static IReadOnlyList<string> GetRequestedAgents(InboundMessage message)

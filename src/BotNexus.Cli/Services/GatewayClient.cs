@@ -41,6 +41,26 @@ public sealed class GatewayClient : IDisposable
     public Task<JsonNode?> GetChannelsAsync(CancellationToken cancellationToken = default)
         => GetJsonAsync("/api/channels", cancellationToken);
 
+    public Task<JsonNode?> GetExtensionsAsync(CancellationToken cancellationToken = default)
+        => GetJsonAsync("/api/extensions", cancellationToken);
+
+    public async Task<bool> IsRunningAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            _ = await GetHealthAsync(cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
+    }
+
     private async Task<JsonNode?> GetJsonAsync(string endpoint, CancellationToken cancellationToken)
     {
         try
