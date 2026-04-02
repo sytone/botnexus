@@ -35,22 +35,27 @@ foreach ($tempPath in @($stagingRoot, $packageWorkRoot)) {
     New-Item -ItemType Directory -Path $tempPath | Out-Null
 }
 
-# Build the entire solution once so all projects and shared dependencies are compiled.
-Write-Host "Building solution..."
-dotnet build (Join-Path $repoRoot "BotNexus.slnx") --configuration Release --nologo --verbosity minimal --tl:off /p:Version=$packageVersion /p:InformationalVersion=$packageVersion
+# Restore once for the entire solution to avoid redundant package fetches.
+Write-Host "Restoring solution..."
+dotnet restore (Join-Path $repoRoot "BotNexus.slnx") --nologo --verbosity minimal
 if ($LASTEXITCODE -ne 0) {
-    throw "dotnet build failed"
+    throw "dotnet restore failed"
 }
 
-# Publish all components in parallel (--no-build since solution is already compiled).
+# Publish all components in parallel. Each publish builds its own project tree independently
+# (avoiding the ref assembly race condition that occurs with --no-build).
 Write-Host "Publishing $($components.Count) components in parallel..."
 $publishJobs = $components | ForEach-Object -Parallel {
     $componentId = [string]$_.Id
     $projectPath = Join-Path $using:repoRoot ([string]$_.Project)
     $publishPath = Join-Path $using:stagingRoot $componentId
 
-    dotnet publish $projectPath --configuration Release --output $publishPath --no-build --nologo --verbosity minimal --tl:off /p:Version=$using:packageVersion /p:InformationalVersion=$using:packageVersion 2>&1
-    if ($LASTEXITCODE -ne 0) {
+    $output = dotnet publish $projectPath --configuration Release --output $publishPath --no-restore --nologo --verbosity minimal --tl:off /p:Version=$using:packageVersion /p:InformationalVersion=$using:packageVersion /p:UseSharedCompilation=false 2>&1
+    $exitCode = $LASTEXITCODE
+    
+    if ($exitCode -ne 0) {
+        Write-Error "dotnet publish failed for $componentId with exit code $exitCode"
+        Write-Error ($output | Out-String)
         throw "dotnet publish failed for $componentId"
     }
 
