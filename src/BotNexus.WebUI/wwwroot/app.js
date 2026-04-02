@@ -14,6 +14,7 @@
     let currentSessionKey = null;
     let isSubscribed = false;
     let reconnectTimer = null;
+    let commandPaletteIndex = -1;
 
     // --- DOM refs ---
     const $ = (sel) => document.querySelector(sel);
@@ -37,6 +38,64 @@
     const elBtnSend = $('#btn-send');
     const elToggleActivity = $('#toggle-activity');
     const elAgentSelect = $('#agent-select');
+    const elCommandPalette = $('#command-palette');
+
+    // --- Commands ---
+    const COMMANDS = [
+        { name: '/help', description: 'Show available commands and their descriptions' },
+        { name: '/reset', description: 'Reset the current conversation session' },
+        { name: '/status', description: 'Show system status and last heartbeat time' }
+    ];
+
+    function showCommandPalette(filter) {
+        const query = filter.toLowerCase();
+        const matches = COMMANDS.filter(c => c.name.startsWith(query));
+        if (matches.length === 0) {
+            hideCommandPalette();
+            return;
+        }
+        commandPaletteIndex = 0;
+        elCommandPalette.innerHTML = '';
+        for (let i = 0; i < matches.length; i++) {
+            const el = document.createElement('div');
+            el.className = 'command-item' + (i === 0 ? ' active' : '');
+            el.dataset.index = i;
+            el.innerHTML = `<span class="command-name">${escapeHtml(matches[i].name)}</span><span class="command-desc">${escapeHtml(matches[i].description)}</span>`;
+            el.addEventListener('click', () => acceptCommand(matches[i].name));
+            elCommandPalette.appendChild(el);
+        }
+        const hint = document.createElement('div');
+        hint.className = 'command-palette-hint';
+        hint.textContent = '↑↓ navigate · Tab or Enter to select · Esc to dismiss';
+        elCommandPalette.appendChild(hint);
+        elCommandPalette.classList.remove('hidden');
+    }
+
+    function hideCommandPalette() {
+        elCommandPalette.classList.add('hidden');
+        elCommandPalette.innerHTML = '';
+        commandPaletteIndex = -1;
+    }
+
+    function acceptCommand(name) {
+        elChatInput.value = name + ' ';
+        hideCommandPalette();
+        elChatInput.focus();
+        autoResize(elChatInput);
+    }
+
+    function navigateCommandPalette(direction) {
+        const items = elCommandPalette.querySelectorAll('.command-item');
+        if (items.length === 0) return;
+        items[commandPaletteIndex]?.classList.remove('active');
+        commandPaletteIndex = (commandPaletteIndex + direction + items.length) % items.length;
+        items[commandPaletteIndex].classList.add('active');
+        items[commandPaletteIndex].scrollIntoView({ block: 'nearest' });
+    }
+
+    function isCommandPaletteVisible() {
+        return !elCommandPalette.classList.contains('hidden');
+    }
 
     // --- WebSocket ---
     function connect() {
@@ -447,13 +506,45 @@
     elBtnSend.addEventListener('click', sendMessage);
 
     elChatInput.addEventListener('keydown', (e) => {
+        if (isCommandPaletteVisible()) {
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                navigateCommandPalette(1);
+                return;
+            }
+            if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                navigateCommandPalette(-1);
+                return;
+            }
+            if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+                e.preventDefault();
+                const active = elCommandPalette.querySelector('.command-item.active .command-name');
+                if (active) acceptCommand(active.textContent);
+                return;
+            }
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                hideCommandPalette();
+                return;
+            }
+        }
+
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             sendMessage();
         }
     });
 
-    elChatInput.addEventListener('input', () => autoResize(elChatInput));
+    elChatInput.addEventListener('input', () => {
+        autoResize(elChatInput);
+        const text = elChatInput.value;
+        if (text.startsWith('/') && !text.includes(' ')) {
+            showCommandPalette(text);
+        } else {
+            hideCommandPalette();
+        }
+    });
 
     $('#btn-new-chat').addEventListener('click', startNewChat);
 

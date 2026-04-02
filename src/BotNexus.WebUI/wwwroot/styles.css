@@ -495,6 +495,47 @@ body {
     padding: 10px 20px;
 }
 
+/* === Command Palette === */
+.command-palette {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 6px;
+    overflow: hidden;
+}
+.command-palette.hidden {
+    display: none;
+}
+.command-item {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background 0.1s;
+}
+.command-item:hover,
+.command-item.active {
+    background: var(--bg-tertiary);
+}
+.command-item .command-name {
+    font-weight: 600;
+    color: var(--accent);
+    font-family: var(--font-mono);
+    white-space: nowrap;
+}
+.command-item .command-desc {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+}
+.command-palette-hint {
+    padding: 4px 14px 6px;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+}
+
 /* === Utilities === */
 .hidden { display: none !important; }
 .text-muted { color: var(--text-muted); }
