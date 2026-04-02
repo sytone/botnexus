@@ -183,7 +183,7 @@ public sealed class CopilotProvider : LlmProviderBase, IOAuthProvider
     {
         var accessToken = await GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
         var json = JsonSerializer.Serialize(payload);
-        var request = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+        var request = new HttpRequestMessage(HttpMethod.Post, "/chat/completions")
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json")
         };
