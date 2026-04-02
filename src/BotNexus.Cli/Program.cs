@@ -888,7 +888,11 @@ static int StartGateway(string homePath, ConfigFileManager configManager, bool f
     var startInfo = new ProcessStartInfo("dotnet", launchArgs)
     {
         UseShellExecute = false,
-        WorkingDirectory = workingDirectory
+        WorkingDirectory = workingDirectory,
+        RedirectStandardOutput = !foreground,
+        RedirectStandardError = !foreground,
+        RedirectStandardInput = !foreground,
+        CreateNoWindow = !foreground
     };
     startInfo.Environment["BOTNEXUS_HOME"] = homePath;
 
@@ -897,6 +901,13 @@ static int StartGateway(string homePath, ConfigFileManager configManager, bool f
     {
         ConsoleOutput.WriteStatus(ConsoleStatus.Error, "Failed to start gateway process.");
         return 1;
+    }
+
+    if (!foreground)
+    {
+        process.StandardOutput.Close();
+        process.StandardError.Close();
+        process.StandardInput.Close();
     }
 
     if (foreground)
@@ -937,42 +948,71 @@ static int StartGateway(string homePath, ConfigFileManager configManager, bool f
 static int StopGateway(string homePath)
 {
     var pidPath = Path.Combine(homePath, "gateway.pid");
-    if (!File.Exists(pidPath))
+    
+    // Try PID file first
+    if (File.Exists(pidPath))
     {
-        ConsoleOutput.WriteStatus(ConsoleStatus.Warning, "Gateway is not running (PID file missing).");
-        return 1;
-    }
-
-    var pid = ReadPid(pidPath);
-    if (pid is null)
-    {
+        var pid = ReadPid(pidPath);
+        if (pid is not null && IsRunning(pid.Value))
+        {
+            KillProcess(pid.Value);
+            File.Delete(pidPath);
+            ConsoleOutput.WriteStatus(ConsoleStatus.Success, $"Gateway stopped (PID {pid.Value}).");
+            return 0;
+        }
+        
+        // PID file exists but process is gone — clean up
         File.Delete(pidPath);
-        ConsoleOutput.WriteStatus(ConsoleStatus.Error, "PID file is invalid.");
-        return 1;
     }
-
-    if (!IsRunning(pid.Value))
+    
+    // Fallback: find gateway process by name
+    var gatewayProcess = FindGatewayProcess();
+    if (gatewayProcess is not null)
     {
-        File.Delete(pidPath);
-        ConsoleOutput.WriteStatus(ConsoleStatus.Warning, "Gateway is not running.");
-        return 1;
+        var fallbackPid = gatewayProcess.Id;
+        KillProcess(fallbackPid);
+        ConsoleOutput.WriteStatus(ConsoleStatus.Success, $"Gateway stopped (PID {fallbackPid}, found by process name).");
+        return 0;
     }
+    
+    ConsoleOutput.WriteStatus(ConsoleStatus.Warning, "Gateway is not running.");
+    return 1;
+}
 
-    var process = Process.GetProcessById(pid.Value);
+static void KillProcess(int pid)
+{
     try
     {
-        if (!process.CloseMainWindow())
+        var process = Process.GetProcessById(pid);
+        try
+        {
+            if (!process.CloseMainWindow())
+                process.Kill();
+        }
+        catch
+        {
             process.Kill();
+        }
+        process.WaitForExit(5000);
     }
     catch
     {
-        process.Kill();
+        // Process already exited
     }
+}
 
-    process.WaitForExit(5000);
-    File.Delete(pidPath);
-    ConsoleOutput.WriteStatus(ConsoleStatus.Success, $"Gateway stopped (PID {pid.Value}).");
-    return 0;
+static Process? FindGatewayProcess()
+{
+    // Try self-contained exe name first
+    try
+    {
+        var candidates = Process.GetProcessesByName("BotNexus.Gateway");
+        if (candidates.Length > 0) return candidates[0];
+    }
+    catch { }
+    
+    // Can't reliably distinguish dotnet-hosted gateway from other dotnet processes
+    return null;
 }
 
 static string ResolveHome(ParseResult parseResult, Option<string?> homeOption)
@@ -1311,7 +1351,11 @@ static int StartInstalledGateway(string homePath, ConfigFileManager configManage
     var startInfo = new ProcessStartInfo("dotnet", $"\"{gatewayDllPath}\"")
     {
         UseShellExecute = false,
-        WorkingDirectory = workingDirectory
+        WorkingDirectory = workingDirectory,
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        RedirectStandardInput = true,
+        CreateNoWindow = true
     };
     startInfo.Environment["BOTNEXUS_HOME"] = homePath;
 
@@ -1321,6 +1365,10 @@ static int StartInstalledGateway(string homePath, ConfigFileManager configManage
         ConsoleOutput.WriteStatus(ConsoleStatus.Error, "Failed to restart gateway process.");
         return 1;
     }
+
+    process.StandardOutput.Close();
+    process.StandardError.Close();
+    process.StandardInput.Close();
 
     Directory.CreateDirectory(homePath);
     var pidPath = Path.Combine(homePath, "gateway.pid");
