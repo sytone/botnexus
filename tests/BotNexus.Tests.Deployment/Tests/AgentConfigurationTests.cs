@@ -45,9 +45,8 @@ public sealed class AgentConfigurationTests
             .Select(a => a.GetProperty("name").GetString())
             .ToList();
 
-        agentNames.Should().Contain("default", "default agent should always exist");
         agentNames.Should().Contain("alpha");
         agentNames.Should().Contain("beta");
-        agentNames.Count.Should().Be(3, "should have default + 2 configured agents");
+        agentNames.Count.Should().Be(2, "should have 2 configured agents (no phantom 'default' when named agents exist)");
     }
 }

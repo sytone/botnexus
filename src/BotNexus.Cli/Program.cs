@@ -12,6 +12,8 @@ using BotNexus.Diagnostics;
 using BotNexus.Diagnostics.Checkups.Configuration;
 using Spectre.Console;
 
+Console.OutputEncoding = System.Text.Encoding.UTF8;
+
 var homeOption = new Option<string?>("--home")
 {
     Description = "Override BOTNEXUS_HOME for this command."

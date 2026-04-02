@@ -155,8 +155,6 @@ public sealed class GettingStartedGuideTests
 
         agentNames.Should().Contain("assistant",
             "the 'assistant' agent from config should appear in /api/agents (§5)");
-        agentNames.Should().Contain("default",
-            "'default' agent should always be present (§5)");
 
         // ── §6: Talk to Your Agent — send message via WebSocket ───────────────
         // The guide shows WebSocket at ws://localhost:18790/ws.

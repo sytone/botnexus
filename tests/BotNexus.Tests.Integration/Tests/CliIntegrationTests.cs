@@ -141,7 +141,8 @@ public sealed class CliIntegrationTests
     public async Task Status_ShowsOffline_WhenGatewayNotRunning()
     {
         await using var home = await CliHomeScope.CreateAsync();
-        _ = await CliTestHost.RunCliAsync("config init", home.Path, standardInput: "\n\n\n");
+        var unusedPort = Random.Shared.Next(40000, 50000);
+        _ = await CliTestHost.RunCliAsync("config init", home.Path, standardInput: $"\n\n{unusedPort}\n");
 
         var result = await CliTestHost.RunCliAsync("status", home.Path);
 
