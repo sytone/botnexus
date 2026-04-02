@@ -437,3 +437,27 @@
 - All 466 tests pass (322 unit + 110 integration + 23 E2E + 11 deployment).
 
 ---
+
+## 2026-04-02T23:19:04Z — Internal Tools Auto-Registration (Parallel Session with Bender)
+
+**Context:** Leela and Bender worked in parallel. Leela implemented per-agent tool exclusion; Bender fixed parallel pack build corruption. Both committed under same hash (0f162a1).
+
+**Work:** 
+- Implemented `AgentConfig.DisallowedTools` property for selective tool suppression per agent
+- Refactored `AgentRunnerFactory` to respect DisallowedTools during internal tool instantiation
+- Updated `AgentLoop` execution path to filter disallowed tools before dispatch
+- All existing tests remain passing
+
+**Team Update (Bender's Parallel Work):**
+- Bender fixed parallel pack corruption by switching from `--no-build parallel publish` to `--no-restore` sequential builds
+- Added `/p:UseSharedCompilation=false` flag to prevent Roslyn cache conflicts
+- Both changes committed together as 0f162a1
+
+**Decisions Merged:** leela-commit-instructions.md, leela-agent-file-restructure.md (added during this session)
+
+**Files Modified:**
+- src/BotNexus.Agents/Execution/AgentConfig.cs
+- src/BotNexus.Agents/Execution/AgentRunnerFactory.cs
+- src/BotNexus.Agents/Execution/AgentLoop.cs
+
+---

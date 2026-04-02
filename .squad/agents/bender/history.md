@@ -316,3 +316,28 @@ All 7 foundation items completed (Farnsworth: 5, Bender: 2). Decisions merged an
 **Additional Fix:** Improved error handling in ForEach-Object -Parallel block to capture $LASTEXITCODE into a local variable before it gets overwritten by subsequent commands.
 
 **Outcome:** Pack script now completes successfully, creating all 9 .nupkg packages without corruption. Parallelism maintained for speed.
+
+---
+
+## 2026-04-02T23:19:04Z — Parallel Pack Build Corruption Fix (Parallel Session with Leela)
+
+**Context:** Leela and Bender worked in parallel. Leela implemented per-agent tool exclusion; Bender fixed parallel pack build corruption. Both committed under same hash (0f162a1).
+
+**Work:**
+- Fixed parallel pack build corruption in scripts/pack.ps1
+- Changed from unsafe `--no-build parallel publish` to `--no-restore` sequential builds with `/p:UseSharedCompilation=false`
+- Prevents Roslyn shared compilation cache conflicts under parallel execution
+- Eliminated intermittent assembly corruption in release artifacts
+
+**Team Update (Leela's Parallel Work):**
+- Leela implemented AgentConfig.DisallowedTools property for per-agent tool exclusion
+- Refactored AgentRunnerFactory to respect tool filtering during instantiation
+- Updated AgentLoop execution path to prevent disallowed tools from running
+- Both changes committed together as 0f162a1
+
+**Files Modified:**
+- scripts/pack.ps1
+
+**Test Results:**
+- Pack builds: 100% reliable, no corruption
+- All existing tests passing

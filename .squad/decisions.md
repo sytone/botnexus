@@ -2626,3 +2626,163 @@ cron-consistency-review ─── (after docs)
 **Why:** Critical for team development. Tests must never pollute live user environments. This pattern becomes the canonical approach for all future test infrastructure work.
 
 **Impact:** This decision directly supports the Backup CLI feature (external backup location, separate from runtime data) and establishes a reusable pattern for other environment-sensitive tests.
+
+
+### 2026-04-02T08:48:40Z: User directive
+**By:** Jon Bullen (via Copilot)
+**What:** Install location must be configurable. Default install path is under AppData (e.g. %LOCALAPPDATA%\BotNexus on Windows, ~/.local/share/botnexus on Linux). User can override via config or CLI flag. This is separate from BOTNEXUS_HOME (which is user data at ~/.botnexus).
+**Why:** User request — users should be able to install BotNexus binaries anywhere they want.
+
+
+# CLI Installability + Native Install/Update Decision (Farnsworth)
+
+**Date:** 2026-04-02  
+**Requested by:** Jon Bullen  
+**Status:** Proposed
+
+## Decision
+
+Make BotNexus CLI installable as a global dotnet tool with dedicated bootstrap scripts, and move deployment lifecycle actions into native CLI commands:
+
+1. Add bootstrap installers:
+   - `scripts/install-cli.ps1`
+   - `scripts/install-cli.sh`
+2. Add `botnexus install` and `botnexus update` commands in `src/BotNexus.Cli/Program.cs`.
+3. Treat `BotNexus.Cli` as tool-installed only — never extracted into app install directory from `.nupkg`.
+4. Update `botnexus start` gateway resolution to prioritize installed gateway DLL, then fall back to repo project.
+
+## Rationale
+
+- Improves onboarding and upgrade DX with one-step CLI installation.
+- Removes dependency on separate scripts for core install/update flows by making deployment first-class CLI operations.
+- Preserves separation of concerns: CLI as global tool, runtime app binaries in install path.
+- Ensures `start` works in both production-style installed environments and local developer checkouts.
+
+## Implementation Notes
+
+- Package extraction logic ports install script behavior to C# using `System.IO.Compression.ZipFile`.
+- NuGet metadata entries are filtered (`.nuspec`, `_rels/`, `package/`, `[Content_Types].xml`).
+- `version.json` records UTC timestamp, git commit hash, install path, and package list.
+- `~/.botnexus/config.json` is updated to set `BotNexus.ExtensionsPath` to `{install-path}/extensions`.
+- `update` command stops gateway via PID file before install and restarts only if it was previously running.
+
+
+# Packaging and Install Script Decision (Farnsworth)
+
+**Date:** 2026-04-02  
+**Requested by:** Jon Bullen  
+**Status:** Proposed
+
+## Decision
+
+Adopt a simple file-based deployment workflow for BotNexus:
+
+1. `scripts/pack.ps1` publishes gateway, cli, and all extension projects in Release mode.
+2. Each published output is wrapped into a `.nupkg` artifact as a transport container only (not dotnet tool deployment).
+3. `scripts/install.ps1` installs by extracting package binary contents into a configurable install root (`~/.botnexus/app` default):
+   - gateway → `gateway/`
+   - cli → `cli/`
+   - extensions → `extensions/{type}/{name}/`
+4. `scripts/update.ps1` performs in-place update by stopping running gateway (if detected), running install, and restarting gateway.
+
+## Rationale
+
+- Keeps deployment simple and transparent: just files in predictable locations.
+- Works for both local developer workflows and CI/CD release pipelines.
+- Avoids installer complexity while still producing versioned deployable artifacts.
+- Maintains extension folder layout required by dynamic extension loading.
+
+## Implementation Notes
+
+- `.nupkg` files are treated as zip containers and filtered on install to skip NuGet metadata (`.nuspec`, `_rels/`, `package/`, `[Content_Types].xml`).
+- Install writes `version.json` with UTC timestamp, git commit hash, and package list.
+- If `~/.botnexus/config.json` exists, `ExtensionsPath` is updated to the installed extensions root.
+
+
+# Release + Dev Versioning Decision (Farnsworth)
+
+**Date:** 2026-04-02  
+**Requested by:** Jon Bullen  
+**Status:** Proposed
+
+## Decision
+
+Adopt a unified versioning model across build, packaging, CLI runtime, and install manifests:
+
+1. **Release builds:** Semantic version from git tag (`vX.Y.Z` → `X.Y.Z`).
+2. **Dev builds:** `0.0.0-dev.{short-hash}`.
+3. **Dirty dev builds:** `0.0.0-dev.{short-hash}.dirty`.
+4. **CI/release override:** `BOTNEXUS_VERSION` always wins.
+
+## Rationale
+
+- Removes ambiguity from `1.0.0.0` defaults and timestamp package versions.
+- Makes running code provenance visible in CLI (`--version`, `status`) and install metadata (`version.json`).
+- Aligns local dev, CI, and official release flows under one deterministic model.
+
+## Implementation Notes
+
+- Added root `Directory.Build.props` with default `Version` and `InformationalVersion` set to `0.0.0-dev`.
+- Added shared PowerShell resolver `scripts/common.ps1::Resolve-Version`.
+- `scripts/pack.ps1` now:
+  - resolves version using shared resolver
+  - passes `/p:Version` and `/p:InformationalVersion` to `dotnet publish`
+  - writes resolved version into `.nuspec`
+- `scripts/install-cli.ps1` now passes resolved version into `dotnet pack`.
+- CLI now supports one-line `--version` output and enhanced `status` output with version comparison.
+- `version.json` now contains:
+  - `Version`
+  - `InstalledAtUtc`
+  - `Commit` (short hash)
+  - `InstallPath`
+  - `Packages`
+
+
+### 2026-04-02: Squad lifecycle skill extraction
+
+**By:** Kif (Documentation Engineer)
+**What:** Created `.squad/skills/squad-lifecycle/SKILL.md` — extracted ~40% of squad.agent.md (init mode, casting, member management, integration flows, worktree lifecycle, format references) into a dedicated skill file. The coordinator now loads this content on-demand instead of every session.
+**Why:** The coordinator agent file was 946 lines. Roughly 40% was first-time setup and lifecycle content that loaded every session but is only needed when `.squad/` needs initialization or roster changes. Extracting it into a skill reduces coordinator context cost and improves session start time. The live agent file already had a pointer at line 25: `Read .squad/skills/squad-lifecycle/SKILL.md for the full setup flow.`
+**Impact:** Coordinator context window freed up for operational content. Setup instructions unchanged — faithfully preserved, not summarized.
+
+
+# Decision: Split squad.agent.md into Operations + Lifecycle Skill
+
+**Author:** Leela (Lead)
+**Status:** Implemented
+**Scope:** Squad framework architecture
+
+## Context
+
+`squad.agent.md` had grown to 1287 lines. ~40% was init/setup content (casting, member management, worktree lifecycle, integrations) that runs once but loaded into every session, diluting the critical orchestration rules the coordinator needs on every turn.
+
+## Decision
+
+Split the agent file into two concerns:
+
+1. **`squad.agent.md`** (982 lines) — Team Mode operations only. Routing, spawning, constraints, ceremonies, Ralph. Always loaded.
+2. **`.squad/skills/squad-lifecycle/SKILL.md`** — Setup, casting, member management, GitHub Issues, PRD intake, human members, @copilot integration, worktree lifecycle, multi-agent format, constraint budgets. Loaded on-demand when triggered.
+
+A new **Lifecycle Operations** routing table in the agent file maps triggers to the skill file. The init check was simplified from a 4-line branching block to a 2-line skill reference.
+
+## Additions
+
+- **Pre-response self-check** constraint: forces the coordinator to verify it spawned an agent before delivering domain content inline.
+- **Skill entry** in Source of Truth Hierarchy for the lifecycle skill file.
+
+## Rationale
+
+- Context window efficiency: every token of setup instructions is a token not available for orchestration reasoning.
+- Separation of concerns: setup runs once, operations run every turn. Different loading profiles.
+- The skill file pattern already exists in Squad — this follows the established on-demand reference pattern.
+
+## Risks
+
+- If the skill file is missing or not yet created by Kif, the coordinator will fail to find setup instructions. Mitigated by the explicit error message in the init check.
+- Stale cross-references if either file is updated independently. Mitigated by the routing table being trigger-based (stable) rather than line-number-based.
+
+
+### 2026-04-02: Agents must commit their own changes
+**By:** Jon Bullen (via Leela)
+**What:** All agents must git add + git commit their changes after completing work. Commit messages must include the Co-authored-by Copilot trailer.
+**Why:** User directive — changes were not being committed after agent work sessions.
