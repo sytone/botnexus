@@ -20,22 +20,36 @@ BotNexus uses a hierarchical, dictionary-based configuration model with a unifie
 
 ### Minimal Configuration (`~/.botnexus/config.json`)
 
+On first run, BotNexus creates a minimal default config:
+
 ```json
 {
   "BotNexus": {
-    "Agents": {
-      "Model": "gpt-4o"
+    "ExtensionsPath": "~/.botnexus/extensions",
+    "Providers": {},
+    "Channels": {
+      "Instances": {}
     },
+    "Tools": {
+      "Extensions": {},
+      "McpServers": {}
+    }
+  }
+}
+```
+
+To add your first provider (e.g., Copilot), add it to the `Providers` section:
+
+```json
+{
+  "BotNexus": {
+    "ExtensionsPath": "~/.botnexus/extensions",
     "Providers": {
       "copilot": {
         "Auth": "oauth",
         "DefaultModel": "gpt-4o",
         "ApiBase": "https://api.githubcopilot.com"
       }
-    },
-    "Gateway": {
-      "Host": "0.0.0.0",
-      "Port": 18790
     }
   }
 }

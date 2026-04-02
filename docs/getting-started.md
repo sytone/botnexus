@@ -81,24 +81,28 @@ BotNexus automatically initializes a home directory at `~/.botnexus/`. Here's wh
 ├── agents/                  # Agent workspace directories
 ├── tokens/                  # OAuth token storage
 ├── sessions/                # Conversation history (JSONL)
-└── logs/
+└── logs/                    # Daily log files (botnexus-YYYYMMDD.log)
 ```
 
-The default `config.json` is created with sensible defaults — including the Copilot provider pre-configured:
+The default `config.json` is created as a minimal template with **no providers or channels pre-configured**. You add what you need:
 
 ```json
 {
   "BotNexus": {
     "ExtensionsPath": "~/.botnexus/extensions",
-    "Providers": {
-      "copilot": {
-        "Auth": "oauth",
-        "ApiBase": "https://api.githubcopilot.com"
-      }
+    "Providers": {},
+    "Channels": {
+      "Instances": {}
+    },
+    "Tools": {
+      "Extensions": {},
+      "McpServers": {}
     }
   }
 }
 ```
+
+This is intentional — the system starts clean. You'll add the Copilot provider (or another provider) as your first configuration step.
 
 > **Custom home directory:** Set the `BOTNEXUS_HOME` environment variable to override the default `~/.botnexus/` location.
 
@@ -110,12 +114,42 @@ The Gateway starts on **port 18790** by default. Check the health endpoint:
 curl http://localhost:18790/health
 ```
 
-Expected response:
+Expected response (on first run):
 
 ```json
 {
   "status": "Healthy",
-  "results": { ... }
+  "checks": {
+    "messageBus": {
+      "status": "Healthy",
+      "description": "Message bus is alive",
+      "duration": 0.15,
+      "data": null
+    },
+    "providers": {
+      "status": "Healthy",
+      "description": "No providers configured",
+      "duration": 0.08,
+      "data": null
+    },
+    "channels": {
+      "status": "Healthy",
+      "description": "No enabled channels configured",
+      "duration": 0.05,
+      "data": null
+    },
+    "extensionLoader": {
+      "status": "Healthy",
+      "description": "Extension loader completed successfully",
+      "duration": 0.32,
+      "data": {
+        "loaded": 0,
+        "failed": 0,
+        "warnings": 0
+      }
+    }
+  },
+  "totalDuration": 0.6
 }
 ```
 
@@ -126,15 +160,15 @@ info: BotNexus[0] BotNexus home: C:\Users\you\.botnexus
 info: Microsoft.Hosting.Lifetime[14] Now listening on: http://0.0.0.0:18790
 ```
 
+> **Note:** On first run, you'll see "No providers configured" and "No enabled channels configured" — these are healthy states. You'll configure providers and channels as needed in the next steps.
+
 > **Troubleshooting:** If port 18790 is in use, edit `~/.botnexus/config.json` and change `Gateway.Port` (see [Section 12](#12-security) for full Gateway config).
 
 ---
 
-## 4. Configure the Copilot Provider
+## 4. Configure Your First Provider (Copilot)
 
-Good news — the Copilot provider is already in your default `config.json`. The built-in defaults include the GitHub OAuth client ID and API base URL automatically.
-
-If you want to explicitly set the model, edit `~/.botnexus/config.json`:
+The Copilot provider is not pre-configured by default. Add it to `~/.botnexus/config.json`:
 
 ```json
 {
@@ -150,6 +184,10 @@ If you want to explicitly set the model, edit `~/.botnexus/config.json`:
   }
 }
 ```
+
+Restart the Gateway to pick up the configuration change (Ctrl+C, then `dotnet run --project src/BotNexus.Gateway`).
+
+> **Note:** The Copilot provider uses GitHub's built-in OAuth client ID and API endpoint automatically. No additional setup is needed beyond adding it to the config.
 
 ### The OAuth device code flow
 
@@ -441,7 +479,7 @@ BotNexus supports multiple messaging channels as extensions. Channels are config
 
 ### Extension folder structure
 
-Channel implementations are loaded from `~/.botnexus/extensions/channels/`. Place compiled extension assemblies there:
+Channel, provider, and tool implementations are loaded from `~/.botnexus/extensions/`:
 
 ```
 ~/.botnexus/extensions/
@@ -449,6 +487,10 @@ Channel implementations are loaded from `~/.botnexus/extensions/channels/`. Plac
 ├── providers/        # LLM provider plugins
 └── tools/            # Tool plugins
 ```
+
+**Development mode:** When running `dotnet run` in development, extensions are loaded from `{repo-root}/extensions/` instead. This allows you to build extensions without installing them to your home directory.
+
+**Production mode:** Extensions are always loaded from `~/.botnexus/extensions/`.
 
 > See [Extension Development](extension-development.md) for building custom channel extensions.
 
@@ -614,12 +656,28 @@ curl http://localhost:18790/api/sessions
 
 ### Logs
 
-Gateway logs are written to the console by default. Look for:
+Logs are written to **both the console and files**:
+
+**Console:** Gateway logs appear in real-time. Look for:
 
 - `info: BotNexus[0] BotNexus home: ...` — Confirms home directory
 - `info: Microsoft.Hosting.Lifetime[14] Now listening on: ...` — Confirms listening address
 - OAuth flow messages from `BotNexus.Providers.Copilot.GitHubDeviceCodeFlow`
 - Extension loading results at startup
+
+**File:** Daily log files are written to `~/.botnexus/logs/botnexus-YYYYMMDD.log`. Each day gets a new file, and logs are retained for 14 days.
+
+To view today's logs:
+
+```bash
+# Windows (PowerShell)
+Get-Content $env:USERPROFILE\.botnexus\logs\botnexus-*.log -Tail 50
+
+# macOS/Linux
+tail -50 ~/.botnexus/logs/botnexus-*.log
+```
+
+> **Troubleshooting tip:** If the health check shows unhealthy status, check the log file for detailed error messages. Logs provide insight into extension loading failures, OAuth issues, and configuration problems.
 
 ### Common issues
 
@@ -629,7 +687,8 @@ Gateway logs are written to the console by default. Look for:
 | OAuth code expired | Took too long to authorize | Send another message to get a fresh code |
 | "Unauthorized" on API calls | API key configured but not sent | Add `X-Api-Key` header (see [Security](#12-security)) |
 | Agent not found | Agent not in `Named` config | Add agent to `Agents.Named` and restart |
-| Extensions not loading | Wrong directory | Check `~/.botnexus/extensions/{type}/` |
+| Extensions show warnings at startup | Missing extension folder (expected on first run) | Not an error — folders are created on-demand when needed |
+| Health check says unhealthy | An extension failed to load or a required component is missing | Check `~/.botnexus/logs/botnexus-*.log` for details; check `GET /api/extensions` for failures |
 
 ---
 
