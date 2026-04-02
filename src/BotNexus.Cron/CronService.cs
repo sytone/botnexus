@@ -23,9 +23,11 @@ public sealed class CronService : BackgroundService, ICronService
     private readonly IServiceProvider _services;
     private readonly IActivityStream _activityStream;
     private readonly IBotNexusMetrics _metrics;
-    private readonly TimeSpan _tickInterval;
-    private readonly int _executionHistorySize;
-    private readonly bool _enabled;
+    private readonly IOptionsMonitor<BotNexusConfig> _configMonitor;
+    private readonly CronJobFactory? _cronJobFactory;
+    private TimeSpan _tickInterval;
+    private volatile int _executionHistorySize;
+    private volatile bool _enabled;
     private volatile bool _isRunning;
 
     public CronService(
@@ -34,16 +36,32 @@ public sealed class CronService : BackgroundService, ICronService
         IActivityStream activityStream,
         IBotNexusMetrics metrics,
         IOptions<BotNexusConfig> options)
+        : this(
+            logger,
+            services,
+            activityStream,
+            metrics,
+            new StaticOptionsMonitor(options.Value),
+            cronJobFactory: null)
+    {
+    }
+
+    public CronService(
+        ILogger<CronService> logger,
+        IServiceProvider services,
+        IActivityStream activityStream,
+        IBotNexusMetrics metrics,
+        IOptionsMonitor<BotNexusConfig> optionsMonitor,
+        CronJobFactory? cronJobFactory = null)
     {
         _logger = logger;
         _services = services;
         _activityStream = activityStream;
         _metrics = metrics;
+        _configMonitor = optionsMonitor;
+        _cronJobFactory = cronJobFactory;
 
-        var cron = options.Value.Cron ?? new CronConfig();
-        _enabled = cron.Enabled;
-        _tickInterval = TimeSpan.FromSeconds(cron.TickIntervalSeconds > 0 ? cron.TickIntervalSeconds : 10);
-        _executionHistorySize = cron.ExecutionHistorySize > 0 ? cron.ExecutionHistorySize : 100;
+        ApplyCronSettings(_configMonitor.CurrentValue.Cron);
     }
 
     /// <inheritdoc />
@@ -165,14 +183,68 @@ public sealed class CronService : BackgroundService, ICronService
     }
 
     /// <inheritdoc />
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    public Task ReloadFromConfigAsync(CancellationToken cancellationToken = default)
     {
-        if (!_enabled)
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var cronConfig = _configMonitor.CurrentValue.Cron ?? new CronConfig();
+        ApplyCronSettings(cronConfig);
+
+        if (_cronJobFactory is null)
         {
-            _logger.LogInformation("Cron service is disabled via configuration.");
-            return;
+            _logger.LogWarning("Cron reload requested but no CronJobFactory is available.");
+            return Task.CompletedTask;
         }
 
+        var desiredJobs = _cronJobFactory.CreateJobs();
+        Dictionary<string, ICronJob> currentJobs;
+        lock (_sync)
+        {
+            currentJobs = _jobs.Values.ToDictionary(entry => entry.Job.Name, entry => entry.Job, StringComparer.OrdinalIgnoreCase);
+        }
+
+        var removed = currentJobs.Keys
+            .Except(desiredJobs.Keys, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        foreach (var jobName in removed)
+            Remove(jobName);
+
+        var added = 0;
+        var updated = 0;
+        foreach (var (jobName, desiredJob) in desiredJobs)
+        {
+            if (!currentJobs.TryGetValue(jobName, out var existingJob))
+            {
+                Register(desiredJob);
+                added++;
+                continue;
+            }
+
+            if (!IsEquivalent(existingJob, desiredJob))
+            {
+                Remove(jobName);
+                Register(desiredJob);
+                updated++;
+            }
+            else
+            {
+                SetEnabled(jobName, desiredJob.Enabled);
+            }
+        }
+
+        _logger.LogInformation(
+            "Cron config reloaded. Added={Added}, Updated={Updated}, Removed={Removed}, Enabled={Enabled}, TickIntervalSeconds={TickIntervalSeconds}",
+            added,
+            updated,
+            removed.Count,
+            _enabled,
+            _tickInterval.TotalSeconds);
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
         _isRunning = true;
         _logger.LogInformation("Cron service started with tick interval {TickIntervalSeconds}s", _tickInterval.TotalSeconds);
 
@@ -202,6 +274,9 @@ public sealed class CronService : BackgroundService, ICronService
 
     private Task TickAsync(CancellationToken cancellationToken)
     {
+        if (!_enabled)
+            return Task.CompletedTask;
+
         var now = DateTimeOffset.UtcNow;
         List<(CronJobEntry Entry, DateTimeOffset ScheduledTime)> dueJobs = [];
 
@@ -475,5 +550,39 @@ public sealed class CronService : BackgroundService, ICronService
         public CronJobResult? LastResult { get; set; }
         public int ConsecutiveFailures { get; set; }
         public bool IsRunning { get; set; }
+    }
+
+    private void ApplyCronSettings(CronConfig? cronConfig)
+    {
+        var cron = cronConfig ?? new CronConfig();
+        _enabled = cron.Enabled;
+        _tickInterval = TimeSpan.FromSeconds(cron.TickIntervalSeconds > 0 ? cron.TickIntervalSeconds : 10);
+        _executionHistorySize = cron.ExecutionHistorySize > 0 ? cron.ExecutionHistorySize : 100;
+    }
+
+    private static bool IsEquivalent(ICronJob existingJob, ICronJob desiredJob)
+    {
+        var existingZone = existingJob.TimeZone?.Id ?? string.Empty;
+        var desiredZone = desiredJob.TimeZone?.Id ?? string.Empty;
+        return existingJob.GetType() == desiredJob.GetType()
+            && existingJob.Type == desiredJob.Type
+            && string.Equals(existingJob.Schedule, desiredJob.Schedule, StringComparison.Ordinal)
+            && string.Equals(existingZone, desiredZone, StringComparison.Ordinal)
+            && existingJob.Enabled == desiredJob.Enabled;
+    }
+
+    private sealed class StaticOptionsMonitor(BotNexusConfig currentValue) : IOptionsMonitor<BotNexusConfig>
+    {
+        public BotNexusConfig CurrentValue { get; private set; } = currentValue;
+
+        public BotNexusConfig Get(string? name) => CurrentValue;
+
+        public IDisposable OnChange(Action<BotNexusConfig, string?> listener) => NullChangeToken.Instance;
+    }
+
+    private sealed class NullChangeToken : IDisposable
+    {
+        public static readonly NullChangeToken Instance = new();
+        public void Dispose() { }
     }
 }

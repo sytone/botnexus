@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using BotNexus.Channels.Base;
@@ -5,10 +6,12 @@ using BotNexus.Core.Abstractions;
 using BotNexus.Core.Configuration;
 using BotNexus.Core.Extensions;
 using BotNexus.Core.Models;
+using BotNexus.Diagnostics;
 using BotNexus.Gateway;
 using BotNexus.Gateway.HealthChecks;
 using BotNexus.Providers.Base;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
 using Serilog;
@@ -18,7 +21,7 @@ var botNexusHome = BotNexusHome.Initialize();
 builder.Configuration.AddJsonFile(
     Path.Combine(botNexusHome, "config.json"),
     optional: true,
-    reloadOnChange: false);
+    reloadOnChange: true);
 builder.Configuration.AddEnvironmentVariables();
 var logFilePath = Path.Combine(botNexusHome, "logs", "botnexus-.log");
 builder.Host.UseSerilog((context, _, loggerConfiguration) =>
@@ -44,6 +47,7 @@ var gatewayCfg = builder.Configuration
 builder.WebHost.UseUrls($"http://{gatewayCfg.Host}:{gatewayCfg.Port}");
 
 var app = builder.Build();
+var startedAt = DateTimeOffset.UtcNow;
 app.Logger.LogInformation("BotNexus home: {path}", botNexusHome);
 
 // JSON options for REST API responses
@@ -356,6 +360,141 @@ app.MapGet("/api/extensions", (
     }, jsonOptions);
 });
 
+// --- REST API: Status ---
+app.MapGet("/api/status", async (
+    HealthCheckService healthCheckService,
+    ExtensionLoadReport extensionReport,
+    ChannelManager channelManager,
+    ProviderRegistry providerRegistry,
+    IEnumerable<ITool> tools,
+    IOptions<BotNexusConfig> config,
+    ICronService cronService,
+    ISessionManager sessionManager) =>
+{
+    var healthReport = await healthCheckService.CheckHealthAsync();
+    var sessionKeys = await sessionManager.ListKeysAsync();
+    var cronJobs = cronService.GetJobs();
+    var namedAgents = config.Value.Agents.Named;
+    var version = Assembly.GetExecutingAssembly()
+        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
+        ?? "0.0.0";
+
+    // Detect memory consolidation from maintenance cron jobs
+    var consolidationJob = cronJobs.FirstOrDefault(j =>
+        j.Type == CronJobType.Maintenance &&
+        j.Name.Contains("consolidat", StringComparison.OrdinalIgnoreCase));
+
+    return Results.Json(new
+    {
+        gateway = new
+        {
+            version,
+            startedAt,
+            uptime = DateTimeOffset.UtcNow - startedAt
+        },
+        health = new
+        {
+            status = healthReport.Status.ToString(),
+            checks = healthReport.Entries.Count,
+            healthy = healthReport.Entries.Count(e => e.Value.Status == HealthStatus.Healthy),
+            degraded = healthReport.Entries.Count(e => e.Value.Status == HealthStatus.Degraded),
+            unhealthy = healthReport.Entries.Count(e => e.Value.Status == HealthStatus.Unhealthy)
+        },
+        extensions = new
+        {
+            loaded = extensionReport.LoadedCount,
+            providers = providerRegistry.GetProviderNames().Count,
+            channels = channelManager.Channels.Count,
+            tools = tools.Count()
+        },
+        agents = new
+        {
+            configured = 1 + namedAgents.Count  // default + named
+        },
+        cron = new
+        {
+            registered = cronJobs.Count,
+            enabled = cronJobs.Count(j => j.Enabled),
+            running = cronService.IsRunning
+        },
+        sessions = new
+        {
+            active = sessionKeys.Count
+        },
+        memory = new
+        {
+            consolidationConfigured = consolidationJob is not null,
+            consolidationEnabled = consolidationJob?.Enabled,
+            lastConsolidation = consolidationJob?.LastRunStartedAt,
+            lastConsolidationSuccess = consolidationJob?.LastRunSuccess
+        }
+    }, jsonOptions);
+});
+
+// --- REST API: Doctor ---
+app.MapGet("/api/doctor", async (CheckupRunner checkupRunner, string? category) =>
+{
+    var results = await checkupRunner.RunAndFixAsync(
+        category: category,
+        force: false,
+        promptUser: null);
+
+    var passed = results.Count(r => r.Result.Status == CheckupStatus.Pass);
+    var warnings = results.Count(r => r.Result.Status == CheckupStatus.Warn);
+    var failed = results.Count(r => r.Result.Status == CheckupStatus.Fail);
+
+    return Results.Json(new
+    {
+        summary = new { passed, warnings, failed },
+        results = results.Select(r => new
+        {
+            name = r.Checkup.Name,
+            category = r.Checkup.Category,
+            status = r.Result.Status,
+            message = r.Result.Message,
+            advice = r.Result.Advice,
+            canAutoFix = r.Checkup.CanAutoFix
+        })
+    }, jsonOptions);
+});
+
+// --- REST API: Shutdown ---
+app.MapPost("/api/shutdown", (
+    HttpContext httpContext,
+    IHostApplicationLifetime lifetime,
+    ILogger<Program> logger) =>
+{
+    ShutdownRequest? body = null;
+    try
+    {
+        body = httpContext.Request.ContentLength > 0
+            ? httpContext.Request.ReadFromJsonAsync<ShutdownRequest>(jsonOptions).GetAwaiter().GetResult()
+            : null;
+    }
+    catch
+    {
+        // Invalid JSON is acceptable — reason is optional
+    }
+
+    var reason = body?.Reason ?? "No reason provided";
+    logger.LogWarning("Shutdown requested via API. Reason: {Reason}", reason);
+
+    // Stop the application after the response is sent
+    _ = Task.Run(async () =>
+    {
+        await Task.Delay(500);
+        lifetime.StopApplication();
+    });
+
+    return Results.Json(new
+    {
+        accepted = true,
+        message = "Shutdown initiated",
+        reason
+    }, jsonOptions, statusCode: 202);
+});
+
 // --- WebSocket endpoint ---
 if (gatewayCfg.WebSocketEnabled)
 {
@@ -404,3 +543,4 @@ finally
 public partial class Program { }
 
 internal sealed record EnableRequest(bool Enabled);
+internal sealed record ShutdownRequest(string? Reason);

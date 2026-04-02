@@ -16,6 +16,7 @@
     <ProjectReference Include="..\BotNexus.Command\BotNexus.Command.csproj" />
     <ProjectReference Include="..\BotNexus.Cron\BotNexus.Cron.csproj" />
     <ProjectReference Include="..\BotNexus.Heartbeat\BotNexus.Heartbeat.csproj" />
+    <ProjectReference Include="..\BotNexus.Diagnostics\BotNexus.Diagnostics.csproj" />
     <ProjectReference Include="..\BotNexus.WebUI\BotNexus.WebUI.csproj" />
   </ItemGroup>
 

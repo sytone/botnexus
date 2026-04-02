@@ -4,6 +4,7 @@ using BotNexus.Core.Extensions;
 using BotNexus.Channels.Base;
 using BotNexus.Cron;
 using BotNexus.Cron.Actions;
+using BotNexus.Diagnostics;
 using BotNexus.Gateway.HealthChecks;
 using BotNexus.Core.Configuration;
 using BotNexus.Session;
@@ -79,6 +80,9 @@ public static class BotNexusServiceExtensions
         // Heartbeat (backward-compatible facade over cron)
         services.AddSingleton<IHeartbeatService, CronHeartbeatAdapter>();
 
+        // Diagnostics
+        services.AddBotNexusDiagnostics();
+
         // Gateway
         services.AddSingleton<IAgentRunnerFactory, AgentRunnerFactory>();
 
@@ -93,8 +97,10 @@ public static class BotNexusServiceExtensions
                 sp.GetRequiredService<IAgentRunnerFactory>().Create(agentName));
         }
 
-        services.AddSingleton<IAgentRouter, AgentRouter>();
+        services.AddSingleton<AgentRouter>();
+        services.AddSingleton<IAgentRouter>(sp => sp.GetRequiredService<AgentRouter>());
         services.AddHostedService<Gateway>();
+        services.AddHostedService<ConfigReloadOrchestrator>();
         services.AddHealthChecks()
             .AddCheck<MessageBusHealthCheck>("message_bus")
             .AddCheck<ProviderRegistrationHealthCheck>("provider_registration")
