@@ -24,8 +24,9 @@ public sealed class AgentRunnerFactory : IAgentRunnerFactory
     private readonly IEnumerable<IAgentHook> _hooks;
     private readonly ILoggerFactory _loggerFactory;
     private readonly IBotNexusMetrics? _metrics;
-    private readonly IChannel? _defaultResponseChannel;
+    private readonly IReadOnlyList<IChannel> _channels;
     private readonly ICommandRouter? _commandRouter;
+    private readonly ICronService? _cronService;
 
     public AgentRunnerFactory(
         IContextBuilderFactory contextBuilderFactory,
@@ -39,7 +40,8 @@ public sealed class AgentRunnerFactory : IAgentRunnerFactory
         ILoggerFactory loggerFactory,
         IEnumerable<IChannel> channels,
         IBotNexusMetrics? metrics = null,
-        ICommandRouter? commandRouter = null)
+        ICommandRouter? commandRouter = null,
+        ICronService? cronService = null)
     {
         _contextBuilderFactory = contextBuilderFactory;
         _agentWorkspaceFactory = agentWorkspaceFactory;
@@ -51,8 +53,9 @@ public sealed class AgentRunnerFactory : IAgentRunnerFactory
         _hooks = hooks;
         _loggerFactory = loggerFactory;
         _metrics = metrics;
-        _defaultResponseChannel = channels.FirstOrDefault();
+        _channels = channels.ToList();
         _commandRouter = commandRouter;
+        _cronService = cronService;
     }
 
     /// <inheritdoc />
@@ -64,6 +67,7 @@ public sealed class AgentRunnerFactory : IAgentRunnerFactory
         var contextBuilder = _contextBuilderFactory.Create(agentName);
         var agentConfig = ResolveAgentConfig(agentName);
         var defaults = _config.Value.Agents;
+        var toolsConfig = _config.Value.Tools;
 
         var settings = new GenerationSettings
         {
@@ -76,6 +80,12 @@ public sealed class AgentRunnerFactory : IAgentRunnerFactory
 
         var toolRegistry = new ToolRegistry(_metrics);
 
+        var disallowed = new HashSet<string>(agentConfig.DisallowedTools, StringComparer.OrdinalIgnoreCase);
+
+        var internalTools = CreateInternalTools(workspace, toolsConfig);
+        var allTools = internalTools.Concat(_tools)
+            .Where(t => !disallowed.Contains(t.Definition.Name));
+
         var agentLoop = new AgentLoop(
             agentName: workspace.AgentName,
             providerRegistry: _providerRegistry,
@@ -85,9 +95,10 @@ public sealed class AgentRunnerFactory : IAgentRunnerFactory
             settings: settings,
             model: agentConfig.Model,
             providerName: agentConfig.Provider,
-            additionalTools: _tools,
+            additionalTools: allTools,
             enableMemory: agentConfig.EnableMemory == true,
             memoryStore: _memoryStore,
+            disallowedTools: disallowed,
             hooks: [.. _hooks],
             logger: _loggerFactory.CreateLogger<AgentLoop>(),
             metrics: _metrics,
@@ -97,8 +108,25 @@ public sealed class AgentRunnerFactory : IAgentRunnerFactory
             agentName: workspace.AgentName,
             agentLoop: agentLoop,
             logger: _loggerFactory.CreateLogger<AgentRunner>(),
-            responseChannel: _defaultResponseChannel,
+            responseChannel: _channels.FirstOrDefault(),
             commandRouter: _commandRouter);
+    }
+
+    private IReadOnlyList<ITool> CreateInternalTools(IAgentWorkspace workspace, ToolsConfig toolsConfig)
+    {
+        var logger = _loggerFactory.CreateLogger<AgentRunnerFactory>();
+        var tools = new List<ITool>
+        {
+            new FilesystemTool(workspace.WorkspacePath, toolsConfig.RestrictToWorkspace, logger),
+            new WebTool(logger: logger),
+            new MessageTool(_channels.FirstOrDefault(), logger),
+            new CronTool(_cronService, this, _sessionManager, _channels, logger)
+        };
+
+        if (toolsConfig.Exec.Enable)
+            tools.Add(new ShellTool(workspace.WorkspacePath, toolsConfig.Exec.Timeout, logger));
+
+        return tools;
     }
 
     private AgentConfig ResolveAgentConfig(string agentName)

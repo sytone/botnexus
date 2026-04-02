@@ -28,6 +28,7 @@ public sealed class AgentLoop
     private readonly IReadOnlyList<ITool> _additionalTools;
     private readonly bool _enableMemory;
     private readonly IMemoryStore? _memoryStore;
+    private readonly IReadOnlySet<string> _disallowedTools;
     private readonly IReadOnlyList<IAgentHook> _hooks;
     private readonly ILogger<AgentLoop> _logger;
     private readonly GenerationSettings _settings;
@@ -46,6 +47,7 @@ public sealed class AgentLoop
         IEnumerable<ITool>? additionalTools = null,
         bool enableMemory = false,
         IMemoryStore? memoryStore = null,
+        IReadOnlySet<string>? disallowedTools = null,
         IReadOnlyList<IAgentHook>? hooks = null,
         ILogger<AgentLoop>? logger = null,
         IBotNexusMetrics? metrics = null,
@@ -62,6 +64,7 @@ public sealed class AgentLoop
         _additionalTools = [.. (additionalTools ?? [])];
         _enableMemory = enableMemory;
         _memoryStore = memoryStore;
+        _disallowedTools = disallowedTools ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         _hooks = hooks ?? [];
         _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentLoop>.Instance;
         _metrics = metrics;
@@ -197,14 +200,20 @@ public sealed class AgentLoop
             }
             else
             {
-                _toolRegistry.Register(new MemorySearchTool(_memoryStore, _agentName));
-                _toolRegistry.Register(new MemorySaveTool(_memoryStore, _agentName));
-                _toolRegistry.Register(new MemoryGetTool(_memoryStore, _agentName));
+                RegisterIfAllowed(new MemorySearchTool(_memoryStore, _agentName));
+                RegisterIfAllowed(new MemorySaveTool(_memoryStore, _agentName));
+                RegisterIfAllowed(new MemoryGetTool(_memoryStore, _agentName));
             }
         }
 
         if (_additionalTools.Count > 0)
             _toolRegistry.RegisterRange(_additionalTools);
+    }
+
+    private void RegisterIfAllowed(ITool tool)
+    {
+        if (!_disallowedTools.Contains(tool.Definition.Name))
+            _toolRegistry.Register(tool);
     }
 
     private ILlmProvider ResolveProvider()

@@ -412,3 +412,15 @@
 **Cross-Agent Update:** Sprint 7 was a major infrastructure sprint combining three interconnected capabilities: the otnexus CLI tool, pluggable doctor diagnostics system, and config hot reload. The CLI tool added 16 commands via System.CommandLine framework for managing BotNexus. The doctor system provides 13 diagnostic checkups across 6 categories (config, security, connectivity, extensions, providers, permissions, resources) with optional auto-fix capability and two fix modes (interactive --fix, force --fix --force). Config hot reload lets the Gateway watch ~/.botnexus/config.json and automatically reload without restart using IOptionsMonitor + FileSystemWatcher. Also deployed three Gateway REST endpoints (/api/status, /api/doctor, /api/shutdown) and fixed a P0 first-run bug where extensions failed to load. Test coverage grew to 443 tests (322 unit + 98 integration + 23 E2E). Kif (Documentation Engineer) joined the team. See .squad/log/2026-04-02T00-34-sprint7-complete.md and .squad/decisions.md Sprint 7 section for full details.
 
 ---
+
+### Agent File Restructure — squad.agent.md Trimming
+
+**Architecture Decision:** Split squad.agent.md into operational rules (kept in agent file) and lifecycle/setup content (moved to `.squad/skills/squad-lifecycle/SKILL.md`). The agent file dropped from 1287→982 lines (−24%). 14 sections removed: Init Mode (both phases), Casting & Persistent Naming (all subsections), Adding/Removing Team Members, Plugin Marketplace, Worktree Lifecycle Management, Pre-Spawn: Worktree Setup, Multi-Agent Artifact Format, Constraint Budget Tracking, GitHub Issues Mode, PRD Mode, Human Team Members, Copilot Coding Agent Member.
+
+**Key additions:** Lifecycle Operations routing table, pre-response self-check constraint (anti-inline-work guard), skill entry in Source of Truth Hierarchy, lightweight init check referencing skill file.
+
+**Pattern:** On-demand loading — setup/lifecycle instructions load only when triggered, not on every session. Keeps the coordinator's context window focused on orchestration rules that matter for every interaction.
+
+**User Preference (Jon):** Wants the agent file lean — load-on-demand for infrequent operations, always-loaded for critical operational rules.
+
+---
