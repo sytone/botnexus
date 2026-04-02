@@ -25,6 +25,7 @@ public sealed class AgentRunnerFactory : IAgentRunnerFactory
     private readonly ILoggerFactory _loggerFactory;
     private readonly IBotNexusMetrics? _metrics;
     private readonly IChannel? _defaultResponseChannel;
+    private readonly ICommandRouter? _commandRouter;
 
     public AgentRunnerFactory(
         IContextBuilderFactory contextBuilderFactory,
@@ -37,7 +38,8 @@ public sealed class AgentRunnerFactory : IAgentRunnerFactory
         IEnumerable<IAgentHook> hooks,
         ILoggerFactory loggerFactory,
         IEnumerable<IChannel> channels,
-        IBotNexusMetrics? metrics = null)
+        IBotNexusMetrics? metrics = null,
+        ICommandRouter? commandRouter = null)
     {
         _contextBuilderFactory = contextBuilderFactory;
         _agentWorkspaceFactory = agentWorkspaceFactory;
@@ -50,6 +52,7 @@ public sealed class AgentRunnerFactory : IAgentRunnerFactory
         _loggerFactory = loggerFactory;
         _metrics = metrics;
         _defaultResponseChannel = channels.FirstOrDefault();
+        _commandRouter = commandRouter;
     }
 
     /// <inheritdoc />
@@ -94,7 +97,8 @@ public sealed class AgentRunnerFactory : IAgentRunnerFactory
             agentName: workspace.AgentName,
             agentLoop: agentLoop,
             logger: _loggerFactory.CreateLogger<AgentRunner>(),
-            responseChannel: _defaultResponseChannel);
+            responseChannel: _defaultResponseChannel,
+            commandRouter: _commandRouter);
     }
 
     private AgentConfig ResolveAgentConfig(string agentName)

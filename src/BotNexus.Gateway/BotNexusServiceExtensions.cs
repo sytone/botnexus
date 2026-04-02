@@ -1,4 +1,5 @@
 using BotNexus.Agent;
+using BotNexus.Command;
 using BotNexus.Core.Abstractions;
 using BotNexus.Core.Extensions;
 using BotNexus.Channels.Base;
@@ -82,6 +83,18 @@ public static class BotNexusServiceExtensions
 
         // Diagnostics
         services.AddBotNexusDiagnostics();
+
+        // Commands
+        services.AddSingleton<ICommandRouter>(sp =>
+        {
+            var logger = sp.GetRequiredService<ILogger<CommandRouter>>();
+            var channel = sp.GetServices<IChannel>().FirstOrDefault();
+            var router = new CommandRouter(logger, channel);
+            var sessionManager = sp.GetRequiredService<ISessionManager>();
+            var heartbeatService = sp.GetService<IHeartbeatService>();
+            BuiltinCommands.Register(router, sessionManager, heartbeatService);
+            return router;
+        });
 
         // Gateway
         services.AddSingleton<IAgentRunnerFactory, AgentRunnerFactory>();
