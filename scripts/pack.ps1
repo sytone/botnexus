@@ -35,21 +35,39 @@ foreach ($tempPath in @($stagingRoot, $packageWorkRoot)) {
     New-Item -ItemType Directory -Path $tempPath | Out-Null
 }
 
+# Build the entire solution once so all projects and shared dependencies are compiled.
+Write-Host "Building solution..."
+dotnet build (Join-Path $repoRoot "BotNexus.slnx") --configuration Release --nologo --verbosity minimal --tl:off /p:Version=$packageVersion /p:InformationalVersion=$packageVersion
+if ($LASTEXITCODE -ne 0) {
+    throw "dotnet build failed"
+}
+
+# Publish all components in parallel (--no-build since solution is already compiled).
+Write-Host "Publishing $($components.Count) components in parallel..."
+$publishJobs = $components | ForEach-Object -Parallel {
+    $componentId = [string]$_.Id
+    $projectPath = Join-Path $using:repoRoot ([string]$_.Project)
+    $publishPath = Join-Path $using:stagingRoot $componentId
+
+    dotnet publish $projectPath --configuration Release --output $publishPath --no-build --nologo --verbosity minimal --tl:off /p:Version=$using:packageVersion /p:InformationalVersion=$using:packageVersion 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "dotnet publish failed for $componentId"
+    }
+
+    [pscustomobject]@{ Id = $componentId; PublishPath = $publishPath }
+} -ThrottleLimit 4 -AsJob
+
+$publishResults = Receive-Job -Job $publishJobs -Wait -AutoRemoveJob
+
+# Package each component into .nupkg files.
 $results = New-Object System.Collections.Generic.List[object]
 
 foreach ($component in $components) {
     $componentId = [string]$component.Id
-    $projectPath = Join-Path $repoRoot ([string]$component.Project)
     $publishPath = Join-Path $stagingRoot $componentId
     $workPath = Join-Path $packageWorkRoot $componentId
     $nupkgPath = Join-Path $artifactsRoot "$componentId.nupkg"
     $zipPath = Join-Path $artifactsRoot "$componentId.zip"
-
-    Write-Host "Publishing $componentId..."
-    dotnet publish $projectPath --configuration Release --output $publishPath --nologo --verbosity minimal --tl:off /p:Version=$packageVersion /p:InformationalVersion=$packageVersion
-    if ($LASTEXITCODE -ne 0) {
-        throw "dotnet publish failed for $componentId"
-    }
 
     if (Test-Path -LiteralPath $workPath) {
         Remove-Item -LiteralPath $workPath -Recurse -Force
