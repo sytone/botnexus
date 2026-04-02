@@ -36,6 +36,7 @@
     const elChatInput = $('#chat-input');
     const elBtnSend = $('#btn-send');
     const elToggleActivity = $('#toggle-activity');
+    const elAgentSelect = $('#agent-select');
 
     // --- WebSocket ---
     function connect() {
@@ -163,6 +164,12 @@
         elChatMessages.innerHTML = '';
         elBtnSend.disabled = false;
 
+        // Set agent selector to match session's agent
+        if (session.agentName) {
+            elAgentSelect.value = session.agentName;
+        }
+        elAgentSelect.disabled = true;
+
         // Render history
         if (session.history) {
             for (const entry of session.history) {
@@ -200,6 +207,7 @@
         // If we have a current session, send with session_id override
         const payload = { type: 'message', content: text };
         if (currentSessionKey) payload.session_id = currentSessionKey;
+        if (!currentSessionKey && elAgentSelect.value) payload.agent = elAgentSelect.value;
         sendWs(payload);
     }
 
@@ -247,9 +255,10 @@
         elWelcome.classList.add('hidden');
         elChatView.classList.remove('hidden');
         elChatTitle.textContent = 'New Chat';
-        elChatMeta.textContent = 'Session will be created on first message';
+        elChatMeta.textContent = `Agent: ${elAgentSelect.value || 'default'} · Session will be created on first message`;
         elChatMessages.innerHTML = '';
         elBtnSend.disabled = false;
+        elAgentSelect.disabled = false;
 
         // Remove active from all sessions
         elSessionsList.querySelectorAll('.list-item').forEach(el => el.classList.remove('active'));
@@ -295,6 +304,15 @@
                 <span class="item-meta">Model: ${escapeHtml(a.model)} · Temp: ${a.temperature} · Max tokens: ${a.maxTokens}</span>
             `;
             elAgentsList.appendChild(el);
+        }
+
+        // Populate agent selector dropdown
+        elAgentSelect.innerHTML = '';
+        for (const a of agents) {
+            const opt = document.createElement('option');
+            opt.value = a.name;
+            opt.textContent = a.name;
+            elAgentSelect.appendChild(opt);
         }
     }
 

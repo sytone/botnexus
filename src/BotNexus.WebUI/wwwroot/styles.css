@@ -364,10 +364,46 @@ body {
     padding: 12px 20px;
     border-bottom: 1px solid var(--border);
     background: var(--bg-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 }
 .chat-info h2 {
     font-size: 1rem;
     font-weight: 600;
+}
+
+.chat-header-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.agent-select-label {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.agent-select {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.35rem 0.75rem;
+    font-size: 0.85rem;
+    cursor: pointer;
+    min-width: 140px;
+}
+
+.agent-select:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.agent-select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
 }
 
 .chat-messages {
