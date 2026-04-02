@@ -245,6 +245,7 @@ public sealed class DiagnosticsCheckupsTests
     {
         var port = GetFreeTcpPort();
         using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        socket.ExclusiveAddressUse = true;
         socket.Bind(new IPEndPoint(IPAddress.Any, port));
         var config = CreateConfig();
         config.Gateway.Port = port;
@@ -452,7 +453,7 @@ public sealed class DiagnosticsCheckupsTests
     private static string GetMissingDriveRootPath()
     {
         if (!OperatingSystem.IsWindows())
-            return Path.Combine(Path.GetTempPath(), $"missing-root-{Guid.NewGuid():N}");
+            return $"/nonexistent-drive-{Guid.NewGuid():N}/botnexus-missing";
 
         var used = DriveInfo.GetDrives()
             .Select(d => char.ToUpperInvariant(d.Name[0]))

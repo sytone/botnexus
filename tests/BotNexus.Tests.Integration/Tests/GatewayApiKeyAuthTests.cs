@@ -11,8 +11,24 @@ using Microsoft.Extensions.Hosting;
 
 namespace BotNexus.Tests.Integration.Tests;
 
-public class GatewayApiKeyAuthTests
+public class GatewayApiKeyAuthTests : IDisposable
 {
+    private readonly string? _previousHome;
+    private readonly string _tempHome;
+
+    public GatewayApiKeyAuthTests()
+    {
+        _tempHome = Path.Combine(Path.GetTempPath(), $"botnexus-apikey-test-{Guid.NewGuid():N}");
+        _previousHome = Environment.GetEnvironmentVariable("BOTNEXUS_HOME");
+        Environment.SetEnvironmentVariable("BOTNEXUS_HOME", _tempHome);
+    }
+
+    public void Dispose()
+    {
+        Environment.SetEnvironmentVariable("BOTNEXUS_HOME", _previousHome);
+        try { if (Directory.Exists(_tempHome)) Directory.Delete(_tempHome, recursive: true); } catch { }
+    }
+
     [Fact]
     public async Task ApiEndpoints_AllowRequest_WithValidHeaderApiKey()
     {

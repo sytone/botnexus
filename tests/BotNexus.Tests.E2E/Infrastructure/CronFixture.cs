@@ -21,6 +21,7 @@ public sealed class CronFixture : IAsyncLifetime
     private HttpClient? _client;
     private readonly string _workspacePath = Path.Combine(
         AppContext.BaseDirectory, "cron-e2e-workspace", Guid.NewGuid().ToString("N"));
+    private string? _previousHome;
 
     public MockLlmProvider MockProvider { get; } = new();
     public MockWebChannel WebChannel { get; } = new();
@@ -32,6 +33,9 @@ public sealed class CronFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
+        _previousHome = Environment.GetEnvironmentVariable("BOTNEXUS_HOME");
+        Environment.SetEnvironmentVariable("BOTNEXUS_HOME", _workspacePath);
+
         Directory.CreateDirectory(_workspacePath);
         Directory.CreateDirectory(Path.Combine(_workspacePath, "sessions"));
 
@@ -120,6 +124,7 @@ public sealed class CronFixture : IAsyncLifetime
 
     public Task DisposeAsync()
     {
+        Environment.SetEnvironmentVariable("BOTNEXUS_HOME", _previousHome);
         _client?.Dispose();
         _factory?.Dispose();
         try

@@ -145,7 +145,8 @@ public sealed class AgentWorkspace : IAgentWorkspace
         if (!Directory.Exists(WorkspacePath))
             return Task.FromResult<IReadOnlyList<string>>([]);
 
-        var files = Directory.GetFiles(WorkspacePath, "*.md", SearchOption.TopDirectoryOnly)
+        var files = Directory.GetFiles(WorkspacePath, "*", SearchOption.TopDirectoryOnly)
+            .Where(file => string.Equals(Path.GetExtension(file), ".md", StringComparison.OrdinalIgnoreCase))
             .Select(Path.GetFileName)
             .Where(name => !string.IsNullOrWhiteSpace(name))
             .Select(name => name!)

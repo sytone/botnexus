@@ -22,6 +22,7 @@ public sealed class MultiAgentFixture : IAsyncLifetime
     private WebApplicationFactory<Program>? _factory;
     private readonly string _workspacePath = Path.Combine(
         AppContext.BaseDirectory, "e2e-workspace", Guid.NewGuid().ToString("N"));
+    private string? _previousHome;
 
     public MockLlmProvider MockProvider { get; } = new();
     public MockWebChannel WebChannel { get; } = new();
@@ -72,6 +73,9 @@ public sealed class MultiAgentFixture : IAsyncLifetime
 
     public Task InitializeAsync()
     {
+        _previousHome = Environment.GetEnvironmentVariable("BOTNEXUS_HOME");
+        Environment.SetEnvironmentVariable("BOTNEXUS_HOME", _workspacePath);
+
         Directory.CreateDirectory(_workspacePath);
         var sessionsPath = Path.Combine(_workspacePath, "sessions");
         Directory.CreateDirectory(sessionsPath);
@@ -124,6 +128,7 @@ public sealed class MultiAgentFixture : IAsyncLifetime
 
     public Task DisposeAsync()
     {
+        Environment.SetEnvironmentVariable("BOTNEXUS_HOME", _previousHome);
         _factory?.Dispose();
         try
         {

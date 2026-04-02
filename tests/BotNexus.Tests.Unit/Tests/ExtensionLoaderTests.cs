@@ -322,19 +322,26 @@ public class ExtensionLoaderTests : IDisposable
         Directory.CreateDirectory(outsideFolder);
         Directory.CreateDirectory(Path.GetDirectoryName(junctionLink)!);
 
-        var process = Process.Start(new ProcessStartInfo
+        if (OperatingSystem.IsWindows())
         {
-            FileName = "cmd.exe",
-            Arguments = $"/c mklink /J \"{junctionLink}\" \"{outsideFolder}\"",
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        });
+            var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/c mklink /J \"{junctionLink}\" \"{outsideFolder}\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
 
-        process.Should().NotBeNull();
-        process!.WaitForExit();
-        process.ExitCode.Should().Be(0, $"mklink output: {process.StandardOutput.ReadToEnd()} {process.StandardError.ReadToEnd()}");
+            process.Should().NotBeNull();
+            process!.WaitForExit();
+            process.ExitCode.Should().Be(0, $"mklink output: {process.StandardOutput.ReadToEnd()} {process.StandardError.ReadToEnd()}");
+        }
+        else
+        {
+            Directory.CreateSymbolicLink(junctionLink, outsideFolder);
+        }
 
         var config = BuildConfiguration(new Dictionary<string, string?>
         {
@@ -453,7 +460,8 @@ public class ExtensionLoaderTests : IDisposable
         emptyResult.Should().BeFalse();
         args[4].Should().Be("Extension key is empty");
 
-        args = [ _testRoot, "tools", "C:\\absolute", null, null ];
+        var rootedKey = OperatingSystem.IsWindows() ? "C:\\absolute" : "/absolute";
+        args = [ _testRoot, "tools", rootedKey, null, null ];
         var rootedResult = (bool)resolver.Invoke(null, args)!;
         rootedResult.Should().BeFalse();
         args[4].Should().Be("Rooted paths are not allowed");

@@ -18,9 +18,25 @@ namespace BotNexus.Tests.Integration.Tests;
 /// Registers SlackWebhookHandler in the Gateway, POSTs to /webhooks/slack,
 /// and validates URL verification + message routing through the full pipeline.
 /// </summary>
-public sealed class SlackWebhookE2eTests
+public sealed class SlackWebhookE2eTests : IDisposable
 {
     private const string SigningSecret = "test-slack-signing-secret";
+    private readonly string? _previousHome;
+    private readonly string _tempHome;
+
+    public SlackWebhookE2eTests()
+    {
+        _tempHome = Path.Combine(Path.GetTempPath(), $"botnexus-slack-test-{Guid.NewGuid():N}");
+        _previousHome = Environment.GetEnvironmentVariable("BOTNEXUS_HOME");
+        Environment.SetEnvironmentVariable("BOTNEXUS_HOME", _tempHome);
+    }
+
+    public void Dispose()
+    {
+        Environment.SetEnvironmentVariable("BOTNEXUS_HOME", _previousHome);
+        try { if (Directory.Exists(_tempHome)) Directory.Delete(_tempHome, recursive: true); } catch { }
+    }
+
 
     [Fact]
     public async Task SlackWebhook_UrlVerification_ReturnsChallengeViaGateway()

@@ -296,7 +296,14 @@ All Sprints 1-2 foundation work completed by Farnsworth and Bender. Hermes ready
 
 
 ### 2026-04-02 — Sprint 7 Complete: CLI Tool, Doctor Diagnostics, Config Hot Reload
-
+ 
 **Cross-Agent Update:** Sprint 7 was a major infrastructure sprint combining three interconnected capabilities: the otnexus CLI tool, pluggable doctor diagnostics system, and config hot reload. The CLI tool added 16 commands via System.CommandLine framework for managing BotNexus. The doctor system provides 13 diagnostic checkups across 6 categories (config, security, connectivity, extensions, providers, permissions, resources) with optional auto-fix capability and two fix modes (interactive --fix, force --fix --force). Config hot reload lets the Gateway watch ~/.botnexus/config.json and automatically reload without restart using IOptionsMonitor + FileSystemWatcher. Also deployed three Gateway REST endpoints (/api/status, /api/doctor, /api/shutdown) and fixed a P0 first-run bug where extensions failed to load. Test coverage grew to 443 tests (322 unit + 98 integration + 23 E2E). Kif (Documentation Engineer) joined the team. See .squad/log/2026-04-02T00-34-sprint7-complete.md and .squad/decisions.md Sprint 7 section for full details.
-
+ 
 ---
+
+### 2026-04-02 — Cross-platform test stability learnings
+
+- Extension loader path-escape tests must create links with platform APIs (`mklink /J` on Windows, `Directory.CreateSymbolicLink` on non-Windows) so CI does not depend on `cmd.exe`.
+- Guard-branch tests for rooted paths must use OS-specific rooted strings (`C:\...` on Windows, `/...` on Unix) because `Path.IsPathRooted` is platform-sensitive.
+- Markdown file enumeration in `AgentWorkspace.ListFilesAsync` must filter by `Path.GetExtension(...).Equals(".md", OrdinalIgnoreCase)`; glob `*.md` is case-sensitive on Linux and misses files like `B.MD`.
+- Diagnostics portability: missing-drive tests need an unwritable absolute Unix root path, and port-in-use tests should set `ExclusiveAddressUse` before bind to preserve "bound-not-listening blocks probe" behavior across runtimes.

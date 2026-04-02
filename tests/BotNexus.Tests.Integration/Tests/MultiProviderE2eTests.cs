@@ -17,8 +17,24 @@ namespace BotNexus.Tests.Integration.Tests;
 /// Validates that multiple LLM providers can be registered in the ProviderRegistry
 /// concurrently and that agents route to the correct provider by name.
 /// </summary>
-public sealed class MultiProviderE2eTests
+public sealed class MultiProviderE2eTests : IDisposable
 {
+    private readonly string? _previousHome;
+    private readonly string _tempHome;
+
+    public MultiProviderE2eTests()
+    {
+        _tempHome = Path.Combine(Path.GetTempPath(), $"botnexus-multiprov-test-{Guid.NewGuid():N}");
+        _previousHome = Environment.GetEnvironmentVariable("BOTNEXUS_HOME");
+        Environment.SetEnvironmentVariable("BOTNEXUS_HOME", _tempHome);
+    }
+
+    public void Dispose()
+    {
+        Environment.SetEnvironmentVariable("BOTNEXUS_HOME", _previousHome);
+        try { if (Directory.Exists(_tempHome)) Directory.Delete(_tempHome, recursive: true); } catch { }
+    }
+
     [Fact]
     public async Task MultipleProviders_RegisteredAndRetrievable_ByCaseInsensitiveName()
     {
