@@ -130,15 +130,19 @@ $versionPayload | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $versionPat
 $configPath = Join-Path $HOME ".botnexus\config.json"
 if (Test-Path -LiteralPath $configPath) {
     try {
-        $configJson = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
-        if ($null -eq $configJson) {
-            $configJson = [pscustomobject]@{}
+        $configRaw = Get-Content -LiteralPath $configPath -Raw
+        $configJson = $configRaw | ConvertFrom-Json
+        $extensionsPath = Join-Path $resolvedInstallPath "extensions"
+
+        if ($null -ne $configJson.BotNexus) {
+            $configJson.BotNexus | Add-Member -NotePropertyName ExtensionsPath -NotePropertyValue $extensionsPath -Force
         }
-        $configJson | Add-Member -NotePropertyName ExtensionsPath -NotePropertyValue (Join-Path $resolvedInstallPath "extensions") -Force
+
         $configJson | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $configPath -Encoding UTF8
+        Write-Host "Updated ExtensionsPath in $configPath"
     }
     catch {
-        Write-Warning "Could not update $configPath: $($_.Exception.Message)"
+        Write-Warning "Could not update $configPath`: $($_.Exception.Message)"
     }
 }
 

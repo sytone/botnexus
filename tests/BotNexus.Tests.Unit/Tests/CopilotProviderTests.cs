@@ -17,7 +17,7 @@ public class CopilotProviderTests
         var tokenStore = new InMemoryTokenStore(new OAuthToken("cached-token", DateTimeOffset.UtcNow.AddMinutes(10)));
         var providerHttpClient = new HttpClient(new StubHttpMessageHandler((request, _) =>
         {
-            request.RequestUri!.AbsolutePath.Should().Be("/v1/chat/completions");
+            request.RequestUri!.AbsolutePath.Should().Be("/chat/completions");
             request.Headers.Authorization.Should().BeEquivalentTo(new AuthenticationHeaderValue("Bearer", "cached-token"));
             return JsonResponse("""
             {
