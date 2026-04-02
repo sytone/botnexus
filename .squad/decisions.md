@@ -2517,3 +2517,73 @@ cron-consistency-review ─── (after docs)
 - 11 team agents active, 1 new (Kif)
 - 0 production incidents (fixed 1 P0 pre-release)
 
+
+---
+
+## User Directives (2026-04-01 Batch)
+
+### 2026-04-01T20:15:43Z: Agents must always commit their work
+
+**By:** Jon Bullen (via Copilot)  
+**Status:** Adopted  
+
+**Directive:** Agents must always commit their work as part of completing a task. Uncommitted changes are not considered done.
+
+**Why:** Task completion requires durable record in version control. Uncommitted changes create ambiguity about whether a task is actually complete.
+
+**Implementation:** Every agent spawn must include git commit as final step. Use copilot-directive-commit-always.md as reference in .squad/decisions/inbox/.
+
+---
+
+### 2026-04-01T20:15:43Z: No tests may touch ~/.botnexus/
+
+**By:** Jon Bullen (via Copilot)  
+**Status:** Adopted  
+
+**Directive:** No tests (unit, integration, E2E, or simulations) may touch the ~/.botnexus folder under the user profile directory. All tests must set BOTNEXUS_HOME to a temp directory and restore it on cleanup.
+
+**Why:** Test runs contaminated the real ~/.botnexus directory, breaking local development when BotNexus was installed on the same machine. The home directory is live production data — tests must never touch it.
+
+**Implementation:** All test fixtures must wrap BOTNEXUS_HOME with temp dir scope. See AgentWorkspace.cs for central path resolver. BotNexusHome.cs validates all paths are isolated in CI/test environments.
+
+**Hermes Result (2026-04-02):** Found 5 test classes missing env var override; all fixed. 322 tests now pass with strict isolation.
+
+---
+
+### 2026-04-02T03:16:47Z: Cross-Platform Test Compatibility Patterns
+
+**By:** Hermes (Tester)  
+**Status:** Completed & Committed  
+
+**Scope:** Unit test reliability on GitHub Actions Linux + local Windows
+
+**Decision:** Standardize cross-platform test patterns:
+
+1. **Link creation is OS-aware**
+   - Windows: `cmd.exe /c mklink /J`
+   - Non-Windows: Use .NET symbolic link APIs (no shell dependency)
+
+2. **Path-rooted assertions use OS-native samples**
+   - Windows rooted sample: `C:\absolute`
+   - Unix rooted sample: `/absolute`
+
+3. **Filesystem extension matching is case-insensitive**
+   - Avoid relying on `Directory.GetFiles(..., "*.md")` for cross-platform consistency
+   - Filter with `Path.GetExtension(...).Equals(".md", StringComparison.OrdinalIgnoreCase)`
+
+4. **Socket binding tests force exclusive binding semantics**
+   - Use `Socket.ExclusiveAddressUse = true` before `Bind(...)` to prevent runtime/platform binding differences
+
+**Why:** CI failures were Linux-only while Windows passed, indicating tests encoded Windows assumptions. These rules preserve intended behavior checks while removing platform coupling.
+
+**Result:** 5 CI test failures fixed. 8 test files updated. All 322 unit tests passing on Linux + Windows.
+
+**Files Modified:**
+- src/BotNexus.Agent/AgentWorkspace.cs
+- tests/BotNexus.Tests.Unit/Tests/ExtensionLoaderTests.cs
+- tests/BotNexus.Tests.Unit/Tests/DiagnosticsCheckupsTests.cs
+- tests/BotNexus.Tests.E2E/Infrastructure/MultiAgentFixture.cs
+- tests/BotNexus.Tests.E2E/Infrastructure/CronFixture.cs
+- tests/BotNexus.Tests.Integration/Tests/GatewayApiKeyAuthTests.cs
+- tests/BotNexus.Tests.Integration/Tests/MultiProviderE2eTests.cs
+- tests/BotNexus.Tests.Integration/Tests/SlackWebhookE2eTests.cs

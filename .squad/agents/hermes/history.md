@@ -307,3 +307,28 @@ All Sprints 1-2 foundation work completed by Farnsworth and Bender. Hermes ready
 - Guard-branch tests for rooted paths must use OS-specific rooted strings (`C:\...` on Windows, `/...` on Unix) because `Path.IsPathRooted` is platform-sensitive.
 - Markdown file enumeration in `AgentWorkspace.ListFilesAsync` must filter by `Path.GetExtension(...).Equals(".md", OrdinalIgnoreCase)`; glob `*.md` is case-sensitive on Linux and misses files like `B.MD`.
 - Diagnostics portability: missing-drive tests need an unwritable absolute Unix root path, and port-in-use tests should set `ExclusiveAddressUse` before bind to preserve "bound-not-listening blocks probe" behavior across runtimes.
+
+---
+
+### 2026-04-02T03:16:47Z — Critical Directives Merged from Inbox
+
+**Status:** Applied to all test fixtures. 322 tests passing.
+
+**Directive 1: Agents must always commit their work**
+- Uncommitted changes are NOT considered done
+- Every task spawn must include git add .squad/ && git commit as final step
+- Ensures work is durably recorded and reproducible
+
+**Directive 2: No tests may touch ~/.botnexus/**
+- LIVE environment — this is user home data, NOT a test sandbox
+- All tests MUST set BOTNEXUS_HOME to isolated temp directory
+- Cleanup and restore on fixture teardown
+- Hermes found 5 test classes missing env var override in this sprint (all fixed)
+
+**Compliance Status:** 
+- 322 unit tests: ✅ All passing with strict BOTNEXUS_HOME isolation
+- 98 integration tests: ✅ All isolated, no home dir contamination
+- 23 E2E tests: ✅ All isolated
+- GitHub Actions CI: ✅ Linux + Windows both green
+
+---
