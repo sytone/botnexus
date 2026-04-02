@@ -280,12 +280,27 @@ in the connection status.
 
 ## 5. Configure Your First Provider (Copilot)
 
+### Important: Where provider assemblies are loaded from
+
+BotNexus loads provider DLLs from the `ExtensionsPath` directory configured in your config. **The pre-built provider assemblies ship with the repository** at `{repo-root}/extensions/providers/` — they are **not** deployed to `~/.botnexus/extensions/` automatically.
+
+**For development (running from the repo via `dotnet run`):**
+- Set `ExtensionsPath` to point to the repo's extensions directory so the pre-built providers are found
+- Example: `"ExtensionsPath": "{repo-root}/extensions"` or use a relative path from where you run `dotnet run`
+- Or, omit `ExtensionsPath` entirely to use the development default
+
+**For production (running an installed tool):**
+- Extensions must be built and copied to `~/.botnexus/extensions/` manually or during tool installation
+- Set `ExtensionsPath` to `~/.botnexus/extensions` (or omit it if this is the default)
+
+---
+
 The Copilot provider is not pre-configured by default. Add it to `~/.botnexus/config.json`:
 
 ```json
 {
   "BotNexus": {
-    "ExtensionsPath": "~/.botnexus/extensions",
+    "ExtensionsPath": "{repo-root}/extensions",
     "Providers": {
       "copilot": {
         "Auth": "oauth",
@@ -296,6 +311,8 @@ The Copilot provider is not pre-configured by default. Add it to `~/.botnexus/co
   }
 }
 ```
+
+> **Note:** Replace `{repo-root}` with the path to where you cloned the BotNexus repository (e.g., `/home/user/botnexus` or `C:\repos\botnexus`). For development, you can also use a relative path like `./extensions` if you run `dotnet run` from the repo root.
 
 Restart the Gateway to pick up the configuration change (Ctrl+C, then `dotnet run --project src/BotNexus.Gateway`).
 
@@ -838,6 +855,7 @@ tail -50 ~/.botnexus/logs/botnexus-*.log
 | "Unauthorized" on API calls | API key configured but not sent | Add `X-Api-Key` header (see [Security](#12-security)) |
 | Agent not found | Agent not in `Named` config | Add agent to `Agents.Named` and restart |
 | Extensions show warnings at startup | Missing extension folder (expected on first run) | Not an error — folders are created on-demand when needed |
+| Provider configured but not loaded / "No LLM providers registered" | `ExtensionsPath` does not point to the directory containing provider DLLs | For development: set `ExtensionsPath` to `{repo-root}/extensions` in config.json and restart. For production: build and copy provider DLLs to `~/.botnexus/extensions/providers/` |
 | Health check says unhealthy | An extension failed to load or a required component is missing | Check `~/.botnexus/logs/botnexus-*.log` for details; check `GET /api/extensions` for failures |
 
 ---
