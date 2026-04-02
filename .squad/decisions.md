@@ -2587,3 +2587,42 @@ cron-consistency-review ─── (after docs)
 - tests/BotNexus.Tests.Integration/Tests/GatewayApiKeyAuthTests.cs
 - tests/BotNexus.Tests.Integration/Tests/MultiProviderE2eTests.cs
 - tests/BotNexus.Tests.Integration/Tests/SlackWebhookE2eTests.cs
+
+---
+
+### 2026-04-02T04:21:22Z: Test Isolation Pattern — BOTNEXUS_HOME via test.runsettings + Directory.Build.props
+
+**By:** Coordinator (with Hermes integration)  
+**Status:** Approved for Team Adoption  
+
+**Problem:** Tests were contaminating developer home directories (`~/.botnexus`) and CI/CD environments with test artifacts. Root cause: `BOTNEXUS_HOME` environment variable was not consistently set for test processes.
+
+**Solution:** Foolproof two-layer environment variable management:
+
+1. **test.runsettings** (NEW, repository root)
+   - Centralized BOTNEXUS_HOME configuration for all test processes
+   - Picked up automatically by VSTest, dotnet test, and CI/CD
+   - Cannot be accidentally skipped
+
+2. **Directory.Build.props** (NEW, repository root)
+   - Auto-applies test.runsettings to all test projects
+   - New tests inherit isolation automatically
+   - Reduces boilerplate and error surface
+
+3. **Parallelization Disabled**
+   - Process-global environment variables race with parallel execution
+   - Added `<ParallelizeTestsWithinCollection>false</ParallelizeTestsWithinCollection>` to Unit and Integration projects
+   - Trade-off: sequential execution, but test suite remains fast
+
+4. **CliHomeScope Enhancement**
+   - Updated cleanup to handle sibling `~/.botnexus-backups` directory
+   - Backup location is external (reinforces test isolation principle)
+
+**Verification Results:**
+- Full test suite: 465/465 tests PASS
+- ZERO ~/.botnexus contamination detected
+- Test isolation: VERIFIED across all test types
+
+**Why:** Critical for team development. Tests must never pollute live user environments. This pattern becomes the canonical approach for all future test infrastructure work.
+
+**Impact:** This decision directly supports the Backup CLI feature (external backup location, separate from runtime data) and establishes a reusable pattern for other environment-sensitive tests.

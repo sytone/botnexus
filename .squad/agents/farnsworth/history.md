@@ -257,3 +257,42 @@ All 7 foundation items completed (Farnsworth: 5, Bender: 2). Decisions merged an
 - 2 P2 items deferred to next sprint: Anthropic tool-calling feature parity, plugin architecture deep-dive
 - Hearbeat service still needs HealthCheck.AggregateAsync() implementation (minor gap)
 - Plugin discovery (AssemblyLoadContext per extension) not yet fully tested with real extension deployments
+
+## 2026-04-02 — Backup CLI & Test Isolation Infrastructure
+
+### Your Deliverables (Farnsworth)
+
+**Backup CLI Implementation** — src/BotNexus.Cli/Program.cs
+- New command group: `backup create|restore|list`
+- `backup create` — creates full backup of ~/.botnexus to ~/.botnexus-backups (external location)
+- `backup restore {backup-id}` — restores from named backup
+- `backup list` — lists available backups with metadata
+- Self-backup exclusion: skips ~/.botnexus-backups when creating new backup (bug fixed by Coordinator)
+- All 11 integration tests passing (Hermes wrote tests)
+
+### Key Architecture Decisions
+
+1. **Backup Location: External to Home**
+   - Location: ~/.botnexus-backups (sibling to ~/.botnexus, NOT inside)
+   - Rationale: backups are emergency snapshots, kept separate from runtime data
+   - Prevents recursive backup issues (backups being backed up)
+   - Cleaner cleanup semantics for test isolation
+
+2. **Test Isolation Pattern** (cross-team decision, led by Coordinator)
+   - Introduced: test.runsettings for foolproof BOTNEXUS_HOME environment variable
+   - Introduced: Directory.Build.props to auto-apply runsettings to all test projects
+   - Result: all 465 tests pass, ZERO ~/.botnexus contamination on dev machines/CI
+   - Pattern becomes team standard for test infrastructure going forward
+
+### Build Status
+- ✅ Solution green, 0 errors, 0 warnings
+- ✅ All 465 tests passing (11 new backup integration tests included)
+- ✅ ZERO home directory contamination verified
+
+### Integration Points
+- Backup command integrates with unified ~/.botnexus/ configuration home
+- Test isolation infrastructure enables safe backup testing without developer home pollution
+- Backup location strategy informs where other external data lives (logs, caches, temp state)
+
+### Team Status
+**Backup infrastructure COMPLETE:** CLI command fully implemented, comprehensive test coverage, foolproof test isolation established. Ready for production backup/restore workflows.

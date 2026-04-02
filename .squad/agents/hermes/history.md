@@ -338,3 +338,45 @@ All Sprints 1-2 foundation work completed by Farnsworth and Bender. Hermes ready
 - Preserved strict home isolation by using `CliHomeScope.CreateAsync()` in every test to avoid touching `%USERPROFILE%\.botnexus`.
 
 ---
+
+## 2026-04-02 — Backup CLI Integration Tests & Test Isolation Infrastructure
+
+### Your Deliverables (Hermes)
+
+**Backup CLI Integration Tests** — tests/BotNexus.Tests.Integration/Tests/BackupCliIntegrationTests.cs
+- 11 comprehensive integration tests for backup create, restore, and list commands
+- Test coverage: backup creation with zip validation, restore functionality, list metadata, error handling
+- All 11 tests PASS
+- Updated CliHomeScope to clean up sibling ~/.botnexus-backups directory
+- Strictly isolated: uses CliHomeScope for each test, ZERO home directory contamination
+
+### Cross-Team Infrastructure Achievement
+
+**Test Isolation Pattern** (Coordinator-led, Hermes implemented test support):
+- **Problem:** Tests were contaminating ~/.botnexus on dev machines and CI/CD
+- **Solution:** Foolproof BOTNEXUS_HOME environment variable via test.runsettings + Directory.Build.props
+- **Hermes' Role:** Updated CliHomeScope cleanup to handle sibling backups directory
+- **Result:** 465 total tests passing, ZERO home directory pollution verified
+
+### Key Architecture Insights
+
+1. **Backup Location: External to Home** (informs test strategy)
+   - ~/.botnexus-backups is sibling directory, not inside ~/.botnexus
+   - CliHomeScope must clean up both directories for true isolation
+   - Principle: backups are external emergency snapshots, kept separate
+
+2. **Test Isolation becomes Team Standard** (documented in decisions/inbox)
+   - BOTNEXUS_HOME via test.runsettings is foolproof (can't be forgotten)
+   - Directory.Build.props ensures all future tests inherit isolation automatically
+   - Parallelization disabled in Unit/Integration projects (process-global env var safety)
+   - Pattern now the canonical approach for environment-sensitive tests
+
+### Build Status
+- ✅ Solution green, 0 errors, 0 warnings
+- ✅ All 465 tests passing (11 new backup integration tests included)
+- ✅ Test execution: Sequential (within assemblies) for reliability
+- ✅ ZERO home directory contamination verified
+- ✅ Cross-platform CI/CD passing (Linux + Windows)
+
+### Team Status
+**Backup testing infrastructure COMPLETE:** 11 comprehensive integration tests written, passed, and integrated with foolproof test isolation pattern. Backup CLI feature fully validated. Test infrastructure pattern established as team standard for all future test work.
