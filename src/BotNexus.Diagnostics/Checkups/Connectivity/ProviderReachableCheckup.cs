@@ -9,6 +9,15 @@ public sealed class ProviderReachableCheckup(IOptions<BotNexusConfig> options) :
 {
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(5);
     private readonly BotNexusConfig _config = options?.Value ?? throw new ArgumentNullException(nameof(options));
+    private readonly Func<HttpClient> _httpClientFactory = () => new HttpClient { Timeout = RequestTimeout };
+
+    public ProviderReachableCheckup(
+        IOptions<BotNexusConfig> options,
+        Func<HttpClient> httpClientFactory)
+        : this(options)
+    {
+        _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
+    }
 
     public string Name => "ProviderReachable";
     public string Category => "Connectivity";
@@ -26,7 +35,7 @@ public sealed class ProviderReachableCheckup(IOptions<BotNexusConfig> options) :
                     "Add providers with ApiBase URLs under BotNexus:Providers.");
             }
 
-            using var httpClient = new HttpClient { Timeout = RequestTimeout };
+            using var httpClient = _httpClientFactory();
             var failures = new List<string>();
             var warnings = new List<string>();
             var successes = new List<string>();

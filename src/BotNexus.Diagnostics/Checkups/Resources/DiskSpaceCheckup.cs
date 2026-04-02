@@ -7,6 +7,15 @@ public sealed class DiskSpaceCheckup(DiagnosticsPaths paths) : IHealthCheckup
     private const long WarningThresholdBytes = 500L * 1024 * 1024;
     private const long FailureThresholdBytes = 100L * 1024 * 1024;
     private readonly DiagnosticsPaths _paths = paths ?? throw new ArgumentNullException(nameof(paths));
+    private readonly Func<string, long> _freeSpaceProvider = root => new DriveInfo(root).AvailableFreeSpace;
+
+    public DiskSpaceCheckup(
+        DiagnosticsPaths paths,
+        Func<string, long> freeSpaceProvider)
+        : this(paths)
+    {
+        _freeSpaceProvider = freeSpaceProvider ?? throw new ArgumentNullException(nameof(freeSpaceProvider));
+    }
 
     public string Name => "DiskSpace";
     public string Category => "Resources";
@@ -27,7 +36,7 @@ public sealed class DiskSpaceCheckup(DiagnosticsPaths paths) : IHealthCheckup
             }
 
             var drive = new DriveInfo(root);
-            var freeBytes = drive.AvailableFreeSpace;
+            var freeBytes = _freeSpaceProvider(root);
             var freeMb = freeBytes / (1024 * 1024);
 
             if (freeBytes < FailureThresholdBytes)

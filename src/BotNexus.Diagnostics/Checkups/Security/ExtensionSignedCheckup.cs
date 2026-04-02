@@ -1,3 +1,4 @@
+using System.Reflection;
 using BotNexus.Core.Abstractions;
 using BotNexus.Core.Configuration;
 using Microsoft.Extensions.Options;
@@ -29,7 +30,35 @@ public sealed class ExtensionSignedCheckup(IOptions<BotNexusConfig> options) : I
                 .Where(assembly => assembly.Location.StartsWith(extensionRoot, StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
-            if (loadedExtensions.Count == 0)
+            var discoveredDlls = Directory.Exists(extensionRoot)
+                ? Directory.EnumerateFiles(extensionRoot, "*.dll", SearchOption.AllDirectories).ToList()
+                : [];
+
+            var unsignedDiscovered = discoveredDlls
+                .Where(dll =>
+                {
+                    try
+                    {
+                        var token = AssemblyName.GetAssemblyName(dll).GetPublicKeyToken();
+                        return token is null || token.Length == 0;
+                    }
+                    catch (Exception ex) when (ex is FileLoadException or FileNotFoundException or BadImageFormatException)
+                    {
+                        return true;
+                    }
+                })
+                .Select(Path.GetFileName)
+                .ToList();
+
+            if (unsignedDiscovered.Count > 0)
+            {
+                return Task.FromResult(new CheckupResult(
+                    CheckupStatus.Fail,
+                    $"Unsigned extension assemblies detected on disk: {string.Join(", ", unsignedDiscovered)}",
+                    "Strong-name sign extension assemblies or disable RequireSignedAssemblies for development-only scenarios."));
+            }
+
+            if (loadedExtensions.Count == 0 && discoveredDlls.Count == 0)
             {
                 return Task.FromResult(new CheckupResult(
                     CheckupStatus.Warn,
