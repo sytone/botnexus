@@ -130,6 +130,7 @@ app.MapGet("/api/sessions/{*key}", async (string key, ISessionManager sessionMan
     {
         key = session.Key,
         agentName = session.AgentName,
+        channel = session.Key.Contains(':') ? session.Key[..session.Key.IndexOf(':')] : "unknown",
         createdAt = session.CreatedAt,
         updatedAt = session.UpdatedAt,
         history = session.History.Select(e => new
@@ -138,7 +139,13 @@ app.MapGet("/api/sessions/{*key}", async (string key, ISessionManager sessionMan
             content = e.Content,
             timestamp = e.Timestamp,
             toolName = e.ToolName,
-            toolCallId = e.ToolCallId
+            toolCallId = e.ToolCallId,
+            toolCalls = e.ToolCalls?.Select(tc => new
+            {
+                id = tc.Id,
+                name = tc.ToolName,
+                arguments = tc.Arguments
+            })
         })
     }, jsonOptions);
 });

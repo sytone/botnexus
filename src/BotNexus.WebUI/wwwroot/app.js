@@ -137,10 +137,7 @@
             el.dataset.key = s.key;
             const channelIcon = channelEmoji(s.channel);
             const timeStr = relativeTime(s.updatedAt);
-            el.innerHTML = `
-                <span class="item-title">${channelIcon} ${escapeHtml(s.key)}</span>
-                <span class="item-meta">Agent: ${escapeHtml(s.agentName)} · ${s.messageCount} msgs · ${timeStr}</span>
-            `;
+            el.innerHTML = `<span class="item-title">${channelIcon} ${escapeHtml(s.agentName || 'Chat')}</span><span class="item-meta">${escapeHtml(s.channel)} · ${s.messageCount} msgs · ${timeStr}</span>`;
             el.addEventListener('click', () => openSession(s.key));
             elSessionsList.appendChild(el);
         }
@@ -159,8 +156,9 @@
         // Show chat view
         elWelcome.classList.add('hidden');
         elChatView.classList.remove('hidden');
-        elChatTitle.textContent = key;
-        elChatMeta.textContent = `Agent: ${session.agentName}`;
+        const channel = session.channel || (key.includes(':') ? key.split(':')[0] : 'unknown');
+        elChatTitle.textContent = `${session.agentName || 'Chat'}`;
+        elChatMeta.textContent = `Channel: ${channel} · Agent: ${session.agentName} · ${session.history ? session.history.length : 0} messages`;
         elChatMessages.innerHTML = '';
         elBtnSend.disabled = false;
 
