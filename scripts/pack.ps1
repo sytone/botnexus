@@ -35,22 +35,24 @@ foreach ($tempPath in @($stagingRoot, $packageWorkRoot)) {
     New-Item -ItemType Directory -Path $tempPath | Out-Null
 }
 
-# Restore once for the entire solution to avoid redundant package fetches.
-Write-Host "Restoring solution..."
-dotnet restore (Join-Path $repoRoot "BotNexus.slnx") --nologo --verbosity minimal
+# Build the entire solution once to compile all shared dependencies (BotNexus.Core, etc.).
+# This eliminates obj/ file contention that occurs when multiple parallel publishes
+# try to build the same shared projects simultaneously.
+Write-Host "Building solution..."
+dotnet build (Join-Path $repoRoot "BotNexus.slnx") --configuration Release --nologo --verbosity minimal /p:Version=$packageVersion /p:InformationalVersion=$packageVersion
 if ($LASTEXITCODE -ne 0) {
-    throw "dotnet restore failed"
+    throw "dotnet build failed"
 }
 
-# Publish all components in parallel. Each publish builds its own project tree independently
-# (avoiding the ref assembly race condition that occurs with --no-build).
+# Publish all components in parallel using --no-build to skip compilation.
+# Each publish only copies already-built binaries, avoiding race conditions.
 Write-Host "Publishing $($components.Count) components in parallel..."
 $publishJobs = $components | ForEach-Object -Parallel {
     $componentId = [string]$_.Id
     $projectPath = Join-Path $using:repoRoot ([string]$_.Project)
     $publishPath = Join-Path $using:stagingRoot $componentId
 
-    $output = dotnet publish $projectPath --configuration Release --output $publishPath --no-restore --nologo --verbosity minimal --tl:off /p:Version=$using:packageVersion /p:InformationalVersion=$using:packageVersion /p:UseSharedCompilation=false 2>&1
+    $output = dotnet publish $projectPath --configuration Release --output $publishPath --no-build --nologo --verbosity minimal --tl:off /p:Version=$using:packageVersion /p:InformationalVersion=$using:packageVersion 2>&1
     $exitCode = $LASTEXITCODE
     
     if ($exitCode -ne 0) {
@@ -60,7 +62,7 @@ $publishJobs = $components | ForEach-Object -Parallel {
     }
 
     [pscustomobject]@{ Id = $componentId; PublishPath = $publishPath }
-} -ThrottleLimit 4 -AsJob
+} -ThrottleLimit 8 -AsJob
 
 $publishResults = Receive-Job -Job $publishJobs -Wait -AutoRemoveJob
 
