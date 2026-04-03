@@ -22,7 +22,10 @@ public enum ActivityEventType
     AgentCompleted,
 
     /// <summary>An error occurred during processing.</summary>
-    Error
+    Error,
+
+    /// <summary>A system-level notification or message.</summary>
+    SystemMessage
 }
 
 /// <summary>Represents a system-wide activity event broadcast to all subscribers.</summary>

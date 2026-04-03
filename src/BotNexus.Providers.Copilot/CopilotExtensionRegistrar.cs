@@ -1,4 +1,5 @@
 using BotNexus.Core.Abstractions;
+using BotNexus.Core.Bus;
 using BotNexus.Core.Configuration;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -15,7 +16,13 @@ public sealed class CopilotExtensionRegistrar : IExtensionRegistrar
         var providerConfig = configuration.Get<CopilotConfig>() ?? new CopilotConfig();
         services.AddSingleton(providerConfig);
         services.TryAddSingleton<IOAuthTokenStore, FileOAuthTokenStore>();
-        services.AddSingleton<GitHubDeviceCodeFlow>();
+        services.AddSingleton<GitHubDeviceCodeFlow>(sp =>
+        {
+            var logger = sp.GetRequiredService<ILogger<GitHubDeviceCodeFlow>>();
+            var activityStream = sp.GetRequiredService<IActivityStream>();
+            var messageStore = sp.GetRequiredService<SystemMessageStore>();
+            return new GitHubDeviceCodeFlow(new HttpClient(), logger, activityStream, messageStore);
+        });
 
         services.AddSingleton<ILlmProvider>(sp =>
         {

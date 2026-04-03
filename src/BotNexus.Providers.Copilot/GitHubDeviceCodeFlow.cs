@@ -1,6 +1,8 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
 using BotNexus.Core.Abstractions;
+using BotNexus.Core.Bus;
+using BotNexus.Core.Models;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Providers.Copilot;
@@ -11,22 +13,65 @@ public class GitHubDeviceCodeFlow
     private const string AccessTokenEndpoint = "https://github.com/login/oauth/access_token";
     private readonly HttpClient _httpClient;
     private readonly ILogger<GitHubDeviceCodeFlow> _logger;
+    private readonly IActivityStream? _activityStream;
+    private readonly SystemMessageStore? _messageStore;
 
     public GitHubDeviceCodeFlow(ILogger<GitHubDeviceCodeFlow>? logger = null)
-        : this(new HttpClient(), logger)
+        : this(new HttpClient(), logger, null, null)
     {
     }
 
-    public GitHubDeviceCodeFlow(HttpClient httpClient, ILogger<GitHubDeviceCodeFlow>? logger = null)
+    public GitHubDeviceCodeFlow(
+        HttpClient httpClient, 
+        ILogger<GitHubDeviceCodeFlow>? logger = null, 
+        IActivityStream? activityStream = null,
+        SystemMessageStore? messageStore = null)
     {
         _httpClient = httpClient;
         _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<GitHubDeviceCodeFlow>.Instance;
+        _activityStream = activityStream;
+        _messageStore = messageStore;
     }
 
     public async Task<OAuthToken> AcquireAccessTokenAsync(string clientId, CancellationToken cancellationToken = default)
     {
         var deviceCode = await RequestDeviceCodeAsync(clientId, cancellationToken).ConfigureAwait(false);
         _logger.LogInformation("Go to {VerificationUri} and enter code: {UserCode}", deviceCode.VerificationUri, deviceCode.UserCode);
+
+        // Broadcast device auth message to connected clients
+        if (_activityStream is not null || _messageStore is not null)
+        {
+            var message = new SystemMessage(
+                Type: "device_auth",
+                Title: "GitHub Copilot Authentication Required",
+                Content: $"Visit {deviceCode.VerificationUri} and enter code: {deviceCode.UserCode}",
+                Data: new Dictionary<string, string>
+                {
+                    ["provider"] = "copilot",
+                    ["verification_uri"] = deviceCode.VerificationUri,
+                    ["user_code"] = deviceCode.UserCode,
+                    ["expires_in"] = deviceCode.ExpiresIn.ToString()
+                });
+
+            _messageStore?.Add(message);
+
+            if (_activityStream is not null)
+            {
+                await _activityStream.PublishAsync(new ActivityEvent(
+                    ActivityEventType.SystemMessage,
+                    "system",
+                    "copilot-auth",
+                    null,
+                    null,
+                    message.Content,
+                    DateTimeOffset.UtcNow,
+                    new Dictionary<string, object>
+                    {
+                        ["system_message"] = message
+                    }), cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         return await PollForAccessTokenAsync(clientId, deviceCode, cancellationToken).ConfigureAwait(false);
     }
 
@@ -77,6 +122,37 @@ public class GitHubDeviceCodeFlow
                 var expiresInSeconds = payload.TryGetProperty("expires_in", out var expiresInElement)
                     ? expiresInElement.GetInt32()
                     : 8 * 60 * 60;
+
+                // Broadcast auth success message to connected clients
+                if (_activityStream is not null || _messageStore is not null)
+                {
+                    var message = new SystemMessage(
+                        Type: "auth_success",
+                        Title: "GitHub Copilot Authentication Successful",
+                        Content: "GitHub Copilot authentication completed successfully",
+                        Data: new Dictionary<string, string>
+                        {
+                            ["provider"] = "copilot"
+                        });
+
+                    _messageStore?.Add(message);
+
+                    if (_activityStream is not null)
+                    {
+                        await _activityStream.PublishAsync(new ActivityEvent(
+                            ActivityEventType.SystemMessage,
+                            "system",
+                            "copilot-auth",
+                            null,
+                            null,
+                            message.Content,
+                            DateTimeOffset.UtcNow,
+                            new Dictionary<string, object>
+                            {
+                                ["system_message"] = message
+                            }), cancellationToken).ConfigureAwait(false);
+                    }
+                }
 
                 return new OAuthToken(accessToken, DateTimeOffset.UtcNow.AddSeconds(expiresInSeconds), refreshToken);
             }
