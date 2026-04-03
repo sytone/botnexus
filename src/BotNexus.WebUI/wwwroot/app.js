@@ -1153,13 +1153,14 @@
             return escapeHtml(str);
         }
         marked.setOptions({
-            breaks: true,
+            breaks: false,
             gfm: true,
             headerIds: false,
             mangle: false
         });
         const rawHtml = marked.parse(str);
-        return DOMPurify.sanitize(rawHtml);
+        const sanitized = DOMPurify.sanitize(rawHtml);
+        return `<div class="markdown-content">${sanitized}</div>`;
     }
 
     function formatTime(isoStr) {
