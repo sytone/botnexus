@@ -263,7 +263,10 @@ public sealed class CopilotProvider : LlmProviderBase, IOAuthProvider
 
         IReadOnlyList<ToolCallRequest>? toolCalls = null;
         if (message.TryGetProperty("tool_calls", out var toolCallsElement) && toolCallsElement.ValueKind == JsonValueKind.Array)
+        {
+            Logger.LogInformation("CopilotProvider: Raw tool_calls JSON: {ToolCallsJson}", toolCallsElement.GetRawText());
             toolCalls = ParseToolCalls(toolCallsElement);
+        }
 
         Logger.LogInformation("Copilot response: model={Model}, content_length={ContentLength}, finish_reason={FinishReasonRaw}/{FinishReasonMapped}, tool_calls={ToolCallCount}",
             modelUsed, content?.Length ?? 0, finishReasonStr ?? "null", finishReason, toolCalls?.Count ?? 0);
@@ -507,7 +510,7 @@ public sealed class CopilotProvider : LlmProviderBase, IOAuthProvider
         _ => FinishReason.Other
     };
 
-    private static IReadOnlyList<ToolCallRequest> ParseToolCalls(JsonElement toolCallsElement)
+    private IReadOnlyList<ToolCallRequest> ParseToolCalls(JsonElement toolCallsElement)
     {
         var result = new List<ToolCallRequest>();
 
@@ -518,19 +521,46 @@ public sealed class CopilotProvider : LlmProviderBase, IOAuthProvider
                 : string.Empty;
 
             if (!toolCall.TryGetProperty("function", out var functionElement))
+            {
+                Logger.LogWarning("CopilotProvider: Tool call missing 'function' property: {RawToolCall}", toolCall.GetRawText());
                 continue;
+            }
 
             var name = functionElement.TryGetProperty("name", out var nameElement)
                 ? nameElement.GetString() ?? string.Empty
                 : string.Empty;
 
-            var argumentsJson = functionElement.TryGetProperty("arguments", out var argumentsElement)
-                ? argumentsElement.GetString()
-                : null;
+            // Handle both OpenAI format (arguments as JSON string) and Claude format (arguments as JSON object)
+            Dictionary<string, object?> arguments;
+            if (functionElement.TryGetProperty("arguments", out var argumentsElement))
+            {
+                if (argumentsElement.ValueKind == JsonValueKind.String)
+                {
+                    // OpenAI format: arguments is a JSON string that needs parsing
+                    var argumentsJson = argumentsElement.GetString();
+                    arguments = string.IsNullOrWhiteSpace(argumentsJson)
+                        ? new Dictionary<string, object?>()
+                        : JsonSerializer.Deserialize<Dictionary<string, object?>>(argumentsJson) ?? [];
+                }
+                else if (argumentsElement.ValueKind == JsonValueKind.Object)
+                {
+                    // Claude/Copilot format: arguments is already a JSON object
+                    arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(argumentsElement.GetRawText()) ?? [];
+                }
+                else
+                {
+                    Logger.LogWarning("CopilotProvider: Unexpected arguments type {ValueKind} for tool {ToolName}, using empty dict", 
+                        argumentsElement.ValueKind, name);
+                    arguments = new Dictionary<string, object?>();
+                }
+            }
+            else
+            {
+                arguments = new Dictionary<string, object?>();
+            }
 
-            var arguments = string.IsNullOrWhiteSpace(argumentsJson)
-                ? new Dictionary<string, object?>()
-                : JsonSerializer.Deserialize<Dictionary<string, object?>>(argumentsJson) ?? [];
+            Logger.LogDebug("CopilotProvider: Parsed tool call: id={Id}, name={Name}, arguments_count={Count}", 
+                id, name, arguments.Count);
 
             result.Add(new ToolCallRequest(id, name, arguments));
         }
