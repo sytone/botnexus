@@ -7,6 +7,33 @@
 
 ## Recent Session Summaries
 
+### 2026-04-03 — UI Bug Fixes: Whitespace & Tool Call Rendering
+
+**Session:** Post-deployment UI cleanup  
+**Status:** ✅ Complete  
+**Commit:** 74d54d6 — `fix(webui): remove excessive whitespace and handle tool calls in live responses`
+
+**Issues Fixed:**
+1. **Excessive whitespace** — Hidden tool messages kept 2px margins, creating gaps where content was collapsed
+2. **Missing tool calls in live responses** — WebSocket 'response' handler didn't check for toolCalls, so live messages showed content-only while history showed them properly
+
+**Changes Made:**
+- Added `.message.tool.hidden { margin: 0; }` CSS rule to collapse margins when tools are hidden
+- Modified `handleWsMessage()` to check `msg.toolCalls` and route to new renderer
+- Created `renderAssistantWithToolsLive()` function for live responses with tool calls
+- Removed inline `style="margin-top: 6px;"` that created extra space in hidden tool summaries
+- Ensures tool call summaries render identically in both live streaming and history views
+
+**Root Causes:**
+- Tool visibility toggle used `.hidden` class but didn't account for element margins
+- Live response rendering path (`appendChatMessage`) was separate from history rendering path (`renderAssistantWithTools`)
+- No parity between WebSocket message handling and session history replay
+
+**Learnings:**
+- When hiding UI elements, must collapse both display AND spacing (margins/padding)
+- Live WebSocket handlers should mirror history replay logic to avoid divergence
+- Tool call rendering should be centralized to prevent duplication/inconsistency
+
 ### 2026-04-03 — Model Selector UI + Tool Visibility (Parallel with Farnsworth)
 
 **Session:** Sprint 4 parallel UI and config work  
@@ -206,6 +233,13 @@ See decisions.md "Part 4: Implementation Phases & Work Items" for full roadmap w
    - `cron.job.completed` — includes duration_ms and success in metadata
    - `cron.job.failed` — includes duration_ms, success, and error in metadata
    - All visible in WebUI via activity stream WebSocket
+
+---
+
+## 2026-04-03 — Loop Alignment & UI Fix
+
+**Cross-Agent Update:** Leela (Lead) fixed critical agent loop pattern and system prompt issues. Root cause of agents narrating work instead of executing: system prompt lacked explicit tool-use instructions. Leela removed non-standard keyword continuation detection and implemented nanobot-style finalization retry pattern (proven across Anthropic, OpenAI, nanobot frameworks). Added explicit "USE tools proactively" instructions to AgentContextBuilder.BuildIdentityBlock(). Simultaneously, Fry (Web Dev) fixed UI rendering bugs: CSS margin cleanup on hidden tool messages was broken, and WebSocket live rendering was missing tool call context. Both fixes committed: Leela 8951925, Fry 74d54d6. Decision "Agent Loop Standard Pattern" merged to decisions.md. See .squad/log/2026-04-03T05-51-33Z-loop-alignment-ui-fix.md for session summary.
+
 
 ### Tests
 - 5 new `CronServiceHealthCheckTests`: disabled, not-running, healthy, degraded threshold, below-threshold

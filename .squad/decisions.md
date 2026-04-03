@@ -2259,6 +2259,71 @@ End-to-end tracing: Cron tick → Job execution → Agent run → Channel output
 
 ---
 
+## 9. Agent Loop Standard Pattern
+
+**Date:** 2026-04-02  
+**Author:** Leela  
+**Status:** Implemented  
+**Commit:** `8951925`
+
+### Context
+
+Bender had added keyword-based continuation detection to `AgentLoop.cs` that would prompt the agent to continue when it said "I'll", "I will", "proceed", or "next" without making tool calls. This was non-standard — no major framework (nanobot, LangChain, CrewAI, OpenAI, Anthropic) does this.
+
+Simultaneously, agents were narrating actions instead of executing tool calls. Investigation revealed the system prompt lacked explicit tool-use instructions.
+
+### Decision
+
+**Part 1: Adopt industry-standard agent loop pattern**
+
+Remove keyword-based continuation detection. Implement only the nanobot-style finalization retry:
+
+- **Tool calls present** → execute tools, continue loop
+- **No tool calls + text content** → final answer, break loop
+- **No tool calls + blank content** → finalization retry ONCE (prompt "Provide your final answer now" with tools disabled), then break
+- **Max iterations** → force stop
+
+Rationale: This pattern is proven across multiple production frameworks. Keyword detection was a workaround for a system prompt issue, not a legitimate continuation signal.
+
+**Part 2: Add explicit tool-use instructions to system prompt**
+
+Add to `AgentContextBuilder.BuildIdentityBlock()`:
+
+```markdown
+### Tool Use Instructions
+- You have access to tools to accomplish tasks. USE them proactively — do not just narrate what you would do.
+- When you need information or need to perform an action, call the appropriate tool immediately rather than describing it or asking the user.
+- Always use tools when they can help. Do not just describe what you would do — actually do it.
+- State your intent briefly, then make the tool call(s). Do not predict or claim results before receiving them.
+```
+
+Rationale: Research shows that LLMs need explicit instruction to USE tools rather than describe them. This mirrors nanobot's approach and industry best practices.
+
+### Consequences
+
+**Positive:**
+- Agents will proactively use tools instead of narrating
+- Loop behavior aligns with Anthropic, OpenAI, nanobot patterns
+- Finalization retry handles blank response edge case gracefully
+- No breaking changes
+
+**Negative:**
+- None identified. This replaces a non-standard workaround with proven patterns.
+
+### Alternatives Considered
+
+1. **Keep keyword detection** — Rejected: Non-standard, band-aid for missing tool-use instructions
+2. **No finalization retry** — Rejected: Blank responses should get one chance to finalize (nanobot pattern)
+3. **Multi-turn finalization** — Rejected: One retry is sufficient, more risks confusion
+
+### References
+
+- nanobot: `nanobot/agent/context.py` — system prompt with explicit tool-use instructions
+- Industry research: Zero frameworks use keyword continuation, finalization retry is nanobot-only proven pattern
+- Commit: `8951925` — "Align agent loop to industry standard and add tool-use instructions"
+
+---
+
 ## 9. Extension Points
 
 ### Custom ICronJob Implementations

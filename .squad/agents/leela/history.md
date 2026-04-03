@@ -550,6 +550,13 @@
 
 **Testing:**
 - ✅ `.\scripts\pack.ps1` completes successfully, all 9 packages created
+
+---
+
+## 2026-04-03 — Loop Alignment & UI Fix
+
+**Cross-Team Update:** Fixed critical agent loop pattern and system prompt issues. Root cause analysis: agents were narrating work instead of executing because system prompt lacked explicit tool-use instructions. Removed non-standard keyword continuation detection from AgentLoop.cs and implemented nanobot-style finalization retry (proven across Anthropic, OpenAI, nanobot production systems). Added explicit "USE tools proactively" instructions to AgentContextBuilder.BuildIdentityBlock(): "You have access to tools to accomplish tasks. USE them proactively — do not just narrate what you would do." Simultaneously, Fry fixed UI rendering bugs (CSS margin cleanup on hidden tool messages + WebSocket renderer tool call context). Decision "Agent Loop Standard Pattern" created, implemented, and merged to decisions.md. Commits: Leela 8951925, Fry 74d54d6. See .squad/log/2026-04-03T05-51-33Z-loop-alignment-ui-fix.md.
+
 - ✅ `.\scripts\dev-loop.ps1` end-to-end test passes (pack + install + gateway start)
 - ✅ Build time ~30s, parallelism maintained in publish/packaging phase
 
