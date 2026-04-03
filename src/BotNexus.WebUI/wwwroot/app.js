@@ -247,6 +247,20 @@
         }
     }
 
+    async function patchJson(path, body) {
+        try {
+            const res = await fetch(`${API_BASE}${path}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            return { ok: res.ok, status: res.status, data: res.ok ? await res.json() : await res.text() };
+        } catch (e) {
+            console.error(`API error (${path}):`, e);
+            return { ok: false, status: 0, data: e.message };
+        }
+    }
+
     // --- Sessions ---
     async function loadSessions() {
         elSessionsList.innerHTML = '<div class="loading">Loading...</div>';
@@ -288,7 +302,7 @@
     }
 
     async function hideSession(key) {
-        const result = await postJson(`/sessions/${encodeURIComponent(key)}/hide`, {});
+        const result = await patchJson(`/sessions/${encodeURIComponent(key)}`, { hidden: true });
         if (result.ok) {
             // If we're hiding the currently active session, go back to welcome
             if (key === currentSessionKey) {
