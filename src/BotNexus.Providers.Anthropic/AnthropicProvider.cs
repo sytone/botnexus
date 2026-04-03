@@ -46,6 +46,22 @@ public sealed class AnthropicProvider : LlmProviderBase
     public override string DefaultModel => _defaultModel;
 
     /// <inheritdoc/>
+    public override Task<IReadOnlyList<string>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
+    {
+        // Anthropic doesn't provide a models list API, so we return known models
+        var models = new[]
+        {
+            "claude-3-5-sonnet-20241022",
+            "claude-3-5-sonnet-20240620",
+            "claude-3-5-haiku-20241022",
+            "claude-3-opus-20240229",
+            "claude-3-sonnet-20240229",
+            "claude-3-haiku-20240307"
+        };
+        return Task.FromResult<IReadOnlyList<string>>(models);
+    }
+
+    /// <inheritdoc/>
     protected override async Task<LlmResponse> ChatCoreAsync(ChatRequest request, CancellationToken cancellationToken)
     {
         var actualModel = string.IsNullOrWhiteSpace(request.Settings.Model) ? _defaultModel : request.Settings.Model;
@@ -178,9 +194,9 @@ public sealed class AnthropicProvider : LlmProviderBase
             ["stream"] = stream
         };
 
-        // Only include max_tokens and temperature if explicitly set
-        // Note: Anthropic requires max_tokens, so use a sensible default if not set
-        body["max_tokens"] = settings.MaxTokens ?? 8192;
+        // Anthropic requires max_tokens - if not set, use a reasonable default
+        // Provider-specific requirement - most providers don't need this
+        body["max_tokens"] = settings.MaxTokens ?? 4096;
         if (settings.Temperature.HasValue)
             body["temperature"] = settings.Temperature.Value;
 

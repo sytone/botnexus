@@ -29,8 +29,8 @@ public sealed class ChatController : ControllerBase
         var settings = new GenerationSettings
         {
             Model = request.Model ?? _provider.DefaultModel,
-            MaxTokens = request.MaxTokens ?? 8192,
-            Temperature = request.Temperature ?? 0.1
+            MaxTokens = request.MaxTokens,
+            Temperature = request.Temperature
         };
 
         var chatRequest = new ChatRequest(messages, settings);
