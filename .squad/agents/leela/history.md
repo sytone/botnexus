@@ -461,3 +461,33 @@
 - src/BotNexus.Agents/Execution/AgentLoop.cs
 
 ---
+
+### 2026-04-02 — Fixed pack.ps1 Parallel Publish Race Condition
+
+**Trigger:** Bender's `pack.ps1` implementation used "restore once + publish --no-restore in parallel", which still caused race conditions. Parallel `dotnet publish --no-restore` processes were building simultaneously and fighting over shared `obj/` directories in BotNexus.Core and other shared dependencies.
+
+**Root Cause Analysis:**
+- All 9 components (Gateway, CLI, 3 providers, 3 channels, 1 tool) depend on BotNexus.Core
+- Providers share BotNexus.Providers.Base (3 projects)
+- Channels share BotNexus.Channels.Base (4 projects)
+- `dotnet publish --no-restore` still **builds** — only skips package restore
+- Multiple parallel builds of the same project create file contention in `obj/` directories, causing intermittent failures like "PE metadata corruption" or "access denied"
+
+**Solution:**
+- Changed from "restore once + publish --no-restore in parallel" to **"build once + publish --no-build in parallel"**
+- `dotnet build` the full solution ONCE — compiles all shared dependencies serially, no contention
+- `dotnet publish --no-build` in parallel — only copies pre-built binaries, safe to parallelize
+- Increased ThrottleLimit from 4 to 8 since publish is now just file operations (no CPU-bound builds)
+
+**Key Learnings:**
+- `--no-restore` ≠ "skip build" — it only skips package fetch. Build still happens.
+- `--no-build` is the correct flag for parallel publish after a solution-wide build
+- Shared project dependencies make parallel builds fundamentally unsafe without isolation
+- Building the solution once is faster AND more reliable than parallel project builds with shared deps
+
+**Testing:**
+- ✅ `.\scripts\pack.ps1` completes successfully, all 9 packages created
+- ✅ `.\scripts\dev-loop.ps1` end-to-end test passes (pack + install + gateway start)
+- ✅ Build time ~30s, parallelism maintained in publish/packaging phase
+
+**Commit:** 5f4b0bc "Fix pack.ps1 parallel publish race condition"
