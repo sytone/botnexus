@@ -1,0 +1,110 @@
+# Tool Call Argument Format Handling in CopilotProvider
+
+**By:** Leela (Lead)  
+**Date:** 2026-04-03  
+**Status:** Implemented  
+**Commit:** dd0343a
+
+## Context
+
+BotNexus supports multiple LLM providers (OpenAI, Anthropic, Copilot). The Copilot provider acts as a proxy to GitHub Copilot's API, which can serve different model families (GPT, Claude, etc.). When using Claude models through the Copilot proxy, tool call responses have a different JSON structure than OpenAI's native API.
+
+## Problem
+
+The original `ParseToolCalls()` implementation assumed the OpenAI format where `function.arguments` is a JSON **string**:
+
+```json
+{
+  "function": {
+    "name": "filesystem",
+    "arguments": "{\"action\":\"list\",\"path\":\"Q:\\repos\\botnexus\"}"
+  }
+}
+```
+
+But Claude models via Copilot can return `arguments` as a JSON **object**:
+
+```json
+{
+  "function": {
+    "name": "filesystem",
+    "arguments": {"action": "list", "path": "Q:\\repos\\botnexus"}
+  }
+}
+```
+
+Using `argumentsElement.GetString()` on a JSON object returns `null`, causing:
+- Empty arguments dictionaries
+- Tool calls to be skipped
+- Agent loop to exit prematurely with `FinishReason=ToolCalls, ToolCalls=0`
+
+## Decision
+
+**CopilotProvider must handle both formats** by checking `JsonElement.ValueKind`:
+
+```csharp
+if (argumentsElement.ValueKind == JsonValueKind.String)
+{
+    // OpenAI: arguments is JSON string → parse with GetString()
+    var argumentsJson = argumentsElement.GetString();
+    arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(argumentsJson) ?? [];
+}
+else if (argumentsElement.ValueKind == JsonValueKind.Object)
+{
+    // Claude/Copilot: arguments is JSON object → deserialize directly
+    arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(argumentsElement.GetRawText()) ?? [];
+}
+else
+{
+    Logger.LogWarning("Unexpected arguments type {ValueKind}", argumentsElement.ValueKind);
+    arguments = new Dictionary<string, object?>();
+}
+```
+
+## Rationale
+
+1. **Proxy flexibility** — Copilot API proxies multiple model families with subtle format differences
+2. **Backward compatibility** — Must still work with OpenAI's string format
+3. **Forward compatibility** — Handles future format variations gracefully
+4. **Diagnostic visibility** — Added logging to surface parsing issues immediately
+
+## Alternatives Considered
+
+1. **Normalize at serialization** — Force Copilot API to always return string format
+   - Rejected: We don't control the Copilot API
+2. **Separate parsers per model family** — Different parse logic for GPT vs Claude
+   - Rejected: Over-engineering; single parser with format detection is simpler
+3. **Try-parse fallback** — Try string first, fall back to object
+   - Rejected: Implicit behavior; explicit ValueKind check is clearer
+
+## Implementation Details
+
+- Changed `ParseToolCalls` from `static` to instance method (needs Logger)
+- Added INFO logging of raw `tool_calls` JSON before parsing
+- Added WARN logging when tool calls are skipped or have unexpected formats
+- Added DEBUG logging of parsed tool call details (id, name, arg count)
+
+## Testing
+
+- ✅ Unit tests: 396 passing (including CopilotProvider tests)
+- ✅ E2E: filesystem tool call with Claude → parsed, executed, final response
+- ✅ E2E: cron tool call with Claude → parsed, executed, final response
+- ✅ Logs confirm `tool_calls=1` (not 0), multi-turn loop completes
+
+## Impact
+
+- **Users:** Multi-turn tool calling now works with Claude models via Copilot
+- **Developers:** Diagnostic logs make tool call parsing failures immediately visible
+- **System:** No breaking changes; backward-compatible with OpenAI format
+
+## Future Considerations
+
+- Monitor logs for unexpected `ValueKind` values (not String or Object)
+- Consider extracting format detection into a reusable helper if other providers need it
+- Track Copilot API changes that might introduce new format variations
+
+## References
+
+- Commit: dd0343a
+- File: `src/BotNexus.Providers.Copilot/CopilotProvider.cs`
+- Related: Multi-turn investigation (`.squad/agents/leela/multi-turn-investigation.md`)
