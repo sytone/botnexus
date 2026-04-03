@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using BotNexus.Agent;
 using BotNexus.Cli.Services;
 using BotNexus.Core.Abstractions;
 using BotNexus.Core.Configuration;
@@ -133,23 +134,40 @@ static Command BuildAgentCommand(Option<string?> homeOption, ConfigFileManager c
     {
         var homePath = ResolveHome(parseResult, homeOption);
         var config = configManager.LoadConfig(homePath);
-        var name = ConsoleOutput.Prompt("Agent name", string.Empty);
-        if (string.IsNullOrWhiteSpace(name))
+        var displayName = ConsoleOutput.Prompt("Agent name", string.Empty);
+        if (string.IsNullOrWhiteSpace(displayName))
         {
             ConsoleOutput.WriteStatus(ConsoleStatus.Error, "Agent name is required.");
             return 1;
         }
 
+        var agentId = NormalizeAgentId(displayName);
+        if (config.Agents.Named.ContainsKey(agentId))
+        {
+            ConsoleOutput.WriteStatus(ConsoleStatus.Error, $"Agent '{agentId}' already exists in config.");
+            return 1;
+        }
+
         var provider = ConsoleOutput.Prompt("Provider", config.Providers.Keys.FirstOrDefault() ?? "copilot");
         var model = ConsoleOutput.Prompt("Model", config.Agents.Model);
-        configManager.AddAgent(homePath, name, new AgentConfig
+        configManager.AddAgent(homePath, agentId, new AgentConfig
         {
-            Name = name,
+            Name = displayName,
             Provider = provider,
             Model = model
         });
 
-        ConsoleOutput.WriteStatus(ConsoleStatus.Success, $"Added agent '{name}'.");
+        try
+        {
+            var workspace = new AgentWorkspace(agentId);
+            workspace.InitializeAsync().GetAwaiter().GetResult();
+            ConsoleOutput.WriteStatus(ConsoleStatus.Success, $"Added agent '{displayName}' (ID: {agentId}) and initialized workspace.");
+        }
+        catch (Exception ex)
+        {
+            ConsoleOutput.WriteStatus(ConsoleStatus.Warning, $"Added agent '{displayName}' but workspace initialization failed: {ex.Message}");
+        }
+
         return 0;
     });
 
@@ -178,7 +196,7 @@ static Command BuildAgentCommand(Option<string?> homeOption, ConfigFileManager c
 
     var nameArgument = new Argument<string>("name")
     {
-        Description = "Agent name"
+        Description = "Agent name or ID"
     };
     var workspaceCommand = new Command("workspace", "Show agent workspace path and files.")
     {
@@ -187,14 +205,15 @@ static Command BuildAgentCommand(Option<string?> homeOption, ConfigFileManager c
     workspaceCommand.SetAction(parseResult =>
     {
         var homePath = ResolveHome(parseResult, homeOption);
-        var name = parseResult.GetValue(nameArgument);
-        if (string.IsNullOrWhiteSpace(name))
+        var nameOrId = parseResult.GetValue(nameArgument);
+        if (string.IsNullOrWhiteSpace(nameOrId))
         {
-            ConsoleOutput.WriteStatus(ConsoleStatus.Error, "Agent name is required.");
+            ConsoleOutput.WriteStatus(ConsoleStatus.Error, "Agent name or ID is required.");
             return 1;
         }
 
-        var workspacePath = Path.Combine(homePath, "agents", name);
+        var agentId = NormalizeAgentId(nameOrId);
+        var workspacePath = Path.Combine(homePath, "agents", agentId);
         ConsoleOutput.WriteHeader("Workspace");
         Console.WriteLine(workspacePath);
 
@@ -1403,6 +1422,19 @@ static bool TryRunGitCommand(string arguments, out string output)
     {
         return false;
     }
+}
+
+static string NormalizeAgentId(string agentName)
+{
+    if (string.IsNullOrWhiteSpace(agentName))
+        return string.Empty;
+
+    var normalized = agentName.Trim().ToLowerInvariant();
+    normalized = Regex.Replace(normalized, @"[^a-z0-9]+", "-");
+    normalized = normalized.Trim('-');
+    normalized = Regex.Replace(normalized, @"-+", "-");
+
+    return normalized;
 }
 
 static InstalledVersionInfo? ReadInstalledVersionInfo(string installPath)

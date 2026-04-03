@@ -10,6 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\BotNexus.Agent\BotNexus.Agent.csproj" />
     <ProjectReference Include="..\BotNexus.Core\BotNexus.Core.csproj" />
     <ProjectReference Include="..\BotNexus.Diagnostics\BotNexus.Diagnostics.csproj" />
   </ItemGroup>
