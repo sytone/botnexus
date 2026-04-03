@@ -10,6 +10,10 @@ $commonScript = Join-Path $PSScriptRoot "common.ps1"
 $artifactsRoot = Join-Path $repoRoot "artifacts"
 $stagingRoot = Join-Path $artifactsRoot "_staging"
 $packageWorkRoot = Join-Path $artifactsRoot "_package"
+
+# Resolve version from git or BOTNEXUS_VERSION environment variable.
+# For local dev, use a fixed version (set by dev-loop.ps1) to enable incremental builds.
+# For CI/release, use git-based version (tag or commit hash).
 $packageVersion = Resolve-Version
 
 $components = @(

@@ -22,6 +22,12 @@ $repoRoot = Split-Path -Path $PSScriptRoot -Parent
 $commonScript = Join-Path $PSScriptRoot "common.ps1"
 . $commonScript
 
+# Use fixed version for dev builds to enable incremental compilation.
+# Version changes force full rebuilds of all projects, so we use a stable
+# dev version unless overridden by BOTNEXUS_VERSION environment variable.
+if ([string]::IsNullOrWhiteSpace($env:BOTNEXUS_VERSION)) {
+    $env:BOTNEXUS_VERSION = "0.0.0-dev"
+}
 $packageVersion = Resolve-Version
 $artifactsRoot = Join-Path $repoRoot "artifacts"
 $resolvedInstallPath = [System.IO.Path]::GetFullPath($InstallPath)
