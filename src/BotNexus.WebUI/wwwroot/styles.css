@@ -202,6 +202,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: 2px;
+    position: relative;
 }
 .list-item:hover {
     background: rgba(255,255,255,0.06);
@@ -218,6 +219,33 @@ body {
 .list-item .item-meta {
     font-size: 0.75rem;
     color: var(--text-muted);
+}
+.list-item .btn-hide-session {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 18px;
+    height: 18px;
+    border: none;
+    background: rgba(244,67,54,0.2);
+    color: var(--error);
+    border-radius: 3px;
+    font-size: 0.7rem;
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    padding: 0;
+    transition: all 0.15s;
+}
+.list-item:hover .btn-hide-session,
+.list-item.active .btn-hide-session {
+    display: flex;
+}
+.list-item .btn-hide-session:hover {
+    background: var(--error);
+    color: white;
 }
 .channel-badge {
     display: inline-block;
@@ -679,6 +707,150 @@ body {
     max-height: 300px;
     overflow-y: auto;
     margin: 0;
+}
+
+/* === Agent Form Modal === */
+.agent-form-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.agent-form-modal.hidden {
+    display: none;
+}
+.agent-form-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(2px);
+}
+.agent-form-content {
+    position: relative;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    width: 90%;
+    max-width: 600px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+.agent-form-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+}
+.agent-form-header h3 {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+.agent-form-close {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 1.8rem;
+    cursor: pointer;
+    padding: 0;
+    width: 32px;
+    height: 32px;
+    line-height: 1;
+    border-radius: 4px;
+    transition: all 0.15s;
+}
+.agent-form-close:hover {
+    background: rgba(255,255,255,0.1);
+    color: var(--text-primary);
+}
+.agent-form-body {
+    padding: 20px;
+    overflow-y: auto;
+    flex: 1;
+}
+.form-group {
+    margin-bottom: 16px;
+}
+.form-label {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+.form-label.required::after {
+    content: ' *';
+    color: var(--error);
+}
+.form-input,
+.form-select,
+.form-textarea {
+    width: 100%;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 0.85rem;
+}
+.form-input:focus,
+.form-select:focus,
+.form-textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+.form-input:disabled,
+.form-select:disabled,
+.form-textarea:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+.form-textarea {
+    resize: vertical;
+    min-height: 80px;
+    font-family: var(--font-mono);
+}
+.agent-form-footer {
+    padding: 16px 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+}
+.btn-secondary {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+}
+.btn-secondary:hover {
+    background: var(--bg-input);
+}
+.form-error {
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: rgba(244,67,54,0.15);
+    border: 1px solid var(--error);
+    border-radius: 6px;
+    color: var(--error);
+    font-size: 0.85rem;
+}
+.form-success {
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: rgba(76,175,80,0.15);
+    border: 1px solid var(--success);
+    border-radius: 6px;
+    color: var(--success);
+    font-size: 0.85rem;
 }
 
 /* === Utilities === */

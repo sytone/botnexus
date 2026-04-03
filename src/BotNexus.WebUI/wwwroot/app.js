@@ -17,6 +17,8 @@
     let commandPaletteIndex = -1;
     let availableModels = [];
     let showTools = false;
+    let agentFormMode = 'add'; // 'add' or 'edit'
+    let editingAgentName = null;
 
     // --- DOM refs ---
     const $ = (sel) => document.querySelector(sel);
@@ -46,6 +48,21 @@
     const elToolModal = $('#tool-modal');
     const elToolModalClose = $('.tool-modal-close');
     const elToolModalOverlay = $('.tool-modal-overlay');
+    const elAgentFormModal = $('#agent-form-modal');
+    const elAgentFormTitle = $('#agent-form-title');
+    const elAgentForm = $('#agent-form');
+    const elAgentFormClose = $('.agent-form-close');
+    const elAgentFormOverlay = $('.agent-form-overlay');
+    const elFormAgentName = $('#form-agent-name');
+    const elFormAgentProvider = $('#form-agent-provider');
+    const elFormAgentModel = $('#form-agent-model');
+    const elFormAgentSystemPrompt = $('#form-agent-system-prompt');
+    const elFormAgentTemperature = $('#form-agent-temperature');
+    const elFormAgentMaxTokens = $('#form-agent-max-tokens');
+    const elFormFeedback = $('#form-feedback');
+    const elBtnSaveAgent = $('#btn-save-agent');
+    const elBtnCancelAgent = $('#btn-cancel-agent');
+    const elBtnAddAgent = $('#btn-add-agent');
 
     // --- Commands ---
     const COMMANDS = [
@@ -202,6 +219,34 @@
         }
     }
 
+    async function postJson(path, body) {
+        try {
+            const res = await fetch(`${API_BASE}${path}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            return { ok: res.ok, status: res.status, data: res.ok ? await res.json() : await res.text() };
+        } catch (e) {
+            console.error(`API error (${path}):`, e);
+            return { ok: false, status: 0, data: e.message };
+        }
+    }
+
+    async function putJson(path, body) {
+        try {
+            const res = await fetch(`${API_BASE}${path}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            return { ok: res.ok, status: res.status, data: res.ok ? await res.json() : await res.text() };
+        } catch (e) {
+            console.error(`API error (${path}):`, e);
+            return { ok: false, status: 0, data: e.message };
+        }
+    }
+
     // --- Sessions ---
     async function loadSessions() {
         elSessionsList.innerHTML = '<div class="loading">Loading...</div>';
@@ -218,9 +263,43 @@
             el.dataset.key = s.key;
             const channelIcon = channelEmoji(s.channel);
             const timeStr = relativeTime(s.updatedAt);
-            el.innerHTML = `<span class="item-title">${channelIcon} ${escapeHtml(s.agentName || 'Chat')}</span><span class="item-meta">${escapeHtml(s.channel)} · ${s.messageCount} msgs · ${timeStr}</span>`;
-            el.addEventListener('click', () => openSession(s.key));
+            el.innerHTML = `
+                <span class="item-title">${channelIcon} ${escapeHtml(s.agentName || 'Chat')}</span>
+                <span class="item-meta">${escapeHtml(s.channel)} · ${s.messageCount} msgs · ${timeStr}</span>
+                <button class="btn-hide-session" title="Hide session">✕</button>
+            `;
+            
+            // Prevent click from bubbling to parent when clicking main area
+            el.addEventListener('click', (e) => {
+                if (!e.target.classList.contains('btn-hide-session')) {
+                    openSession(s.key);
+                }
+            });
+            
+            // Hide button click handler
+            const hideBtn = el.querySelector('.btn-hide-session');
+            hideBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                await hideSession(s.key);
+            });
+            
             elSessionsList.appendChild(el);
+        }
+    }
+
+    async function hideSession(key) {
+        const result = await postJson(`/sessions/${encodeURIComponent(key)}/hide`, {});
+        if (result.ok) {
+            // If we're hiding the currently active session, go back to welcome
+            if (key === currentSessionKey) {
+                currentSessionKey = null;
+                elChatView.classList.add('hidden');
+                elWelcome.classList.remove('hidden');
+            }
+            // Refresh the sessions list
+            loadSessions();
+        } else {
+            console.error('Failed to hide session:', result.data);
         }
     }
 
@@ -526,6 +605,7 @@
                 <span class="item-title">${escapeHtml(a.name)}</span>
                 <span class="item-meta">Model: ${escapeHtml(a.model)} · Temp: ${a.temperature} · Max tokens: ${a.maxTokens}</span>
             `;
+            el.addEventListener('click', () => openEditAgentForm(a.name));
             elAgentsList.appendChild(el);
         }
 
@@ -537,6 +617,104 @@
             opt.textContent = a.name;
             elAgentSelect.appendChild(opt);
         }
+    }
+
+    function openAddAgentForm() {
+        agentFormMode = 'add';
+        editingAgentName = null;
+        elAgentFormTitle.textContent = 'Add Agent';
+        elFormAgentName.disabled = false;
+        elAgentForm.reset();
+        elFormFeedback.classList.add('hidden');
+        elAgentFormModal.classList.remove('hidden');
+    }
+
+    async function openEditAgentForm(name) {
+        agentFormMode = 'edit';
+        editingAgentName = name;
+        elAgentFormTitle.textContent = 'Edit Agent';
+        elFormAgentName.disabled = true;
+        elFormFeedback.classList.add('hidden');
+        
+        // Load agent config
+        const agent = await fetchJson(`/agents/${encodeURIComponent(name)}`);
+        if (!agent) {
+            showFormFeedback('Failed to load agent config', 'error');
+            return;
+        }
+        
+        // Populate form
+        elFormAgentName.value = agent.name || '';
+        elFormAgentProvider.value = agent.provider || '';
+        elFormAgentModel.value = agent.model || '';
+        elFormAgentSystemPrompt.value = agent.systemPrompt || '';
+        elFormAgentTemperature.value = agent.temperature || '';
+        elFormAgentMaxTokens.value = agent.maxTokens || '';
+        
+        elAgentFormModal.classList.remove('hidden');
+    }
+
+    function closeAgentForm() {
+        elAgentFormModal.classList.add('hidden');
+        elAgentForm.reset();
+        elFormFeedback.classList.add('hidden');
+    }
+
+    async function saveAgent() {
+        elFormFeedback.classList.add('hidden');
+        
+        // Validate required fields
+        if (!elFormAgentName.value.trim()) {
+            showFormFeedback('Name is required', 'error');
+            return;
+        }
+        if (!elFormAgentProvider.value) {
+            showFormFeedback('Provider is required', 'error');
+            return;
+        }
+        if (!elFormAgentModel.value.trim()) {
+            showFormFeedback('Model is required', 'error');
+            return;
+        }
+        
+        // Build payload
+        const payload = {
+            name: elFormAgentName.value.trim(),
+            provider: elFormAgentProvider.value,
+            model: elFormAgentModel.value.trim()
+        };
+        
+        if (elFormAgentSystemPrompt.value.trim()) {
+            payload.systemPrompt = elFormAgentSystemPrompt.value.trim();
+        }
+        if (elFormAgentTemperature.value) {
+            payload.temperature = parseFloat(elFormAgentTemperature.value);
+        }
+        if (elFormAgentMaxTokens.value) {
+            payload.maxTokens = parseInt(elFormAgentMaxTokens.value, 10);
+        }
+        
+        // Call API
+        let result;
+        if (agentFormMode === 'add') {
+            result = await postJson('/agents', payload);
+        } else {
+            result = await putJson(`/agents/${encodeURIComponent(editingAgentName)}`, payload);
+        }
+        
+        if (result.ok) {
+            showFormFeedback('Agent saved successfully!', 'success');
+            loadAgents(); // Refresh agents list
+            setTimeout(() => closeAgentForm(), 1500);
+        } else {
+            showFormFeedback(`Failed to save agent: ${result.data}`, 'error');
+        }
+    }
+
+    function showFormFeedback(message, type) {
+        elFormFeedback.className = type === 'error' ? 'form-error' : 'form-success';
+        elFormFeedback.textContent = message;
+        elFormFeedback.classList.remove('hidden');
     }
 
     // --- Extensions ---
@@ -591,6 +769,15 @@
             .map(p => p.defaultModel || p.model)
             .filter(m => m && m !== 'N/A');
         populateModelSelector();
+        
+        // Populate provider dropdown in agent form
+        elFormAgentProvider.innerHTML = '<option value="">Select provider...</option>';
+        for (const p of providers) {
+            const opt = document.createElement('option');
+            opt.value = p.name;
+            opt.textContent = p.name;
+            elFormAgentProvider.appendChild(opt);
+        }
     }
 
     function populateModelSelector() {
@@ -813,11 +1000,21 @@
 
     elToolModalClose.addEventListener('click', closeToolModal);
     elToolModalOverlay.addEventListener('click', closeToolModal);
+    
+    elAgentFormClose.addEventListener('click', closeAgentForm);
+    elAgentFormOverlay.addEventListener('click', closeAgentForm);
+    elBtnCancelAgent.addEventListener('click', closeAgentForm);
+    elBtnSaveAgent.addEventListener('click', saveAgent);
+    elBtnAddAgent.addEventListener('click', openAddAgentForm);
 
-    // Close modal on Escape key
+    // Close modals on Escape key
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && !elToolModal.classList.contains('hidden')) {
-            closeToolModal();
+        if (e.key === 'Escape') {
+            if (!elToolModal.classList.contains('hidden')) {
+                closeToolModal();
+            } else if (!elAgentFormModal.classList.contains('hidden')) {
+                closeAgentForm();
+            }
         }
     });
 

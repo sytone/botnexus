@@ -46,7 +46,10 @@
             <div class="sidebar-section">
                 <div class="section-header" data-toggle="agents-list">
                     <span>🧠 Agents</span>
-                    <button id="btn-refresh-agents" class="btn-icon" title="Refresh">↻</button>
+                    <div style="display: flex; gap: 4px;">
+                        <button id="btn-add-agent" class="btn-icon" title="Add Agent">➕</button>
+                        <button id="btn-refresh-agents" class="btn-icon" title="Refresh">↻</button>
+                    </div>
                 </div>
                 <div id="agents-list" class="section-content">
                     <div class="loading">Loading agents...</div>
@@ -161,6 +164,52 @@
                     <div class="tool-modal-label">Output:</div>
                     <pre class="tool-modal-code" id="modal-tool-output"></pre>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Agent Form Modal -->
+    <div id="agent-form-modal" class="agent-form-modal hidden">
+        <div class="agent-form-overlay"></div>
+        <div class="agent-form-content">
+            <div class="agent-form-header">
+                <h3 id="agent-form-title">Add Agent</h3>
+                <button class="agent-form-close" title="Close">&times;</button>
+            </div>
+            <div class="agent-form-body">
+                <form id="agent-form">
+                    <div class="form-group">
+                        <label class="form-label required" for="form-agent-name">Name</label>
+                        <input type="text" id="form-agent-name" class="form-input" required />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label required" for="form-agent-provider">Provider</label>
+                        <select id="form-agent-provider" class="form-select" required>
+                            <option value="">Select provider...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label required" for="form-agent-model">Model</label>
+                        <input type="text" id="form-agent-model" class="form-input" required />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="form-agent-system-prompt">System Prompt</label>
+                        <textarea id="form-agent-system-prompt" class="form-textarea"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="form-agent-temperature">Temperature</label>
+                        <input type="number" id="form-agent-temperature" class="form-input" step="0.1" min="0" max="2" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="form-agent-max-tokens">Max Tokens</label>
+                        <input type="number" id="form-agent-max-tokens" class="form-input" step="1" min="1" />
+                    </div>
+                    <div id="form-feedback" class="hidden"></div>
+                </form>
+            </div>
+            <div class="agent-form-footer">
+                <button id="btn-cancel-agent" class="btn btn-secondary">Cancel</button>
+                <button id="btn-save-agent" class="btn btn-primary">Save</button>
             </div>
         </div>
     </div>

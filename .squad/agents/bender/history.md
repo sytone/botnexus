@@ -368,3 +368,41 @@ All 7 foundation items completed (Farnsworth: 5, Bender: 2). Decisions merged an
 **Test Results:**
 - Pack builds: 100% reliable, no corruption
 - All existing tests passing
+
+## Learnings
+
+### Model Logging and Token Budget Visibility (2025-01-30)
+
+Jon reported "exceeding max prompt tokens" errors. The configured model should have enough capacity, suggesting the wrong model might be used. Added comprehensive logging:
+
+**Model Logging:**
+- AgentLoop now logs the actual model being sent to the API (not just the provider name)
+- Provider resolution logic logs which model/provider was matched and why
+- All providers (Copilot, OpenAI, Anthropic) log the model in their API calls
+- Added contextWindowTokens to the logging so we can see the budget being applied
+
+**Session Model Tracking:**
+- Added Model property to Session and SessionMeta
+- Sessions now capture and persist which model was used
+- Session API endpoints (/api/sessions and /api/sessions/{key}) now include the model in responses
+- WebUI can now display which model a session is using
+
+**Key Files Modified:**
+- BotNexus.Agent/AgentLoop.cs - Enhanced provider resolution logging, log model in each call
+- BotNexus.Agent/AgentRunnerFactory.cs - Log configured settings at agent creation time
+- BotNexus.Core/Models/Session.cs - Added Model property
+- BotNexus.Session/SessionManager.cs - Persist/load model in metadata sidecar
+- BotNexus.Gateway/Program.cs - Include model in API responses
+- BotNexus.Providers.*/[Provider].cs - Log model being sent to each API
+
+**How This Helps:**
+- Logs will now show: "Calling provider CopilotProvider for agent assistant, model=gpt-4o, contextWindowTokens=65536"
+- We can see if a fallback model is being used instead of the configured one
+- We can confirm the context window token budget matches expectations
+- Session API shows which model was actually used, not just what was configured
+
+**Next Steps If Issue Persists:**
+- Check if ContextWindowTokens is null and defaulting incorrectly
+- Look for hardcoded token limits in provider implementations
+- Add error logging when token limits are exceeded to capture the actual limit vs request size
+
