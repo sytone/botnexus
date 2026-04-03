@@ -15,6 +15,7 @@
     let isSubscribed = false;
     let reconnectTimer = null;
     let commandPaletteIndex = -1;
+    let availableModels = [];
 
     // --- DOM refs ---
     const $ = (sel) => document.querySelector(sel);
@@ -38,6 +39,7 @@
     const elBtnSend = $('#btn-send');
     const elToggleActivity = $('#toggle-activity');
     const elAgentSelect = $('#agent-select');
+    const elModelSelect = $('#model-select');
     const elCommandPalette = $('#command-palette');
 
     // --- Commands ---
@@ -227,6 +229,12 @@
         }
         elAgentSelect.disabled = true;
 
+        // Set model selector to match session's model (if available)
+        if (session.model) {
+            elModelSelect.value = session.model;
+        }
+        elModelSelect.disabled = false; // Allow changing model even for existing sessions
+
         // Render history
         if (session.history) {
             for (const entry of session.history) {
@@ -259,6 +267,7 @@
         const payload = { type: 'message', content: text };
         if (currentSessionKey) payload.session_id = currentSessionKey;
         if (!currentSessionKey && elAgentSelect.value) payload.agent = elAgentSelect.value;
+        if (elModelSelect.value) payload.model = elModelSelect.value;
         sendWs(payload);
     }
 
@@ -294,10 +303,12 @@
         elWelcome.classList.add('hidden');
         elChatView.classList.remove('hidden');
         elChatTitle.textContent = 'New Chat';
-        elChatMeta.textContent = `Agent: ${elAgentSelect.value || 'default'} · Session will be created on first message`;
+        const modelText = elModelSelect.value ? ` · Model: ${elModelSelect.value}` : '';
+        elChatMeta.textContent = `Agent: ${elAgentSelect.value || 'default'}${modelText} · Session will be created on first message`;
         elChatMessages.innerHTML = '';
         elBtnSend.disabled = false;
         elAgentSelect.disabled = false;
+        elModelSelect.disabled = false;
 
         // Remove active from all sessions
         elSessionsList.querySelectorAll('.list-item').forEach(el => el.classList.remove('active'));
@@ -400,6 +411,30 @@
                 <span class="ext-detail">Model: ${escapeHtml(p.defaultModel || p.model || 'N/A')}</span>
             `;
             elProvidersList.appendChild(el);
+        }
+
+        // Extract models for the model selector
+        availableModels = providers
+            .map(p => p.defaultModel || p.model)
+            .filter(m => m && m !== 'N/A');
+        populateModelSelector();
+    }
+
+    function populateModelSelector() {
+        elModelSelect.innerHTML = '';
+        
+        // Add a default option
+        const defaultOpt = document.createElement('option');
+        defaultOpt.value = '';
+        defaultOpt.textContent = '(default)';
+        elModelSelect.appendChild(defaultOpt);
+
+        // Add available models
+        for (const model of availableModels) {
+            const opt = document.createElement('option');
+            opt.value = model;
+            opt.textContent = model;
+            elModelSelect.appendChild(opt);
         }
     }
 
@@ -565,6 +600,20 @@
         loadExtensions();
         loadProviders();
         loadTools();
+    });
+
+    elAgentSelect.addEventListener('change', () => {
+        if (!currentSessionKey) {
+            const modelText = elModelSelect.value ? ` · Model: ${elModelSelect.value}` : '';
+            elChatMeta.textContent = `Agent: ${elAgentSelect.value || 'default'}${modelText} · Session will be created on first message`;
+        }
+    });
+
+    elModelSelect.addEventListener('change', () => {
+        if (!currentSessionKey) {
+            const modelText = elModelSelect.value ? ` · Model: ${elModelSelect.value}` : '';
+            elChatMeta.textContent = `Agent: ${elAgentSelect.value || 'default'}${modelText} · Session will be created on first message`;
+        }
     });
 
     elToggleActivity.addEventListener('change', () => {
