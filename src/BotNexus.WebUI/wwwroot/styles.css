@@ -633,6 +633,25 @@ body {
     text-transform: uppercase;
 }
 
+.message.thinking {
+    background: transparent;
+    align-self: flex-start;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    font-style: italic;
+    padding: 6px 12px;
+}
+
+.thinking-dots {
+    display: inline-block;
+    animation: thinking-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes thinking-pulse {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 1; }
+}
+
 /* === Chat Input === */
 .chat-input-area {
     padding: 12px 20px;

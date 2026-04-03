@@ -184,6 +184,23 @@
         // Remove all streaming indicators when a final response arrives
         const streamingElements = elChatMessages.querySelectorAll('.message.assistant.streaming');
         streamingElements.forEach(el => el.remove());
+        
+        // Remove thinking indicator when final response arrives
+        const thinkingElements = elChatMessages.querySelectorAll('.message.thinking');
+        thinkingElements.forEach(el => el.remove());
+    }
+
+    function showThinkingIndicator() {
+        // Remove any existing thinking indicator first
+        const existing = elChatMessages.querySelectorAll('.message.thinking');
+        existing.forEach(el => el.remove());
+        
+        // Create and insert thinking indicator
+        const div = document.createElement('div');
+        div.className = 'message thinking';
+        div.innerHTML = '<span class="thinking-dots">●●●</span> Agent is thinking...';
+        elChatMessages.appendChild(div);
+        scrollToBottom();
     }
 
     // --- WS message handler ---
@@ -542,6 +559,9 @@
         autoResize(elChatInput);
 
         appendChatMessage('user', text);
+        
+        // Show thinking indicator immediately after user message
+        showThinkingIndicator();
 
         // If we have a current session, send with session_id override
         const payload = { type: 'message', content: text };
@@ -566,6 +586,10 @@
     function appendDelta(content) {
         let streaming = elChatMessages.querySelector('.message.assistant.streaming');
         if (!streaming) {
+            // Remove thinking indicator when streaming starts
+            const thinkingElements = elChatMessages.querySelectorAll('.message.thinking');
+            thinkingElements.forEach(el => el.remove());
+            
             streaming = document.createElement('div');
             streaming.className = 'message assistant streaming';
             streaming.innerHTML = `<div class="msg-header"><span class="msg-role">ASSISTANT</span><span>streaming...</span></div><span class="delta-content"></span>`;
