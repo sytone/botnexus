@@ -807,3 +807,22 @@
 
 **Learning:** MSBuild incremental build cache is invalidated when ANY build property changes, including Version. For fast local dev loops, use stable version strings. Reserve dynamic versions (git hash, timestamps) for release builds.
 
+
+### 2026-04-02 — Gateway Startup Crash: Invalid Route Pattern
+
+**Issue:** Gateway crashing on startup with `RoutePatternException: A catch-all parameter can only appear as the last segment of the route template` at `Program.cs:168`.
+
+**Root Cause:** Commit `2422b23` (Farnsworth's agent CRUD API) introduced invalid route patterns:
+- `POST /api/sessions/{*key}/hide`
+- `POST /api/sessions/{*key}/unhide`
+
+ASP.NET Core routing does not allow catch-all parameters (`{*key}`) to have additional path segments after them. The `{*key}` must be the final segment.
+
+**Solution:** Changed to single RESTful endpoint using HTTP PATCH with body payload:
+- `PATCH /api/sessions/{*key}` with `{ "hidden": true/false }` in body
+- More RESTful design (PATCH for partial updates vs separate POST endpoints)
+- Complies with routing constraints
+
+**Commit:** 1e02abd "fix(gateway): correct invalid route pattern for session hide/unhide endpoints"
+
+**Learning:** When adding REST endpoints with catch-all route parameters, the catch-all MUST be the final segment. Additional actions should use query parameters, HTTP methods (GET/POST/PATCH/DELETE), or request body properties rather than additional path segments. Always test gateway startup after modifying routes.
