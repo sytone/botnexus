@@ -272,7 +272,10 @@ public sealed class AgentContextBuilderTests
         configureAgents?.Invoke(agents);
 
         var config = Options.Create(new BotNexusConfig { Agents = agents });
-        return new AgentContextBuilder(workspace.Object, resolvedMemoryStore, registry, config, NullLogger<AgentContextBuilder>.Instance);
+        var skillsLoader = new Mock<ISkillsLoader>();
+        skillsLoader.Setup(s => s.LoadSkillsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        return new AgentContextBuilder(workspace.Object, resolvedMemoryStore, registry, skillsLoader.Object, config, NullLogger<AgentContextBuilder>.Instance);
     }
 
     private static Mock<IAgentWorkspace> CreateWorkspaceMock(Dictionary<string, string?>? files = null)

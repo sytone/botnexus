@@ -38,10 +38,17 @@ public sealed class AgentContextBuilderFactory : IContextBuilderFactory
         var workspace = _workspaceFactory.Create(agentName);
         var toolRegistry = new ToolRegistry(_metrics);
         toolRegistry.RegisterRange(_services.GetServices<ITool>());
+        
+        var skillsLoader = new SkillsLoader(
+            BotNexusHome.ResolveHomePath(),
+            _config,
+            _loggerFactory.CreateLogger<SkillsLoader>());
+        
         return new AgentContextBuilder(
             workspace,
             _memoryStore,
             toolRegistry,
+            skillsLoader,
             _config,
             _loggerFactory.CreateLogger<AgentContextBuilder>());
     }

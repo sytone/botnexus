@@ -64,6 +64,7 @@ public static class BotNexusHome
         Directory.CreateDirectory(Path.Combine(homePath, "tokens"));
         Directory.CreateDirectory(Path.Combine(homePath, "sessions"));
         Directory.CreateDirectory(Path.Combine(homePath, "logs"));
+        Directory.CreateDirectory(Path.Combine(homePath, "skills"));
         Directory.CreateDirectory(AgentsPath);
 
         var configPath = Path.Combine(homePath, "config.json");
@@ -82,6 +83,7 @@ public static class BotNexusHome
         Directory.CreateDirectory(agentWorkspacePath);
         Directory.CreateDirectory(Path.Combine(agentWorkspacePath, "memory"));
         Directory.CreateDirectory(Path.Combine(agentWorkspacePath, "memory", "daily"));
+        Directory.CreateDirectory(Path.Combine(agentWorkspacePath, "skills"));
     }
 
     private static string ResolveAbsolutePath(string path)

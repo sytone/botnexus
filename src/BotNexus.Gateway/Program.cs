@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using BotNexus.Agent;
 using BotNexus.Channels.Base;
 using BotNexus.Core.Abstractions;
 using BotNexus.Core.Configuration;
@@ -679,6 +680,44 @@ app.MapGet("/api/tools", (IEnumerable<ITool> tools) =>
         parameterCount = t.Definition.Parameters.Count
     });
     return Results.Json(toolList, jsonOptions);
+});
+
+// --- REST API: Skills ---
+app.MapGet("/api/skills", async (IOptions<BotNexusConfig> config, ILoggerFactory loggerFactory) =>
+{
+    var skillsLoader = new SkillsLoader(botNexusHome, config, loggerFactory.CreateLogger<SkillsLoader>());
+    var globalSkills = await skillsLoader.LoadSkillsAsync("_global", CancellationToken.None);
+    
+    return Results.Json(globalSkills.Select(s => new
+    {
+        name = s.Name,
+        description = s.Description,
+        version = s.Version,
+        scope = s.Scope.ToString(),
+        alwaysLoad = s.AlwaysLoad,
+        sourcePath = s.SourcePath
+    }), jsonOptions);
+});
+
+app.MapGet("/api/agents/{name}/skills", async (string name, IOptions<BotNexusConfig> config, ILoggerFactory loggerFactory) =>
+{
+    var agentDefaults = config.Value.Agents;
+    if (!agentDefaults.Named.ContainsKey(name))
+        return Results.Json(new { error = $"Agent '{name}' not found." }, jsonOptions, statusCode: 404);
+    
+    var skillsLoader = new SkillsLoader(botNexusHome, config, loggerFactory.CreateLogger<SkillsLoader>());
+    var skills = await skillsLoader.LoadSkillsAsync(name, CancellationToken.None);
+    
+    return Results.Json(skills.Select(s => new
+    {
+        name = s.Name,
+        description = s.Description,
+        version = s.Version,
+        scope = s.Scope.ToString(),
+        alwaysLoad = s.AlwaysLoad,
+        sourcePath = s.SourcePath,
+        contentPreview = s.Content.Length > 200 ? s.Content[..200] + "..." : s.Content
+    }), jsonOptions);
 });
 
 // --- REST API: Cron ---

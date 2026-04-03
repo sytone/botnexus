@@ -23,6 +23,7 @@ public sealed class AgentContextBuilder : IContextBuilder
     private readonly IAgentWorkspace _workspace;
     private readonly IMemoryStore _memoryStore;
     private readonly ToolRegistry _toolRegistry;
+    private readonly ISkillsLoader _skillsLoader;
     private readonly BotNexusConfig _config;
     private readonly ILogger<AgentContextBuilder> _logger;
 
@@ -30,12 +31,14 @@ public sealed class AgentContextBuilder : IContextBuilder
         IAgentWorkspace workspace,
         IMemoryStore memoryStore,
         ToolRegistry toolRegistry,
+        ISkillsLoader skillsLoader,
         IOptions<BotNexusConfig> config,
         ILogger<AgentContextBuilder> logger)
     {
         _workspace = workspace;
         _memoryStore = memoryStore;
         _toolRegistry = toolRegistry;
+        _skillsLoader = skillsLoader;
         _config = config.Value;
         _logger = logger;
     }
@@ -63,6 +66,9 @@ public sealed class AgentContextBuilder : IContextBuilder
 
         parts.Add(Truncate(GenerateAgentsMarkdown(), maxChars));
         parts.Add(Truncate(GenerateToolsMarkdown(), maxChars));
+
+        var skillsSections = await BuildSkillsSectionsAsync(agentName, maxChars, cancellationToken).ConfigureAwait(false);
+        parts.AddRange(skillsSections);
 
         var memorySections = await BuildMemorySectionsAsync(agentName, maxChars, cancellationToken).ConfigureAwait(false);
         parts.AddRange(memorySections);
@@ -140,6 +146,42 @@ public sealed class AgentContextBuilder : IContextBuilder
         if (!string.IsNullOrWhiteSpace(yesterdayMemory))
             sections.Add($"## memory/daily/{yesterday}.md\n\n{Truncate(yesterdayMemory, maxChars)}");
 
+        return sections;
+    }
+
+    private async Task<IReadOnlyList<string>> BuildSkillsSectionsAsync(
+        string agentName,
+        int maxChars,
+        CancellationToken cancellationToken)
+    {
+        var skills = await _skillsLoader.LoadSkillsAsync(agentName, cancellationToken).ConfigureAwait(false);
+        if (skills.Count == 0)
+            return [];
+
+        var sections = new List<string>();
+        var sb = new StringBuilder();
+        
+        sb.AppendLine("## SKILLS.md");
+        sb.AppendLine();
+        sb.AppendLine("Available skills loaded for this agent:");
+        sb.AppendLine();
+
+        foreach (var skill in skills)
+        {
+            sb.AppendLine($"### {skill.Name}");
+            sb.AppendLine();
+            sb.AppendLine($"**Description:** {skill.Description}");
+            if (!string.IsNullOrWhiteSpace(skill.Version))
+                sb.AppendLine($"**Version:** {skill.Version}");
+            sb.AppendLine($"**Scope:** {skill.Scope}");
+            sb.AppendLine();
+            sb.AppendLine(skill.Content);
+            sb.AppendLine();
+            sb.AppendLine("---");
+            sb.AppendLine();
+        }
+
+        sections.Add(Truncate(sb.ToString().TrimEnd(), maxChars));
         return sections;
     }
 
