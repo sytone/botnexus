@@ -17,7 +17,10 @@ namespace BotNexus.Providers.OpenAI;
 public sealed class OpenAiProvider : LlmProviderBase
 {
     private readonly ChatClient _chatClient;
+    private readonly OpenAIClient _openAiClient;
     private readonly string _defaultModel;
+    private readonly string? _apiBase;
+    private readonly string _apiKey;
 
     public OpenAiProvider(
         string apiKey,
@@ -27,7 +30,9 @@ public sealed class OpenAiProvider : LlmProviderBase
         int maxRetries = 3)
         : base(logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<OpenAiProvider>.Instance, maxRetries)
     {
+        _apiKey = apiKey;
         _defaultModel = model;
+        _apiBase = apiBase;
         Generation = new GenerationSettings { Model = model };
 
         OpenAIClientOptions? options = null;
@@ -36,15 +41,67 @@ public sealed class OpenAiProvider : LlmProviderBase
             options = new OpenAIClientOptions { Endpoint = new Uri(apiBase) };
         }
 
-        var openAiClient = options is not null
+        _openAiClient = options is not null
             ? new OpenAIClient(new ApiKeyCredential(apiKey), options)
             : new OpenAIClient(new ApiKeyCredential(apiKey));
 
-        _chatClient = openAiClient.GetChatClient(model);
+        _chatClient = _openAiClient.GetChatClient(model);
     }
 
     /// <inheritdoc/>
     public override string DefaultModel => _defaultModel;
+
+    /// <inheritdoc/>
+    public override async Task<IReadOnlyList<string>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var httpClient = new HttpClient();
+            var baseUrl = _apiBase ?? "https://api.openai.com";
+            httpClient.BaseAddress = new Uri(baseUrl);
+            httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _apiKey);
+
+            var response = await httpClient.GetAsync("/v1/models", cancellationToken).ConfigureAwait(false);
+            
+            if (!response.IsSuccessStatusCode)
+            {
+                Logger.LogWarning("Failed to fetch OpenAI models: HTTP {StatusCode}", (int)response.StatusCode);
+                return new[] { _defaultModel };
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("data", out var dataElement) && dataElement.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                var models = new List<string>();
+                foreach (var model in dataElement.EnumerateArray())
+                {
+                    if (model.TryGetProperty("id", out var idElement))
+                    {
+                        var id = idElement.GetString();
+                        if (!string.IsNullOrWhiteSpace(id))
+                            models.Add(id);
+                    }
+                }
+
+                if (models.Count > 0)
+                {
+                    Logger.LogDebug("Fetched {Count} models from OpenAI API", models.Count);
+                    return models;
+                }
+            }
+
+            Logger.LogWarning("No models found in OpenAI API response, falling back to default");
+            return new[] { _defaultModel };
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to fetch available models from OpenAI, falling back to default");
+            return new[] { _defaultModel };
+        }
+    }
 
     /// <inheritdoc/>
     protected override async Task<LlmResponse> ChatCoreAsync(ChatRequest request, CancellationToken cancellationToken)

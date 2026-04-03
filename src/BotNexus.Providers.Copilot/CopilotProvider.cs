@@ -50,6 +50,58 @@ public sealed class CopilotProvider : LlmProviderBase, IOAuthProvider
 
     public bool HasValidToken => _cachedToken is { IsExpired: false };
 
+    public override async Task<IReadOnlyList<string>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var accessToken = await GetCopilotAccessTokenAsync(cancellationToken).ConfigureAwait(false);
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/models");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            request.Headers.TryAddWithoutValidation("Editor-Version", CopilotConfig.EditorVersion);
+            request.Headers.TryAddWithoutValidation("Editor-Plugin-Version", CopilotConfig.EditorPluginVersion);
+
+            using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            
+            if (!response.IsSuccessStatusCode)
+            {
+                Logger.LogWarning("Failed to fetch Copilot models: HTTP {StatusCode}", (int)response.StatusCode);
+                return new[] { _defaultModel };
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("data", out var dataElement) && dataElement.ValueKind == JsonValueKind.Array)
+            {
+                var models = new List<string>();
+                foreach (var model in dataElement.EnumerateArray())
+                {
+                    if (model.TryGetProperty("id", out var idElement))
+                    {
+                        var id = idElement.GetString();
+                        if (!string.IsNullOrWhiteSpace(id))
+                            models.Add(id);
+                    }
+                }
+
+                if (models.Count > 0)
+                {
+                    Logger.LogDebug("Fetched {Count} models from Copilot API", models.Count);
+                    return models;
+                }
+            }
+
+            Logger.LogWarning("No models found in Copilot API response, falling back to default");
+            return new[] { _defaultModel };
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to fetch available models from Copilot, falling back to default");
+            return new[] { _defaultModel };
+        }
+    }
+
     public async Task<string> GetAccessTokenAsync(CancellationToken cancellationToken = default)
     {
         if (HasValidToken)

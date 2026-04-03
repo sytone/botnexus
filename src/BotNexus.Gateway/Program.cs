@@ -602,22 +602,71 @@ static string NormalizeAgentId(string agentName)
 }
 
 // --- REST API: Providers ---
-app.MapGet("/api/providers", (ProviderRegistry providerRegistry) =>
+app.MapGet("/api/providers", async (ProviderRegistry providerRegistry) =>
 {
     var names = providerRegistry.GetProviderNames();
-    var providers = names.Select(name =>
+    var providers = new List<object>();
+    
+    foreach (var name in names)
     {
         var provider = providerRegistry.Get(name);
-        return new
+        if (provider is null)
+            continue;
+            
+        IReadOnlyList<string> availableModels;
+        try
+        {
+            availableModels = await provider.GetAvailableModelsAsync();
+        }
+        catch (Exception)
+        {
+            availableModels = new[] { provider.DefaultModel };
+        }
+        
+        providers.Add(new
         {
             name,
-            defaultModel = provider?.DefaultModel,
-            model = provider?.Generation.Model,
-            maxTokens = provider?.Generation.MaxTokens,
-            temperature = provider?.Generation.Temperature
-        };
-    });
+            defaultModel = provider.DefaultModel,
+            model = provider.Generation.Model,
+            maxTokens = provider.Generation.MaxTokens,
+            temperature = provider.Generation.Temperature,
+            availableModels = availableModels
+        });
+    }
+    
     return Results.Json(providers, jsonOptions);
+});
+
+// --- REST API: Models ---
+app.MapGet("/api/models", async (ProviderRegistry providerRegistry) =>
+{
+    var names = providerRegistry.GetProviderNames();
+    var result = new List<object>();
+    
+    foreach (var name in names)
+    {
+        var provider = providerRegistry.Get(name);
+        if (provider is null)
+            continue;
+            
+        IReadOnlyList<string> models;
+        try
+        {
+            models = await provider.GetAvailableModelsAsync();
+        }
+        catch (Exception)
+        {
+            models = new[] { provider.DefaultModel };
+        }
+        
+        result.Add(new
+        {
+            provider = name,
+            models = models
+        });
+    }
+    
+    return Results.Json(result, jsonOptions);
 });
 
 // --- REST API: Tools ---

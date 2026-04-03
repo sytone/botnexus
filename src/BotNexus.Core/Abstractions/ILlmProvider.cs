@@ -11,6 +11,9 @@ public interface ILlmProvider
     /// <summary>Generation settings.</summary>
     GenerationSettings Generation { get; set; }
 
+    /// <summary>Gets the list of available models for this provider.</summary>
+    Task<IReadOnlyList<string>> GetAvailableModelsAsync(CancellationToken cancellationToken = default);
+
     /// <summary>Sends a chat request and returns the complete response.</summary>
     Task<LlmResponse> ChatAsync(ChatRequest request, CancellationToken cancellationToken = default);
 

@@ -12,6 +12,11 @@ public sealed class FixtureLlmProvider(IConfiguration configuration) : ILlmProvi
 
     public GenerationSettings Generation { get; set; } = new();
 
+    public Task<IReadOnlyList<string>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult<IReadOnlyList<string>>(new[] { _defaultModel });
+    }
+
     public Task<LlmResponse> ChatAsync(ChatRequest request, CancellationToken cancellationToken = default)
     {
         var lastUserMessage = request.Messages.LastOrDefault(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase))?.Content ?? string.Empty;

@@ -162,6 +162,11 @@ public sealed class MemoryConsolidationE2eTests : IDisposable
             MaxTokens = 4096, Temperature = 0.0, ContextWindowTokens = 32000, MaxToolIterations = 5
         };
 
+        public Task<IReadOnlyList<string>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<IReadOnlyList<string>>(new[] { DefaultModel });
+        }
+
         public Task<LlmResponse> ChatAsync(ChatRequest request, CancellationToken cancellationToken = default)
             => Task.FromResult(new LlmResponse(consolidatedOutput, FinishReason.Stop));
 

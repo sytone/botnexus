@@ -14,6 +14,11 @@ public sealed class MockLlmProvider : ILlmProvider
     public string DefaultModel => "mock-model";
     public GenerationSettings Generation { get; set; } = new();
 
+    public Task<IReadOnlyList<string>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult<IReadOnlyList<string>>(new[] { "mock-model", "mock-model-2" });
+    }
+
     /// <summary>Per-agent memory store for Quill's note-taking behavior.</summary>
     private readonly ConcurrentDictionary<string, List<string>> _notesBySession = new();
 

@@ -477,6 +477,11 @@ public sealed class ConfigHotReloadIntegrationTests
         public string DefaultModel => $"{name}-default-model";
         public GenerationSettings Generation { get; set; } = new() { Model = $"{name}-model", MaxTokens = 512, Temperature = 0.1 };
 
+        public Task<IReadOnlyList<string>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<IReadOnlyList<string>>(new[] { DefaultModel });
+        }
+
         public Task<LlmResponse> ChatAsync(ChatRequest request, CancellationToken cancellationToken = default)
             => Task.FromResult(new LlmResponse($"response:{name}", FinishReason.Stop));
 

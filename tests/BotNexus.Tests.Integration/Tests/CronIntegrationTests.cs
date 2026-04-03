@@ -393,6 +393,11 @@ public sealed class CronIntegrationTests
         public string DefaultModel => "test-model";
         public GenerationSettings Generation { get; set; } = new();
 
+        public Task<IReadOnlyList<string>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<IReadOnlyList<string>>(new[] { DefaultModel });
+        }
+
         public Task<LlmResponse> ChatAsync(ChatRequest request, CancellationToken cancellationToken = default)
         {
             var lastUser = request.Messages.LastOrDefault(static m => m.Role == "user")?.Content ?? string.Empty;

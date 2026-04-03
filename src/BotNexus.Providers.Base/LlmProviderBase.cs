@@ -27,6 +27,16 @@ public abstract class LlmProviderBase : ILlmProvider
     public GenerationSettings Generation { get; set; } = new();
 
     /// <inheritdoc/>
+    /// <remarks>
+    /// Default implementation returns a single-item list with the default model.
+    /// Override this method to query the provider's API for available models.
+    /// </remarks>
+    public virtual Task<IReadOnlyList<string>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult<IReadOnlyList<string>>(new[] { DefaultModel });
+    }
+
+    /// <inheritdoc/>
     public async Task<LlmResponse> ChatAsync(ChatRequest request, CancellationToken cancellationToken = default)
     {
         for (int attempt = 0; attempt <= MaxRetries; attempt++)

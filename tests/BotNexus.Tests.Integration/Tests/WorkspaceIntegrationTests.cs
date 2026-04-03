@@ -396,6 +396,11 @@ public sealed class WorkspaceIntegrationTests
         private int _index;
         public string DefaultModel => "test-model";
         public GenerationSettings Generation { get; set; } = new();
+
+        public Task<IReadOnlyList<string>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<IReadOnlyList<string>>(new[] { DefaultModel });
+        }
         public List<ChatRequest> Requests { get; } = [];
 
         public Task<LlmResponse> ChatAsync(ChatRequest request, CancellationToken cancellationToken = default)
