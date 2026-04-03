@@ -170,10 +170,10 @@ public sealed class MemoryConsolidationE2eTests : IDisposable
         public Task<LlmResponse> ChatAsync(ChatRequest request, CancellationToken cancellationToken = default)
             => Task.FromResult(new LlmResponse(consolidatedOutput, FinishReason.Stop));
 
-        public async IAsyncEnumerable<string> ChatStreamAsync(ChatRequest request,
+        public async IAsyncEnumerable<StreamingChatChunk> ChatStreamAsync(ChatRequest request,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            yield return (await ChatAsync(request, cancellationToken)).Content;
+            yield return StreamingChatChunk.FromContentDelta((await ChatAsync(request, cancellationToken)).Content);
         }
     }
 

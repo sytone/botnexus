@@ -413,10 +413,10 @@ public sealed class WorkspaceIntegrationTests
             return Task.FromResult(new LlmResponse(fallback, FinishReason.Stop));
         }
 
-        public async IAsyncEnumerable<string> ChatStreamAsync(ChatRequest request, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        public async IAsyncEnumerable<StreamingChatChunk> ChatStreamAsync(ChatRequest request, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var response = await ChatAsync(request, cancellationToken);
-            yield return response.Content;
+            yield return StreamingChatChunk.FromContentDelta(response.Content);
         }
     }
 

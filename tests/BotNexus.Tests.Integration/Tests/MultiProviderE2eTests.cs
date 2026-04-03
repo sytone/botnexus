@@ -151,10 +151,10 @@ public sealed class MultiProviderE2eTests : IDisposable
         public Task<LlmResponse> ChatAsync(ChatRequest request, CancellationToken cancellationToken = default)
             => Task.FromResult(new LlmResponse(response, FinishReason.Stop));
 
-        public async IAsyncEnumerable<string> ChatStreamAsync(ChatRequest request,
+        public async IAsyncEnumerable<StreamingChatChunk> ChatStreamAsync(ChatRequest request,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            yield return response;
+            yield return StreamingChatChunk.FromContentDelta(response);
         }
     }
 }

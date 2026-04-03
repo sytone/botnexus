@@ -485,12 +485,12 @@ public sealed class ConfigHotReloadIntegrationTests
         public Task<LlmResponse> ChatAsync(ChatRequest request, CancellationToken cancellationToken = default)
             => Task.FromResult(new LlmResponse($"response:{name}", FinishReason.Stop));
 
-        public async IAsyncEnumerable<string> ChatStreamAsync(
+        public async IAsyncEnumerable<StreamingChatChunk> ChatStreamAsync(
             ChatRequest request,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var response = await ChatAsync(request, cancellationToken);
-            yield return response.Content;
+            yield return StreamingChatChunk.FromContentDelta(response.Content);
         }
     }
 }

@@ -315,7 +315,7 @@ public sealed class MemoryConsolidatorTests : IDisposable
             MaxToolIterations = 12
         });
         provider.Setup(p => p.ChatStreamAsync(It.IsAny<ChatRequest>(), It.IsAny<CancellationToken>()))
-            .Returns(AsyncEnumerable.Empty<string>());
+            .Returns(AsyncEnumerable.Empty<StreamingChatChunk>());
         return provider;
     }
 

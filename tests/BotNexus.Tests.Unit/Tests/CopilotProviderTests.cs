@@ -86,7 +86,8 @@ public class CopilotProviderTests
                            [new ChatMessage("user", "Stream")],
                            new GenerationSettings { Model = "gpt-4o" })))
         {
-            chunks.Add(chunk);
+            if (!string.IsNullOrEmpty(chunk.ContentDelta))
+                chunks.Add(chunk.ContentDelta);
         }
 
         chunks.Should().Equal("Hello", " world");

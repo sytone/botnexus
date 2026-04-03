@@ -404,12 +404,12 @@ public sealed class CronIntegrationTests
             return Task.FromResult(new LlmResponse($"provider-response:{lastUser}", FinishReason.Stop));
         }
 
-        public async IAsyncEnumerable<string> ChatStreamAsync(
+        public async IAsyncEnumerable<StreamingChatChunk> ChatStreamAsync(
             ChatRequest request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var response = await ChatAsync(request, cancellationToken);
-            yield return response.Content;
+            yield return StreamingChatChunk.FromContentDelta(response.Content);
         }
     }
 
