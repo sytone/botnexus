@@ -34,7 +34,8 @@ function Get-InstallTarget {
         }
     }
 
-    throw "Unknown package naming pattern: $PackageId"
+    Write-Warning "Skipping unrecognized package: $PackageId"
+    return $null
 }
 
 function Test-IsNuGetMetadataEntry {
@@ -70,6 +71,11 @@ $installed = New-Object System.Collections.Generic.List[object]
 foreach ($package in $packageFiles) {
     $packageId = $package.BaseName
     $target = Get-InstallTarget -PackageId $packageId -InstallRoot $resolvedInstallPath
+    
+    if ($null -eq $target) {
+        continue
+    }
+    
     $targetPath = [string]$target.TargetPath
 
     if (Test-Path -LiteralPath $targetPath) {

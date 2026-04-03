@@ -1,5 +1,4 @@
-[CmdletBinding()]
-param()
+
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -51,7 +50,7 @@ if ($LASTEXITCODE -ne 0) {
 # Publish all components in parallel using --no-build to skip compilation.
 # Each publish only copies already-built binaries, avoiding race conditions.
 Write-Host "Publishing $($components.Count) components in parallel..."
-$publishJobs = $components | ForEach-Object -Parallel {
+$publishResults = $components | ForEach-Object -Parallel {
     $componentId = [string]$_.Id
     $projectPath = Join-Path $using:repoRoot ([string]$_.Project)
     $publishPath = Join-Path $using:stagingRoot $componentId
@@ -66,9 +65,7 @@ $publishJobs = $components | ForEach-Object -Parallel {
     }
 
     [pscustomobject]@{ Id = $componentId; PublishPath = $publishPath }
-} -ThrottleLimit 8 -AsJob
-
-$publishResults = Receive-Job -Job $publishJobs -Wait -AutoRemoveJob
+} -ThrottleLimit 8 -TimeoutSeconds 300
 
 # Package each component into .nupkg files.
 $results = New-Object System.Collections.Generic.List[object]
