@@ -69,7 +69,8 @@ X-Api-Key: your-api-key
     "provider": "openai",
     "maxTokens": 2000,
     "temperature": 0.7,
-    "disallowedTools": []
+    "disallowedTools": [],
+    "disabledSkills": []
   },
   {
     "name": "analyzer",
@@ -78,7 +79,8 @@ X-Api-Key: your-api-key
     "provider": "anthropic",
     "maxTokens": null,
     "temperature": null,
-    "disallowedTools": ["shell"]
+    "disallowedTools": ["shell"],
+    "disabledSkills": []
   }
 ]
 ```
@@ -109,7 +111,8 @@ X-Api-Key: your-api-key
   "provider": "openai",
   "maxTokens": 2000,
   "temperature": 0.7,
-  "disallowedTools": ["filesystem"]
+  "disallowedTools": ["filesystem"],
+  "disabledSkills": []
 }
 ```
 
@@ -146,6 +149,7 @@ X-Api-Key: your-api-key
 - `maxTokens` (integer, optional) — Max tokens per response. When null, provider uses its default
 - `temperature` (number, optional) — Temperature for randomness (0.0-2.0). When null, provider uses its default
 - `disallowedTools` (array of strings, optional) — Tools to disable for this agent (e.g., ["shell", "filesystem"])
+- `disabledSkills` (array of strings, optional) — Skills to disable for this agent (e.g., ["debug-*", "experimental"])
 
 **Request:**
 ```http
@@ -173,7 +177,8 @@ Content-Type: application/json
   "provider": "openai",
   "maxTokens": 4000,
   "temperature": 0.5,
-  "disallowedTools": ["shell"]
+  "disallowedTools": ["shell"],
+  "disabledSkills": []
 }
 ```
 
@@ -226,7 +231,8 @@ Content-Type: application/json
   "provider": "openai",
   "maxTokens": 2000,
   "temperature": 0.8,
-  "disallowedTools": []
+  "disallowedTools": [],
+  "disabledSkills": []
 }
 ```
 
