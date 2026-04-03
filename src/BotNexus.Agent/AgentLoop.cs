@@ -153,18 +153,41 @@ public sealed class AgentLoop
                         response = llmResponse.Content;
                 }
 
-                // Handle tool calls
-                if (llmResponse.FinishReason != FinishReason.ToolCalls || llmResponse.ToolCalls is not { Count: > 0 })
+                // Check if we have tool calls to execute
+                var hasToolCalls = llmResponse.FinishReason == FinishReason.ToolCalls && llmResponse.ToolCalls is { Count: > 0 };
+                
+                if (!hasToolCalls)
                 {
+                    // No tool calls - check if agent indicated continuation intent
+                    // If agent produced content suggesting more work, prompt it to continue with a tool call
+                    var hasContent = !string.IsNullOrWhiteSpace(llmResponse.Content);
+                    var suggestsContinuation = hasContent && llmResponse.Content is not null &&
+                        (llmResponse.Content.Contains("I'll", StringComparison.OrdinalIgnoreCase) ||
+                         llmResponse.Content.Contains("I will", StringComparison.OrdinalIgnoreCase) ||
+                         llmResponse.Content.Contains("next", StringComparison.OrdinalIgnoreCase) ||
+                         llmResponse.Content.Contains("proceed", StringComparison.OrdinalIgnoreCase));
+                    
+                    if (suggestsContinuation && iteration < _maxToolIterations - 1)
+                    {
+                        // Agent narrated next action but didn't make tool call - prompt it to execute
+                        _logger.LogInformation("Agent {AgentName}: detected continuation intent without tool calls, prompting to proceed (iteration {Iteration})",
+                            _agentName, iteration);
+                        session.AddEntry(new SessionEntry(
+                            MessageRole.User,
+                            "Please proceed with the action you described using the appropriate tool.",
+                            DateTimeOffset.UtcNow));
+                        continue; // Loop again to get the tool call
+                    }
+                    
                     _logger.LogInformation("Agent {AgentName}: breaking loop at iteration {Iteration}, FinishReason={FinishReason}, ToolCalls={ToolCallCount}",
                         _agentName, iteration, llmResponse.FinishReason, llmResponse.ToolCalls?.Count ?? 0);
                     break;
                 }
 
                 _logger.LogInformation("Agent {AgentName}: executing {Count} tool calls (iteration {Iteration})",
-                    _agentName, llmResponse.ToolCalls.Count, iteration);
+                    _agentName, llmResponse.ToolCalls!.Count, iteration);
 
-                foreach (var toolCall in llmResponse.ToolCalls)
+                foreach (var toolCall in llmResponse.ToolCalls!)
                 {
                     var toolResult = await _toolRegistry.ExecuteAsync(toolCall, cancellationToken).ConfigureAwait(false);
                     session.AddEntry(new SessionEntry(
