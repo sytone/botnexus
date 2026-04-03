@@ -5,6 +5,16 @@
 - **Stack:** C# (.NET latest), modular class libraries: Core, Agent, Api, Channels (Base/Discord/Slack/Telegram), Command, Cron, Gateway, Heartbeat, Providers (Base/Anthropic/OpenAI), Session, Tools.GitHub, WebUI
 - **Created:** 2026-04-01
 
+## 2026-04-03T17:45:00Z — System Messages Sprint (Team Sync)
+
+**Lead:** Leela  
+**Collaborating:** Farnsworth (Platform), Fry (Web)  
+
+**Runtime Layer:** Broadcasts device auth code+URL via system messages (Farnsworth infrastructure)  
+**Config Layer:** Hardened write safety (surgical JsonNode updates), auto-reauth on 401/403, secure token storage in ~/.botnexus/tokens/ (not config.json)  
+
+**Status:** ✅ Sprint complete. Auth flow secured end-to-end.
+
 ## Team Directives (All Agents Must Follow)
 
 1. **Dynamic Assembly Loading** (2026-04-01T16:29Z)

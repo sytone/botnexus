@@ -2,6 +2,14 @@
 
 ## Active Decisions
 
+### System Messages Sprint Decisions (2026-04-03)
+
+### 2026-04-03T10:29:01Z: User request — thinking/processing indicator in WebUI
+**By:** Jon Bullen (via Copilot)
+**What:** The chat UI needs a visual indicator (typing dots, spinner, "thinking..." label) that appears when the agent is processing. Should appear after the user sends a message and persist through all tool call iterations. Only dismiss when the final response arrives with FinishReason=Stop.
+**Why:** Without feedback the user doesn't know if the agent is working or broken. Critical UX.
+
+
 ### 1. Initial Architecture Review Findings (2026-04-01)
 
 **Author:** Leela (Lead/Architect)  

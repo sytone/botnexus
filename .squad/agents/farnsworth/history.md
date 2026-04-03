@@ -5,6 +5,21 @@
 - **Stack:** C# (.NET latest), modular class libraries: Core, Agent, Api, Channels (Base/Discord/Slack/Telegram), Command, Cron, Gateway, Heartbeat, Providers (Base/Anthropic/OpenAI), Session, Tools.GitHub, WebUI
 - **Created:** 2026-04-01
 
+## 2026-04-03T17:45:00Z — System Messages Sprint (Team Sync)
+
+**Delivered by:** Farnsworth (Platform)  
+**Collaborating:** Bender (Runtime), Leela (Lead), Fry (Web)  
+
+**Cross-Agent Deliverables:**
+- SystemMessage model + IActivityStream extension for infrastructure foundation
+- SystemMessageStore (100 msg retention) + GET /api/system/messages endpoint
+- ProviderStartupValidationService ensures auth checks at startup
+- Bender broadcasts device auth code+URL via system messages (runtime layer)
+- Leela hardened config write safety + secure token storage in ~/.botnexus/tokens/
+- Fry built device auth UX banners (copy code, clickable URL) + thinking indicator with pulsing animation
+
+**Status:** ✅ Sprint complete. All systems communicating device auth flow via system messages.
+
 ## Team Directives (All Agents Must Follow)
 
 1. **Dynamic Assembly Loading** (2026-04-01T16:29Z)

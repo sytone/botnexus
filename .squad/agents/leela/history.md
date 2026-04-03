@@ -5,9 +5,15 @@
 - **Stack:** C# (.NET latest), modular class libraries: Core, Agent, Api, Channels (Base/Discord/Slack/Telegram), Command, Cron, Gateway, Heartbeat, Providers (Base/Anthropic/OpenAI), Session, Tools.GitHub, WebUI
 - **Created:** 2026-04-01
 
-## Learnings
+## 2026-04-03T17:45:00Z — System Messages Sprint (Team Sync)
 
-<!-- Append new learnings below. Each entry is something lasting about the project. -->
+**Delivered by:** Leela (Lead)  
+**Collaborating:** Farnsworth (Platform), Bender (Runtime), Fry (Web)  
+
+**Config & Auth:** Hardened write safety (surgical JsonNode updates), auto-reauth on 401/403, secure token storage in ~/.botnexus/tokens/ (not config.json)  
+**Cross-Layer:** Device auth flow now secured end-to-end from runtime (Bender) → platform (Farnsworth) → web (Fry)  
+
+**Status:** ✅ Sprint complete. All auth touchpoints secured.
 
 ### 2026-04-03 — Critical Auth Issues: Token Loss Root Cause + Auto-Reauth
 
