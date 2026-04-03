@@ -82,6 +82,7 @@
 - 2026-04-01: Gateway observability now uses ASP.NET Core `IHealthCheck` + `/health` and `/ready`, with readiness tied to enabled channel runtime state and configured provider initialization.
 - 2026-04-01: Baseline platform metrics are emitted via `System.Diagnostics.Metrics` (`botnexus.messages.processed`, `botnexus.tool_calls.executed`, `botnexus.provider.latency`, `botnexus.extensions.loaded`), and message processing logs carry `CorrelationId` scopes end-to-end.
 - 2026-04-01: Startup now resolves BotNexus home from `BOTNEXUS_HOME` or `%USERPROFILE%\.botnexus`, creates home subfolders (`extensions/*`, `tokens`, `sessions`, `logs`) and loads user overrides from `config.json`.
+- **Generation settings now nullable for provider defaults** (2026-04-02): `GenerationSettings.Temperature`, `MaxTokens`, and `ContextWindowTokens` are now `nullable` types. When `null`, providers use their own defaults instead of BotNexus overriding with hardcoded values. Providers (Copilot, OpenAI, Anthropic) conditionally include these in API requests only when non-null. Default fallback of 65536 tokens used for context window sizing when null.
 
 ## Sprint 1 Summary — 2026-04-01T17:33Z
 
