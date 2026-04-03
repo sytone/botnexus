@@ -27,6 +27,7 @@ public sealed class AgentRunnerFactory : IAgentRunnerFactory
     private readonly IReadOnlyList<IChannel> _channels;
     private readonly ICommandRouter? _commandRouter;
     private readonly ICronService? _cronService;
+    private readonly IActivityStream? _activityStream;
 
     public AgentRunnerFactory(
         IContextBuilderFactory contextBuilderFactory,
@@ -41,7 +42,8 @@ public sealed class AgentRunnerFactory : IAgentRunnerFactory
         IEnumerable<IChannel> channels,
         IBotNexusMetrics? metrics = null,
         ICommandRouter? commandRouter = null,
-        ICronService? cronService = null)
+        ICronService? cronService = null,
+        IActivityStream? activityStream = null)
     {
         _contextBuilderFactory = contextBuilderFactory;
         _agentWorkspaceFactory = agentWorkspaceFactory;
@@ -56,6 +58,7 @@ public sealed class AgentRunnerFactory : IAgentRunnerFactory
         _channels = channels.ToList();
         _commandRouter = commandRouter;
         _cronService = cronService;
+        _activityStream = activityStream;
     }
 
     /// <inheritdoc />
@@ -106,7 +109,8 @@ public sealed class AgentRunnerFactory : IAgentRunnerFactory
             hooks: [.. _hooks],
             logger: _loggerFactory.CreateLogger<AgentLoop>(),
             metrics: _metrics,
-            maxToolIterations: agentConfig.MaxToolIterations ?? defaults.MaxToolIterations);
+            maxToolIterations: agentConfig.MaxToolIterations ?? defaults.MaxToolIterations,
+            activityStream: _activityStream);
 
         return new AgentRunner(
             agentName: workspace.AgentName,

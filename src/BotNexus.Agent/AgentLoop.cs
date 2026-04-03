@@ -34,6 +34,7 @@ public sealed class AgentLoop
     private readonly GenerationSettings _settings;
     private readonly int _maxToolIterations;
     private readonly IBotNexusMetrics? _metrics;
+    private readonly IActivityStream? _activityStream;
 
     public AgentLoop(
         string agentName,
@@ -51,7 +52,8 @@ public sealed class AgentLoop
         IReadOnlyList<IAgentHook>? hooks = null,
         ILogger<AgentLoop>? logger = null,
         IBotNexusMetrics? metrics = null,
-        int maxToolIterations = 40)
+        int maxToolIterations = 40,
+        IActivityStream? activityStream = null)
     {
         _agentName = agentName;
         _providerRegistry = providerRegistry;
@@ -69,10 +71,17 @@ public sealed class AgentLoop
         _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentLoop>.Instance;
         _metrics = metrics;
         _maxToolIterations = maxToolIterations;
+        _activityStream = activityStream;
     }
 
     /// <summary>Processes an inbound message through the full agent pipeline.</summary>
-    public async Task<string> ProcessAsync(InboundMessage message, CancellationToken cancellationToken = default)
+    /// <param name="message">The inbound message to process.</param>
+    /// <param name="onDelta">Optional callback for streaming deltas during LLM response generation.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    public async Task<string> ProcessAsync(
+        InboundMessage message, 
+        Func<string, Task>? onDelta = null,
+        CancellationToken cancellationToken = default)
     {
         var correlationId = message.GetCorrelationId() ?? "n/a";
         using var scope = _logger.BeginScope(new Dictionary<string, object>
@@ -152,8 +161,36 @@ public sealed class AgentLoop
                 var actualModel = string.IsNullOrWhiteSpace(request.Settings.Model) ? provider.DefaultModel : request.Settings.Model;
                 _logger.LogInformation("Agent {AgentName} configured with model={ConfiguredModel}, resolved to provider={ProviderName}, sending model={ActualModel}, contextWindowTokens={ContextWindowTokens}", 
                     _agentName, _model ?? _settings.Model, provider.GetType().Name, actualModel, request.Settings.ContextWindowTokens);
+                
                 var providerTimer = Stopwatch.StartNew();
-                var llmResponse = await provider.ChatAsync(request, cancellationToken).ConfigureAwait(false);
+                
+                // Use streaming if callback is provided AND tools are not being used
+                // Note: Most streaming providers don't properly support tool calls in streaming mode yet
+                LlmResponse llmResponse;
+                var useStreaming = onDelta is not null && (tools == null || tools.Count == 0);
+                
+                if (useStreaming)
+                {
+                    // Streaming mode: collect response while streaming deltas to client
+                    var contentBuilder = new System.Text.StringBuilder();
+                    
+                    await foreach (var delta in provider.ChatStreamAsync(request, cancellationToken).ConfigureAwait(false))
+                    {
+                        if (!string.IsNullOrWhiteSpace(delta))
+                        {
+                            contentBuilder.Append(delta);
+                            await onDelta!(delta).ConfigureAwait(false);
+                        }
+                    }
+                    
+                    llmResponse = new LlmResponse(contentBuilder.ToString(), FinishReason.Stop, null);
+                }
+                else
+                {
+                    // Non-streaming mode (backward compatible, supports tool calls)
+                    llmResponse = await provider.ChatAsync(request, cancellationToken).ConfigureAwait(false);
+                }
+                
                 providerTimer.Stop();
                 _metrics?.RecordProviderLatency(provider.GetType().Name, providerTimer.Elapsed.TotalMilliseconds);
                 _logger.LogInformation("Provider {ProviderName} responded in {ElapsedMs}ms", provider.GetType().Name, providerTimer.Elapsed.TotalMilliseconds);
@@ -244,6 +281,19 @@ public sealed class AgentLoop
 
                 foreach (var toolCall in llmResponse.ToolCalls!)
                 {
+                    // Publish tool execution progress event
+                    if (_activityStream is not null)
+                    {
+                        await _activityStream.PublishAsync(new Core.Models.ActivityEvent(
+                            ActivityEventType.AgentProcessing,
+                            message.Channel,
+                            $"{message.Channel}:{message.ChatId}",
+                            message.ChatId,
+                            _agentName,
+                            $"🔧 Using tool: {toolCall.ToolName}",
+                            DateTimeOffset.UtcNow), cancellationToken).ConfigureAwait(false);
+                    }
+                    
                     var toolResult = await _toolRegistry.ExecuteAsync(toolCall, cancellationToken).ConfigureAwait(false);
                     session.AddEntry(new SessionEntry(
                         MessageRole.Tool,

@@ -52,7 +52,17 @@ public sealed class AgentRunner : IAgentRunner
 
         try
         {
-            var response = await _agentLoop.ProcessAsync(message, cancellationToken).ConfigureAwait(false);
+            // Create streaming callback if channel supports it
+            Func<string, Task>? onDelta = null;
+            if (_responseChannel is not null && _responseChannel.SupportsStreaming)
+            {
+                onDelta = async (delta) =>
+                {
+                    await _responseChannel.SendDeltaAsync(message.ChatId, delta, cancellationToken: cancellationToken).ConfigureAwait(false);
+                };
+            }
+
+            var response = await _agentLoop.ProcessAsync(message, onDelta, cancellationToken).ConfigureAwait(false);
 
             if (!string.IsNullOrEmpty(response) && _responseChannel is not null)
             {
