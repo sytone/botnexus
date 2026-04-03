@@ -811,8 +811,24 @@ body {
 .form-input:disabled,
 .form-select:disabled,
 .form-textarea:disabled {
-    opacity: 0.6;
+    opacity: 0.5;
     cursor: not-allowed;
+    background: var(--bg-secondary);
+}
+.form-checkbox-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+.form-checkbox {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: var(--accent);
+}
+.form-checkbox-wrapper .form-label {
+    margin-bottom: 0;
 }
 .form-textarea {
     resize: vertical;

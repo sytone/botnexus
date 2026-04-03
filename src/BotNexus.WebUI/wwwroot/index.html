@@ -190,19 +190,27 @@
                     </div>
                     <div class="form-group">
                         <label class="form-label required" for="form-agent-model">Model</label>
-                        <input type="text" id="form-agent-model" class="form-input" required />
+                        <select id="form-agent-model" class="form-select" required>
+                            <option value="">Select model...</option>
+                        </select>
                     </div>
                     <div class="form-group">
                         <label class="form-label" for="form-agent-system-prompt">System Prompt</label>
                         <textarea id="form-agent-system-prompt" class="form-textarea"></textarea>
                     </div>
                     <div class="form-group">
-                        <label class="form-label" for="form-agent-temperature">Temperature</label>
-                        <input type="number" id="form-agent-temperature" class="form-input" step="0.1" min="0" max="2" />
+                        <div class="form-checkbox-wrapper">
+                            <input type="checkbox" id="form-agent-temperature-enabled" class="form-checkbox" />
+                            <label class="form-label" for="form-agent-temperature">Temperature</label>
+                        </div>
+                        <input type="number" id="form-agent-temperature" class="form-input" step="0.1" min="0" max="2" disabled />
                     </div>
                     <div class="form-group">
-                        <label class="form-label" for="form-agent-max-tokens">Max Tokens</label>
-                        <input type="number" id="form-agent-max-tokens" class="form-input" step="1" min="1" />
+                        <div class="form-checkbox-wrapper">
+                            <input type="checkbox" id="form-agent-max-tokens-enabled" class="form-checkbox" />
+                            <label class="form-label" for="form-agent-max-tokens">Max Tokens</label>
+                        </div>
+                        <input type="number" id="form-agent-max-tokens" class="form-input" step="1" min="1" disabled />
                     </div>
                     <div id="form-feedback" class="hidden"></div>
                 </form>

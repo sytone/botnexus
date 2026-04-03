@@ -58,7 +58,9 @@
     const elFormAgentModel = $('#form-agent-model');
     const elFormAgentSystemPrompt = $('#form-agent-system-prompt');
     const elFormAgentTemperature = $('#form-agent-temperature');
+    const elFormAgentTemperatureEnabled = $('#form-agent-temperature-enabled');
     const elFormAgentMaxTokens = $('#form-agent-max-tokens');
+    const elFormAgentMaxTokensEnabled = $('#form-agent-max-tokens-enabled');
     const elFormFeedback = $('#form-feedback');
     const elBtnSaveAgent = $('#btn-save-agent');
     const elBtnCancelAgent = $('#btn-cancel-agent');
@@ -640,6 +642,13 @@
         elFormAgentName.disabled = false;
         elAgentForm.reset();
         elFormFeedback.classList.add('hidden');
+        
+        // Reset checkboxes and disable inputs
+        elFormAgentTemperatureEnabled.checked = false;
+        elFormAgentTemperature.disabled = true;
+        elFormAgentMaxTokensEnabled.checked = false;
+        elFormAgentMaxTokens.disabled = true;
+        
         elAgentFormModal.classList.remove('hidden');
     }
 
@@ -662,8 +671,28 @@
         elFormAgentProvider.value = agent.provider || '';
         elFormAgentModel.value = agent.model || '';
         elFormAgentSystemPrompt.value = agent.systemPrompt || '';
-        elFormAgentTemperature.value = agent.temperature || '';
-        elFormAgentMaxTokens.value = agent.maxTokens || '';
+        
+        // Temperature: if value exists, check and enable; otherwise uncheck and disable
+        if (agent.temperature !== null && agent.temperature !== undefined) {
+            elFormAgentTemperatureEnabled.checked = true;
+            elFormAgentTemperature.disabled = false;
+            elFormAgentTemperature.value = agent.temperature;
+        } else {
+            elFormAgentTemperatureEnabled.checked = false;
+            elFormAgentTemperature.disabled = true;
+            elFormAgentTemperature.value = '';
+        }
+        
+        // Max Tokens: if value exists, check and enable; otherwise uncheck and disable
+        if (agent.maxTokens !== null && agent.maxTokens !== undefined) {
+            elFormAgentMaxTokensEnabled.checked = true;
+            elFormAgentMaxTokens.disabled = false;
+            elFormAgentMaxTokens.value = agent.maxTokens;
+        } else {
+            elFormAgentMaxTokensEnabled.checked = false;
+            elFormAgentMaxTokens.disabled = true;
+            elFormAgentMaxTokens.value = '';
+        }
         
         elAgentFormModal.classList.remove('hidden');
     }
@@ -701,11 +730,19 @@
         if (elFormAgentSystemPrompt.value.trim()) {
             payload.systemPrompt = elFormAgentSystemPrompt.value.trim();
         }
-        if (elFormAgentTemperature.value) {
+        
+        // Temperature: only include if checkbox is checked, otherwise send null
+        if (elFormAgentTemperatureEnabled.checked && elFormAgentTemperature.value) {
             payload.temperature = parseFloat(elFormAgentTemperature.value);
+        } else {
+            payload.temperature = null;
         }
-        if (elFormAgentMaxTokens.value) {
+        
+        // Max Tokens: only include if checkbox is checked, otherwise send null
+        if (elFormAgentMaxTokensEnabled.checked && elFormAgentMaxTokens.value) {
             payload.maxTokens = parseInt(elFormAgentMaxTokens.value, 10);
+        } else {
+            payload.maxTokens = null;
         }
         
         // Call API
@@ -791,6 +828,18 @@
             opt.value = p.name;
             opt.textContent = p.name;
             elFormAgentProvider.appendChild(opt);
+        }
+        
+        // Populate model dropdown in agent form
+        elFormAgentModel.innerHTML = '<option value="">Select model...</option>';
+        for (const p of providers) {
+            const model = p.defaultModel || p.model;
+            if (model && model !== 'N/A') {
+                const opt = document.createElement('option');
+                opt.value = model;
+                opt.textContent = model;
+                elFormAgentModel.appendChild(opt);
+            }
         }
     }
 
@@ -1020,6 +1069,20 @@
     elBtnCancelAgent.addEventListener('click', closeAgentForm);
     elBtnSaveAgent.addEventListener('click', saveAgent);
     elBtnAddAgent.addEventListener('click', openAddAgentForm);
+    
+    // Checkbox toggles for nullable fields
+    elFormAgentTemperatureEnabled.addEventListener('change', () => {
+        elFormAgentTemperature.disabled = !elFormAgentTemperatureEnabled.checked;
+        if (!elFormAgentTemperatureEnabled.checked) {
+            elFormAgentTemperature.value = '';
+        }
+    });
+    elFormAgentMaxTokensEnabled.addEventListener('change', () => {
+        elFormAgentMaxTokens.disabled = !elFormAgentMaxTokensEnabled.checked;
+        if (!elFormAgentMaxTokensEnabled.checked) {
+            elFormAgentMaxTokens.value = '';
+        }
+    });
 
     // Close modals on Escape key
     document.addEventListener('keydown', (e) => {
