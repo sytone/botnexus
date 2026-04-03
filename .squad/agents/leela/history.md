@@ -826,3 +826,51 @@ ASP.NET Core routing does not allow catch-all parameters (`{*key}`) to have addi
 **Commit:** 1e02abd "fix(gateway): correct invalid route pattern for session hide/unhide endpoints"
 
 **Learning:** When adding REST endpoints with catch-all route parameters, the catch-all MUST be the final segment. Additional actions should use query parameters, HTTP methods (GET/POST/PATCH/DELETE), or request body properties rather than additional path segments. Always test gateway startup after modifying routes.
+
+### 2026-04-02 — Skills System Implementation
+
+**Task:** Research, design, and implement a comprehensive skills system for BotNexus.
+
+**Research Phase:**
+- Studied nanobot (HKUDS) skills architecture — SKILL.md with YAML frontmatter, progressive loading
+- Analyzed industry patterns for LLM agent skills — modular knowledge packages, declarative vs procedural
+- Examined existing BotNexus SkillsLoader (simple text file reader) and AgentConfig.Skills property
+
+**Design Decisions:**
+1. **SKILL.md Format** — YAML frontmatter + markdown body (like nanobot, industry standard)
+2. **Two-Tier Loading** — Global skills in ~/.botnexus/skills/, per-agent in ~/.botnexus/agents/{name}/skills/
+3. **Agent Overrides Global** — Same skill name = agent version wins
+4. **DisabledSkills with Wildcards** — Opt-out filtering with glob patterns (e.g., web-*)
+5. **Context Integration** — Skills injected into system prompt, not executable tools
+6. **Separation of Concerns** — Skills = knowledge, Tools = execution
+
+**Implementation:**
+- Created Skill model with Name, Description, Content, SourcePath, Scope, Version, AlwaysLoad
+- Rewrote SkillsLoader to scan, parse YAML frontmatter, merge, and filter skills
+- Added DisabledSkills to AgentConfig
+- Integrated skills into AgentContextBuilder.BuildSystemPromptAsync()
+- Added YamlDotNet dependency to BotNexus.Agent project
+- Created API endpoints: GET /api/skills, GET /api/agents/{name}/skills
+- Updated BotNexusHome to create skills directories on bootstrap
+- Fixed test mocks in AgentContextBuilderTests for new constructor signature
+
+**Testing:**
+- ✅ Build clean, no warnings
+- ✅ All 516 tests passing
+- Created example global skill in ~/.botnexus/skills/example-skill/SKILL.md
+
+**Deliverables:**
+- Fully functional skills system ready for production
+- Comprehensive decision document in .squad/decisions/inbox/leela-skills-architecture.md
+- Backward compatible (empty directories = no-op)
+
+**Next Steps for Team:**
+1. Documentation — user guide, skill creation guide, best practices
+2. WebUI — skills page, editor, enable/disable UI
+3. Testing — unit tests for SkillsLoader, integration tests, E2E with example skill
+4. Example Skills — build reference skills library (git workflow, code review, documentation)
+
+**Commit:** df0c629 — "feat: implement skills system with global and per-agent skill loading"
+
+---
+
