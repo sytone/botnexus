@@ -34,6 +34,29 @@
 - Live WebSocket handlers should mirror history replay logic to avoid divergence
 - Tool call rendering should be centralized to prevent duplication/inconsistency
 
+### 2026-04-03 — Skills Platform Sprint (Web Dev)
+
+**Timestamp:** 2026-04-03T07:50:00Z  
+**Status:** ✅ Complete  
+**Scope:** Model dropdown UI integration  
+
+**Deliverables:**
+- **Model Dropdown Component**
+  - Fetches from GET /api/models endpoint
+  - Client-side caching to avoid refetches
+  - Dropdown selector in chat UI header
+  - Works with existing and new sessions
+  - Selected model passed through WebSocket payload
+- **Shared loadModels() Function** — Centralized HTTP call with caching
+- **Dev-Loop Deployment** — Tested and deployed locally
+
+**Team Impact:**
+- Leela's SkillsLoader provided foundation API
+- Farnsworth's config work enabled provider selection
+- Documentation by Kif includes model selection guide
+
+---
+
 ### 2026-04-03 — Model Selector UI + Tool Visibility (Parallel with Farnsworth)
 
 **Session:** Sprint 4 parallel UI and config work  

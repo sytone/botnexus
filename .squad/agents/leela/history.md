@@ -51,6 +51,30 @@
 
 ---
 
+### 2026-04-03 — Skills Platform Sprint (Lead)
+
+**Timestamp:** 2026-04-03T07:50:00Z  
+**Status:** ✅ Complete  
+**Scope:** Skills platform design and implementation  
+
+**Deliverables:**
+- **SkillsLoader** — Dynamic skill discovery from `extensions/skills/`
+  - Global and per-agent filtering via config + frontmatter
+  - YAML frontmatter metadata parsing
+  - Wildcard DisabledSkills patterns (e.g., `disabled-*`, `*-beta`)
+- **Context Integration** — Skills injected at runtime via context builder
+- **REST API Endpoints**
+  - GET /api/skills
+  - GET /api/skills/{skillId}
+  - POST /api/agents/{agentId}/skills
+
+**Team Coordination:**
+- **Fry:** Model dropdown UI depends on SkillsLoader API
+- **Kif:** Documentation (640-line skills guide, API reference, config docs) — commit f241ca3
+- **Hermes:** 24 new tests (loading, filtering, frontmatter, wildcards) — 396 total passing
+
+---
+
 ### 2026-04-03 — Sprint 4 Completion — Model Selector UI + Config Hardening
 
 **Spawn Date:** 2026-04-03T03:22:49Z  

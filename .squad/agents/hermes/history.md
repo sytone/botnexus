@@ -285,6 +285,29 @@ All Sprints 1-2 foundation work completed by Farnsworth and Bender. Hermes ready
 - WebUI deployed with real-time status feeds
 - Full E2E scenario coverage: 64/64 scenarios passing
 
+### 2026-04-03 — Skills Platform Sprint (Testing)
+
+**Timestamp:** 2026-04-03T07:50:00Z  
+**Status:** ✅ Complete  
+**Scope:** Skills system unit tests  
+
+**Test Coverage:**
+- **Skill Loading** (8 tests) — Discovery from extensions/skills/, global list, missing folder handling
+- **Per-Agent Filtering** (6 tests) — Config filtering, frontmatter directives, multiple agents
+- **Frontmatter Parsing** (5 tests) — Metadata extraction, validation, error handling
+- **Wildcard DisabledSkills** (5 tests) — Prefix patterns, suffix patterns, combined patterns
+
+**Quality Metrics:**
+- **24 new tests** added to suite
+- **396/396 total tests passing** (100%)
+- **Zero regressions** in existing test suites
+
+**Dependencies:**
+- Tests validate Leela's SkillsLoader implementation
+- Tests verify Kif's documented patterns work as designed
+
+---
+
 **Deferred (P2):** 2 Anthropic items awaiting clarification
 
 **Decisions Merged:**
