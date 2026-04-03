@@ -16,6 +16,7 @@
     let reconnectTimer = null;
     let commandPaletteIndex = -1;
     let availableModels = [];
+    let modelsData = null;
     let showTools = false;
     let agentFormMode = 'add'; // 'add' or 'edit'
     let editingAgentName = null;
@@ -378,7 +379,8 @@
         }
         elAgentSelect.disabled = true;
 
-        // Set model selector to match session's model (if available)
+        // Populate model selector if not already done, then set session's model
+        await populateModelSelector();
         if (session.model) {
             elModelSelect.value = session.model;
         }
@@ -1141,6 +1143,21 @@
         const div = document.createElement('div');
         div.textContent = str;
         return div.innerHTML;
+    }
+
+    function renderMarkdown(str) {
+        if (!str) return '';
+        if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
+            return escapeHtml(str);
+        }
+        marked.setOptions({
+            breaks: true,
+            gfm: true,
+            headerIds: false,
+            mangle: false
+        });
+        const rawHtml = marked.parse(str);
+        return DOMPurify.sanitize(rawHtml);
     }
 
     function formatTime(isoStr) {
