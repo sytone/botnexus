@@ -61,7 +61,33 @@ public sealed class AnthropicProvider : LlmProviderBase
         return Task.FromResult<IReadOnlyList<string>>(models);
     }
 
-    /// <inheritdoc/>
+    /// <summary>
+    /// Normalizes Anthropic Messages API response to canonical LlmResponse format.
+    /// 
+    /// <para><b>Provider-Specific Normalization Responsibilities:</b></para>
+    /// <list type="bullet">
+    ///   <item><b>Content block extraction:</b> Anthropic returns content as array of blocks, we extract 
+    ///   first block's text field.</item>
+    ///   
+    ///   <item><b>Tool calls:</b> NOT YET IMPLEMENTED. Anthropic supports tool use via content blocks with 
+    ///   type="tool_use", but this provider currently only handles text responses. Tool call support is 
+    ///   marked as P1 in architecture review.</item>
+    ///   
+    ///   <item><b>Finish reason mapping:</b> Anthropic uses strings ("end_turn", "max_tokens", etc.) which 
+    ///   we map to FinishReason enum. Note: "tool_use" stop reason not yet handled.</item>
+    ///   
+    ///   <item><b>Token count normalization:</b> Anthropic uses snake_case "input_tokens" and "output_tokens" 
+    ///   which we map to InputTokens and OutputTokens.</item>
+    ///   
+    ///   <item><b>JSON naming:</b> Anthropic API uses snake_case throughout, which JsonSerializerOptions 
+    ///   handles automatically for request serialization.</item>
+    /// </list>
+    /// 
+    /// <para>
+    /// <b>TODO:</b> Implement tool call normalization. Anthropic's tool_use content blocks need to be 
+    /// parsed into ToolCallRequest list. See Anthropic Messages API docs for content block structure.
+    /// </para>
+    /// </summary>
     protected override async Task<LlmResponse> ChatCoreAsync(ChatRequest request, CancellationToken cancellationToken)
     {
         var actualModel = string.IsNullOrWhiteSpace(request.Settings.Model) ? _defaultModel : request.Settings.Model;
@@ -77,12 +103,16 @@ public sealed class AnthropicProvider : LlmProviderBase
         var doc = JsonDocument.Parse(responseJson);
         var root = doc.RootElement;
 
+        // NORMALIZATION: Extract first content block's text
         var text = root.GetProperty("content")[0].GetProperty("text").GetString() ?? string.Empty;
+        
+        // NORMALIZATION: Map snake_case string to canonical enum
         var stopReason = root.TryGetProperty("stop_reason", out var sr) ? sr.GetString() : null;
         var finishReason = stopReason == "end_turn" ? FinishReason.Stop
             : stopReason == "max_tokens" ? FinishReason.Length
             : FinishReason.Other;
 
+        // NORMALIZATION: Extract token counts from snake_case fields
         int? inputTokens = null, outputTokens = null;
         if (root.TryGetProperty("usage", out var usage))
         {
@@ -90,6 +120,7 @@ public sealed class AnthropicProvider : LlmProviderBase
             if (usage.TryGetProperty("output_tokens", out var ot)) outputTokens = ot.GetInt32();
         }
 
+        // TODO: Parse tool_use content blocks into ToolCallRequest list
         return new LlmResponse(text, finishReason, null, inputTokens, outputTokens);
     }
 

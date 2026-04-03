@@ -103,7 +103,28 @@ public sealed class OpenAiProvider : LlmProviderBase
         }
     }
 
-    /// <inheritdoc/>
+    /// <summary>
+    /// Normalizes OpenAI SDK response to canonical LlmResponse format.
+    /// 
+    /// <para><b>Provider-Specific Normalization Responsibilities:</b></para>
+    /// <list type="bullet">
+    ///   <item><b>Single content block:</b> OpenAI SDK returns Content as array, we take first item's Text.</item>
+    ///   
+    ///   <item><b>Tool argument format:</b> OpenAI always returns arguments as JSON string (standard format), 
+    ///   which we deserialize to Dictionary&lt;string, object?&gt;.</item>
+    ///   
+    ///   <item><b>Finish reason mapping:</b> OpenAI SDK uses ChatFinishReason enum which we map to our 
+    ///   canonical FinishReason enum.</item>
+    ///   
+    ///   <item><b>Token count normalization:</b> OpenAI uses "InputTokenCount" and "OutputTokenCount" 
+    ///   which map directly to our InputTokens and OutputTokens.</item>
+    /// </list>
+    /// 
+    /// <para>
+    /// The OpenAI provider benefits from the official SDK which abstracts HTTP and provides strongly-typed
+    /// response objects. This makes normalization straightforward compared to raw JSON parsing providers.
+    /// </para>
+    /// </summary>
     protected override async Task<LlmResponse> ChatCoreAsync(ChatRequest request, CancellationToken cancellationToken)
     {
         var actualModel = string.IsNullOrWhiteSpace(request.Settings.Model) ? _defaultModel : request.Settings.Model;
@@ -114,8 +135,13 @@ public sealed class OpenAiProvider : LlmProviderBase
         var completion = await _chatClient.CompleteChatAsync(messages, options, cancellationToken).ConfigureAwait(false);
         var result = completion.Value;
 
+        // NORMALIZATION: Extract first content block's text
         var content = result.Content.Count > 0 ? result.Content[0].Text : string.Empty;
+        
+        // NORMALIZATION: Map SDK enum to canonical enum
         var finishReason = MapFinishReason(result.FinishReason);
+        
+        // NORMALIZATION: Parse tool calls (handles JSON string arguments)
         var toolCalls = MapToolCalls(result.ToolCalls);
 
         return new LlmResponse(
@@ -230,6 +256,10 @@ public sealed class OpenAiProvider : LlmProviderBase
         return BinaryData.FromObjectAsJson(schema);
     }
 
+    /// <summary>
+    /// Maps OpenAI SDK finish reason enum to canonical FinishReason enum.
+    /// Part of the provider normalization layer.
+    /// </summary>
     private static FinishReason MapFinishReason(ChatFinishReason? reason) => reason switch
     {
         ChatFinishReason.Stop => FinishReason.Stop,
@@ -239,6 +269,15 @@ public sealed class OpenAiProvider : LlmProviderBase
         _ => FinishReason.Other
     };
 
+    /// <summary>
+    /// Normalizes OpenAI SDK tool calls to canonical ToolCallRequest list.
+    /// 
+    /// <para>
+    /// OpenAI always returns tool arguments as a JSON string (via FunctionArguments.ToString()).
+    /// We deserialize this to Dictionary&lt;string, object?&gt; for the canonical format.
+    /// Malformed JSON is ignored gracefully (empty dict) rather than failing the entire response.
+    /// </para>
+    /// </summary>
     private static IReadOnlyList<ToolCallRequest>? MapToolCalls(IReadOnlyList<ChatToolCall> toolCalls)
     {
         if (toolCalls is not { Count: > 0 }) return null;
@@ -250,6 +289,7 @@ public sealed class OpenAiProvider : LlmProviderBase
             {
                 try
                 {
+                    // OpenAI format: arguments is always a JSON string
                     args = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object?>>(json)
                         ?? [];
                 }

@@ -205,6 +205,28 @@ public sealed class CopilotProvider : LlmProviderBase, IOAuthProvider
         return _copilotAccessToken;
     }
 
+    /// <summary>
+    /// Normalizes Copilot API response to canonical LlmResponse format.
+    /// 
+    /// <para><b>Provider-Specific Normalization Responsibilities:</b></para>
+    /// <list type="bullet">
+    ///   <item><b>Multi-choice merging:</b> When proxying Claude, Copilot may split content and tool_calls 
+    ///   across multiple choices[]. We merge by taking first non-empty content, first tool_calls array, 
+    ///   and first finish_reason.</item>
+    ///   
+    ///   <item><b>Tool argument formats:</b> Copilot returns tool arguments in TWO formats depending on 
+    ///   the backend model: OpenAI models use JSON string, Claude models use JSON object. ParseToolCalls 
+    ///   handles both via ValueKind detection.</item>
+    ///   
+    ///   <item><b>Finish reason mapping:</b> Copilot uses strings ("stop", "tool_calls", "length", 
+    ///   "content_filter") which we map to FinishReason enum.</item>
+    ///   
+    ///   <item><b>Token count normalization:</b> Copilot uses "prompt_tokens" and "completion_tokens" 
+    ///   (OpenAI naming) which we map to InputTokens and OutputTokens.</item>
+    /// </list>
+    /// 
+    /// <para>See ParseToolCalls for detailed handling of dual argument formats (commit dd0343a).</para>
+    /// </summary>
     protected override async Task<LlmResponse> ChatCoreAsync(ChatRequest request, CancellationToken cancellationToken)
     {
         var payload = BuildRequestPayload(request, stream: false);
@@ -252,6 +274,7 @@ public sealed class CopilotProvider : LlmProviderBase, IOAuthProvider
         var root = document.RootElement;
         var choices = root.GetProperty("choices");
         
+        // NORMALIZATION: Multi-choice merging
         // Claude via Copilot may split content and tool_calls across multiple choices.
         // Merge all choices: collect content from first choice with content, tool_calls from any choice that has them.
         string content = string.Empty;
@@ -276,8 +299,10 @@ public sealed class CopilotProvider : LlmProviderBase, IOAuthProvider
                 finishReasonStr = frEl.GetString();
         }
 
+        // NORMALIZATION: Finish reason mapping (string -> enum)
         var finishReason = MapFinishReason(finishReasonStr);
 
+        // NORMALIZATION: Tool call parsing (handles dual argument formats)
         IReadOnlyList<ToolCallRequest>? toolCalls = null;
         if (toolCallsElement is not null)
         {
@@ -294,6 +319,7 @@ public sealed class CopilotProvider : LlmProviderBase, IOAuthProvider
                 string.Join(", ", toolCalls.Select(tc => $"{tc.ToolName}(id={tc.Id})")));
         }
 
+        // NORMALIZATION: Token count field mapping (prompt_tokens -> InputTokens, completion_tokens -> OutputTokens)
         int? promptTokens = null;
         int? completionTokens = null;
         if (root.TryGetProperty("usage", out var usageElement))
@@ -527,6 +553,26 @@ public sealed class CopilotProvider : LlmProviderBase, IOAuthProvider
         _ => FinishReason.Other
     };
 
+    /// <summary>
+    /// Normalizes Copilot raw tool_calls array to canonical ToolCallRequest list.
+    /// 
+    /// <para><b>Critical normalization:</b> Handles DUAL argument formats (commit dd0343a fix):</para>
+    /// <list type="bullet">
+    ///   <item><b>OpenAI format:</b> arguments is a JSON string → parse via GetString() then deserialize</item>
+    ///   <item><b>Claude format:</b> arguments is a JSON object → parse via GetRawText() and deserialize</item>
+    /// </list>
+    /// 
+    /// <para>
+    /// The Copilot proxy preserves backend-specific formats. OpenAI models return arguments as 
+    /// stringified JSON, Claude returns arguments as inline JSON objects. Both must normalize to 
+    /// Dictionary&lt;string, object?&gt; for ToolCallRequest.
+    /// </para>
+    /// 
+    /// <para>
+    /// When arguments are missing or malformed, we use an empty dictionary rather than failing,
+    /// allowing tools to handle missing arguments gracefully.
+    /// </para>
+    /// </summary>
     private IReadOnlyList<ToolCallRequest> ParseToolCalls(JsonElement toolCallsElement)
     {
         var result = new List<ToolCallRequest>();
@@ -547,7 +593,7 @@ public sealed class CopilotProvider : LlmProviderBase, IOAuthProvider
                 ? nameElement.GetString() ?? string.Empty
                 : string.Empty;
 
-            // Handle both OpenAI format (arguments as JSON string) and Claude format (arguments as JSON object)
+            // NORMALIZATION: Dual argument format handling (OpenAI string vs Claude object)
             Dictionary<string, object?> arguments;
             if (functionElement.TryGetProperty("arguments", out var argumentsElement))
             {
