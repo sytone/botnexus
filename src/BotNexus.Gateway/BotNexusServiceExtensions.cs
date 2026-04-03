@@ -115,6 +115,7 @@ public static class BotNexusServiceExtensions
         services.AddSingleton<IAgentRouter>(sp => sp.GetRequiredService<AgentRouter>());
         services.AddHostedService<Gateway>();
         services.AddHostedService<ConfigReloadOrchestrator>();
+        services.AddHostedService<ProviderStartupValidationService>();
         services.AddHealthChecks()
             .AddCheck<MessageBusHealthCheck>("message_bus")
             .AddCheck<ProviderRegistrationHealthCheck>("provider_registration")
