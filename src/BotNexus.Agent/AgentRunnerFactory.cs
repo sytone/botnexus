@@ -78,7 +78,8 @@ public sealed class AgentRunnerFactory : IAgentRunnerFactory
             MaxTokens = agentConfig.MaxTokens ?? defaults.MaxTokens,
             Temperature = agentConfig.Temperature ?? defaults.Temperature,
             ContextWindowTokens = defaults.ContextWindowTokens,
-            MaxToolIterations = agentConfig.MaxToolIterations ?? defaults.MaxToolIterations
+            MaxToolIterations = agentConfig.MaxToolIterations ?? defaults.MaxToolIterations,
+            MaxRepeatedToolCalls = agentConfig.MaxRepeatedToolCalls ?? defaults.MaxRepeatedToolCalls ?? 2
         };
 
         var logger = _loggerFactory.CreateLogger<AgentRunnerFactory>();

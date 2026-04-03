@@ -8,4 +8,5 @@ public class GenerationSettings
     public double? Temperature { get; set; }
     public int? ContextWindowTokens { get; set; }
     public int MaxToolIterations { get; set; } = 40;
+    public int MaxRepeatedToolCalls { get; set; } = 2;
 }

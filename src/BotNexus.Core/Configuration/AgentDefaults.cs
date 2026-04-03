@@ -9,6 +9,7 @@ public class AgentDefaults
     public int? ContextWindowTokens { get; set; }
     public double? Temperature { get; set; }
     public int MaxToolIterations { get; set; } = 40;
+    public int? MaxRepeatedToolCalls { get; set; }
     public string Timezone { get; set; } = "UTC";
     public Dictionary<string, AgentConfig> Named { get; set; } = [];
 }

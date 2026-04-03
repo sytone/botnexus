@@ -5,6 +5,7 @@ using BotNexus.Providers.Base;
 using BotNexus.Agent.Tools;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
+using System.Text.Json;
 
 namespace BotNexus.Agent;
 
@@ -35,6 +36,9 @@ public sealed class AgentLoop
     private readonly int _maxToolIterations;
     private readonly IBotNexusMetrics? _metrics;
     private readonly IActivityStream? _activityStream;
+
+    // Track tool call signatures per session to detect loops
+    private readonly Dictionary<string, int> _toolCallSignatures = new(StringComparer.Ordinal);
 
     public AgentLoop(
         string agentName,
@@ -158,7 +162,8 @@ public sealed class AgentLoop
                     MaxTokens = _settings.MaxTokens,
                     Temperature = _settings.Temperature,
                     ContextWindowTokens = _settings.ContextWindowTokens,
-                    MaxToolIterations = _settings.MaxToolIterations
+                    MaxToolIterations = _settings.MaxToolIterations,
+                    MaxRepeatedToolCalls = _settings.MaxRepeatedToolCalls
                 };
 
                 var request = new ChatRequest(requestMessages, effectiveSettings, tools, systemPrompt);
@@ -176,30 +181,93 @@ public sealed class AgentLoop
                 
                 var providerTimer = Stopwatch.StartNew();
                 
-                // Use streaming if callback is provided AND tools are not being used
-                // Note: Most streaming providers don't properly support tool calls in streaming mode yet
+                // Use streaming if callback is provided - streaming now supports tool calls!
                 LlmResponse llmResponse;
-                var useStreaming = onDelta is not null && (tools == null || tools.Count == 0);
+                var useStreaming = onDelta is not null;
                 
                 if (useStreaming)
                 {
-                    // Streaming mode: collect response while streaming deltas to client
+                    // Streaming mode: aggregate chunks into full response while streaming deltas to client
                     var contentBuilder = new System.Text.StringBuilder();
+                    var toolCallBuffers = new Dictionary<string, ToolCallStreamBuffer>();
+                    FinishReason finishReason = FinishReason.Stop;
+                    int? inputTokens = null;
+                    int? outputTokens = null;
                     
-                    await foreach (var delta in provider.ChatStreamAsync(request, cancellationToken).ConfigureAwait(false))
+                    await foreach (var chunk in provider.ChatStreamAsync(request, cancellationToken).ConfigureAwait(false))
                     {
-                        if (!string.IsNullOrWhiteSpace(delta))
+                        // Content delta - stream to client
+                        if (!string.IsNullOrWhiteSpace(chunk.ContentDelta))
                         {
-                            contentBuilder.Append(delta);
-                            await onDelta!(delta).ConfigureAwait(false);
+                            contentBuilder.Append(chunk.ContentDelta);
+                            await onDelta!(chunk.ContentDelta).ConfigureAwait(false);
                         }
+                        
+                        // Tool call start
+                        if (!string.IsNullOrEmpty(chunk.ToolCallId) && !string.IsNullOrEmpty(chunk.ToolName))
+                        {
+                            toolCallBuffers[chunk.ToolCallId] = new ToolCallStreamBuffer(chunk.ToolCallId, chunk.ToolName);
+                        }
+                        
+                        // Tool call arguments delta
+                        if (!string.IsNullOrEmpty(chunk.ToolCallId) && !string.IsNullOrEmpty(chunk.ArgumentsDelta))
+                        {
+                            if (toolCallBuffers.TryGetValue(chunk.ToolCallId, out var buffer))
+                            {
+                                buffer.ArgumentsBuilder.Append(chunk.ArgumentsDelta);
+                            }
+                        }
+                        
+                        // Finish reason
+                        if (chunk.FinishReason.HasValue)
+                        {
+                            finishReason = chunk.FinishReason.Value;
+                        }
+                        
+                        // Usage
+                        if (chunk.InputTokens.HasValue)
+                            inputTokens = chunk.InputTokens.Value;
+                        if (chunk.OutputTokens.HasValue)
+                            outputTokens = chunk.OutputTokens.Value;
                     }
                     
-                    llmResponse = new LlmResponse(contentBuilder.ToString(), FinishReason.Stop, null);
+                    // Parse accumulated tool calls
+                    IReadOnlyList<ToolCallRequest>? toolCalls = null;
+                    if (toolCallBuffers.Count > 0)
+                    {
+                        var parsedToolCalls = new List<ToolCallRequest>();
+                        foreach (var buffer in toolCallBuffers.Values)
+                        {
+                            var argumentsJson = buffer.ArgumentsBuilder.ToString();
+                            Dictionary<string, object?> arguments;
+                            
+                            if (!string.IsNullOrWhiteSpace(argumentsJson))
+                            {
+                                try
+                                {
+                                    arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(argumentsJson) ?? [];
+                                }
+                                catch (JsonException ex)
+                                {
+                                    _logger.LogWarning(ex, "Failed to parse tool arguments for {ToolName}: {Json}", buffer.Name, argumentsJson);
+                                    arguments = new Dictionary<string, object?>();
+                                }
+                            }
+                            else
+                            {
+                                arguments = new Dictionary<string, object?>();
+                            }
+                            
+                            parsedToolCalls.Add(new ToolCallRequest(buffer.Id, buffer.Name, arguments));
+                        }
+                        toolCalls = parsedToolCalls;
+                    }
+                    
+                    llmResponse = new LlmResponse(contentBuilder.ToString(), finishReason, toolCalls, inputTokens, outputTokens);
                 }
                 else
                 {
-                    // Non-streaming mode (backward compatible, supports tool calls)
+                    // Non-streaming mode (backward compatible)
                     llmResponse = await provider.ChatAsync(request, cancellationToken).ConfigureAwait(false);
                 }
                 
@@ -293,6 +361,30 @@ public sealed class AgentLoop
 
                 foreach (var toolCall in llmResponse.ToolCalls!)
                 {
+                    // Check for repeated tool call (loop detection)
+                    var signature = ComputeToolCallSignature(toolCall);
+                    var currentCount = _toolCallSignatures.GetValueOrDefault(signature, 0);
+                    var maxRepeatedCalls = _settings.MaxRepeatedToolCalls;
+
+                    if (currentCount >= maxRepeatedCalls)
+                    {
+                        // Block the repeated call and return error to LLM
+                        var errorMessage = $"Error: Loop detected. Tool '{toolCall.ToolName}' called {currentCount + 1} times with identical arguments. Try a different approach.";
+                        _logger.LogWarning("Agent {AgentName}: Blocked repeated tool call '{ToolName}' (attempt {Count}/{Max}), signature: {Signature}",
+                            _agentName, toolCall.ToolName, currentCount + 1, maxRepeatedCalls, signature);
+
+                        session.AddEntry(new SessionEntry(
+                            MessageRole.Tool,
+                            errorMessage,
+                            DateTimeOffset.UtcNow,
+                            ToolName: toolCall.ToolName,
+                            ToolCallId: toolCall.Id));
+                        continue;
+                    }
+
+                    // Increment the count for this signature
+                    _toolCallSignatures[signature] = currentCount + 1;
+
                     var toolProgressMessage = $"🔧 Using tool: {toolCall.ToolName}";
                     
                     // Stream tool progress via callback if available
@@ -428,5 +520,31 @@ public sealed class AgentLoop
 
         var providerName = model[..separatorIndex];
         return _providerRegistry.Get(providerName);
+    }
+
+    /// <summary>
+    /// Computes a signature for a tool call based on tool name and normalized arguments.
+    /// </summary>
+    private string ComputeToolCallSignature(ToolCallRequest toolCall)
+    {
+        // Normalize: tool name + sorted arguments JSON
+        var argsJson = JsonSerializer.Serialize(toolCall.Arguments, new JsonSerializerOptions { WriteIndented = false });
+        return $"{toolCall.ToolName}::{argsJson}";
+    }
+}
+
+/// <summary>
+/// Buffer for accumulating streaming tool call arguments.
+/// </summary>
+internal sealed class ToolCallStreamBuffer
+{
+    public string Id { get; }
+    public string Name { get; }
+    public System.Text.StringBuilder ArgumentsBuilder { get; } = new();
+
+    public ToolCallStreamBuffer(string id, string name)
+    {
+        Id = id;
+        Name = name;
     }
 }

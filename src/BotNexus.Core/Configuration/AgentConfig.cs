@@ -12,6 +12,7 @@ public class AgentConfig
     public int? MaxTokens { get; set; }
     public double? Temperature { get; set; }
     public int? MaxToolIterations { get; set; }
+    public int? MaxRepeatedToolCalls { get; set; }
     public string? Timezone { get; set; }
     public bool? EnableMemory { get; set; }
     public int MaxContextFileChars { get; set; } = 8000;
