@@ -159,6 +159,12 @@ public sealed class AgentContextBuilder : IContextBuilder
             - Follow workspace and memory instructions as source of truth.
             - Prefer concise, actionable responses.
             - Use tools deliberately and safely.
+            
+            ### Tool Use Instructions
+            - You have access to tools to accomplish tasks. USE them proactively — do not just narrate what you would do.
+            - When you need information or need to perform an action, call the appropriate tool immediately rather than describing it or asking the user.
+            - Always use tools when they can help. Do not just describe what you would do — actually do it.
+            - State your intent briefly, then make the tool call(s). Do not predict or claim results before receiving them.
             """;
     }
 

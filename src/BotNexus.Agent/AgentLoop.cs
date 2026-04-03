@@ -158,29 +158,68 @@ public sealed class AgentLoop
                 
                 if (!hasToolCalls)
                 {
-                    // No tool calls - check if agent indicated continuation intent
-                    // If agent produced content suggesting more work, prompt it to continue with a tool call
+                    // No tool calls - standard pattern: break unless blank content (finalization retry)
                     var hasContent = !string.IsNullOrWhiteSpace(llmResponse.Content);
-                    var suggestsContinuation = hasContent && llmResponse.Content is not null &&
-                        (llmResponse.Content.Contains("I'll", StringComparison.OrdinalIgnoreCase) ||
-                         llmResponse.Content.Contains("I will", StringComparison.OrdinalIgnoreCase) ||
-                         llmResponse.Content.Contains("next", StringComparison.OrdinalIgnoreCase) ||
-                         llmResponse.Content.Contains("proceed", StringComparison.OrdinalIgnoreCase));
                     
-                    if (suggestsContinuation && iteration < _maxToolIterations - 1)
+                    if (!hasContent && iteration < _maxToolIterations - 1)
                     {
-                        // Agent narrated next action but didn't make tool call - prompt it to execute
-                        _logger.LogInformation("Agent {AgentName}: detected continuation intent without tool calls, prompting to proceed (iteration {Iteration})",
+                        // Blank content - nanobot-style finalization retry
+                        _logger.LogInformation("Agent {AgentName}: blank response, requesting finalization (iteration {Iteration})",
                             _agentName, iteration);
-                        session.AddEntry(new SessionEntry(
-                            MessageRole.User,
-                            "Please proceed with the action you described using the appropriate tool.",
-                            DateTimeOffset.UtcNow));
-                        continue; // Loop again to get the tool call
+                        
+                        // Retry with tools disabled to force a final answer
+                        var finalizationHistory = session.History
+                            .Where(entry =>
+                                entry.Role != MessageRole.System &&
+                                !(entry.Role == MessageRole.User &&
+                                  entry.Timestamp == message.Timestamp &&
+                                  string.Equals(entry.Content, message.Content, StringComparison.Ordinal)))
+                            .Select(static entry => new ChatMessage(
+                                entry.Role switch
+                                {
+                                    MessageRole.User => "user",
+                                    MessageRole.Assistant => "assistant",
+                                    MessageRole.Tool => "tool",
+                                    _ => "user"
+                                },
+                                entry.Content,
+                                ToolCallId: entry.ToolCallId,
+                                ToolName: entry.ToolName,
+                                ToolCalls: entry.ToolCalls))
+                            .ToList();
+                        
+                        var finalizationMessages = await _contextBuilder.BuildMessagesAsync(
+                            _agentName,
+                            finalizationHistory,
+                            "You have finished the tool work. Provide your final answer now.",
+                            message.Channel,
+                            message.ChatId,
+                            cancellationToken).ConfigureAwait(false);
+                        
+                        var finalizationRequest = new ChatRequest(
+                            finalizationMessages.Where(static m => !string.Equals(m.Role, "system", StringComparison.OrdinalIgnoreCase)).ToList(),
+                            _settings,
+                            Tools: null, // Disable tools for finalization
+                            systemPrompt);
+                        
+                        var finalizationProvider = ResolveProvider();
+                        var finalizationTimer = Stopwatch.StartNew();
+                        var finalizationResponse = await finalizationProvider.ChatAsync(finalizationRequest, cancellationToken).ConfigureAwait(false);
+                        finalizationTimer.Stop();
+                        _logger.LogInformation("Finalization request completed in {ElapsedMs}ms", finalizationTimer.Elapsed.TotalMilliseconds);
+                        
+                        if (!string.IsNullOrWhiteSpace(finalizationResponse.Content))
+                        {
+                            response = finalizationResponse.Content;
+                            session.AddEntry(new SessionEntry(
+                                MessageRole.Assistant,
+                                finalizationResponse.Content,
+                                DateTimeOffset.UtcNow));
+                        }
                     }
                     
-                    _logger.LogInformation("Agent {AgentName}: breaking loop at iteration {Iteration}, FinishReason={FinishReason}, ToolCalls={ToolCallCount}",
-                        _agentName, iteration, llmResponse.FinishReason, llmResponse.ToolCalls?.Count ?? 0);
+                    _logger.LogInformation("Agent {AgentName}: breaking loop at iteration {Iteration}, FinishReason={FinishReason}, ToolCalls={ToolCallCount}, HasContent={HasContent}",
+                        _agentName, iteration, llmResponse.FinishReason, llmResponse.ToolCalls?.Count ?? 0, hasContent);
                     break;
                 }
 
