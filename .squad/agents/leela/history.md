@@ -718,3 +718,55 @@
 - No breaking changes — backward compatible
 
 **Build & Test:** ✅ All tests pass, solution builds cleanly
+
+### 2026-04-02 — Token Deletion Investigation & Audit Logging
+
+**Issue:** Jon's GitHub OAuth token was lost, forcing re-authentication. Investigated root cause and added comprehensive audit logging.
+
+**Investigation Findings:**
+1. **Timeline (2026-04-02):**
+   - 22:59:00 PM: Extensions installed via install.ps1 (config.json updated)
+   - 23:02:52 PM: OAuth flow triggered: "Go to https://github.com/login/device..."
+   - 23:03:43 PM: New token saved to ~/.botnexus/tokens/copilot.json
+   
+2. **Root Cause Analysis:**
+   - OAuth tokens stored separately in ~/.botnexus/tokens/, NOT in config.json
+   - Token was either expired, corrupted, or missing
+   - CopilotProvider clears expired tokens (lines 68-72) but **no logging existed**
+   - No audit trail for token deletion, config writes, or authentication events
+   
+3. **Likely Scenario:** Token expired or was invalid. Provider cleared it and prompted re-auth. Zero visibility into what happened.
+
+**Solution Implemented (Commit eb27c58):**
+
+1. **Config Audit Logging (ConfigFileManager):**
+   - Backup config.json to config.json.bak before every write
+   - Log all config writes at INFO level: "Config file updated: {path}"
+   - Log agent/provider/channel additions with context
+   
+2. **Token Audit Logging (FileOAuthTokenStore):**
+   - Log token saves at WARNING level with expiration timestamp
+   - Log token clears at WARNING level: "Clearing OAuth token for provider '{name}'"
+   - Constructor updated to accept ILogger via DI
+   
+3. **Provider Audit Logging (CopilotProvider):**
+   - Log expired token detection at WARNING level with expiry timestamp
+   - Log token exchange failures with clear context about re-auth
+   
+4. **Install Script Safety (install.ps1):**
+   - Backup config.json before modification
+   - Enhanced logging for ExtensionsPath updates
+   
+**Build & Test:**
+- ✅ Build succeeded (3 pre-existing warnings)
+- ✅ All 322 unit tests passing
+- ⚠️  Deployment tests failed due to pre-existing ASP.NET routing issues (unrelated)
+
+**Impact:** Next time a token is cleared/expired, logs will show:
+- Exact timestamp of token deletion
+- Reason for deletion (expired, auth failure, etc.)
+- Which config operations wrote to disk
+- Backup files available for recovery
+
+**Learning:** OAuth token lifecycle events are security-sensitive. Always log at WARNING level. Config overwrites should always backup first.
+
