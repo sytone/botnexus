@@ -168,13 +168,17 @@ public sealed class CopilotProvider : LlmProviderBase, IOAuthProvider
         var content = message.TryGetProperty("content", out var contentElement)
             ? contentElement.GetString() ?? string.Empty
             : string.Empty;
-        var finishReason = choice.TryGetProperty("finish_reason", out var finishReasonElement)
-            ? MapFinishReason(finishReasonElement.GetString())
-            : FinishReason.Other;
+        var finishReasonStr = choice.TryGetProperty("finish_reason", out var finishReasonElement)
+            ? finishReasonElement.GetString()
+            : null;
+        var finishReason = MapFinishReason(finishReasonStr);
 
         IReadOnlyList<ToolCallRequest>? toolCalls = null;
         if (message.TryGetProperty("tool_calls", out var toolCallsElement) && toolCallsElement.ValueKind == JsonValueKind.Array)
             toolCalls = ParseToolCalls(toolCallsElement);
+
+        Logger.LogDebug("Copilot response: content_length={ContentLength}, finish_reason={FinishReasonRaw}/{FinishReasonMapped}, tool_calls={ToolCallCount}",
+            content?.Length ?? 0, finishReasonStr ?? "null", finishReason, toolCalls?.Count ?? 0);
 
         int? promptTokens = null;
         int? completionTokens = null;

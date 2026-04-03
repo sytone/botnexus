@@ -155,10 +155,14 @@ public sealed class AgentLoop
 
                 // Handle tool calls
                 if (llmResponse.FinishReason != FinishReason.ToolCalls || llmResponse.ToolCalls is not { Count: > 0 })
+                {
+                    _logger.LogInformation("Agent {AgentName}: breaking loop at iteration {Iteration}, FinishReason={FinishReason}, ToolCalls={ToolCallCount}",
+                        _agentName, iteration, llmResponse.FinishReason, llmResponse.ToolCalls?.Count ?? 0);
                     break;
+                }
 
-                _logger.LogDebug("Agent {AgentName}: executing {Count} tool calls (iteration {Iteration})",
-                    _agentName, llmResponse.ToolCalls.Count, iteration + 1);
+                _logger.LogInformation("Agent {AgentName}: executing {Count} tool calls (iteration {Iteration})",
+                    _agentName, llmResponse.ToolCalls.Count, iteration);
 
                 foreach (var toolCall in llmResponse.ToolCalls)
                 {
