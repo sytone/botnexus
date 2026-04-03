@@ -46,6 +46,20 @@ Build is clean, tests pass. ProviderRegistry exists but is unused — evaluate i
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-02 — Agent Loop Continuation Prompting
+
+**Problem Solved:** Agent loop was stopping prematurely when the LLM narrated its next action ("I'll proceed to do X next") but didn't make tool calls. The loop only continued when `FinishReason == ToolCalls`, causing agents to describe work without executing it.
+
+**Solution:** Added continuation intent detection in `AgentLoop.cs`. When the LLM response contains continuation phrases ("I'll", "I will", "next", "proceed") without tool calls, the platform injects a user message ("Please proceed with the action you described using the appropriate tool") to prompt the agent to actually execute what it described.
+
+**Pattern Source:** Inspired by nanobot's multi-turn agent runner pattern, which keeps conversations going until the agent signals true completion, not just when it pauses between thoughts and actions.
+
+**Implementation:** Continuation prompting only triggers if (1) no tool calls present, (2) response contains continuation intent keywords, (3) iteration budget allows, preventing infinite loops while enabling natural multi-step agent reasoning.
+
+**Key Insight:** Agent platforms must distinguish between "thinking out loud" responses and true completion signals. Modern LLMs sometimes narrate plans before executing them — the platform should nudge them to follow through rather than stopping the conversation prematurely.
+
+**Testing:** All existing AgentLoop unit tests pass. The change is backward-compatible — agents that already make tool calls correctly are unaffected.
+
 ### 2026-04-01 — Gateway Multi-Agent Routing Implemented
 
 - Gateway dispatch now resolves targets via an injectable `IAgentRouter` instead of hardcoding `runners[0]`.

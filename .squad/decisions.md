@@ -2912,3 +2912,55 @@ dotnet publish {project} --configuration Release --output {path} --no-build
 - **Dependencies:** All 9 components → BotNexus.Core; Providers → BotNexus.Providers.Base; Channels → BotNexus.Channels.Base  
 - **Testing:** Verified with `.\scripts\pack.ps1` and `.\scripts\dev-loop.ps1` end-to-end
 
+
+## 12. Agent Loop Continuation Prompting
+
+**Date:** 2026-04-02  
+**Author:** Bender (Runtime Dev)  
+**Status:** Implemented  
+**Commit:** 259beb2  
+
+### Context
+
+Agent loop was stopping prematurely when the LLM indicated it would continue ("I'll proceed to do X next") but didn't make tool calls. The loop only continued when `FinishReason == ToolCalls`, causing agents to describe work without executing it.
+
+Example failure pattern:
+- iteration 0: 1 tool call ✓
+- iteration 1: 1 tool call ✓
+- iteration 2: 1 tool call ✓
+- iteration 3: FinishReason=Stop, ToolCalls=0, Content="I'll continue with X next" ← loop stops here
+
+### Decision
+
+**Implement continuation intent detection and prompting in AgentLoop.cs.**
+
+When the LLM response:
+1. Has `FinishReason != ToolCalls` (no tool calls)
+2. Contains continuation intent keywords ("I'll", "I will", "next", "proceed")
+3. Is within iteration budget (`iteration < _maxToolIterations - 1`)
+
+The platform will:
+- Inject a user message: "Please proceed with the action you described using the appropriate tool."
+- Continue the loop to allow the agent to make the actual tool call
+
+### Rationale
+
+Modern LLMs sometimes narrate their plan before executing it. This is a thinking/planning step, not a completion signal. Stopping the loop at this point would cut off legitimate multi-step agent workflows.
+
+**Pattern Source:** Inspired by nanobot's multi-turn agent runner, which keeps conversations going until true completion rather than stopping on the first pause. The key insight: **continuation is about work completion, not just tool call presence.**
+
+**Safety Mechanisms:**
+1. Iteration budget: Only prompts if `iteration < _maxToolIterations - 1` to prevent infinite loops
+2. Keyword detection: Only triggers on specific continuation phrases to avoid false positives
+3. Backward compatible: Agents that already make tool calls correctly are unaffected
+
+### Team Impact
+
+**All agents should be aware:**
+- The platform now supports multi-step agent workflows where the agent thinks out loud between actions
+- Continuation prompting is automatic — no changes needed to agent implementations
+- If an agent gets stuck in continuation loops, check that it's actually making tool calls when prompted
+- Max iteration limit (`maxToolIterations: 40`) still applies as safety valve
+
+---
+
