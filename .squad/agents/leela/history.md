@@ -9,6 +9,48 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-02 — Agent Loop Tool Execution Investigation (IN PROGRESS)
+
+**Issue:** Agent loop appears to stall after tool calls. User report: Nova agent says "I'll look around" (implying tool use) but conversation hangs — no follow-up response with tool results.
+
+**Investigation Progress:**
+1. **Code Review:** `AgentLoop.ProcessAsync()` loop logic verified sound:
+   - For loop (0..maxToolIterations) correctly continues after tool execution
+   - Line 157: Breaks only when `FinishReason != ToolCalls OR ToolCalls.Count == 0`
+   - Lines 163-172: Tool execution and history updates work correctly
+   - Loop should continue to next iteration after tools execute
+   
+2. **Test Validation:** Ran `AgentLoopTests` — ALL 10 tests PASS ✅
+   - `ProcessAsync_ExecutesToolCalls_AddsToolResultToSession` confirms loop works correctly
+   - Mock provider returns `FinishReason.ToolCalls` → loop continues → second call returns `FinishReason.Stop`
+   - **Conclusion:** AgentLoop code is correct. Problem is NOT in the loop logic.
+
+3. **Log Analysis:** Examined logs from reported Nova interactions (20:30:42, 20:31:22):
+   - Each shows only ONE "Calling provider" log per user message
+   - **Expected:** Two provider calls (iteration 0 with tools, iteration 1 with results)
+   - **Actual:** Single provider call → immediate response sent
+   - No evidence of tool execution in logs (tool logging was LogDebug, not visible)
+
+4. **Diagnostic Logging Added (commit 08851e6):**
+   - AgentLoop: Log when breaking loop (iteration, FinishReason, tool count)
+   - AgentLoop: Changed tool execution log from Debug → Information level
+   - CopilotProvider: Log raw API response (finish_reason, content length, tool calls)
+
+**Root Cause Hypothesis:** One of the following:
+1. **Copilot API not returning `finish_reason: "tool_calls"`** — Provider returns "stop" even when tools are suggested  
+2. **Tools not being offered to LLM** — Tool definitions not in request payload  
+3. **LLM not choosing to use tools** — Valid response, not a bug (agent just responds with text)
+
+**Next Steps:**
+- Reproduce bug with new logging to capture actual API responses
+- Verify tool definitions are included in Copilot API request payload
+- Test if Copilot provider correctly handles tool_calls in response
+- If logging reveals Copilot API issue, may need to debug provider or check model/config
+
+**Status:** Investigation complete. Root cause narrowed to 3 hypotheses. Awaiting live test with diagnostic logging to identify exact cause. No code fix applied yet — only diagnostics added.
+
+---
+
 ### 2026-04-03 — Sprint 4 Completion — Model Selector UI + Config Hardening
 
 **Spawn Date:** 2026-04-03T03:22:49Z  
