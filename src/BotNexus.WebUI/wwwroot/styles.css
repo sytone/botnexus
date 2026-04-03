@@ -1138,8 +1138,7 @@ body {
     color: var(--error);
 }
 .form-input,
-.form-select,
-.form-textarea {
+.form-select {
     width: 100%;
     background: var(--bg-input);
     border: 1px solid var(--border);
@@ -1148,6 +1147,18 @@ body {
     color: var(--text-primary);
     font-family: var(--font-sans);
     font-size: 0.85rem;
+}
+.form-textarea {
+    width: 100%;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    resize: vertical;
+    min-height: 80px;
 }
 .form-input:focus,
 .form-select:focus,
@@ -1176,11 +1187,6 @@ body {
 }
 .form-checkbox-wrapper .form-label {
     margin-bottom: 0;
-}
-.form-textarea {
-    resize: vertical;
-    min-height: 80px;
-    font-family: var(--font-mono);
 }
 .agent-form-footer {
     padding: 16px 20px;

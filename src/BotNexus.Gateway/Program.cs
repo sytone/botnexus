@@ -212,7 +212,9 @@ app.MapGet("/api/agents", (IOptions<BotNexusConfig> config) =>
             maxTokens = agentDefaults.MaxTokens,
             temperature = agentDefaults.Temperature,
             maxToolIterations = agentDefaults.MaxToolIterations,
-            timezone = agentDefaults.Timezone
+            timezone = agentDefaults.Timezone,
+            disallowedTools = new List<string>(),
+            disabledSkills = new List<string>()
         });
     }
 
@@ -225,7 +227,9 @@ app.MapGet("/api/agents", (IOptions<BotNexusConfig> config) =>
             maxTokens = agentCfg.MaxTokens ?? agentDefaults.MaxTokens,
             temperature = agentCfg.Temperature ?? agentDefaults.Temperature,
             maxToolIterations = agentCfg.MaxToolIterations ?? agentDefaults.MaxToolIterations,
-            timezone = agentCfg.Timezone ?? agentDefaults.Timezone
+            timezone = agentCfg.Timezone ?? agentDefaults.Timezone,
+            disallowedTools = agentCfg.DisallowedTools,
+            disabledSkills = agentCfg.DisabledSkills
         });
     }
 
@@ -258,7 +262,8 @@ app.MapGet("/api/agents/{name}", (string name, IOptions<BotNexusConfig> config) 
         autoLoadMemory = agentCfg.AutoLoadMemory,
         mcpServers = agentCfg.McpServers,
         skills = agentCfg.Skills,
-        disallowedTools = agentCfg.DisallowedTools
+        disallowedTools = agentCfg.DisallowedTools,
+        disabledSkills = agentCfg.DisabledSkills
     }, jsonOptions);
 });
 
@@ -340,6 +345,22 @@ app.MapPost("/api/agents", async (HttpContext httpContext, IOptions<BotNexusConf
                                 writer.WriteNumber("MaxToolIterations", body.MaxToolIterations.Value);
                             if (!string.IsNullOrWhiteSpace(body.Timezone))
                                 writer.WriteString("Timezone", body.Timezone);
+                            if (body.DisallowedTools?.Count > 0)
+                            {
+                                writer.WritePropertyName("DisallowedTools");
+                                writer.WriteStartArray();
+                                foreach (var tool in body.DisallowedTools)
+                                    writer.WriteStringValue(tool);
+                                writer.WriteEndArray();
+                            }
+                            if (body.DisabledSkills?.Count > 0)
+                            {
+                                writer.WritePropertyName("DisabledSkills");
+                                writer.WriteStartArray();
+                                foreach (var skill in body.DisabledSkills)
+                                    writer.WriteStringValue(skill);
+                                writer.WriteEndArray();
+                            }
                             writer.WriteEndObject();
                             
                             writer.WriteEndObject();
@@ -386,7 +407,9 @@ app.MapPost("/api/agents", async (HttpContext httpContext, IOptions<BotNexusConf
         maxTokens = body.MaxTokens ?? agentDefaults.MaxTokens,
         temperature = body.Temperature ?? agentDefaults.Temperature,
         maxToolIterations = body.MaxToolIterations ?? agentDefaults.MaxToolIterations,
-        timezone = body.Timezone ?? agentDefaults.Timezone
+        timezone = body.Timezone ?? agentDefaults.Timezone,
+        disallowedTools = body.DisallowedTools ?? new List<string>(),
+        disabledSkills = body.DisabledSkills ?? new List<string>()
     }, jsonOptions, statusCode: 201);
 });
 
@@ -442,25 +465,37 @@ app.MapPut("/api/agents/{name}", async (string name, HttpContext httpContext, IO
                                 writer.WritePropertyName(existingAgent.Name);
                                 if (existingAgent.Name == name)
                                 {
-                                    // Update this agent
+                                    // Update this agent - preserve existing fields
                                     writer.WriteStartObject();
+                                    var existingObj = existingAgent.Value;
+                                    
+                                    // Always write Name
                                     writer.WriteString("Name", name);
-                                    if (body.SystemPrompt is not null)
-                                        writer.WriteString("SystemPrompt", body.SystemPrompt);
-                                    if (body.SystemPromptFile is not null)
-                                        writer.WriteString("SystemPromptFile", body.SystemPromptFile);
-                                    if (body.Model is not null)
-                                        writer.WriteString("Model", body.Model);
-                                    if (body.Provider is not null)
-                                        writer.WriteString("Provider", body.Provider);
-                                    if (body.MaxTokens.HasValue)
-                                        writer.WriteNumber("MaxTokens", body.MaxTokens.Value);
-                                    if (body.Temperature.HasValue)
-                                        writer.WriteNumber("Temperature", body.Temperature.Value);
-                                    if (body.MaxToolIterations.HasValue)
-                                        writer.WriteNumber("MaxToolIterations", body.MaxToolIterations.Value);
-                                    if (body.Timezone is not null)
-                                        writer.WriteString("Timezone", body.Timezone);
+                                    
+                                    // Update or preserve each field
+                                    WriteStringIfSet(writer, "SystemPrompt", body.SystemPrompt, existingObj);
+                                    WriteStringIfSet(writer, "SystemPromptFile", body.SystemPromptFile, existingObj);
+                                    WriteStringIfSet(writer, "Model", body.Model, existingObj);
+                                    WriteStringIfSet(writer, "Provider", body.Provider, existingObj);
+                                    WriteIntIfSet(writer, "MaxTokens", body.MaxTokens, existingObj);
+                                    WriteDoubleIfSet(writer, "Temperature", body.Temperature, existingObj);
+                                    WriteIntIfSet(writer, "MaxToolIterations", body.MaxToolIterations, existingObj);
+                                    WriteStringIfSet(writer, "Timezone", body.Timezone, existingObj);
+                                    WriteArrayIfSet(writer, "DisallowedTools", body.DisallowedTools, existingObj);
+                                    WriteArrayIfSet(writer, "DisabledSkills", body.DisabledSkills, existingObj);
+                                    
+                                    // Preserve other fields not in UpdateAgentRequest
+                                    foreach (var prop in existingObj.EnumerateObject())
+                                    {
+                                        if (prop.Name is not ("Name" or "SystemPrompt" or "SystemPromptFile" or "Model" or "Provider" 
+                                            or "MaxTokens" or "Temperature" or "MaxToolIterations" or "Timezone" 
+                                            or "DisallowedTools" or "DisabledSkills"))
+                                        {
+                                            writer.WritePropertyName(prop.Name);
+                                            prop.Value.WriteTo(writer);
+                                        }
+                                    }
+                                    
                                     writer.WriteEndObject();
                                 }
                                 else
@@ -499,17 +534,27 @@ app.MapPut("/api/agents/{name}", async (string name, HttpContext httpContext, IO
     var updatedJson = System.Text.Encoding.UTF8.GetString(stream.ToArray());
     await File.WriteAllTextAsync(configPath, updatedJson);
 
+    // Reload config to get merged result
+    var updatedConfig = new ConfigurationBuilder()
+        .AddJsonFile(configPath)
+        .Build();
+    var updatedAgentDefaults = new AgentDefaults();
+    updatedConfig.GetSection("BotNexus:Agents").Bind(updatedAgentDefaults);
+    var updatedAgent = updatedAgentDefaults.Named[name];
+
     return Results.Json(new
     {
         name,
-        systemPrompt = body.SystemPrompt,
-        systemPromptFile = body.SystemPromptFile,
-        model = body.Model,
-        provider = body.Provider,
-        maxTokens = body.MaxTokens,
-        temperature = body.Temperature,
-        maxToolIterations = body.MaxToolIterations,
-        timezone = body.Timezone
+        systemPrompt = updatedAgent.SystemPrompt,
+        systemPromptFile = updatedAgent.SystemPromptFile,
+        model = updatedAgent.Model ?? updatedAgentDefaults.Model,
+        provider = updatedAgent.Provider,
+        maxTokens = updatedAgent.MaxTokens ?? updatedAgentDefaults.MaxTokens,
+        temperature = updatedAgent.Temperature ?? updatedAgentDefaults.Temperature,
+        maxToolIterations = updatedAgent.MaxToolIterations ?? updatedAgentDefaults.MaxToolIterations,
+        timezone = updatedAgent.Timezone ?? updatedAgentDefaults.Timezone,
+        disallowedTools = updatedAgent.DisallowedTools,
+        disabledSkills = updatedAgent.DisabledSkills
     }, jsonOptions);
 });
 
@@ -1081,6 +1126,47 @@ foreach (var webhookHandler in app.Services.GetServices<IWebhookHandler>())
     });
 }
 
+static void WriteStringIfSet(Utf8JsonWriter writer, string propertyName, string? value, JsonElement existing)
+{
+    if (value is not null)
+        writer.WriteString(propertyName, value);
+    else if (existing.TryGetProperty(propertyName, out var existingProp) && existingProp.ValueKind == JsonValueKind.String)
+        writer.WriteString(propertyName, existingProp.GetString()!);
+}
+
+static void WriteIntIfSet(Utf8JsonWriter writer, string propertyName, int? value, JsonElement existing)
+{
+    if (value.HasValue)
+        writer.WriteNumber(propertyName, value.Value);
+    else if (existing.TryGetProperty(propertyName, out var existingProp) && existingProp.ValueKind == JsonValueKind.Number)
+        writer.WriteNumber(propertyName, existingProp.GetInt32());
+}
+
+static void WriteDoubleIfSet(Utf8JsonWriter writer, string propertyName, double? value, JsonElement existing)
+{
+    if (value.HasValue)
+        writer.WriteNumber(propertyName, value.Value);
+    else if (existing.TryGetProperty(propertyName, out var existingProp) && existingProp.ValueKind == JsonValueKind.Number)
+        writer.WriteNumber(propertyName, existingProp.GetDouble());
+}
+
+static void WriteArrayIfSet(Utf8JsonWriter writer, string propertyName, List<string>? value, JsonElement existing)
+{
+    if (value is not null)
+    {
+        writer.WritePropertyName(propertyName);
+        writer.WriteStartArray();
+        foreach (var item in value)
+            writer.WriteStringValue(item);
+        writer.WriteEndArray();
+    }
+    else if (existing.TryGetProperty(propertyName, out var existingProp) && existingProp.ValueKind == JsonValueKind.Array)
+    {
+        writer.WritePropertyName(propertyName);
+        existingProp.WriteTo(writer);
+    }
+}
+
 try
 {
     await app.RunAsync();
@@ -1104,7 +1190,9 @@ internal sealed record CreateAgentRequest(
     int? MaxTokens = null,
     double? Temperature = null,
     int? MaxToolIterations = null,
-    string? Timezone = null);
+    string? Timezone = null,
+    List<string>? DisallowedTools = null,
+    List<string>? DisabledSkills = null);
 internal sealed record UpdateAgentRequest(
     string? SystemPrompt = null,
     string? SystemPromptFile = null,
@@ -1113,5 +1201,7 @@ internal sealed record UpdateAgentRequest(
     int? MaxTokens = null,
     double? Temperature = null,
     int? MaxToolIterations = null,
-    string? Timezone = null);
+    string? Timezone = null,
+    List<string>? DisallowedTools = null,
+    List<string>? DisabledSkills = null);
 

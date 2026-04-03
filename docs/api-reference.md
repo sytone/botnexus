@@ -712,6 +712,7 @@ Type `/` in the chat input to open the command palette:
 - `/help` — Show available commands and their descriptions
 - `/reset` — Reset the current conversation session
 - `/status` — Show system status and last heartbeat time
+- `/models` — List all available models by provider (alias: `/model`)
 
 **Usage:**
 1. Type `/hel` in the chat input

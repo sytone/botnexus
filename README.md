@@ -22,7 +22,7 @@ New to BotNexus? The **Getting Started** guide walks you from clone → build �
 - **Diagnostics** — 13 health checkups across 6 categories with auto-fix support (`botnexus doctor`)
 - **Hot Reload** — Edit `config.json` and changes apply live (agents, providers, cron) — no restart needed
 - **REST API** — Agent CRUD, session management, skills, system status endpoints
-- **WebUI** — Real-time chat with model selector, tool visibility toggle, and command palette (`/help`, `/reset`, `/status`)
+- **WebUI** — Real-time chat with model selector, tool visibility toggle, and command palette (`/help`, `/reset`, `/status`, `/models`)
 - **Tool Control** — Disable tools per agent via `DisallowedTools` config
 - **Skill Control** — Disable skills per agent via `DisabledSkills` config (supports wildcards)
 - **Model Logging** — Actual model used logged per provider call for debugging and observability
