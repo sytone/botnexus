@@ -9,6 +9,48 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-03 — Critical Auth Issues: Token Loss Root Cause + Auto-Reauth
+
+**Timestamp:** 2026-04-03T17:30:00Z  
+**Status:** ✅ Complete  
+**Scope:** OAuth token resilience and config safety  
+
+**Issue Reports:**
+1. **Token disappearing from config** — Second occurrence of Jon's Copilot token going missing
+2. **Silent auth failures** — No auto-reauth when token expires or is missing
+
+**Investigation Findings:**
+- **Root Cause Identified:** Token was NOT being lost from config.json. OAuth tokens are stored separately in `~/.botnexus/tokens/copilot.json` by `FileOAuthTokenStore`. The config.json only contains provider settings (API base, timeout, etc.), NOT tokens.
+- **Actual Timeline (from logs):**
+  - 2026-04-03 09:06:57 — Token naturally expired (expiry: 2026-04-03 14:03:43Z)
+  - System correctly cleared expired token and initiated device auth
+  - Device code presented: `7C8C-E529` (timeout: 15 min)
+  - User didn't complete auth in time → silent failure
+  - Subsequent requests failed with no automatic retry
+- **Secondary Issue:** When 401/403 occurred during chat, only Copilot access token was cleared, not the GitHub OAuth token. This created a loop where the same expired GitHub token was reused.
+
+**Fixes Implemented:**
+1. **Auto-reauth on 401/403** — `CopilotProvider` now:
+   - Clears ALL tokens (GitHub OAuth + Copilot access) on auth failure
+   - Automatically retries with fresh auth after token exchange failure
+   - Provides clear error messages instead of silent failures
+   
+2. **Surgical Config Updates** — `ConfigFileManager.SaveConfig` refactored to:
+   - Use `JsonNode` for partial updates instead of full object serialization
+   - Deep merge strategy preserves fields not in C# model
+   - Prevents accidental data loss when config contains provider-specific fields
+
+**Technical Details:**
+- `InvalidateAndClearTokensAsync()` method clears both `_copilotAccessToken` and `_cachedToken`, then calls `_tokenStore.ClearTokenAsync()`
+- Token exchange failure now triggers automatic re-authentication with single retry
+- ConfigFileManager uses `JsonNode.Parse()` and `MergeJsonObjects()` for safe updates
+
+**Test Results:** All 6 Copilot provider tests passing, including auth expiry and retry scenarios.
+
+**Commit:** `50f27fe` — feat(auth): Add auto-reauth and surgical config updates
+
+---
+
 ### 2026-04-02 — Agent Loop Tool Execution Investigation (IN PROGRESS)
 
 **Issue:** Agent loop appears to stall after tool calls. User report: Nova agent says "I'll look around" (implying tool use) but conversation hangs — no follow-up response with tool results.
