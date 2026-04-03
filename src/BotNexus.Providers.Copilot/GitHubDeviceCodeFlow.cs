@@ -39,9 +39,9 @@ public class GitHubDeviceCodeFlow
         _logger.LogInformation("Go to {VerificationUri} and enter code: {UserCode}", deviceCode.VerificationUri, deviceCode.UserCode);
 
         // Broadcast device auth message to connected clients
-        if (_activityStream is not null || _messageStore is not null)
+        if (_activityStream is not null)
         {
-            var message = new SystemMessage(
+            await _activityStream.PublishSystemMessageAsync(new SystemMessage(
                 Type: "device_auth",
                 Title: "GitHub Copilot Authentication Required",
                 Content: $"Visit {deviceCode.VerificationUri} and enter code: {deviceCode.UserCode}",
@@ -51,25 +51,7 @@ public class GitHubDeviceCodeFlow
                     ["verification_uri"] = deviceCode.VerificationUri,
                     ["user_code"] = deviceCode.UserCode,
                     ["expires_in"] = deviceCode.ExpiresIn.ToString()
-                });
-
-            _messageStore?.Add(message);
-
-            if (_activityStream is not null)
-            {
-                await _activityStream.PublishAsync(new ActivityEvent(
-                    ActivityEventType.SystemMessage,
-                    "system",
-                    "copilot-auth",
-                    null,
-                    null,
-                    message.Content,
-                    DateTimeOffset.UtcNow,
-                    new Dictionary<string, object>
-                    {
-                        ["system_message"] = message
-                    }), cancellationToken).ConfigureAwait(false);
-            }
+                }), cancellationToken).ConfigureAwait(false);
         }
 
         return await PollForAccessTokenAsync(clientId, deviceCode, cancellationToken).ConfigureAwait(false);
@@ -124,34 +106,16 @@ public class GitHubDeviceCodeFlow
                     : 8 * 60 * 60;
 
                 // Broadcast auth success message to connected clients
-                if (_activityStream is not null || _messageStore is not null)
+                if (_activityStream is not null)
                 {
-                    var message = new SystemMessage(
+                    await _activityStream.PublishSystemMessageAsync(new SystemMessage(
                         Type: "auth_success",
                         Title: "GitHub Copilot Authentication Successful",
-                        Content: "GitHub Copilot authentication completed successfully",
+                        Content: "GitHub Copilot authentication completed successfully.",
                         Data: new Dictionary<string, string>
                         {
                             ["provider"] = "copilot"
-                        });
-
-                    _messageStore?.Add(message);
-
-                    if (_activityStream is not null)
-                    {
-                        await _activityStream.PublishAsync(new ActivityEvent(
-                            ActivityEventType.SystemMessage,
-                            "system",
-                            "copilot-auth",
-                            null,
-                            null,
-                            message.Content,
-                            DateTimeOffset.UtcNow,
-                            new Dictionary<string, object>
-                            {
-                                ["system_message"] = message
-                            }), cancellationToken).ConfigureAwait(false);
-                    }
+                        }), cancellationToken).ConfigureAwait(false);
                 }
 
                 return new OAuthToken(accessToken, DateTimeOffset.UtcNow.AddSeconds(expiresInSeconds), refreshToken);

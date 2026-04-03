@@ -8,6 +8,9 @@ public interface IActivityStream
     /// <summary>Publishes an activity event to all subscribers.</summary>
     ValueTask PublishAsync(ActivityEvent activityEvent, CancellationToken cancellationToken = default);
 
+    /// <summary>Publishes a system message to all subscribers by wrapping it in an ActivityEvent.</summary>
+    ValueTask PublishSystemMessageAsync(SystemMessage message, CancellationToken cancellationToken = default);
+
     /// <summary>Subscribes to activity events. Returns a subscription that yields events.</summary>
     IActivitySubscription Subscribe();
 }

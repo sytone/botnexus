@@ -13,6 +13,12 @@ namespace BotNexus.Core.Bus;
 public sealed class ActivityStream : IActivityStream
 {
     private readonly ConcurrentDictionary<string, Channel<ActivityEvent>> _subscribers = new();
+    private readonly SystemMessageStore? _messageStore;
+
+    public ActivityStream(SystemMessageStore? messageStore = null)
+    {
+        _messageStore = messageStore;
+    }
 
     /// <inheritdoc/>
     public ValueTask PublishAsync(ActivityEvent activityEvent, CancellationToken cancellationToken = default)
@@ -23,6 +29,38 @@ public sealed class ActivityStream : IActivityStream
             channel.Writer.TryWrite(activityEvent);
         }
         return ValueTask.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    public ValueTask PublishSystemMessageAsync(SystemMessage message, CancellationToken cancellationToken = default)
+    {
+        // Store the message for API retrieval
+        _messageStore?.Add(message);
+
+        var metadata = new Dictionary<string, object>
+        {
+            ["message_type"] = message.Type,
+            ["message_title"] = message.Title,
+            ["message_id"] = message.Id
+        };
+
+        if (message.Data is not null)
+        {
+            foreach (var (key, value) in message.Data)
+                metadata[key] = value;
+        }
+
+        var activityEvent = new ActivityEvent(
+            ActivityEventType.SystemMessage,
+            "system",
+            "system",
+            null,
+            null,
+            message.Content,
+            message.CreatedAt,
+            metadata);
+
+        return PublishAsync(activityEvent, cancellationToken);
     }
 
     /// <inheritdoc/>
