@@ -1,15 +1,16 @@
 # BotNexus API Reference
 
-Complete reference for BotNexus REST API endpoints, including agents, sessions, providers, and system status.
+Complete reference for BotNexus REST API endpoints, including agents, sessions, providers, skills, and system status.
 
 ## Table of Contents
 
 1. [Overview](#overview)
 2. [Authentication](#authentication)
 3. [Agent Management](#agent-management)
-4. [Session Management](#session-management)
-5. [System & Status](#system--status)
-6. [Error Handling](#error-handling)
+4. [Skills Management](#skills-management)
+5. [Session Management](#session-management)
+6. [System & Status](#system--status)
+7. [Error Handling](#error-handling)
 
 ---
 
@@ -265,6 +266,112 @@ X-Api-Key: your-api-key
 **Error Responses:**
 - `404 Not Found` — Agent does not exist
 - `500 Internal Server Error` — Deletion failed
+
+---
+
+## Skills Management
+
+Skills are modular knowledge packages that enhance agent reasoning. Learn more in the [Skills Guide](./skills.md).
+
+### List Global Skills
+
+**Endpoint:** `GET /api/skills`
+
+**Description:** Retrieve all global skills available to all agents.
+
+**Request:**
+```http
+GET /api/skills
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK
+```json
+[
+  {
+    "name": "git-workflow",
+    "description": "Git workflow and commit conventions for BotNexus",
+    "version": "1.0.0",
+    "scope": "Global",
+    "alwaysLoad": false,
+    "sourcePath": "/home/user/.botnexus/skills/git-workflow/SKILL.md"
+  },
+  {
+    "name": "testing-standards",
+    "description": "Testing patterns and best practices",
+    "version": "1.0.0",
+    "scope": "Global",
+    "alwaysLoad": false,
+    "sourcePath": "/home/user/.botnexus/skills/testing-standards/SKILL.md"
+  }
+]
+```
+
+**Response Fields:**
+- `name` (string) — Skill identifier (folder name)
+- `description` (string) — Human-readable skill description
+- `version` (string) — Semantic version of the skill
+- `scope` (string) — Scope: `"Global"` or `"Agent"`
+- `alwaysLoad` (boolean) — Reserved for future use (always false currently)
+- `sourcePath` (string) — File path for debugging
+
+---
+
+### List Agent Skills
+
+**Endpoint:** `GET /api/agents/{name}/skills`
+
+**Description:** Retrieve all skills (global + per-agent) loaded for a specific agent, respecting `DisabledSkills` configuration.
+
+**Parameters:**
+- `name` (string, path) — Agent name
+
+**Request:**
+```http
+GET /api/agents/code-reviewer/skills
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK
+```json
+[
+  {
+    "name": "code-review-criteria",
+    "description": "Code review standards for this project",
+    "version": "1.0.0",
+    "scope": "Agent",
+    "alwaysLoad": false,
+    "sourcePath": "/home/user/.botnexus/agents/code-reviewer/skills/code-review-criteria/SKILL.md",
+    "contentPreview": "# Code Review Criteria\n\nReviewers should check:\n1. Functionality\n2. Code style\n3. Tests\n..."
+  },
+  {
+    "name": "git-workflow",
+    "description": "Git workflow and commit conventions for BotNexus",
+    "version": "1.0.0",
+    "scope": "Global",
+    "alwaysLoad": false,
+    "sourcePath": "/home/user/.botnexus/skills/git-workflow/SKILL.md"
+  }
+]
+```
+
+**Response Fields:**
+- All fields from [List Global Skills](#list-global-skills), plus:
+- `contentPreview` (string) — First 200 characters of skill markdown content (agent endpoint only)
+
+**Skill Resolution Order:**
+1. Global skills from `~/.botnexus/skills/`
+2. Per-agent skills from `~/.botnexus/agents/{name}/skills/` (override global if same name)
+3. Filtered by agent's `DisabledSkills` configuration
+4. Sorted alphabetically by name
+
+**Error Responses:**
+- `404 Not Found` — Agent does not exist
+
+**Notes:**
+- Agent skills override global skills with the same name
+- Use `DisabledSkills` in agent config to exclude specific skills or patterns
+- See [Skills Guide: Disabling Skills](./skills.md#disabling-skills) for pattern syntax
 
 ---
 

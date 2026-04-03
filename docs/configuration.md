@@ -210,6 +210,7 @@ Override any default for a specific agent:
 | `DisallowedTools` | list | Tool names to exclude for this agent (e.g., `["shell", "filesystem"]`) — see [Internal Tools](#internal-tools) |
 | `McpServers` | list | MCP servers enabled for this agent (see [MCP Servers](#mcp-servers)) |
 | `Skills` | list | Named skill references (plugin extension names) |
+| `DisabledSkills` | list | Skill names or patterns to exclude for this agent (e.g., `["debug-*", "experimental-*", "test-skill"]`) — supports wildcards (`*`, `?`). See [Skills Guide](./skills.md#disabling-skills) |
 | `CronJobs` | list | **Deprecated.** Use centralized `Cron.Jobs` instead (see [Cron and Scheduling Guide](./cron-and-scheduling.md)). Legacy entries are auto-migrated at startup. |
 
 ---

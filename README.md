@@ -14,15 +14,17 @@ New to BotNexus? The **Getting Started** guide walks you from clone → build �
 - **Multi-Channel** — Discord, Slack, Telegram, WebSocket, and REST API
 - **Multi-Provider** — GitHub Copilot (OAuth), OpenAI, Anthropic, Azure OpenAI
 - **Extensible** — Dynamic assembly loading with folder-based extension system
+- **Skills System** — Modular knowledge packages for agents (git workflows, coding standards, best practices)
 - **MCP Support** — Model Context Protocol servers (stdio and SSE transports)
 - **Session Persistence** — Conversation history persisted to disk (JSONL format)
 - **Observable** — Correlation IDs, health checks, real-time activity stream via WebUI
 - **CLI Tool** — `botnexus` command-line interface for config, agents, providers, doctor, and Gateway lifecycle
 - **Diagnostics** — 13 health checkups across 6 categories with auto-fix support (`botnexus doctor`)
 - **Hot Reload** — Edit `config.json` and changes apply live (agents, providers, cron) — no restart needed
-- **REST API** — Agent CRUD, session management, system status endpoints
+- **REST API** — Agent CRUD, session management, skills, system status endpoints
 - **WebUI** — Real-time chat with model selector, tool visibility toggle, and command palette (`/help`, `/reset`, `/status`)
 - **Tool Control** — Disable tools per agent via `DisallowedTools` config
+- **Skill Control** — Disable skills per agent via `DisabledSkills` config (supports wildcards)
 - **Model Logging** — Actual model used logged per provider call for debugging and observability
 - **Config Audit** — Config changes backed up to `.bak`, OAuth token operations logged
 - **Agent Templates** — Auto-bootstrapped workspace with SOUL.md, IDENTITY.md, USER.md, HEARTBEAT.md, MEMORY.md
