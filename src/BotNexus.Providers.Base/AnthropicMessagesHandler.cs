@@ -273,66 +273,98 @@ public sealed class AnthropicMessagesHandler : IApiFormatHandler
         // Convert messages to Anthropic format
         var messages = new List<Dictionary<string, object?>>();
         
+        // Group consecutive tool messages into single user messages (Anthropic requirement)
+        Dictionary<string, object?>? currentMessage = null;
+        List<Dictionary<string, object?>>? currentContentBlocks = null;
+        
         foreach (var message in request.Messages)
         {
             // Skip system messages (handled separately)
             if (string.Equals(message.Role, "system", StringComparison.OrdinalIgnoreCase))
                 continue;
             
-            var msg = new Dictionary<string, object?>();
+            var isTool = string.Equals(message.Role, "tool", StringComparison.OrdinalIgnoreCase);
             
-            // Role mapping (Anthropic uses "user" and "assistant" only)
-            if (string.Equals(message.Role, "tool", StringComparison.OrdinalIgnoreCase))
+            // If starting a new non-tool message, flush any pending message
+            if (!isTool && currentMessage is not null)
             {
-                msg["role"] = "user";
+                currentMessage["content"] = currentContentBlocks!;
+                messages.Add(currentMessage);
+                currentMessage = null;
+                currentContentBlocks = null;
             }
-            else
-            {
-                msg["role"] = message.Role;
-            }
             
-            // Content as content blocks
-            var contentBlocks = new List<Dictionary<string, object?>>();
-            
-            // Text content
-            if (!string.IsNullOrEmpty(message.Content))
+            // Tool messages: accumulate into current user message
+            if (isTool)
             {
-                contentBlocks.Add(new Dictionary<string, object?>
+                // Start new user message if needed
+                if (currentMessage is null)
                 {
-                    ["type"] = "text",
-                    ["text"] = message.Content
-                });
-            }
-            
-            // Tool calls (assistant messages)
-            if (message.ToolCalls is { Count: > 0 })
-            {
-                foreach (var toolCall in message.ToolCalls)
+                    currentMessage = new Dictionary<string, object?> { ["role"] = "user" };
+                    currentContentBlocks = new List<Dictionary<string, object?>>();
+                }
+                
+                // Add tool_result block
+                if (!string.IsNullOrEmpty(message.ToolCallId))
                 {
-                    contentBlocks.Add(new Dictionary<string, object?>
+                    currentContentBlocks!.Add(new Dictionary<string, object?>
                     {
-                        ["type"] = "tool_use",
-                        ["id"] = toolCall.Id,
-                        ["name"] = toolCall.ToolName,
-                        ["input"] = toolCall.Arguments
+                        ["type"] = "tool_result",
+                        ["tool_use_id"] = message.ToolCallId,
+                        ["content"] = message.Content ?? string.Empty
+                    });
+                }
+                else if (!string.IsNullOrEmpty(message.Content))
+                {
+                    // Tool message without ToolCallId - add as text
+                    currentContentBlocks!.Add(new Dictionary<string, object?>
+                    {
+                        ["type"] = "text",
+                        ["text"] = message.Content
                     });
                 }
             }
-            
-            // Tool results (user messages)
-            if (string.Equals(message.Role, "tool", StringComparison.OrdinalIgnoreCase) && 
-                !string.IsNullOrEmpty(message.ToolCallId))
+            else
             {
-                contentBlocks.Add(new Dictionary<string, object?>
+                // User or assistant message
+                var msg = new Dictionary<string, object?> { ["role"] = message.Role };
+                var contentBlocks = new List<Dictionary<string, object?>>();
+                
+                // Text content
+                if (!string.IsNullOrEmpty(message.Content))
                 {
-                    ["type"] = "tool_result",
-                    ["tool_use_id"] = message.ToolCallId,
-                    ["content"] = message.Content
-                });
+                    contentBlocks.Add(new Dictionary<string, object?>
+                    {
+                        ["type"] = "text",
+                        ["text"] = message.Content
+                    });
+                }
+                
+                // Tool calls (assistant messages)
+                if (message.ToolCalls is { Count: > 0 })
+                {
+                    foreach (var toolCall in message.ToolCalls)
+                    {
+                        contentBlocks.Add(new Dictionary<string, object?>
+                        {
+                            ["type"] = "tool_use",
+                            ["id"] = toolCall.Id,
+                            ["name"] = toolCall.ToolName,
+                            ["input"] = toolCall.Arguments
+                        });
+                    }
+                }
+                
+                msg["content"] = contentBlocks;
+                messages.Add(msg);
             }
-            
-            msg["content"] = contentBlocks;
-            messages.Add(msg);
+        }
+        
+        // Flush any remaining tool message
+        if (currentMessage is not null)
+        {
+            currentMessage["content"] = currentContentBlocks!;
+            messages.Add(currentMessage);
         }
         
         var payload = new Dictionary<string, object?>
