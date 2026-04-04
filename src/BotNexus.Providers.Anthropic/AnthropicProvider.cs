@@ -66,27 +66,24 @@ public sealed class AnthropicProvider : LlmProviderBase
     /// 
     /// <para><b>Provider-Specific Normalization Responsibilities:</b></para>
     /// <list type="bullet">
-    ///   <item><b>Content block extraction:</b> Anthropic returns content as array of blocks, we extract 
-    ///   first block's text field.</item>
+    ///   <item><b>Content block extraction:</b> Anthropic returns content as array of blocks (text, tool_use), 
+    ///   we parse all blocks and extract text + tool calls.</item>
     ///   
-    ///   <item><b>Tool calls:</b> NOT YET IMPLEMENTED. Anthropic supports tool use via content blocks with 
-    ///   type="tool_use", but this provider currently only handles text responses. Tool call support is 
-    ///   marked as P1 in architecture review.</item>
+    ///   <item><b>Tool calls:</b> Anthropic tool_use blocks are parsed into ToolCallRequest list with 
+    ///   id, name, and input (arguments). Supports both streaming and non-streaming modes.</item>
     ///   
-    ///   <item><b>Finish reason mapping:</b> Anthropic uses strings ("end_turn", "max_tokens", etc.) which 
-    ///   we map to FinishReason enum. Note: "tool_use" stop reason not yet handled.</item>
+    ///   <item><b>Finish reason mapping:</b> Anthropic uses strings ("end_turn", "max_tokens", "tool_use") 
+    ///   which we map to FinishReason enum. Tool calls also set FinishReason.ToolCalls.</item>
     ///   
     ///   <item><b>Token count normalization:</b> Anthropic uses snake_case "input_tokens" and "output_tokens" 
     ///   which we map to InputTokens and OutputTokens.</item>
     ///   
     ///   <item><b>JSON naming:</b> Anthropic API uses snake_case throughout, which JsonSerializerOptions 
     ///   handles automatically for request serialization.</item>
+    ///   
+    ///   <item><b>Tool definitions:</b> Anthropic expects tools array with name, description, and input_schema 
+    ///   (object with properties and required fields).</item>
     /// </list>
-    /// 
-    /// <para>
-    /// <b>TODO:</b> Implement tool call normalization. Anthropic's tool_use content blocks need to be 
-    /// parsed into ToolCallRequest list. See Anthropic Messages API docs for content block structure.
-    /// </para>
     /// </summary>
     protected override async Task<LlmResponse> ChatCoreAsync(ChatRequest request, CancellationToken cancellationToken)
     {
