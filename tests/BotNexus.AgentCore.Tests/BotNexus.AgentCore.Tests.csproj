@@ -21,5 +21,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\agent\BotNexus.AgentCore\BotNexus.AgentCore.csproj" />
+    <ProjectReference Include="..\..\src\providers\BotNexus.Providers.Core\BotNexus.Providers.Core.csproj" />
   </ItemGroup>
 </Project>
