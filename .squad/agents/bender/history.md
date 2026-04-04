@@ -197,7 +197,16 @@ Build is clean, tests pass. ProviderRegistry exists but is unused — evaluate i
 - `BotNexus.Tools.GitHub` now exposes a dynamic-loading registrar (`GitHubExtensionRegistrar : IExtensionRegistrar`) so extension config under `Tools:Extensions:{key}` binds and registers `ITool` services through the extension loader.
 - `GitHubTool` now implements `BotNexus.Core.Abstractions.ITool` directly, removing the project’s compile-time dependency on `BotNexus.Agent` and keeping extension contracts rooted in Core.
 - `AgentLoop` now accepts optional additional tools (`IEnumerable<ITool>`) and merges them into the runtime `ToolRegistry`, enabling built-in and dynamically-loaded tools to coexist in invocation flow.
+### 2026-04-04 — New Anthropic Messages API Provider (IApiProvider)
 
+- Built `src/providers/BotNexus.Providers.Anthropic/` implementing `IApiProvider` from `BotNexus.Providers.Core` — the new-architecture provider layer ported from pi-mono's `providers/anthropic.ts`.
+- Assembly named `BotNexus.Providers.Anthropic.Messages` to coexist alongside the old extension-style `src/BotNexus.Providers.Anthropic/` without conflict.
+- Full SSE streaming: message_start, content_block_start/delta/stop, message_delta, message_stop — mapped to Core's `AssistantMessageEvent` protocol (Start, TextDelta, ThinkingDelta, ToolCallDelta, Done, Error).
+- Three auth modes: API key (`x-api-key`), OAuth (`sk-ant-oat` prefix → Bearer + claude-code beta), Copilot (Bearer, no fine-grained-tool-streaming beta).
+- Thinking support: adaptive (`opus-4`/`sonnet-4` → effort levels) and budget-based (older models → `budget_tokens`). Temperature auto-excluded when thinking enabled.
+- Message conversion via `MessageTransformer.TransformMessages()` with tool call ID normalization (alphanumeric + `_-`, max 64 chars). Consecutive tool results merged into single user message.
+- Cache control: ephemeral on system prompt + last user message; 1h TTL for long retention on `api.anthropic.com`.
+- Full solution builds clean: 0 warnings, 0 errors across all 32 projects.
 ### 2026-04-01 — Extension Build/Publish Pipeline via MSBuild Metadata
 
 - Added shared `src/Extension.targets` that extension projects can import and activate with `<ExtensionType>` + `<ExtensionName>` metadata.
@@ -557,6 +566,33 @@ _logger.LogInformation("Agent {AgentName} configured with model={ConfiguredModel
 - 950+ lines of documentation
 - 5 configuration mismatches resolved
 - Full provider model API exposure
+
+---
+
+## 2026-04-04 — OpenAI-Compatible Provider Implementation
+
+**Status:** ✅ Complete  
+**Requested by:** Jon Bullen
+
+**What:** Created `BotNexus.Providers.OpenAICompat` under `src/providers/`. Standalone provider for OpenAI-compatible inference servers (Ollama, vLLM, LM Studio, SGLang, Cerebras, xAI, DeepSeek, Groq).
+
+**Files Created:**
+- `BotNexus.Providers.OpenAICompat.csproj` — NET 10.0, references Core only, no external SDK
+- `OpenAICompatProvider.cs` — `IApiProvider` impl (api="openai-compat"), raw HttpClient SSE streaming, compat-aware request/response
+- `OpenAICompatOptions.cs` — extends `StreamOptions` with `ToolChoice` and `ReasoningEffort`
+- `CompatDetector.cs` — auto-detect compat settings from model provider/baseUrl (8 known servers + conservative default)
+- `PreConfiguredModels.cs` — factory methods for Ollama, vLLM, LM Studio, SGLang with sensible defaults
+
+**Design Decisions:**
+- Raw HttpClient, no SDK — these servers don't have stable SDKs and we need full control over compat quirks
+- `CompatDetector.Detect()` uses explicit model compat first, falls back to provider/URL heuristics
+- SSE parsing reads line-by-line with `ReadLineAsync` (not `EndOfStream` — CA2024 compliance)
+- Tool call streaming accumulates JSON args via `StringBuilder` + `StreamingJsonParser.Parse()` for partial parsing
+- System prompt role switches between "developer"/"system" based on `SupportsDeveloperRole`
+- Synthetic assistant messages inserted after tool results when `RequiresAssistantAfterToolResult` (DeepSeek quirk)
+- Images filtered based on `model.Input` capabilities — servers that can't handle images get text only
+
+**Build:** 0 errors, 0 warnings across full 29-project solution
 
 **Cross-Agent Dependencies Resolved:**
 - Farnsworth's model provider APIs enable Fry's UI dropdown

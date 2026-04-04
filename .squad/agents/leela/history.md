@@ -838,7 +838,8 @@ User → Gateway → AgentRunner → AgentLoop.ProcessAsync(onDelta: callback)
 
 1. **CLI Tool (otnexus command):** New src/BotNexus.Cli/ project as a dotnet tool (installable via dotnet tool install). Uses System.CommandLine for parsing. 16 commands across 6 groups: lifecycle (start/stop/restart/status), config (validate/show/init), agent (add/list/workspace), provider (add/list), channel (add), extension (list), doctor, and logs. Two operating modes: offline (reads config.json directly) and online (queries Gateway REST API). Process management via PID file + health endpoint polling.
 
-2. **Config Hot Reload:** eloadOnChange: true + ConfigReloadOrchestrator hosted service using IOptionsMonitor<BotNexusConfig>.OnChange() with 500ms debounce. Defined what CAN hot reload (agents, cron jobs, API key) vs what REQUIRES restart (Kestrel binding, extension loading, new channels/providers). ApiKeyAuthenticationMiddleware migrated from IOptions to IOptionsMonitor for live API key updates.
+2. **Config Hot Reload:** 
+eloadOnChange: true + ConfigReloadOrchestrator hosted service using IOptionsMonitor<BotNexusConfig>.OnChange() with 500ms debounce. Defined what CAN hot reload (agents, cron jobs, API key) vs what REQUIRES restart (Kestrel binding, extension loading, new channels/providers). ApiKeyAuthenticationMiddleware migrated from IOptions to IOptionsMonitor for live API key updates.
 
 3. **Doctor Command:** IHealthCheckup interface in Core. 13 built-in checkups across 6 categories (configuration, security, connectivity, extensions, permissions, resources). Implementations in new BotNexus.Diagnostics project. CheckupRunner executes sequentially with timing. Supports offline (CLI) and online (Gateway /api/doctor endpoint) modes. --category filtering and --json output.
 
@@ -1319,4 +1320,44 @@ Jon reported that Nova agent says "Let me check if there's anything in the confi
 
 **Recommendation:**
 HIGH PRIORITY — Capture HTTP payload to definitively confirm whether tool results are making it into subsequent requests or if there's a serialization/format issue specific to Copilot API or Claude models.
+
+---
+
+## 2026-04-04T12:00:00Z — Provider Abstraction Layer Architecture (Lead)
+
+**Timestamp:** 2026-04-04T12:00:00Z  
+**Status:** ✅ Complete (Decision Proposed)  
+**Requested by:** Jon Bullen  
+**Scope:** Design C#/.NET 10 provider abstraction layer inspired by pi-mono
+
+**Context:**
+Jon requested a full architecture decision for re-architecting the LLM provider layer, drawing from badlogic/pi-mono (TypeScript). The goal: a clean, provider-agnostic LLM abstraction that supports streaming, cross-provider handoffs, and dynamic provider registration.
+
+**Work Done:**
+1. Deep analysis of pi-mono's architecture: types.ts, api-registry.ts, models.ts, event-stream.ts, transform-messages.ts, and all provider implementations (Anthropic, OpenAI, Google, Mistral, Bedrock)
+2. Mapped every pi-mono concept to idiomatic C# equivalents
+3. Made concrete decisions on 17 design points (no options lists)
+
+**Key Decisions:**
+- **Content blocks:** `abstract record ContentBlock` with sealed leaf records (TextContent, ThinkingContent, ImageContent, ToolCallContent)
+- **Messages:** `abstract record Message` hierarchy with sealed UserMessage, AssistantMessage, ToolResultMessage
+- **Streaming:** `ICompletionStream` = `IAsyncEnumerable<StreamEvent>` + `Task<AssistantMessage>` (Channel internally, IAsyncEnumerable publicly)
+- **Events:** `abstract record StreamEvent` with 12 nested sealed records for exhaustive pattern matching
+- **Provider contract:** `IApiProvider` interface with `Api`, `Stream()`, `StreamSimple()` 
+- **Registry:** `IApiProviderRegistry` backed by `ConcurrentDictionary` (thread-safe, DI-friendly)
+- **Model:** `ModelInfo` record (not generic — C# doesn't benefit from TS branded strings)
+- **Tool params:** `JsonElement` for JSON Schema (zero-copy, no schema library dependency)
+- **Options:** `record StreamOptions` base, `record SimpleStreamOptions : StreamOptions` with Reasoning
+- **Cross-provider:** Static `MessageTransformer.Transform()` — pure function matching pi-mono's approach
+- **Cost:** `decimal` for financial precision
+- **Cancellation:** `CancellationToken` replaces `AbortSignal`
+
+**Decision Document:** `.squad/decisions/inbox/leela-providers-architecture.md`
+
+## Learnings
+
+- Pi-mono's `EventStream<T, R>` maps cleanly to `IAsyncEnumerable<T>` + `Task<R>` in C#. The Channel is an implementation detail, not the public API.
+- Pi-mono's `Model<TApi>` generic parameter adds value in TypeScript for auto-complete on API-specific options. In C#, the same is achieved via provider-specific StreamOptions subclasses — the generic on Model itself is unnecessary overhead.
+- Pi-mono's transform-messages.ts does three things: thinking-to-text conversion for cross-model, tool call ID normalization, and orphaned tool call cleanup. These are all pure data transformations — static method, not a service.
+- Provider implementations in pi-mono all follow the exact same template: create stream, create output, start async IIFE, try/catch with error events. The C# equivalent is Task.Run with the same pattern. Don't over-abstract this — the template is simple enough to copy.
 
