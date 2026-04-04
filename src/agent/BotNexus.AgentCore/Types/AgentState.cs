@@ -1,5 +1,5 @@
 using BotNexus.AgentCore.Tools;
-using BotNexus.Providers.Base;
+using BotNexus.Providers.Core.Models;
 
 namespace BotNexus.AgentCore.Types;
 
@@ -20,12 +20,12 @@ public class AgentState
     /// <summary>
     /// Gets or sets the active model definition.
     /// </summary>
-    public required ModelDefinition Model { get; set; }
+    public required LlmModel Model { get; set; }
 
     /// <summary>
     /// Gets or sets the thinking level used for model calls.
     /// </summary>
-    public ThinkingLevel ThinkingLevel { get; set; } = ThinkingLevel.Off;
+    public ThinkingLevel? ThinkingLevel { get; set; } = null;
 
     /// <summary>
     /// Gets or sets the registered tools.

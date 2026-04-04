@@ -1,5 +1,5 @@
 using BotNexus.AgentCore.Types;
-using BotNexus.Core.Models;
+using BotNexus.Providers.Core.Models;
 
 namespace BotNexus.AgentCore.Tools;
 
@@ -21,7 +21,7 @@ public interface IAgentTool
     /// <summary>
     /// Gets the tool schema definition exposed to the model.
     /// </summary>
-    ToolDefinition Definition { get; }
+    Tool Definition { get; }
 
     /// <summary>
     /// Validates and prepares tool call arguments before execution.

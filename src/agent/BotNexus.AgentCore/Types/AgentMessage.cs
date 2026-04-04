@@ -1,4 +1,4 @@
-using BotNexus.Core.Models;
+using BotNexus.Providers.Core.Models;
 
 namespace BotNexus.AgentCore.Types;
 
@@ -42,8 +42,8 @@ public sealed record UserMessage(string Content, IReadOnlyList<AgentImageContent
 /// <param name="Timestamp">The message timestamp.</param>
 public sealed record AssistantAgentMessage(
     string Content,
-    IReadOnlyList<ToolCallRequest>? ToolCalls = null,
-    FinishReason FinishReason = FinishReason.Stop,
+    IReadOnlyList<ToolCallContent>? ToolCalls = null,
+    StopReason FinishReason = StopReason.Stop,
     AgentUsage? Usage = null,
     string? ErrorMessage = null,
     DateTimeOffset? Timestamp = null) : AgentMessage("assistant");

@@ -1,6 +1,6 @@
 using BotNexus.AgentCore.Tools;
 using BotNexus.AgentCore.Types;
-using BotNexus.Providers.Base;
+using BotNexus.Providers.Core.Models;
 
 namespace BotNexus.AgentCore.Configuration;
 
@@ -14,7 +14,7 @@ namespace BotNexus.AgentCore.Configuration;
 /// <param name="Messages">The initial message timeline.</param>
 public record AgentInitialState(
     string? SystemPrompt = null,
-    ModelDefinition? Model = null,
+    LlmModel? Model = null,
     ThinkingLevel? ThinkingLevel = null,
     IReadOnlyList<IAgentTool>? Tools = null,
     IReadOnlyList<AgentMessage>? Messages = null);

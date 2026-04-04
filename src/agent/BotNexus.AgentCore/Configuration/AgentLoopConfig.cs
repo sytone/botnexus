@@ -1,6 +1,6 @@
 using BotNexus.AgentCore.Types;
-using BotNexus.Core.Models;
-using BotNexus.Providers.Base;
+using BotNexus.Providers.Core;
+using BotNexus.Providers.Core.Models;
 
 namespace BotNexus.AgentCore.Configuration;
 
@@ -18,7 +18,7 @@ namespace BotNexus.AgentCore.Configuration;
 /// <param name="AfterToolCall">Optional post-tool-call hook.</param>
 /// <param name="GenerationSettings">The generation settings for model calls.</param>
 public record AgentLoopConfig(
-    ModelDefinition Model,
+    LlmModel Model,
     ConvertToLlmDelegate ConvertToLlm,
     TransformContextDelegate TransformContext,
     GetApiKeyDelegate GetApiKey,
@@ -27,4 +27,4 @@ public record AgentLoopConfig(
     ToolExecutionMode ToolExecutionMode,
     BeforeToolCallDelegate? BeforeToolCall,
     AfterToolCallDelegate? AfterToolCall,
-    GenerationSettings GenerationSettings);
+    SimpleStreamOptions GenerationSettings);

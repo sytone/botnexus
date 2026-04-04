@@ -1,6 +1,6 @@
 using BotNexus.AgentCore.Hooks;
 using BotNexus.AgentCore.Types;
-using BotNexus.Core.Models;
+using BotNexus.Providers.Core.Models;
 
 namespace BotNexus.AgentCore.Configuration;
 
@@ -10,7 +10,7 @@ namespace BotNexus.AgentCore.Configuration;
 /// <param name="messages">The agent messages to convert.</param>
 /// <param name="cancellationToken">The cancellation token.</param>
 /// <returns>A provider-level chat message list.</returns>
-public delegate Task<IReadOnlyList<ChatMessage>> ConvertToLlmDelegate(
+public delegate Task<IReadOnlyList<Message>> ConvertToLlmDelegate(
     IReadOnlyList<AgentMessage> messages,
     CancellationToken cancellationToken);
 

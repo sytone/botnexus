@@ -1,4 +1,4 @@
-using BotNexus.Core.Models;
+using BotNexus.Providers.Core.Models;
 
 namespace BotNexus.AgentCore.Types;
 
@@ -66,7 +66,7 @@ public sealed record MessageUpdateEvent(
     string? ToolCallId,
     string? ToolName,
     string? ArgumentsDelta,
-    FinishReason? FinishReason,
+    StopReason? FinishReason,
     int? InputTokens,
     int? OutputTokens,
     DateTimeOffset Timestamp) : AgentEvent(AgentEventType.MessageUpdate, Timestamp);

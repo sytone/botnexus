@@ -1,6 +1,6 @@
 using BotNexus.AgentCore.Types;
-using BotNexus.Core.Models;
-using BotNexus.Providers.Base;
+using BotNexus.Providers.Core;
+using BotNexus.Providers.Core.Models;
 
 namespace BotNexus.AgentCore.Configuration;
 
@@ -23,7 +23,7 @@ namespace BotNexus.AgentCore.Configuration;
 /// <param name="SessionId">Optional caller-provided session identifier.</param>
 public record AgentOptions(
     AgentInitialState? InitialState,
-    ModelDefinition Model,
+    LlmModel Model,
     ConvertToLlmDelegate ConvertToLlm,
     TransformContextDelegate TransformContext,
     GetApiKeyDelegate GetApiKey,
@@ -32,7 +32,7 @@ public record AgentOptions(
     ToolExecutionMode ToolExecutionMode,
     BeforeToolCallDelegate? BeforeToolCall,
     AfterToolCallDelegate? AfterToolCall,
-    GenerationSettings GenerationSettings,
+    SimpleStreamOptions GenerationSettings,
     QueueMode SteeringMode,
     QueueMode FollowUpMode,
     string? SessionId = null);

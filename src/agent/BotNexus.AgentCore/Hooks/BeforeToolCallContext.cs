@@ -1,5 +1,5 @@
 using BotNexus.AgentCore.Types;
-using BotNexus.Core.Models;
+using BotNexus.Providers.Core.Models;
 
 namespace BotNexus.AgentCore.Hooks;
 
@@ -12,6 +12,6 @@ namespace BotNexus.AgentCore.Hooks;
 /// <param name="AgentContext">The current agent context.</param>
 public record BeforeToolCallContext(
     AssistantAgentMessage AssistantMessage,
-    ToolCallRequest ToolCallRequest,
+    ToolCallContent ToolCallRequest,
     IReadOnlyDictionary<string, object?> ValidatedArgs,
     AgentContext AgentContext);
