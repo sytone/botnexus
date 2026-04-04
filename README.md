@@ -156,7 +156,8 @@ src/
 ├── BotNexus.Api           # OpenAI-compatible REST API
 ├── BotNexus.Agent         # Agent loop, tool registry, MCP
 ├── BotNexus.Session       # JSONL session persistence
-├── BotNexus.Channels.*    # Channel implementations
+├── channels/
+│   └── BotNexus.Channels.*  # Channel implementations (Discord, Slack, Telegram)
 ├── BotNexus.Providers.*   # LLM provider implementations
 ├── BotNexus.Tools.*       # Tool extensions
 └── BotNexus.WebUI         # Real-time monitoring UI
