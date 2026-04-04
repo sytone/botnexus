@@ -3235,3 +3235,1263 @@ Multi-turn tool calling loops infinitely — same tool called repeatedly (iterat
 **Why:** Ceremonies have been consistently skipped, leading to inconsistencies, stale docs, and missed quality gates accumulating across sprints.
 
 
+
+
+---
+
+### 2026-04-03T16:19:02Z: Repeated tool call detection needed
+**By:** Squad (via investigation)
+**What:** AgentLoop needs repeated tool call detection — like nanobot's repeated_external_lookup_error(). When the LLM calls the same tool with the same arguments 2+ times, block it and return an error message to break the cycle. Also lower max iterations from 40 to 20 as a safety valve.
+**Why:** Agent got stuck in a schedule→remove→schedule→list loop for 20+ iterations. The tool calls were valid individually but the LLM couldn't break the cycle.
+
+
+---
+
+# Copilot Responses API Investigation
+
+**Date:** 2026-04-03  
+**Investigator:** Farnsworth (Platform Dev)  
+**Context:** Task to replace Chat Completions API with OpenAI Responses API
+
+## Summary
+
+The GitHub Copilot API **does have** a `/responses` endpoint (not 404), but it **is not functionally available** for any tested models. All attempts return HTTP 400 with error messages indicating models don't support the Responses API.
+
+## Investigation Details
+
+### Endpoint Status
+
+- **Endpoint:** `https://api.githubcopilot.com/responses`
+- **HTTP Method:** POST
+- **Status:** EXISTS (not 404) but REJECTS all models
+
+### Models Tested
+
+1. **gpt-4o** → `400 Bad Request`
+   ```json
+   {
+     "error": {
+       "message": "model gpt-4o is not supported via Responses API.",
+       "code": "unsupported_api_for_model"
+     }
+   }
+   ```
+
+2. **claude-opus-4.6** → `400 Bad Request`
+   ```json
+   {
+     "error": {
+       "message": "model claude-opus-4.6 does not support Responses API.",
+       "code": "unsupported_api_for_model"
+     }
+   }
+   ```
+
+3. **gpt-4o-realtime-preview-2024-12-17** → `400 Bad Request`
+   ```json
+   {
+     "error": {
+       "message": "The requested model is not supported.",
+       "code": "model_not_supported",
+       "param": "model",
+       "type": "invalid_request_error"
+     }
+   }
+   ```
+
+### Request Format Used
+
+```json
+POST https://api.githubcopilot.com/responses
+Headers:
+  Authorization: Bearer <copilot_token>
+  Content-Type: application/json
+  Editor-Version: vscode/1.99.0
+  Editor-Plugin-Version: copilot-chat/0.26.0
+
+Body:
+{
+  "model": "...",
+  "input": [
+    {
+      "role": "user",
+      "content": "Say 'Hello from Responses API' and nothing else."
+    }
+  ],
+  "stream": false
+}
+```
+
+### Available Models Check
+
+Queried `/models` endpoint and found 40 available models including:
+- All Claude models (opus-4.6, sonnet-4.6, sonnet-4.5, etc.)
+- All GPT models (gpt-4o, gpt-5.x, gpt-4.1, etc.)
+- Gemini models
+- Embedding models
+
+**None** of the chat models indicate Responses API support in their capabilities.
+
+## Conclusion
+
+The Responses API endpoint exists in the Copilot proxy but is not yet enabled for any models. This appears to be:
+- Either a feature in development
+- Or requires specific access/permissions not available to BotNexus
+- Or requires a different request format we haven't discovered
+
+## Decision
+
+**Proceed with hardening the Chat Completions API provider** instead:
+1. Enhance SSE streaming to handle tool calls, finish reasons, and usage tokens
+2. Add proper Copilot-specific headers (X-Initiator, Openai-Intent, Copilot-Vision-Request)
+3. Create richer streaming response model (not just text deltas)
+4. Maintain the existing multi-choice merging and dual argument format handling
+
+The Chat Completions API (`/chat/completions`) is fully functional and supports all models. We can revisit Responses API when GitHub enables it.
+
+## Artifacts
+
+Test scripts created:
+- `scripts/test-responses-api.ps1` - Tests /responses endpoint with various models
+- `scripts/list-copilot-models.ps1` - Lists all available Copilot models
+
+Both scripts use proper OAuth flow and token exchange.
+
+
+---
+
+# Provider Response Normalization Layer
+
+**Decision ID:** leela-provider-normalization  
+**Date:** 2026-04-03T16:25:00Z  
+**Author:** Leela (Lead)  
+**Status:** Active  
+**Requested by:** Jon Bullen
+
+## Context
+
+After discovering the Copilot proxy splits Claude responses across multiple choices (content in `choices[0]`, tool_calls in `choices[1]`), we patched it with a merge-choices loop in CopilotProvider. This works but is fragile and provider-specific logic was starting to leak.
+
+The Pi agent architecture (badlogic/pi-mono, `@mariozechner/pi-ai`) takes a better approach:
+- Defines a canonical `AssistantMessage` type with normalized content
+- Each provider has its own streaming parser that produces `AssistantMessageEvent` items
+- The agent loop only works with these normalized types
+- Provider quirks (split choices, different argument formats, different finish reasons) are handled INSIDE each provider
+
+Our existing architecture already followed this pattern with `LlmResponse`, but the normalization contract was implicit. This decision formalizes it.
+
+## Decision
+
+**All ILlmProvider implementations MUST normalize their raw API responses into the canonical `LlmResponse` format.**
+
+The agent loop and other consumers work exclusively with `LlmResponse` and should never see provider-specific response structures.
+
+### Normalization Contract
+
+Each provider is responsible for:
+
+1. **Parsing raw API responses** (JSON, SDK objects, etc.) into LlmResponse
+2. **Merging multi-choice/multi-block responses** if the API returns them
+3. **Normalizing tool call argument formats:**
+   - OpenAI: JSON string → deserialize to Dictionary
+   - Claude via Copilot: JSON object OR JSON string → deserialize to Dictionary
+   - Anthropic: content blocks → (TODO: not yet implemented)
+4. **Mapping provider-specific finish reasons** to the canonical FinishReason enum:
+   - OpenAI: `ChatFinishReason` enum → FinishReason
+   - Copilot: strings ("stop", "tool_calls", "length") → FinishReason
+   - Anthropic: strings ("end_turn", "max_tokens") → FinishReason
+5. **Normalizing token count field names:**
+   - OpenAI: InputTokenCount/OutputTokenCount → InputTokens/OutputTokens
+   - Copilot: prompt_tokens/completion_tokens → InputTokens/OutputTokens
+   - Anthropic: input_tokens/output_tokens → InputTokens/OutputTokens
+6. **Handling missing/null fields gracefully** (empty strings, null, etc.)
+
+### Implementation
+
+The normalization layer is documented in:
+
+1. **`LlmResponse` record** (`Core/Models/LlmResponse.cs`)
+   - XML documentation explains it's the canonical format
+   - Lists all provider normalization responsibilities
+   - Documents each field's purpose and nullability
+
+2. **`ILlmProvider` interface** (`Core/Abstractions/ILlmProvider.cs`)
+   - `ChatAsync` method documents normalization requirement
+   - Explains providers handle quirks internally
+
+3. **Each provider's `ChatCoreAsync` method:**
+   - **CopilotProvider:** Documents multi-choice merging, dual argument formats, finish reason mapping, token count mapping
+   - **OpenAiProvider:** Documents content extraction, SDK enum mapping, token count direct mapping
+   - **AnthropicProvider:** Documents content block extraction, stop reason mapping, token count mapping
+
+Inline `// NORMALIZATION:` comments mark each normalization point in the code.
+
+## Provider-Specific Quirks Handled
+
+### CopilotProvider
+- **Multi-choice responses:** Copilot proxy may split Claude responses across multiple choices. We merge by taking first non-empty content, first tool_calls array, first finish_reason.
+- **Dual argument formats:** OpenAI models return arguments as JSON string, Claude returns as JSON object. ParseToolCalls detects ValueKind and handles both (fix from commit dd0343a).
+- **Field naming:** Uses OpenAI-style "prompt_tokens"/"completion_tokens"
+
+### OpenAiProvider
+- **Single content block:** SDK returns Content[] array, we take first item's Text
+- **Standard format:** Arguments always JSON string
+- **SDK abstraction:** Benefits from strongly-typed SDK objects vs raw JSON
+
+### AnthropicProvider
+- **Content blocks:** Extract first block's text field
+- **Snake case:** API uses "input_tokens", "output_tokens", "stop_reason"
+- **No tool calls:** Tool use not yet implemented (P1 priority)
+
+## Rationale
+
+**Why formalize this now?**
+1. The Copilot multi-choice bug revealed that provider-specific parsing logic was becoming complex
+2. Without explicit documentation, future contributors might leak provider awareness into AgentLoop
+3. The pattern already existed but was implicit - making it explicit prevents regression
+
+**Why this approach vs alternatives?**
+- **Alternative 1: Provider-agnostic response parser** — Would require understanding all provider formats in one place, harder to extend
+- **Alternative 2: Agent loop handles variations** — Violates separation of concerns, makes agent logic brittle
+- **Chosen: Provider-owned normalization** — Each provider is expert on its own API, agent loop stays simple
+
+**Benefits:**
+- Clear ownership: Provider bugs stay in provider code
+- Extensibility: New providers know exactly what to implement
+- Maintainability: Provider changes don't ripple to agent logic
+- Testability: Can test providers and agent loop independently
+
+## Testing
+
+- ✅ Build: 0 errors, 0 warnings
+- ✅ Tests: 540 passing (23 E2E, 11 deployment, 396 unit, 110 integration)
+- ✅ Backward compatible: No behavioral changes
+- ✅ AgentLoop verified clean: No provider-specific logic
+
+## Future Work
+
+1. **Anthropic tool call normalization:** Implement tool use content block parsing (P1)
+2. **Streaming normalization:** Consider if streaming responses need similar contract (currently provider-specific)
+3. **Response metadata:** Consider normalizing model name, request ID, rate limit headers if needed
+
+## References
+
+- **Pi architecture:** `badlogic/pi-mono`, `@mariozechner/pi-ai` package
+- **Copilot multi-choice fix:** Commit dd0343a (2026-04-03)
+- **Architecture review:** `.squad/agents/leela/history.md` (2026-04-01 initial review)
+
+## Related Decisions
+
+- Build validation before commit (2026-04-03) — enforces that normalization changes don't break builds
+- Zero tolerance for build warnings — helps catch null-handling issues in normalization
+
+## Enforcement
+
+This is a **mandatory architectural pattern** for all ILlmProvider implementations:
+
+1. **Code reviews:** Verify new providers implement normalization correctly
+2. **Documentation:** Providers MUST document their normalization logic with `// NORMALIZATION:` comments
+3. **Interface contract:** `ILlmProvider.ChatAsync` documentation specifies normalization requirement
+4. **AgentLoop isolation:** Agent loop should NEVER reference provider-specific types or quirks
+
+**Violation:** Adding provider-specific response handling to AgentLoop or other consumers is a critical architectural violation.
+
+---
+
+**Commit:** d31923b  
+**Files changed:** 5 files, 214 insertions(+), 9 deletions(-)
+
+
+---
+
+# Responses API Migration Sprint Plan
+**Design Review by:** Leela (Lead/Architect)  
+**Date:** 2026-04-04  
+**Requested by:** Jon Bullen  
+**Status:** Awaiting Approval
+
+---
+
+## Executive Summary
+
+This sprint migrates BotNexus from the OpenAI Chat Completions API to the **OpenAI Responses API** (GitHub Copilot's production streaming model). The Responses API eliminates parsing ambiguity through event-driven streaming—no split choices, no dual argument formats, no special-case normalization.
+
+**Key Changes:**
+1. New `CopilotResponsesProvider` using event-driven streaming
+2. Enhanced repeated tool call detection (nanobot-style signature tracking)
+3. Lower max iterations: 40 → 20
+4. Keep Chat Completions as fallback for OpenAI/Anthropic
+
+**Timeline:** 3-5 days (parallel track execution)  
+**Risk:** Medium (new API, streaming complexity)  
+**Reward:** High (eliminates quirks, production-proven architecture)
+
+---
+
+## Design Review Findings
+
+### 1. Requirements & Scope
+
+#### In Scope
+- ✅ New `CopilotResponsesProvider` for GitHub Copilot
+- ✅ Event-driven streaming pipeline (`response.output_item.added`, etc.)
+- ✅ Incremental JSON parsing for tool call arguments (`parseStreamingJson`)
+- ✅ Copilot-specific headers (`X-Initiator`, `Openai-Intent`, `Copilot-Vision-Request`)
+- ✅ Repeated tool call detection (track `tool_name + args` signature hash)
+- ✅ Lower max iterations from 40 to 20
+- ✅ Updated WebSocket message types for new streaming events
+- ✅ Comprehensive tests for new provider and streaming
+
+#### Out of Scope (Future Sprints)
+- ❌ Migrate OpenAI provider to Responses API (keep Chat Completions for now)
+- ❌ Migrate Anthropic to Responses API (doesn't support it yet)
+- ❌ Reasoning/thinking block streaming (Phase 2)
+- ❌ Prompt caching (Phase 2)
+
+#### Migration Strategy
+**Incremental with Fallback:**
+- Keep existing `CopilotProvider` (Chat Completions) as-is
+- Add new `CopilotResponsesProvider` alongside
+- Configuration flag: `"UseResponsesApi": true` in agent config
+- Gateway routes based on flag: `UseResponsesApi ? CopilotResponsesProvider : CopilotProvider`
+- Once stable, deprecate old provider
+
+---
+
+### 2. Architecture Design
+
+#### 2.1 Provider Layer Changes
+
+**New Provider:** `BotNexus.Providers.Copilot.CopilotResponsesProvider`
+
+```csharp
+public class CopilotResponsesProvider : LlmProviderBase, IOAuthProvider
+{
+    // Reuse OAuth from existing CopilotProvider
+    private readonly CopilotOAuthService _oauthService;
+    
+    // New HTTP client for Responses API endpoint
+    private readonly HttpClient _httpClient;
+    
+    protected override async Task<LlmResponse> ChatCoreAsync(
+        ChatRequest request, 
+        CancellationToken cancellationToken)
+    {
+        // POST to /v1/responses endpoint
+        // Parse server-sent events (SSE)
+        // Build LlmResponse from event stream
+    }
+    
+    protected override async IAsyncEnumerable<string> ChatStreamCoreAsync(
+        ChatRequest request,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        // Event-driven streaming:
+        // - response.output_text.delta → yield text delta
+        // - response.function_call_arguments.delta → accumulate JSON
+        // - response.output_item.done → finalize tool call
+    }
+}
+```
+
+**Key Differences from Chat Completions:**
+
+| Feature | Chat Completions | Responses API |
+|---------|-----------------|---------------|
+| Endpoint | `/v1/chat/completions` | `/v1/responses` |
+| Request Body | `messages[]` with roles | `ResponseInput[]` (unified structure) |
+| Streaming Format | Chunks with `choices[].delta` | SSE events with `type` field |
+| Tool Calls | `message.tool_calls[]` | `item.type === "function_call"` |
+| Tool Call ID | Single `id` field | `call_id + "|" + id` |
+| Arguments Format | JSON string OR object (dual) | Always streamed as deltas, parsed incrementally |
+| Multi-choice Split | YES (Claude quirk) | NO (one event stream) |
+
+#### 2.2 Agent Loop Changes
+
+**Modified:** `BotNexus.Agent.AgentLoop.cs`
+
+**Before (Lines 55, 120-331):**
+```csharp
+private readonly int _maxToolIterations = 40;
+
+for (int iteration = 0; iteration < _maxToolIterations; iteration++)
+{
+    // No repeated tool call detection
+    // Just execute all tools and continue
+}
+```
+
+**After:**
+```csharp
+private readonly int _maxToolIterations = 20;  // REDUCED from 40
+private readonly Dictionary<string, int> _toolCallSignatures = new();  // Track signatures
+
+for (int iteration = 0; iteration < _maxToolIterations; iteration++)
+{
+    // Execute tools
+    foreach (var toolCall in llmResponse.ToolCalls!)
+    {
+        // BEFORE execution: Check for repeated calls
+        var signature = ComputeToolCallSignature(toolCall);
+        
+        if (_toolCallSignatures.TryGetValue(signature, out var count))
+        {
+            if (count >= 2)
+            {
+                // BLOCK: Same tool with same args called 3+ times
+                session.AddEntry(new SessionEntry(
+                    MessageRole.Tool,
+                    $"Error: Tool '{toolCall.ToolName}' has been called {count + 1} times with identical arguments. This indicates a loop. Please try a different approach.",
+                    ToolName: toolCall.ToolName,
+                    ToolCallId: toolCall.Id));
+                continue;  // Skip execution
+            }
+            _toolCallSignatures[signature] = count + 1;
+        }
+        else
+        {
+            _toolCallSignatures[signature] = 1;
+        }
+        
+        // AFTER check: Execute tool normally
+        var toolResult = await _toolRegistry.ExecuteAsync(toolCall, cancellationToken);
+        session.AddEntry(new SessionEntry(MessageRole.Tool, toolResult, ...));
+    }
+}
+
+private string ComputeToolCallSignature(ToolCallRequest toolCall)
+{
+    // Hash: tool_name + JSON-serialized args (normalized, sorted keys)
+    var argsJson = JsonSerializer.Serialize(toolCall.Arguments, 
+        new JsonSerializerOptions { WriteIndented = false, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull });
+    return $"{toolCall.ToolName}::{argsJson}";
+}
+```
+
+**Why 40 → 20?**
+- Pi-mono defaults to 10-15 iterations
+- 40 is excessive; most valid agentic tasks complete in <10 iterations
+- With repeated call detection, infinite loops caught earlier
+- Lower iteration count = faster failure detection, lower cost
+
+#### 2.3 Streaming Pipeline Changes
+
+**Modified:** `BotNexus.Agent.AgentLoop.cs` (Lines 182-204)
+
+**Current Streaming (Chat Completions):**
+```csharp
+await foreach (var delta in provider.ChatStreamAsync(request, cancellationToken))
+{
+    contentBuilder.Append(delta);
+    await onDelta!(delta).ConfigureAwait(false);
+}
+llmResponse = new LlmResponse(contentBuilder.ToString(), FinishReason.Stop, null);
+```
+
+**New Streaming (Responses API):**
+```csharp
+// Responses API streaming yields structured events, not just text
+// Provider internally handles event types:
+// - response.output_text.delta → yield text to caller
+// - response.function_call_arguments.delta → accumulate internally
+// When stream completes, provider returns full LlmResponse with:
+//   - Accumulated text content
+//   - Parsed tool calls (with complete arguments)
+//   - Finish reason from response.completed event
+
+// NO CHANGE needed in AgentLoop—provider abstracts event handling
+await foreach (var delta in provider.ChatStreamAsync(request, cancellationToken))
+{
+    contentBuilder.Append(delta);
+    await onDelta!(delta).ConfigureAwait(false);
+}
+// Provider ensures LlmResponse includes tool calls even when streaming
+llmResponse = await provider.GetFinalResponseAsync();  // NEW method
+```
+
+**Gateway Changes:**
+- **No changes required** to `GatewayWebSocketHandler` or `WebSocketChannel`
+- Streaming deltas flow through same `onDelta` callback
+- WebSocket messages stay JSON: `{"type":"delta","content":"text"}`
+
+**WebUI Changes (Fry):**
+- **Minimal changes** — existing delta handling works as-is
+- Optional: Add new message types for tool call streaming visibility
+  - `{"type":"toolcall_start","name":"search_web"}`
+  - `{"type":"toolcall_progress","delta":"partial JSON"}`
+  - `{"type":"toolcall_end","name":"search_web"}`
+
+#### 2.4 What Stays the Same
+
+✅ **ILlmProvider interface** — no breaking changes  
+✅ **LlmResponse model** — same structure (Content, ToolCalls, FinishReason)  
+✅ **ToolCallRequest model** — same (Id, ToolName, Arguments)  
+✅ **SessionEntry model** — no changes  
+✅ **ToolRegistry** — no changes  
+✅ **WebSocket protocol** — backward compatible  
+✅ **OpenAI provider** — keeps Chat Completions API  
+✅ **Anthropic provider** — keeps Messages API
+
+---
+
+### 3. Component Contracts & Interfaces
+
+#### 3.1 New: IResponsesStreamParser
+
+**Purpose:** Parse server-sent events (SSE) from Responses API
+
+```csharp
+public interface IResponsesStreamParser
+{
+    /// <summary>Parse SSE stream into typed events</summary>
+    IAsyncEnumerable<ResponseStreamEvent> ParseEventsAsync(
+        Stream sseStream, 
+        CancellationToken cancellationToken);
+}
+
+public abstract record ResponseStreamEvent(string Type);
+
+public record ResponseCreatedEvent(string ResponseId) : ResponseStreamEvent("response.created");
+
+public record OutputItemAddedEvent(string ItemId, string ItemType, string? Name) 
+    : ResponseStreamEvent("response.output_item.added");
+
+public record OutputTextDeltaEvent(int OutputIndex, string Delta) 
+    : ResponseStreamEvent("response.output_text.delta");
+
+public record FunctionCallArgumentsDeltaEvent(int OutputIndex, string Delta)
+    : ResponseStreamEvent("response.function_call_arguments.delta");
+
+public record FunctionCallArgumentsDoneEvent(int OutputIndex, string Arguments)
+    : ResponseStreamEvent("response.function_call_arguments.done");
+
+public record OutputItemDoneEvent(int OutputIndex, OutputItem Item)
+    : ResponseStreamEvent("response.output_item.done");
+
+public record ResponseCompletedEvent(string FinishReason, Usage Usage)
+    : ResponseStreamEvent("response.completed");
+
+public record ResponseFailedEvent(Error Error)
+    : ResponseStreamEvent("response.failed");
+```
+
+#### 3.2 New: StreamingJsonParser
+
+**Purpose:** Parse incomplete JSON during streaming (replicates Pi's `parseStreamingJson`)
+
+```csharp
+public static class StreamingJsonParser
+{
+    /// <summary>
+    /// Parse potentially incomplete JSON string.
+    /// Returns empty dictionary on failure.
+    /// </summary>
+    public static IReadOnlyDictionary<string, object?> Parse(string partialJson)
+    {
+        if (string.IsNullOrWhiteSpace(partialJson))
+            return new Dictionary<string, object?>();
+        
+        try
+        {
+            // Fast path: complete JSON
+            return JsonSerializer.Deserialize<Dictionary<string, object?>>(partialJson) 
+                ?? new Dictionary<string, object?>();
+        }
+        catch (JsonException)
+        {
+            // Partial JSON: use lenient parser
+            // Options: partial-json-parser (npm), custom state machine, or best-effort regex
+            return ParsePartialJson(partialJson);
+        }
+    }
+    
+    private static IReadOnlyDictionary<string, object?> ParsePartialJson(string json)
+    {
+        // Simplified: extract complete key-value pairs, ignore incomplete
+        // Production: use partial-json library or state machine parser
+        // Fallback: return empty dict (safe, arguments accumulate on next delta)
+        return new Dictionary<string, object?>();
+    }
+}
+```
+
+#### 3.3 Modified: ILlmProvider
+
+**No breaking changes**, but add optional method for streaming finalization:
+
+```csharp
+public interface ILlmProvider
+{
+    // Existing methods unchanged
+    Task<LlmResponse> ChatAsync(ChatRequest request, CancellationToken cancellationToken = default);
+    IAsyncEnumerable<string> ChatStreamAsync(ChatRequest request, CancellationToken cancellationToken = default);
+    
+    // NEW: Optional finalization method for streaming
+    // Returns full response after stream completes (includes tool calls)
+    // Default implementation returns null (providers override if needed)
+    Task<LlmResponse?> GetStreamingFinalResponseAsync() => Task.FromResult<LlmResponse?>(null);
+}
+```
+
+**Responses API providers override `GetStreamingFinalResponseAsync` to return accumulated response with tool calls.**
+
+---
+
+### 4. Risks & Mitigation
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| **SSE parsing bugs** | Medium | High | Reuse Pi's proven event parser patterns; extensive unit tests |
+| **Incomplete JSON parsing** | Medium | Medium | Use well-tested partial-json library; fallback to empty dict |
+| **Tool call ID format mismatch** | Low | Medium | Document `call_id\|id` format; add validation tests |
+| **Copilot headers incorrect** | Medium | High | Copy exact header logic from Pi; test with real Copilot API |
+| **Streaming breaks WebUI** | Low | Medium | Keep backward-compatible delta format; add feature flag |
+| **Repeated tool detection false positives** | Medium | Low | Use normalized JSON for signature (sorted keys); log all blocks |
+| **Max iterations too aggressive (20)** | Low | Medium | Make configurable; monitor metrics; can raise if needed |
+| **Chat Completions fallback fails** | Low | High | Keep existing providers untouched; separate registration |
+
+**Testing Strategy:**
+1. **Unit tests:** Event parsing, JSON parsing, signature computation
+2. **Integration tests:** Full request/response cycle with mock SSE streams
+3. **E2E tests:** Real Copilot API calls (requires auth)
+4. **Regression tests:** Ensure Chat Completions providers still work
+
+---
+
+### 5. Sprint Plan & Team Assignments
+
+#### Timeline: 3-5 Days (Parallel Execution)
+
+```
+Day 1-2: Core Implementation (Farnsworth + Bender)
+Day 2-3: Integration & Testing (Hermes + Bender)
+Day 3-4: WebUI & Docs (Fry + Kif)
+Day 4-5: Review & Deployment (Nibbler + Leela)
+```
+
+---
+
+### Track 1: Provider Layer (Farnsworth)
+
+**Owner:** Farnsworth  
+**Priority:** P0 (Blocking)  
+**Estimated Time:** 2 days
+
+#### Tasks
+
+**F1. Create CopilotResponsesProvider** ⏱️ 6-8 hours
+- [ ] Create `BotNexus.Providers.Copilot/CopilotResponsesProvider.cs`
+- [ ] Implement OAuth integration (reuse `CopilotOAuthService` from existing provider)
+- [ ] Implement HTTP client for `/v1/responses` endpoint
+- [ ] Build request body converter: `ChatRequest → ResponseInput[]`
+- [ ] Parse SSE stream into `ResponseStreamEvent` objects
+
+**Dependencies:**
+- Existing `CopilotOAuthService` (reuse)
+- New `IResponsesStreamParser` (create)
+
+**Acceptance Criteria:**
+- ✅ Provider successfully authenticates with GitHub Copilot OAuth
+- ✅ POST to `/v1/responses` returns SSE stream
+- ✅ Events parsed into typed `ResponseStreamEvent` objects
+
+---
+
+**F2. Implement Event Stream Parser** ⏱️ 4-6 hours
+- [ ] Create `ResponsesStreamParser : IResponsesStreamParser`
+- [ ] Parse SSE format: `data: {...}\n\n` lines
+- [ ] Deserialize JSON into event types (discriminated by `type` field)
+- [ ] Handle error events (`response.failed`)
+
+**Reference:** Pi's `packages/ai/src/utils/event-stream.ts`
+
+**Acceptance Criteria:**
+- ✅ Parses all event types: `response.created`, `output_item.added`, `output_text.delta`, `function_call_arguments.delta`, etc.
+- ✅ Gracefully handles malformed events (log and skip)
+- ✅ Yields events as `IAsyncEnumerable<ResponseStreamEvent>`
+
+---
+
+**F3. Implement Streaming JSON Parser** ⏱️ 3-4 hours
+- [ ] Create `StreamingJsonParser` static class
+- [ ] Implement fast path: `JsonSerializer.Deserialize` for complete JSON
+- [ ] Implement fallback: partial JSON parser (extract complete key-value pairs)
+- [ ] Return empty dict on failure (safe default)
+
+**Reference:** Pi's `packages/ai/src/utils/json-parse.ts` (uses `partial-json` npm package)
+
+**Options:**
+1. Port `partial-json` algorithm to C#
+2. Use best-effort regex extraction
+3. Use JsonDocument with lenient parsing
+
+**Acceptance Criteria:**
+- ✅ Parses complete JSON correctly
+- ✅ Parses incomplete JSON (e.g., `{"name":"search","args":{"q"`) without throwing
+- ✅ Never throws exceptions (always returns valid dict)
+
+---
+
+**F4. Build LlmResponse from Event Stream** ⏱️ 6-8 hours
+- [ ] Implement state machine in `CopilotResponsesProvider.ChatCoreAsync`:
+  - Track current output item (text block vs function call)
+  - Accumulate text deltas into content string
+  - Accumulate function call argument deltas into partial JSON
+  - Parse arguments with `StreamingJsonParser` on each delta
+  - Finalize tool calls on `output_item.done` event
+  - Extract finish reason and usage from `response.completed`
+- [ ] Map to canonical `LlmResponse` (Content, ToolCalls, FinishReason, Tokens)
+
+**Reference:** Pi's `processResponsesStream` in `openai-responses-shared.ts` (lines ~170-400)
+
+**Acceptance Criteria:**
+- ✅ Text responses return `LlmResponse` with Content populated
+- ✅ Tool call responses return `LlmResponse` with ToolCalls[] populated
+- ✅ Tool call IDs formatted as `call_id|id`
+- ✅ Arguments parsed correctly as `Dictionary<string, object?>`
+
+---
+
+**F5. Implement Copilot Headers** ⏱️ 2-3 hours
+- [ ] Create `CopilotHeadersBuilder` utility class
+- [ ] Implement header logic:
+  - `X-Initiator`: "user" if last message is user role, else "agent"
+  - `Openai-Intent`: "conversation-edits"
+  - `Copilot-Vision-Request`: "true" if any message has images
+- [ ] Detect images in messages (check for base64 data or image URLs)
+
+**Reference:** Pi's `packages/ai/src/providers/github-copilot-headers.ts`
+
+**Acceptance Criteria:**
+- ✅ `X-Initiator` set correctly based on last message role
+- ✅ `Openai-Intent` always "conversation-edits"
+- ✅ `Copilot-Vision-Request` set when images present
+
+---
+
+**F6. Add DI Registration** ⏱️ 1-2 hours
+- [ ] Create `BotNexus.Providers.Copilot/CopilotResponsesProviderExtensions.cs`
+- [ ] Add `AddCopilotResponsesProvider(this IServiceCollection services)` method
+- [ ] Register `CopilotResponsesProvider` as `ILlmProvider`
+- [ ] Register `IResponsesStreamParser` implementation
+
+**Acceptance Criteria:**
+- ✅ DI registration matches pattern from `OpenAIProviderExtensions.cs`
+- ✅ Provider resolves correctly in Gateway
+
+---
+
+### Track 2: Agent Loop Enhancements (Bender)
+
+**Owner:** Bender  
+**Priority:** P0 (Blocking)  
+**Estimated Time:** 1.5 days
+
+#### Tasks
+
+**B1. Implement Repeated Tool Call Detection** ⏱️ 4-6 hours
+- [ ] Add `_toolCallSignatures` dictionary to `AgentLoop` (tracks signature → count)
+- [ ] Implement `ComputeToolCallSignature(ToolCallRequest)`:
+  - Serialize arguments to JSON (sorted keys, no whitespace)
+  - Hash: `"{toolName}::{argsJson}"`
+- [ ] Before each tool execution:
+  - Check if signature exists in dict
+  - If count >= 2, add error to session and skip execution
+  - Else increment count and continue
+- [ ] Clear `_toolCallSignatures` at start of `ProcessAsync` (per-conversation tracking)
+
+**Reference:** Nanobot pattern (mentioned in context)
+
+**Acceptance Criteria:**
+- ✅ Same tool with same args called 3+ times is blocked
+- ✅ Error message added to session: "Tool X called N times with identical arguments. Loop detected."
+- ✅ Different tools or different args are NOT blocked
+- ✅ Signature computation handles null/missing arguments correctly
+
+---
+
+**B2. Lower Max Iterations to 20** ⏱️ 30 mins
+- [ ] Update `AgentLoop` constructor: `_maxToolIterations = 20` (was 40)
+- [ ] Update `GenerationSettings.MaxToolIterations` default: 20
+- [ ] Update tests: `GenerationSettingsNullableTests.cs` (expect 20, not 40)
+
+**Acceptance Criteria:**
+- ✅ Default max iterations is 20
+- ✅ Can still be overridden via `GenerationSettings.MaxToolIterations`
+- ✅ Tests pass
+
+---
+
+**B3. Add Streaming Finalization Support** ⏱️ 2-3 hours
+- [ ] In `AgentLoop.ProcessAsync`, after streaming completes:
+  - Call `provider.GetStreamingFinalResponseAsync()` if available
+  - If returns non-null, use that `LlmResponse` (includes tool calls)
+  - Else use constructed response from deltas (current behavior)
+
+**Why Needed:**
+- Responses API accumulates tool calls internally during streaming
+- `ChatStreamAsync` yields text deltas only
+- Final response with tool calls available via `GetStreamingFinalResponseAsync`
+
+**Acceptance Criteria:**
+- ✅ Streaming with Responses API returns tool calls
+- ✅ Streaming with Chat Completions API still works (returns null, uses current behavior)
+
+---
+
+**B4. Add Configuration Flag for Responses API** ⏱️ 1-2 hours
+- [ ] Add to `AgentConfiguration`:
+  ```csharp
+  public bool UseResponsesApi { get; set; } = false;
+  ```
+- [ ] Update `appsettings.json` schema documentation
+- [ ] In `AgentLoop`, resolve provider based on flag:
+  ```csharp
+  var providerName = effectiveModel.StartsWith("gpt-") && config.UseResponsesApi
+      ? "copilot-responses"
+      : "copilot";
+  var provider = ResolveProvider(providerName);
+  ```
+
+**Acceptance Criteria:**
+- ✅ `UseResponsesApi: true` → routes to `CopilotResponsesProvider`
+- ✅ `UseResponsesApi: false` → routes to `CopilotProvider` (default)
+- ✅ Flag documented in configuration guide
+
+---
+
+### Track 3: Testing (Hermes)
+
+**Owner:** Hermes  
+**Priority:** P0 (Blocking)  
+**Estimated Time:** 2 days
+
+#### Tasks
+
+**H1. Unit Tests: Event Stream Parser** ⏱️ 4-5 hours
+- [ ] Create `ResponsesStreamParserTests.cs`
+- [ ] Test cases:
+  - Valid SSE stream with all event types
+  - Malformed event (invalid JSON) → skip and continue
+  - Empty stream → no events
+  - Partial event at end of stream → buffered and parsed
+
+**Acceptance Criteria:**
+- ✅ All event types parsed correctly
+- ✅ Error handling verified (no exceptions on malformed input)
+
+---
+
+**H2. Unit Tests: Streaming JSON Parser** ⏱️ 3-4 hours
+- [ ] Create `StreamingJsonParserTests.cs`
+- [ ] Test cases:
+  - Complete JSON → parsed correctly
+  - Incomplete JSON: `{"name":"search"` → returns partial or empty dict
+  - Invalid JSON: `{{{` → returns empty dict
+  - Empty string → returns empty dict
+  - Null input → returns empty dict
+
+**Acceptance Criteria:**
+- ✅ Never throws exceptions
+- ✅ Always returns valid `IReadOnlyDictionary<string, object?>`
+
+---
+
+**H3. Unit Tests: Tool Call Signature Computation** ⏱️ 2-3 hours
+- [ ] Create `AgentLoopToolSignatureTests.cs`
+- [ ] Test cases:
+  - Same tool, same args → same signature
+  - Same tool, different args → different signature
+  - Different tool, same args → different signature
+  - Null arguments → handled
+  - Argument order variation → normalized (sorted keys)
+
+**Acceptance Criteria:**
+- ✅ Signature computation is deterministic
+- ✅ Handles edge cases (null, empty, large objects)
+
+---
+
+**H4. Unit Tests: Repeated Tool Call Detection** ⏱️ 3-4 hours
+- [ ] Create `AgentLoopRepeatedToolCallTests.cs`
+- [ ] Test cases:
+  - Call 1: Execute normally
+  - Call 2: Execute normally
+  - Call 3: Blocked with error
+  - Different args: Execute normally
+  - Reset on new conversation
+
+**Acceptance Criteria:**
+- ✅ Detection triggers on 3rd identical call
+- ✅ Error message matches expected format
+- ✅ Non-identical calls not blocked
+
+---
+
+**H5. Integration Tests: CopilotResponsesProvider** ⏱️ 6-8 hours
+- [ ] Create `CopilotResponsesProviderTests.cs`
+- [ ] Test cases (with mock SSE stream):
+  - Text-only response → `LlmResponse.Content` populated, no tool calls
+  - Tool call response → `LlmResponse.ToolCalls` populated
+  - Multi-tool response → all tools parsed
+  - Streaming response → deltas yielded, final response correct
+  - Error event → throws appropriate exception
+
+**Acceptance Criteria:**
+- ✅ All response types handled correctly
+- ✅ Tool calls parsed with correct ID format (`call_id|id`)
+- ✅ Streaming yields deltas and finalizes correctly
+
+---
+
+**H6. E2E Tests: Full Agent Loop with Responses API** ⏱️ 4-6 hours
+- [ ] Create `AgentLoopResponsesApiE2ETests.cs`
+- [ ] Test cases (requires Copilot API access or mock):
+  - Simple query → text response
+  - Query requiring tool → tool called and result processed
+  - Multi-turn conversation → context preserved
+  - Repeated tool call → detection triggers
+
+**Acceptance Criteria:**
+- ✅ Full agent loop works end-to-end
+- ✅ Tool execution integrates correctly
+- ✅ Repeated call detection prevents loops
+
+---
+
+### Track 4: WebUI Updates (Fry)
+
+**Owner:** Fry  
+**Priority:** P1 (Nice to Have)  
+**Estimated Time:** 1 day
+
+#### Tasks
+
+**F1. Add Tool Call Streaming Message Types** ⏱️ 2-3 hours
+- [ ] Update WebSocket message DTOs:
+  ```typescript
+  type WSMessage = 
+    | { type: "delta", content: string }
+    | { type: "toolcall_start", name: string, id: string }
+    | { type: "toolcall_progress", delta: string }
+    | { type: "toolcall_end", name: string, result: string }
+    | { type: "done" }
+    | { type: "error", message: string };
+  ```
+- [ ] Update Gateway to emit new message types (optional, can defer)
+
+**Acceptance Criteria:**
+- ✅ New message types defined in TypeScript
+- ✅ Backward compatible with existing `delta` messages
+
+---
+
+**F2. Add UI Indicators for Tool Calls** ⏱️ 4-6 hours
+- [ ] When `toolcall_start` received:
+  - Show badge: "🔧 Calling: search_web"
+- [ ] When `toolcall_end` received:
+  - Show result: "✅ search_web completed"
+- [ ] CSS styling for tool call indicators
+
+**Acceptance Criteria:**
+- ✅ Tool calls visible to user during execution
+- ✅ Visual feedback improves transparency
+
+---
+
+### Track 5: Documentation (Kif)
+
+**Owner:** Kif  
+**Priority:** P1 (Required before merge)  
+**Estimated Time:** 1 day
+
+#### Tasks
+
+**K1. API Migration Guide** ⏱️ 3-4 hours
+- [ ] Create `docs/providers/responses-api-migration.md`
+- [ ] Document:
+  - What changed (Chat Completions → Responses API)
+  - Why (eliminates quirks, production-proven)
+  - How to enable (`UseResponsesApi: true`)
+  - Event types and streaming behavior
+  - Tool call ID format (`call_id|id`)
+  - Migration checklist
+
+**Acceptance Criteria:**
+- ✅ Engineers understand why and how to migrate
+- ✅ Configuration steps clear
+
+---
+
+**K2. Architecture Documentation Updates** ⏱️ 2-3 hours
+- [ ] Update `docs/architecture/providers.md`:
+  - Add section on Responses API
+  - Document event-driven streaming model
+  - Update provider comparison table
+- [ ] Update `docs/architecture/agent-loop.md`:
+  - Document repeated tool call detection
+  - Document max iterations change (20)
+
+**Acceptance Criteria:**
+- ✅ Architecture docs reflect new design
+- ✅ Team understands event-driven model
+
+---
+
+**K3. Configuration Reference** ⏱️ 1-2 hours
+- [ ] Update `docs/configuration/agent-configuration.md`:
+  - Add `UseResponsesApi` flag documentation
+  - Add example `appsettings.json`
+
+**Acceptance Criteria:**
+- ✅ Configuration reference complete
+- ✅ Examples provided
+
+---
+
+### Track 6: Post-Migration Review (Nibbler)
+
+**Owner:** Nibbler  
+**Priority:** P2 (After merge)  
+**Estimated Time:** 0.5 days
+
+#### Tasks
+
+**N1. Cross-Check Consistency** ⏱️ 3-4 hours
+- [ ] Verify docs ↔ code alignment
+- [ ] Check for stale references to old implementation
+- [ ] Ensure tests cover all new code paths
+- [ ] Review error messages for clarity
+
+**Acceptance Criteria:**
+- ✅ No inconsistencies between docs and code
+- ✅ All new features tested
+
+---
+
+**N2. Performance Metrics Review** ⏱️ 2-3 hours
+- [ ] Compare latency: Chat Completions vs Responses API
+- [ ] Verify token counts match
+- [ ] Check for memory leaks (streaming state cleanup)
+
+**Acceptance Criteria:**
+- ✅ Performance comparable or better
+- ✅ No resource leaks detected
+
+---
+
+### Dependencies & Execution Order
+
+```mermaid
+graph TD
+    F1[F1: CopilotResponsesProvider] --> F2[F2: Event Stream Parser]
+    F2 --> F3[F3: Streaming JSON Parser]
+    F3 --> F4[F4: Build LlmResponse]
+    F4 --> F5[F5: Copilot Headers]
+    F5 --> F6[F6: DI Registration]
+    
+    B1[B1: Repeated Tool Detection] --> B4[B4: Config Flag]
+    B2[B2: Lower Max Iterations] --> B4
+    B3[B3: Streaming Finalization] --> B4
+    
+    F6 --> H5[H5: Integration Tests]
+    B4 --> H6[H6: E2E Tests]
+    
+    H5 --> K1[K1: Migration Guide]
+    H6 --> K1
+    
+    K1 --> N1[N1: Consistency Review]
+```
+
+**Parallel Tracks:**
+- Track 1 (Farnsworth) + Track 2 (Bender) can run in parallel until integration
+- Track 3 (Hermes) starts after F3 & B1 complete
+- Track 4 (Fry) can run anytime (UI is optional)
+- Track 5 (Kif) starts when Track 1 & 2 are 75% complete
+- Track 6 (Nibbler) runs after all tracks complete
+
+**Critical Path:** F1 → F2 → F3 → F4 → F6 → H5 → H6 → K1 → N1
+
+---
+
+## MVP Definition
+
+**Minimum Viable Product (Sprint Goal):**
+1. ✅ `CopilotResponsesProvider` working with Copilot API
+2. ✅ Text responses streaming correctly
+3. ✅ Tool calls parsing correctly with Responses API events
+4. ✅ Repeated tool call detection preventing loops
+5. ✅ Max iterations lowered to 20
+6. ✅ Tests passing (unit + integration)
+7. ✅ Configuration flag working (`UseResponsesApi`)
+8. ✅ Basic documentation (migration guide)
+
+**Deferred to Phase 2:**
+- Reasoning/thinking block streaming (not critical for MVP)
+- Prompt caching (optimization, not blocker)
+- WebUI tool call indicators (nice-to-have UX)
+- Migrating OpenAI/Anthropic to Responses API (separate sprint)
+
+---
+
+## Success Criteria
+
+**Technical:**
+- ✅ All tests pass (unit, integration, E2E)
+- ✅ Zero build errors/warnings
+- ✅ Responses API requests succeed with real Copilot API
+- ✅ Tool calls execute correctly via Responses API
+- ✅ Repeated tool detection triggers on 3rd identical call
+- ✅ Streaming deltas flow to WebUI without errors
+
+**Functional:**
+- ✅ Agent conversations work via Responses API
+- ✅ Multi-turn tool calling completes successfully
+- ✅ Infinite loops prevented by repeated call detection
+- ✅ Finalization retry still works (blank response handling)
+
+**Documentation:**
+- ✅ Migration guide complete
+- ✅ Architecture docs updated
+- ✅ Configuration reference accurate
+
+**Team Readiness:**
+- ✅ All agents understand new architecture
+- ✅ Rollout plan agreed (flag-based gradual rollout)
+- ✅ Rollback plan documented (disable flag, revert to Chat Completions)
+
+---
+
+## Rollout Plan
+
+### Phase 1: Canary (1 agent, 1 day)
+- Enable `UseResponsesApi: true` for Nova agent only
+- Monitor logs for errors
+- Compare response quality vs Chat Completions
+- **Success Criteria:** Zero errors, quality equivalent or better
+
+### Phase 2: Gradual Rollout (2-3 days)
+- Enable for 25% of agents
+- Monitor latency, error rate, token usage
+- **Success Criteria:** <1% error rate increase, latency <10% increase
+
+### Phase 3: Full Rollout (1 day)
+- Enable for all agents using Copilot
+- Monitor for 24 hours
+- **Success Criteria:** Stable performance, no regressions
+
+### Phase 4: Deprecation (Future Sprint)
+- Mark `CopilotProvider` (Chat Completions) as deprecated
+- Add console warning when used
+- Remove in 2-3 sprints after full validation
+
+---
+
+## Rollback Plan
+
+**If Responses API fails:**
+1. Set `UseResponsesApi: false` in config (immediate)
+2. Restart Gateway (30 seconds)
+3. Traffic routes back to Chat Completions API
+4. Investigate logs, fix bugs, redeploy
+
+**Rollback Triggers:**
+- Error rate >5%
+- Latency increase >50%
+- Tool calling failures
+- User-facing errors
+
+---
+
+## Open Questions & Research Tasks
+
+**R1. Partial JSON Parsing Library**
+- **Question:** Which C# library to use for partial JSON parsing?
+- **Options:**
+  1. Port `partial-json` (npm) to C#
+  2. Use `System.Text.Json` with custom error handling
+  3. Write state machine parser
+- **Owner:** Farnsworth
+- **Timeline:** Day 1, before F3
+
+**R2. Copilot API Rate Limits**
+- **Question:** What are Copilot Responses API rate limits vs Chat Completions?
+- **Owner:** Farnsworth
+- **Timeline:** Day 1 (research during F1)
+
+**R3. Tool Call ID Backward Compatibility**
+- **Question:** Do existing sessions break with new ID format (`call_id|id`)?
+- **Owner:** Bender
+- **Timeline:** Day 2 (test during B3)
+- **Mitigation:** Add ID format migration logic if needed
+
+---
+
+## Team Roster & Availability
+
+| Agent | Domain | Availability | Capacity |
+|-------|--------|--------------|----------|
+| **Farnsworth** | Providers, Core | Full-time | 100% (Track 1 lead) |
+| **Bender** | Agent, Gateway | Full-time | 100% (Track 2 lead) |
+| **Hermes** | Testing | Full-time | 100% (Track 3 lead) |
+| **Fry** | WebUI | Part-time | 50% (Track 4, optional) |
+| **Kif** | Docs | Full-time | 100% (Track 5) |
+| **Nibbler** | Consistency | Part-time | 25% (Track 6, post-merge) |
+| **Leela** | Lead/Review | Part-time | 25% (reviews, unblocking) |
+
+---
+
+## Daily Standup Checklist
+
+**What to Report:**
+1. What you completed yesterday
+2. What you're working on today
+3. Any blockers or dependencies
+
+**Blocker Escalation:**
+- Tag Leela in `.squad/agents/leela/inbox/` for architectural decisions
+- Tag Jon Bullen for API access or external dependencies
+
+---
+
+## Post-Sprint Retrospective (Scheduled)
+
+**When:** After all tracks complete + 1 week of production use
+
+**Agenda:**
+1. What went well?
+2. What didn't go well?
+3. Metrics review:
+   - Error rate (Chat Completions vs Responses API)
+   - Latency (p50, p95, p99)
+   - Token usage (cost comparison)
+   - Loop detection effectiveness (how many loops caught?)
+4. Action items for next sprint
+
+---
+
+## References
+
+### Pi-Mono Implementation Files
+- `packages/ai/src/providers/openai-responses.ts` — Main provider
+- `packages/ai/src/providers/openai-responses-shared.ts` — Event processing
+- `packages/ai/src/providers/github-copilot-headers.ts` — Header logic
+- `packages/ai/src/utils/json-parse.ts` — Streaming JSON parser
+- `packages/ai/src/utils/event-stream.ts` — Event stream infrastructure
+
+### OpenAI Responses API Docs
+- [Streaming API Responses](https://developers.openai.com/api/docs/guides/streaming-responses)
+- [Responses API Spec](https://github.com/openai/openai-dotnet/blob/main/specification/base/typespec/responses/models.tsp)
+
+### BotNexus Current Implementation
+- `src/BotNexus.Core/Abstractions/ILlmProvider.cs` — Provider interface
+- `src/BotNexus.Providers.Copilot/CopilotProvider.cs` — Chat Completions provider
+- `src/BotNexus.Agent/AgentLoop.cs` — Agent loop (40 iterations, no loop detection)
+- `src/BotNexus.Gateway/GatewayWebSocketHandler.cs` — WebSocket streaming
+
+---
+
+**This plan is ready for execution pending approval from Jon Bullen.**
+
+**Questions? Comments? Escalate to Leela.**
+

@@ -425,3 +425,30 @@ All Sprints 1-2 foundation work completed by Farnsworth and Bender. Hermes ready
 
 ---
 
+## 2026-04-04T00:49:47Z — Pi Provider Architecture Port Sprint (Team Sync)
+
+**Sprint Status:** ✅ Complete  
+**Timestamp:** 2026-04-04T00:49:47Z  
+**Orchestration:** See `.squad/orchestration-log/2026-04-04T00-49-47Z-hermes.md`
+
+**Your Contribution (Hermes — Tester):**
+- Wrote 72 new tests for model registry, handler routing, format handlers
+- Fixed 3 pre-existing test failures (null-handling, token mapping, finish reason enum)
+- 494 total tests passing: 396 unit + 110 integration + 23 E2E + 11 deployment
+- Commit 5d293d4
+
+**Team Outcomes:**
+- **Farnsworth (Platform):** Ported Pi provider architecture — ModelDefinition, CopilotModels registry (30+ models), 3 API format handlers, rewrote CopilotProvider. 3 commits.
+- **Bender (Runtime):** Verified AgentLoop + Gateway integration — no changes needed. Commit e916394.
+- **Kif (Documentation):** Updated architecture docs, model mapping tables, configuration reference.
+
+**Cross-Team Decisions Merged:**
+1. Repeated tool call detection needed (Squad investigation)
+2. Copilot Responses API investigation (Farnsworth)
+3. Provider Response Normalization Layer (Leela, architectural)
+4. Responses API Migration Sprint Plan (Leela, awaiting approval)
+
+**Test Patterns Established:** Model registry queries, handler routing validation, format handler edge cases (multi-choice, dual args, finish reason mapping).
+
+---
+
