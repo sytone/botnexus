@@ -410,7 +410,7 @@ When developing BotNexus, you'll iterate through this cycle:
 
 ### C. Changing Extensions (Channels, Tools)
 
-1. **Edit extension code** (in `src/BotNexus.Channels.*/` or `src/BotNexus.Tools.*/`)
+1. **Edit extension code** (in `src/channels/BotNexus.Channels.*/` or `src/BotNexus.Tools.*/`)
 2. **Pack**: `./scripts/pack.ps1` — rebuilds all packages including extensions
 3. **Install**: `botnexus install` — deploys fresh extension DLLs
 4. **Restart the gateway**: `botnexus stop && botnexus start` to reload extensions

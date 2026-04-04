@@ -1,12 +1,12 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\BotNexus.Core\BotNexus.Core.csproj" />
+    <ProjectReference Include="..\..\BotNexus.Core\BotNexus.Core.csproj" />
     <ProjectReference Include="..\BotNexus.Channels.Base\BotNexus.Channels.Base.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="SlackNet" Version="0.17.10" />
+    <PackageReference Include="Telegram.Bot" Version="22.9.5.3" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -14,9 +14,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ExtensionType>channels</ExtensionType>
-    <ExtensionName>slack</ExtensionName>
+    <ExtensionName>telegram</ExtensionName>
   </PropertyGroup>
 
-  <Import Project="..\Extension.targets" />
+  <Import Project="..\..\Extension.targets" />
 
 </Project>

@@ -11,7 +11,7 @@
     <ProjectReference Include="..\BotNexus.Core\BotNexus.Core.csproj" />
     <ProjectReference Include="..\BotNexus.Agent\BotNexus.Agent.csproj" />
     <ProjectReference Include="..\BotNexus.Session\BotNexus.Session.csproj" />
-    <ProjectReference Include="..\BotNexus.Channels.Base\BotNexus.Channels.Base.csproj" />
+    <ProjectReference Include="..\channels\BotNexus.Channels.Base\BotNexus.Channels.Base.csproj" />
     <ProjectReference Include="..\BotNexus.Providers.Base\BotNexus.Providers.Base.csproj" />
     <ProjectReference Include="..\BotNexus.Command\BotNexus.Command.csproj" />
     <ProjectReference Include="..\BotNexus.Cron\BotNexus.Cron.csproj" />

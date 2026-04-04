@@ -2062,13 +2062,13 @@ BotNexus.Agent/
     ├── McpTool.cs
     └── IMcpClient.cs
 
-BotNexus.Channels.Base/
+channels/BotNexus.Channels.Base/
 ├── BaseChannel.cs
 ├── ChannelManager.cs
 └── Models/
     └── ...
 
-BotNexus.Channels.{Discord,Slack,Telegram}/
+channels/BotNexus.Channels.{Discord,Slack,Telegram}/
 ├── {Provider}Channel.cs
 
 BotNexus.Providers.Base/

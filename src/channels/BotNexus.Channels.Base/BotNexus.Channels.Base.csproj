@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\BotNexus.Core\BotNexus.Core.csproj" />
+    <ProjectReference Include="..\..\BotNexus.Core\BotNexus.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>

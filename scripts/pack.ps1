@@ -21,9 +21,9 @@ $components = @(
     @{ Id = "BotNexus.Providers.Copilot"; Project = "src\BotNexus.Providers.Copilot\BotNexus.Providers.Copilot.csproj" },
     @{ Id = "BotNexus.Providers.OpenAI"; Project = "src\BotNexus.Providers.OpenAI\BotNexus.Providers.OpenAI.csproj" },
     @{ Id = "BotNexus.Providers.Anthropic"; Project = "src\BotNexus.Providers.Anthropic\BotNexus.Providers.Anthropic.csproj" },
-    @{ Id = "BotNexus.Channels.Discord"; Project = "src\BotNexus.Channels.Discord\BotNexus.Channels.Discord.csproj" },
-    @{ Id = "BotNexus.Channels.Slack"; Project = "src\BotNexus.Channels.Slack\BotNexus.Channels.Slack.csproj" },
-    @{ Id = "BotNexus.Channels.Telegram"; Project = "src\BotNexus.Channels.Telegram\BotNexus.Channels.Telegram.csproj" },
+    @{ Id = "BotNexus.Channels.Discord"; Project = "src\channels\BotNexus.Channels.Discord\BotNexus.Channels.Discord.csproj" },
+    @{ Id = "BotNexus.Channels.Slack"; Project = "src\channels\BotNexus.Channels.Slack\BotNexus.Channels.Slack.csproj" },
+    @{ Id = "BotNexus.Channels.Telegram"; Project = "src\channels\BotNexus.Channels.Telegram\BotNexus.Channels.Telegram.csproj" },
     @{ Id = "BotNexus.Tools.GitHub"; Project = "src\BotNexus.Tools.GitHub\BotNexus.Tools.GitHub.csproj" }
 )
 

@@ -32,8 +32,8 @@
     <ProjectReference Include="..\..\src\BotNexus.Gateway\BotNexus.Gateway.csproj" />
     <ProjectReference Include="..\..\src\BotNexus.Agent\BotNexus.Agent.csproj" />
     <ProjectReference Include="..\..\src\BotNexus.Session\BotNexus.Session.csproj" />
-    <ProjectReference Include="..\..\src\BotNexus.Channels.Base\BotNexus.Channels.Base.csproj" />
-    <ProjectReference Include="..\..\src\BotNexus.Channels.Slack\BotNexus.Channels.Slack.csproj" />
+    <ProjectReference Include="..\..\src\channels\BotNexus.Channels.Base\BotNexus.Channels.Base.csproj" />
+    <ProjectReference Include="..\..\src\channels\BotNexus.Channels.Slack\BotNexus.Channels.Slack.csproj" />
     <ProjectReference Include="..\..\src\BotNexus.Providers.Base\BotNexus.Providers.Base.csproj" />
     <ProjectReference Include="..\BotNexus.Tests.Extensions.E2E\BotNexus.Tests.Extensions.E2E.csproj" />
   </ItemGroup>

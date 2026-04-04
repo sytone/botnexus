@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\BotNexus.Core\BotNexus.Core.csproj" />
+    <ProjectReference Include="..\..\BotNexus.Core\BotNexus.Core.csproj" />
     <ProjectReference Include="..\BotNexus.Channels.Base\BotNexus.Channels.Base.csproj" />
   </ItemGroup>
 
@@ -17,6 +17,6 @@
     <ExtensionName>discord</ExtensionName>
   </PropertyGroup>
 
-  <Import Project="..\Extension.targets" />
+  <Import Project="..\..\Extension.targets" />
 
 </Project>
