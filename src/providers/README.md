@@ -47,19 +47,41 @@ Unified LLM API with provider abstraction, streaming, tool calling, thinking/rea
 ## Quick Start
 
 ```csharp
+using System.Text.Json;
 using BotNexus.Providers.Core;
 using BotNexus.Providers.Core.Models;
 using BotNexus.Providers.Core.Registry;
 using BotNexus.Providers.Core.Streaming;
 
-// Get a model from the registry
+// Get a model from the registry (fully typed with known provider/model IDs)
 var model = ModelRegistry.GetModel("openai", "gpt-4o-mini")
     ?? throw new InvalidOperationException("Model not found");
 
-// Build a conversation context
+// Define tools with JSON Schema for type safety and validation
+var tools = new List<Tool>
+{
+    new(
+        Name: "get_time",
+        Description: "Get the current time",
+        Parameters: JsonDocument.Parse("""
+        {
+            "type": "object",
+            "properties": {
+                "timezone": {
+                    "type": "string",
+                    "description": "Optional timezone (e.g., America/New_York)"
+                }
+            }
+        }
+        """).RootElement
+    )
+};
+
+// Build a conversation context (easily serializable and transferable between models)
 var context = new Context(
     SystemPrompt: "You are a helpful assistant.",
-    Messages: [new UserMessage("What time is it?", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())]
+    Messages: [new UserMessage("What time is it?", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())],
+    Tools: tools
 );
 
 // Option 1: Stream events as they arrive
@@ -105,8 +127,50 @@ await foreach (var evt in stream)
     }
 }
 
-// Get the final message after streaming
+// Get the final message after streaming, add it to the context
 var finalMessage = await stream.GetResultAsync();
+context = context with
+{
+    Messages = [.. context.Messages, finalMessage]
+};
+
+// Handle tool calls if any
+var toolCalls = finalMessage.Content.OfType<ToolCallContent>().ToList();
+foreach (var call in toolCalls)
+{
+    // Execute the tool
+    var result = call.Name == "get_time"
+        ? DateTime.UtcNow.ToString("F")
+        : "Unknown tool";
+
+    // Add tool result to context (supports text and images)
+    context = context with
+    {
+        Messages = [.. context.Messages, new ToolResultMessage(
+            ToolCallId: call.Id,
+            ToolName: call.Name,
+            Content: [new TextContent(result)],
+            IsError: false,
+            Timestamp: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        )]
+    };
+}
+
+// Continue if there were tool calls
+if (toolCalls.Count > 0)
+{
+    var continuation = await LlmClient.CompleteAsync(model, context);
+    context = context with
+    {
+        Messages = [.. context.Messages, continuation]
+    };
+    Console.WriteLine("After tool execution:");
+    foreach (var block in continuation.Content)
+    {
+        if (block is TextContent text)
+            Console.WriteLine(text.Text);
+    }
+}
 
 Console.WriteLine($"Total tokens: {finalMessage.Usage.Input} in, {finalMessage.Usage.Output} out");
 Console.WriteLine($"Cost: ${finalMessage.Usage.Cost.Total:F4}");
