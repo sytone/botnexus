@@ -2,10 +2,10 @@
   <Folder Name="/src/">
     <Project Path="src/BotNexus.Agent/BotNexus.Agent.csproj" />
     <Project Path="src/BotNexus.Api/BotNexus.Api.csproj" />
-    <Project Path="src/BotNexus.Channels.Base/BotNexus.Channels.Base.csproj" />
-    <Project Path="src/BotNexus.Channels.Discord/BotNexus.Channels.Discord.csproj" />
-    <Project Path="src/BotNexus.Channels.Slack/BotNexus.Channels.Slack.csproj" />
-    <Project Path="src/BotNexus.Channels.Telegram/BotNexus.Channels.Telegram.csproj" />
+    <Project Path="src/channels/BotNexus.Channels.Base/BotNexus.Channels.Base.csproj" />
+    <Project Path="src/channels/BotNexus.Channels.Discord/BotNexus.Channels.Discord.csproj" />
+    <Project Path="src/channels/BotNexus.Channels.Slack/BotNexus.Channels.Slack.csproj" />
+    <Project Path="src/channels/BotNexus.Channels.Telegram/BotNexus.Channels.Telegram.csproj" />
     <Project Path="src/BotNexus.Cli/BotNexus.Cli.csproj" />
     <Project Path="src/BotNexus.Command/BotNexus.Command.csproj" />
     <Project Path="src/BotNexus.Core/BotNexus.Core.csproj" />
@@ -21,6 +21,13 @@
     <Project Path="src/BotNexus.Tools.GitHub/BotNexus.Tools.GitHub.csproj" />
     <Project Path="src/BotNexus.WebUI/BotNexus.WebUI.csproj" />
   </Folder>
+  <Folder Name="/src/providers/">
+    <Project Path="src/providers/BotNexus.Providers.Anthropic/BotNexus.Providers.Anthropic.csproj" />
+    <Project Path="src/providers/BotNexus.Providers.Core/BotNexus.Providers.Core.csproj" />
+    <Project Path="src/providers/BotNexus.Providers.OpenAI/BotNexus.Providers.OpenAI.csproj" />
+    <Project Path="src/providers/BotNexus.Providers.OpenAICompat/BotNexus.Providers.OpenAICompat.csproj" />
+    <Project Path="src/providers/BotNexus.Providers.Copilot/BotNexus.Providers.Copilot.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/BotNexus.Tests.Extensions.Convention/BotNexus.Tests.Extensions.Convention.csproj" />
     <Project Path="tests/BotNexus.Tests.Extensions.E2E/BotNexus.Tests.Extensions.E2E.csproj" />
@@ -29,5 +36,10 @@
     <Project Path="tests/BotNexus.Tests.Unit/BotNexus.Tests.Unit.csproj" />
     <Project Path="tests/BotNexus.Tests.E2E/BotNexus.Tests.E2E.csproj" />
     <Project Path="tests/BotNexus.Tests.Deployment/BotNexus.Tests.Deployment.csproj" />
+    <Project Path="tests/BotNexus.Providers.Copilot.Tests/BotNexus.Providers.Copilot.Tests.csproj" />
+    <Project Path="tests/BotNexus.Providers.OpenAICompat.Tests/BotNexus.Providers.OpenAICompat.Tests.csproj" />
+    <Project Path="tests/BotNexus.Providers.Core.Tests/BotNexus.Providers.Core.Tests.csproj" />
+    <Project Path="tests/BotNexus.Providers.OpenAI.Tests/BotNexus.Providers.OpenAI.Tests.csproj" />
+    <Project Path="tests/BotNexus.Providers.Anthropic.Tests/BotNexus.Providers.Anthropic.Tests.csproj" />
   </Folder>
 </Solution>
