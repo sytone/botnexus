@@ -1,34 +1,41 @@
 ---
-updated_at: 2026-04-04T22:30:00Z
-focus_area: Agent Port Completion — Integration Sprints Begin
+updated_at: 2026-04-05T00:00:00Z
+focus_area: CodingAgent — pi-mono Coding Agent Port
 active_issues: []
-status: delivered
+status: planning
 ---
 
 # What We're Focused On
 
-**pi-mono Agent Core port COMPLETE.** All 4 sprints delivered on schedule.
+**BotNexus.CodingAgent** — porting `@mariozechner/pi-coding-agent` to C#/.NET.
 
-## Delivery Summary
+The coding agent is a standalone CLI built on `BotNexus.AgentCore` + `BotNexus.Providers.Core`. It provides built-in coding tools (read, write, edit, shell, glob), session management, extension loading, and an interactive REPL for developer workflows.
 
-| Metric | Value |
-|--------|-------|
-| Commits | 20 |
-| Source Files | 27 |
-| Tests | 26 passing |
-| Sprints | 4 |
+## Current Status
 
-### What's Done
-- ✓ BotNexus.AgentCore project scaffold + types (Farnsworth, Sprint 1)
-- ✓ Agent loop engine: MessageConverter, ContextConverter, StreamAccumulator, ToolExecutor, AgentLoopRunner (Bender, Sprint 2)
-- ✓ Agent class + PendingMessageQueue + full public API + thread safety (Bender, Sprint 3)
-- ✓ XML docs enriched to pi-mono quality (Kif, Sprint 4)
-- ✓ 26 test cases + comprehensive README (Hermes + Kif, Sprint 4)
-- ✓ Decision inbox merged; team context updated
+**Multi-sprint plan PROPOSED.** Awaiting approval to begin Sprint 1.
 
-## Next Phase
+| Sprint | Focus | Owner | Status |
+|--------|-------|-------|--------|
+| Sprint 1 | Project scaffold + built-in tools | Farnsworth | ⏳ Pending |
+| Sprint 2 | Agent factory + session runtime | Bender | ⏳ Pending |
+| Sprint 3 | CLI + extension system | Bender | ⏳ Pending |
+| Sprint 4 | Tests + documentation | Hermes + Kif | ⏳ Pending |
 
-**Integration sprints** — bind AgentCore into BotNexus platform services. Ready for deployment review.
+### Key Constraints
+- Project at `src/coding-agent/BotNexus.CodingAgent/`
+- References ONLY `BotNexus.AgentCore` and `BotNexus.Providers.Core`
+- No references to archived projects or legacy Agent
+- Extensible architecture — minimal core + extension loading
+
+### What's Done (Prior)
+- ✓ BotNexus.AgentCore — full pi-agent-core port (Agent, IAgentTool, events, loop)
+- ✓ BotNexus.Providers.Core — LlmClient, model registry, streaming
+- ✓ Provider abstraction layer — Copilot, OpenAI, Anthropic normalized
+
+## Plan Document
+
+`.squad/decisions/inbox/leela-coding-agent-plan.md` — 4 sprints, 35 work items, 3-4 week estimate.
 
 ## Team
 

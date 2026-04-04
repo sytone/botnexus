@@ -88,7 +88,7 @@ public class LlmClientTests : IDisposable
 
         var mockProvider = new Mock<IApiProvider>();
         mockProvider.Setup(p => p.Api).Returns("test-api");
-        mockProvider.Setup(p => p.Stream(model, context, null)).Returns(stream);
+        mockProvider.Setup(p => p.Stream(It.IsAny<LlmModel>(), It.IsAny<Context>(), It.IsAny<StreamOptions>())).Returns(stream);
         ApiProviderRegistry.Register(mockProvider.Object);
 
         var result = await LlmClient.CompleteAsync(model, context);

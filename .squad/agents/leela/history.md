@@ -1402,3 +1402,12 @@ Jon requested a full architecture decision for re-architecting the LLM provider 
 - Pi-mono's transform-messages.ts does three things: thinking-to-text conversion for cross-model, tool call ID normalization, and orphaned tool call cleanup. These are all pure data transformations — static method, not a service.
 - Provider implementations in pi-mono all follow the exact same template: create stream, create output, start async IIFE, try/catch with error events. The C# equivalent is Task.Run with the same pattern. Don't over-abstract this — the template is simple enough to copy.
 
+### 2026-04-05 — CodingAgent Port Planning
+
+- Pi-mono's coding agent (`pi-coding-agent`) is a thin layer over `pi-agent-core`. The heavy lifting (loop, events, tools interface) is in AgentCore — the coding agent just wires tools + config + CLI. Same pattern should hold for BotNexus: `CodingAgent` is a factory/orchestrator, NOT a new agent engine.
+- Pi-mono's tools (read, write, edit, bash) use the same `IAgentTool` interface as any extension tool. Built-in tools get no special treatment — they're just pre-registered. This validates our design where `CodingAgent.CreateAsync()` creates tool instances and adds them to `AgentOptions.InitialState.Tools`.
+- Pi-mono's session management is file-based (JSONL in `.pi/sessions/`). This is the right pattern for a CLI tool — simple, debuggable, git-friendly. No SQLite, no server.
+- Pi-mono's extension model loads from `.pi/extensions/` — npm packages or local modules. Our C# equivalent uses `AssemblyLoadContext` for DLL isolation, matching BotNexus's existing extension architecture (`extensions/{type}/{name}/`).
+- The coding agent's dependency boundary is critical: ONLY `AgentCore` + `Providers.Core`. No references to the legacy `BotNexus.Agent`, `BotNexus.Core`, or `BotNexus.Gateway`. The coding agent is standalone — it IS the gateway for developer CLI usage.
+- Pi-mono's safety hooks (beforeToolCall/afterToolCall) already exist in our `AgentCore` as `BeforeToolCallDelegate`/`AfterToolCallDelegate`. The coding agent just needs to provide implementations that validate paths and commands — no new hook infrastructure needed.
+
