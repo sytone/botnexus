@@ -5,6 +5,89 @@
 - **Stack:** C# (.NET latest), modular class libraries: Core, Agent, Api, Channels (Base/Discord/Slack/Telegram), Command, Cron, Gateway, Heartbeat, Providers (Base/Anthropic/OpenAI/Copilot), Session, Tools.GitHub, WebUI
 - **Created:** 2026-04-01
 
+## 2026-04-03T16:25:00Z — Provider Response Normalization Layer (Lead)
+
+**Timestamp:** 2026-04-03T16:25:00Z  
+**Status:** ✅ Complete  
+**Requested by:** Jon Bullen  
+**Scope:** Design and implement provider response normalization layer
+
+**Context:**
+After discovering the Copilot proxy splits Claude responses across multiple choices (content in `choices[0]`, tool_calls in `choices[1]`), we patched it with a merge-choices loop. This works but is fragile. Pi's architecture (badlogic/pi-mono) is better: each provider owns its own response parsing and emits a canonical `AssistantMessage` type. The agent loop never sees raw JSON.
+
+**Architecture Goal:**
+Establish clear normalization contract where:
+1. `LlmResponse` is the single canonical response format
+2. Each provider normalizes its raw API response internally
+3. Agent loop is completely isolated from provider quirks
+4. Provider-specific edge cases (multi-choice, argument formats, field naming) handled inside providers
+
+**Implementation:**
+
+1. **Enhanced LlmResponse documentation** (`Core/Models/LlmResponse.cs`)
+   - Documented as "canonical normalized response from any LLM provider"
+   - Listed provider normalization responsibilities:
+     * Parse provider-specific formats (JSON, SDK objects)
+     * Merge multi-choice responses if applicable
+     * Normalize tool call argument formats (JSON string vs object)
+     * Map finish reasons to FinishReason enum
+     * Normalize token count field names
+     * Handle missing/null fields gracefully
+   - Added XML docs to FinishReason enum values
+   - Added parameter documentation
+
+2. **Enhanced ILlmProvider interface** (`Core/Abstractions/ILlmProvider.cs`)
+   - Documented normalization contract at interface level
+   - `ChatAsync` MUST return normalized LlmResponse
+   - Clarified providers handle their own quirks internally
+   - Agent loop should never see raw provider responses
+
+3. **Documented CopilotProvider normalization** (`Providers.Copilot/CopilotProvider.cs`)
+   - **Multi-choice merging:** When proxying Claude, Copilot splits content and tool_calls across choices[] - we merge by taking first non-empty content, first tool_calls array
+   - **Dual argument formats:** OpenAI returns arguments as JSON string, Claude returns as JSON object - ParseToolCalls handles both via ValueKind detection (commit dd0343a fix)
+   - **Finish reason mapping:** Copilot strings ("stop", "tool_calls") → FinishReason enum
+   - **Token count mapping:** "prompt_tokens"/"completion_tokens" → InputTokens/OutputTokens
+   - Added `// NORMALIZATION:` comments at each normalization point
+   - Referenced historical fix (commit dd0343a) in docs
+
+4. **Documented OpenAiProvider normalization** (`Providers.OpenAI/OpenAiProvider.cs`)
+   - **Content extraction:** OpenAI SDK returns Content[] array, we take first item's Text
+   - **Tool arguments:** Always JSON string format, deserialize to Dictionary<string, object?>
+   - **Finish reason mapping:** ChatFinishReason SDK enum → FinishReason enum
+   - **Token count mapping:** InputTokenCount/OutputTokenCount (direct mapping)
+   - Added `// NORMALIZATION:` comments
+   - Documented that SDK makes normalization straightforward vs raw JSON
+
+5. **Documented AnthropicProvider normalization** (`Providers.Anthropic/AnthropicProvider.cs`)
+   - **Content extraction:** content[] array, extract first block's text field
+   - **Stop reason mapping:** snake_case strings ("end_turn", "max_tokens") → enum
+   - **Token count mapping:** "input_tokens"/"output_tokens" → InputTokens/OutputTokens
+   - **TODO:** Tool call support not yet implemented (marked as P1 in architecture review)
+   - Added `// NORMALIZATION:` comments
+
+**Verification:**
+- ✅ Build: 0 errors, 0 warnings
+- ✅ Tests: 540 passing (23 E2E, 11 deployment, 396 unit, 110 integration)
+- ✅ Backward compatible: No behavioral changes, only documentation
+- ✅ Pre-commit hook validated: Build + tests
+- ✅ AgentLoop confirmed clean: No provider-specific logic, works only with LlmResponse
+
+**Key Design Principles:**
+1. **Separation of concerns:** Provider quirks stay in providers, agent logic stays clean
+2. **Explicit contract:** Documentation makes normalization responsibilities crystal clear
+3. **Future-proof:** New providers know exactly what they must implement
+4. **Follows patterns:** Inspired by Pi's AssistantMessage normalization architecture
+
+**Commits:**
+- `d31923b`: feat(providers): Implement provider response normalization layer
+
+**Outcome:**
+Normalization layer is now formally documented and enforced via contract. Each provider owns its response parsing, the agent loop is isolated from provider details. This pattern is now the standard for all current and future providers. The existing code already followed this pattern - we formalized it with comprehensive documentation.
+
+**Decision Document:** `.squad/decisions/inbox/leela-provider-normalization.md`
+
+---
+
 ## 2026-04-03T22:30:00Z — Multi-Turn Tool Call Bug Fix (Lead)
 
 **Timestamp:** 2026-04-03T22:30:00Z  

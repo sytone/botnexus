@@ -1,6 +1,5 @@
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
-using System.Text;
 using System.Text.Json;
 using BotNexus.Core.Abstractions;
 using BotNexus.Core.Models;
@@ -9,6 +8,10 @@ using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Providers.Copilot;
 
+/// <summary>
+/// GitHub Copilot provider using the new architecture.
+/// Routes requests to appropriate API format handlers based on model.
+/// </summary>
 public sealed class CopilotProvider : LlmProviderBase, IOAuthProvider
 {
     private readonly HttpClient _httpClient;
@@ -21,6 +24,8 @@ public sealed class CopilotProvider : LlmProviderBase, IOAuthProvider
     private string? _copilotAccessToken;
     private DateTimeOffset _copilotExpiresAt;
     private static readonly TimeSpan ExpirySkew = TimeSpan.FromSeconds(60);
+    
+    private readonly Dictionary<string, IApiFormatHandler> _handlers;
 
     public CopilotProvider(
         CopilotConfig config,
@@ -39,67 +44,28 @@ public sealed class CopilotProvider : LlmProviderBase, IOAuthProvider
         Generation = new GenerationSettings { Model = _defaultModel };
 
         _httpClient = httpClient ?? new HttpClient();
-        _httpClient.BaseAddress ??= new Uri(config.ApiBase ?? CopilotConfig.DefaultApiBaseUrl);
         if (config.TimeoutSeconds > 0)
             _httpClient.Timeout = TimeSpan.FromSeconds(config.TimeoutSeconds);
-        _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(CopilotConfig.UserAgentValue);
+        
+        // Initialize API format handlers
+        _handlers = new Dictionary<string, IApiFormatHandler>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["anthropic-messages"] = new AnthropicMessagesHandler(_httpClient, Logger),
+            ["openai-completions"] = new OpenAiCompletionsHandler(_httpClient, Logger),
+            ["openai-responses"] = new OpenAiResponsesHandler(_httpClient, Logger)
+        };
     }
 
     public override string DefaultModel => _defaultModel;
 
     public bool HasValidToken => _cachedToken is { IsExpired: false };
 
-    public override async Task<IReadOnlyList<string>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
+    public override Task<IReadOnlyList<string>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
     {
-        try
-        {
-            var accessToken = await GetCopilotAccessTokenAsync(cancellationToken).ConfigureAwait(false);
-            using var request = new HttpRequestMessage(HttpMethod.Get, "/models");
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-            request.Headers.TryAddWithoutValidation("Editor-Version", CopilotConfig.EditorVersion);
-            request.Headers.TryAddWithoutValidation("Editor-Plugin-Version", CopilotConfig.EditorPluginVersion);
-
-            using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
-            
-            if (!response.IsSuccessStatusCode)
-            {
-                Logger.LogWarning("Failed to fetch Copilot models: HTTP {StatusCode}", (int)response.StatusCode);
-                return new[] { _defaultModel };
-            }
-
-            var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            if (root.TryGetProperty("data", out var dataElement) && dataElement.ValueKind == JsonValueKind.Array)
-            {
-                var models = new List<string>();
-                foreach (var model in dataElement.EnumerateArray())
-                {
-                    if (model.TryGetProperty("id", out var idElement))
-                    {
-                        var id = idElement.GetString();
-                        if (!string.IsNullOrWhiteSpace(id))
-                            models.Add(id);
-                    }
-                }
-
-                if (models.Count > 0)
-                {
-                    Logger.LogDebug("Fetched {Count} models from Copilot API", models.Count);
-                    return models;
-                }
-            }
-
-            Logger.LogWarning("No models found in Copilot API response, falling back to default");
-            return new[] { _defaultModel };
-        }
-        catch (Exception ex)
-        {
-            Logger.LogWarning(ex, "Failed to fetch available models from Copilot, falling back to default");
-            return new[] { _defaultModel };
-        }
+        // Return all registered Copilot models from the registry
+        var modelIds = CopilotModels.All.Select(m => m.Id).ToArray();
+        Logger.LogDebug("Returning {Count} registered Copilot models", modelIds.Length);
+        return Task.FromResult<IReadOnlyList<string>>(modelIds);
     }
 
     public async Task<string> GetAccessTokenAsync(CancellationToken cancellationToken = default)
@@ -206,205 +172,73 @@ public sealed class CopilotProvider : LlmProviderBase, IOAuthProvider
     }
 
     /// <summary>
-    /// Normalizes Copilot API response to canonical LlmResponse format.
-    /// 
-    /// <para><b>Provider-Specific Normalization Responsibilities:</b></para>
-    /// <list type="bullet">
-    ///   <item><b>Multi-choice merging:</b> When proxying Claude, Copilot may split content and tool_calls 
-    ///   across multiple choices[]. We merge by taking first non-empty content, first tool_calls array, 
-    ///   and first finish_reason.</item>
-    ///   
-    ///   <item><b>Tool argument formats:</b> Copilot returns tool arguments in TWO formats depending on 
-    ///   the backend model: OpenAI models use JSON string, Claude models use JSON object. ParseToolCalls 
-    ///   handles both via ValueKind detection.</item>
-    ///   
-    ///   <item><b>Finish reason mapping:</b> Copilot uses strings ("stop", "tool_calls", "length", 
-    ///   "content_filter") which we map to FinishReason enum.</item>
-    ///   
-    ///   <item><b>Token count normalization:</b> Copilot uses "prompt_tokens" and "completion_tokens" 
-    ///   (OpenAI naming) which we map to InputTokens and OutputTokens.</item>
-    /// </list>
-    /// 
-    /// <para>See ParseToolCalls for detailed handling of dual argument formats (commit dd0343a).</para>
+    /// Routes the request to the appropriate API format handler based on the model.
     /// </summary>
     protected override async Task<LlmResponse> ChatCoreAsync(ChatRequest request, CancellationToken cancellationToken)
     {
-        var payload = BuildRequestPayload(request, stream: false);
-        var modelUsed = payload["model"]?.ToString() ?? _defaultModel;
-        var toolCount = request.Tools?.Count ?? 0;
+        var modelId = string.IsNullOrWhiteSpace(request.Settings.Model) ? _defaultModel : request.Settings.Model;
         
-        Logger.LogInformation("CopilotProvider: Sending chat request with model={Model}, tools={ToolCount}, messages={MessageCount}", 
-            modelUsed, toolCount, request.Messages.Count);
-        
-        if (toolCount > 0)
+        if (!CopilotModels.TryResolve(modelId, out var model))
         {
-            Logger.LogInformation("CopilotProvider: Tools in request: {ToolNames}", 
-                string.Join(", ", request.Tools!.Select(t => t.Name)));
+            Logger.LogWarning("Model {ModelId} not found in registry, falling back to default {DefaultModel}", 
+                modelId, _defaultModel);
+            model = CopilotModels.Resolve(_defaultModel);
         }
         
-        // Log the full payload for debugging
-        var payloadJson = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = false });
-        Logger.LogDebug("CopilotProvider: Request payload: {Payload}", payloadJson);
+        if (model is null)
+            throw new InvalidOperationException($"Failed to resolve model: {modelId}");
         
-        using var httpRequest = await CreateChatRequestAsync(payload, cancellationToken).ConfigureAwait(false);
-        using var response = await _httpClient.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            Logger.LogWarning("Copilot API returned HTTP {StatusCode} for model {Model}: {Body}", 
-                (int)response.StatusCode, modelUsed, body);
-
-            if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
-            {
-                Logger.LogWarning("Authentication failed, clearing cached tokens and triggering re-authentication");
-                await InvalidateAndClearTokensAsync(cancellationToken).ConfigureAwait(false);
-                throw new HttpRequestException($"Authentication required. Token expired or missing. Re-authentication will be triggered on next request. (HTTP {(int)response.StatusCode})");
-            }
-        }
-
-        response.EnsureSuccessStatusCode();
-
-        var responseContent = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        var handler = GetHandler(model.Api);
+        var apiKey = await GetCopilotAccessTokenAsync(cancellationToken).ConfigureAwait(false);
         
-        // Log response for debugging (debug level to avoid noise)
-        Logger.LogDebug("CopilotProvider: Raw response body: {ResponseContent}", responseContent);
+        Logger.LogInformation("Routing to {ApiFormat} handler for model {ModelId}", model.Api, model.Id);
         
-        using var document = JsonDocument.Parse(responseContent);
-        var root = document.RootElement;
-        var choices = root.GetProperty("choices");
-        
-        // NORMALIZATION: Multi-choice merging
-        // Claude via Copilot may split content and tool_calls across multiple choices.
-        // Merge all choices: collect content from first choice with content, tool_calls from any choice that has them.
-        string content = string.Empty;
-        string? finishReasonStr = null;
-        JsonElement? toolCallsElement = null;
-
-        foreach (var choice in choices.EnumerateArray())
+        try
         {
-            var msg = choice.GetProperty("message");
-
-            if (string.IsNullOrEmpty(content) && msg.TryGetProperty("content", out var contentEl))
-            {
-                var text = contentEl.GetString();
-                if (!string.IsNullOrEmpty(text))
-                    content = text;
-            }
-
-            if (toolCallsElement is null && msg.TryGetProperty("tool_calls", out var tcEl) && tcEl.ValueKind == JsonValueKind.Array && tcEl.GetArrayLength() > 0)
-                toolCallsElement = tcEl;
-
-            if (finishReasonStr is null && choice.TryGetProperty("finish_reason", out var frEl))
-                finishReasonStr = frEl.GetString();
+            return await handler.ChatAsync(model, request, apiKey, cancellationToken).ConfigureAwait(false);
         }
-
-        // NORMALIZATION: Finish reason mapping (string -> enum)
-        var finishReason = MapFinishReason(finishReasonStr);
-
-        // NORMALIZATION: Tool call parsing (handles dual argument formats)
-        IReadOnlyList<ToolCallRequest>? toolCalls = null;
-        if (toolCallsElement is not null)
+        catch (HttpRequestException ex) when (ex.Message.Contains("401") || ex.Message.Contains("403"))
         {
-            Logger.LogInformation("CopilotProvider: Raw tool_calls JSON: {ToolCallsJson}", toolCallsElement.Value.GetRawText());
-            toolCalls = ParseToolCalls(toolCallsElement.Value);
+            Logger.LogWarning("Authentication failed, clearing cached tokens and triggering re-authentication");
+            await InvalidateAndClearTokensAsync(cancellationToken).ConfigureAwait(false);
+            throw new HttpRequestException($"Authentication required. Token expired or missing. Re-authentication will be triggered on next request.", ex);
         }
-
-        Logger.LogInformation("Copilot response: model={Model}, content_length={ContentLength}, finish_reason={FinishReasonRaw}/{FinishReasonMapped}, tool_calls={ToolCallCount}",
-            modelUsed, content?.Length ?? 0, finishReasonStr ?? "null", finishReason, toolCalls?.Count ?? 0);
-        
-        if (toolCalls is { Count: > 0 })
-        {
-            Logger.LogInformation("CopilotProvider: Tool calls returned: {ToolCallNames}", 
-                string.Join(", ", toolCalls.Select(tc => $"{tc.ToolName}(id={tc.Id})")));
-        }
-
-        // NORMALIZATION: Token count field mapping (prompt_tokens -> InputTokens, completion_tokens -> OutputTokens)
-        int? promptTokens = null;
-        int? completionTokens = null;
-        if (root.TryGetProperty("usage", out var usageElement))
-        {
-            if (usageElement.TryGetProperty("prompt_tokens", out var promptTokensElement))
-                promptTokens = promptTokensElement.GetInt32();
-            if (usageElement.TryGetProperty("completion_tokens", out var completionTokensElement))
-                completionTokens = completionTokensElement.GetInt32();
-        }
-
-        return new LlmResponse(content ?? string.Empty, finishReason, toolCalls, promptTokens, completionTokens);
     }
 
-    public override async IAsyncEnumerable<string> ChatStreamAsync(
+    public override async IAsyncEnumerable<StreamingChatChunk> ChatStreamAsync(
         ChatRequest request,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var payload = BuildRequestPayload(request, stream: true);
-        using var httpRequest = await CreateChatRequestAsync(payload, cancellationToken).ConfigureAwait(false);
-        using var response = await _httpClient
-            .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
-            .ConfigureAwait(false);
-
-        if (!response.IsSuccessStatusCode)
+        var modelId = string.IsNullOrWhiteSpace(request.Settings.Model) ? _defaultModel : request.Settings.Model;
+        
+        if (!CopilotModels.TryResolve(modelId, out var model))
         {
-            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            Logger.LogWarning("Copilot API returned HTTP {StatusCode}: {Body}", (int)response.StatusCode, body);
-
-            if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
-            {
-                Logger.LogWarning("Authentication failed during stream, clearing cached tokens");
-                await InvalidateAndClearTokensAsync(cancellationToken).ConfigureAwait(false);
-                throw new HttpRequestException($"Authentication required. Token expired or missing. Re-authentication will be triggered on next request. (HTTP {(int)response.StatusCode})");
-            }
+            Logger.LogWarning("Model {ModelId} not found in registry, falling back to default {DefaultModel}", 
+                modelId, _defaultModel);
+            model = CopilotModels.Resolve(_defaultModel);
         }
-
-        response.EnsureSuccessStatusCode();
-
-        using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-        using var reader = new StreamReader(stream);
-
-        while (!cancellationToken.IsCancellationRequested)
+        
+        if (model is null)
+            throw new InvalidOperationException($"Failed to resolve model: {modelId}");
+        
+        var handler = GetHandler(model.Api);
+        var apiKey = await GetCopilotAccessTokenAsync(cancellationToken).ConfigureAwait(false);
+        
+        Logger.LogInformation("Routing to {ApiFormat} streaming handler for model {ModelId}", model.Api, model.Id);
+        
+        await foreach (var chunk in handler.ChatStreamAsync(model, request, apiKey, cancellationToken).ConfigureAwait(false))
         {
-            var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
-            if (line is null) break;
-            if (string.IsNullOrWhiteSpace(line) || !line.StartsWith("data: ", StringComparison.Ordinal))
-                continue;
-
-            var data = line["data: ".Length..];
-            if (data == "[DONE]")
-                yield break;
-
-            JsonDocument? document = null;
-            try
-            {
-                document = JsonDocument.Parse(data);
-            }
-            catch
-            {
-                continue;
-            }
-
-            using (document)
-            {
-                if (!document.RootElement.TryGetProperty("choices", out var choices) ||
-                    choices.ValueKind != JsonValueKind.Array ||
-                    choices.GetArrayLength() == 0)
-                {
-                    continue;
-                }
-
-                var delta = choices[0].TryGetProperty("delta", out var deltaElement)
-                    ? deltaElement
-                    : default;
-
-                if (delta.ValueKind == JsonValueKind.Object &&
-                    delta.TryGetProperty("content", out var contentElement) &&
-                    contentElement.ValueKind == JsonValueKind.String)
-                {
-                    var content = contentElement.GetString();
-                    if (!string.IsNullOrEmpty(content))
-                        yield return content;
-                }
-            }
+            yield return chunk;
         }
+    }
+
+    
+    private IApiFormatHandler GetHandler(string apiFormat)
+    {
+        if (_handlers.TryGetValue(apiFormat, out var handler))
+            return handler;
+        
+        throw new ArgumentException($"Unknown API format: {apiFormat}. Available: {string.Join(", ", _handlers.Keys)}", nameof(apiFormat));
     }
 
     private async Task InvalidateAndClearTokensAsync(CancellationToken cancellationToken)
@@ -413,221 +247,5 @@ public sealed class CopilotProvider : LlmProviderBase, IOAuthProvider
         _copilotExpiresAt = default;
         _cachedToken = null;
         await _tokenStore.ClearTokenAsync("copilot", cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task<HttpRequestMessage> CreateChatRequestAsync(
-        IReadOnlyDictionary<string, object?> payload,
-        CancellationToken cancellationToken)
-    {
-        var accessToken = await GetCopilotAccessTokenAsync(cancellationToken).ConfigureAwait(false);
-        var json = JsonSerializer.Serialize(payload);
-        var request = new HttpRequestMessage(HttpMethod.Post, "/chat/completions")
-        {
-            Content = new StringContent(json, Encoding.UTF8, "application/json")
-        };
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-        request.Headers.TryAddWithoutValidation("Editor-Version", CopilotConfig.EditorVersion);
-        request.Headers.TryAddWithoutValidation("Editor-Plugin-Version", CopilotConfig.EditorPluginVersion);
-        return request;
-    }
-
-    private Dictionary<string, object?> BuildRequestPayload(ChatRequest request, bool stream)
-    {
-        var messages = new List<Dictionary<string, object?>>();
-        if (!string.IsNullOrWhiteSpace(request.SystemPrompt))
-        {
-            messages.Add(new Dictionary<string, object?>
-            {
-                ["role"] = "system",
-                ["content"] = request.SystemPrompt
-            });
-        }
-
-        foreach (var message in request.Messages)
-        {
-            var msg = new Dictionary<string, object?>
-            {
-                ["role"] = message.Role,
-                ["content"] = message.Content
-            };
-
-            // Assistant messages with tool_calls
-            if (message.ToolCalls is { Count: > 0 })
-            {
-                msg["tool_calls"] = message.ToolCalls.Select(tc => new Dictionary<string, object?>
-                {
-                    ["id"] = tc.Id,
-                    ["type"] = "function",
-                    ["function"] = new Dictionary<string, object?>
-                    {
-                        ["name"] = tc.ToolName,
-                        ["arguments"] = JsonSerializer.Serialize(tc.Arguments)
-                    }
-                }).ToList();
-            }
-
-            // Tool result messages
-            if (string.Equals(message.Role, "tool", StringComparison.OrdinalIgnoreCase))
-            {
-                if (!string.IsNullOrEmpty(message.ToolCallId))
-                    msg["tool_call_id"] = message.ToolCallId;
-                if (!string.IsNullOrEmpty(message.ToolName))
-                    msg["name"] = message.ToolName;
-            }
-
-            messages.Add(msg);
-        }
-
-        var payload = new Dictionary<string, object?>
-        {
-            ["model"] = string.IsNullOrWhiteSpace(request.Settings.Model) ? _defaultModel : request.Settings.Model,
-            ["messages"] = messages,
-            ["stream"] = stream
-        };
-
-        // Only include max_tokens and temperature if explicitly set
-        if (request.Settings.MaxTokens.HasValue)
-            payload["max_tokens"] = request.Settings.MaxTokens.Value;
-        if (request.Settings.Temperature.HasValue)
-            payload["temperature"] = request.Settings.Temperature.Value;
-
-        if (request.Tools is { Count: > 0 })
-        {
-            payload["tools"] = request.Tools.Select(tool => new Dictionary<string, object?>
-            {
-                ["type"] = "function",
-                ["function"] = new Dictionary<string, object?>
-                {
-                    ["name"] = tool.Name,
-                    ["description"] = tool.Description,
-                    ["parameters"] = BuildParameterSchema(tool)
-                }
-            }).ToList();
-        }
-
-        return payload;
-    }
-
-    private static Dictionary<string, object?> BuildParameterSchema(ToolDefinition tool)
-    {
-        var properties = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-        var required = new List<string>();
-
-        foreach (var parameter in tool.Parameters)
-        {
-            var schema = new Dictionary<string, object?>
-            {
-                ["type"] = parameter.Value.Type,
-                ["description"] = parameter.Value.Description
-            };
-            if (parameter.Value.EnumValues is { Count: > 0 })
-                schema["enum"] = parameter.Value.EnumValues;
-            if (parameter.Value.Items is not null)
-            {
-                schema["items"] = new Dictionary<string, object?>
-                {
-                    ["type"] = parameter.Value.Items.Type,
-                    ["description"] = parameter.Value.Items.Description
-                };
-            }
-
-            properties[parameter.Key] = schema;
-            if (parameter.Value.Required)
-                required.Add(parameter.Key);
-        }
-
-        return new Dictionary<string, object?>
-        {
-            ["type"] = "object",
-            ["properties"] = properties,
-            ["required"] = required
-        };
-    }
-
-    private static FinishReason MapFinishReason(string? reason) => reason switch
-    {
-        "stop" => FinishReason.Stop,
-        "tool_calls" => FinishReason.ToolCalls,
-        "length" => FinishReason.Length,
-        "content_filter" => FinishReason.ContentFilter,
-        _ => FinishReason.Other
-    };
-
-    /// <summary>
-    /// Normalizes Copilot raw tool_calls array to canonical ToolCallRequest list.
-    /// 
-    /// <para><b>Critical normalization:</b> Handles DUAL argument formats (commit dd0343a fix):</para>
-    /// <list type="bullet">
-    ///   <item><b>OpenAI format:</b> arguments is a JSON string → parse via GetString() then deserialize</item>
-    ///   <item><b>Claude format:</b> arguments is a JSON object → parse via GetRawText() and deserialize</item>
-    /// </list>
-    /// 
-    /// <para>
-    /// The Copilot proxy preserves backend-specific formats. OpenAI models return arguments as 
-    /// stringified JSON, Claude returns arguments as inline JSON objects. Both must normalize to 
-    /// Dictionary&lt;string, object?&gt; for ToolCallRequest.
-    /// </para>
-    /// 
-    /// <para>
-    /// When arguments are missing or malformed, we use an empty dictionary rather than failing,
-    /// allowing tools to handle missing arguments gracefully.
-    /// </para>
-    /// </summary>
-    private IReadOnlyList<ToolCallRequest> ParseToolCalls(JsonElement toolCallsElement)
-    {
-        var result = new List<ToolCallRequest>();
-
-        foreach (var toolCall in toolCallsElement.EnumerateArray())
-        {
-            var id = toolCall.TryGetProperty("id", out var idElement)
-                ? idElement.GetString() ?? string.Empty
-                : string.Empty;
-
-            if (!toolCall.TryGetProperty("function", out var functionElement))
-            {
-                Logger.LogWarning("CopilotProvider: Tool call missing 'function' property: {RawToolCall}", toolCall.GetRawText());
-                continue;
-            }
-
-            var name = functionElement.TryGetProperty("name", out var nameElement)
-                ? nameElement.GetString() ?? string.Empty
-                : string.Empty;
-
-            // NORMALIZATION: Dual argument format handling (OpenAI string vs Claude object)
-            Dictionary<string, object?> arguments;
-            if (functionElement.TryGetProperty("arguments", out var argumentsElement))
-            {
-                if (argumentsElement.ValueKind == JsonValueKind.String)
-                {
-                    // OpenAI format: arguments is a JSON string that needs parsing
-                    var argumentsJson = argumentsElement.GetString();
-                    arguments = string.IsNullOrWhiteSpace(argumentsJson)
-                        ? new Dictionary<string, object?>()
-                        : JsonSerializer.Deserialize<Dictionary<string, object?>>(argumentsJson) ?? [];
-                }
-                else if (argumentsElement.ValueKind == JsonValueKind.Object)
-                {
-                    // Claude/Copilot format: arguments is already a JSON object
-                    arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(argumentsElement.GetRawText()) ?? [];
-                }
-                else
-                {
-                    Logger.LogWarning("CopilotProvider: Unexpected arguments type {ValueKind} for tool {ToolName}, using empty dict", 
-                        argumentsElement.ValueKind, name);
-                    arguments = new Dictionary<string, object?>();
-                }
-            }
-            else
-            {
-                arguments = new Dictionary<string, object?>();
-            }
-
-            Logger.LogDebug("CopilotProvider: Parsed tool call: id={Id}, name={Name}, arguments_count={Count}", 
-                id, name, arguments.Count);
-
-            result.Add(new ToolCallRequest(id, name, arguments));
-        }
-
-        return result;
     }
 }

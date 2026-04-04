@@ -153,7 +153,7 @@ public sealed class OpenAiProvider : LlmProviderBase
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<string> ChatStreamAsync(
+    public override async IAsyncEnumerable<StreamingChatChunk> ChatStreamAsync(
         ChatRequest request,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -165,7 +165,7 @@ public sealed class OpenAiProvider : LlmProviderBase
             foreach (var part in update.ContentUpdate)
             {
                 if (!string.IsNullOrEmpty(part.Text))
-                    yield return part.Text;
+                    yield return StreamingChatChunk.FromContentDelta(part.Text);
             }
         }
     }

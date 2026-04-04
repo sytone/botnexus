@@ -430,7 +430,7 @@ public sealed class OpenAiCompletionsHandler : IApiFormatHandler
     private HttpRequestMessage CreateHttpRequest(ModelDefinition model, Dictionary<string, object?> payload, string apiKey)
     {
         var json = JsonSerializer.Serialize(payload);
-        var request = new HttpRequestMessage(HttpMethod.Post, $"{model.BaseUrl}/v1/chat/completions")
+        var request = new HttpRequestMessage(HttpMethod.Post, "/chat/completions")
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json")
         };

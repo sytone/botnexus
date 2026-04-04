@@ -50,12 +50,27 @@ public interface ILlmProvider
     Task<LlmResponse> ChatAsync(ChatRequest request, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Sends a chat request and streams response tokens.
+    /// Sends a chat request and streams response chunks.
     /// 
     /// <para>
-    /// Streaming mode yields raw text deltas. Tool calls are not supported in streaming mode.
-    /// Use <see cref="ChatAsync"/> when tool calling is required.
+    /// Streaming mode yields <see cref="StreamingChatChunk"/> objects that may contain text deltas,
+    /// tool call deltas, finish reasons, or usage statistics. Consumers should aggregate chunks
+    /// to build the complete response.
+    /// </para>
+    /// 
+    /// <para><b>Tool Call Streaming:</b></para>
+    /// <para>
+    /// When the model requests tool calls, the provider yields chunks with ToolCallId, ToolName,
+    /// and ArgumentsDelta. Arguments stream as partial JSON fragments that must be buffered and
+    /// parsed when complete. Providers that don't support tool call streaming can still use
+    /// ChatAsync for non-streaming tool calls.
+    /// </para>
+    /// 
+    /// <para><b>Backward Compatibility:</b></para>
+    /// <para>
+    /// Consumers that only care about text streaming can read ContentDelta and ignore other fields.
+    /// This maintains compatibility with simple streaming use cases.
     /// </para>
     /// </summary>
-    IAsyncEnumerable<string> ChatStreamAsync(ChatRequest request, CancellationToken cancellationToken = default);
+    IAsyncEnumerable<StreamingChatChunk> ChatStreamAsync(ChatRequest request, CancellationToken cancellationToken = default);
 }

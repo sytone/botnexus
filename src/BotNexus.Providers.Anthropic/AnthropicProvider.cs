@@ -125,7 +125,7 @@ public sealed class AnthropicProvider : LlmProviderBase
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<string> ChatStreamAsync(
+    public override async IAsyncEnumerable<StreamingChatChunk> ChatStreamAsync(
         ChatRequest request,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -162,7 +162,7 @@ public sealed class AnthropicProvider : LlmProviderBase
                 {
                     var text = textEl.GetString();
                     if (!string.IsNullOrEmpty(text))
-                        yield return text;
+                        yield return StreamingChatChunk.FromContentDelta(text);
                 }
             }
         }
