@@ -55,12 +55,12 @@ public class HandlerFormatTests
         }
         else
         {
-            modelValue.ToString().Should().Be("claude-opus-4.6");
+            modelValue?.ToString().Should().Be("claude-opus-4.6");
         }
-        capturedPayload["system"].ToString().Should().Be("You are a helpful assistant");
-        capturedPayload["max_tokens"].ToString().Should().Be("1000");
-        capturedPayload["temperature"].ToString().Should().Be("0.7");
-        capturedPayload["stream"].ToString().Should().Be("False");
+        capturedPayload["system"]?.ToString().Should().Be("You are a helpful assistant");
+        capturedPayload["max_tokens"]?.ToString().Should().Be("1000");
+        capturedPayload["temperature"]?.ToString().Should().Be("0.7");
+        capturedPayload["stream"]?.ToString().Should().Be("False");
         
         var messages = capturedPayload["messages"] as JsonElement?;
         messages.Should().NotBeNull();
@@ -255,11 +255,11 @@ public class HandlerFormatTests
         }
         else
         {
-            modelValue.ToString().Should().Be("gpt-4o");
+            modelValue?.ToString().Should().Be("gpt-4o");
         }
-        capturedPayload["temperature"].ToString().Should().Be("0.8");
-        capturedPayload["max_tokens"].ToString().Should().Be("500");
-        capturedPayload["stream"].ToString().Should().Be("False");
+        capturedPayload["temperature"]?.ToString().Should().Be("0.8");
+        capturedPayload["max_tokens"]?.ToString().Should().Be("500");
+        capturedPayload["stream"]?.ToString().Should().Be("False");
         
         var messages = capturedPayload["messages"] as JsonElement?;
         messages.Should().NotBeNull();
@@ -412,7 +412,7 @@ public class HandlerFormatTests
         }
         else
         {
-            modelValue.ToString().Should().Be("gpt-5.2");
+            modelValue?.ToString().Should().Be("gpt-5.2");
         }
         capturedPayload.Should().ContainKey("input");
         

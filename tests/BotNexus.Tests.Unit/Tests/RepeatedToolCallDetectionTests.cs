@@ -277,7 +277,7 @@ public class RepeatedToolCallDetectionTests : IDisposable
     }
 
     [Fact]
-    public void SignatureComputation_SameArgs_ProducesSameSignature()
+    public async Task SignatureComputation_SameArgs_ProducesSameSignature()
     {
         // Arrange: Create two tool calls with identical arguments
         var args1 = new Dictionary<string, object?> 
@@ -333,7 +333,7 @@ public class RepeatedToolCallDetectionTests : IDisposable
             maxToolIterations: 10);
 
         // Assert: Second call should be blocked (same signature detected)
-        loop.ProcessAsync(MakeMessage("test")).Wait();
+        await loop.ProcessAsync(MakeMessage("test"));
         mockTool.Verify(t => t.ExecuteAsync(It.IsAny<IReadOnlyDictionary<string, object?>>(), It.IsAny<CancellationToken>()), 
             Times.Once); // Only first call executed
     }
