@@ -1066,6 +1066,18 @@ eloadOnChange: true + ConfigReloadOrchestrator hosted service using IOptionsMoni
 
 ## Learnings
 
+### Gateway Phase 4 Wave 1 Design Review (2026-04-05)
+- **Reviewed:** 12 commits covering runtime hardening, config validation endpoint, multi-tenant API key auth
+- **Overall grade: A-** — well-executed runtime fixes with textbook async patterns
+- **Key patterns observed:**
+  - `AsyncLocal<HashSet<string>>` for per-flow recursion detection — correct isolation, clean `IDisposable` cleanup
+  - `TaskCompletionSource` with `RunContinuationsAsynchronously` for deduplicating concurrent creation — textbook pattern, replaces lock-held async creation
+  - `ConcurrentDictionary` with `TryAdd`/`TryUpdate` optimistic loop for rate limiting — lock-free, amortized cleanup every 128th update
+  - Options pattern migration from `LoadAsync().GetAwaiter().GetResult()` to synchronous `Load()` — eliminates sync-over-async deadlock risk
+- **P1 findings:** (1) Config validation endpoint allows unauthenticated filesystem path probing — needs auth gating or path restriction; (2) Two recursion guard tests are `Skip`-ped — should be enabled
+- **P2 findings:** (1) `ApplyPlatformConfig` manual property copy is fragile; (2) WebSocket handler accumulating rate-limiting responsibility; (3) No max call-chain depth limit; (4) Dual config source-of-truth (legacy + nested) without conflict warnings
+- **Review written to:** `.squad/decisions/inbox/leela-phase4-design-review.md`
+
 ### pi-mono Agent Architecture
 - **types.ts**: 10+ type definitions forming a discriminated-union event system, typed tool definitions with TypeBox schemas, extensible messages via declaration merging, AgentState as mutable state container
 - **agent-loop.ts**: The core engine — outer loop (follow-ups) → inner loop (tool calls + steering) → streamAssistantResponse → executeToolCalls. Two execution modes: sequential and parallel. BeforeToolCall/AfterToolCall hooks allow skip/modify.

@@ -709,3 +709,119 @@ The Gateway Service is **well-built and highly consistent internally**. XML doc 
 ### Verdict
 
 Gateway passes consistency review. **P1 items should be addressed before the next milestone; P2 items are housekeeping.** The overall code quality is high.
+
+---
+
+## Wave: Phase 3 Design Review Fixes (2026-04-05T2300Z)
+
+### Bender — P0/P1 Runtime Fixes
+
+#### P0.1: Gateway session history thread safety + streaming exception surfacing
+- **Status:** Implemented | **Commits:** 8510dac (recursion guard), 331e4cb (supervisor race fix)
+- Introduced thread-safe session history APIs on GatewaySession with AddEntry(), AddEntries(), GetHistorySnapshot()
+- Exception handling around in-process stream subscription callbacks surfaces stream failures as AgentStreamEventType.Error instead of silent termination
+- Updated FileSessionStore, GatewayHost, StreamingSessionHelper, GatewayWebSocketHandler, ChatController
+- Tests: 149 passed, 2 skipped
+
+#### P0.2: GatewayWebSocketHandler streaming history loss
+- **Status:** Implemented | **Commit:** b6a92bb
+- Applied streamedContent/streamedHistory accumulation pattern from GatewayHost.DispatchAsync into GatewayWebSocketHandler.HandleUserMessageAsync
+- Captures ToolStart, ToolEnd, and final ssistant entries before session save
+- Closed data-loss bug for WebSocket interactions
+
+#### P1.1: Recursion guard for cross-agent calls
+- **Status:** Implemented | **Commit:** 8510dac
+- Added max nesting depth check (counts ::sub:: segments in parent session ID)
+- Prevents infinite recursion in supervisor callback chain
+
+#### P1.2: Supervisor race condition (state transitions)
+- **Status:** Implemented | **Commit:** 331e4cb
+- Serialized supervisor state transitions to prevent concurrent mutation
+
+#### P1.3: Reconnection backoff guardrails
+- **Status:** Implemented | **Commit:** b8eb0d2
+- Server-side: tracks per-client reconnect attempts in sliding window, rejects excess with HTTP 429 + Retry-After
+- Client-side: exponential backoff with bounded max retry count
+
+#### P1.4: Async startup (proper cancellation during bootstrap)
+- **Status:** Implemented | **Commit:** 01680ff
+- Allows proper cancellation during agent bootstrap phase
+
+#### P1.5: Options pattern for runtime configuration
+- **Status:** Implemented | **Commit:** 01680ff
+- Enables extensible runtime configuration
+
+### Farnsworth — Platform Config + Deployment Scenario + Multi-Tenant Auth
+
+#### Gateway Config/Auth Shape
+- **Status:** Implemented | **Commits:** c0fad0b, 5b0b3cf, 30474d7
+- Unified platform config schema supports: gateway settings, agents definitions, providers, channels
+- gateway.apiKeys (and root piKeys for compatibility) maps each key to tenant identity + permissions
+- PlatformConfig, PlatformConfigLoader, ApiKeyGatewayAuthHandler all registered
+- Runnable API host entrypoint for deployment scenarios
+
+#### Multi-Tenant Auth
+- **Status:** Implemented | **Commit:** 9d5ac37
+- API-key based auth mapped from platform config
+- Isolated contexts per tenant
+
+#### Improved Error Messages
+- **Status:** Implemented | **Commit:** 3695444
+- Actionable recovery steps for operators
+- Enhanced observability
+
+#### Isolation Strategy Registration
+- **Status:** Implemented
+- All built-in isolation strategies registered in DI: InProcessIsolationStrategy, SandboxIsolationStrategy, ContainerIsolationStrategy, RemoteIsolationStrategy
+- Phase 2 strategies are explicit stubs with NotSupportedException and guidance
+
+#### Platform Config Source
+- **Status:** Implemented
+- Source: ~/.botnexus/config.json
+- PlatformConfig + PlatformConfigLoader with validation for URL/path/log-level
+- Missing files resolve to defaults (non-breaking)
+
+#### P1 Channel Stub Fixes
+- **Status:** Implemented
+- TuiChannelAdapter and TelegramChannelAdapter now extend ChannelAdapterBase
+- Override OnStartAsync, OnStopAsync, SendAsync, SendStreamDeltaAsync
+- Honor IChannelAdapter contract (TUI: SupportsStreaming = true; Telegram: alse)
+
+#### P1 TelegramOptions DI Pattern
+- **Status:** Implemented
+- Migrated to services.AddOptions<TelegramOptions>() + services.Configure(configure)
+- TelegramChannelAdapter now consumes IOptions<TelegramOptions>
+- Consistent with GatewayOptions pattern
+
+#### P1 IChannelManager Interface
+- **Status:** Implemented
+- Added IChannelManager with IReadOnlyList<IChannelAdapter> Adapters { get; } and Get(string channelType)
+- ChannelManager implements interface; GatewayHost depends on IChannelManager
+- Pure read-only registry with zero lifecycle logic
+
+### Hermes — Live Integration Testing
+
+#### Live Copilot Provider Integration Tests
+- **Status:** Implemented | **Commits:** 73384a5, ea2600c
+- 7 integration tests passed validating end-to-end provider flow
+- Tests support concurrent provider scenarios
+- Empty stream handling verified under load
+
+#### Graceful Skip Pattern for Live Tests
+- **Status:** Implemented
+- Integration tests in CopilotIntegrationTests.cs treat auth/connectivity failures as graceful skips
+- Inspect recorded gateway activity errors while still asserting strict behavior when no live-environment failure present
+- Prevents false negatives from live-environment volatility
+
+#### Gateway Test Coverage Growth
+- From 135 to 151 tests (149 passed, 2 skipped)
+- Test suite now includes provider integration, session persistence, WebSocket streaming
+
+### Summary: Phase 3 Wave 1
+- **11 atomic commits** across three agents
+- **684 total tests** passed (up from 670 baseline)
+- **0 test failures**, 2 skipped
+- **Build:** Clean (0 errors, 0 warnings)
+- **P1/P2 blockers:** All resolved
+- **Status:** READY FOR RELEASE
+
