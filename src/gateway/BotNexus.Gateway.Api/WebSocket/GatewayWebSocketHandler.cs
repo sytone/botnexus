@@ -6,6 +6,7 @@ using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Streaming;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 
@@ -147,56 +148,34 @@ public sealed class GatewayWebSocketHandler
     {
         var session = await _sessions.GetOrCreateAsync(sessionId, agentId, cancellationToken);
         session.History.Add(new SessionEntry { Role = "user", Content = content });
-        var streamedContent = new StringBuilder();
-        var streamedHistory = new List<SessionEntry>();
+        var sessionSaved = false;
 
         try
         {
             var handle = await _supervisor.GetOrCreateAsync(agentId, sessionId, cancellationToken);
 
-            await foreach (var evt in handle.StreamAsync(content, cancellationToken))
-            {
-                switch (evt.Type)
-                {
-                    case AgentStreamEventType.ContentDelta when evt.ContentDelta is not null:
-                        streamedContent.Append(evt.ContentDelta);
-                        break;
-                    case AgentStreamEventType.ToolStart when evt.ToolCallId is not null || evt.ToolName is not null:
-                        streamedHistory.Add(new SessionEntry
+            await StreamingSessionHelper.ProcessAndSaveAsync(
+                handle.StreamAsync(content, cancellationToken),
+                session,
+                _sessions,
+                new StreamingSessionOptions(
+                    OnEventAsync: (evt, ct) =>
+                    {
+                        object wsMessage = evt.Type switch
                         {
-                            Role = "tool",
-                            Content = $"Tool '{evt.ToolName ?? "unknown"}' started.",
-                            ToolName = evt.ToolName,
-                            ToolCallId = evt.ToolCallId
-                        });
-                        break;
-                    case AgentStreamEventType.ToolEnd when evt.ToolCallId is not null || evt.ToolName is not null:
-                        streamedHistory.Add(new SessionEntry
-                        {
-                            Role = "tool",
-                            Content = evt.ToolResult ?? (evt.ToolIsError == true ? "Tool execution failed." : "Tool execution completed."),
-                            ToolName = evt.ToolName,
-                            ToolCallId = evt.ToolCallId
-                        });
-                        break;
-                }
+                            AgentStreamEventType.MessageStart => new { type = "message_start", messageId = evt.MessageId },
+                            AgentStreamEventType.ContentDelta => new { type = "content_delta", delta = evt.ContentDelta, messageId = evt.MessageId },
+                            AgentStreamEventType.ToolStart => new { type = "tool_start", toolCallId = evt.ToolCallId, toolName = evt.ToolName, messageId = evt.MessageId },
+                            AgentStreamEventType.ToolEnd => new { type = "tool_end", toolCallId = evt.ToolCallId, toolResult = evt.ToolResult, messageId = evt.MessageId },
+                            AgentStreamEventType.MessageEnd => new { type = "message_end", messageId = evt.MessageId, usage = evt.Usage },
+                            AgentStreamEventType.Error => new { type = "error", message = evt.ErrorMessage },
+                            _ => (object)new { type = "unknown" }
+                        };
 
-                object wsMessage = evt.Type switch
-                {
-                    AgentStreamEventType.MessageStart => new { type = "message_start", messageId = evt.MessageId },
-                    AgentStreamEventType.ContentDelta => new { type = "content_delta", delta = evt.ContentDelta, messageId = evt.MessageId },
-                    AgentStreamEventType.ToolStart => new { type = "tool_start", toolCallId = evt.ToolCallId, toolName = evt.ToolName, messageId = evt.MessageId },
-                    AgentStreamEventType.ToolEnd => new { type = "tool_end", toolCallId = evt.ToolCallId, toolResult = evt.ToolResult, messageId = evt.MessageId },
-                    AgentStreamEventType.MessageEnd => new { type = "message_end", messageId = evt.MessageId, usage = evt.Usage },
-                    AgentStreamEventType.Error => new { type = "error", message = evt.ErrorMessage },
-                    _ => (object)new { type = "unknown" }
-                };
-
-                await SendJsonAsync(socket, wsMessage, cancellationToken);
-            }
-
-            session.History.AddRange(streamedHistory);
-            session.History.Add(new SessionEntry { Role = "assistant", Content = streamedContent.ToString() });
+                        return new ValueTask(SendJsonAsync(socket, wsMessage, ct));
+                    }),
+                cancellationToken);
+            sessionSaved = true;
         }
         catch (Exception ex)
         {
@@ -204,8 +183,11 @@ public sealed class GatewayWebSocketHandler
             await SendJsonAsync(socket, new { type = "error", message = ex.Message, code = "AGENT_ERROR" }, cancellationToken);
         }
 
-        session.UpdatedAt = DateTimeOffset.UtcNow;
-        await _sessions.SaveAsync(session, cancellationToken);
+        if (!sessionSaved)
+        {
+            session.UpdatedAt = DateTimeOffset.UtcNow;
+            await _sessions.SaveAsync(session, cancellationToken);
+        }
     }
 
     private static async Task SendJsonAsync(System.Net.WebSockets.WebSocket socket, object message, CancellationToken cancellationToken)

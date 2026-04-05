@@ -4,10 +4,10 @@ using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Streaming;
 using BotNexus.Channels.Core;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using System.Text;
 
 namespace BotNexus.Gateway;
 
@@ -136,48 +136,26 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
                 }, cancellationToken);
 
                 // Stream if the channel supports it, otherwise collect and send
+                var sessionSaved = false;
                 if (_channelManager.Get(message.ChannelType) is { SupportsStreaming: true } channel)
                 {
-                    var streamedContent = new StringBuilder();
-                    var streamedHistory = new List<SessionEntry>();
-                    await foreach (var evt in handle.StreamAsync(message.Content, cancellationToken))
-                    {
-                        switch (evt.Type)
-                        {
-                            case AgentStreamEventType.ContentDelta when evt.ContentDelta is not null:
-                                streamedContent.Append(evt.ContentDelta);
-                                await channel.SendStreamDeltaAsync(message.ConversationId, evt.ContentDelta, cancellationToken);
-                                break;
-                            case AgentStreamEventType.ToolStart when evt.ToolCallId is not null || evt.ToolName is not null:
-                                streamedHistory.Add(new SessionEntry
+                    await StreamingSessionHelper.ProcessAndSaveAsync(
+                        handle.StreamAsync(message.Content, cancellationToken),
+                        session,
+                        _sessions,
+                        new StreamingSessionOptions(
+                            IncludeErrorsInHistory: true,
+                            OnEventAsync: (evt, ct) =>
+                            {
+                                if (evt.Type == AgentStreamEventType.ContentDelta && evt.ContentDelta is not null)
                                 {
-                                    Role = "tool",
-                                    Content = $"Tool '{evt.ToolName ?? "unknown"}' started.",
-                                    ToolName = evt.ToolName,
-                                    ToolCallId = evt.ToolCallId
-                                });
-                                break;
-                            case AgentStreamEventType.ToolEnd when evt.ToolCallId is not null || evt.ToolName is not null:
-                                streamedHistory.Add(new SessionEntry
-                                {
-                                    Role = "tool",
-                                    Content = evt.ToolResult ?? (evt.ToolIsError == true ? "Tool execution failed." : "Tool execution completed."),
-                                    ToolName = evt.ToolName,
-                                    ToolCallId = evt.ToolCallId
-                                });
-                                break;
-                            case AgentStreamEventType.Error when !string.IsNullOrWhiteSpace(evt.ErrorMessage):
-                                streamedHistory.Add(new SessionEntry
-                                {
-                                    Role = "system",
-                                    Content = $"Agent stream error: {evt.ErrorMessage}"
-                                });
-                                break;
-                        }
-                    }
+                                    return new ValueTask(channel.SendStreamDeltaAsync(message.ConversationId, evt.ContentDelta, ct));
+                                }
 
-                    session.History.AddRange(streamedHistory);
-                    session.History.Add(new SessionEntry { Role = "assistant", Content = streamedContent.ToString() });
+                                return ValueTask.CompletedTask;
+                            }),
+                        cancellationToken);
+                    sessionSaved = true;
                 }
                 else
                 {
@@ -196,8 +174,11 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
                     session.History.Add(new SessionEntry { Role = "assistant", Content = response.Content });
                 }
 
-                session.UpdatedAt = DateTimeOffset.UtcNow;
-                await _sessions.SaveAsync(session, cancellationToken);
+                if (!sessionSaved)
+                {
+                    session.UpdatedAt = DateTimeOffset.UtcNow;
+                    await _sessions.SaveAsync(session, cancellationToken);
+                }
 
                 await _activity.PublishAsync(new GatewayActivity
                 {
