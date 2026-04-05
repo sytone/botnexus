@@ -101,7 +101,7 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
                     ThinkingLevel.Low => "low",
                     ThinkingLevel.Medium => "medium",
                     ThinkingLevel.High => "high",
-                    ThinkingLevel.ExtraHigh => "max",
+                    ThinkingLevel.ExtraHigh => IsOpus46Model(model.Id) ? "max" : "high",
                     _ => "medium"
                 };
             }
@@ -888,6 +888,10 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
         modelId.Contains("opus-4.6", StringComparison.OrdinalIgnoreCase) ||
         modelId.Contains("sonnet-4-6", StringComparison.OrdinalIgnoreCase) ||
         modelId.Contains("sonnet-4.6", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsOpus46Model(string modelId) =>
+        modelId.Contains("opus-4-6", StringComparison.OrdinalIgnoreCase) ||
+        modelId.Contains("opus-4.6", StringComparison.OrdinalIgnoreCase);
 
     [GeneratedRegex("[^a-zA-Z0-9_-]")]
     private static partial Regex NonAlphanumericRegex();
