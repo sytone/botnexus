@@ -120,12 +120,19 @@ internal sealed class InProcessAgentHandle : IAgentHandle
             var streamEvent = agentEvent switch
             {
                 MessageStartEvent => new AgentStreamEvent { Type = AgentStreamEventType.MessageStart, MessageId = messageId },
-                MessageUpdateEvent update when update.ContentDelta is not null => new AgentStreamEvent
-                {
-                    Type = AgentStreamEventType.ContentDelta,
-                    ContentDelta = update.ContentDelta,
-                    MessageId = messageId
-                },
+                MessageUpdateEvent update when update.ContentDelta is not null => update.IsThinking
+                    ? new AgentStreamEvent
+                    {
+                        Type = AgentStreamEventType.ThinkingDelta,
+                        ThinkingContent = update.ContentDelta,
+                        MessageId = messageId
+                    }
+                    : new AgentStreamEvent
+                    {
+                        Type = AgentStreamEventType.ContentDelta,
+                        ContentDelta = update.ContentDelta,
+                        MessageId = messageId
+                    },
                 ToolExecutionStartEvent toolStart => new AgentStreamEvent
                 {
                     Type = AgentStreamEventType.ToolStart,

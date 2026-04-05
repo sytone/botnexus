@@ -28,6 +28,7 @@ namespace BotNexus.Gateway.Api.WebSocket;
 /// <list type="bullet">
 ///   <item><c>{ "type": "connected", "connectionId": "...", "sessionId": "..." }</c></item>
 ///   <item><c>{ "type": "message_start", "messageId": "..." }</c></item>
+///   <item><c>{ "type": "thinking_delta", "delta": "...", "messageId": "..." }</c></item>
 ///   <item><c>{ "type": "content_delta", "delta": "...", "messageId": "..." }</c></item>
 ///   <item><c>{ "type": "tool_start", "toolCallId": "...", "toolName": "...", "messageId": "..." }</c></item>
 ///   <item><c>{ "type": "tool_end", "toolCallId": "...", "toolResult": "...", "messageId": "..." }</c></item>
@@ -164,6 +165,7 @@ public sealed class GatewayWebSocketHandler
                         object wsMessage = evt.Type switch
                         {
                             AgentStreamEventType.MessageStart => new { type = "message_start", messageId = evt.MessageId },
+                            AgentStreamEventType.ThinkingDelta => new { type = "thinking_delta", delta = evt.ThinkingContent, messageId = evt.MessageId },
                             AgentStreamEventType.ContentDelta => new { type = "content_delta", delta = evt.ContentDelta, messageId = evt.MessageId },
                             AgentStreamEventType.ToolStart => new { type = "tool_start", toolCallId = evt.ToolCallId, toolName = evt.ToolName, messageId = evt.MessageId },
                             AgentStreamEventType.ToolEnd => new { type = "tool_end", toolCallId = evt.ToolCallId, toolResult = evt.ToolResult, messageId = evt.MessageId },

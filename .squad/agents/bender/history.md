@@ -752,3 +752,8 @@ Participated in design review ceremony for Phase 3 architecture. All ADs approve
 ### 2026-04-06 — P0 WebSocket streaming history parity
 - Fixed GatewayWebSocketHandler.HandleUserMessageAsync to mirror GatewayHost.DispatchAsync streaming history capture.
 - WebSocket streaming now accumulates content deltas into a final assistant entry and persists tool_start/tool_end as tool role SessionEntry records before saving the session.
+
+### 2026-04-06 — Shared stream helper + thinking events
+- `StreamingSessionHelper` in `src\gateway\BotNexus.Gateway\Streaming\` now centralizes stream-to-history behavior (content accumulation, tool start/end entries, optional stream errors, session save) and supports per-event callbacks for channel/WebSocket emission.
+- `GatewayHost` and `GatewayWebSocketHandler` now both route streaming through the helper, preserving existing output behavior while removing duplicated history logic.
+- Gateway stream contracts now include `AgentStreamEventType.ThinkingDelta` + `AgentStreamEvent.ThinkingContent`; `InProcessAgentHandle` maps `MessageUpdateEvent.IsThinking` to thinking deltas, and WebSocket emits `{ "type": "thinking_delta", "delta": "...", "messageId": "..." }` without persisting thinking content to session history.

@@ -37,6 +37,33 @@ public sealed class StreamingSessionHelperTests
         store.Verify(s => s.SaveAsync(session, It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task ProcessAndSaveAsync_DoesNotPersistThinkingContent()
+    {
+        var callbackTypes = new List<AgentStreamEventType>();
+        var session = new GatewaySession { SessionId = "session-2", AgentId = "agent-1" };
+        var store = new Mock<ISessionStore>();
+
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.ThinkingDelta, ThinkingContent = "Let me think..." },
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "Final answer." }
+            ]),
+            session,
+            store.Object,
+            new StreamingSessionOptions(OnEventAsync: (evt, _) =>
+            {
+                callbackTypes.Add(evt.Type);
+                return ValueTask.CompletedTask;
+            }));
+
+        session.History.Should().ContainSingle();
+        session.History[0].Role.Should().Be("assistant");
+        session.History[0].Content.Should().Be("Final answer.");
+        callbackTypes.Should().Contain(AgentStreamEventType.ThinkingDelta);
+    }
+
     private static async IAsyncEnumerable<AgentStreamEvent> ToAsyncEnumerable(IEnumerable<AgentStreamEvent> events)
     {
         foreach (var evt in events)

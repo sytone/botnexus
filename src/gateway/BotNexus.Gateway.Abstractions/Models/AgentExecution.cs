@@ -59,6 +59,9 @@ public sealed record AgentStreamEvent
     /// <summary>Incremental content delta (for <see cref="AgentStreamEventType.ContentDelta"/>).</summary>
     public string? ContentDelta { get; init; }
 
+    /// <summary>Incremental thinking delta (for <see cref="AgentStreamEventType.ThinkingDelta"/>).</summary>
+    public string? ThinkingContent { get; init; }
+
     /// <summary>Tool call identifier (for tool-related events).</summary>
     public string? ToolCallId { get; init; }
 
@@ -94,6 +97,9 @@ public enum AgentStreamEventType
 
     /// <summary>Incremental content from the agent.</summary>
     ContentDelta,
+
+    /// <summary>Incremental thinking content from the agent.</summary>
+    ThinkingDelta,
 
     /// <summary>A tool execution has started.</summary>
     ToolStart,
