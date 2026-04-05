@@ -105,6 +105,98 @@ public sealed class FileAgentConfigurationSourceTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadAsync_WithPathTraversalSystemPromptFile_RejectsDescriptor()
+    {
+        var logger = new ListLogger<FileAgentConfigurationSource>();
+        File.WriteAllText(
+            Path.Combine(_directoryPath, "agent-a.json"),
+            """
+            {
+              "agentId": "agent-a",
+              "displayName": "Agent A",
+              "modelId": "model-x",
+              "apiProvider": "provider-x",
+              "systemPromptFile": "../../etc/passwd"
+            }
+            """);
+
+        var source = new FileAgentConfigurationSource(_directoryPath, logger);
+
+        var descriptors = await source.LoadAsync();
+
+        descriptors.Should().BeEmpty();
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Warning &&
+            e.Message.Contains("Path traversal blocked", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithAbsoluteSystemPromptFileOutsideConfigDirectory_RejectsDescriptor()
+    {
+        var logger = new ListLogger<FileAgentConfigurationSource>();
+        var outsideDirectory = Path.Combine(_directoryPath, "..", "outside");
+        Directory.CreateDirectory(outsideDirectory);
+        var outsidePromptPath = Path.GetFullPath(Path.Combine(outsideDirectory, "outside-prompt.txt"));
+
+        try
+        {
+            File.WriteAllText(outsidePromptPath, "Outside prompt");
+            File.WriteAllText(
+                Path.Combine(_directoryPath, "agent-a.json"),
+                $$"""
+                {
+                  "agentId": "agent-a",
+                  "displayName": "Agent A",
+                  "modelId": "model-x",
+                  "apiProvider": "provider-x",
+                  "systemPromptFile": "{{outsidePromptPath.Replace("\\", "\\\\")}}"
+                }
+                """);
+
+            var source = new FileAgentConfigurationSource(_directoryPath, logger);
+
+            var descriptors = await source.LoadAsync();
+
+            descriptors.Should().BeEmpty();
+            logger.Entries.Should().Contain(e =>
+                e.Level == LogLevel.Warning &&
+                e.Message.Contains("Path traversal blocked", StringComparison.Ordinal));
+        }
+        finally
+        {
+            if (Directory.Exists(outsideDirectory))
+                Directory.Delete(outsideDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithAbsoluteSystemPromptFileWithinConfigDirectory_LoadsPromptContent()
+    {
+        var promptDirectory = Path.Combine(_directoryPath, "prompts");
+        Directory.CreateDirectory(promptDirectory);
+        var promptPath = Path.GetFullPath(Path.Combine(promptDirectory, "system-absolute.txt"));
+        File.WriteAllText(promptPath, "Absolute prompt from file");
+        File.WriteAllText(
+            Path.Combine(_directoryPath, "agent-a.json"),
+            $$"""
+            {
+              "agentId": "agent-a",
+              "displayName": "Agent A",
+              "modelId": "model-x",
+              "apiProvider": "provider-x",
+              "systemPromptFile": "{{promptPath.Replace("\\", "\\\\")}}"
+            }
+            """);
+
+        var source = new FileAgentConfigurationSource(_directoryPath, new ListLogger<FileAgentConfigurationSource>());
+
+        var descriptor = (await source.LoadAsync()).Should().ContainSingle().Subject;
+
+        descriptor.SystemPrompt.Should().Be("Absolute prompt from file");
+        descriptor.SystemPromptFile.Should().BeNull();
+    }
+
+    [Fact]
     public async Task LoadAsync_WithMalformedJson_SkipsFileAndLogsWarning()
     {
         var logger = new ListLogger<FileAgentConfigurationSource>();

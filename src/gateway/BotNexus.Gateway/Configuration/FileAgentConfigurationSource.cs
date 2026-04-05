@@ -106,8 +106,19 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
         string systemPromptFile,
         CancellationToken cancellationToken)
     {
-        var configDirectory = Path.GetDirectoryName(configPath) ?? _directoryPath;
+        var configDirectory = Path.GetFullPath(Path.GetDirectoryName(configPath) ?? _directoryPath);
         var resolvedPath = Path.GetFullPath(Path.Combine(configDirectory, systemPromptFile));
+        var configDirectoryPrefix = configDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+
+        if (!resolvedPath.StartsWith(configDirectoryPrefix, StringComparison.OrdinalIgnoreCase) &&
+            !resolvedPath.Equals(configDirectory, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning(
+                "System prompt file '{SystemPromptFile}' for agent config '{ConfigPath}' resolves outside the configuration directory. Path traversal blocked.",
+                systemPromptFile,
+                configPath);
+            return null;
+        }
 
         if (!File.Exists(resolvedPath))
         {
