@@ -304,13 +304,19 @@ internal static partial class AnthropicMessageConverter
             content = blocks;
         }
 
-        return new Dictionary<string, object?>
+        var result = new Dictionary<string, object?>
         {
             ["type"] = "tool_result",
             ["tool_use_id"] = toolResult.ToolCallId,
-            ["content"] = content,
-            ["is_error"] = toolResult.IsError ? true : null
+            ["content"] = content
         };
+
+        if (toolResult.IsError)
+        {
+            result["is_error"] = true;
+        }
+
+        return result;
     }
 
     internal static Dictionary<string, object?>? BuildCacheControl(
