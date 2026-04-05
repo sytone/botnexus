@@ -15,6 +15,7 @@
 - ThinkingBudgets type was simplified from ThinkingBudgetLevel record to plain int? but docs/README examples still showed the old type — type changes need compile-check of all doc code snippets.
 - CodingAgent README had a separate maintenance cadence from training docs — both must be updated when tools change.
 - 2026-04-03: Post-sprint consistency reviews are ESSENTIAL after major refactors. The Pi provider architecture port was a massive rewrite (26 models, 3 API handlers, model-aware routing), and even with excellent engineering discipline, minor issues (11 nullability warnings) slipped through. Documentation quality is high — all architecture docs, configuration guides, and README were already accurate.
+- 2026-07-18: Gateway consistency review — 0 P0, 4 P1, 7 P2. Biggest patterns: (1) CancellationToken parameter naming split (`ct` in API layer vs `cancellationToken` everywhere else) — API-layer shortcuts diverge from library conventions. (2) ConfigureAwait(false) policy differs between Gateway (never) and AgentCore (always) — intentional but undocumented. (3) Test file names didn't match class names (5/6 files) — likely from early scaffolding with generic names that weren't updated. (4) Gateway uses C# 13 `Lock` type while AgentCore still uses `object` locks — modernization gap, not a bug. Overall: Gateway code quality is high. XML doc coverage near 100%, record/class usage appropriate, project structure exemplary.
 
 ## 2026-04-02 — Team Updates
 
