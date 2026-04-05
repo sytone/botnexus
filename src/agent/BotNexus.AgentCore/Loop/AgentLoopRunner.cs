@@ -1,4 +1,5 @@
 using BotNexus.AgentCore.Configuration;
+using BotNexus.AgentCore.Tools;
 using BotNexus.AgentCore.Types;
 using BotNexus.Providers.Core;
 using BotNexus.Providers.Core.Models;
@@ -161,25 +162,12 @@ public static class AgentLoopRunner
 
                 pendingMessages.Clear();
 
-                var transformedMessages = config.TransformContext is null
-                    ? messages
-                    : await config.TransformContext(messages, cancellationToken).ConfigureAwait(false);
-                var transformedContext = new AgentContext(
-                    currentContext.SystemPrompt,
-                    transformedMessages,
-                    currentContext.Tools);
-
-                var providerContext = await ContextConverter.ToProviderContext(
-                        transformedContext,
-                        config.ConvertToLlm,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-
                 var streamOptions = await BuildStreamOptionsAsync(config, cancellationToken).ConfigureAwait(false);
                 var assistantMessage = await ExecuteWithRetryAsync(
                         messages,
+                        currentContext.SystemPrompt,
+                        currentContext.Tools,
                         config,
-                        providerContext,
                         streamOptions,
                         emit,
                         cancellationToken)
@@ -275,8 +263,9 @@ public static class AgentLoopRunner
 
     private static async Task<AssistantAgentMessage> ExecuteWithRetryAsync(
         List<AgentMessage> messages,
+        string? systemPrompt,
+        IReadOnlyList<IAgentTool> tools,
         AgentLoopConfig config,
-        Context providerContext,
         SimpleStreamOptions streamOptions,
         Func<AgentEvent, Task> emit,
         CancellationToken cancellationToken)
@@ -289,6 +278,18 @@ public static class AgentLoopRunner
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            // Re-run transforms per attempt so context overflow compaction is visible.
+            var transformedMessages = config.TransformContext is null
+                ? messages
+                : await config.TransformContext(messages, cancellationToken).ConfigureAwait(false);
+            var transformedContext = new AgentContext(systemPrompt, transformedMessages, tools);
+            var providerContext = await ContextConverter.ToProviderContext(
+                    transformedContext,
+                    config.ConvertToLlm,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
             try
             {
                 var stream = config.LlmClient.StreamSimple(config.Model, providerContext, streamOptions);
@@ -300,10 +301,6 @@ public static class AgentLoopRunner
                 var compacted = CompactForOverflow(messages);
                 messages.Clear();
                 messages.AddRange(compacted);
-                var compactedProviderMessages = providerContext.Messages.Count <= 12
-                    ? providerContext.Messages
-                    : providerContext.Messages.Skip(providerContext.Messages.Count - Math.Max(8, providerContext.Messages.Count / 3)).ToList();
-                providerContext = providerContext with { Messages = compactedProviderMessages };
                 continue;
             }
             catch (Exception ex) when (IsTransientError(ex) && attempt < maxAttempts - 1)
