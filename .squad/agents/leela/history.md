@@ -1597,3 +1597,17 @@ Design review filtered 14 audit findings down to 6 real fixes (5 already impleme
 - Sessions: src/gateway/BotNexus.Gateway.Sessions/
 - Channels: src/channels/BotNexus.Channels.Core/
 - ADR: .squad/decisions/inbox/leela-gateway-architecture.md
+
+## Learnings -- Gateway Design Review (2025-07-24)
+
+### Review Findings
+1. **Architecture grade: A-** — Clean contracts, correct dependency flow, genuinely pluggable extension model. One bug (streaming history loss) prevents A grade.
+2. **P1-1 Bug: Streaming history loss** — GatewayHost.DispatchAsync streaming branch never appends assistant response to session.History. Non-streaming path is correct.
+3. **P1-2: SetDefaultAgent DI smell** — DefaultMessageRouter has a concrete SetDefaultAgent() method not on IMessageRouter. Forces dual registration in DI.
+4. **P1-3: ChannelManager duplicates GatewayHost** — Both start/stop channels. GatewayHost should be authoritative; ChannelManager should be read-only or removed.
+5. **P1-4: No ISessionStore in default DI** — AddBotNexusGateway() doesn't register any session store. Runtime failure with no guidance.
+6. **P1-5: Test file naming mismatch** — IsolationStrategyTests tests ActivityBroadcaster, WebSocketProtocolTests tests MessageRouter, ChannelAdapterTests tests SessionsController.
+7. **Test coverage gaps** — No tests for InProcessIsolationStrategy, GatewayWebSocketHandler, ChannelAdapterBase, FileSessionStore, DefaultAgentCommunicator.
+
+### Key File Paths
+- Review: .squad/decisions/inbox/leela-gateway-design-review.md

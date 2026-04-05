@@ -575,3 +575,137 @@ The test runner hang is a time bomb — it wastes CI minutes and masks real fail
 | Design review filter saves | 2 (AC-C1 downgrade, P-M4 rejection) |
 
 **Verdict:** Solid execution sprint. The implementation itself was clean — all five bugs trace to pre-existing debt or process gaps, not to implementation errors. The speculative-parallel anti-pattern's third recurrence demands a hard process rule (R5-3).
+
+---
+
+## Design Review — Gateway Service Architecture
+
+**Reviewer:** Leela (Lead / Architect)  
+**Date:** 2025-07-24  
+**Scope:** 5 Gateway projects + Channels.Core + 30 tests  
+**Status:** APPROVED with conditions
+
+### Summary
+
+The Gateway Service is well-architected. The five-project decomposition is clean, dependency flow is correct, interfaces are focused, and the extension model is genuinely pluggable. Two bugs need fixing before we ship (P0/P1), but the foundation is solid.
+
+**Architecture Grade: A-**
+
+### SOLID Compliance
+
+#### Single Responsibility — ✅ PASS
+Each class has one clear reason to change:
+- `DefaultAgentRegistry` — Agent descriptor storage
+- `DefaultAgentSupervisor` — Agent instance lifecycle
+- `DefaultMessageRouter` — Routing resolution
+- `InProcessIsolationStrategy` — In-process agent creation
+- `InMemoryActivityBroadcaster` — Pub/sub fan-out
+- `ApiKeyGatewayAuthHandler` — API key validation
+- `GatewayHost` — Pipeline orchestration
+
+GatewayHost is the broadest — it owns channel lifecycle and message dispatch — but as the composition root, this is the correct place for orchestration.
+
+#### Open/Closed — ✅ PASS
+Extension without modification is well-supported:
+- New isolation strategy → Implement `IIsolationStrategy`, register in DI. Zero Gateway code changes.
+- New channel adapter → Implement `IChannelAdapter`, register in DI. GatewayHost consumes `IEnumerable<IChannelAdapter>` automatically.
+- New session store → Implement `ISessionStore`, swap DI registration.
+- New auth handler → Implement `IGatewayAuthHandler`, swap DI registration.
+
+#### Liskov Substitution — ✅ PASS
+All abstraction implementations are swappable. `InMemorySessionStore` and `FileSessionStore` both satisfy the `ISessionStore` contract. The `InProcessAgentHandle` wraps `AgentCore.Agent` correctly and could be replaced by a container-proxy handle without breaking the supervisor.
+
+#### Interface Segregation — ✅ PASS
+Interfaces are focused and minimal (1-7 members each). No fat interfaces detected.
+
+#### Dependency Inversion — ✅ PASS
+All high-level modules depend on abstractions. Controllers inject `IAgentRegistry`, `ISessionStore`, etc. — never `DefaultAgentRegistry`.
+
+### Extension Points
+
+- **IIsolationStrategy** — Registered by `Name` property, resolved at runtime. New strategies need only DI registration.
+- **IChannelAdapter** — GatewayHost consumes `IEnumerable<IChannelAdapter>` and starts all. New adapters subclass `ChannelAdapterBase` and register via DI.
+- **ISessionStore** — Two implementations already prove the interface works (InMemory, File).
+- **IMessageRouter** — Single implementation today, but the interface is justified — routing policy will diverge.
+
+### Issues
+
+#### P0 — Must Fix Before Proceeding
+None. No blocking architectural defects found.
+
+#### P1 — Should Fix Soon
+
+| # | Issue | Location | Impact |
+|---|---|---|---|
+| P1-1 | **Streaming path drops assistant history** — `GatewayHost.DispatchAsync` records the user message but never appends the assistant response to `session.History` when using the streaming branch. | `GatewayHost.cs:133-141` | Session history is incomplete for streaming interactions. Breaks session resume. |
+| P1-2 | **DefaultMessageRouter.SetDefaultAgent leaks through DI** — `SetDefaultAgent()` is a concrete method not on `IMessageRouter`. Consumers must know the concrete type. | `DefaultMessageRouter.cs:33`, `GatewayServiceCollectionExtensions.cs:31-32` | Consumers must know the concrete type to configure routing. |
+| P1-3 | **ChannelManager duplicates GatewayHost lifecycle** — Both classes start/stop channel adapters. Unclear which is authoritative. | `ChannelManager.cs`, `GatewayHost.cs:60-91` | Confusion about lifecycle ownership. |
+| P1-4 | **No ISessionStore registered in AddBotNexusGateway()** — The core DI extension doesn't register any session store. Consumer must know to add one manually. | `GatewayServiceCollectionExtensions.cs` | Runtime `InvalidOperationException` with no guidance. |
+| P1-5 | **Test file names don't match test subjects** — Three test files test different components than their names suggest. | `tests/BotNexus.Gateway.Tests/` | Misleading coverage signals. |
+
+#### P2 — Nice to Have
+
+6 items documented for future improvement (mutable properties, WebSocket buffer, global serialization, missing test coverage, etc.).
+
+---
+
+### Architecture Grade: A-
+
+**Rationale:**
+- Contracts are clean. Interfaces are focused, well-documented, and genuinely pluggable.
+- Dependency flow is correct. No circular references. Leaf projects depend only on Abstractions.
+- Extension model works. Adding new isolation strategies, channels, or session stores requires zero modification to existing code.
+- AgentCore integration is correct. The in-process handle properly wraps Agent with full streaming support.
+- **One real bug** (P1-1: streaming history loss) prevents an A grade. P1-4 (missing session store registration) and P1-5 (test naming confusion) are housekeeping items.
+
+The architecture is production-ready once the P1 items are addressed.
+
+---
+
+## Gateway Service — Consistency Review
+
+**Reviewer:** Nibbler (Consistency Reviewer)  
+**Date:** 2026-07-18  
+**Scope:** All 5 new Gateway projects + Channels.Core, cross-referenced against AgentCore and Providers.Core
+
+### Summary
+
+The Gateway Service is **well-built and highly consistent internally**. XML doc coverage is effectively 100% on public APIs, naming conventions are clean, and the project structure is exemplary. Found **0 P0 issues**, **4 P1 issues**, and **7 P2 issues**. The most significant finding is a `ConfigureAwait(false)` policy divergence between Gateway (never uses it) and AgentCore (uses it everywhere). This is likely a deliberate architectural choice that should be documented, not a bug.
+
+### Key Findings
+
+#### Naming Conventions — ✅ Consistent
+- Namespace pattern: `BotNexus.{Module}.{Submodule}` matches existing patterns
+- Interface/Class naming: Prefix `I` for interfaces, `Default*` for primary implementations
+- Matches AgentCore/Providers.Core conventions
+
+#### P1 Issues
+
+| # | Issue | Recommendation |
+|---|---|---|
+| P1-01 | **CancellationToken naming split** — Gateway API layer uses `ct`; abstractions use `cancellationToken`. | Rename `ct` → `cancellationToken` for consistency. |
+| P1-02 | **ConfigureAwait policy divergence** — Gateway never uses it; AgentCore uses it 79+ times. | Document the policy. Consider adding to `FileSessionStore` (reusable library). |
+| P1-03 | **Test file names don't match classes** — 5 files have misleading names. | Rename test files to match class names. |
+| P1-04 | **Gateway test classes missing `sealed` modifier** — Inconsistent with newer test additions in AgentCore/Providers.Core. | Add `sealed` modifier to all Gateway test classes. |
+
+#### P2 Issues (Informational)
+
+7 items noted: collection initialization style, csproj property order (pre-existing), archive renames (intentional), SessionEntry.Role type, test cleanup patterns, Theory usage, XML doc coverage in controllers.
+
+### Thread Safety Pattern
+
+- **C# 13 `Lock` type** — Used for sync code; more efficient than `object` locks
+- **`SemaphoreSlim(1,1)`** — Used for async operations (`FileSessionStore`)
+- This is a modernization relative to AgentCore; no inconsistency issue.
+
+### Test Framework
+
+- ✅ xUnit exclusively (`[Fact]` and `[Theory]/[InlineData]`)
+- ✅ Naming: `MethodName_Condition_ExpectedResult` matches codebase pattern
+- ✅ FluentAssertions exclusively
+- ⚠️ No test cleanup pattern used (acceptable for current tests)
+- ⚠️ No `[Theory]` parameterized tests yet (acceptable for current scope)
+
+### Verdict
+
+Gateway passes consistency review. **P1 items should be addressed before the next milestone; P2 items are housekeeping.** The overall code quality is high.

@@ -1,32 +1,30 @@
 ---
-updated_at: 2026-04-05T16:00:00Z
-focus_area: Post-Audit Process Improvements + Provider Sprint Planning
-active_issues: [audit methodology template, consistency review gate, sprint health dashboard, 6 remaining providers, missing CLI modes, session features architecture]
-status: retrospective_complete
+updated_at: 2026-04-05T18:30:00Z
+focus_area: Gateway Service P1 Fixes + Process Improvements
+active_issues: [streaming history drop, test file renames, sealed modifiers, CancellationToken naming, ChannelManager reduction, session store bootstrap, ConfigureAwait documentation]
+status: design_review_complete
 ---
 
 # What We're Focused On
 
-**Port audit complete — retrospective done.** Major audit found 153 findings (15 Critical, 43 Major, 63 Minor, 32 Enhancement). Fixed all Critical, 526+ tests passing, 0 failures, 15 commits. Team execution: 3 parallel agents (providers, agents, tests) + consistency review. Next: implement process improvements (consistency review gate, audit methodology template, sprint dashboard), then scale to 6 remaining providers.
+**Gateway Service architecture approved A-.** Design review and consistency review complete. 5 projects (11 interfaces) audited. 30 tests passing. 5 P1 issues identified for remediation sprint. Port audit phases 1-5 complete; 153 findings triaged, ~95 resolved. Next: fix Gateway P1 issues, extend test coverage, implement Phase 2 stubs (DefaultAgentCommunicator, ApiKeyGatewayAuthHandler).
 
 ## Current Status
 
-✅ **Sprint:** Phase 4 complete — retrospective done  
+✅ **Sprint:** Gateway reviews complete (design + consistency)  
 ✅ **Build:** 0 errors, 0 warnings  
-✅ **Tests:** 438 passing (134 Core + 54 Anthropic + 42 OpenAI + 24 OpenAICompat + 15 Copilot + 52 AgentCore + 117 CodingAgent)  
-✅ **P0s:** 32/32 closed across all audit phases (25 prior + 7 Phase 4)  
-📋 **Decisions:** 24 architecture decisions locked (AD-1–AD-17 + P0-1–P0-7)  
-📋 **Port audit:** 4 phases complete
+✅ **Tests:** 501 passing (134 Core + 54 Anthropic + 42 OpenAI + 24 OpenAICompat + 15 Copilot + 52 AgentCore + 117 CodingAgent + 30 Gateway + 33 other)  
+✅ **P0s:** 32/32 closed across all audit phases  
+✅ **Gateway Architecture:** A- grade (1 real bug P1-1, 4 housekeeping P1s)  
+📋 **Decisions:** 26+ architecture decisions locked (AD-1–AD-17 + P0-1–P0-7 + Gateway review decisions)  
+📋 **Port audit:** 5 phases complete + remediation
 
-## Completed — Phase 4 Sprint Results (20+ commits, 8 agents)
+## Completed — Gateway Service Architecture Review (Design + Consistency)
 
-- **Farnsworth:** P0-4 ModelsAreEqual, P0-5 StopReason mapping, P1 apiKey fallback, P1 Anthropic file split, P1 JSON construction
-- **Bender (agent):** P0-6 swallowed exceptions, P0-7 MessageStartEvent, P1 HasQueuedMessages, P1 queue mode setters, P1 TransformContext, P1 ConvertToLlm fallback
-- **Bender (coding-agent):** P0-1 DiffPlex EditTool, P0-2 Git Bash ShellTool, P0-3 byte limit alignment, P1 truncation suffix, P1 timeout docs
-- **Hermes:** 16 new tests covering all P0 fixes
-- **Kif:** 5 training module updates + new changelog module
-- **Nibbler:** Consistency review
-- **Scribe:** Orchestration logs, history updates
+- **Leela:** Design review A- grade. 5 projects audited. Extension model verified. P1-1 (streaming history), P1-2 (SetDefaultAgent), P1-3 (ChannelManager), P1-4 (session store), P1-5 (test names) documented.
+- **Nibbler:** Consistency review. 4 P1 findings (CancellationToken naming P1-01, ConfigureAwait divergence P1-02, test file names P1-03, sealed modifiers P1-04). 7 P2 items (informational).
+- **Gateway codebase:** 30 tests passing. 11 interfaces clean. SOLID compliance verified. Extension points work (IIsolationStrategy, IChannelAdapter, ISessionStore, IMessageRouter, IGatewayAuthHandler).
+- **Scribe:** Decision merge, inbox cleanup, session log written.
 
 ## Action Items (from Phase 4 Retro)
 
@@ -39,23 +37,25 @@ status: retrospective_complete
 
 ## Remaining Backlog
 
-### P1 — Next Sprint Candidates
-- Streaming error recovery and retry-after handling
-- Context window pressure tracking with thresholds
-- Provider-level error categorization
-- Rate limit backoff coordination
-- Model capability metadata per provider
-- Compaction quality scoring
-- Tool timeout configuration
-- Session restore edge cases
-- isStreaming semantics refinement
-- Tool result size limits
-- Agent.Subscribe cleanup on dispose
-- Hook ordering under concurrent access
-- ContinueAsync steering deduplication
-- OpenAI Responses API streaming gaps
-- Anthropic cache_control TTL optimization
-- Phase 4 P2/P3 items (23 P2, 14 P3)
+### Gateway P1 — Remediation Sprint (READY)
+- **P1-1 (BLOCKER):** Streaming history drop in `GatewayHost.DispatchAsync` — session resume broken
+- **P1-2:** SetDefaultAgent leaks concrete type through DI — needs interface or options pattern
+- **P1-3:** ChannelManager duplicates GatewayHost lifecycle — reduce or remove
+- **P1-4:** No ISessionStore default registered — runtime error with no guidance
+- **P1-5:** 5 test files have wrong names — misleading coverage signals
+
+### Gateway P1 — Consistency (READY)
+- **P1-01:** CancellationToken `ct` vs `cancellationToken` naming split
+- **P1-02:** ConfigureAwait(false) divergence — document policy or add to FileSessionStore
+- **P1-03:** Test file names don't match classes (duplicate of P1-5)
+- **P1-04:** Gateway test classes missing `sealed` modifier
+
+### Phase 2 Stubs (Backlog)
+- DefaultAgentCommunicator stub
+- ApiKeyGatewayAuthHandler expansion (multi-tenant support)
+- RPC mode, JSON mode, HTML export
+- Missing 6 providers (Google, Bedrock, Azure, Mistral, Codex)
+- Full CLI flag parity
 
 ### Process Improvements
 - **Signature extraction script** — utility to extract public API signatures from assemblies (P1)
@@ -70,11 +70,11 @@ status: retrospective_complete
 - Full CLI flag parity, slash command parity
 
 ## Next Sprint Priorities
-1. Process improvements — implement sequencing + build gate action items
-2. P1 triage — rank by user-facing impact
-3. Provider conformance test suite (quality gate investment)
-4. Streaming error recovery (top P1)
-5. AgentSession design sprint (AD-1 constraint ready)
+1. **Gateway P1 fixes** — Fix streaming history (P1-1), SetDefaultAgent pattern (P1-2), ChannelManager (P1-3), session store bootstrap (P1-4)
+2. **Gateway test cleanup** — Rename 5 test files (P1-5), add sealed modifiers (P1-04)
+3. **Gateway consistency pass** — CancellationToken naming (P1-01), ConfigureAwait documentation (P1-02)
+4. **Expand Gateway test coverage** — Add tests for InProcessIsolationStrategy, GatewayWebSocketHandler, FileSessionStore
+5. **Phase 2 stubs** — DefaultAgentCommunicator, ApiKeyGatewayAuthHandler multi-tenant
 
 ## Key Architecture Decisions (Locked)
 
@@ -105,40 +105,37 @@ status: retrospective_complete
 | P0-6 | Agent.cs — log swallowed listener exceptions | Diagnostic callback instead of bare catch |
 | P0-7 | MessageStartEvent — defer add to MessageEnd | Prevents partial messages in state during streaming |
 
-## What's Done
+## What's Done — Full Context
 
-### Port Audit Phase 4 (20+ commits, 8 agents)
-- 67 findings triaged: 7 P0, 23 P1, 23 P2, 14 P3
-- 7/7 P0s fixed, 6/6 P1s fixed
-- 16 new tests added (422 → 438)
-- DiffPlex adoption, Git Bash detection, MessageStartEvent fix
+### Gateway Service Architecture (This Session)
+- 5 projects audited (Abstractions, Gateway, Gateway.Api, Gateway.Sessions, Channels.Core)
+- 11 interfaces verified
+- SOLID compliance: 5/5 pass (SRP, OC, LSP, ISP, DIP)
+- Extension model works (IIsolationStrategy, IChannelAdapter, ISessionStore, IGatewayAuthHandler)
+- Design review: A- grade (1 real bug P1-1)
+- Consistency review: 0 P0, 4 P1, 7 P2 (all actionable)
+- 5 P1 items roadmapped for remediation
+- 30 tests all passing
+
+### Port Audit Phase 5 (15 commits, 5 agents)
+- 153 findings triaged from 3 subsystems (Providers, AgentCore, CodingAgent)
+- 8 P0/P1 fixes implemented (3 P0, 5 P1)
+- 21 new tests added (480 → 501)
 - Architecture grade: **A**
+- Design review gate filtered 2 false positives
 
-### Port Audit Phase 3 (13 commits, 6 agents)
-- 9 architecture decisions (AD-9–AD-17): 7 implemented, 1 deferred, 1 already present
-- 43 new tests added (372 → 415)
-- 4 new training modules, 22 consistency fixes
-- Architecture grade: **A**
-
-### Port Audit Phase 2 (18 commits, 5 agents)
-- 79 findings triaged (15 P0, 29 P1, 24 P2, 11 P3)
-- All 15 P0s resolved, 14 P1s fixed alongside
-- 8 architecture decisions locked pre-sprint
-- 372 tests passing, 0 errors, 0 warnings
-- Architecture grade: **A**
-
-### Port Audit Phase 1 (12 commits, ~1,550 lines changed)
-- 3-way parallel deep audit: 10 P0, 22 P1, 19 P2 found
-- All 10 P0s fixed across 10 commits
-- 101 regression tests added, 350 total tests green
-- Training docs shipped (4,300+ lines)
-- Architecture grade: **A−**
+### Port Audit Phases 1-4 (58+ commits total)
+- Phase 4: 7 P0s fixed, 16 new tests (422 → 438) — **A** grade
+- Phase 3: 9 ADs implemented, 43 new tests (372 → 415) — **A** grade
+- Phase 2: 15 P0s + 14 P1s fixed, 372 tests, 8 ADs locked — **A** grade
+- Phase 1: 10 P0s fixed, 101 new tests (250 → 350), training docs — **A−** grade
 
 ### Previous Milestones
 - ✓ Archive phase (old projects moved)
 - ✓ CodingAgent built (4 sprints, 25 commits)
 - ✓ Skills system implemented
 - ✓ OAuth token resilience + config safety
+- ✓ Full port audit complete (5 phases, ~95 findings resolved)
 
 ## Key Artifacts
 
@@ -150,6 +147,14 @@ status: retrospective_complete
 - `.squad/decisions/inbox/leela-port-audit-sprint-complete.md` — Phase 1 completion
 - `docs/training/` — 10-module training guide with glossary
 
-## Team
+## Team Status
 
-Farnsworth (Platform), Bender (Runtime), Hermes (Tests), Kif (Docs), Nibbler (Consistency), Scribe (Logs), Leela (Lead)
+| Agent | Role | Current Work | Status |
+|-------|------|--------------|--------|
+| Leela | Lead / Architect | Design reviews, decisions, sprint planning | ✅ Gateway design review complete |
+| Bender | Runtime Dev | Core fixes, retry loops, streaming | ⏸ Ready for P1 fixes (P1-1, P1-2, P1-3, P1-4) |
+| Hermes | Tester | Test authoring, cleanup, coverage | ⏸ Ready for test file renames + sealed modifiers |
+| Farnsworth | Platform Dev | Provider integration, DI setup | ⏸ Ready for Phase 2 stubs if scheduled |
+| Nibbler | Consistency Reviewer | Code review, naming, patterns | ✅ Gateway consistency review complete |
+| Kif | Documentation | Training modules, docs | — |
+| Scribe | Memory Manager | Logs, decisions, orchestration | ✅ Session log + decision merge complete |
