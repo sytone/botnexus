@@ -13,12 +13,12 @@ namespace BotNexus.CodingAgent.Tools;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Platform contract: Windows executes through PowerShell, non-Windows executes through bash.
-/// This keeps command semantics predictable for repository automation scenarios.
+/// Platform contract: Windows prefers Git Bash when available, falling back to PowerShell;
+/// non-Windows executes through bash. This prioritizes portable command semantics across platforms.
 /// </para>
 /// <para>
-/// Output is capped at 50,000 characters to protect downstream token budgets and prevent runaway
-/// responses from large command streams while preserving tail errors.
+/// Output is capped at 50 * 1024 (51,200) bytes to protect downstream token budgets and prevent
+/// runaway responses from large command streams while preserving tail errors.
 /// </para>
 /// </remarks>
 public sealed class ShellTool : IAgentTool

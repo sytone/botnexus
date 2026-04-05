@@ -147,12 +147,13 @@ private static IReadOnlyList<IAgentTool> CreateTools(
 
 **Parameters:** `path` (required), `edits` (array of `{oldText, newText}`)
 
-**Behavior:**
+**Behavior (Phase 4):**
 1. **BOM stripping** — removes UTF-8 BOM (`\uFEFF`) before processing
 2. **Exact match** — tries literal string match first
-3. **Fuzzy fallback** — normalizes whitespace, Unicode quotes/dashes, and line endings
-4. **Validation** — rejects overlapping edits and ambiguous matches
-5. **Preservation** — detects and maintains original line endings (CRLF/LF)
+3. **Context-based unified diff** — uses DiffPlex to compute optimal diff hunks (new in Phase 4)
+4. **Fuzzy fallback** — normalizes whitespace, Unicode quotes/dashes, and line endings
+5. **Validation** — rejects overlapping edits and ambiguous matches
+6. **Preservation** — detects and maintains original line endings (CRLF/LF)
 
 ```json
 {
@@ -164,12 +165,14 @@ private static IReadOnlyList<IAgentTool> CreateTools(
 }
 ```
 
+> **Phase 4 change:** `EditTool` now uses DiffPlex for proper context-based unified diffs. This improves diff quality when fuzzy matching is needed, providing better visual context for debugging edit operations.
+
 ### `bash` — Shell command execution
 
 **Parameters:** `command` (required), `timeout` (optional, default 120s)
 
-**Platform behavior:**
-- **Windows:** Executes via PowerShell (`-NoLogo -NoProfile -NonInteractive`)
+**Platform behavior (Phase 4):**
+- **Windows:** Prefers Git Bash if available; falls back to PowerShell only if Git Bash is not found (`FindBashExecutable` detects `bash.exe` in PATH)
 - **Unix:** Executes via `/bin/bash -lc`
 
 **Output format:**
@@ -181,7 +184,7 @@ Hello world
 
 ```
 
-**Limits:** Output capped at 50,000 characters. Process tree killed on timeout.
+**Limits:** Output capped at 50 * 1024 bytes (51,200 bytes, aligned with TypeScript implementation). Process tree killed on timeout. Truncation appends `[Output truncated at N bytes]` or `[Output truncated at N lines]` suffix.
 
 ### `grep` — Regex search
 

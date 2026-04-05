@@ -488,6 +488,10 @@ private void ProcessSseEvent(
             "end_turn" => StopReason.Stop,
             "max_tokens" => StopReason.Length,
             "tool_use" => StopReason.ToolUse,
+            "refusal" => StopReason.Refusal,        // Phase 4: explicit refusal mapping
+            "content_policy" => StopReason.Sensitive, // Phase 4: explicit content sensitivity
+            "safety" => StopReason.Sensitive,         // Phase 4: explicit content sensitivity
+            "sensitive" => StopReason.Sensitive,      // Phase 4: explicit content sensitivity
             _ => StopReason.Stop
         };
 

@@ -91,14 +91,23 @@ public sealed class Agent
         }
     }
 
+    /// <summary>
+    /// Gets a value indicating whether steering or follow-up messages are queued.
+    /// </summary>
     public bool HasQueuedMessages => _steeringQueue.HasItems || _followUpQueue.HasItems;
 
+    /// <summary>
+    /// Gets or sets the queue consumption mode for steering messages.
+    /// </summary>
     public QueueMode SteeringMode
     {
         get => _steeringQueue.Mode;
         set => _steeringQueue.Mode = value;
     }
 
+    /// <summary>
+    /// Gets or sets the queue consumption mode for follow-up messages.
+    /// </summary>
     public QueueMode FollowUpMode
     {
         get => _followUpQueue.Mode;

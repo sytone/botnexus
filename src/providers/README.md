@@ -572,7 +572,6 @@ Every `AssistantMessage` includes a `StopReason` field that indicates how genera
 | `StopReason.Error` | An error occurred during generation |
 | `StopReason.Aborted` | Request was cancelled via `CancellationToken` |
 | `StopReason.Refusal` | Model refused to generate content |
-| `StopReason.PauseTurn` | Model paused mid-turn (multi-turn flows) |
 | `StopReason.Sensitive` | Content flagged as sensitive |
 
 `AssistantMessage` may also include `ResponseId`, a provider-specific upstream response or message identifier when the underlying API exposes one. Do not assume it is always present across providers.

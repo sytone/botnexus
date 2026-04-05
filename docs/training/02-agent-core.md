@@ -78,6 +78,9 @@ void Reset()
 void ClearSteeringQueue()
 void ClearFollowUpQueue()
 void ClearAllQueues()
+
+// Check if steering or follow-up messages are queued (Phase 4)
+bool HasQueuedMessages { get; }
 ```
 
 All three `PromptAsync` overloads acquire `_runLock`, set status to `Running`, enter the loop, and release the lock on exit. `ContinueAsync` does the same but skips adding a new user message.
@@ -128,8 +131,8 @@ public record AgentOptions(
     AgentInitialState? InitialState,
     LlmModel Model,
     LlmClient LlmClient,
-    ConvertToLlmDelegate ConvertToLlm,
-    TransformContextDelegate TransformContext,
+    ConvertToLlmDelegate? ConvertToLlm,
+    TransformContextDelegate? TransformContext,
     GetApiKeyDelegate GetApiKey,
     GetMessagesDelegate? GetSteeringMessages,
     GetMessagesDelegate? GetFollowUpMessages,
@@ -139,7 +142,8 @@ public record AgentOptions(
     SimpleStreamOptions GenerationSettings,
     QueueMode SteeringMode,
     QueueMode FollowUpMode,
-    string? SessionId = null
+    string? SessionId = null,
+    Action<string>? OnDiagnostic = null
 );
 ```
 
@@ -148,8 +152,8 @@ public record AgentOptions(
 | `InitialState` | Optional initial state (system prompt, model override, tools, pre-seeded messages) |
 | `Model` | Default LLM model for this agent |
 | `LlmClient` | The client used to call providers (routes to correct `IApiProvider`) |
-| `ConvertToLlm` | Converts `AgentMessage` list → provider-level `Message` list |
-| `TransformContext` | Context window compaction — trim, summarize, or rewrite messages before each LLM call |
+| `ConvertToLlm` | Converts `AgentMessage` list → provider-level `Message` list (auto-defaults to `DefaultMessageConverter` if not provided — Phase 4) |
+| `TransformContext` | Optional context window compaction — trim, summarize, or rewrite messages before each LLM call (defaults to identity passthrough if not provided — Phase 4) |
 | `GetApiKey` | Resolves API key by provider name |
 | `GetSteeringMessages` | Optional delegate that produces steering messages at turn boundaries |
 | `GetFollowUpMessages` | Optional delegate that produces follow-up messages after runs |
@@ -157,9 +161,10 @@ public record AgentOptions(
 | `BeforeToolCall` | Hook that fires before each tool executes — can block execution |
 | `AfterToolCall` | Hook that fires after each tool executes — can transform results |
 | `GenerationSettings` | `SimpleStreamOptions` for controlling temperature, max tokens, etc. |
-| `SteeringMode` | `QueueMode.All` (drain all at once) or `QueueMode.OneAtATime` |
-| `FollowUpMode` | `QueueMode.All` or `QueueMode.OneAtATime` |
+| `SteeringMode` | `QueueMode.All` (drain all at once) or `QueueMode.OneAtATime` (Phase 4: configurable via setter) |
+| `FollowUpMode` | `QueueMode.All` or `QueueMode.OneAtATime` (Phase 4: configurable via setter) |
 | `SessionId` | Optional session identifier for logging and persistence |
+| `OnDiagnostic` | Optional callback for non-fatal runtime diagnostics (e.g., swallowed listener exceptions — Phase 4) |
 
 > **Key takeaway:** `AgentOptions` is set-once wiring. To change behavior at runtime, modify `AgentState` properties instead.
 
@@ -249,18 +254,20 @@ public static async Task<AssistantAgentMessage> AccumulateAsync(
 
 | Provider event | Agent event emitted | Key data |
 |----------------|---------------------|----------|
-| `StartEvent` | `MessageStartEvent` | Initializes the message snapshot |
+| `StartEvent` | `MessageStartEvent` | Initializes the message snapshot (NOT added to state.Messages — Phase 4 change) |
 | `TextDeltaEvent` | `MessageUpdateEvent` | `ContentDelta` = text chunk, `IsThinking` = false |
 | `ThinkingDeltaEvent` | `MessageUpdateEvent` | `ContentDelta` = thinking chunk, `IsThinking` = true |
 | `ToolCallStartEvent` | `MessageUpdateEvent` | `ToolCallId`, `ToolName` from provider state |
 | `ToolCallDeltaEvent` | `MessageUpdateEvent` | `ArgumentsDelta` = partial JSON arguments |
 | `ToolCallEndEvent` | `MessageUpdateEvent` | Final tool call info |
-| `DoneEvent` | `MessageEndEvent` | Streaming complete, `FinishReason` set |
+| `DoneEvent` | `MessageEndEvent` | Streaming complete, `FinishReason` set, message added to state.Messages |
 | `ErrorEvent` | `MessageEndEvent` | `FinishReason` = `Error`, error details captured |
 
 Additional provider events (`TextStartEvent`, `TextEndEvent`, `ThinkingStartEvent`, `ThinkingEndEvent`) also emit `MessageUpdateEvent` with `ContentDelta` = null, marking structural boundaries in the stream.
 
 The accumulator maintains a running snapshot of the `AssistantAgentMessage` as deltas arrive. Each `MessageUpdateEvent` carries the current snapshot plus the incremental delta, so subscribers can render either progressively or from the snapshot.
+
+> **Phase 4 change:** `MessageStartEvent` no longer adds the assistant message to `state.Messages` during streaming. The message is only added when `MessageEndEvent` fires. This prevents duplicate messages when streaming is interrupted or replayed, and ensures event ordering consistency.
 
 > **Key takeaway:** `StreamAccumulator` is a pure transform — provider stream in, agent events out. It produces exactly one `MessageStartEvent`, zero or more `MessageUpdateEvent`s, and exactly one `MessageEndEvent` per LLM call.
 
@@ -456,6 +463,8 @@ AfterToolCall: async (context, ct) =>
 ## Event system
 
 The agent emits a structured stream of events during every run. Subscribe via `Agent.Subscribe()` to observe progress, render UI, log activity, or drive external integrations.
+
+> **Phase 4 note:** Listener exceptions on failure/abort paths are now logged via `OnDiagnostic` instead of being swallowed. This improves observability when listening to agent events.
 
 ### Event lifecycle
 

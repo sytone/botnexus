@@ -29,7 +29,7 @@ public interface IApiProvider
 
 | Provider class | `Api` value | Constructor parameters | Notes |
 |---|---|---|---|
-| `AnthropicProvider` | `"anthropic-messages"` | `HttpClient` | Anthropic Messages API |
+| `AnthropicProvider` | `"anthropic-messages"` | `HttpClient` | Anthropic Messages API (refactored into specialized components) |
 | `OpenAICompletionsProvider` | `"openai-completions"` | `HttpClient`, `ILogger<OpenAICompletionsProvider>` | OpenAI Chat Completions API |
 | `OpenAIResponsesProvider` | `"openai-responses"` | `HttpClient`, `ILogger<OpenAIResponsesProvider>` | OpenAI Responses API (GPT-5 series) |
 | `OpenAICompatProvider` | `"openai-compat"` | `HttpClient` | Any OpenAI-compatible endpoint |
@@ -841,7 +841,46 @@ apiProviders.Register(new MyCustomProvider(httpClient));
 
 ---
 
-## StopReason enum
+## AnthropicProvider — Implementation structure (Phase 4)
+
+As of Port Audit Phase 4, `AnthropicProvider` is refactored into specialized components for clarity and maintainability:
+
+| Component | Purpose | Responsibility |
+|-----------|---------|-----------------|
+| `AnthropicProvider.cs` | Main provider class | Orchestrates streaming, routes to specialized components |
+| `AnthropicRequestBuilder.cs` | Request construction | Converts `Context` + `StreamOptions` → Anthropic JSON payload |
+| `AnthropicMessageConverter.cs` | Message conversion | Maps BotNexus `Message[]` → Anthropic message format |
+| `AnthropicStreamParser.cs` | SSE parsing | Consumes HTTP stream → `AssistantMessageEvent` instances |
+
+All components handle:
+- **Authentication:** Cascading fallback from config → `ANTHROPIC_OAUTH_TOKEN` → `ANTHROPIC_API_KEY`
+- **Thinking levels:** Maps `ThinkingLevel` enum to Anthropic `budget_tokens` parameter
+- **Tool use:** Parses tool call events and integrates into `ContentBlock` stream
+- **StopReason mapping:** Converts Anthropic `stop_reason` to standardized `StopReason` enum (including new `Refusal` and `Sensitive` mappings)
+
+### Model identity (Phase 4)
+
+Model equality changed: `ModelsAreEqual` now compares only **`Id` and `Provider`**, not `BaseUrl`. This allows multiple regions/deployments of the same model to be treated as equivalent:
+
+```csharp
+// Before Phase 4: distinct because of different BaseUrl
+var model1 = new LlmModel(Id: "claude-3.5-sonnet", Provider: "anthropic", 
+    BaseUrl: "https://api.anthropic.com/v1", ...);
+var model2 = new LlmModel(Id: "claude-3.5-sonnet", Provider: "anthropic", 
+    BaseUrl: "https://api-eu.anthropic.com/v1", ...);
+// model1 != model2  ❌
+
+// Phase 4: same model, different region, now equivalent
+// ModelsAreEqual(model1, model2) == true  ✓
+```
+
+This is useful for:
+- Regional failover without changing agent configuration
+- Multi-tenant deployments where different tenants use different endpoints
+- Testing with mocked endpoints
+
+---
+
 
 `StopReason` tells you **why** the model stopped generating:
 
@@ -855,23 +894,23 @@ public enum StopReason
     Error,       // Something went wrong
     Aborted,     // Caller cancelled (CancellationToken)
     Refusal,     // Model declined (safety filter)
-    PauseTurn,   // Multi-turn pause (agent loop control)
     Sensitive    // Content flagged as sensitive
 }
 ```
 
-| Value | When you see it | What to do |
-|---|---|---|
-| `Stop` | Model finished naturally | Display the response. |
-| `Length` | Output truncated | Warn the user or continue in a follow-up turn. |
-| `ToolUse` | Model returned tool calls | Execute the tools and send results back. |
-| `Error` | Provider or API failure | Log, retry, or surface the error. |
-| `Aborted` | `CancellationToken` fired | Clean up gracefully. |
-| `Refusal` | Safety filter triggered | Inform the user the request was declined. |
-| `PauseTurn` | Agent loop boundary | Let the agent loop decide next steps. |
-| `Sensitive` | Content sensitivity flag | Handle per your application's policy. |
+| Value | When you see it | What to do | Provider mapping |
+|---|---|---|---|
+| `Stop` | Model finished naturally | Display the response. | Anthropic/OpenAI: `"end_turn"` |
+| `Length` | Output truncated | Warn the user or continue in a follow-up turn. | Anthropic: `"max_tokens"`, OpenAI: `"length"` |
+| `ToolUse` | Model returned tool calls | Execute the tools and send results back. | Anthropic: `"tool_use"`, OpenAI: `"tool_calls"` |
+| `Error` | Provider or API failure | Log, retry, or surface the error. | Internal error condition |
+| `Aborted` | `CancellationToken` fired | Clean up gracefully. | Cancellation signal |
+| `Refusal` | Safety filter triggered | Inform the user the request was declined. | Anthropic/OpenAI: `"refusal"` (new in Phase 4) |
+| `Sensitive` | Content flagged as sensitive | Handle per your application's policy. | Anthropic: `"content_policy"`, `"safety"`, `"sensitive"` (new in Phase 4) |
 
-> **Key takeaway:** Always check `StopReason` before assuming the response is complete. `ToolUse` and `PauseTurn` are not errors — they are control flow signals for the [agent core](02-agent-core.md).
+> **Note (Phase 4):** `Refusal` and `Sensitive` are now properly mapped by providers. Previously, refusals and content flags were treated as generic stop reasons. Now they're explicitly distinguished so applications can provide context-specific handling.
+
+> **Key takeaway:** Always check `StopReason` before assuming the response is complete. `ToolUse` is not an error — it is a control flow signal for the [agent core](02-agent-core.md).
 
 ---
 

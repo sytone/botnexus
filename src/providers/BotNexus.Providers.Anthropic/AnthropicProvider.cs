@@ -11,7 +11,10 @@ namespace BotNexus.Providers.Anthropic;
 
 /// <summary>
 /// Anthropic Messages API provider. Port of pi-mono's providers/anthropic.ts.
-/// Handles SSE streaming, three auth modes, thinking configuration, and message conversion.
+/// Orchestrates SSE streaming, three auth modes, and thinking configuration.
+/// Delegates request building to <see cref="AnthropicRequestBuilder"/>,
+/// message conversion to <see cref="AnthropicMessageConverter"/>,
+/// and stream parsing to <see cref="AnthropicStreamParser"/>.
 /// </summary>
 public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvider
 {

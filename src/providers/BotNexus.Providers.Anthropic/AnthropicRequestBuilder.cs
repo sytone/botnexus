@@ -6,6 +6,10 @@ using System.Text.Json.Nodes;
 
 namespace BotNexus.Providers.Anthropic;
 
+/// <summary>
+/// Builds the JSON request body for the Anthropic Messages API from a
+/// <see cref="Context"/> and <see cref="StreamOptions"/>.
+/// </summary>
 internal static class AnthropicRequestBuilder
 {
     internal static JsonObject BuildRequestBody(

@@ -5,6 +5,10 @@ using BotNexus.Providers.Core.Utilities;
 
 namespace BotNexus.Providers.Anthropic;
 
+/// <summary>
+/// Converts BotNexus messages to Anthropic API message format and handles
+/// cache control, tool-name mapping, and tool-call ID normalization.
+/// </summary>
 internal static partial class AnthropicMessageConverter
 {
     private static readonly IReadOnlyDictionary<string, string> ClaudeCodeToolLookup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)

@@ -6,6 +6,9 @@ using BotNexus.Providers.Core.Utilities;
 
 namespace BotNexus.Providers.Anthropic;
 
+/// <summary>
+/// Parses Anthropic SSE streams into content blocks and streaming events.
+/// </summary>
 internal static class AnthropicStreamParser
 {
     internal static async Task<(Usage Usage, string? ResponseId, StopReason StopReason)> ProcessStreamAsync(
