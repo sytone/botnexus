@@ -2,6 +2,8 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Collections.Concurrent;
+using System.Globalization;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
@@ -9,6 +11,7 @@ using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Streaming;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Api.WebSocket;
 
@@ -44,7 +47,10 @@ public sealed class GatewayWebSocketHandler
     private readonly IAgentSupervisor _supervisor;
     private readonly ISessionStore _sessions;
     private readonly IActivityBroadcaster _activity;
+    private readonly IOptions<GatewayWebSocketOptions> _webSocketOptions;
     private readonly ILogger<GatewayWebSocketHandler> _logger;
+    private readonly ConcurrentDictionary<string, ConnectionAttemptWindow> _connectionAttempts = new(StringComparer.OrdinalIgnoreCase);
+    private long _connectionAttemptUpdates;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -56,12 +62,23 @@ public sealed class GatewayWebSocketHandler
         IAgentSupervisor supervisor,
         ISessionStore sessions,
         IActivityBroadcaster activity,
+        IOptions<GatewayWebSocketOptions> webSocketOptions,
         ILogger<GatewayWebSocketHandler> logger)
     {
         _supervisor = supervisor;
         _sessions = sessions;
         _activity = activity;
+        _webSocketOptions = webSocketOptions;
         _logger = logger;
+    }
+
+    public GatewayWebSocketHandler(
+        IAgentSupervisor supervisor,
+        ISessionStore sessions,
+        IActivityBroadcaster activity,
+        ILogger<GatewayWebSocketHandler> logger)
+        : this(supervisor, sessions, activity, Options.Create(new GatewayWebSocketOptions()), logger)
+    {
     }
 
     /// <summary>
@@ -82,6 +99,19 @@ public sealed class GatewayWebSocketHandler
         {
             context.Response.StatusCode = 400;
             await context.Response.WriteAsync("Missing 'agent' query parameter", cancellationToken);
+            return;
+        }
+
+        if (!TryRegisterConnectionAttempt(context, agentId, out var retryAfter))
+        {
+            context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+            var retrySeconds = (int)Math.Ceiling(retryAfter.TotalSeconds);
+            if (retrySeconds > 0)
+                context.Response.Headers["Retry-After"] = retrySeconds.ToString(CultureInfo.InvariantCulture);
+
+            await context.Response.WriteAsync(
+                $"Reconnect limit exceeded. Retry in {Math.Max(retrySeconds, 1)} second(s).",
+                cancellationToken);
             return;
         }
 
@@ -233,7 +263,88 @@ public sealed class GatewayWebSocketHandler
         await socket.SendAsync(json, WebSocketMessageType.Text, true, cancellationToken);
     }
 
+    private bool TryRegisterConnectionAttempt(HttpContext context, string agentId, out TimeSpan retryAfter)
+    {
+        var options = _webSocketOptions.Value;
+        var maxAttempts = Math.Max(options.MaxReconnectAttempts, 1);
+        var attemptWindow = TimeSpan.FromSeconds(Math.Max(options.AttemptWindowSeconds, 1));
+        var backoffBase = TimeSpan.FromSeconds(Math.Max(options.BackoffBaseSeconds, 1));
+        var backoffMax = TimeSpan.FromSeconds(Math.Max(options.BackoffMaxSeconds, options.BackoffBaseSeconds));
+        var now = DateTimeOffset.UtcNow;
+        var clientKey = GetClientAttemptKey(context, agentId);
+
+        while (true)
+        {
+            if (!_connectionAttempts.TryGetValue(clientKey, out var current))
+            {
+                if (_connectionAttempts.TryAdd(clientKey, new ConnectionAttemptWindow(now, 1)))
+                {
+                    retryAfter = TimeSpan.Zero;
+                    CleanupStaleAttemptWindows(attemptWindow, now);
+                    return true;
+                }
+
+                continue;
+            }
+
+            if (now - current.WindowStartedUtc >= attemptWindow)
+            {
+                if (_connectionAttempts.TryUpdate(clientKey, new ConnectionAttemptWindow(now, 1), current))
+                {
+                    retryAfter = TimeSpan.Zero;
+                    CleanupStaleAttemptWindows(attemptWindow, now);
+                    return true;
+                }
+
+                continue;
+            }
+
+            if (current.AttemptCount >= maxAttempts)
+            {
+                var penaltyAttempt = current.AttemptCount - maxAttempts + 1;
+                var retrySeconds = Math.Min(
+                    backoffBase.TotalSeconds * Math.Pow(2, penaltyAttempt - 1),
+                    backoffMax.TotalSeconds);
+                retryAfter = TimeSpan.FromSeconds(Math.Max(1, Math.Ceiling(retrySeconds)));
+                return false;
+            }
+
+            var updated = current with { AttemptCount = current.AttemptCount + 1 };
+            if (_connectionAttempts.TryUpdate(clientKey, updated, current))
+            {
+                retryAfter = TimeSpan.Zero;
+                CleanupStaleAttemptWindows(attemptWindow, now);
+                return true;
+            }
+        }
+    }
+
+    private static string GetClientAttemptKey(HttpContext context, string agentId)
+    {
+        var forwardedFor = context.Request.Headers["X-Forwarded-For"].FirstOrDefault();
+        var clientAddress = context.Connection.RemoteIpAddress?.ToString();
+        var clientId = string.IsNullOrWhiteSpace(forwardedFor)
+            ? clientAddress
+            : forwardedFor.Split(',')[0].Trim();
+
+        return $"{(string.IsNullOrWhiteSpace(clientId) ? "unknown" : clientId)}::{agentId}";
+    }
+
+    private void CleanupStaleAttemptWindows(TimeSpan attemptWindow, DateTimeOffset now)
+    {
+        if (Interlocked.Increment(ref _connectionAttemptUpdates) % 128 != 0)
+            return;
+
+        foreach (var (key, value) in _connectionAttempts)
+        {
+            if (now - value.WindowStartedUtc >= attemptWindow + attemptWindow)
+                _connectionAttempts.TryRemove(key, out _);
+        }
+    }
+
     private sealed record WsClientMessage(
         [property: JsonPropertyName("type")] string Type,
         [property: JsonPropertyName("content")] string? Content = null);
+
+    private readonly record struct ConnectionAttemptWindow(DateTimeOffset WindowStartedUtc, int AttemptCount);
 }

@@ -7,6 +7,7 @@
     const WS_PATH = '/ws';
     const RECONNECT_BASE_MS = 1000;
     const RECONNECT_MAX_MS = 30000;
+    const RECONNECT_MAX_ATTEMPTS = 10;
     const PING_INTERVAL_MS = 30000;
     const RESPONSE_TIMEOUT_MS = 30000;
     const MAX_ACTIVITY_ITEMS = 100;
@@ -304,6 +305,12 @@
 
     function scheduleReconnect() {
         if (reconnectTimer) return;
+        if (reconnectAttempts >= RECONNECT_MAX_ATTEMPTS) {
+            setStatus('disconnected');
+            showConnectionBanner('❌ Unable to reconnect after multiple attempts. Check Gateway health and reconnect manually.', 'error');
+            return;
+        }
+
         const delay = Math.min(RECONNECT_BASE_MS * Math.pow(2, reconnectAttempts), RECONNECT_MAX_MS);
         reconnectAttempts++;
         setStatus('reconnecting');

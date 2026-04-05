@@ -14,8 +14,14 @@ public static class GatewayApiServiceCollectionExtensions
     /// Registers the Gateway API services (controllers, WebSocket handler).
     /// Call after <c>AddBotNexusGateway()</c>.
     /// </summary>
-    public static IServiceCollection AddBotNexusGatewayApi(this IServiceCollection services)
+    public static IServiceCollection AddBotNexusGatewayApi(
+        this IServiceCollection services,
+        Action<GatewayWebSocketOptions>? configure = null)
     {
+        services.AddOptions<GatewayWebSocketOptions>();
+        if (configure is not null)
+            services.Configure(configure);
+
         services.AddSingleton<GatewayWebSocketHandler>();
         services.AddControllers()
             .AddApplicationPart(typeof(GatewayApiServiceCollectionExtensions).Assembly);
