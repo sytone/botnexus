@@ -7,6 +7,7 @@ namespace BotNexus.Providers.Core.Tests.Utilities;
 public class MessageTransformerTests
 {
     private static readonly long Ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+    private sealed record SystemLikeMessage(long Timestamp) : Message(Timestamp);
 
     private static LlmModel MakeModel(string provider = "anthropic", string api = "anthropic-messages") => new(
         Id: "test-model",
@@ -179,6 +180,50 @@ public class MessageTransformerTests
 
         var transformedAssistant = (AssistantMessage)result[0];
         transformedAssistant.Content.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void RedactedThinking_Preserved_ForSameProvider()
+    {
+        var assistant = MakeAssistant(
+            [new ThinkingContent("encrypted", Redacted: true)],
+            provider: "anthropic",
+            api: "anthropic-messages");
+        var model = MakeModel("anthropic", "anthropic-messages");
+
+        var result = MessageTransformer.TransformMessages([assistant], model);
+
+        var transformedAssistant = (AssistantMessage)result[0];
+        transformedAssistant.Content.Should().ContainSingle();
+        transformedAssistant.Content[0].Should().BeOfType<ThinkingContent>();
+        ((ThinkingContent)transformedAssistant.Content[0]).Redacted.Should().BeTrue();
+    }
+
+    [Fact]
+    public void OrphanToolResultMessages_ArePreservedWithoutFailure()
+    {
+        var orphan = new ToolResultMessage("missing-id", "test", [new TextContent("ok")], false, Ts);
+        var model = MakeModel();
+
+        var result = MessageTransformer.TransformMessages([orphan, MakeUser("continue")], model);
+
+        result.Should().HaveCount(2);
+        result[0].Should().Be(orphan);
+        result[1].Should().BeOfType<UserMessage>();
+    }
+
+    [Fact]
+    public void SystemLikeMessages_KeepOriginalPosition()
+    {
+        var system = new SystemLikeMessage(Ts + 1);
+        var assistant = MakeAssistant([new TextContent("ack")]);
+        var model = MakeModel();
+
+        var result = MessageTransformer.TransformMessages([MakeUser("hi"), system, assistant, MakeUser("next")], model);
+
+        result.Should().HaveCount(4);
+        result[1].Should().Be(system);
+        result[2].Should().BeOfType<AssistantMessage>();
     }
 
     [Fact]

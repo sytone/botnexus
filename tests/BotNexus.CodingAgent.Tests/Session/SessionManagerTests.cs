@@ -33,6 +33,21 @@ public sealed class SessionManagerTests : IDisposable
     }
 
     [Fact]
+    public async Task CreateSessionAsync_WithParentSession_PersistsParentReferenceAndVersion()
+    {
+        const string parentSessionId = "parent-session-123";
+        var session = await _manager.CreateSessionAsync(_workingDirectory, "child-session", parentSessionId);
+        var sessionPath = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions", $"{session.Id}.jsonl");
+        var header = (await File.ReadAllLinesAsync(sessionPath)).Single();
+
+        session.ParentSessionId.Should().Be(parentSessionId);
+        session.Version.Should().Be(2);
+        header.Should().Contain("\"type\":\"session_header\"");
+        header.Should().Contain("\"version\":2");
+        header.Should().Contain($"\"parentSessionId\":\"{parentSessionId}\"");
+    }
+
+    [Fact]
     public async Task SaveSessionAsync_WritesTypedEntries()
     {
         var created = await _manager.CreateSessionAsync(_workingDirectory, "resume-test");
@@ -50,6 +65,26 @@ public sealed class SessionManagerTests : IDisposable
         fileContent.Should().Contain("\"type\":\"message\"");
         fileContent.Should().Contain("\"type\":\"tool_result\"");
         fileContent.Should().Contain("\"type\":\"metadata\"");
+    }
+
+    [Fact]
+    public async Task SaveSessionAsync_WritesCompactionSummaryEntryType()
+    {
+        var created = await _manager.CreateSessionAsync(_workingDirectory, "compaction-test");
+        var messages = new AgentMessage[]
+        {
+            new UserMessage("hello"),
+            new SystemAgentMessage("[Session context summary: compacted]")
+        };
+
+        await _manager.SaveSessionAsync(created, messages);
+
+        var sessionPath = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions", $"{created.Id}.jsonl");
+        var fileContent = await File.ReadAllTextAsync(sessionPath);
+
+        fileContent.Should().Contain("\"type\":\"message\"");
+        fileContent.Should().Contain("\"type\":\"compaction_summary\"");
+        fileContent.Should().Contain("\"summary\":\"[Session context summary: compacted]\"");
     }
 
     [Fact]
@@ -140,6 +175,24 @@ public sealed class SessionManagerTests : IDisposable
         resumed.Messages.Should().ContainSingle();
         resumed.Messages[0].Should().BeOfType<UserMessage>();
         ((UserMessage)resumed.Messages[0]).Content.Should().Be("legacy hello");
+    }
+
+    [Fact]
+    public async Task SaveSessionAsync_UpgradesOlderSessionHeaderVersion()
+    {
+        var created = await _manager.CreateSessionAsync(_workingDirectory, "upgrade-version");
+        var sessionPath = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions", $"{created.Id}.jsonl");
+        var lines = await File.ReadAllLinesAsync(sessionPath);
+        lines[0] = lines[0].Replace("\"version\":2", "\"version\":1", StringComparison.Ordinal);
+        await File.WriteAllLinesAsync(sessionPath, lines);
+
+        var resumed = await _manager.ResumeSessionAsync(created.Id, _workingDirectory);
+        resumed.Session.Version.Should().Be(1);
+
+        await _manager.SaveSessionAsync(resumed.Session, [new UserMessage("after-upgrade")]);
+
+        var updatedHeader = (await File.ReadAllLinesAsync(sessionPath)).First();
+        updatedHeader.Should().Contain("\"version\":2");
     }
 
     public void Dispose()
