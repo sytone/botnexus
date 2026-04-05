@@ -8312,3 +8312,86 @@ The Gateway must be provider-agnostic and isolation-strategy-agnostic. It orches
 
 **Follows:** Squad discipline on dependency direction, clear contracts, separation of concerns.
 
+
+---
+
+## Gateway P1 Sprint Decisions (2026-04-05)
+
+### Bender: Gateway P1 Fixes (2026-04-05)
+
+**By:** Bender (Runtime Dev)  
+**Scope Delivered:**
+- P1-1: Streaming session history now persists tool lifecycle + stream errors, not only content deltas.
+- P1-2: Default routing now reads `GatewayOptions` via `IOptionsMonitor`; DI helper `SetDefaultAgent()` added through `PostConfigure`.
+- P1-3: GatewayHost no longer owns a duplicate channel map; it now depends on `ChannelManager` for adapter iteration and lookup.
+- P1-4: `AddBotNexusGateway()` XML docs now explain `ISessionStore` defaults/override behavior; GatewayHost logs a clear warning if session store is unexpectedly null at startup.
+- P1-01: Cancellation token naming standardized in `GatewayWebSocketHandler` to `cancellationToken`.
+- P1-02: ConfigureAwait policy documented and enforced in `FileSessionStore` with `ConfigureAwait(false)` on awaited tasks.
+
+**Key Runtime Patterns Reinforced:**
+1. Gateway session history must remain replay-safe across streaming and non-streaming paths.
+2. Runtime-tunable behavior should flow through options monitoring, not mutable singleton state.
+3. Adapter registries should have a single source of truth (`ChannelManager`) to avoid lifecycle drift.
+4. Library-layer async code should use `ConfigureAwait(false)` consistently.
+
+---
+
+### Hermes: Gateway Test Expansion (2026-04-05)
+
+**By:** Hermes (Tester)  
+**Decisions:**
+1. **No rename commit required for existing Gateway tests** — filename/class alignment already correct and classes already `sealed`.
+2. **Coverage expansion implemented via four new unit-test files:**
+   - `InProcessIsolationStrategyTests.cs`
+   - `FileSessionStoreTests.cs`
+   - `DefaultAgentCommunicatorTests.cs`
+   - `GatewayWebSocketHandlerTests.cs`
+3. **Session-store temp data strategy** — Used isolated per-test directories under test output (`AppContext.BaseDirectory`) with explicit cleanup to avoid cross-test interference.
+4. **WebSocket handler handshake verification** — Added focused in-test `IHttpWebSocketFeature` + fake `WebSocket` to assert connected payload shape without external server wiring.
+
+**Validation:** 48 tests passed, 0 failed.
+
+---
+
+### Fry: WebUI Rebuild for New Gateway API (2026-04-03)
+
+**By:** Fry (Web Dev)  
+**Context:** Original WebUI built for old Gateway architecture with different endpoints. New Gateway has simplified API surface focused on agent-based chat with WebSocket streaming.
+
+**Decision:** Rebuilt `src/BotNexus.WebUI/` from scratch targeting new Gateway API.
+
+**API Surface:**
+- **WebSocket:** `/ws?agent={agentId}&session={sessionId}` — streaming with `message_start`, `content_delta`, `tool_start/end`, `message_end`
+- **REST:** `GET /api/agents`, `GET /api/sessions`, `GET /api/sessions/{id}`, `POST /api/chat`
+
+**Architecture Choices:**
+1. **Pure HTML/CSS/JS** — no build tools, consistent with project convention
+2. **IIFE pattern** in `app.js` — all state encapsulated
+3. **WebSocket-first** with REST fallback — best UX for streaming
+4. **Exponential backoff reconnection** — prevents server hammering
+5. **Ping keepalive** (30s interval) — maintains connection through proxies
+6. **MSBuild copy targets** — wwwroot files copied to Gateway.Api output
+
+**Removed:** Extensions panel, channels list, activity monitor, agent form modal, command palette.  
+**Retained:** Dark theme, sidebar layout, tool call modal, tool visibility toggle, markdown rendering, thinking indicator.
+
+**Impact:** Gateway.Api.csproj gains ProjectReference + MSBuild copy targets. No existing source modified.
+
+---
+
+### Farnsworth: Channel Stub Decisions (2026-04-06)
+
+**By:** Farnsworth (Platform Dev)  
+**Decisions:**
+1. Added two new channel projects: `BotNexus.Channels.Tui` and `BotNexus.Channels.Telegram`
+2. Implemented both as Phase 2 stubs with explicit lifecycle state (`IsRunning`) and minimal outbound behavior.
+3. Marked TUI as streaming-capable (`SupportsStreaming = true`), Telegram as non-streaming (`SupportsStreaming = false`).
+4. Added DI extension methods:
+   - `AddBotNexusTuiChannel(IServiceCollection)`
+   - `AddBotNexusTelegramChannel(IServiceCollection, Action<TelegramOptions>? configure = null)`
+5. Added `TelegramOptions` with `BotToken`, `WebhookUrl`, `AllowedChatIds` to reserve contract surface.
+6. Added both projects to `BotNexus.slnx` and validated builds.
+
+**Follow-up for Full Implementation:**
+- TUI: add background stdin reader loop and dispatch via `IChannelDispatcher`.
+- Telegram: add long-polling/webhook receiver, map updates to `InboundMessage`, call Bot API endpoints.
