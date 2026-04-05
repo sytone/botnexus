@@ -1611,3 +1611,22 @@ Design review filtered 14 audit findings down to 6 real fixes (5 already impleme
 
 ### Key File Paths
 - Review: .squad/decisions/inbox/leela-gateway-design-review.md
+
+## Learnings — P1 Sprint Design Review (2026-04-05)
+
+### Review Findings
+1. **Overall grade: A-** — All six prior P1 issues correctly remediated. One P0 (WebSocket streaming history loss) prevents A grade.
+2. **P0: WebSocket handler missing streaming history** — GatewayWebSocketHandler.HandleUserMessageAsync streams events to client but never captures tool events or assistant content in session.History. Same bug as P1-1, missed in this code path. Needs StreamToHistoryAsync helper extraction.
+3. **P1: Channel stubs bypass ChannelAdapterBase** — TUI and Telegram adapters implement IChannelAdapter directly, missing allow-list enforcement and lifecycle logging from the base class.
+4. **P1: TelegramOptions doesn't use Options pattern** — Registered as raw singleton, inconsistent with GatewayOptions IOptionsMonitor pattern.
+5. **P1: ChannelManager concrete type in DI** — No interface extracted; soft DIP violation.
+6. **Prior P1-1 through P1-5 all verified fixed** — Streaming history, Options pattern, ChannelManager consolidation, default session store, test naming all confirmed correct.
+
+### Key Patterns Observed
+- **Streaming history accumulation pattern** in GatewayHost (streamedContent + streamedHistory lists) is correct and should be reused in all streaming code paths.
+- **IOptionsMonitor for hot-reloadable config** is the right choice for GatewayOptions.DefaultAgentId.
+- **TryAddSingleton for default implementations** correctly allows consumer override.
+- **Channel stubs as IChannelAdapter direct implementors** is acceptable for Phase 2 but should migrate to ChannelAdapterBase for production.
+
+### Key File Paths
+- Review: .squad/decisions/inbox/leela-design-review-p1-sprint.md
