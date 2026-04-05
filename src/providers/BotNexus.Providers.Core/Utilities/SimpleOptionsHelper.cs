@@ -8,6 +8,15 @@ namespace BotNexus.Providers.Core.Utilities;
 /// </summary>
 public static class SimpleOptionsHelper
 {
+    private static readonly IReadOnlyDictionary<ThinkingLevel, int> DefaultThinkingBudgets = new Dictionary<ThinkingLevel, int>
+    {
+        [ThinkingLevel.Minimal] = 1024,
+        [ThinkingLevel.Low] = 2048,
+        [ThinkingLevel.Medium] = 8192,
+        [ThinkingLevel.High] = 16384,
+        [ThinkingLevel.ExtraHigh] = 16384
+    };
+
     /// <summary>
     /// Build base StreamOptions from SimpleStreamOptions, resolving API key.
     /// </summary>
@@ -58,6 +67,14 @@ public static class SimpleOptionsHelper
             ThinkingLevel.ExtraHigh => customBudgets.ExtraHigh,
             _ => null
         };
+    }
+
+    public static int GetDefaultThinkingBudget(ThinkingLevel level)
+    {
+        if (DefaultThinkingBudgets.TryGetValue(level, out var budget))
+            return budget;
+
+        return DefaultThinkingBudgets[ThinkingLevel.Medium];
     }
 
     /// <summary>

@@ -349,7 +349,7 @@ public sealed class OpenAICompletionsProvider(
             };
 
             if (compat.SupportsStrictMode)
-                fn["strict"] = true;
+                fn["strict"] = false;
 
             result.Add(new JsonObject
             {

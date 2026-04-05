@@ -120,14 +120,7 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
                 }
                 else
                 {
-                    budgetTokens = clamped switch
-                    {
-                        ThinkingLevel.Minimal => 1024,
-                        ThinkingLevel.Low => 4096,
-                        ThinkingLevel.Medium => 10000,
-                        ThinkingLevel.High => 32000,
-                        _ => 10000
-                    };
+                    budgetTokens = SimpleOptionsHelper.GetDefaultThinkingBudget(clamped ?? ThinkingLevel.Medium);
                     maxTokens = anthropicOpts.MaxTokens;
                 }
 
@@ -518,7 +511,7 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
                 body["thinking"] = new Dictionary<string, object?>
                 {
                     ["type"] = "enabled",
-                    ["budget_tokens"] = 10000
+                    ["budget_tokens"] = 1024
                 };
             }
         }
