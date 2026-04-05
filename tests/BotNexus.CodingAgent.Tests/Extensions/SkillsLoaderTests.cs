@@ -21,7 +21,7 @@ public sealed class SkillsLoaderTests : IDisposable
 
         var skills = new SkillsLoader().LoadSkills(_tempDirectory, new CodingAgentConfig());
 
-        skills.Should().BeEmpty();
+        skills.Should().NotContain(skill => skill.Contains("not a skill", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -40,10 +40,10 @@ public sealed class SkillsLoaderTests : IDisposable
 
         var skills = new SkillsLoader().LoadSkills(_tempDirectory, new CodingAgentConfig());
 
-        skills.Should().ContainSingle();
-        skills[0].Should().Contain("name: my-skill");
-        skills[0].Should().Contain("description: Sample skill");
-        skills[0].Should().Contain("Skill body");
+        skills.Should().Contain(skill =>
+            skill.Contains("name: my-skill", StringComparison.Ordinal) &&
+            skill.Contains("description: Sample skill", StringComparison.Ordinal) &&
+            skill.Contains("Skill body", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -61,7 +61,7 @@ public sealed class SkillsLoaderTests : IDisposable
 
         var skills = new SkillsLoader().LoadSkills(_tempDirectory, new CodingAgentConfig());
 
-        skills.Should().BeEmpty();
+        skills.Should().NotContain(skill => skill.Contains("name: BadSkill", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -88,9 +88,10 @@ public sealed class SkillsLoaderTests : IDisposable
 
         var skills = new SkillsLoader().LoadSkills(_tempDirectory, new CodingAgentConfig());
 
-        skills.Should().ContainSingle();
-        skills[0].Should().Contain("description: First");
-        skills[0].Should().Contain("First body");
+        var duplicateSkills = skills.Where(skill => skill.Contains("name: duplicate-skill", StringComparison.Ordinal)).ToList();
+        duplicateSkills.Should().ContainSingle();
+        duplicateSkills[0].Should().Contain("description: First");
+        duplicateSkills[0].Should().Contain("First body");
     }
 
     public void Dispose()

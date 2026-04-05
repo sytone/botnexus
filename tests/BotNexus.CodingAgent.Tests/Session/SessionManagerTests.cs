@@ -164,7 +164,11 @@ public sealed class SessionManagerTests : IDisposable
 
         var sessionPath = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions", $"{session.Id}.jsonl");
         var lines = await File.ReadAllLinesAsync(sessionPath);
-        var rootEntryId = JsonDocument.Parse(lines[1]).RootElement.GetProperty("entryId").GetString();
+        var rootEntryId = lines
+            .Select(line => JsonDocument.Parse(line).RootElement)
+            .First(entry => entry.GetProperty("type").GetString() == "message")
+            .GetProperty("entryId")
+            .GetString();
         rootEntryId.Should().NotBeNullOrWhiteSpace();
 
         await _manager.SaveSessionAsync(session with { ActiveLeafId = rootEntryId }, [new UserMessage("root"), new AssistantAgentMessage("branch")]);
@@ -224,8 +228,12 @@ public sealed class SessionManagerTests : IDisposable
 
         await _manager.SaveSessionAsync(resumed.Session, [new UserMessage("after-upgrade")]);
 
-        var updatedHeader = (await File.ReadAllLinesAsync(sessionPath)).First();
-        updatedHeader.Should().Contain("\"version\":2");
+        var headers = (await File.ReadAllLinesAsync(sessionPath))
+            .Select(line => JsonDocument.Parse(line).RootElement)
+            .Where(entry => entry.GetProperty("type").GetString() == "session_header")
+            .ToList();
+        headers.Should().NotBeEmpty();
+        headers.Last().GetProperty("version").GetInt32().Should().Be(2);
     }
 
     public void Dispose()

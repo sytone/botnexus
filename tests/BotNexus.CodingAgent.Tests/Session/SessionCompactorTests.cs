@@ -12,7 +12,6 @@ using ToolResultAgentMessage = BotNexus.AgentCore.Types.ToolResultAgentMessage;
 using AgentToolResult = BotNexus.AgentCore.Types.AgentToolResult;
 using AgentToolContent = BotNexus.AgentCore.Types.AgentToolContent;
 using AgentToolContentType = BotNexus.AgentCore.Types.AgentToolContentType;
-using SystemAgentMessage = BotNexus.AgentCore.Types.SystemAgentMessage;
 
 namespace BotNexus.CodingAgent.Tests.Session;
 
@@ -92,9 +91,9 @@ public sealed class SessionCompactorTests
         var compacted = compactor.Compact(messages, keepRecentCount: 2);
 
         compacted.Should().HaveCount(3);
-        compacted[0].Should().BeOfType<SystemAgentMessage>();
-        compacted[0].As<SystemAgentMessage>().Content.Should().Contain("3 earlier messages compacted");
-        compacted[0].As<SystemAgentMessage>().Content.Should().Contain("GrepTool.cs");
+        compacted[0].Should().BeOfType<AgentUserMessage>();
+        compacted[0].As<AgentUserMessage>().Content.Should().Contain("3 earlier messages compacted");
+        compacted[0].As<AgentUserMessage>().Content.Should().Contain("GrepTool.cs");
         compacted[1].Should().Be(messages[3]);
         compacted[2].Should().Be(messages[4]);
     }
@@ -111,7 +110,7 @@ public sealed class SessionCompactorTests
 
         var compactor = new SessionCompactor();
         var compacted = compactor.Compact(messages, keepRecentCount: 1);
-        var summary = compacted[0].As<SystemAgentMessage>().Content;
+        var summary = compacted[0].As<AgentUserMessage>().Content;
 
         summary.Should().Contain("Key topics discussed:");
         summary.Should().Contain("Files modified:");
@@ -138,7 +137,7 @@ public sealed class SessionCompactorTests
 
         var compacted = await compactor.CompactAsync(messages, options);
 
-        compacted[0].Should().BeOfType<SystemAgentMessage>();
+        compacted[0].Should().BeOfType<AgentUserMessage>();
     }
 
     [Fact]
@@ -193,11 +192,11 @@ public sealed class SessionCompactorTests
 
         var compacted = await compactor.CompactAsync(messages, options);
 
-        compacted[0].As<SystemAgentMessage>().Content.Should().Contain("<modified-files>");
+        compacted[0].As<AgentUserMessage>().Content.Should().Contain("<modified-files>");
     }
 
     [Fact]
-    public async Task CompactAsync_WhenLlmSummaryGenerated_UsesSummaryAsSystemMessage()
+    public async Task CompactAsync_WhenLlmSummaryGenerated_UsesSummaryAsUserMessage()
     {
         var compactor = new SessionCompactor();
         var messages = new AgentMessage[]
@@ -216,7 +215,7 @@ public sealed class SessionCompactorTests
 
         var compacted = await compactor.CompactAsync(messages, options);
 
-        compacted[0].As<SystemAgentMessage>().Content.Should().Contain("## Goal");
+        compacted[0].As<AgentUserMessage>().Content.Should().Contain("## Goal");
     }
 
     [Fact]
@@ -244,7 +243,7 @@ public sealed class SessionCompactorTests
             Model: MakeModel());
 
         var compacted = await compactor.CompactAsync(messages, options);
-        var summary = compacted[0].As<SystemAgentMessage>().Content;
+        var summary = compacted[0].As<AgentUserMessage>().Content;
 
         summary.Should().NotContain("Turn Context (split turn)");
         compacted.Skip(1).OfType<AgentUserMessage>().Select(message => message.Content)
