@@ -100,7 +100,7 @@ public sealed class WriteTool : IAgentTool
             Directory.CreateDirectory(parent);
         }
 
-        await File.WriteAllTextAsync(fullPath, content, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+        await File.WriteAllTextAsync(fullPath, content, new UTF8Encoding(false), cancellationToken).ConfigureAwait(false);
 
         var byteCount = Encoding.UTF8.GetByteCount(content);
         var relativePath = PathUtils.GetRelativePath(fullPath, _workingDirectory);

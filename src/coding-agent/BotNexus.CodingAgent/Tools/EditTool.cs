@@ -221,20 +221,43 @@ public sealed class EditTool : IAgentTool
 
     private static List<ResolvedEdit> ResolveReplacements(string normalizedOriginal, IReadOnlyList<EditEntry> edits)
     {
+        var normalizedForFuzzy = NormalizeForFuzzyMatchWithMap(normalizedOriginal);
         var replacements = edits
             .Select(edit =>
             {
                 var normalizedOld = NormalizeLineEndings(edit.OldText);
                 var normalizedNew = NormalizeLineEndings(edit.NewText);
-                var matchCount = CountOccurrences(normalizedOriginal, normalizedOld);
-                if (matchCount != 1)
+                var exactMatchCount = CountOccurrences(normalizedOriginal, normalizedOld);
+                if (exactMatchCount > 1)
                 {
                     throw new InvalidOperationException(
-                        $"Expected exactly one match for edits[].oldText, but found {matchCount}.");
+                        $"Expected exactly one match for edits[].oldText, but found {exactMatchCount}.");
                 }
 
-                var start = normalizedOriginal.IndexOf(normalizedOld, StringComparison.Ordinal);
-                return new ResolvedEdit(start, start + normalizedOld.Length, normalizedOld, normalizedNew);
+                if (exactMatchCount == 1)
+                {
+                    var start = normalizedOriginal.IndexOf(normalizedOld, StringComparison.Ordinal);
+                    var end = start + normalizedOld.Length;
+                    return new ResolvedEdit(start, end, normalizedOriginal[start..end], normalizedNew);
+                }
+
+                var fuzzyOld = NormalizeForFuzzyMatch(normalizedOld);
+                var fuzzyMatchCount = CountOccurrences(normalizedForFuzzy.Normalized, fuzzyOld);
+                if (fuzzyMatchCount != 1)
+                {
+                    throw new InvalidOperationException(
+                        $"Expected exactly one match for edits[].oldText, but found {fuzzyMatchCount}.");
+                }
+
+                var fuzzyStart = normalizedForFuzzy.Normalized.IndexOf(fuzzyOld, StringComparison.Ordinal);
+                var startIndex = normalizedForFuzzy.IndexMap[fuzzyStart];
+                var endIndex = normalizedForFuzzy.IndexMap[fuzzyStart + fuzzyOld.Length];
+
+                return new ResolvedEdit(
+                    startIndex,
+                    endIndex,
+                    normalizedOriginal[startIndex..endIndex],
+                    normalizedNew);
             })
             .OrderBy(edit => edit.StartIndex)
             .ToList();
@@ -256,7 +279,7 @@ public sealed class EditTool : IAgentTool
 
     private static string ApplyReplacements(string source, IReadOnlyList<ResolvedEdit> replacements)
     {
-        var delta = replacements.Sum(edit => edit.NewText.Length - edit.OldText.Length);
+        var delta = replacements.Sum(edit => edit.NewText.Length - (edit.EndIndex - edit.StartIndex));
         var builder = new StringBuilder(source.Length + delta);
         var cursor = 0;
 
@@ -295,6 +318,61 @@ public sealed class EditTool : IAgentTool
             .Replace('\r', '\n');
     }
 
+    private static string NormalizeForFuzzyMatch(string text)
+    {
+        return NormalizeForFuzzyMatchWithMap(text).Normalized;
+    }
+
+    private static NormalizedFuzzyText NormalizeForFuzzyMatchWithMap(string text)
+    {
+        var normalized = new StringBuilder(text.Length);
+        var indexMap = new List<int>(text.Length + 1);
+        var lineStart = 0;
+
+        while (lineStart < text.Length)
+        {
+            var lineEnd = text.IndexOf('\n', lineStart);
+            var hasLineBreak = lineEnd >= 0;
+            var contentEnd = hasLineBreak ? lineEnd : text.Length;
+            var trimmedEnd = contentEnd;
+
+            while (trimmedEnd > lineStart && char.IsWhiteSpace(text[trimmedEnd - 1]) && text[trimmedEnd - 1] != '\n')
+            {
+                trimmedEnd--;
+            }
+
+            for (var i = lineStart; i < trimmedEnd; i++)
+            {
+                normalized.Append(NormalizeFuzzyChar(text[i]));
+                indexMap.Add(i);
+            }
+
+            if (!hasLineBreak)
+            {
+                break;
+            }
+
+            normalized.Append('\n');
+            indexMap.Add(lineEnd);
+            lineStart = lineEnd + 1;
+        }
+
+        indexMap.Add(text.Length);
+        return new NormalizedFuzzyText(normalized.ToString(), indexMap);
+    }
+
+    private static char NormalizeFuzzyChar(char value)
+    {
+        return value switch
+        {
+            '\u201C' or '\u201D' => '"',
+            '\u2018' or '\u2019' => '\'',
+            '\u2014' or '\u2013' => '-',
+            '\u00A0' => ' ',
+            _ => value
+        };
+    }
+
     private static string DetectLineEnding(string value)
     {
         return value.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
@@ -318,4 +396,6 @@ public sealed class EditTool : IAgentTool
     private sealed record EditEntry(string OldText, string NewText);
 
     private sealed record ResolvedEdit(int StartIndex, int EndIndex, string OldText, string NewText);
+
+    private sealed record NormalizedFuzzyText(string Normalized, IReadOnlyList<int> IndexMap);
 }

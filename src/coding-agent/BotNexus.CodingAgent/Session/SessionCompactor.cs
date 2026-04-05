@@ -137,8 +137,7 @@ public sealed class SessionCompactor
     public int EstimateTokens(IReadOnlyList<AgentMessage> messages)
     {
         ArgumentNullException.ThrowIfNull(messages);
-        var chars = ExtractText(messages).Sum(static text => text.Length);
-        return Math.Max(1, (int)Math.Ceiling(chars / 4d));
+        return messages.Sum(EstimateTokens);
     }
 
     private static int FindCutIndex(IReadOnlyList<AgentMessage> messages, SessionCompactionOptions options)
@@ -149,7 +148,7 @@ public sealed class SessionCompactor
 
         for (var i = messages.Count - 1; i >= 0; i--)
         {
-            runningRecentTokens += EstimateMessageTokens(messages[i]);
+            runningRecentTokens += EstimateTokens(messages[i]);
             var recentCount = messages.Count - i;
             if (runningRecentTokens >= options.KeepRecentTokens && recentCount >= minRecent)
             {
@@ -160,8 +159,17 @@ public sealed class SessionCompactor
         return minCut;
     }
 
-    private static int EstimateMessageTokens(AgentMessage message)
+    private static int EstimateTokens(AgentMessage message)
     {
+        if (message is AssistantAgentMessage { Usage: not null } assistantWithUsage)
+        {
+            var usageTokens = (assistantWithUsage.Usage!.InputTokens ?? 0) + (assistantWithUsage.Usage.OutputTokens ?? 0);
+            if (usageTokens > 0)
+            {
+                return usageTokens;
+            }
+        }
+
         var chars = message switch
         {
             AgentUserMessage user => user.Content?.Length ?? 0,

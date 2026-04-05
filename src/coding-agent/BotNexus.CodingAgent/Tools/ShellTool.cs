@@ -17,14 +17,14 @@ namespace BotNexus.CodingAgent.Tools;
 /// This keeps command semantics predictable for repository automation scenarios.
 /// </para>
 /// <para>
-/// Output is capped at 10,000 characters to protect downstream token budgets and prevent runaway
-/// responses from large command streams.
+/// Output is capped at 50,000 characters to protect downstream token budgets and prevent runaway
+/// responses from large command streams while preserving tail errors.
 /// </para>
 /// </remarks>
 public sealed class ShellTool : IAgentTool
 {
     private const int DefaultTimeoutSeconds = 120;
-    private const int MaxOutputCharacters = 10000;
+    private const int MaxOutputCharacters = 50000;
 
     /// <inheritdoc />
     public string Name => "bash";
@@ -145,7 +145,8 @@ public sealed class ShellTool : IAgentTool
         var output = outputBuilder.ToString();
         if (output.Length > MaxOutputCharacters)
         {
-            output = $"{output[..MaxOutputCharacters]}\n[warning] Output truncated at {MaxOutputCharacters} characters.";
+            output =
+                $"[Output truncated — showing last {MaxOutputCharacters} characters]\n{output[^MaxOutputCharacters..]}";
         }
 
         return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, output)]);
