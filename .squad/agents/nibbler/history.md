@@ -10,6 +10,10 @@
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
 - 2026-04-01: Added to team as Consistency Reviewer after Jon caught docs/architecture.md not reflecting the ~/.botnexus/ unified config that was implemented after the docs were written. Multi-agent workflows have a systemic consistency gap — each agent updates their own files but nobody checks the seams.
+- Tool names renamed during port audit (list_directory→ls, glob→find) but training docs and CodingAgent README were not updated — tool renames need a grep-sweep checklist across all docs.
+- Parameter renames (start_line/end_line→offset/limit, include→glob, max_results→limit) are high-risk for doc staleness because the old names still compile via legacy support in tool code, masking the drift.
+- ThinkingBudgets type was simplified from ThinkingBudgetLevel record to plain int? but docs/README examples still showed the old type — type changes need compile-check of all doc code snippets.
+- CodingAgent README had a separate maintenance cadence from training docs — both must be updated when tools change.
 - 2026-04-03: Post-sprint consistency reviews are ESSENTIAL after major refactors. The Pi provider architecture port was a massive rewrite (26 models, 3 API handlers, model-aware routing), and even with excellent engineering discipline, minor issues (11 nullability warnings) slipped through. Documentation quality is high — all architecture docs, configuration guides, and README were already accurate.
 
 ## 2026-04-02 — Team Updates
