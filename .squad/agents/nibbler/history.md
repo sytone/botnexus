@@ -193,6 +193,40 @@
 - StreamAccumulator has only 1 unit test — flagged as coverage gap
 - CodingAgent factory has only 1 test (reflection-based) — flagged as coverage gap
 
+## 2026-04-03 — Post-Sprint 3 Consistency Review
+
+**Requested by:** sytone (Jon Bullen)
+**Sprint:** Sprint 3 — 7 commits (AD-9 through AD-17)
+
+**Review Scope:**
+1. Training docs 06-09 ↔ Code alignment
+2. Existing training docs 01-05 ↔ Sprint 3 API changes
+3. CodingAgent README ↔ Reality
+4. IAgentTool interface ↔ Doc examples
+5. Glossary completeness and deduplication
+
+**Results:**
+- **22 discrepancies found** across 7 files
+- **All fixed** in commit e7ff6d8
+- ✅ Build: 0 errors, 0 warnings
+- ✅ Tests: 415/415 pass (all 7 test projects)
+
+**Key Fixes:**
+- 07-thinking-levels.md: Stale CLI section claimed --thinking didn't exist; rewrote with actual --thinking flag, /thinking slash command, and session metadata docs
+- 06-context-file-discovery.md: Truncation algorithm showed binary search but code uses char-by-char iteration
+- 09-tool-development.md: IAgentTool.ExecuteAsync missing toolCallId param, wrong param order; GetPromptGuidelines wrong return type (string? vs IReadOnlyList<string>); all 4 example tools had wrong signatures
+- 08-building-custom-coding-agent.md: SystemPromptBuilder.Build() called with wrong params (ProjectName, EnvironmentContext, PackageManagers); missing Utils namespace import; wrong cross-ref link
+- 03-coding-agent.md: Missing ListDirectoryTool in tool table, code example, and note (6→7 tools)
+- 05-glossary.md: Duplicate ThinkingLevel entry; missing cross-refs to modules 06-09
+- CodingAgent/README.md: Missing --thinking in CLI help, wrong tool count (6→7), missing list_directory section, wrong read params
+
+**Learnings:**
+- New training docs (06-09) were written based on planned APIs rather than final implementations — every Sprint 3 doc had at least one wrong API signature
+- ExecuteAsync signature change (added toolCallId) wasn't propagated to any doc examples
+- GetPromptGuidelines return type change (string? → IReadOnlyList<string>) wasn't propagated to docs
+- ListDirectoryTool (AD-11) wasn't added to 03-coding-agent.md or CodingAgent README
+- CLI features (--thinking, /thinking) weren't reflected in 07-thinking-levels.md despite being the primary user-facing feature
+
 
 ## Session: Phase 3 Port Audit Design Review (2026-04-05T09:49:50Z)
 
