@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BotNexus</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Sidebar -->
+        <aside id="sidebar">
+            <div class="sidebar-header">
+                <h1>🤖 BotNexus</h1>
+                <div id="connection-status" class="status disconnected" role="status" aria-live="polite">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <span class="status-text">Disconnected</span>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="section-header" data-toggle="new-chat-section">
+                    <span>💬 New Chat</span>
+                </div>
+                <div id="new-chat-section" class="section-content">
+                    <button id="btn-new-chat" class="btn btn-primary">Start New Chat</button>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="section-header" data-toggle="sessions-list">
+                    <span>📋 Sessions</span>
+                    <button id="btn-refresh-sessions" class="btn-icon" title="Refresh sessions" aria-label="Refresh sessions">↻</button>
+                </div>
+                <div id="sessions-list" class="section-content" role="list">
+                    <div class="loading">Loading sessions...</div>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="section-header" data-toggle="agents-list">
+                    <span>🧠 Agents</span>
+                    <button id="btn-refresh-agents" class="btn-icon" title="Refresh agents" aria-label="Refresh agents">↻</button>
+                </div>
+                <div id="agents-list" class="section-content" role="list">
+                    <div class="loading">Loading agents...</div>
+                </div>
+            </div>
+
+            <div class="sidebar-footer">
+                <span class="text-muted" style="font-size:0.72rem;">BotNexus Gateway</span>
+            </div>
+        </aside>
+
+        <!-- Main content -->
+        <main id="main-content">
+            <!-- Welcome screen -->
+            <div id="welcome-screen" class="welcome">
+                <div class="welcome-inner">
+                    <h2>🤖 BotNexus</h2>
+                    <p>Select a session from the sidebar or start a new chat.</p>
+                    <p class="text-muted">Choose an agent and begin a conversation.</p>
+                </div>
+            </div>
+
+            <!-- Chat view -->
+            <div id="chat-view" class="chat-view hidden">
+                <div class="chat-header">
+                    <div class="chat-info">
+                        <h2 id="chat-title">Chat</h2>
+                        <span id="chat-meta" class="text-muted"></span>
+                    </div>
+                    <div class="chat-header-controls">
+                        <label for="agent-select" class="select-label">Agent:</label>
+                        <select id="agent-select" class="header-select" aria-label="Select agent"></select>
+                        <label class="toggle-switch" title="Show/hide tool calls">
+                            <input type="checkbox" id="toggle-tools" aria-label="Toggle tool call visibility">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span class="toggle-label">🔧 Tools</span>
+                        <button id="btn-abort" class="btn btn-danger hidden" title="Abort current request" aria-label="Abort">⏹ Abort</button>
+                    </div>
+                </div>
+                <div id="chat-messages" class="chat-messages" role="log" aria-live="polite" aria-label="Chat messages">
+                </div>
+                <div class="chat-input-area">
+                    <div class="input-row">
+                        <label for="chat-input" class="sr-only">Type a message</label>
+                        <textarea id="chat-input" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" rows="1" aria-label="Chat message input"></textarea>
+                        <button id="btn-send" class="btn btn-primary" disabled aria-label="Send message">Send</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Tool Detail Modal -->
+    <div id="tool-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-overlay" aria-hidden="true"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">🔧 Tool Details</h3>
+                <button class="modal-close" title="Close" aria-label="Close modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-section">
+                    <div class="modal-label">Tool Name:</div>
+                    <div class="modal-value" id="modal-tool-name"></div>
+                </div>
+                <div class="modal-section">
+                    <div class="modal-label">Arguments:</div>
+                    <pre class="modal-code" id="modal-tool-args"></pre>
+                </div>
+                <div class="modal-section">
+                    <div class="modal-label">Result:</div>
+                    <pre class="modal-code" id="modal-tool-result"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

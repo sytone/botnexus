@@ -15,6 +15,21 @@
   <ItemGroup>
     <ProjectReference Include="..\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway\BotNexus.Gateway.csproj" />
+    <ProjectReference Include="..\..\BotNexus.WebUI\BotNexus.WebUI.csproj" />
   </ItemGroup>
+
+  <Target Name="CopyWebUI" AfterTargets="Build">
+    <ItemGroup>
+      <WebUIFiles Include="$(MSBuildProjectDirectory)\..\..\BotNexus.WebUI\wwwroot\**" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WebUIFiles)" DestinationFolder="$(OutputPath)wwwroot\%(RecursiveDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyWebUIPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <WebUIPublishFiles Include="$(MSBuildProjectDirectory)\..\..\BotNexus.WebUI\wwwroot\**" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WebUIPublishFiles)" DestinationFolder="$(PublishDir)wwwroot\%(RecursiveDir)" SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>
