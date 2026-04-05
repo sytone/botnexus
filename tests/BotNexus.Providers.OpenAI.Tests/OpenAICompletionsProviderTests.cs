@@ -108,7 +108,7 @@ public class OpenAICompletionsProviderTests
     }
 
     [Fact]
-    public void MapStopReason_ContentFilter_MapsToSensitive()
+    public void MapStopReason_ContentFilter_MapsToErrorWithMessage()
     {
         var mapStopReason = typeof(OpenAICompletionsProvider).GetMethod(
             "MapStopReason",
@@ -117,6 +117,80 @@ public class OpenAICompletionsProviderTests
 
         var mapped = ((StopReason StopReason, string? ErrorMessage))mapStopReason!.Invoke(null, ["content_filter"])!;
 
-        mapped.StopReason.Should().Be(StopReason.Sensitive);
+        mapped.StopReason.Should().Be(StopReason.Error);
+        mapped.ErrorMessage.Should().Be("Content filtered by provider");
+    }
+
+    [Fact]
+    public void ConvertMessages_NonVisionModel_FiltersImageOnlyUserMessage()
+    {
+        var convertMessages = typeof(OpenAICompletionsProvider).GetMethod(
+            "ConvertMessages",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        convertMessages.Should().NotBeNull();
+
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var model = new LlmModel(
+            Id: "gpt-4o-mini",
+            Name: "GPT-4o-mini",
+            Api: "openai-completions",
+            Provider: "openai",
+            BaseUrl: "https://api.openai.com/v1",
+            Reasoning: false,
+            Input: ["text"],
+            Cost: new ModelCost(0, 0, 0, 0),
+            ContextWindow: 128000,
+            MaxTokens: 32768);
+        var userWithOnlyImage = new UserMessage(new UserMessageContent([
+            new ImageContent("aGVsbG8=", "image/png")
+        ]), timestamp);
+
+        var converted = convertMessages!.Invoke(
+            null,
+            [null, model, new Message[] { userWithOnlyImage }, new OpenAICompletionsCompat()]) as JsonArray;
+
+        converted.Should().NotBeNull();
+        converted.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ConvertMessages_SanitizesSystemUserAndToolResultText()
+    {
+        var convertMessages = typeof(OpenAICompletionsProvider).GetMethod(
+            "ConvertMessages",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        convertMessages.Should().NotBeNull();
+
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var model = new LlmModel(
+            Id: "gpt-4o",
+            Name: "GPT-4o",
+            Api: "openai-completions",
+            Provider: "openai",
+            BaseUrl: "https://api.openai.com/v1",
+            Reasoning: true,
+            Input: ["text"],
+            Cost: new ModelCost(0, 0, 0, 0),
+            ContextWindow: 128000,
+            MaxTokens: 32768);
+        var messages = new Message[]
+        {
+            new UserMessage(new UserMessageContent("hello \uD800 world"), timestamp),
+            new ToolResultMessage(
+                ToolCallId: "call_1",
+                ToolName: "read_file",
+                Content: [new TextContent("tool \uD800 output")],
+                IsError: false,
+                Timestamp: timestamp)
+        };
+
+        var converted = convertMessages!.Invoke(
+            null,
+            ["sys \uD800 prompt", model, messages, new OpenAICompletionsCompat()]) as JsonArray;
+
+        converted.Should().NotBeNull();
+        converted![0]!["content"]!.GetValue<string>().Should().Be("sys  prompt");
+        converted[1]!["content"]!.GetValue<string>().Should().Be("hello  world");
+        converted[2]!["content"]!.GetValue<string>().Should().Be("tool  output");
     }
 }

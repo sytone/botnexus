@@ -66,6 +66,50 @@ public class OpenAIProviderAlignmentTests
     }
 
     [Fact]
+    public async Task Stream_CapturesThinkingSignatureFromReasoningField()
+    {
+        var handler = new RecordingHandler(_ => SseResponse("""
+            data: {"id":"resp_1","choices":[{"delta":{"reasoning_text":"step-1"}}]}
+            data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}
+            data: [DONE]
+            """));
+        var provider = new OpenAICompletionsProvider(
+            new HttpClient(handler),
+            NullLogger<OpenAICompletionsProvider>.Instance);
+        var model = TestHelpers.MakeModel(reasoning: true);
+        var context = TestHelpers.MakeContext();
+
+        var stream = provider.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
+        var final = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(3));
+
+        var thinking = final.Content.OfType<ThinkingContent>().Single();
+        thinking.Thinking.Should().Be("step-1");
+        thinking.ThinkingSignature.Should().Be("reasoning_text");
+    }
+
+    [Fact]
+    public async Task Stream_MatchesReasoningDetailsByToolCallId()
+    {
+        var handler = new RecordingHandler(_ => SseResponse("""
+            data: {"id":"resp_1","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"a","arguments":"{}"}},{"index":1,"id":"call_b","type":"function","function":{"name":"b","arguments":"{}"}}],"reasoning_details":[{"type":"reasoning.encrypted","id":"call_b","data":"sig-b"},{"type":"reasoning.encrypted","id":"call_a","data":"sig-a"}]}}]}
+            data: {"choices":[{"finish_reason":"tool_calls","delta":{}}]}
+            data: [DONE]
+            """));
+        var provider = new OpenAICompletionsProvider(
+            new HttpClient(handler),
+            NullLogger<OpenAICompletionsProvider>.Instance);
+        var model = TestHelpers.MakeModel(reasoning: true);
+        var context = TestHelpers.MakeContext();
+
+        var stream = provider.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
+        var final = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(3));
+
+        var toolCalls = final.Content.OfType<ToolCallContent>().ToDictionary(tc => tc.Id, tc => tc.ThoughtSignature);
+        toolCalls["call_a"].Should().Contain("\"data\":\"sig-a\"");
+        toolCalls["call_b"].Should().Contain("\"data\":\"sig-b\"");
+    }
+
+    [Fact]
     public void Constructor_ThrowsWhenHttpClientIsNull()
     {
         var act = () => _ = new OpenAICompletionsProvider(

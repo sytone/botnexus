@@ -19,10 +19,16 @@ public record OpenAICompletionsCompat
     public bool? RequiresAssistantAfterToolResult { get; init; } = false;
     public bool? RequiresThinkingAsText { get; init; } = false;
     public string ThinkingFormat { get; init; } = "openai";
-    public Dictionary<string, object>? OpenRouterRouting { get; init; } = [];
+    public OpenRouterRouting? OpenRouterRouting { get; init; } = new();
     public VercelGatewayRouting? VercelGatewayRouting { get; init; } = new();
     public bool? ZaiToolStream { get; init; } = false;
     public bool? SupportsStrictMode { get; init; } = true;
+}
+
+public record OpenRouterRouting
+{
+    public IReadOnlyList<string>? Only { get; init; }
+    public IReadOnlyList<string>? Order { get; init; }
 }
 
 public record VercelGatewayRouting

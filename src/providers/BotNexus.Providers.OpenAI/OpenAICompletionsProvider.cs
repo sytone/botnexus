@@ -279,9 +279,10 @@ public sealed partial class OpenAICompletionsProvider(
         }
 
         if (model.BaseUrl.Contains("openrouter.ai", StringComparison.OrdinalIgnoreCase) &&
-            compat.OpenRouterRouting is { Count: > 0 })
+            compat.OpenRouterRouting is { } openRouterRouting &&
+            (openRouterRouting.Only is { Count: > 0 } || openRouterRouting.Order is { Count: > 0 }))
         {
-            payload["provider"] = JsonSerializer.SerializeToNode(compat.OpenRouterRouting);
+            payload["provider"] = JsonSerializer.SerializeToNode(openRouterRouting);
         }
 
         if (model.BaseUrl.Contains("ai-gateway.vercel.sh", StringComparison.OrdinalIgnoreCase) &&
@@ -409,7 +410,7 @@ public sealed partial class OpenAICompletionsProvider(
         if (systemPrompt is not null)
         {
             var role = model.Reasoning && compat.SupportsDeveloperRole != false ? "developer" : "system";
-            result.Add(new JsonObject { ["role"] = role, ["content"] = systemPrompt });
+            result.Add(new JsonObject { ["role"] = role, ["content"] = UnicodeSanitizer.SanitizeSurrogates(systemPrompt) });
         }
 
         for (var i = 0; i < transformedMessages.Count; i++)
@@ -425,9 +426,13 @@ public sealed partial class OpenAICompletionsProvider(
             switch (message)
             {
                 case UserMessage user:
-                    result.Add(ConvertUserMessage(user));
+                {
+                    var userMessage = ConvertUserMessage(user, model.Input.Contains("image"));
+                    if (userMessage is not null)
+                        result.Add(userMessage);
                     lastRole = "user";
                     break;
+                }
 
                 case AssistantMessage assistant:
                     var assistantMessage = ConvertAssistantMessage(assistant, compat, model);
@@ -503,10 +508,14 @@ public sealed partial class OpenAICompletionsProvider(
         return result;
     }
 
-    private static JsonObject ConvertUserMessage(UserMessage user)
+    private static JsonObject? ConvertUserMessage(UserMessage user, bool supportsImages)
     {
         if (user.Content.IsText)
-            return new JsonObject { ["role"] = "user", ["content"] = user.Content.Text };
+            return new JsonObject
+            {
+                ["role"] = "user",
+                ["content"] = UnicodeSanitizer.SanitizeSurrogates(user.Content.Text ?? string.Empty)
+            };
 
         var contentArray = new JsonArray();
         foreach (var block in user.Content.Blocks!)
@@ -514,10 +523,14 @@ public sealed partial class OpenAICompletionsProvider(
             switch (block)
             {
                 case TextContent text:
-                    contentArray.Add(new JsonObject { ["type"] = "text", ["text"] = text.Text });
+                    contentArray.Add(new JsonObject
+                    {
+                        ["type"] = "text",
+                        ["text"] = UnicodeSanitizer.SanitizeSurrogates(text.Text)
+                    });
                     break;
 
-                case ImageContent image:
+                case ImageContent image when supportsImages:
                     contentArray.Add(new JsonObject
                     {
                         ["type"] = "image_url",
@@ -529,6 +542,9 @@ public sealed partial class OpenAICompletionsProvider(
                     break;
             }
         }
+
+        if (contentArray.Count == 0)
+            return null;
 
         return new JsonObject { ["role"] = "user", ["content"] = contentArray };
     }
@@ -677,6 +693,7 @@ public sealed partial class OpenAICompletionsProvider(
 
         var currentTextIndex = -1;
         var currentThinkingIndex = -1;
+        string? currentThinkingSignature = null;
         var textAccumulator = new StringBuilder();
         var thinkingAccumulator = new StringBuilder();
 
@@ -809,12 +826,15 @@ public sealed partial class OpenAICompletionsProvider(
                             if (currentThinkingIndex < 0)
                             {
                                 currentThinkingIndex = contentBlocks.Count;
-                                contentBlocks.Add(new ThinkingContent(""));
+                                currentThinkingSignature = reasoningField;
+                                contentBlocks.Add(new ThinkingContent(string.Empty, currentThinkingSignature));
                                 stream.Push(new ThinkingStartEvent(currentThinkingIndex, BuildPartial()));
                             }
 
                             thinkingAccumulator.Append(thinking);
-                            contentBlocks[currentThinkingIndex] = new ThinkingContent(thinkingAccumulator.ToString());
+                            contentBlocks[currentThinkingIndex] = new ThinkingContent(
+                                thinkingAccumulator.ToString(),
+                                currentThinkingSignature);
                             stream.Push(new ThinkingDeltaEvent(currentThinkingIndex, thinking, BuildPartial()));
                         }
                     }
@@ -834,6 +854,7 @@ public sealed partial class OpenAICompletionsProvider(
                                     thinkingAccumulator.ToString(),
                                     BuildPartial()));
                                 currentThinkingIndex = -1;
+                                currentThinkingSignature = null;
                             }
 
                             if (currentTextIndex < 0)
@@ -850,6 +871,24 @@ public sealed partial class OpenAICompletionsProvider(
                     }
 
                     // --- Tool calls ---
+                    var reasoningDetailsByToolId = new Dictionary<string, string>(StringComparer.Ordinal);
+                    if (delta.TryGetProperty("reasoning_details", out var reasoningDetailsProp) &&
+                        reasoningDetailsProp.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var detail in reasoningDetailsProp.EnumerateArray())
+                        {
+                            if (detail.ValueKind != JsonValueKind.Object ||
+                                !detail.TryGetProperty("id", out var detailIdProp))
+                            {
+                                continue;
+                            }
+
+                            var detailId = detailIdProp.GetString();
+                            if (!string.IsNullOrWhiteSpace(detailId))
+                                reasoningDetailsByToolId[detailId] = detail.GetRawText();
+                        }
+                    }
+
                     if (delta.TryGetProperty("tool_calls", out var tcProp) &&
                         tcProp.ValueKind == JsonValueKind.Array)
                     {
@@ -859,11 +898,19 @@ public sealed partial class OpenAICompletionsProvider(
                                 ? idxProp.GetInt32()
                                 : 0;
                             string? thoughtSignature = null;
-                            if (delta.TryGetProperty("reasoning_details", out var reasoningDetailsProp) &&
-                                reasoningDetailsProp.ValueKind == JsonValueKind.Array &&
-                                reasoningDetailsProp.GetArrayLength() > tcIndex)
+                            var tcId = tc.TryGetProperty("id", out var tcIdProp)
+                                ? tcIdProp.GetString() ?? string.Empty
+                                : string.Empty;
+                            if (!string.IsNullOrWhiteSpace(tcId) &&
+                                reasoningDetailsByToolId.TryGetValue(tcId, out var detailSignature))
                             {
-                                thoughtSignature = reasoningDetailsProp[tcIndex].GetRawText();
+                                thoughtSignature = detailSignature;
+                            }
+                            else if (toolCallState.TryGetValue(tcIndex, out var existingState) &&
+                                     !string.IsNullOrWhiteSpace(existingState.Id) &&
+                                     reasoningDetailsByToolId.TryGetValue(existingState.Id, out var existingSignature))
+                            {
+                                thoughtSignature = existingSignature;
                             }
 
                             if (!toolCallState.ContainsKey(tcIndex))
@@ -871,11 +918,8 @@ public sealed partial class OpenAICompletionsProvider(
                                 // New tool call — close open text/thinking blocks
                                 CloseOpenBlocks(
                                     stream, ref currentTextIndex, ref currentThinkingIndex,
+                                    ref currentThinkingSignature,
                                     textAccumulator, thinkingAccumulator, contentBlocks, BuildPartial);
-
-                                var tcId = tc.TryGetProperty("id", out var tcIdProp)
-                                    ? tcIdProp.GetString() ?? ""
-                                    : "";
 
                                 var fnName = "";
                                 if (tc.TryGetProperty("function", out var fnProp) &&
@@ -945,6 +989,7 @@ public sealed partial class OpenAICompletionsProvider(
         LlmStream stream,
         ref int currentTextIndex,
         ref int currentThinkingIndex,
+        ref string? currentThinkingSignature,
         StringBuilder textAccumulator,
         StringBuilder thinkingAccumulator,
         List<ContentBlock> contentBlocks,
@@ -954,6 +999,7 @@ public sealed partial class OpenAICompletionsProvider(
         {
             stream.Push(new ThinkingEndEvent(currentThinkingIndex, thinkingAccumulator.ToString(), buildPartial()));
             currentThinkingIndex = -1;
+            currentThinkingSignature = null;
         }
 
         if (currentTextIndex >= 0)
@@ -1025,7 +1071,7 @@ public sealed partial class OpenAICompletionsProvider(
         "length" => (StopReason.Length, null),
         "function_call" => (StopReason.ToolUse, null),
         "tool_calls" => (StopReason.ToolUse, null),
-        "content_filter" => (StopReason.Sensitive, null),
+        "content_filter" => (StopReason.Error, "Content filtered by provider"),
         "refusal" => (StopReason.Refusal, null),
         "network_error" => (StopReason.Error, "Provider finish_reason: network_error"),
         null => (StopReason.Stop, null),
@@ -1133,7 +1179,7 @@ public sealed partial class OpenAICompletionsProvider(
             RequiresAssistantAfterToolResult = false,
             RequiresThinkingAsText = false,
             ThinkingFormat = flags.ThinkingFormat,
-            OpenRouterRouting = [],
+            OpenRouterRouting = new(),
             VercelGatewayRouting = new(),
             ZaiToolStream = false,
             SupportsStrictMode = true
