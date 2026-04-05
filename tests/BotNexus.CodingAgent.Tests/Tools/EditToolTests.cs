@@ -199,6 +199,32 @@ public sealed class EditToolTests : IDisposable
         (await File.ReadAllTextAsync(filePath)).Should().Contain("before updated after");
     }
 
+    [Fact]
+    public async Task ExecuteAsync_SingleLineEdit_ProducesCompactUnifiedDiffHunk()
+    {
+        var filePath = Path.Combine(_tempDirectory, "compact-diff.txt");
+        var lines = Enumerable.Range(1, 20).Select(index => $"line {index}");
+        await File.WriteAllTextAsync(filePath, string.Join('\n', lines));
+
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        {
+            ["path"] = "compact-diff.txt",
+            ["edits"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["oldText"] = "line 10",
+                    ["newText"] = "line 10 updated"
+                }
+            }
+        });
+
+        var outputLines = result.Content[0].Value
+            .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+        outputLines.Should().HaveCountLessThanOrEqualTo(12);
+        outputLines.Should().Contain(line => line.StartsWith("@@ -", StringComparison.Ordinal) && line.EndsWith(" @@", StringComparison.Ordinal));
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_tempDirectory))
