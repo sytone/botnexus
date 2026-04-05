@@ -119,6 +119,11 @@ dotnet run --project src/coding-agent/BotNexus.CodingAgent/ -- --resume abc123de
 dotnet run --project src/coding-agent/BotNexus.CodingAgent/ -- --verbose
 ```
 
+**Piped stdin** (combines with prompt):
+```powershell
+cat file.txt | dotnet run --project src/coding-agent/BotNexus.CodingAgent/ -- "explain this"
+```
+
 ## Built-in Tools
 
 The coding agent includes seven core tools, available within any prompt:
@@ -446,6 +451,14 @@ Skills are reusable agent capabilities loaded from skill files. They are include
 
 Skills are loaded from `.botnexus-agent/skills/` and referenced in `AGENTS.md` (if present in the project root).
 
+### Skill Validation
+
+Each skill must pass these validation rules:
+- **Name**: lowercase alphanumeric and hyphens only, max 64 characters
+- **Name format**: no leading/trailing hyphens, no consecutive hyphens
+- **Description**: required, max 1024 characters
+- Invalid skills are skipped with a `[warning]` on stderr
+
 1. Create a skill file (e.g., `.botnexus-agent/skills/my-skill.md`):
 
 ```markdown
@@ -539,9 +552,10 @@ BotNexus.Providers.Core (LLM abstraction, model registry)
 
 1. **Agent Creation**: `CodingAgent.CreateAsync()` builds an `Agent` from `AgentCore`
 2. **Tool Registration**: Built-in tools + extension tools are registered
-3. **System Prompt**: `SystemPromptBuilder` creates context-aware instructions
-4. **Hook Integration**: Safety and audit hooks intercept tool calls
-5. **Message Loop**: `Agent` handles LLM communication, streaming, and state management
+3. **Context Discovery**: `ContextFileDiscovery` walks from cwd to git root, finding `.github/copilot-instructions.md`, `INSTRUCTIONS.md`, `AGENTS.md`, and `.botnexus-agent/AGENTS.md`
+4. **System Prompt**: `SystemPromptBuilder` creates context-aware instructions with current date/time, tool-adaptive guidelines, and custom prompt override support
+5. **Hook Integration**: Safety and audit hooks intercept tool calls
+6. **Message Loop**: `Agent` handles LLM communication, streaming, and state management
 
 ### How CodingAgent Uses Providers.Core
 

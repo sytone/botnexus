@@ -398,6 +398,43 @@ public class AnthropicProviderAlignmentTests
     }
 
     [Fact]
+    public async Task Stream_CopilotHeadersUseOriginalMessagesForInitiator()
+    {
+        var handler = new RecordingHandler(_ => SseResponse("""
+            event: message_start
+            data: {"type":"message_start","message":{"id":"msg_1"}}
+
+            event: message_stop
+            data: {"type":"message_stop"}
+            """));
+        var provider = new AnthropicProvider(new HttpClient(handler));
+        var model = TestHelpers.MakeModel(provider: "github-copilot");
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var context = new Context(
+            SystemPrompt: "system",
+            Messages:
+            [
+                new UserMessage(new UserMessageContent("hello"), timestamp),
+                new AssistantMessage(
+                    Content: [new TextContent("failed")],
+                    Api: model.Api,
+                    Provider: model.Provider,
+                    ModelId: model.Id,
+                    Usage: Usage.Empty(),
+                    StopReason: StopReason.Error,
+                    ErrorMessage: "boom",
+                    ResponseId: null,
+                    Timestamp: timestamp)
+            ]);
+
+        var stream = provider.Stream(model, context, new StreamOptions { ApiKey = "test-key" });
+        _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(3));
+
+        handler.RequestHeaders.Should().ContainKey("X-Initiator");
+        handler.RequestHeaders["X-Initiator"].Should().Contain("agent");
+    }
+
+    [Fact]
     public async Task Stream_StringToolChoice_MapsToAnthropicObject()
     {
         var handler = new RecordingHandler(_ => SseResponse("""

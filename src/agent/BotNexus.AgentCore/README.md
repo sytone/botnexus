@@ -119,7 +119,7 @@ Transform Context (filter/summarize)
     ↓
 Call LLM Provider
     ↓
-Receive Assistant Response
+Stream & Accumulate (partials tracked in context messages)
     ↓
 Execute Tools (if requested)
     ↓
@@ -133,6 +133,8 @@ Drain Follow-Up Messages (ContinueAsync or new PromptAsync)
     ↓
 Return All New Messages
 ```
+
+> **Note:** During streaming, `StreamAccumulator` now tracks the partial `AssistantAgentMessage` in the context messages list, updating it in-place on each delta and replacing it with the final message on completion. Steering polls are skipped only when continuation messages came from the steering queue (not from follow-ups).
 
 ## Event Flow
 

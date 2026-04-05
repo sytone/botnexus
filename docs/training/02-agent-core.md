@@ -223,6 +223,8 @@ FOLLOW-UP LOOP:
 
 **Step 1 — Drain steering:** Any messages queued via `Agent.Steer()` or `GetSteeringMessages` are pulled from the queue and appended to the timeline. This happens at the top of every turn, so steering messages are visible to the LLM on the next call.
 
+> **Steering poll skip (Phase 5):** When `ContinueAsync()` drains queued messages, it tracks whether they came from the steering queue (`fromSteeringQueue`). If they did, `_skipInitialSteeringPollForNextRun` is set to `true`, so the next run skips the redundant initial steering poll. Follow-up messages do **not** set this flag — they always allow a steering poll before the LLM call. This prevents dropping concurrent steering messages during follow-up continuations.
+
 **Step 2 — Transform context (Phase 5):** The `TransformContextDelegate` runs **per retry attempt**. This is where context window compaction happens — old messages can be summarized, trimmed, or removed entirely. Running per-attempt ensures that overflow compaction is visible to the transform function.
 
 **Context transform flow (Phase 5):**
@@ -267,8 +269,11 @@ Before Phase 5, the transform ran once and wasn't re-triggered on overflow recov
 public static async Task<AssistantAgentMessage> AccumulateAsync(
     LlmStream stream,
     Func<AgentEvent, Task> emit,
-    CancellationToken cancellationToken)
+    CancellationToken cancellationToken,
+    List<AgentMessage>? contextMessages = null)
 ```
+
+The optional `contextMessages` parameter enables **streaming partial tracking** — when provided, the accumulator adds a partial `AssistantAgentMessage` to the list on `StartEvent`, updates it in-place on each delta, and replaces it with the final message on completion. This matches pi-mono behavior where `context.messages` contains the partial during streaming.
 
 ### Event mapping
 
@@ -288,6 +293,8 @@ Additional provider events (`TextStartEvent`, `TextEndEvent`, `ThinkingStartEven
 The accumulator maintains a running snapshot of the `AssistantAgentMessage` as deltas arrive. Each `MessageUpdateEvent` carries the current snapshot plus the incremental delta, so subscribers can render either progressively or from the snapshot.
 
 > **Phase 4 change:** `MessageStartEvent` no longer adds the assistant message to `state.Messages` during streaming. The message is only added when `MessageEndEvent` fires. This prevents duplicate messages when streaming is interrupted or replayed, and ensures event ordering consistency.
+
+> **Phase 5 change:** `AccumulateAsync` now accepts an optional `contextMessages` list. When provided, the partial message is added on `StartEvent` and updated in-place during streaming, so context transforms and mid-stream queries see the partial. On `DoneEvent`/`ErrorEvent`, the partial is replaced with the final message. This was the fix for AGENT-003.
 
 > **Key takeaway:** `StreamAccumulator` is a pure transform — provider stream in, agent events out. It produces exactly one `MessageStartEvent`, zero or more `MessageUpdateEvent`s, and exactly one `MessageEndEvent` per LLM call.
 

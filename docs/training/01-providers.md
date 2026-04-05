@@ -68,6 +68,31 @@ public sealed class ApiProviderRegistry
 }
 ```
 
+### GuardedProvider (API mismatch guard)
+
+Every provider registered via `Register()` is internally wrapped in a `GuardedProvider` that validates the model's `Api` field matches the provider's expected API before delegating to `Stream()` or `StreamSimple()`. This catches misconfigured calls where a model with `api="anthropic-messages"` is accidentally routed to the openai-completions provider.
+
+```csharp
+// Internal wrapper added by Register()
+private sealed class GuardedProvider(IApiProvider inner) : IApiProvider
+{
+    public string Api => inner.Api;
+
+    public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
+    {
+        ValidateModelApi(model);
+        return inner.Stream(model, context, options);
+    }
+
+    private void ValidateModelApi(LlmModel model)
+    {
+        if (!string.Equals(model.Api, inner.Api, StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                $"Model '{model.Id}' has Api '{model.Api}' but was routed to provider '{inner.Api}'.");
+    }
+}
+```
+
 ### Methods
 
 | Method | Purpose |
@@ -402,21 +427,28 @@ public sealed class LlmStream : IAsyncEnumerable<AssistantMessageEvent>
 ```csharp
 public void Push(AssistantMessageEvent evt)
 {
+    if (_done) return;
+
     switch (evt)
     {
         case DoneEvent done:
             _resultTcs.TrySetResult(done.Message);
+            _done = true;
             break;
         case ErrorEvent error:
             _resultTcs.TrySetResult(error.Error);
+            _done = true;
             break;
     }
 
     _channel.Writer.TryWrite(evt);
+
+    if (_done)
+        _channel.Writer.TryComplete();
 }
 ```
 
-When the provider pushes a `DoneEvent` or `ErrorEvent`, the result is captured in a `TaskCompletionSource<AssistantMessage>` so callers that only want the final message can `await GetResultAsync()` without iterating events.
+When the provider pushes a `DoneEvent` or `ErrorEvent`, the result is captured in a `TaskCompletionSource<AssistantMessage>` so callers that only want the final message can `await GetResultAsync()` without iterating events. The channel is **automatically completed** on terminal events (DoneEvent/ErrorEvent), so consumers will not hang if the provider forgets to call `End()`.
 
 ### End — close the channel
 

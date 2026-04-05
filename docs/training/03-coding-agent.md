@@ -261,13 +261,17 @@ directory/
 
 **Discovery order:**
 1. Check `{directory}/.github/copilot-instructions.md`
-2. Check `{directory}/AGENTS.md`
-3. Move to parent directory
-4. Repeat until git root or filesystem root
+2. Check `{directory}/INSTRUCTIONS.md`
+3. Check `{directory}/AGENTS.md`
+4. Check `{directory}/.botnexus-agent/AGENTS.md`
+5. Move to parent directory
+6. Repeat until git root or filesystem root
 
 **Files discovered:**
-- `.github/copilot-instructions.md` — Copilot-specific instructions (takes precedence)
-- `AGENTS.md` — Project-level agent instructions
+- `.github/copilot-instructions.md` — Copilot-specific instructions (kind: "copilot-instructions")
+- `INSTRUCTIONS.md` — General project instructions (kind: "instructions")
+- `AGENTS.md` — Project-level agent instructions (kind: "agents")
+- `.botnexus-agent/AGENTS.md` — Config-directory agent instructions (kind: "config-agents")
 
 **Example — monorepo structure:**
 
@@ -287,17 +291,40 @@ project/                                    (git root)
 
 When running from `services/api/src/`:
 1. Check `services/api/src/.github/copilot-instructions.md` — not found
-2. Check `services/api/src/AGENTS.md` — not found
-3. Move to `services/api/`
-4. Check `services/api/.github/copilot-instructions.md` — **found!** ← returned
-5. Check `services/api/AGENTS.md` — **found!** ← returned
-6. Stop (both kinds found)
+2. Check `services/api/src/INSTRUCTIONS.md` — not found
+3. Check `services/api/src/AGENTS.md` — not found
+4. Check `services/api/src/.botnexus-agent/AGENTS.md` — not found
+5. Move to `services/api/`
+6. Check `services/api/.github/copilot-instructions.md` — **found!** ← returned
+7. Check `services/api/INSTRUCTIONS.md` — not found
+8. Check `services/api/AGENTS.md` — **found!** ← returned
+9. Continue to project root for any remaining kinds not yet found
 
 **Budget:** Discovery is limited to 16 KB total content (across all found files). If budget is exhausted, remaining files are skipped. Truncated content appends `[truncated]` marker.
 
 **Why Phase 5:** Monorepos have project-level and org-level context. Walking the hierarchy ensures agents get the most relevant and specific context first.
 
 > **Key takeaway:** Place `AGENTS.md` and `.github/copilot-instructions.md` at your project level (or org root) for automatic discovery. Hierarchy is respected — closest to cwd wins.
+
+## Piped stdin detection (Phase 5)
+
+`Program.cs` detects piped input via `Console.IsInputRedirected` and combines it with any CLI prompt:
+
+```csharp
+private static async Task<string?> ReadPipedStdinAsync()
+{
+    if (!Console.IsInputRedirected)
+        return null;
+
+    var input = await Console.In.ReadToEndAsync();
+    if (string.IsNullOrWhiteSpace(input))
+        return null;
+
+    return input.Trim();
+}
+```
+
+This enables workflows like `cat file.txt | botnexus-coding-agent "explain this"`. The piped content and CLI prompt are combined into a single initial prompt.
 
 > **Key takeaway:** Tools implement `IAgentTool` and contribute to the system prompt via `GetPromptSnippet()` and `GetPromptGuidelines()`. The `ShellTool` is intentionally directory-agnostic — shell commands control their own working directory.
 
@@ -317,20 +344,27 @@ public sealed record SystemPromptContext(
     IReadOnlyList<string> Skills,
     string? CustomInstructions,
     IReadOnlyList<ToolPromptContribution>? ToolContributions = null,
-    IReadOnlyList<PromptContextFile>? ContextFiles = null);
+    IReadOnlyList<PromptContextFile>? ContextFiles = null,
+    string? CustomPrompt = null,
+    DateTimeOffset? CurrentDateTime = null);
 ```
+
+### Custom prompt override
+
+If `CustomPrompt` is non-null, `SystemPromptBuilder.Build()` uses it as the **entire** system prompt, skipping all default sections. This replaces the base prompt entirely.
 
 ### Prompt sections (in order)
 
 | # | Section | Content |
 |---|---------|---------|
 | 1 | **Role definition** | "You are a coding assistant with access to tools..." |
-| 2 | **Environment** | OS, working directory, git branch/status, package manager |
-| 3 | **Available Tools** | Tool names with optional snippets from `GetPromptSnippet()` |
-| 4 | **Tool Guidelines** | Merged set: built-in defaults + custom guidelines from `GetPromptGuidelines()` |
-| 5 | **Project Context** | Content from `PromptContextFile` entries (e.g., README, CONTRIBUTING) |
-| 6 | **Skills** | Parsed skill files with YAML frontmatter |
-| 7 | **Custom Instructions** | User-configured final instructions |
+| 2 | **Date/time** | Current date/time in ISO 8601 format (`CurrentDateTime ?? DateTimeOffset.Now`) |
+| 3 | **Environment** | OS, working directory, git branch/status, package manager |
+| 4 | **Available Tools** | Tool names with optional snippets from `GetPromptSnippet()` |
+| 5 | **Tool Guidelines** | Adaptive: if only bash → "Use bash for file operations"; if bash + grep/find/ls → "Prefer grep/find/ls over bash...". Merged with custom guidelines from `GetPromptGuidelines()` |
+| 6 | **Project Context** | Content from `PromptContextFile` entries (e.g., README, INSTRUCTIONS) |
+| 7 | **Skills** | Parsed skill files with YAML frontmatter |
+| 8 | **Custom Instructions** | User-configured final instructions |
 
 ### Tool contributions
 
@@ -353,6 +387,19 @@ Skills are markdown files with optional YAML frontmatter, loaded from three loca
 1. `./AGENTS.md` (project root)
 2. `./.botnexus-agent/AGENTS.md` (local config)
 3. `./.botnexus-agent/skills/*.md` (alphabetically sorted)
+
+### Skill validation rules
+
+Each skill is validated before inclusion. Invalid skills are skipped with a `[warning]` on stderr:
+
+| Rule | Constraint |
+|------|-----------|
+| **Name characters** | Lowercase alphanumeric and hyphens only |
+| **Name length** | Max 64 characters |
+| **No leading/trailing hyphens** | `"-my-skill"` and `"my-skill-"` are rejected |
+| **No consecutive hyphens** | `"my--skill"` is rejected |
+| **Description required** | Skills without a description are skipped |
+| **Description length** | Max 1024 characters |
 
 ```markdown
 ---

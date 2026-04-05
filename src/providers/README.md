@@ -88,6 +88,8 @@ var context = new Context(
 );
 
 // Create the client (instance-based)
+// Note: Register() wraps each provider in a GuardedProvider that validates
+// the model's Api field matches the provider's expected API before delegating.
 var apiProviderRegistry = new ApiProviderRegistry();
 apiProviderRegistry.Register(new OpenAICompletionsProvider(httpClient, logger));
 var llmClient = new LlmClient(apiProviderRegistry, modelRegistry);
