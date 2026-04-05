@@ -21,6 +21,8 @@ public sealed class OpenAICompletionsProvider(
     HttpClient httpClient,
     ILogger<OpenAICompletionsProvider> logger) : IApiProvider
 {
+    private readonly HttpClient _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+
     public string Api => "openai-completions";
 
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
@@ -127,7 +129,7 @@ public sealed class OpenAICompletionsProvider(
 
         logger.LogDebug("Streaming {Model} from {Url}", model.Id, url);
 
-        using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
 
         if (!response.IsSuccessStatusCode)
         {

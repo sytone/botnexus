@@ -76,8 +76,10 @@ public class ImmutableOptionsTests
         clone.CacheRetention.Should().Be(original.CacheRetention);
         clone.SessionId.Should().Be(original.SessionId);
         clone.MaxRetryDelayMs.Should().Be(original.MaxRetryDelayMs);
-        clone.Headers.Should().BeSameAs(originalHeaders);
-        clone.Metadata.Should().BeSameAs(originalMetadata);
+        clone.Headers.Should().NotBeSameAs(originalHeaders);
+        clone.Headers.Should().BeEquivalentTo(originalHeaders);
+        clone.Metadata.Should().NotBeSameAs(originalMetadata);
+        clone.Metadata.Should().BeEquivalentTo(originalMetadata);
         original.Temperature.Should().Be(0.7f);
     }
 

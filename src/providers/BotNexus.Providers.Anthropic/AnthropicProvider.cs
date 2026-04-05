@@ -17,6 +17,7 @@ namespace BotNexus.Providers.Anthropic;
 public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvider
 {
     private const string ApiVersion = "2023-06-01";
+    private readonly HttpClient _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -187,7 +188,7 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
                 httpRequest.Headers.TryAddWithoutValidation(key, value);
         }
 
-        using var response = await httpClient.SendAsync(
+        using var response = await _httpClient.SendAsync(
             httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
 
         if (!response.IsSuccessStatusCode)

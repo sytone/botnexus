@@ -16,6 +16,8 @@ namespace BotNexus.Providers.OpenAICompat;
 /// </summary>
 public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
 {
+    private readonly HttpClient _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+
     public string Api => "openai-compat";
 
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
@@ -116,7 +118,7 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
 
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
 
-        using var response = await httpClient.SendAsync(
+        using var response = await _httpClient.SendAsync(
             request, HttpCompletionOption.ResponseHeadersRead, ct);
 
         if (!response.IsSuccessStatusCode)

@@ -8,6 +8,25 @@ namespace BotNexus.Providers.Core;
 /// </summary>
 public record class StreamOptions
 {
+    public StreamOptions()
+    {
+    }
+
+    protected StreamOptions(StreamOptions original)
+    {
+        Temperature = original.Temperature;
+        MaxTokens = original.MaxTokens;
+        CancellationToken = original.CancellationToken;
+        ApiKey = original.ApiKey;
+        Transport = original.Transport;
+        CacheRetention = original.CacheRetention;
+        SessionId = original.SessionId;
+        OnPayload = original.OnPayload;
+        Headers = original.Headers is null ? null : new Dictionary<string, string>(original.Headers);
+        MaxRetryDelayMs = original.MaxRetryDelayMs;
+        Metadata = original.Metadata is null ? null : new Dictionary<string, object>(original.Metadata);
+    }
+
     public float? Temperature { get; init; }
     public int? MaxTokens { get; init; }
     public CancellationToken CancellationToken { get; init; }
