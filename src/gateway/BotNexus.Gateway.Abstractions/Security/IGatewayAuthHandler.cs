@@ -83,11 +83,17 @@ public sealed record GatewayCallerIdentity
     /// <summary>Human-readable caller name.</summary>
     public string? DisplayName { get; init; }
 
+    /// <summary>Tenant ID associated with the authenticated caller.</summary>
+    public string? TenantId { get; init; }
+
     /// <summary>
     /// Agent IDs this caller is allowed to interact with.
     /// Empty means all agents are accessible.
     /// </summary>
     public IReadOnlyList<string> AllowedAgents { get; init; } = [];
+
+    /// <summary>Permissions granted to this caller.</summary>
+    public IReadOnlyList<string> Permissions { get; init; } = [];
 
     /// <summary>Whether this caller has administrative privileges.</summary>
     public bool IsAdmin { get; init; }
