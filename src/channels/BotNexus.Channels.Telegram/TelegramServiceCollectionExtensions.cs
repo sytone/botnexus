@@ -22,10 +22,9 @@ public static class TelegramServiceCollectionExtensions
         this IServiceCollection services,
         Action<TelegramOptions>? configure = null)
     {
-        var options = new TelegramOptions();
-        configure?.Invoke(options);
-
-        services.AddSingleton(options);
+        services.AddOptions<TelegramOptions>();
+        if (configure is not null)
+            services.Configure(configure);
         services.AddSingleton<IChannelAdapter, TelegramChannelAdapter>();
 
         return services;
