@@ -9,6 +9,7 @@ namespace BotNexus.Gateway.Agents;
 /// </summary>
 public sealed class DefaultAgentCommunicator : IAgentCommunicator
 {
+    private static readonly AsyncLocal<HashSet<string>?> ActiveCallChain = new();
     private readonly IAgentSupervisor _supervisor;
     private readonly ILogger<DefaultAgentCommunicator> _logger;
 
@@ -33,6 +34,7 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
         string message,
         CancellationToken cancellationToken = default)
     {
+        using var callScope = EnterCallChain(parentAgentId, childAgentId);
         var childSessionId = $"{parentSessionId}::sub::{childAgentId}";
         _logger.LogInformation(
             "Sub-agent call from '{ParentAgentId}' session '{ParentSessionId}' to '{ChildAgentId}' session '{ChildSessionId}'",
@@ -53,6 +55,7 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
         string message,
         CancellationToken cancellationToken = default)
     {
+        using var callScope = EnterCallChain(sourceAgentId, targetAgentId);
         if (!string.IsNullOrWhiteSpace(targetEndpoint))
         {
             throw new NotSupportedException(
@@ -69,5 +72,50 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
 
         var handle = await _supervisor.GetOrCreateAsync(targetAgentId, crossSessionId, cancellationToken);
         return await handle.PromptAsync(message, cancellationToken);
+    }
+
+    private static IDisposable EnterCallChain(string sourceAgentId, string targetAgentId)
+    {
+        var chain = ActiveCallChain.Value;
+        var createdNewChain = false;
+        if (chain is null)
+        {
+            chain = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            ActiveCallChain.Value = chain;
+            createdNewChain = true;
+        }
+
+        var addedSource = chain.Add(sourceAgentId);
+        if (!chain.Add(targetAgentId))
+        {
+            if (addedSource)
+                chain.Remove(sourceAgentId);
+
+            if (createdNewChain && chain.Count == 0)
+                ActiveCallChain.Value = null;
+
+            throw new InvalidOperationException(
+                $"Recursive cross-agent call detected while targeting '{targetAgentId}'. Active chain: {string.Join(" -> ", chain)}");
+        }
+
+        return new CallChainScope(chain, sourceAgentId, targetAgentId, addedSource, createdNewChain);
+    }
+
+    private sealed class CallChainScope(
+        HashSet<string> chain,
+        string sourceAgentId,
+        string targetAgentId,
+        bool addedSource,
+        bool createdNewChain) : IDisposable
+    {
+        public void Dispose()
+        {
+            chain.Remove(targetAgentId);
+            if (addedSource)
+                chain.Remove(sourceAgentId);
+
+            if (createdNewChain && chain.Count == 0)
+                ActiveCallChain.Value = null;
+        }
     }
 }
