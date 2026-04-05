@@ -4,10 +4,18 @@ using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Api.Controllers;
 
+/// <summary>
+/// REST API for platform configuration diagnostics.
+/// </summary>
 [ApiController]
 [Route("api/config")]
 public sealed class ConfigController : ControllerBase
 {
+    /// <summary>
+    /// Validates the platform configuration file and returns any errors.
+    /// </summary>
+    /// <param name="path">Optional explicit path to a config file. Defaults to <c>~/.botnexus/config.json</c>.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     [HttpGet("validate")]
     public async Task<ActionResult<ConfigValidationResponse>> Validate([FromQuery] string? path, CancellationToken cancellationToken)
     {
@@ -44,4 +52,10 @@ public sealed class ConfigController : ControllerBase
     }
 }
 
+/// <summary>
+/// Result of a platform configuration validation check.
+/// </summary>
+/// <param name="IsValid">Whether the configuration passed all validation rules.</param>
+/// <param name="ConfigPath">Resolved path to the configuration file that was validated.</param>
+/// <param name="Errors">Validation errors, empty when <paramref name="IsValid"/> is <see langword="true"/>.</param>
 public sealed record ConfigValidationResponse(bool IsValid, string ConfigPath, IReadOnlyList<string> Errors);
