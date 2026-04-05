@@ -7,28 +7,10 @@ using BotNexus.Providers.Core.Models;
 
 namespace BotNexus.CodingAgent.Tools;
 
-/// <summary>
-/// Applies a single exact-string replacement to a file.
-/// </summary>
-/// <remarks>
-/// <para>
-/// Contract: this tool is intentionally strict to prevent ambiguous edits. The <c>old_str</c> token must
-/// appear exactly once after line-ending normalization. Zero or multiple matches throw, forcing the caller
-/// to provide a more precise replacement window.
-/// </para>
-/// <para>
-/// Line endings are normalized to <c>\n</c> for matching and replacement, then converted back to the file's
-/// dominant style so repository conventions remain stable.
-/// </para>
-/// </remarks>
 public sealed class EditTool : IAgentTool
 {
     private readonly string _workingDirectory;
 
-    /// <summary>
-    /// Initializes the edit tool.
-    /// </summary>
-    /// <param name="workingDirectory">Repository root used for secure file resolution.</param>
     public EditTool(string workingDirectory)
     {
         _workingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
@@ -36,38 +18,46 @@ public sealed class EditTool : IAgentTool
             : Path.GetFullPath(workingDirectory);
     }
 
-    /// <inheritdoc />
     public string Name => "edit";
 
-    /// <inheritdoc />
     public string Label => "Edit File";
 
-    /// <inheritdoc />
     public Tool Definition => new(
         Name,
-        "Replace a single exact string in an existing file.",
+        "Edit a single file using exact text replacement with one or more targeted edits.",
         JsonDocument.Parse("""
             {
               "type": "object",
+              "additionalProperties": false,
               "properties": {
                 "path": {
                   "type": "string",
-                  "description": "File path relative to working directory."
+                  "description": "Path to the file to edit (relative or absolute)."
                 },
-                "old_str": {
-                  "type": "string",
-                  "description": "Exact text to replace."
-                },
-                "new_str": {
-                  "type": "string",
-                  "description": "Replacement text."
+                "edits": {
+                  "type": "array",
+                  "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally.",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "oldText": {
+                        "type": "string",
+                        "description": "Exact text for one targeted replacement."
+                      },
+                      "newText": {
+                        "type": "string",
+                        "description": "Replacement text for this targeted edit."
+                      }
+                    },
+                    "required": ["oldText", "newText"]
+                  }
                 }
               },
-              "required": ["path", "old_str", "new_str"]
+              "required": ["path", "edits"]
             }
             """).RootElement.Clone());
 
-    /// <inheritdoc />
     public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(
         IReadOnlyDictionary<string, object?> arguments,
         CancellationToken cancellationToken = default)
@@ -77,14 +67,12 @@ public sealed class EditTool : IAgentTool
         IReadOnlyDictionary<string, object?> prepared = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["path"] = ReadRequiredString(arguments, "path"),
-            ["old_str"] = ReadRequiredString(arguments, "old_str"),
-            ["new_str"] = ReadRequiredString(arguments, "new_str")
+            ["edits"] = ReadEdits(arguments)
         };
 
         return Task.FromResult(prepared);
     }
 
-    /// <inheritdoc />
     public async Task<AgentToolResult> ExecuteAsync(
         string toolCallId,
         IReadOnlyDictionary<string, object?> arguments,
@@ -93,10 +81,7 @@ public sealed class EditTool : IAgentTool
     {
         var rawPath = arguments["path"]?.ToString()
                       ?? throw new ArgumentException("Missing required argument: path.");
-        var oldStr = arguments["old_str"]?.ToString()
-                     ?? throw new ArgumentException("Missing required argument: old_str.");
-        var newStr = arguments["new_str"]?.ToString()
-                     ?? throw new ArgumentException("Missing required argument: new_str.");
+        var edits = ReadEdits(arguments);
 
         var fullPath = PathUtils.ResolvePath(rawPath, _workingDirectory);
         if (!File.Exists(fullPath))
@@ -107,27 +92,115 @@ public sealed class EditTool : IAgentTool
         var original = await File.ReadAllTextAsync(fullPath, cancellationToken).ConfigureAwait(false);
         var originalLineEnding = DetectLineEnding(original);
         var normalizedOriginal = NormalizeLineEndings(original);
-        var normalizedOld = NormalizeLineEndings(oldStr);
-        var normalizedNew = NormalizeLineEndings(newStr);
-
-        var matchCount = CountOccurrences(normalizedOriginal, normalizedOld);
-        if (matchCount != 1)
-        {
-            throw new InvalidOperationException(
-                $"Expected exactly one match for old_str, but found {matchCount}.");
-        }
-
-        var matchIndex = normalizedOriginal.IndexOf(normalizedOld, StringComparison.Ordinal);
-        var updatedNormalized = ReplaceFirst(normalizedOriginal, normalizedOld, normalizedNew, matchIndex);
+        var replacements = ResolveReplacements(normalizedOriginal, edits);
+        var updatedNormalized = ApplyReplacements(normalizedOriginal, replacements);
         var updatedText = ApplyLineEnding(updatedNormalized, originalLineEnding);
 
-        await File.WriteAllTextAsync(fullPath, updatedText, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+        await File.WriteAllTextAsync(fullPath, updatedText, new UTF8Encoding(false), cancellationToken).ConfigureAwait(false);
 
-        var snippet = BuildSnippet(updatedNormalized, matchIndex, normalizedNew.Length);
+        var firstChange = replacements[0];
+        var snippet = BuildSnippet(updatedNormalized, firstChange.StartIndex, firstChange.NewText.Length);
         var relativePath = PathUtils.GetRelativePath(fullPath, _workingDirectory);
-        var message = $"Applied replacement in '{relativePath}'.\nContext:\n{snippet}";
+        var message = $"Successfully replaced {replacements.Count} block(s) in '{relativePath}'.\nContext:\n{snippet}";
 
         return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, message)]);
+    }
+
+    private static IReadOnlyList<EditEntry> ReadEdits(IReadOnlyDictionary<string, object?> arguments)
+    {
+        if (arguments.TryGetValue("edits", out var editsValue) && editsValue is not null)
+        {
+            var edits = ParseEdits(editsValue);
+            if (edits.Count == 0)
+            {
+                throw new ArgumentException("edits must contain at least one replacement.");
+            }
+
+            return edits;
+        }
+
+        if (TryReadLegacyEdit(arguments, "oldText", "newText", out var legacyEdit) ||
+            TryReadLegacyEdit(arguments, "old_str", "new_str", out legacyEdit))
+        {
+            return [legacyEdit!];
+        }
+
+        throw new ArgumentException("Missing required argument: edits.");
+    }
+
+    private static List<EditEntry> ParseEdits(object value)
+    {
+        if (value is JsonElement element)
+        {
+            if (element.ValueKind != JsonValueKind.Array)
+            {
+                throw new ArgumentException("Argument 'edits' must be an array.");
+            }
+
+            return element.EnumerateArray().Select(ParseEditElement).ToList();
+        }
+
+        if (value is IEnumerable<object?> enumerable)
+        {
+            return enumerable.Select(ParseEditObject).ToList();
+        }
+
+        throw new ArgumentException("Argument 'edits' must be an array.");
+    }
+
+    private static EditEntry ParseEditObject(object? value)
+    {
+        return value switch
+        {
+            JsonElement element => ParseEditElement(element),
+            IReadOnlyDictionary<string, object?> dict => new EditEntry(
+                ReadRequiredString(dict, "oldText"),
+                ReadRequiredString(dict, "newText")),
+            _ => throw new ArgumentException("Each edits entry must be an object.")
+        };
+    }
+
+    private static EditEntry ParseEditElement(JsonElement element)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            throw new ArgumentException("Each edits entry must be an object.");
+        }
+
+        if (!element.TryGetProperty("oldText", out var oldTextElement) || oldTextElement.ValueKind != JsonValueKind.String)
+        {
+            throw new ArgumentException("Each edits entry must include oldText.");
+        }
+
+        if (!element.TryGetProperty("newText", out var newTextElement) || newTextElement.ValueKind != JsonValueKind.String)
+        {
+            throw new ArgumentException("Each edits entry must include newText.");
+        }
+
+        return new EditEntry(
+            oldTextElement.GetString() ?? throw new ArgumentException("oldText cannot be null."),
+            newTextElement.GetString() ?? throw new ArgumentException("newText cannot be null."));
+    }
+
+    private static bool TryReadLegacyEdit(
+        IReadOnlyDictionary<string, object?> arguments,
+        string oldKey,
+        string newKey,
+        out EditEntry? edit)
+    {
+        edit = null;
+        if (!arguments.TryGetValue(oldKey, out var oldValue) ||
+            !arguments.TryGetValue(newKey, out var newValue) ||
+            oldValue is null ||
+            newValue is null)
+        {
+            return false;
+        }
+
+        edit = new EditEntry(
+            ReadRequiredString(arguments, oldKey),
+            ReadRequiredString(arguments, newKey));
+        return true;
     }
 
     private static string ReadRequiredString(IReadOnlyDictionary<string, object?> arguments, string key)
@@ -144,6 +217,76 @@ public sealed class EditTool : IAgentTool
             JsonElement element => element.ToString(),
             _ => value.ToString() ?? throw new ArgumentException($"Argument '{key}' is invalid.")
         };
+    }
+
+    private static List<ResolvedEdit> ResolveReplacements(string normalizedOriginal, IReadOnlyList<EditEntry> edits)
+    {
+        var replacements = edits
+            .Select(edit =>
+            {
+                var normalizedOld = NormalizeLineEndings(edit.OldText);
+                var normalizedNew = NormalizeLineEndings(edit.NewText);
+                var matchCount = CountOccurrences(normalizedOriginal, normalizedOld);
+                if (matchCount != 1)
+                {
+                    throw new InvalidOperationException(
+                        $"Expected exactly one match for edits[].oldText, but found {matchCount}.");
+                }
+
+                var start = normalizedOriginal.IndexOf(normalizedOld, StringComparison.Ordinal);
+                return new ResolvedEdit(start, start + normalizedOld.Length, normalizedOld, normalizedNew);
+            })
+            .OrderBy(edit => edit.StartIndex)
+            .ToList();
+
+        EnsureNonOverlapping(replacements);
+        return replacements;
+    }
+
+    private static void EnsureNonOverlapping(List<ResolvedEdit> replacements)
+    {
+        for (var i = 1; i < replacements.Count; i++)
+        {
+            if (replacements[i].StartIndex < replacements[i - 1].EndIndex)
+            {
+                throw new InvalidOperationException("edits entries must not overlap.");
+            }
+        }
+    }
+
+    private static string ApplyReplacements(string source, IReadOnlyList<ResolvedEdit> replacements)
+    {
+        var delta = replacements.Sum(edit => edit.NewText.Length - edit.OldText.Length);
+        var builder = new StringBuilder(source.Length + delta);
+        var cursor = 0;
+
+        foreach (var replacement in replacements)
+        {
+            builder.Append(source.AsSpan(cursor, replacement.StartIndex - cursor));
+            builder.Append(replacement.NewText);
+            cursor = replacement.EndIndex;
+        }
+
+        builder.Append(source.AsSpan(cursor));
+        return builder.ToString();
+    }
+
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        if (string.IsNullOrEmpty(needle))
+        {
+            throw new ArgumentException("edits[].oldText cannot be empty.");
+        }
+
+        var count = 0;
+        var index = 0;
+        while ((index = haystack.IndexOf(needle, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += needle.Length;
+        }
+
+        return count;
     }
 
     private static string NormalizeLineEndings(string value)
@@ -164,33 +307,6 @@ public sealed class EditTool : IAgentTool
             : value;
     }
 
-    private static int CountOccurrences(string haystack, string needle)
-    {
-        if (string.IsNullOrEmpty(needle))
-        {
-            throw new ArgumentException("old_str cannot be empty.");
-        }
-
-        var count = 0;
-        var index = 0;
-        while ((index = haystack.IndexOf(needle, index, StringComparison.Ordinal)) >= 0)
-        {
-            count++;
-            index += needle.Length;
-        }
-
-        return count;
-    }
-
-    private static string ReplaceFirst(string source, string oldValue, string newValue, int matchIndex)
-    {
-        var builder = new StringBuilder(source.Length - oldValue.Length + newValue.Length);
-        builder.Append(source.AsSpan(0, matchIndex));
-        builder.Append(newValue);
-        builder.Append(source.AsSpan(matchIndex + oldValue.Length));
-        return builder.ToString();
-    }
-
     private static string BuildSnippet(string content, int replacementIndex, int replacementLength)
     {
         const int contextWindow = 120;
@@ -198,4 +314,8 @@ public sealed class EditTool : IAgentTool
         var snippetEnd = Math.Min(content.Length, replacementIndex + replacementLength + contextWindow);
         return content[snippetStart..snippetEnd];
     }
+
+    private sealed record EditEntry(string OldText, string NewText);
+
+    private sealed record ResolvedEdit(int StartIndex, int EndIndex, string OldText, string NewText);
 }

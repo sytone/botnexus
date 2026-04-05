@@ -23,8 +23,14 @@ public sealed class EditToolTests : IDisposable
         await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["path"] = "edit.txt",
-            ["old_str"] = "target",
-            ["new_str"] = "updated"
+            ["edits"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["oldText"] = "target",
+                    ["newText"] = "updated"
+                }
+            }
         });
 
         (await File.ReadAllTextAsync(filePath)).Should().Be("before updated after");
@@ -39,8 +45,14 @@ public sealed class EditToolTests : IDisposable
         var action = () => _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["path"] = "no-match.txt",
-            ["old_str"] = "missing",
-            ["new_str"] = "replacement"
+            ["edits"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["oldText"] = "missing",
+                    ["newText"] = "replacement"
+                }
+            }
         });
 
         await action.Should().ThrowAsync<InvalidOperationException>()
@@ -56,8 +68,14 @@ public sealed class EditToolTests : IDisposable
         var action = () => _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["path"] = "multi-match.txt",
-            ["old_str"] = "repeat",
-            ["new_str"] = "once"
+            ["edits"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["oldText"] = "repeat",
+                    ["newText"] = "once"
+                }
+            }
         });
 
         await action.Should().ThrowAsync<InvalidOperationException>()
@@ -73,12 +91,45 @@ public sealed class EditToolTests : IDisposable
         var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["path"] = "context.txt",
-            ["old_str"] = "target",
-            ["new_str"] = "planet"
+            ["edits"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["oldText"] = "target",
+                    ["newText"] = "planet"
+                }
+            }
         });
 
-        result.Content[0].Value.Should().Contain("Applied replacement in 'context.txt'.");
+        result.Content[0].Value.Should().Contain("Successfully replaced 1 block(s) in 'context.txt'.");
         result.Content[0].Value.Should().Contain("hello planet world");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AppliesMultipleEdits()
+    {
+        var filePath = Path.Combine(_tempDirectory, "multi-edit.txt");
+        await File.WriteAllTextAsync(filePath, "alpha beta gamma delta");
+
+        await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        {
+            ["path"] = "multi-edit.txt",
+            ["edits"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["oldText"] = "beta",
+                    ["newText"] = "BETA"
+                },
+                new Dictionary<string, object?>
+                {
+                    ["oldText"] = "delta",
+                    ["newText"] = "DELTA"
+                }
+            }
+        });
+
+        (await File.ReadAllTextAsync(filePath)).Should().Be("alpha BETA gamma DELTA");
     }
 
     public void Dispose()
