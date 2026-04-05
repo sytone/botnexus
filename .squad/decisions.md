@@ -5013,6 +5013,185 @@ public sealed record ThinkingBudgets(
 
 ---
 
+## Full Port Audit — Critical Findings (2026-04-05)
+
+Three background agents conducted a comprehensive audit of the pi-mono to BotNexus port across Providers/AI, Agent+CodingAgent runtime, and architecture.
+
+### Farnsworth — Providers/AI Audit
+
+**Status:** ⚠️ AMBER (gaps, no blockers)
+
+**Key Findings:**
+- Core provider architecture faithfully ported (Anthropic, OpenAI Completions, Copilot routing)
+- Missing: OpenAI Responses provider, token counting utilities, retry/jitter logic
+- Model registry limited to Copilot models (intentional, by design)
+- Type gaps in streaming response handlers
+
+**Impact:** MVP functional. Advanced features pending. No runtime crash risks.
+
+**See:** `.squad/orchestration-log/2026-04-05T05-21-43Z-farnsworth.md`
+
+### Bender — Agent + CodingAgent Runtime Audit
+
+**Status:** 🟡 AMBER (MVP functional, advanced features incomplete)
+
+**Key Findings (CRITICAL):**
+
+1. **🔴 BLOCKER — Edit tool schema incompatible**
+   - Pi-mono: `edits: [{oldText, newText}]` (array)
+   - Ours: `old_str`, `new_str` (single edit)
+   - LLM sends pi-mono format → our tool rejects → call fails
+   - Fix: Accept `edits[]` array with `oldText`/`newText` OR accept both formats
+
+2. **🔴 BLOCKER — Reflection-based ConvertToLlm fragile**
+   - CodingAgent uses reflection to find `MessageConverter.ToProviderMessages`
+   - Works today but brittle on any assembly/method rename
+   - Fix: Make method public or add public factory
+
+3. **🟡 DEGRADED — Read tool params differ**
+   - Pi-mono: `offset` (1-indexed line), `limit` (max lines)
+   - Ours: `start_line`, `end_line`
+   - Models trained on pi-mono schema send pi-mono params → our tool ignores, wastes tokens
+   - Fix: Accept both param names
+
+4. **🟡 DEGRADED — No file locking on auth.json**
+   - Concurrent BotNexus instances may race on OAuth token refresh
+   - Pi-mono uses proper-lockfile, we use bare File I/O
+   - Fix: Add FileStream with FileShare.None during load-refresh-save
+
+5. **🟡 DEGRADED — Extension provider registration missing**
+   - Pi-mono's factory registers extension-defined providers dynamically
+   - Ours only loads tool extensions, not provider extensions
+   - Fix: Add provider extension loading in runtime path
+
+6. **🟢 OK — Agent loop is faithful**
+   - Message handling, tool execution, streaming all match pi-mono
+
+7. **🟢 OK — Session persistence works**
+   - SaveAsync/ResumeAsync functional
+
+**Priority Fixes Before Release:**
+- Edit tool schema (blocker)
+- Reflection-based ConvertToLlm (fragility)
+- Read tool params (token waste)
+
+**See:** `.squad/orchestration-log/2026-04-05T05-21-43Z-bender.md`
+
+### Leela — Architectural Quality Review
+
+**Grade:** B+ (strong core, fixable tech debt)
+
+**Key Findings:**
+
+1. **🟡 Static Registries**
+   - Tool registry: static Dictionary
+   - Model registry: hard-coded enum
+   - Impact: Difficult to register runtime plugins
+   - Fix: Inject IServiceProvider instead (1–2 sprints)
+
+2. **🟡 Mutable Options Pattern**
+   - CodingAgentOptions: public mutable fields
+   - Impact: Thread-safety concerns, hard to audit state
+   - Fix: Use immutable records, builder pattern (1 sprint)
+
+3. **🟡 HttpClient Per-Instance**
+   - Providers create HttpClient per call
+   - Not using HttpClientFactory
+   - Impact: Socket exhaustion under load
+   - Fix: Centralize in DI (2–3 days)
+
+4. **🟡 Mixed Error Handling**
+   - Mix of exceptions and result types (Option<T>, Either<E,T>)
+   - Impact: Unpredictable error handling
+   - Fix: Define canonical error type (1 sprint)
+
+5. **✅ Decomposition & Abstractions**
+   - Clean separation: AgentCore, CodingAgent, Providers, Gateway
+   - Well-designed interfaces (IAgent, ITool, IProvider)
+   - Unidirectional dependency flow
+
+6. **✅ C# Idioms**
+   - Async/await correct
+   - Dependency Injection properly configured
+   - Nullable reference types: good coverage
+   - No sync-over-async anti-patterns
+
+**Verdict:** Production-ready for MVP. Tech debt documented. 3-quarter remediation plan provided.
+
+**See:** `.squad/orchestration-log/2026-04-05T05-21-43Z-leela.md`
+
+---
+
+## Farnsworth Deep Audit — AgentCore Re-Audit (2026-04-05)
+
+**File:** `.squad/decisions/inbox/farnsworth-agentcore-reaudit.md`
+
+### 🟡 DEGRADED Issues
+
+1. **StreamAccumulator missing thinking/text lifecycle events**
+   - Missing: `TextStartEvent`, `TextEndEvent`, `ThinkingStartEvent`, `ThinkingDeltaEvent`, `ThinkingEndEvent`
+   - Impact: Extended thinking models never surface thinking content to subscribers
+   - Fix: Add switch cases for all five events
+
+2. **Tool result messages not emitted as MessageStart/End**
+   - Pi-mono: emits `message_start`, `message_end` for each tool result
+   - Ours: only emits `ToolExecutionEndEvent`, missing message lifecycle
+   - Impact: `Agent.State.Messages` incomplete during runs; observers see stale state
+   - Fix: Have ToolExecutor or AgentLoopRunner emit message lifecycle events
+
+3. **State.ThinkingLevel changes ignored**
+   - Agent never maps runtime `_state.ThinkingLevel` to `GenerationSettings.Reasoning`
+   - Impact: Consumer can set `agent.State.ThinkingLevel = High`, change is silently ignored
+   - Fix: Map in `Agent.BuildLoopConfig()` via `generationSettings.Reasoning = level`
+
+**Blockers:** None found.
+
+---
+
+## Leela Deep Audit — Providers Re-Audit (2026-04-05)
+
+**File:** `.squad/decisions/inbox/leela-providers-reaudit.md`
+
+### 🔴 BLOCKER Issues
+
+1. **`store: true` instead of `store: false` in OpenAI Completions**
+   - Pi-mono: `store: false` (prevents OpenAI from storing conversations)
+   - Ours: `store: true` (stores all conversations in OpenAI systems)
+   - Fix: Change to `false` (one-line change)
+
+2. **`Openai-Intent` header missing from CopilotHeaders.BuildDynamicHeaders()**
+   - Pi-mono: `buildCopilotDynamicHeaders()` includes `"Openai-Intent": "conversation-edits"`
+   - Ours: CopilotHeaders omits it; only CopilotProvider adds it separately
+   - Impact: Copilot models routed through OpenAI Completions won't send header → Copilot proxy may reject
+   - Fix: Add `Openai-Intent` to CopilotHeaders.BuildDynamicHeaders()
+
+3. **Adaptive thinking detection too broad**
+   - Pi-mono: checks only 4.6 models (`opus-4-6`, `opus-4.6`, `sonnet-4-6`, `sonnet-4.6`)
+   - Ours: `Contains("opus-4") || Contains("sonnet-4")` matches all 4.x models including 4 and 4.5
+   - Impact: Models like sonnet-4 get `thinking: { type: "adaptive" }` instead of budget-based
+   - Fix: Restrict to 4.6 variants only
+
+4. **OAuth token exchange uses `token` prefix instead of `Bearer`**
+   - Pi-mono: `Authorization: Bearer ${refreshToken}`
+   - Ours: `Authorization: token ${githubToken}`
+   - Impact: Copilot token endpoint may reject `token` prefix; OAuth flow breaks
+   - Fix: Change to `$"Bearer {githubToken}"`
+
+### 🟡 DEGRADED Issues
+
+5. Tool call ID normalization replaces invalid chars with empty string instead of underscore
+6. Redacted thinking stores signature as text instead of `[Reasoning redacted]`
+7. OAuth beta headers missing version suffix + `oauth-2025-04-20`
+8. OAuth missing `x-app: cli` header and versioned user-agent
+9. Total tokens excludes cache read/write tokens
+10. No dynamic base URL parsing from `proxy-ep` in token
+
+**Recommended Fix Priority:**
+- **Immediate (4 blockers):** store value, Openai-Intent header, adaptive thinking, OAuth Bearer header
+- **Next sprint (5 degraded):** ID normalization, thinking text, beta headers, x-app/version, total tokens
+
+---
+
 ## 10. Provider Contract — API Provider Interface
 
 ```csharp
