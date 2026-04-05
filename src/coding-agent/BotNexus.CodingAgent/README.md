@@ -1,6 +1,6 @@
 # BotNexus.CodingAgent
 
-Minimal coding agent CLI with read, list_directory, edit, write, shell, grep, and glob tools. Built on BotNexus.AgentCore and BotNexus.Providers.Core.
+Minimal coding agent CLI with read, ls, edit, write, bash, grep, and find tools. Built on BotNexus.AgentCore and BotNexus.Providers.Core.
 
 ## Quick Start
 
@@ -129,8 +129,8 @@ The coding agent includes seven core tools, available within any prompt:
 
 **Parameters**:
 - `path` (string, required): File or directory path relative to working directory
-- `start_line` (integer, optional): 1-based start line for file reads
-- `end_line` (integer, optional): 1-based inclusive end line for file reads
+- `offset` (integer, optional): 1-based line number to start reading from
+- `limit` (integer, optional): Maximum number of lines to return
 
 **Output**:
 - Files: Line-numbered records (`1 | line content`) up to 2000 lines
@@ -143,25 +143,22 @@ path: src/Tools/ReadTool.cs
 range: 1-50
 ```
 
-### list_directory
+### ls
 
-**Purpose**: List directory entries as a formatted tree with depth control.
+**Purpose**: List directory entries in a flat sorted listing.
 
 **Parameters**:
-- `path` (string, required): Directory path relative to working directory
-- `depth` (integer, optional): Maximum depth to recurse (default: 2)
-- `showHidden` (boolean, optional): Include hidden files and directories (default: false)
+- `path` (string, optional): Directory path relative to working directory
+- `limit` (integer, optional): Maximum number of entries to return (default: 500)
 
 **Output**:
-- Formatted directory tree with `├──`/`└──` connectors
-- Entries labeled `[dir]` or `[file, N bytes]`
+- Flat sorted directory listing with file names and sizes
 - Respects `.gitignore` patterns
 
 **Example**:
 ```
-> list_directory
+> ls
 path: src/
-depth: 2
 ```
 
 ### write
@@ -213,7 +210,7 @@ old_str: public int Value { get; set; }
 new_str: public int Value { get; set; } = 0;
 ```
 
-### shell
+### bash
 
 **Purpose**: Execute shell commands with timeout and captured output.
 
@@ -222,7 +219,7 @@ new_str: public int Value { get; set; } = 0;
 - `timeout` (integer, optional): Timeout in seconds (default: 120)
 
 **Output**:
-- stdout/stderr combined up to 10,000 characters
+- stdout/stderr combined up to 50,000 bytes
 - Exit code included in result
 
 **Platform behavior**:
@@ -231,18 +228,19 @@ new_str: public int Value { get; set; } = 0;
 
 **Example**:
 ```
-> shell
+> bash
 command: dotnet build -c Release
 timeout: 180
 ```
 
-### glob
+### find
 
-**Purpose**: Find files by glob pattern with optional base path.
+**Purpose**: Search for files by glob pattern with optional base path.
 
 **Parameters**:
 - `pattern` (string, required): Glob pattern (e.g., `**/*.cs`, `src/**/*.json`)
-- `base` (string, optional): Base directory for glob expansion (default: working directory)
+- `path` (string, optional): Base directory relative to working directory (default: working directory)
+- `limit` (integer, optional): Maximum number of results to return (default: 1000)
 
 **Output**:
 - List of matching file paths relative to working directory
@@ -250,12 +248,12 @@ timeout: 180
 
 **Examples**:
 ```
-> glob
+> find
 pattern: **/*.cs
 
-> glob
+> find
 pattern: **/*.test.cs
-base: src/Tests/
+path: src/Tests/
 ```
 
 ## Sessions
@@ -563,7 +561,7 @@ Tool Call Request
     ↓
 BeforeToolCall Hook (SafetyHooks validates path/command)
     ↓
-Tool Execution (read/write/edit/shell/glob)
+Tool Execution (read/write/edit/bash/find/ls/grep)
     ↓
 AfterToolCall Hook (AuditHooks logs call)
     ↓

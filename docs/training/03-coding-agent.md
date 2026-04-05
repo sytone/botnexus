@@ -25,7 +25,7 @@ Here's what `CreateAsync` does, step by step:
 
 1. **Validate config, resolve working directory** — calls `Path.GetFullPath` on the working directory
 2. **EnsureDirectories** — creates `.botnexus-agent/`, `.botnexus-agent/sessions/`, etc.
-3. **CreateTools(root, extensionTools)** — instantiates the six built-in tools plus any extension tools (see [Built-in tools](#built-in-tools))
+3. **CreateTools(root, extensionTools)** — instantiates the seven built-in tools plus any extension tools (see [Built-in tools](#built-in-tools))
 4. **Git metadata** — calls `GitUtils.GetBranchAsync` and `GitUtils.GetStatusAsync` for the system prompt
 5. **Package manager detection** — runs `PackageManagerDetector.Detect` to identify npm, pip, dotnet, etc.
 6. **System prompt construction** — `SystemPromptBuilder.Build` with a `SystemPromptContext` record (see [System prompt construction](#system-prompt-construction))
@@ -94,12 +94,12 @@ The CodingAgent ships with seven tools. Six of them are scoped to the working di
 | Tool name | Class | Registered as | Purpose |
 |-----------|-------|---------------|---------|
 | read | `ReadTool` | `"read"` | Read files and directories with line numbers |
-| list_directory | `ListDirectoryTool` | `"list_directory"` | List directory entries as a formatted tree with depth control |
+| ls | `ListDirectoryTool` | `"ls"` | List directory entries in a flat sorted listing |
 | write | `WriteTool` | `"write"` | Write complete files (full replacement) |
 | edit | `EditTool` | `"edit"` | Surgical find-and-replace edits with fuzzy matching |
 | bash | `ShellTool` | `"bash"` | Shell command execution (Windows: PowerShell, Unix: bash) |
 | grep | `GrepTool` | `"grep"` | Regex search with context lines |
-| glob | `GlobTool` | `"glob"` | File pattern matching |
+| find | `GlobTool` | `"find"` | File pattern matching |
 
 The `CreateTools` method shows how they're instantiated:
 
@@ -129,7 +129,7 @@ private static IReadOnlyList<IAgentTool> CreateTools(
 
 ### `read` — Read files and directories
 
-**Parameters:** `path` (required), `start_line` (optional), `end_line` (optional)
+**Parameters:** `path` (required), `offset` (optional, 1-based line number), `limit` (optional, max lines to return)
 
 **Behavior:**
 - **Files:** Returns content with line numbers (`1 | first line`, `2 | second line`)
@@ -185,13 +185,13 @@ Hello world
 
 ### `grep` — Regex search
 
-**Parameters:** `pattern` (regex, required), `path`, `include` (glob), `ignore_case`, `context` (lines), `max_results`
+**Parameters:** `pattern` (regex, required), `path`, `glob` (file pattern, e.g. `*.cs`), `ignore_case`, `context` (lines), `limit`
 
 **Features:** Regex validation, `.gitignore` filtering, binary file detection, context lines, match count limiting.
 
-### `glob` — File pattern matching
+### `find` — File pattern matching
 
-**Parameters:** `pattern` (glob, required), `path` (base directory)
+**Parameters:** `pattern` (glob, required), `path` (base directory), `limit` (max results, default 1000)
 
 **Features:** Uses `Microsoft.Extensions.FileSystemGlobbing`. Filters through `.gitignore` rules. Returns sorted relative paths.
 

@@ -498,11 +498,11 @@ var response = await LlmClient.CompleteSimpleAsync(model, context,
         Reasoning = ThinkingLevel.High,
         ThinkingBudgets = new ThinkingBudgets
         {
-            Minimal = new ThinkingBudgetLevel(ThinkingBudget: 1024, MaxTokens: 4096),
-            Low = new ThinkingBudgetLevel(ThinkingBudget: 2048, MaxTokens: 8192),
-            Medium = new ThinkingBudgetLevel(ThinkingBudget: 4096, MaxTokens: 16384),
-            High = new ThinkingBudgetLevel(ThinkingBudget: 8192, MaxTokens: 32000),
-            ExtraHigh = new ThinkingBudgetLevel(ThinkingBudget: 16384, MaxTokens: 64000),
+            Minimal = 1024,
+            Low = 2048,
+            Medium = 4096,
+            High = 8192,
+            ExtraHigh = 16384,
         }
     });
 ```

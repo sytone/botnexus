@@ -70,23 +70,21 @@ Models can override default budgets via `ThinkingBudgets`:
 ```csharp
 public record ThinkingBudgets
 {
-    public ThinkingBudgetLevel? Minimal { get; init; }
-    public ThinkingBudgetLevel? Low { get; init; }
-    public ThinkingBudgetLevel? Medium { get; init; }
-    public ThinkingBudgetLevel? High { get; init; }
-    public ThinkingBudgetLevel? ExtraHigh { get; init; }
+    public int? Minimal { get; init; }
+    public int? Low { get; init; }
+    public int? Medium { get; init; }
+    public int? High { get; init; }
+    public int? ExtraHigh { get; init; }
 }
-
-public record ThinkingBudgetLevel(int ThinkingBudget, int MaxTokens);
 ```
 
-Each level specifies both the thinking budget and the maximum total output tokens for that level. Example:
+Each level specifies the thinking budget token count. Example:
 
 ```csharp
 var customBudgets = new ThinkingBudgets
 {
-    Low = new ThinkingBudgetLevel(ThinkingBudget: 2000, MaxTokens: 3000),
-    Medium = new ThinkingBudgetLevel(ThinkingBudget: 8000, MaxTokens: 12000)
+    Low = 2000,
+    Medium = 8000
 };
 ```
 
@@ -124,7 +122,7 @@ var stream = llmClient.Stream(model, context, options);
 public static class SimpleOptionsHelper
 {
     // Get budget for a specific level (custom or default)
-    public static ThinkingBudgetLevel? GetBudgetForLevel(
+    public static int? GetBudgetForLevel(
         ThinkingLevel level,
         ThinkingBudgets? customBudgets)
     {
@@ -166,23 +164,11 @@ public static class SimpleOptionsHelper
         int? requestedMaxTokens,
         int thinkingBudget)
     {
-        var maxTokens = requestedMaxTokens ?? model.MaxTokens;
+        var baseMaxTokens = requestedMaxTokens ?? model.MaxTokens;
+        var maxTokens = Math.Min(baseMaxTokens + thinkingBudget, model.MaxTokens);
 
-        // Ensure maxTokens is at least thinkingBudget + minimum output room
-        var minRequired = thinkingBudget + 1024;
-        if (maxTokens < minRequired)
-            maxTokens = minRequired;
-
-        // Cap at model maximum
-        if (maxTokens > model.MaxTokens)
-            maxTokens = model.MaxTokens;
-
-        // Recalculate budget if it exceeds adjusted maxTokens
-        if (thinkingBudget >= maxTokens)
-            thinkingBudget = maxTokens - 1024;
-
-        if (thinkingBudget < 1024)
-            thinkingBudget = 1024;
+        if (maxTokens <= thinkingBudget)
+            thinkingBudget = Math.Max(0, maxTokens - 1024);
 
         return (maxTokens, thinkingBudget);
     }
@@ -194,13 +180,10 @@ public static class SimpleOptionsHelper
 When thinking is enabled, the provider must ensure that `maxTokens` is large enough to accommodate both internal reasoning and output:
 
 ```
-minRequired = thinkingBudget + 1024  // 1 KB minimum for output
+maxTokens = Min(baseMaxTokens + thinkingBudget, model.MaxTokens)
 
-if (maxTokens < minRequired)
-    maxTokens = minRequired;
-
-if (thinkingBudget >= maxTokens)
-    thinkingBudget = maxTokens - 1024;  // Reduce thinking to make room for output
+if (maxTokens <= thinkingBudget)
+    thinkingBudget = Max(0, maxTokens - 1024)  // Reduce thinking to make room for output
 ```
 
 This prevents scenarios where the thinking budget alone would consume all available tokens, leaving no room for the final response.

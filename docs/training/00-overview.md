@@ -18,7 +18,7 @@ BotNexus is a modular AI agent execution platform built in C#/.NET. It separates
                       │                └── PendingMessageQueue (steering + follow-ups)
                       │
                       ├── SystemPromptBuilder
-                      ├── Built-in Tools (read, write, edit, bash, grep, glob)
+                      ├── Built-in Tools (read, write, edit, bash, grep, find, ls)
                       ├── Extensions (IExtension plugins)
                       ├── SafetyHooks (command/path validation)
                       └── SessionManager (save/resume/branch)
@@ -73,7 +73,7 @@ The application. Wires everything together into a coding assistant with file too
 **Responsibilities:**
 
 - Construct the agent with all tools and configuration (`CodingAgent.CreateAsync`)
-- Provide built-in tools: `read`, `write`, `edit`, `bash`, `grep`, `glob`
+- Provide built-in tools: `read`, `write`, `edit`, `bash`, `grep`, `find`, `ls`
 - Build the system prompt (`SystemPromptBuilder`)
 - Manage sessions (create, save, resume, branch, compact)
 - Load extensions and skills
