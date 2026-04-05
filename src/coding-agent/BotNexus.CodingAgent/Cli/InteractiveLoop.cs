@@ -246,6 +246,11 @@ public sealed class InteractiveLoop
 
     private static BotNexus.Providers.Core.Models.LlmModel ResolveModel(string provider, string modelId, int maxContextTokens)
     {
+        if (provider.Equals("copilot", StringComparison.OrdinalIgnoreCase))
+        {
+            provider = "github-copilot";
+        }
+
         var existing = ModelRegistry.GetModel(provider, modelId);
         if (existing is not null)
         {
@@ -255,13 +260,20 @@ public sealed class InteractiveLoop
         return new BotNexus.Providers.Core.Models.LlmModel(
             Id: modelId,
             Name: modelId,
-            Api: provider,
+            Api: "openai-completions",
             Provider: provider,
-            BaseUrl: string.Empty,
+            BaseUrl: "https://api.individual.githubcopilot.com",
             Reasoning: false,
             Input: ["text"],
             Cost: new BotNexus.Providers.Core.Models.ModelCost(0, 0, 0, 0),
             ContextWindow: maxContextTokens,
-            MaxTokens: Math.Min(8192, maxContextTokens));
+            MaxTokens: Math.Min(8192, maxContextTokens),
+            Headers: new Dictionary<string, string>
+            {
+                ["User-Agent"] = "GitHubCopilotChat/0.35.0",
+                ["Editor-Version"] = "vscode/1.107.0",
+                ["Editor-Plugin-Version"] = "copilot-chat/0.35.0",
+                ["Copilot-Integration-Id"] = "vscode-chat"
+            });
     }
 }

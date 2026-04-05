@@ -166,6 +166,8 @@ internal static class Program
     /// </summary>
     private static void RegisterBuiltInProviders()
     {
+        BuiltInModels.RegisterAll();
+
         var httpClient = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         ApiProviderRegistry.Register(new CopilotProvider());
         ApiProviderRegistry.Register(new AnthropicProvider());

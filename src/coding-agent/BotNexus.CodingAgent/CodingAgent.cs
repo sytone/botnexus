@@ -135,8 +135,13 @@ public static class CodingAgent
 
     private static LlmModel ResolveModel(CodingAgentConfig config)
     {
-        var provider = config.Provider ?? "copilot";
+        var provider = config.Provider ?? "github-copilot";
         var modelId = config.Model ?? "gpt-4.1";
+
+        if (provider.Equals("copilot", StringComparison.OrdinalIgnoreCase))
+        {
+            provider = "github-copilot";
+        }
 
         var existing = ModelRegistry.GetModel(provider, modelId);
         if (existing is not null)
@@ -147,14 +152,21 @@ public static class CodingAgent
         return new LlmModel(
             Id: modelId,
             Name: modelId,
-            Api: provider,
+            Api: "openai-completions",
             Provider: provider,
-            BaseUrl: string.Empty,
+            BaseUrl: "https://api.individual.githubcopilot.com",
             Reasoning: false,
             Input: ["text"],
             Cost: new ModelCost(0, 0, 0, 0),
             ContextWindow: config.MaxContextTokens,
-            MaxTokens: Math.Min(8192, config.MaxContextTokens));
+            MaxTokens: Math.Min(8192, config.MaxContextTokens),
+            Headers: new Dictionary<string, string>
+            {
+                ["User-Agent"] = "GitHubCopilotChat/0.35.0",
+                ["Editor-Version"] = "vscode/1.107.0",
+                ["Editor-Plugin-Version"] = "copilot-chat/0.35.0",
+                ["Copilot-Integration-Id"] = "vscode-chat"
+            });
     }
 
     private static bool ResolveVerbose(CodingAgentConfig config)
