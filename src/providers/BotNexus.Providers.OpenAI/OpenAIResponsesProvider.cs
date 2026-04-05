@@ -49,6 +49,7 @@ public sealed class OpenAIResponsesProvider(
     public LlmStream StreamSimple(LlmModel model, Context context, SimpleStreamOptions? options = null)
     {
         var apiKey = options?.ApiKey ?? EnvironmentApiKeys.GetApiKey(model.Provider) ?? "";
+        var reasoning = SupportsXhigh(model) ? options?.Reasoning : SimpleOptionsHelper.ClampReasoning(options?.Reasoning);
         var responsesOptions = new OpenAIResponsesOptions
         {
             ApiKey = apiKey,
@@ -64,8 +65,8 @@ public sealed class OpenAIResponsesProvider(
             Metadata = options?.Metadata
         };
 
-        if (options?.Reasoning is not null && model.Reasoning)
-            responsesOptions.ReasoningEffort = MapThinkingLevel(options.Reasoning.Value);
+        if (reasoning is not null && model.Reasoning)
+            responsesOptions.ReasoningEffort = MapThinkingLevel(reasoning.Value);
 
         return Stream(model, context, responsesOptions);
     }
@@ -157,6 +158,9 @@ public sealed class OpenAIResponsesProvider(
 
         if (options?.CacheRetention != CacheRetention.None && !string.IsNullOrWhiteSpace(options?.SessionId))
             payload["prompt_cache_key"] = options.SessionId;
+        var promptCacheRetention = GetPromptCacheRetention(model.BaseUrl, options?.CacheRetention ?? CacheRetention.Short);
+        if (!string.IsNullOrWhiteSpace(promptCacheRetention))
+            payload["prompt_cache_retention"] = promptCacheRetention;
 
         if (tools is { Count: > 0 })
             payload["tools"] = ConvertTools(tools);
@@ -177,6 +181,14 @@ public sealed class OpenAIResponsesProvider(
                 {
                     ["effort"] = effort ?? "medium",
                     ["summary"] = summary ?? "auto"
+                };
+                payload["include"] = new JsonArray { "reasoning.encrypted_content" };
+            }
+            else if (!string.Equals(model.Provider, "github-copilot", StringComparison.OrdinalIgnoreCase))
+            {
+                payload["reasoning"] = new JsonObject
+                {
+                    ["effort"] = "none"
                 };
             }
         }
@@ -765,6 +777,21 @@ public sealed class OpenAIResponsesProvider(
         ThinkingLevel.ExtraHigh => "xhigh",
         _ => "medium"
     };
+
+    private static bool SupportsXhigh(LlmModel model) =>
+        model.Id.Contains("gpt-5.2", StringComparison.OrdinalIgnoreCase) ||
+        model.Id.Contains("gpt-5.3", StringComparison.OrdinalIgnoreCase) ||
+        model.Id.Contains("gpt-5.4", StringComparison.OrdinalIgnoreCase) ||
+        model.Id.Contains("opus-4-6", StringComparison.OrdinalIgnoreCase) ||
+        model.Id.Contains("opus-4.6", StringComparison.OrdinalIgnoreCase);
+
+    private static string? GetPromptCacheRetention(string baseUrl, CacheRetention retention)
+    {
+        if (retention != CacheRetention.Long)
+            return null;
+
+        return baseUrl.Contains("api.openai.com", StringComparison.OrdinalIgnoreCase) ? "24h" : null;
+    }
 
     private static string? GetString(JsonElement element, string propertyName)
     {
