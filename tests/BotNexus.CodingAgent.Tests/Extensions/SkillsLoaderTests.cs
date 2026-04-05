@@ -31,7 +31,7 @@ public sealed class SkillsLoaderTests : IDisposable
         Directory.CreateDirectory(skillDirectory);
         File.WriteAllText(Path.Combine(skillDirectory, "SKILL.md"), """
             ---
-            name: my-skill
+            name: example
             description: Sample skill
             disable-model-invocation: false
             ---
@@ -41,7 +41,7 @@ public sealed class SkillsLoaderTests : IDisposable
         var skills = new SkillsLoader().LoadSkills(_tempDirectory, new CodingAgentConfig());
 
         skills.Should().Contain(skill =>
-            skill.Contains("name: my-skill", StringComparison.Ordinal) &&
+            skill.Contains("name: example", StringComparison.Ordinal) &&
             skill.Contains("description: Sample skill", StringComparison.Ordinal) &&
             skill.Contains("Skill body", StringComparison.Ordinal));
     }
@@ -67,8 +67,9 @@ public sealed class SkillsLoaderTests : IDisposable
     [Fact]
     public void LoadSkills_WhenDuplicateNamesExist_KeepsFirstOccurrence()
     {
-        var firstDirectory = Path.Combine(_tempDirectory, ".botnexus-agent", "skills", "first");
-        var secondDirectory = Path.Combine(_tempDirectory, ".botnexus-agent", "skills", "second");
+        var firstDirectory = Path.Combine(_tempDirectory, ".botnexus-agent", "skills", "duplicate-skill");
+        var secondRoot = Path.Combine(_tempDirectory, "custom-skills");
+        var secondDirectory = Path.Combine(secondRoot, "duplicate-skill");
         Directory.CreateDirectory(firstDirectory);
         Directory.CreateDirectory(secondDirectory);
         File.WriteAllText(Path.Combine(firstDirectory, "SKILL.md"), """
@@ -86,7 +87,8 @@ public sealed class SkillsLoaderTests : IDisposable
             Second body
             """);
 
-        var skills = new SkillsLoader().LoadSkills(_tempDirectory, new CodingAgentConfig());
+        var config = new CodingAgentConfig { SkillsDirectory = secondRoot };
+        var skills = new SkillsLoader().LoadSkills(_tempDirectory, config);
 
         var duplicateSkills = skills.Where(skill => skill.Contains("name: duplicate-skill", StringComparison.Ordinal)).ToList();
         duplicateSkills.Should().ContainSingle();
@@ -133,7 +135,7 @@ public sealed class SkillsLoaderTests : IDisposable
     [Fact]
     public void LoadSkills_SkillInRegularDirectory_IsIncluded()
     {
-        var skillDirectory = Path.Combine(_tempDirectory, ".botnexus-agent", "skills", "normal");
+        var skillDirectory = Path.Combine(_tempDirectory, ".botnexus-agent", "skills", "normal-skill");
         Directory.CreateDirectory(skillDirectory);
         File.WriteAllText(Path.Combine(skillDirectory, "SKILL.md"), """
             ---
@@ -165,7 +167,7 @@ public sealed class SkillsLoaderTests : IDisposable
             Hidden body
             """);
 
-        var visibleSkillDirectory = Path.Combine(_tempDirectory, ".botnexus-agent", "skills", "visible");
+        var visibleSkillDirectory = Path.Combine(_tempDirectory, ".botnexus-agent", "skills", "visible-skill");
         Directory.CreateDirectory(visibleSkillDirectory);
         File.WriteAllText(Path.Combine(visibleSkillDirectory, "SKILL.md"), """
             ---
@@ -194,7 +196,7 @@ public sealed class SkillsLoaderTests : IDisposable
             Ignored body
             """);
 
-        var allowedSkillDirectory = Path.Combine(_tempDirectory, ".botnexus-agent", "skills", "allowed");
+        var allowedSkillDirectory = Path.Combine(_tempDirectory, ".botnexus-agent", "skills", "allowed-skill");
         Directory.CreateDirectory(allowedSkillDirectory);
         File.WriteAllText(Path.Combine(allowedSkillDirectory, "SKILL.md"), """
             ---
@@ -224,7 +226,7 @@ public sealed class SkillsLoaderTests : IDisposable
         Directory.CreateDirectory(blockedDirectory);
         File.WriteAllText(Path.Combine(blockedDirectory, "SKILL.md"), """
             ---
-            name: blocked-skill
+            name: blocked
             description: Blocked
             ---
             Blocked body
@@ -234,7 +236,7 @@ public sealed class SkillsLoaderTests : IDisposable
         Directory.CreateDirectory(allowedDirectory);
         File.WriteAllText(Path.Combine(allowedDirectory, "SKILL.md"), """
             ---
-            name: allowed-from-gitignore
+            name: allowed
             description: Allowed by negation
             ---
             Allowed body
@@ -242,8 +244,43 @@ public sealed class SkillsLoaderTests : IDisposable
 
         var skills = new SkillsLoader().LoadSkills(_tempDirectory, new CodingAgentConfig());
 
-        skills.Should().Contain(skill => skill.Contains("name: allowed-from-gitignore", StringComparison.Ordinal));
-        skills.Should().NotContain(skill => skill.Contains("name: blocked-skill", StringComparison.Ordinal));
+        skills.Should().Contain(skill => skill.Contains("name: allowed", StringComparison.Ordinal));
+        skills.Should().NotContain(skill => skill.Contains("name: blocked", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void LoadSkills_WhenDescriptionMissing_SkipsSkill()
+    {
+        var skillDirectory = Path.Combine(_tempDirectory, ".botnexus-agent", "skills", "missing-description");
+        Directory.CreateDirectory(skillDirectory);
+        File.WriteAllText(Path.Combine(skillDirectory, "SKILL.md"), """
+            ---
+            name: missing-description
+            ---
+            Body
+            """);
+
+        var skills = new SkillsLoader().LoadSkills(_tempDirectory, new CodingAgentConfig());
+
+        skills.Should().NotContain(skill => skill.Contains("name: missing-description", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void LoadSkills_WhenNameHasConsecutiveHyphens_SkipsSkill()
+    {
+        var skillDirectory = Path.Combine(_tempDirectory, ".botnexus-agent", "skills", "bad--name");
+        Directory.CreateDirectory(skillDirectory);
+        File.WriteAllText(Path.Combine(skillDirectory, "SKILL.md"), """
+            ---
+            name: bad--name
+            description: Invalid name
+            ---
+            Body
+            """);
+
+        var skills = new SkillsLoader().LoadSkills(_tempDirectory, new CodingAgentConfig());
+
+        skills.Should().NotContain(skill => skill.Contains("name: bad--name", StringComparison.Ordinal));
     }
 
     public void Dispose()

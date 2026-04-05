@@ -9,6 +9,7 @@ namespace BotNexus.CodingAgent.Extensions;
 public sealed class SkillsLoader
 {
     private const int MaxSkillNameLength = 64;
+    private const int MaxSkillDescriptionLength = 1024;
     private static readonly string[] DefaultIgnoredDirectories = ["node_modules", "bin", "obj", ".git", "build", "dist"];
 
     public IReadOnlyList<string> LoadSkills(string workingDirectory, CodingAgentConfig config)
@@ -82,9 +83,10 @@ public sealed class SkillsLoader
             return;
         }
 
-        if (!IsValidSkillName(parsed.Name))
+        var validationErrors = ValidateSkill(path, parsed);
+        if (validationErrors.Count > 0)
         {
-            Console.Error.WriteLine($"[warning] Ignoring skill '{parsed.Name}' from '{path}': invalid name format.");
+            Console.Error.WriteLine($"[warning] Ignoring skill '{parsed.Name}' from '{path}': {string.Join("; ", validationErrors)}");
             return;
         }
 
@@ -117,23 +119,21 @@ public sealed class SkillsLoader
 
         if (!trimmed.StartsWith("---", StringComparison.Ordinal))
         {
-            return new ParsedSkill(defaultName, $"Skill: {defaultName}", false, trimmed);
+            return new ParsedSkill(defaultName, null, false, trimmed);
         }
 
         var lines = content.Split(["\r\n", "\n"], StringSplitOptions.None);
         var closingIndex = Array.FindIndex(lines, 1, line => line.Trim().Equals("---", StringComparison.Ordinal));
         if (closingIndex < 0)
         {
-            return new ParsedSkill(defaultName, $"Skill: {defaultName}", false, trimmed);
+            return new ParsedSkill(defaultName, null, false, trimmed);
         }
 
         var metadata = ParseFrontmatter(lines, closingIndex);
         var name = metadata.TryGetValue("name", out var rawName) && !string.IsNullOrWhiteSpace(rawName)
             ? rawName
             : defaultName;
-        var description = metadata.TryGetValue("description", out var rawDescription) && !string.IsNullOrWhiteSpace(rawDescription)
-            ? rawDescription
-            : $"Skill: {name}";
+        var description = metadata.TryGetValue("description", out var rawDescription) ? rawDescription : null;
         var disableModelInvocation = metadata.TryGetValue("disable-model-invocation", out var rawDisable)
             && bool.TryParse(rawDisable, out var parsedDisable)
             && parsedDisable;
@@ -172,10 +172,47 @@ public sealed class SkillsLoader
             return false;
         }
 
-        return name.All(static character => char.IsLower(character) || char.IsDigit(character) || character == '-');
+        if (!name.All(static character => char.IsLower(character) || char.IsDigit(character) || character == '-'))
+        {
+            return false;
+        }
+
+        if (name.StartsWith("-", StringComparison.Ordinal) || name.EndsWith("-", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return !name.Contains("--", StringComparison.Ordinal);
     }
 
-    private sealed record ParsedSkill(string Name, string Description, bool DisableModelInvocation, string Body);
+    private static IReadOnlyList<string> ValidateSkill(string path, ParsedSkill parsed)
+    {
+        var errors = new List<string>();
+        var parentDirectoryName = Path.GetFileName(Path.GetDirectoryName(path) ?? string.Empty);
+
+        if (!string.Equals(parsed.Name, parentDirectoryName, StringComparison.Ordinal))
+        {
+            errors.Add($"name \"{parsed.Name}\" must match parent directory \"{parentDirectoryName}\"");
+        }
+
+        if (!IsValidSkillName(parsed.Name))
+        {
+            errors.Add("name must be <= 64 chars, lowercase alphanumeric, and hyphen-safe");
+        }
+
+        if (string.IsNullOrWhiteSpace(parsed.Description))
+        {
+            errors.Add("description is required");
+        }
+        else if (parsed.Description.Length > MaxSkillDescriptionLength)
+        {
+            errors.Add($"description exceeds {MaxSkillDescriptionLength} characters");
+        }
+
+        return errors;
+    }
+
+    private sealed record ParsedSkill(string Name, string? Description, bool DisableModelInvocation, string Body);
 
     private static IReadOnlyList<string> ResolveSkillDirectories(string root, CodingAgentConfig config)
     {
