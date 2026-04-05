@@ -205,6 +205,7 @@ internal static class Program
         var httpClient = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         apiProviderRegistry.Register(new AnthropicProvider(httpClient));
         apiProviderRegistry.Register(new OpenAICompletionsProvider(httpClient, Microsoft.Extensions.Logging.Abstractions.NullLogger<OpenAICompletionsProvider>.Instance));
+        apiProviderRegistry.Register(new OpenAIResponsesProvider(httpClient, Microsoft.Extensions.Logging.Abstractions.NullLogger<OpenAIResponsesProvider>.Instance));
         apiProviderRegistry.Register(new OpenAICompatProvider(httpClient));
         return (apiProviderRegistry, modelRegistry);
     }
