@@ -164,6 +164,9 @@
 - **OpenAI Completions provider (Providers.Core architecture)** (2026-04-04): Created `src/providers/BotNexus.Providers.OpenAI/` implementing `IApiProvider` with `Api = "openai-completions"`. Raw HttpClient SSE streaming — no OpenAI SDK dependency. Full message conversion (user/assistant/tool), tool function format, SSE chunk parsing with text/thinking/toolcall state machine, OpenAICompletionsCompat support (developer role, strict schemas, max_tokens field name, thinking format), Copilot dynamic headers, reasoning_effort mapping from ThinkingLevel. `AssemblyName` set to `BotNexus.Providers.OpenAI.Completions` to avoid collision with old `src/BotNexus.Providers.OpenAI/` provider. 0 warnings, 0 errors.
 - 2026-04-05: `DefaultMessageConverter.Create()` is now the shared default `ConvertToLlmDelegate` in AgentCore; CodingAgent uses it directly and system agent messages are wrapped as provider user summaries (`<summary>...</summary>`).
 - 2026-04-05: `ModelRegistry` now owns model identity helpers — `SupportsExtraHigh(LlmModel)` and `ModelsAreEqual(LlmModel, LlmModel)` — and OpenAI Responses now consumes `SupportsExtraHigh` instead of provider-local xhigh checks.
+- 2026-04-05: `BuiltInModels.RegisterAll()` now composes provider-specific registration methods (`RegisterCopilotModels`, `RegisterAnthropicModels`, `RegisterOpenAIModels`) so direct-provider catalogs can evolve independently.
+- 2026-04-05: Direct-provider baseline models are now registered in Providers.Core for `anthropic` and `openai` with `FreeCost` placeholders, explicit API model IDs, and provider base URLs.
+- 2026-04-05: `LlmModel` now carries `SupportsExtraHighThinking`; `ModelRegistry.SupportsExtraHigh()` is capability-based instead of model-id string matching.
 
 ## Sprint 1 Summary — 2026-04-01T17:33Z
 
