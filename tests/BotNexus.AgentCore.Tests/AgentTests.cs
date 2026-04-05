@@ -3,6 +3,7 @@ using BotNexus.AgentCore.Tests.TestUtils;
 using BotNexus.AgentCore.Types;
 using BotNexus.Providers.Core.Streaming;
 using FluentAssertions;
+using System.Reflection;
 
 namespace BotNexus.AgentCore.Tests;
 
@@ -148,6 +149,42 @@ public class AgentTests
     }
 
     [Fact]
+    public async Task HasQueuedMessages_WhenQueuedAndThenDrained_ReflectsCurrentQueueState()
+    {
+        using var provider = RegisterDefaultProvider();
+        var agent = new Agent(TestHelpers.CreateTestOptions(model: TestHelpers.CreateTestModel("test-api")));
+        agent.Steer(new UserMessage("steer message"));
+
+        agent.HasQueuedMessages.Should().BeTrue();
+
+        _ = await agent.PromptAsync("base prompt");
+        agent.HasQueuedMessages.Should().BeFalse();
+    }
+
+    [Fact]
+    public void SteeringMode_WhenChangedAtRuntime_ChangesDrainBehavior()
+    {
+        var agent = new Agent(TestHelpers.CreateTestOptions(
+            model: TestHelpers.CreateTestModel("test-api"),
+            steeringMode: QueueMode.All));
+        agent.Steer(new UserMessage("steer one"));
+        agent.Steer(new UserMessage("steer two"));
+        agent.SteeringMode = QueueMode.OneAtATime;
+
+        var drainMethod = typeof(Agent).GetMethod("DrainQueuedMessages", BindingFlags.NonPublic | BindingFlags.Instance);
+        drainMethod.Should().NotBeNull();
+        var firstDrain = (IReadOnlyList<AgentMessage>)drainMethod!.Invoke(agent, null)!;
+        firstDrain.Should().ContainSingle();
+
+        agent.Steer(new UserMessage("steer three"));
+        agent.Steer(new UserMessage("steer four"));
+
+        agent.SteeringMode = QueueMode.All;
+        var secondDrain = (IReadOnlyList<AgentMessage>)drainMethod.Invoke(agent, null)!;
+        secondDrain.Should().HaveCount(3);
+    }
+
+    [Fact]
     public async Task PromptAsync_WhenRunFails_AddsSyntheticErrorAssistantMessageAndEmitsAgentEnd()
     {
         using var provider = TestHelpers.RegisterProvider(
@@ -156,7 +193,7 @@ public class AgentTests
                 simpleStreamFactory: (_, _, _) => throw new InvalidOperationException("provider exploded")));
         var agent = new Agent(TestHelpers.CreateTestOptions(model: TestHelpers.CreateTestModel("test-api")));
         AgentEndEvent? agentEnd = null;
-        using var _ = agent.Subscribe((@event, _) =>
+        using var subscription = agent.Subscribe((@event, _) =>
         {
             if (@event is AgentEndEvent endEvent)
             {
@@ -257,6 +294,69 @@ public class AgentTests
         release.TrySetResult();
         await runTask;
         agent.State.Messages.Last().Should().BeOfType<AssistantAgentMessage>();
+    }
+
+    [Fact]
+    public async Task AbortAsync_WhenAgentEndListenerThrows_ReportsDiagnostic()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var diagnostics = new List<string>();
+        using var provider = RegisterBlockingProvider(release);
+        var options = TestHelpers.CreateTestOptions(model: TestHelpers.CreateTestModel("test-api"))
+            with
+            {
+                OnDiagnostic = message => diagnostics.Add(message)
+            };
+        var agent = new Agent(options);
+        using var _ = agent.Subscribe((@event, _) =>
+        {
+            if (@event is AgentEndEvent)
+            {
+                throw new InvalidOperationException("listener failed");
+            }
+
+            return Task.CompletedTask;
+        });
+
+        var runTask = agent.PromptAsync("cancel me");
+        SpinWait.SpinUntil(() => agent.Status == AgentStatus.Running, TimeSpan.FromSeconds(2)).Should().BeTrue();
+        await agent.AbortAsync();
+        release.TrySetResult();
+        await runTask;
+
+        diagnostics.Should().ContainSingle(message => message.Contains("Listener error during agent_end", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task PromptAsync_WhenTransformContextIsNull_DoesNotCrash()
+    {
+        using var provider = RegisterDefaultProvider();
+        var options = TestHelpers.CreateTestOptions(model: TestHelpers.CreateTestModel("test-api"))
+            with
+            {
+                TransformContext = null
+            };
+        var agent = new Agent(options);
+
+        var result = await agent.PromptAsync("hello");
+
+        result.OfType<AssistantAgentMessage>().Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task PromptAsync_WhenConvertToLlmIsNull_UsesDefaultMessageConverter()
+    {
+        using var provider = RegisterDefaultProvider();
+        var options = TestHelpers.CreateTestOptions(model: TestHelpers.CreateTestModel("test-api"))
+            with
+            {
+                ConvertToLlm = null
+            };
+        var agent = new Agent(options);
+
+        var result = await agent.PromptAsync("hello");
+
+        result.OfType<AssistantAgentMessage>().Should().ContainSingle();
     }
 
     [Fact]
