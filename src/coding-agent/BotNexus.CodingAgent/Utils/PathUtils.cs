@@ -17,6 +17,10 @@ namespace BotNexus.CodingAgent.Utils;
 /// </remarks>
 public static class PathUtils
 {
+    private static readonly StringComparer PathComparer = OperatingSystem.IsWindows()
+        ? StringComparer.OrdinalIgnoreCase
+        : StringComparer.Ordinal;
+
     /// <summary>
     /// Resolves a user-provided path against a working directory while enforcing root containment.
     /// </summary>
@@ -48,6 +52,13 @@ public static class PathUtils
         {
             throw new InvalidOperationException(
                 $"Path '{relative}' resolves outside working directory '{root}'.");
+        }
+
+        var resolvedFinal = ResolveFinalTargetPath(resolved);
+        if (!IsUnderRoot(resolvedFinal, root))
+        {
+            throw new UnauthorizedAccessException(
+                $"Symlink target escapes working directory: {relative}");
         }
 
         return resolved;
@@ -122,13 +133,41 @@ public static class PathUtils
     /// </remarks>
     public static bool IsGitIgnored(string path, string workingDirectory)
     {
+        var ignored = GetGitIgnoredPaths([path], workingDirectory);
         var resolvedPath = ResolvePath(path, workingDirectory);
-        var relativePath = GetRelativePath(resolvedPath, workingDirectory);
+        return ignored.Contains(resolvedPath);
+    }
+
+    public static HashSet<string> GetGitIgnoredPaths(IEnumerable<string> paths, string workingDirectory)
+    {
+        var resolved = paths
+            .Where(static path => !string.IsNullOrWhiteSpace(path))
+            .Select(path => ResolvePath(path, workingDirectory))
+            .Distinct(PathComparer)
+            .ToList();
+
+        var ignored = new HashSet<string>(PathComparer);
+        if (resolved.Count == 0)
+        {
+            return ignored;
+        }
+
+        var relativeToAbsolute = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var path in resolved)
+        {
+            var relative = GetRelativePath(path, workingDirectory)
+                .Replace(Path.DirectorySeparatorChar, '/');
+            if (!relativeToAbsolute.ContainsKey(relative))
+            {
+                relativeToAbsolute[relative] = path;
+            }
+        }
 
         var startInfo = new ProcessStartInfo
         {
             FileName = "git",
-            Arguments = $"-C \"{workingDirectory}\" check-ignore -q -- \"{relativePath}\"",
+            Arguments = $"-C \"{workingDirectory}\" check-ignore --stdin",
+            RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -138,10 +177,34 @@ public static class PathUtils
         using var process = Process.Start(startInfo);
         if (process is null)
         {
-            return false;
+            return ignored;
         }
 
-        if (!process.WaitForExit(5000))
+        try
+        {
+            foreach (var relative in relativeToAbsolute.Keys)
+            {
+                process.StandardInput.WriteLine(relative);
+            }
+
+            process.StandardInput.Close();
+        }
+        catch
+        {
+            return ignored;
+        }
+
+        string output;
+        try
+        {
+            output = process.StandardOutput.ReadToEnd();
+        }
+        catch
+        {
+            output = string.Empty;
+        }
+
+        if (!process.WaitForExit(5000) || process.ExitCode > 1)
         {
             try
             {
@@ -149,13 +212,26 @@ public static class PathUtils
             }
             catch
             {
-                // Best-effort timeout cleanup; ignore secondary failures.
             }
 
-            return false;
+            return ignored;
         }
 
-        return process.ExitCode == 0;
+        foreach (var line in output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var relative = line.Trim().Replace('\\', '/');
+            if (relativeToAbsolute.TryGetValue(relative, out var absolute))
+            {
+                ignored.Add(absolute);
+            }
+            else
+            {
+                var resolvedIgnored = ResolvePath(relative, workingDirectory);
+                ignored.Add(resolvedIgnored);
+            }
+        }
+
+        return ignored;
     }
 
     private static string NormalizeSegments(string path)
@@ -203,5 +279,63 @@ public static class PathUtils
         return path.EndsWith(Path.DirectorySeparatorChar)
             ? path
             : path + Path.DirectorySeparatorChar;
+    }
+
+    private static string ResolveFinalTargetPath(string fullPath)
+    {
+        var current = Path.GetFullPath(fullPath);
+        var root = Path.GetPathRoot(current);
+        if (string.IsNullOrWhiteSpace(root))
+        {
+            return current;
+        }
+
+        var rootPath = Path.GetFullPath(root);
+        var segments = current[rootPath.Length..]
+            .Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries);
+
+        var currentPath = rootPath;
+        for (var i = 0; i < segments.Length; i++)
+        {
+            currentPath = Path.Combine(currentPath, segments[i]);
+
+            if (Directory.Exists(currentPath))
+            {
+                var directoryInfo = new DirectoryInfo(currentPath);
+                if (directoryInfo.LinkTarget is not null)
+                {
+                    var resolvedTarget = directoryInfo.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? currentPath;
+                    currentPath = AppendRemainingSegments(resolvedTarget, segments, i + 1);
+                    return Path.GetFullPath(currentPath);
+                }
+            }
+            else if (File.Exists(currentPath))
+            {
+                var fileInfo = new FileInfo(currentPath);
+                if (fileInfo.LinkTarget is not null)
+                {
+                    var resolvedTarget = fileInfo.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? currentPath;
+                    currentPath = AppendRemainingSegments(resolvedTarget, segments, i + 1);
+                    return Path.GetFullPath(currentPath);
+                }
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        return current;
+    }
+
+    private static string AppendRemainingSegments(string basePath, IReadOnlyList<string> segments, int startIndex)
+    {
+        var path = basePath;
+        for (var i = startIndex; i < segments.Count; i++)
+        {
+            path = Path.Combine(path, segments[i]);
+        }
+
+        return path;
     }
 }

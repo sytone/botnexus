@@ -46,6 +46,39 @@ public sealed class PathUtilsTests : IDisposable
         relative.Should().Be(Path.Combine("nested", "target.txt"));
     }
 
+    [Fact]
+    public void ResolvePath_WhenPathTraversesViaSymlinkOutsideRoot_ThrowsUnauthorizedAccessException()
+    {
+        var outsideDirectory = Path.Combine(Path.GetTempPath(), $"botnexus-pathutils-outside-{Guid.NewGuid():N}");
+        var symlinkPath = Path.Combine(_workingDirectory, "escape-link");
+        Directory.CreateDirectory(outsideDirectory);
+
+        try
+        {
+            try
+            {
+                _ = Directory.CreateSymbolicLink(symlinkPath, outsideDirectory);
+            }
+            catch (Exception ex) when (
+                ex is UnauthorizedAccessException or PlatformNotSupportedException ||
+                ex.Message.Contains("privilege", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            var action = () => PathUtils.ResolvePath(Path.Combine("escape-link", "secret.txt"), _workingDirectory);
+
+            action.Should().Throw<UnauthorizedAccessException>();
+        }
+        finally
+        {
+            if (Directory.Exists(outsideDirectory))
+            {
+                Directory.Delete(outsideDirectory, recursive: true);
+            }
+        }
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_workingDirectory))
