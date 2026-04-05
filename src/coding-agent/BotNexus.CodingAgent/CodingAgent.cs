@@ -93,7 +93,8 @@ public static class CodingAgent
             new WriteTool(workingDirectory),
             new EditTool(workingDirectory),
             new ShellTool(),
-            new GlobTool(workingDirectory)
+            new GlobTool(workingDirectory),
+            new GrepTool(workingDirectory)
         };
 
         if (extensionTools is { Count: > 0 })
