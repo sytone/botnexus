@@ -24,13 +24,14 @@ public interface IAgentTool
 
     // Execute the tool
     Task<AgentToolResult> ExecuteAsync(
-        IReadOnlyDictionary<string, object?> preparedArguments,
-        AgentToolUpdateCallback? updateCallback = null,
-        CancellationToken cancellationToken = default);
+        string toolCallId,
+        IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken cancellationToken = default,
+        AgentToolUpdateCallback? onUpdate = null);
 
     // Optional: contribute guidance to the system prompt
-    string? GetPromptSnippet();
-    string? GetPromptGuidelines();
+    string? GetPromptSnippet() => null;
+    IReadOnlyList<string> GetPromptGuidelines() => [];
 }
 ```
 
@@ -40,9 +41,9 @@ public interface IAgentTool
 | `Label` | Display name for UI and documentation. |
 | `Definition` | `Tool` record with `Name`, `Description`, and JSON Schema `Parameters`. Sent to the LLM. |
 | `PrepareArgumentsAsync` | Validate and normalize arguments. Throw `ArgumentException` on invalid input. |
-| `ExecuteAsync` | Run the tool. Return `AgentToolResult` with content and optional error. |
-| `GetPromptSnippet` | (Optional) Include in system prompt as-is. Use for short examples. |
-| `GetPromptGuidelines` | (Optional) Include in system prompt as guidance text. Use for usage notes. |
+| `ExecuteAsync` | Run the tool. Takes `toolCallId` for correlation. Return `AgentToolResult` with content and optional error. |
+| `GetPromptSnippet` | (Optional) Include in system prompt as-is. Use for short examples. Default: `null`. |
+| `GetPromptGuidelines` | (Optional) List of guideline strings contributed to system prompt. Default: empty list. |
 
 ---
 
@@ -90,13 +91,14 @@ public sealed class EchoTool : IAgentTool
     }
 
     public async Task<AgentToolResult> ExecuteAsync(
-        IReadOnlyDictionary<string, object?> preparedArguments,
-        AgentToolUpdateCallback? updateCallback = null,
-        CancellationToken cancellationToken = default)
+        string toolCallId,
+        IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken cancellationToken = default,
+        AgentToolUpdateCallback? onUpdate = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var message = (string)preparedArguments["message"]!;
+        var message = (string)arguments["message"]!;
 
         return new AgentToolResult(
             Content: new List<AgentToolContent>
@@ -110,7 +112,7 @@ public sealed class EchoTool : IAgentTool
     }
 
     public string? GetPromptSnippet() => null;
-    public string? GetPromptGuidelines() => "Use this tool to echo messages for testing.";
+    public IReadOnlyList<string> GetPromptGuidelines() => ["Use this tool to echo messages for testing."];
 }
 ```
 
@@ -178,15 +180,16 @@ public sealed class CalculatorTool : IAgentTool
     }
 
     public async Task<AgentToolResult> ExecuteAsync(
-        IReadOnlyDictionary<string, object?> preparedArguments,
-        AgentToolUpdateCallback? updateCallback = null,
-        CancellationToken cancellationToken = default)
+        string toolCallId,
+        IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken cancellationToken = default,
+        AgentToolUpdateCallback? onUpdate = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var operation = (string)preparedArguments["operation"]!;
-        var a = (double)preparedArguments["a"]!;
-        var b = (double)preparedArguments["b"]!;
+        var operation = (string)arguments["operation"]!;
+        var a = (double)arguments["a"]!;
+        var b = (double)arguments["b"]!;
 
         try
         {
@@ -226,8 +229,8 @@ public sealed class CalculatorTool : IAgentTool
     }
 
     public string? GetPromptSnippet() => null;
-    public string? GetPromptGuidelines() =>
-        "Use this tool for arithmetic. Division by zero returns an error.";
+    public IReadOnlyList<string> GetPromptGuidelines() =>
+        ["Use this tool for arithmetic. Division by zero returns an error."];
 }
 ```
 
@@ -289,12 +292,13 @@ public sealed class DatabaseQueryTool : IAgentTool
     }
 
     public async Task<AgentToolResult> ExecuteAsync(
-        IReadOnlyDictionary<string, object?> preparedArguments,
-        AgentToolUpdateCallback? updateCallback = null,
-        CancellationToken cancellationToken = default)
+        string toolCallId,
+        IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken cancellationToken = default,
+        AgentToolUpdateCallback? onUpdate = null)
     {
-        var query = (string)preparedArguments["query"]!;
-        var limit = (int)preparedArguments["limit"]!;
+        var query = (string)arguments["query"]!;
+        var limit = (int)arguments["limit"]!;
 
         var results = new StringBuilder();
         var rowCount = 0;
@@ -311,9 +315,9 @@ public sealed class DatabaseQueryTool : IAgentTool
                 rowCount++;
 
                 // Update callback: stream partial results every 10 rows
-                if (i % 10 == 0 && updateCallback is not null)
+                if (i % 10 == 0 && onUpdate is not null)
                 {
-                    await updateCallback(new AgentToolContent(
+                    await onUpdate(new AgentToolContent(
                         Type: AgentToolContentType.Text,
                         Text: $"Processed {i} rows..."));
                 }
@@ -359,8 +363,8 @@ public sealed class DatabaseQueryTool : IAgentTool
     }
 
     public string? GetPromptSnippet() => null;
-    public string? GetPromptGuidelines() =>
-        "Use this tool for SELECT queries only. No INSERT, UPDATE, or DELETE.";
+    public IReadOnlyList<string> GetPromptGuidelines() =>
+        ["Use this tool for SELECT queries only. No INSERT, UPDATE, or DELETE."];
 }
 ```
 
@@ -519,9 +523,10 @@ The `SystemPromptBuilder` collects these and includes them in the system prompt.
 
 ```csharp
 public async Task<AgentToolResult> ExecuteAsync(
-    IReadOnlyDictionary<string, object?> preparedArguments,
-    AgentToolUpdateCallback? updateCallback = null,
-    CancellationToken cancellationToken = default)
+    string toolCallId,
+    IReadOnlyDictionary<string, object?> arguments,
+    CancellationToken cancellationToken = default,
+    AgentToolUpdateCallback? onUpdate = null)
 {
     try
     {
@@ -555,7 +560,7 @@ public async Task<AgentToolResult> ExecuteAsync(
 ## Related documentation
 
 - **[Agent Core — Tool Execution](02-agent-core.md#tool-execution)** — How tools fit into the agent loop
-- **[Coding Agent — Built-in Tools](03-coding-agent.md#built-in-tools)** — Examples: ReadTool, WriteTool, EditTool, ShellTool, GrepTool, GlobTool
+- **[Coding Agent — Built-in Tools](03-coding-agent.md#built-in-tools)** — Examples: ReadTool, ListDirectoryTool, WriteTool, EditTool, ShellTool, GrepTool, GlobTool
 - **[Building Custom Coding Agent](08-building-custom-coding-agent.md)** — Register and use tools in your agent
 - **[ReadTool.cs source](../src/coding-agent/BotNexus.CodingAgent/Tools/ReadTool.cs)** — Reference implementation
 - **[IAgentTool interface source](../src/agent/BotNexus.AgentCore/Tools/IAgentTool.cs)** — Complete interface definition

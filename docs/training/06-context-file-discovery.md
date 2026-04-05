@@ -133,37 +133,35 @@ private static string FitContentToBudget(string content, int maxBytes)
     if (fullSize <= maxBytes)
         return content;
 
-    // Binary search: find the longest prefix that fits the budget
-    var low = 0;
-    var high = content.Length - 1;
-    var result = string.Empty;
+    var markerBytes = Encoding.UTF8.GetByteCount(TruncatedMarker);
+    if (maxBytes <= markerBytes)
+        return TruncatedMarker[..Math.Min(TruncatedMarker.Length, maxBytes)];
 
-    while (low <= high)
+    // Character-by-character iteration to find the longest prefix that fits
+    var allowedBytes = maxBytes - markerBytes;
+    var builder = new StringBuilder(content.Length);
+    var usedBytes = 0;
+    foreach (var ch in content)
     {
-        var mid = (low + high) / 2;
-        var prefix = content[..mid];
-        var prefixSize = Encoding.UTF8.GetByteCount(prefix);
+        var charBytes = Encoding.UTF8.GetByteCount(ch.ToString());
+        if (usedBytes + charBytes > allowedBytes)
+            break;
 
-        if (prefixSize + Encoding.UTF8.GetByteCount(TruncatedMarker) <= maxBytes)
-        {
-            result = prefix;
-            low = mid + 1;
-        }
-        else
-        {
-            high = mid - 1;
-        }
+        builder.Append(ch);
+        usedBytes += charBytes;
     }
 
-    return result + TruncatedMarker;
+    builder.Append(TruncatedMarker);
+    return builder.ToString();
 }
 ```
 
 **Algorithm:**
-- Binary search on string length to find the longest prefix that fits
+- Iterates character-by-character, accumulating UTF-8 byte cost
 - Reserves space for the `[truncated]` marker (11 bytes)
+- Stops as soon as adding the next character would exceed the budget
 - Always truncates at character boundaries (never mid-UTF8-sequence)
-- Shorter files may be skipped entirely if no space is left
+- Edge case: if the budget is smaller than the marker itself, the marker is truncated to fit
 
 ## Return value
 

@@ -89,11 +89,12 @@ graph TB
 
 ## Built-in tools
 
-The CodingAgent ships with six tools. Five of them are scoped to the working directory; `ShellTool` is the exception — its constructor takes **no parameters**.
+The CodingAgent ships with seven tools. Six of them are scoped to the working directory; `ShellTool` is the exception — its constructor takes **no parameters**.
 
 | Tool name | Class | Registered as | Purpose |
 |-----------|-------|---------------|---------|
 | read | `ReadTool` | `"read"` | Read files and directories with line numbers |
+| list_directory | `ListDirectoryTool` | `"list_directory"` | List directory entries as a formatted tree with depth control |
 | write | `WriteTool` | `"write"` | Write complete files (full replacement) |
 | edit | `EditTool` | `"edit"` | Surgical find-and-replace edits with fuzzy matching |
 | bash | `ShellTool` | `"bash"` | Shell command execution (Windows: PowerShell, Unix: bash) |
@@ -109,6 +110,7 @@ private static IReadOnlyList<IAgentTool> CreateTools(
     var tools = new List<IAgentTool>
     {
         new ReadTool(workingDirectory),
+        new ListDirectoryTool(workingDirectory),
         new WriteTool(workingDirectory),
         new EditTool(workingDirectory),
         new ShellTool(),
@@ -123,7 +125,7 @@ private static IReadOnlyList<IAgentTool> CreateTools(
 }
 ```
 
-> Note: `ShellTool()` takes **no** `workingDirectory` parameter. All other tools (`ReadTool`, `WriteTool`, `EditTool`, `GlobTool`, `GrepTool`) receive it for path containment.
+> Note: `ShellTool()` takes **no** `workingDirectory` parameter. All other tools (`ReadTool`, `ListDirectoryTool`, `WriteTool`, `EditTool`, `GlobTool`, `GrepTool`) receive it for path containment.
 
 ### `read` — Read files and directories
 

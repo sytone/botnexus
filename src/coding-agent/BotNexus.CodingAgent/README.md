@@ -1,6 +1,6 @@
 # BotNexus.CodingAgent
 
-Minimal coding agent CLI with read, edit, write, shell, and glob tools. Built on BotNexus.AgentCore and BotNexus.Providers.Core.
+Minimal coding agent CLI with read, list_directory, edit, write, shell, grep, and glob tools. Built on BotNexus.AgentCore and BotNexus.Providers.Core.
 
 ## Quick Start
 
@@ -86,6 +86,7 @@ Options:
   --model <model>          Override model id (e.g., gpt-4.1, claude-3-opus)
   --provider <provider>    Override provider id (e.g., openai, anthropic)
   --resume <session-id>    Resume an existing session
+  --thinking <level>       Set reasoning level: off|minimal|low|medium|high|xhigh
   --non-interactive        Run one prompt and exit
   --verbose                Enable verbose logs
   --help                   Show this help
@@ -120,7 +121,7 @@ dotnet run --project src/coding-agent/BotNexus.CodingAgent/ -- --verbose
 
 ## Built-in Tools
 
-The coding agent includes six core tools, available within any prompt:
+The coding agent includes seven core tools, available within any prompt:
 
 ### read
 
@@ -128,7 +129,8 @@ The coding agent includes six core tools, available within any prompt:
 
 **Parameters**:
 - `path` (string, required): File or directory path relative to working directory
-- `range` (string, optional): Line range in format `START-END` (e.g., `1-50`)
+- `start_line` (integer, optional): 1-based start line for file reads
+- `end_line` (integer, optional): 1-based inclusive end line for file reads
 
 **Output**:
 - Files: Line-numbered records (`1 | line content`) up to 2000 lines
@@ -139,6 +141,27 @@ The coding agent includes six core tools, available within any prompt:
 > read
 path: src/Tools/ReadTool.cs
 range: 1-50
+```
+
+### list_directory
+
+**Purpose**: List directory entries as a formatted tree with depth control.
+
+**Parameters**:
+- `path` (string, required): Directory path relative to working directory
+- `depth` (integer, optional): Maximum depth to recurse (default: 2)
+- `showHidden` (boolean, optional): Include hidden files and directories (default: false)
+
+**Output**:
+- Formatted directory tree with `├──`/`└──` connectors
+- Entries labeled `[dir]` or `[file, N bytes]`
+- Respects `.gitignore` patterns
+
+**Example**:
+```
+> list_directory
+path: src/
+depth: 2
 ```
 
 ### write

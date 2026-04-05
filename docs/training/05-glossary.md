@@ -2,7 +2,7 @@
 
 Quick reference for all key terms used in the BotNexus codebase. Terms are organized alphabetically.
 
-> **See also:** [Architecture Overview](00-overview.md) · [Provider System](01-providers.md) · [Agent Core](02-agent-core.md) · [Coding Agent](03-coding-agent.md) · [Build Your Own Agent](04-building-your-own.md)
+> **See also:** [Architecture Overview](00-overview.md) · [Provider System](01-providers.md) · [Agent Core](02-agent-core.md) · [Coding Agent](03-coding-agent.md) · [Build Your Own Agent](04-building-your-own.md) · [Context File Discovery](06-context-file-discovery.md) · [Thinking Levels](07-thinking-levels.md) · [Building Custom Coding Agent](08-building-custom-coding-agent.md) · [Tool Development](09-tool-development.md)
 
 ---
 
@@ -426,15 +426,6 @@ Assembles the system prompt from multiple sources: environment context, tool con
 
 **Source:** `BotNexus.CodingAgent`
 **Training:** [Coding Agent — System Prompt](03-coding-agent.md)
-
----
-
-### ThinkingLevel
-
-Enum controlling reasoning intensity for models that support extended thinking. Values: `Minimal`, `Low`, `Medium`, `High`, `ExtraHigh`.
-
-**Source:** `BotNexus.Providers.Core.Models`
-**Training:** [Provider System](01-providers.md)
 
 ---
 

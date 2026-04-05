@@ -284,24 +284,57 @@ botnexus-coding-agent --thinking medium "Implement a binary search"
 
 ## CLI integration
 
-The coding agent CLI currently does not expose a `--thinking` flag directly in the command parser. To use thinking levels, you would:
+### `--thinking` command-line argument
 
-1. Set it in `.botnexus-agent/config.json`:
-   ```json
-   {
-     "thinkingLevel": "medium",
-     "model": "claude-sonnet-4"
-   }
-   ```
+The coding agent CLI exposes a `--thinking` flag for setting the thinking level at startup:
 
-2. Or programmatically via `Agent.State.ThinkingLevel`:
-   ```csharp
-   var agent = await CodingAgent.CreateAsync(...);
-   agent.State.ThinkingLevel = ThinkingLevel.Medium;
-   await agent.PromptAsync("Complex coding task");
-   ```
+```
+--thinking <level>       Set reasoning level: off|minimal|low|medium|high|xhigh
+```
 
-**Future enhancement:** Add `--thinking` flag to the CLI parser for quick override.
+Example:
+
+```bash
+botnexus-coding-agent --thinking medium "Implement a binary search"
+```
+
+The `CommandParser` parses this argument and resolves it to a `ThinkingLevel?` value. The value `"off"` maps to `null` (thinking disabled).
+
+### `/thinking` slash command
+
+During an interactive session, you can view or change the thinking level with the `/thinking` slash command:
+
+```
+/thinking              Show current thinking level
+/thinking <level>      Set thinking level (off|minimal|low|medium|high|xhigh)
+```
+
+When you change the thinking level, the session records a `thinking_level_change` metadata entry (e.g., `"off → medium"`) so the change is visible in session history.
+
+### Configuration via config.json
+
+You can also set the thinking level in `.botnexus-agent/config.json` using the `custom` dictionary:
+
+```json
+{
+  "model": "claude-sonnet-4",
+  "custom": {
+    "thinking": "medium"
+  }
+}
+```
+
+The resolution order is: CLI `--thinking` flag → config.json `custom.thinking` → default (`null` / off).
+
+### Programmatic access
+
+Set thinking level programmatically via `Agent.State.ThinkingLevel`:
+
+```csharp
+var agent = await CodingAgent.CreateAsync(...);
+agent.State.ThinkingLevel = ThinkingLevel.Medium;
+await agent.PromptAsync("Complex coding task");
+```
 
 ## Content blocks: ThinkingContent
 

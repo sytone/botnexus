@@ -137,19 +137,21 @@ Or use the full `SystemPromptBuilder` from `BotNexus.CodingAgent`:
 
 ```csharp
 using BotNexus.CodingAgent;
+using BotNexus.CodingAgent.Utils;
 
 var contextFiles = await ContextFileDiscovery.DiscoverAsync(
     Environment.CurrentDirectory,
     CancellationToken.None);
 
-var systemPrompt = SystemPromptBuilder.Build(new SystemPromptContext(
+var promptBuilder = new SystemPromptBuilder();
+var systemPrompt = promptBuilder.Build(new SystemPromptContext(
     WorkingDirectory: Environment.CurrentDirectory,
-    ProjectName: "MyProject",
-    EnvironmentContext: "Linux, C#",
     GitBranch: "main",
-    PackageManagers: new[] { "dotnet" },
-    Tools: new List<IAgentTool>(),  // Populated in next step
+    GitStatus: null,
+    PackageManager: "dotnet",
+    ToolNames: new List<string>(),  // Populated in next step
     Skills: new List<string>(),
+    CustomInstructions: null,
     ContextFiles: contextFiles
 ));
 ```
@@ -197,11 +199,12 @@ public sealed class DemoTool : IAgentTool
     }
 
     public async Task<AgentToolResult> ExecuteAsync(
-        IReadOnlyDictionary<string, object?> preparedArguments,
-        AgentToolUpdateCallback? updateCallback = null,
-        CancellationToken cancellationToken = default)
+        string toolCallId,
+        IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken cancellationToken = default,
+        AgentToolUpdateCallback? onUpdate = null)
     {
-        var message = preparedArguments["message"]?.ToString() ?? "";
+        var message = arguments["message"]?.ToString() ?? "";
         var result = $"Echo: {message}";
         
         return new AgentToolResult(
@@ -217,7 +220,7 @@ public sealed class DemoTool : IAgentTool
 
     // Optional: contribute extra guidance to the system prompt
     public string? GetPromptSnippet() => null;
-    public string? GetPromptGuidelines() => "Use this tool to echo messages.";
+    public IReadOnlyList<string> GetPromptGuidelines() => ["Use this tool to echo messages."];
 }
 ```
 
@@ -466,5 +469,5 @@ await httpClient.DisposeAsync();
 - **[Architecture Overview](00-overview.md)** — System design and layer separation
 - **[Agent Core](02-agent-core.md)** — Deep dive into the agent loop, state, and hooks
 - **[Coding Agent](03-coding-agent.md)** — How BotNexus wires a full coding agent
-- **[Tool Development](08-tool-development.md)** — In-depth tool implementation guide
+- **[Tool Development](09-tool-development.md)** — In-depth tool implementation guide
 - **[Building Your Own — Provider](04-building-your-own.md#step-10-adding-a-new-llm-provider)** — Implementing a custom provider
