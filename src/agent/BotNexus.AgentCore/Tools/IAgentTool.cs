@@ -94,4 +94,14 @@ public interface IAgentTool
         IReadOnlyDictionary<string, object?> arguments,
         CancellationToken cancellationToken = default,
         AgentToolUpdateCallback? onUpdate = null);
+
+    /// <summary>
+    /// Optional one-line snippet for system prompt tool listing.
+    /// </summary>
+    string? GetPromptSnippet() => null;
+
+    /// <summary>
+    /// Optional additional guidelines contributed by this tool.
+    /// </summary>
+    IReadOnlyList<string> GetPromptGuidelines() => [];
 }
