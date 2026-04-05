@@ -86,6 +86,18 @@ public sealed class Agent
 
     public bool HasQueuedMessages => _steeringQueue.HasItems || _followUpQueue.HasItems;
 
+    public QueueMode SteeringMode
+    {
+        get => _steeringQueue.Mode;
+        set => _steeringQueue.Mode = value;
+    }
+
+    public QueueMode FollowUpMode
+    {
+        get => _followUpQueue.Mode;
+        set => _followUpQueue.Mode = value;
+    }
+
     /// <summary>
     /// Subscribe to agent lifecycle events.
     /// </summary>
