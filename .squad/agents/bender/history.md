@@ -749,3 +749,6 @@ Participated in design review ceremony for Phase 3 architecture. All ADs approve
 - `src\gateway\BotNexus.Gateway\Extensions\GatewayServiceCollectionExtensions.cs`: added `SetDefaultAgent(IServiceCollection, string)` helper, registered `ChannelManager`, and documented `ISessionStore` default behavior.
 - `src\channels\BotNexus.Channels.Core\ChannelManager.cs` is now the single adapter registry used by GatewayHost for startup, shutdown, and dispatch lookup.
 - `src\gateway\BotNexus.Gateway.Sessions\FileSessionStore.cs`: documented ConfigureAwait policy and applied `ConfigureAwait(false)` consistently across awaits.
+### 2026-04-06 — P0 WebSocket streaming history parity
+- Fixed GatewayWebSocketHandler.HandleUserMessageAsync to mirror GatewayHost.DispatchAsync streaming history capture.
+- WebSocket streaming now accumulates content deltas into a final assistant entry and persists tool_start/tool_end as tool role SessionEntry records before saving the session.

@@ -147,6 +147,8 @@ public sealed class GatewayWebSocketHandler
     {
         var session = await _sessions.GetOrCreateAsync(sessionId, agentId, cancellationToken);
         session.History.Add(new SessionEntry { Role = "user", Content = content });
+        var streamedContent = new StringBuilder();
+        var streamedHistory = new List<SessionEntry>();
 
         try
         {
@@ -154,6 +156,31 @@ public sealed class GatewayWebSocketHandler
 
             await foreach (var evt in handle.StreamAsync(content, cancellationToken))
             {
+                switch (evt.Type)
+                {
+                    case AgentStreamEventType.ContentDelta when evt.ContentDelta is not null:
+                        streamedContent.Append(evt.ContentDelta);
+                        break;
+                    case AgentStreamEventType.ToolStart when evt.ToolCallId is not null || evt.ToolName is not null:
+                        streamedHistory.Add(new SessionEntry
+                        {
+                            Role = "tool",
+                            Content = $"Tool '{evt.ToolName ?? "unknown"}' started.",
+                            ToolName = evt.ToolName,
+                            ToolCallId = evt.ToolCallId
+                        });
+                        break;
+                    case AgentStreamEventType.ToolEnd when evt.ToolCallId is not null || evt.ToolName is not null:
+                        streamedHistory.Add(new SessionEntry
+                        {
+                            Role = "tool",
+                            Content = evt.ToolResult ?? (evt.ToolIsError == true ? "Tool execution failed." : "Tool execution completed."),
+                            ToolName = evt.ToolName,
+                            ToolCallId = evt.ToolCallId
+                        });
+                        break;
+                }
+
                 object wsMessage = evt.Type switch
                 {
                     AgentStreamEventType.MessageStart => new { type = "message_start", messageId = evt.MessageId },
@@ -167,6 +194,9 @@ public sealed class GatewayWebSocketHandler
 
                 await SendJsonAsync(socket, wsMessage, cancellationToken);
             }
+
+            session.History.AddRange(streamedHistory);
+            session.History.Add(new SessionEntry { Role = "assistant", Content = streamedContent.ToString() });
         }
         catch (Exception ex)
         {
