@@ -22,6 +22,10 @@ namespace BotNexus.AgentCore.Configuration;
 /// <param name="FollowUpMode">Controls follow-up message queue consumption (All or OneAtATime).</param>
 /// <param name="SessionId">Optional caller-provided session identifier (overrides GenerationSettings.SessionId if set).</param>
 /// <param name="OnDiagnostic">Optional callback for non-fatal runtime diagnostics.</param>
+/// <param name="MaxRetryDelayMs">
+/// Optional maximum delay in milliseconds for transient retry backoff.
+/// Must be greater than zero when set; null means uncapped retry delay.
+/// </param>
 /// <remarks>
 /// AgentOptions is passed to the Agent constructor and frozen for the lifetime of the agent.
 /// InitialState is used to seed AgentState — changes to InitialState after construction have no effect.
@@ -42,4 +46,5 @@ public record AgentOptions(
     QueueMode SteeringMode,
     QueueMode FollowUpMode,
     string? SessionId = null,
-    Action<string>? OnDiagnostic = null);
+    Action<string>? OnDiagnostic = null,
+    int? MaxRetryDelayMs = null);

@@ -308,7 +308,10 @@ public static class AgentLoopRunner
             }
             catch (Exception ex) when (IsTransientError(ex) && attempt < maxAttempts - 1)
             {
-                await Task.Delay(backoffMs, cancellationToken).ConfigureAwait(false);
+                var delayMs = config.MaxRetryDelayMs is > 0
+                    ? Math.Min(backoffMs, config.MaxRetryDelayMs.Value)
+                    : backoffMs;
+                await Task.Delay(delayMs, cancellationToken).ConfigureAwait(false);
                 attempt++;
                 backoffMs *= 2;
                 continue;

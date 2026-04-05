@@ -47,6 +47,14 @@ public sealed class Agent
     public Agent(AgentOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
+        if (options.MaxRetryDelayMs is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options.MaxRetryDelayMs),
+                options.MaxRetryDelayMs,
+                "MaxRetryDelayMs must be greater than zero when set.");
+        }
+
         _options = options;
         _convertToLlm = options.ConvertToLlm ?? DefaultMessageConverter.ConvertToLlm;
         _transformContext = options.TransformContext ?? IdentityTransformContext;
@@ -569,6 +577,7 @@ public sealed class Agent
             _options.BeforeToolCall,
             _options.AfterToolCall,
             generationSettings,
+            _options.MaxRetryDelayMs,
             skipInitialSteeringPoll);
     }
 

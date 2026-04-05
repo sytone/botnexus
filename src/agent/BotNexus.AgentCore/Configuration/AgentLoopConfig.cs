@@ -17,6 +17,10 @@ namespace BotNexus.AgentCore.Configuration;
 /// <param name="BeforeToolCall">Optional pre-tool-call hook for validation and blocking.</param>
 /// <param name="AfterToolCall">Optional post-tool-call hook for result transformation.</param>
 /// <param name="GenerationSettings">The generation settings for model calls (temperature, maxTokens, etc.).</param>
+/// <param name="MaxRetryDelayMs">
+/// Optional maximum delay in milliseconds for transient retry backoff.
+/// Must be greater than zero when set; null means uncapped retry delay.
+/// </param>
 /// <param name="SkipInitialSteeringPoll">True to skip the first steering queue drain for this run.</param>
 /// <remarks>
 /// AgentLoopConfig is built from AgentOptions at the start of each run.
@@ -34,4 +38,5 @@ public record AgentLoopConfig(
     BeforeToolCallDelegate? BeforeToolCall,
     AfterToolCallDelegate? AfterToolCall,
     SimpleStreamOptions GenerationSettings,
+    int? MaxRetryDelayMs = null,
     bool SkipInitialSteeringPoll = false);
