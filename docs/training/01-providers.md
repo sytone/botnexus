@@ -112,6 +112,7 @@ public record LlmModel(
     ModelCost Cost,                                  // per-token pricing
     int ContextWindow,                               // max context length in tokens
     int MaxTokens,                                   // max output tokens
+    bool SupportsExtraHighThinking = false,          // supports xhigh thinking level?
     IReadOnlyDictionary<string, string>? Headers = null,  // extra HTTP headers
     OpenAICompletionsCompat? Compat = null            // compatibility overrides
 );

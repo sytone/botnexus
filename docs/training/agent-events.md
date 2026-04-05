@@ -117,7 +117,7 @@ Events are defined in `Types/AgentEvent.cs` and `Types/AgentEventType.cs`. Every
 | `MessageStartEvent` | `MessageStart` | When message processing starts | `Message` — the in-progress message |
 | `MessageUpdateEvent` | `MessageUpdate` | Streaming deltas during generation | `ContentDelta`, `IsThinking`, `ToolCallId`, `ToolName`, `ArgumentsDelta`, `FinishReason`, token counts |
 | `MessageEndEvent` | `MessageEnd` | Message complete | `Message` — final complete message |
-| `ToolExecutionStartEvent` | `ToolExecutionStart` | Before `ExecuteAsync` is called | `ToolCallId`, `ToolName`, `Args` |
+| `ToolExecutionStartEvent` | `ToolExecutionStart` | Before argument validation and hooks | `ToolCallId`, `ToolName`, `Args` (raw) |
 | `ToolExecutionUpdateEvent` | `ToolExecutionUpdate` | During long-running tool execution | `ToolCallId`, `ToolName`, `Args`, `PartialResult` |
 | `ToolExecutionEndEvent` | `ToolExecutionEnd` | After tool completes and hooks run | `ToolCallId`, `ToolName`, `Result`, `IsError` |
 
@@ -342,12 +342,12 @@ AfterToolCall = async (context, ct) =>
 ```
 For each tool call in the assistant message:
 │
-├── 1. Find tool by name (case-sensitive)
-├── 2. PrepareArgumentsAsync (validate/coerce arguments)
-├── 3. BeforeToolCall hook
+├── 1. Emit ToolExecutionStartEvent (with raw args)
+├── 2. Find tool by name (case-sensitive)
+├── 3. PrepareArgumentsAsync (validate/coerce arguments)
+├── 4. BeforeToolCall hook
 │     ├── Block=true → return error result, skip execution
 │     └── Block=false or null → proceed
-├── 4. Emit ToolExecutionStartEvent
 ├── 5. tool.ExecuteAsync(toolCallId, validatedArgs, ct, updateCallback)
 ├── 6. AfterToolCall hook (may transform result)
 ├── 7. Emit ToolExecutionEndEvent
@@ -499,7 +499,8 @@ public record AgentOptions(
     QueueMode SteeringMode,                       // Queue drain mode for steering
     QueueMode FollowUpMode,                       // Queue drain mode for follow-ups
     string? SessionId,                            // Caller-provided session ID
-    Action<string>? OnDiagnostic                  // Non-fatal diagnostic callback
+    Action<string>? OnDiagnostic,                 // Non-fatal diagnostic callback
+    int? MaxRetryDelayMs                          // Max retry backoff delay (ms); null = uncapped
 );
 ```
 

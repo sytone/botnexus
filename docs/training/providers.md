@@ -126,8 +126,9 @@ public record LlmModel(
     ModelCost Cost,                               // per-million-token pricing
     int ContextWindow,                            // max context tokens (e.g., 200000)
     int MaxTokens,                                // max output tokens (e.g., 32000)
-    IReadOnlyDictionary<string, string>? Headers, // custom HTTP headers
-    OpenAICompletionsCompat? Compat               // compat settings for OpenAI-like APIs
+    bool SupportsExtraHighThinking = false,       // true if model supports xhigh thinking level
+    IReadOnlyDictionary<string, string>? Headers = null, // custom HTTP headers
+    OpenAICompletionsCompat? Compat = null        // compat settings for OpenAI-like APIs
 );
 ```
 
@@ -160,14 +161,21 @@ IReadOnlyList<LlmModel> models = registry.GetModels("anthropic");
 
 ### Built-in models
 
-`BuiltInModels.RegisterAll()` pre-registers 20+ models for GitHub Copilot, including:
+`BuiltInModels.RegisterAll()` pre-registers 30+ models across three provider groups:
 
+**GitHub Copilot** (via `https://api.individual.githubcopilot.com`):
 - **Claude:** claude-haiku-4.5, claude-sonnet-4, claude-sonnet-4.5, claude-sonnet-4.6, claude-opus-4.5, claude-opus-4.6
-- **GPT:** gpt-4.1, gpt-4o, gpt-5, gpt-5-mini, gpt-5.1, gpt-5.2, gpt-5.2-codex, gpt-5.3-codex, gpt-5.4
+- **GPT:** gpt-4.1, gpt-4o, gpt-5, gpt-5-mini, gpt-5.1, gpt-5.1-codex, gpt-5.1-codex-max, gpt-5.1-codex-mini, gpt-5.2, gpt-5.2-codex, gpt-5.3-codex, gpt-5.4, gpt-5.4-mini
 - **Gemini:** gemini-2.5-pro, gemini-3-flash-preview, gemini-3-pro-preview, gemini-3.1-pro-preview
 - **Grok:** grok-code-fast-1
 
-All built-in models use the `https://api.individual.githubcopilot.com` base URL with Copilot-specific headers (`User-Agent`, `Editor-Version`, `Editor-Plugin-Version`, `Copilot-Integration-Id`).
+**Direct Anthropic** (via `https://api.anthropic.com`):
+- claude-3-5-haiku-20241022, claude-sonnet-4-20250514, claude-sonnet-4-5-20250929, claude-opus-4-5-20250929
+
+**Direct OpenAI** (via `https://api.openai.com/v1`):
+- gpt-4.1, gpt-4.1-mini, gpt-4o, o3, o4-mini
+
+Copilot models include Copilot-specific headers (`User-Agent`, `Editor-Version`, `Editor-Plugin-Version`, `Copilot-Integration-Id`). Direct Anthropic/OpenAI models use standard API authentication without custom headers.
 
 ### Cost calculation
 
@@ -470,9 +478,7 @@ modelRegistry.Register("my-provider", new LlmModel(
     Input: ["text"],
     Cost: new ModelCost(0.001m, 0.002m, 0m, 0m),
     ContextWindow: 128000,
-    MaxTokens: 4096,
-    Headers: null,
-    Compat: null
+    MaxTokens: 4096
 ));
 
 // Create client

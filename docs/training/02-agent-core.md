@@ -143,7 +143,8 @@ public record AgentOptions(
     QueueMode SteeringMode,
     QueueMode FollowUpMode,
     string? SessionId = null,
-    Action<string>? OnDiagnostic = null
+    Action<string>? OnDiagnostic = null,
+    int? MaxRetryDelayMs = null
 );
 ```
 
@@ -165,6 +166,7 @@ public record AgentOptions(
 | `FollowUpMode` | `QueueMode.All` or `QueueMode.OneAtATime` (Phase 4: configurable via setter) |
 | `SessionId` | Optional session identifier for logging and persistence |
 | `OnDiagnostic` | Optional callback for non-fatal runtime diagnostics (e.g., swallowed listener exceptions — Phase 4) |
+| `MaxRetryDelayMs` | Optional max delay (ms) for transient retry backoff; null means uncapped |
 
 > **Key takeaway:** `AgentOptions` is set-once wiring. To change behavior at runtime, modify `AgentState` properties instead.
 

@@ -269,7 +269,7 @@ Instance-based entry point that routes LLM requests to the correct provider. Acc
 
 ### LlmModel
 
-Record describing an LLM model: `Id`, `Name`, `Api` (routing key), `Provider`, `BaseUrl`, `Reasoning`, input modalities, `Cost`, `ContextWindow`, `MaxTokens`, optional `Headers` and `Compat`.
+Record describing an LLM model: `Id`, `Name`, `Api` (routing key), `Provider`, `BaseUrl`, `Reasoning`, input modalities, `Cost`, `ContextWindow`, `MaxTokens`, `SupportsExtraHighThinking`, optional `Headers` and `Compat`.
 
 **Source:** `BotNexus.Providers.Core.Models`
 **Training:** [Provider System — Model Registry](01-providers.md)

@@ -568,9 +568,7 @@ var model = new LlmModel(
     Input: ["text", "image"],
     Cost: new ModelCost(0.003m, 0.015m, 0.0003m, 0.00375m),
     ContextWindow: 200000,
-    MaxTokens: 16384,
-    Headers: null,
-    Compat: null
+    MaxTokens: 16384
 );
 modelRegistry.Register("anthropic", model);
 

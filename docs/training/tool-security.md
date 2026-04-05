@@ -85,6 +85,8 @@ public static string ResolvePath(string relative, string workingDirectory)
 2. Normalizes the relative path (collapses `./` and `..` segments).
 3. Resolves to an absolute path using `Path.GetFullPath`.
 4. **Checks that the resolved path starts with `workingDirectory`** — if not, throws `InvalidOperationException`.
+5. **Resolves symlinks** — walks each path segment, resolving directory and file symlinks to their final targets via `ResolveFinalTargetPath`.
+6. **Checks the symlink target is under the root** — if the resolved symlink target escapes the working directory, throws `UnauthorizedAccessException`.
 
 **Example:**
 
@@ -102,15 +104,16 @@ PathUtils.ResolvePath("/etc/passwd", "/home/user/project");
 
 ### Platform-aware comparison
 
-Path containment checks are **case-insensitive on Windows** and **case-sensitive on Unix/macOS**:
+Path containment checks use **case-insensitive comparison (`OrdinalIgnoreCase`) on all platforms**. The `PathComparer` field (used for gitignore path matching) is platform-aware — case-insensitive on Windows and case-sensitive on Unix — but the `IsUnderRoot` containment check always uses `OrdinalIgnoreCase`:
 
 ```csharp
-// Internal implementation uses:
-// Windows: StringComparison.OrdinalIgnoreCase
-// Unix:    StringComparison.Ordinal
+// IsUnderRoot always uses:
+// StringComparison.OrdinalIgnoreCase (all platforms)
+//
+// PathComparer (gitignore matching) uses:
+// Windows: StringComparer.OrdinalIgnoreCase
+// Unix:    StringComparer.Ordinal
 ```
-
-This means on Windows, `C:\Users\PROJECT\src` and `c:\users\project\src` are considered the same path. On Linux, `/home/User/project` and `/home/user/project` are different.
 
 ### SanitizePath
 
@@ -121,7 +124,7 @@ public static string SanitizePath(string path)
 ```
 
 - Collapses `./` segments
-- Normalizes directory separators to forward slashes
+- Normalizes directory separators to the OS-native separator (`\` on Windows, `/` on Unix)
 - **Throws `InvalidOperationException` if `..` segments would escape the root**
 
 ### Every file tool uses ResolvePath

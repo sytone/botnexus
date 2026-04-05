@@ -123,10 +123,10 @@ public sealed record MessageEndEvent(AgentMessage Message, DateTimeOffset Timest
 /// </summary>
 /// <param name="ToolCallId">The tool call identifier.</param>
 /// <param name="ToolName">The tool name.</param>
-/// <param name="Args">The validated tool arguments (after PrepareArgumentsAsync).</param>
+/// <param name="Args">The raw tool arguments (before PrepareArgumentsAsync validation).</param>
 /// <param name="Timestamp">The event timestamp.</param>
 /// <remarks>
-/// Emitted after argument validation and before-hooks, immediately before ExecuteAsync is called.
+/// Emitted before argument validation and before-hooks run, as the first event for each tool call.
 /// For parallel execution, all ToolExecutionStartEvents are emitted before any tool executes.
 /// </remarks>
 public sealed record ToolExecutionStartEvent(
