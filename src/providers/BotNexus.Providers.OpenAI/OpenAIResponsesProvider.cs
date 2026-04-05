@@ -447,6 +447,7 @@ public sealed class OpenAIResponsesProvider(
         string? responseId = null;
         var started = false;
         var stopReason = StopReason.Stop;
+        var sawRefusal = false;
 
         var textStates = new Dictionary<string, (int ContentIndex, StringBuilder Text)>(StringComparer.Ordinal);
         var thinkingStates = new Dictionary<string, (int ContentIndex, StringBuilder Text)>(StringComparer.Ordinal);
@@ -582,6 +583,11 @@ public sealed class OpenAIResponsesProvider(
                 if (evt.Event is "response.output_text.delta" or "response.refusal.delta")
                 {
                     EnsureStart();
+                    if (evt.Event is "response.refusal.delta")
+                    {
+                        sawRefusal = true;
+                        stopReason = StopReason.Refusal;
+                    }
                     var itemId = GetString(root, "item_id");
                     var delta = GetString(root, "delta") ?? "";
                     if (delta.Length == 0) continue;
@@ -696,6 +702,17 @@ public sealed class OpenAIResponsesProvider(
                     var responseEl = root.TryGetProperty("response", out var resp) ? resp : root;
                     responseId = GetString(responseEl, "id") ?? responseId;
                     stopReason = MapStopReason(GetString(responseEl, "status"));
+
+                    if (responseEl.TryGetProperty("incomplete_details", out var incompleteDetails) &&
+                        incompleteDetails.ValueKind == JsonValueKind.Object &&
+                        string.Equals(GetString(incompleteDetails, "reason"), "content_filter", StringComparison.OrdinalIgnoreCase))
+                    {
+                        stopReason = StopReason.Sensitive;
+                    }
+                    else if (sawRefusal && stopReason == StopReason.Stop)
+                    {
+                        stopReason = StopReason.Refusal;
+                    }
 
                     if (responseEl.TryGetProperty("usage", out var usageEl) &&
                         usageEl.ValueKind == JsonValueKind.Object)
@@ -820,6 +837,8 @@ public sealed class OpenAIResponsesProvider(
     {
         "completed" => StopReason.Stop,
         "incomplete" => StopReason.Length,
+        "refusal" => StopReason.Refusal,
+        "content_filter" => StopReason.Sensitive,
         "failed" => StopReason.Error,
         "cancelled" => StopReason.Error,
         "in_progress" => StopReason.Stop,

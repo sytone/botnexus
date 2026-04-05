@@ -986,10 +986,12 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
         "end_turn" => StopReason.Stop,
         "max_tokens" => StopReason.Length,
         "tool_use" => StopReason.ToolUse,
-        "refusal" => StopReason.Error,
+        "refusal" => StopReason.Refusal,
         "pause_turn" => StopReason.Stop,
         "stop_sequence" => StopReason.Stop,
-        "sensitive" => StopReason.Error,
+        "content_policy" => StopReason.Sensitive,
+        "safety" => StopReason.Sensitive,
+        "sensitive" => StopReason.Sensitive,
         _ => throw new InvalidOperationException($"Unhandled Anthropic stop reason: {reason}")
     };
 

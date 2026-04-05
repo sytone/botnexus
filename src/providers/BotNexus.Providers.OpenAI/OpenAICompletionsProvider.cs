@@ -764,6 +764,13 @@ public sealed partial class OpenAICompletionsProvider(
                     if (!choice.TryGetProperty("delta", out var delta))
                         continue;
 
+                    if (delta.TryGetProperty("refusal", out var refusalProp) &&
+                        refusalProp.ValueKind == JsonValueKind.String &&
+                        !string.IsNullOrWhiteSpace(refusalProp.GetString()))
+                    {
+                        stopReason = StopReason.Refusal;
+                    }
+
                     if (!startEmitted)
                     {
                         stream.Push(new StartEvent(BuildPartial()));
@@ -1015,7 +1022,8 @@ public sealed partial class OpenAICompletionsProvider(
         "length" => (StopReason.Length, null),
         "function_call" => (StopReason.ToolUse, null),
         "tool_calls" => (StopReason.ToolUse, null),
-        "content_filter" => (StopReason.Error, "Provider finish_reason: content_filter"),
+        "content_filter" => (StopReason.Sensitive, null),
+        "refusal" => (StopReason.Refusal, null),
         "network_error" => (StopReason.Error, "Provider finish_reason: network_error"),
         null => (StopReason.Stop, null),
         _ => (StopReason.Error, $"Provider finish_reason: {reason}")

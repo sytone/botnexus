@@ -11,7 +11,6 @@ public enum StopReason
     [JsonStringEnumMemberName("error")] Error,
     [JsonStringEnumMemberName("aborted")] Aborted,
     [JsonStringEnumMemberName("refusal")] Refusal,
-    [JsonStringEnumMemberName("pause_turn")] PauseTurn,
     [JsonStringEnumMemberName("sensitive")] Sensitive
 }
 
