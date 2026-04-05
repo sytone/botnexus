@@ -17,7 +17,9 @@ public static class CodingAgent
         ModelRegistry modelRegistry,
         ExtensionRunner? extensionRunner = null,
         IReadOnlyList<IAgentTool>? extensionTools = null,
-        IReadOnlyList<string>? skills = null);
+        IReadOnlyList<string>? skills = null,
+        SessionManager? sessionManager = null,
+        SessionInfo? session = null);
 }
 ```
 
@@ -25,14 +27,16 @@ Here's what `CreateAsync` does, step by step:
 
 1. **Validate config, resolve working directory** — calls `Path.GetFullPath` on the working directory
 2. **EnsureDirectories** — creates `.botnexus-agent/`, `.botnexus-agent/sessions/`, etc.
-3. **CreateTools(root, extensionTools)** — instantiates the seven built-in tools plus any extension tools (see [Built-in tools](#built-in-tools))
+3. **CreateTools(root, config, extensionTools)** — instantiates the seven built-in tools plus any extension tools (see [Built-in tools](#built-in-tools))
 4. **Git metadata** — calls `GitUtils.GetBranchAsync` and `GitUtils.GetStatusAsync` for the system prompt
 5. **Package manager detection** — runs `PackageManagerDetector.Detect` to identify npm, pip, dotnet, etc.
-6. **System prompt construction** — `SystemPromptBuilder.Build` with a `SystemPromptContext` record (see [System prompt construction](#system-prompt-construction))
-7. **ResolveModel** — resolves the model from config + `ModelRegistry` (see [Model resolution](#model-resolution))
-8. **Create AuditHooks and SafetyHooks** — wires up safety validation and audit logging
-9. **Build AgentOptions** — assembles all delegates: `LlmClient` (instance-based), `GetApiKey`, `BeforeToolCall`, `AfterToolCall`, `ConvertToLlm`, `TransformContext`
-10. **Return `new Agent(options)`** — the configured agent, ready to run
+6. **Context file discovery** — calls `ContextFileDiscovery.DiscoverAsync` to auto-detect README and documentation files
+7. **System prompt construction** — `SystemPromptBuilder.Build` with a `SystemPromptContext` record (see [System prompt construction](#system-prompt-construction))
+8. **ResolveModel** — resolves the model from config + `ModelRegistry` (see [Model resolution](#model-resolution))
+9. **Create AuditHooks and SafetyHooks** — wires up safety validation and audit logging
+10. **Build AgentOptions** — assembles all delegates: `LlmClient` (instance-based), `GetApiKey`, `BeforeToolCall`, `AfterToolCall`, `ConvertToLlm`, `TransformContext`
+11. **Wire SessionManager** — if provided, configures auto-persistence of agent state to sessions
+12. **Return `new Agent(options)`** — the configured agent, ready to run
 
 ```mermaid
 graph TB
@@ -45,17 +49,20 @@ graph TB
         ExtRunner[ExtensionRunner]
         ExtTools[Extension Tools]
         Skills[Skills]
+        SessionMgr[SessionManager]
+        Session[SessionInfo]
     end
 
     subgraph Factory["CodingAgent.CreateAsync"]
         ResolveDir[Path.GetFullPath +<br/>EnsureDirectories]
-        CreateTools[CreateTools<br/>Read, Write, Edit,<br/>Shell, Glob, Grep<br/>+ extensions]
+        CreateTools[CreateTools<br/>Read, Write, Edit,<br/>Shell, Glob, Grep,<br/>ListDirectory<br/>+ extensions]
         GitMeta[GitUtils<br/>branch + status]
         PkgMgr[PackageManagerDetector]
         BuildPrompt[SystemPromptBuilder<br/>sections, tool contributions]
         ResolveModel[ResolveModel<br/>ModelRegistry lookup<br/>or Copilot fallback]
         CreateHooks[SafetyHooks +<br/>AuditHooks +<br/>ExtensionRunner hooks]
         AssembleOpts[Build AgentOptions<br/>with LlmClient instance]
+        WireSession[Wire SessionManager<br/>auto-persistence]
     end
 
     subgraph Output["Result"]
@@ -74,6 +81,8 @@ graph TB
     LLC --> AssembleOpts
     AuthMgr --> AssembleOpts
     ExtRunner --> CreateHooks
+    SessionMgr --> WireSession
+    Session --> WireSession
 
     ResolveDir --> CreateTools
     CreateTools --> BuildPrompt
@@ -82,7 +91,8 @@ graph TB
     BuildPrompt --> AssembleOpts
     ResolveModel --> AssembleOpts
     CreateHooks --> AssembleOpts
-    AssembleOpts --> Agent
+    AssembleOpts --> WireSession
+    WireSession --> Agent
 ```
 
 > **Key takeaway:** `CreateAsync` is a pure factory. It constructs everything, wires the delegates, and returns an `Agent`. The `Agent` itself has no knowledge of coding-specific concerns — all coding-agent behavior is injected through hooks, tools, and delegates.
@@ -105,7 +115,9 @@ The `CreateTools` method shows how they're instantiated:
 
 ```csharp
 private static IReadOnlyList<IAgentTool> CreateTools(
-    string workingDirectory, IReadOnlyList<IAgentTool>? extensionTools)
+    string workingDirectory, 
+    CodingAgentConfig config, 
+    IReadOnlyList<IAgentTool>? extensionTools)
 {
     var tools = new List<IAgentTool>
     {
@@ -113,7 +125,7 @@ private static IReadOnlyList<IAgentTool> CreateTools(
         new ListDirectoryTool(workingDirectory),
         new WriteTool(workingDirectory),
         new EditTool(workingDirectory),
-        new ShellTool(_defaultTimeoutSeconds),  // Phase 5: pass configured timeout
+        new ShellTool(config.DefaultShellTimeoutSeconds),
         new GlobTool(workingDirectory),
         new GrepTool(workingDirectory)
     };
@@ -125,7 +137,7 @@ private static IReadOnlyList<IAgentTool> CreateTools(
 }
 ```
 
-> Note: `ShellTool(defaultTimeoutSeconds?)` now accepts an optional timeout parameter (Phase 5). All other tools receive `workingDirectory` for path containment.
+> Note: `ShellTool` receives `config.DefaultShellTimeoutSeconds` from the `CodingAgentConfig`. All other tools receive `workingDirectory` for path containment.
 
 ### `read` — Read files and directories
 

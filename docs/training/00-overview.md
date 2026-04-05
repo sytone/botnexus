@@ -73,7 +73,7 @@ The application. Wires everything together into a coding assistant with file too
 **Responsibilities:**
 
 - Construct the agent with all tools and configuration (`CodingAgent.CreateAsync`)
-- Provide built-in tools: `read`, `write`, `edit`, `bash`, `grep`, `find`, `ls`
+- Provide built-in tools: `read`, `write`, `edit`, `bash`, `grep`, `glob`, `list-directory`
 - Build the system prompt (`SystemPromptBuilder`)
 - Manage sessions (create, save, resume, branch, compact)
 - Load extensions and skills
