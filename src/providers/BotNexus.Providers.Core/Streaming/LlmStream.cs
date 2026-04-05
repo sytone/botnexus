@@ -42,6 +42,9 @@ public sealed class LlmStream : IAsyncEnumerable<AssistantMessageEvent>
         }
 
         _channel.Writer.TryWrite(evt);
+
+        if (_done)
+            _channel.Writer.TryComplete();
     }
 
     /// <summary>

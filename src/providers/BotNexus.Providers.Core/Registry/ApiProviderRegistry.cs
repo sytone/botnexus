@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using BotNexus.Providers.Core.Models;
+using BotNexus.Providers.Core.Streaming;
 
 namespace BotNexus.Providers.Core.Registry;
 
@@ -9,12 +11,34 @@ namespace BotNexus.Providers.Core.Registry;
 public sealed class ApiProviderRegistry
 {
     private sealed record Registration(IApiProvider Provider, string? SourceId);
+    private sealed class GuardedProvider(IApiProvider inner) : IApiProvider
+    {
+        public string Api => inner.Api;
+
+        public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
+        {
+            ValidateModelApi(model, Api);
+            return inner.Stream(model, context, options);
+        }
+
+        public LlmStream StreamSimple(LlmModel model, Context context, SimpleStreamOptions? options = null)
+        {
+            ValidateModelApi(model, Api);
+            return inner.StreamSimple(model, context, options);
+        }
+
+        private static void ValidateModelApi(LlmModel model, string expectedApi)
+        {
+            if (!string.Equals(model.Api, expectedApi, StringComparison.Ordinal))
+                throw new InvalidOperationException($"Mismatched api: {model.Api} expected {expectedApi}");
+        }
+    }
 
     private readonly ConcurrentDictionary<string, Registration> _registry = new();
 
     public void Register(IApiProvider provider, string? sourceId = null)
     {
-        _registry[provider.Api] = new Registration(provider, sourceId);
+        _registry[provider.Api] = new Registration(new GuardedProvider(provider), sourceId);
     }
 
     public IApiProvider? Get(string api)

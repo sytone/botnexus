@@ -34,7 +34,8 @@ public sealed class RegistryWaveOneTests
         registry.Register(provider.Object);
         var resolved = registry.Get("wave-api");
 
-        resolved.Should().BeSameAs(provider.Object);
+        resolved.Should().NotBeNull();
+        resolved!.Api.Should().Be("wave-api");
     }
 
     [Fact]

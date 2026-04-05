@@ -187,4 +187,15 @@ public class ModelRegistryTests : IDisposable
 
         result.Should().BeTrue();
     }
+
+    [Fact]
+    public void ModelsAreEqual_DifferentCase_ReturnsFalse()
+    {
+        var first = MakeModel(id: "GPT-5", provider: "OpenAI");
+        var second = MakeModel(id: "gpt-5", provider: "openai");
+
+        var result = ModelRegistry.ModelsAreEqual(first, second);
+
+        result.Should().BeFalse();
+    }
 }

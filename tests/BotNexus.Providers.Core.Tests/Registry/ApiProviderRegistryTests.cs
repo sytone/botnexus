@@ -35,7 +35,8 @@ public class ApiProviderRegistryTests : IDisposable
 
         var result = _registry.Get("test-api");
 
-        result.Should().BeSameAs(mock.Object);
+        result.Should().NotBeNull();
+        result!.Api.Should().Be("test-api");
     }
 
     [Fact]
@@ -91,6 +92,60 @@ public class ApiProviderRegistryTests : IDisposable
 
         var result = _registry.Get("same-api");
 
-        result.Should().BeSameAs(mock2.Object);
+        result.Should().NotBeNull();
+        result!.Api.Should().Be("same-api");
     }
+
+    [Fact]
+    public void Stream_WithMismatchedModelApi_Throws()
+    {
+        var expectedStream = new LlmStream();
+        var mock = CreateMockProvider("anthropic-messages");
+        mock.Setup(p => p.Stream(It.IsAny<LlmModel>(), It.IsAny<Context>(), It.IsAny<StreamOptions?>()))
+            .Returns(expectedStream);
+        _registry.Register(mock.Object);
+
+        var provider = _registry.Get("anthropic-messages");
+        provider.Should().NotBeNull();
+        var model = MakeModel("openai-completions");
+        var context = new Context(null, []);
+
+        var act = () => provider!.Stream(model, context);
+
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("Mismatched api: openai-completions expected anthropic-messages");
+    }
+
+    [Fact]
+    public void StreamSimple_WithMismatchedModelApi_Throws()
+    {
+        var expectedStream = new LlmStream();
+        var mock = CreateMockProvider("openai-completions");
+        mock.Setup(p => p.StreamSimple(It.IsAny<LlmModel>(), It.IsAny<Context>(), It.IsAny<SimpleStreamOptions?>()))
+            .Returns(expectedStream);
+        _registry.Register(mock.Object);
+
+        var provider = _registry.Get("openai-completions");
+        provider.Should().NotBeNull();
+        var model = MakeModel("anthropic-messages");
+        var context = new Context(null, []);
+
+        var act = () => provider!.StreamSimple(model, context);
+
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("Mismatched api: anthropic-messages expected openai-completions");
+    }
+
+    private static LlmModel MakeModel(string api) => new(
+        Id: "test-model",
+        Name: "Test Model",
+        Api: api,
+        Provider: "test",
+        BaseUrl: "https://example.com",
+        Reasoning: false,
+        Input: ["text"],
+        Cost: new ModelCost(0, 0, 0, 0),
+        ContextWindow: 8192,
+        MaxTokens: 2048
+    );
 }

@@ -46,7 +46,6 @@ public class LlmStreamTests
         var final = MakeMessage();
 
         stream.Push(new DoneEvent(StopReason.Stop, final));
-        stream.End();
 
         var count = 0;
         await foreach (var _ in stream)
@@ -62,7 +61,6 @@ public class LlmStreamTests
         var errorMsg = MakeMessage(StopReason.Error, "boom");
 
         stream.Push(new ErrorEvent(StopReason.Error, errorMsg));
-        stream.End();
 
         var events = new List<AssistantMessageEvent>();
         await foreach (var evt in stream)
@@ -79,7 +77,6 @@ public class LlmStreamTests
         var final = MakeMessage();
 
         stream.Push(new DoneEvent(StopReason.Stop, final));
-        stream.End();
 
         var result = await stream.GetResultAsync();
 
@@ -94,7 +91,6 @@ public class LlmStreamTests
         var errorMsg = MakeMessage(StopReason.Error, "failure");
 
         stream.Push(new ErrorEvent(StopReason.Error, errorMsg));
-        stream.End();
 
         var result = await stream.GetResultAsync();
 
@@ -152,7 +148,6 @@ public class LlmStreamTests
         var final = MakeMessage();
 
         stream.Push(new DoneEvent(StopReason.Stop, final));
-        stream.End();
 
         var events = new List<AssistantMessageEvent>();
         await foreach (var evt in stream)
