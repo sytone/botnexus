@@ -112,4 +112,78 @@ public class ModelRegistryTests : IDisposable
         cost.Output.Should().Be(500 * 15.0m / 1_000_000m);
         cost.Total.Should().Be(cost.Input + cost.Output);
     }
+
+    [Fact]
+    public void SupportsExtraHigh_WithOpusReasoningModel_ReturnsTrue()
+    {
+        var model = MakeModel(id: "claude-opus-4.6") with { Reasoning = true };
+
+        var result = ModelRegistry.SupportsExtraHigh(model);
+
+        result.Should().BeTrue();
+    }
+
+    [Fact]
+    public void SupportsExtraHigh_WithNonOpusModel_ReturnsFalse()
+    {
+        var model = MakeModel(id: "claude-sonnet-4.5") with { Reasoning = true };
+
+        var result = ModelRegistry.SupportsExtraHigh(model);
+
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public void SupportsExtraHigh_WithReasoningDisabled_ReturnsFalse()
+    {
+        var model = MakeModel(id: "claude-opus-4.6") with { Reasoning = false };
+
+        var result = ModelRegistry.SupportsExtraHigh(model);
+
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ModelsAreEqual_SameIdentity_ReturnsTrue()
+    {
+        var first = MakeModel();
+        var second = first with { Cost = new ModelCost(10, 20, 0, 0) };
+
+        var result = ModelRegistry.ModelsAreEqual(first, second);
+
+        result.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ModelsAreEqual_DifferentId_ReturnsFalse()
+    {
+        var first = MakeModel(id: "model-a");
+        var second = MakeModel(id: "model-b");
+
+        var result = ModelRegistry.ModelsAreEqual(first, second);
+
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ModelsAreEqual_DifferentProvider_ReturnsFalse()
+    {
+        var first = MakeModel(provider: "provider-a");
+        var second = MakeModel(provider: "provider-b");
+
+        var result = ModelRegistry.ModelsAreEqual(first, second);
+
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ModelsAreEqual_DifferentBaseUrl_ReturnsFalse()
+    {
+        var first = MakeModel() with { BaseUrl = "https://a.example.com" };
+        var second = MakeModel() with { BaseUrl = "https://b.example.com" };
+
+        var result = ModelRegistry.ModelsAreEqual(first, second);
+
+        result.Should().BeFalse();
+    }
 }

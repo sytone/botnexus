@@ -49,7 +49,7 @@ public sealed class OpenAIResponsesProvider(
     public LlmStream StreamSimple(LlmModel model, Context context, SimpleStreamOptions? options = null)
     {
         var apiKey = options?.ApiKey ?? EnvironmentApiKeys.GetApiKey(model.Provider) ?? "";
-        var reasoning = SupportsXhigh(model) ? options?.Reasoning : SimpleOptionsHelper.ClampReasoning(options?.Reasoning);
+        var reasoning = ModelRegistry.SupportsExtraHigh(model) ? options?.Reasoning : SimpleOptionsHelper.ClampReasoning(options?.Reasoning);
         var responsesOptions = new OpenAIResponsesOptions
         {
             ApiKey = apiKey,
@@ -792,13 +792,6 @@ public sealed class OpenAIResponsesProvider(
         ThinkingLevel.ExtraHigh => "xhigh",
         _ => "medium"
     };
-
-    private static bool SupportsXhigh(LlmModel model) =>
-        model.Id.Contains("gpt-5.2", StringComparison.OrdinalIgnoreCase) ||
-        model.Id.Contains("gpt-5.3", StringComparison.OrdinalIgnoreCase) ||
-        model.Id.Contains("gpt-5.4", StringComparison.OrdinalIgnoreCase) ||
-        model.Id.Contains("opus-4-6", StringComparison.OrdinalIgnoreCase) ||
-        model.Id.Contains("opus-4.6", StringComparison.OrdinalIgnoreCase);
 
     private static string? GetPromptCacheRetention(string baseUrl, CacheRetention retention)
     {
