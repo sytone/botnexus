@@ -143,7 +143,7 @@ public static class CopilotOAuth
         string githubToken, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, CopilotTokenUrl);
-        request.Headers.TryAddWithoutValidation("Authorization", $"token {githubToken}");
+        request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {githubToken}");
         request.Headers.TryAddWithoutValidation("Accept", "application/json");
         request.Headers.TryAddWithoutValidation("User-Agent", "BotNexus/0.1");
         request.Headers.TryAddWithoutValidation("Editor-Version", "vscode/1.99.0");
