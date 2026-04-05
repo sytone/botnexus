@@ -55,4 +55,33 @@ public sealed class BuiltInModelsTests
             model.ContextWindow > 0 &&
             model.MaxTokens > 0);
     }
+
+    [Fact]
+    public void RegisterAll_WhenCalled_RegistersExpectedProviderCatalogs()
+    {
+        var registry = new ModelRegistry();
+
+        new BuiltInModels().RegisterAll(registry);
+
+        registry.GetModels("github-copilot").Should().NotBeEmpty();
+        registry.GetModels("anthropic").Should().NotBeEmpty();
+        registry.GetModels("openai").Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public void RegisterAll_WhenCalled_OpenAiAndAnthropicModelsHaveKeyFields()
+    {
+        var registry = new ModelRegistry();
+
+        new BuiltInModels().RegisterAll(registry);
+        var directModels = registry.GetModels("anthropic")
+            .Concat(registry.GetModels("openai"))
+            .ToList();
+
+        directModels.Should().NotBeEmpty();
+        directModels.Should().OnlyContain(model =>
+            !string.IsNullOrWhiteSpace(model.Id) &&
+            model.ContextWindow > 0 &&
+            model.MaxTokens > 0);
+    }
 }
