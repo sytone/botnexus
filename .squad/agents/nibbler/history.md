@@ -284,3 +284,38 @@ Participated in design review ceremony for Phase 3 architecture. All ADs approve
 **Build Status:** ✅ Full solution clean (0 errors, 0 warnings)
 
 **Next Phase:** Ready for merge validation and release.
+
+---
+
+## 2026-04-05 — Post-Sprint Consistency Review: P0/P1 Safety & Alignment Fixes
+
+**Requested by:** sytone (Jon Bullen)
+**Sprint:** P0 safety fixes (Bender), P1 alignment fixes (Farnsworth), tests (Hermes), training docs (Kif)
+
+**Review Scope:**
+1. New training docs (providers.md, agent-events.md, tool-security.md, building-a-coding-agent.md, README.md) ↔ Code
+2. New XML doc comments (StopReason, AgentState, AgentMessage) ↔ Behavior
+3. New public properties (MaxRetryDelayMs, SupportsExtraHighThinking) ↔ Docs
+4. Existing docs (01-providers.md, 02-agent-core.md, 05-glossary.md) ↔ Sprint changes
+5. Stale references grep sweep
+
+**Results:**
+- **12 discrepancies found** across 8 files (4 HIGH, 5 MEDIUM, 3 LOW)
+- **All fixed** in commit d9e1ad9
+- ✅ Build: 0 errors, 0 warnings
+- ✅ Tests: 453/453 pass (all 7 test projects)
+
+**Key Fixes:**
+- providers.md: Added SupportsExtraHighThinking to LlmModel, updated built-in models (30+ models, 3 provider groups including direct Anthropic/OpenAI), added missing GPT model IDs
+- agent-events.md: Fixed ToolExecutionStartEvent order (fires before validation/hooks, not after), added MaxRetryDelayMs to AgentOptions reference
+- tool-security.md: Added symlink resolution steps to ResolvePath, fixed platform comparison (OrdinalIgnoreCase on all platforms), fixed SanitizePath separator description
+- building-a-coding-agent.md: Cleaned stale explicit nulls from LlmModel example
+- 01-providers.md: Added SupportsExtraHighThinking to LlmModel
+- 02-agent-core.md: Added MaxRetryDelayMs to AgentOptions record and field table
+- 05-glossary.md: Added SupportsExtraHighThinking to LlmModel field list
+- AgentEvent.cs: Fixed ToolExecutionStartEvent XML doc — Args are raw (pre-validation), event fires before hooks
+
+**Learnings:**
+- ToolExecutionStartEvent XML docs were wrong since inception — event fires before validation, not after. The ToolExecutor passes raw args to the event, not validated ones. This is the kind of subtle XML doc drift that's invisible unless you trace the exact call order in code.
+- New record properties with default values (SupportsExtraHighThinking=false, MaxRetryDelayMs=null) don't cause compile errors in existing code, so they silently go undocumented. Every new public property needs a grep sweep of all doc files showing the record definition.
+- IsUnderRoot uses OrdinalIgnoreCase unconditionally — the platform-aware PathComparer is only used for gitignore matching, not containment checks. This makes the security model slightly more permissive than documented on Unix.
