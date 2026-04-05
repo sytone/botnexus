@@ -764,3 +764,8 @@ Participated in design review ceremony for Phase 3 architecture. All ADs approve
 - `FileSessionStore` now writes from `GetHistorySnapshot()` and loads via batched entries to avoid unsafe concurrent enumeration/mutation.
 - `InProcessAgentHandle.StreamAsync` now catches subscription callback exceptions, logs, emits `AgentStreamEventType.Error`, and completes the stream channel with the exception so clients receive failure signals.
 - Prompt background task now logs prompt failures and distinguishes cancellation (`TrySetCanceled`) from faults (`TrySetException`), avoiding silent stream termination.
+
+### 2026-04-06 — Gateway cross-agent + runtime steering controls
+- `DefaultAgentCommunicator.CallCrossAgentAsync` now supports local-only cross-agent calls by creating `cross::{source}::{target}::{guid}` sessions and routing via `IAgentSupervisor`; non-empty `targetEndpoint` now throws `NotSupportedException` as a remote Phase 3 stub.
+- `IAgentHandle` now exposes `SteerAsync` and `FollowUpAsync`; `InProcessAgentHandle` maps them to `Agent.Steer(new UserMessage(...))` and `Agent.FollowUp(new UserMessage(...))`.
+- Gateway APIs now expose runtime control surfaces: WebSocket accepts `{ "type":"steer" }` and `{ "type":"follow_up" }`, and REST exposes `POST /api/chat/steer` + `POST /api/chat/follow-up` for active sessions.

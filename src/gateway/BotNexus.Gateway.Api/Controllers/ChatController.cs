@@ -41,10 +41,43 @@ public sealed class ChatController : ControllerBase
 
         return Ok(new ChatResponse(sessionId, response.Content, response.Usage));
     }
+
+    /// <summary>
+    /// Injects a steering message into an active agent run.
+    /// </summary>
+    [HttpPost("steer")]
+    public async Task<IActionResult> Steer([FromBody] AgentControlRequest request, CancellationToken cancellationToken)
+    {
+        var instance = _supervisor.GetInstance(request.AgentId, request.SessionId);
+        if (instance is null)
+            return NotFound(new { message = "Agent session not found." });
+
+        var handle = await _supervisor.GetOrCreateAsync(request.AgentId, request.SessionId, cancellationToken);
+        await handle.SteerAsync(request.Message, cancellationToken);
+        return Accepted();
+    }
+
+    /// <summary>
+    /// Queues a follow-up message for an active agent session.
+    /// </summary>
+    [HttpPost("follow-up")]
+    public async Task<IActionResult> FollowUp([FromBody] AgentControlRequest request, CancellationToken cancellationToken)
+    {
+        var instance = _supervisor.GetInstance(request.AgentId, request.SessionId);
+        if (instance is null)
+            return NotFound(new { message = "Agent session not found." });
+
+        var handle = await _supervisor.GetOrCreateAsync(request.AgentId, request.SessionId, cancellationToken);
+        await handle.FollowUpAsync(request.Message, cancellationToken);
+        return Accepted();
+    }
 }
 
 /// <summary>Chat request payload.</summary>
 public sealed record ChatRequest(string AgentId, string Message, string? SessionId = null);
+
+/// <summary>Agent control request payload.</summary>
+public sealed record AgentControlRequest(string AgentId, string SessionId, string Message);
 
 /// <summary>Chat response payload.</summary>
 public sealed record ChatResponse(string SessionId, string Content, AgentResponseUsage? Usage = null);

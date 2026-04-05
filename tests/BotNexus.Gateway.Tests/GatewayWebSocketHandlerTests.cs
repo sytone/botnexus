@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Api.WebSocket;
 using FluentAssertions;
@@ -65,9 +66,65 @@ public sealed class GatewayWebSocketHandlerTests
         payload.RootElement.GetProperty("connectionId").GetString().Should().NotBeNullOrEmpty();
     }
 
-    private static GatewayWebSocketHandler CreateHandler()
+    [Fact]
+    public async Task HandleAsync_WithSteerMessage_QueuesSteeringOnHandle()
+    {
+        var handle = new Mock<IAgentHandle>();
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetInstance("agent-a", "session-123"))
+            .Returns(new AgentInstance
+            {
+                InstanceId = "agent-a::session-123",
+                AgentId = "agent-a",
+                SessionId = "session-123",
+                IsolationStrategy = "in-process"
+            });
+        supervisor.Setup(s => s.GetOrCreateAsync("agent-a", "session-123", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new QueryString("?agent=agent-a&session=session-123");
+        var socket = new TestWebSocket();
+        socket.QueueIncomingText("""{"type":"steer","content":"adjust"}""");
+        context.Features.Set<IHttpWebSocketFeature>(new TestWebSocketFeature { IsWebSocketRequest = true, Socket = socket });
+        var handler = CreateHandler(supervisor.Object);
+
+        await handler.HandleAsync(context, CancellationToken.None);
+
+        handle.Verify(h => h.SteerAsync("adjust", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WithFollowUpMessage_QueuesFollowUpOnHandle()
+    {
+        var handle = new Mock<IAgentHandle>();
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetInstance("agent-a", "session-123"))
+            .Returns(new AgentInstance
+            {
+                InstanceId = "agent-a::session-123",
+                AgentId = "agent-a",
+                SessionId = "session-123",
+                IsolationStrategy = "in-process"
+            });
+        supervisor.Setup(s => s.GetOrCreateAsync("agent-a", "session-123", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new QueryString("?agent=agent-a&session=session-123");
+        var socket = new TestWebSocket();
+        socket.QueueIncomingText("""{"type":"follow_up","content":"next"}""");
+        context.Features.Set<IHttpWebSocketFeature>(new TestWebSocketFeature { IsWebSocketRequest = true, Socket = socket });
+        var handler = CreateHandler(supervisor.Object);
+
+        await handler.HandleAsync(context, CancellationToken.None);
+
+        handle.Verify(h => h.FollowUpAsync("next", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    private static GatewayWebSocketHandler CreateHandler(IAgentSupervisor? supervisor = null)
         => new(
-            Mock.Of<IAgentSupervisor>(),
+            supervisor ?? Mock.Of<IAgentSupervisor>(),
             Mock.Of<ISessionStore>(),
             Mock.Of<IActivityBroadcaster>(),
             NullLogger<GatewayWebSocketHandler>.Instance);
@@ -85,8 +142,12 @@ public sealed class GatewayWebSocketHandlerTests
     private sealed class TestWebSocket : WebSocket
     {
         private WebSocketState _state = WebSocketState.Open;
+        private readonly Queue<byte[]> _incomingMessages = new();
 
         public List<byte[]> SentMessages { get; } = [];
+
+        public void QueueIncomingText(string text)
+            => _incomingMessages.Enqueue(Encoding.UTF8.GetBytes(text));
 
         public override WebSocketCloseStatus? CloseStatus => null;
         public override string? CloseStatusDescription => null;
@@ -109,12 +170,21 @@ public sealed class GatewayWebSocketHandlerTests
         }
 
         public override Task<WebSocketReceiveResult> ReceiveAsync(ArraySegment<byte> buffer, CancellationToken cancellationToken)
-            => Task.FromResult(new WebSocketReceiveResult(0, WebSocketMessageType.Close, true));
+        {
+            if (_incomingMessages.Count == 0)
+            {
+                _state = WebSocketState.CloseReceived;
+                return Task.FromResult(new WebSocketReceiveResult(0, WebSocketMessageType.Close, true));
+            }
+
+            var payload = _incomingMessages.Dequeue();
+            payload.CopyTo(buffer.Array!, buffer.Offset);
+            return Task.FromResult(new WebSocketReceiveResult(payload.Length, WebSocketMessageType.Text, true));
+        }
 
         public override Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken)
         {
             SentMessages.Add(buffer.ToArray());
-            _state = WebSocketState.Closed;
             return Task.CompletedTask;
         }
 

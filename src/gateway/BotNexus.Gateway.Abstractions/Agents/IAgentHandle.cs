@@ -50,4 +50,22 @@ public interface IAgentHandle : IAsyncDisposable
     /// Aborts the current agent execution, if any.
     /// </summary>
     Task AbortAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Steers the running agent by injecting a message during execution.
+    /// The message is queued and delivered between tool calls.
+    /// </summary>
+    /// <param name="message">The steering message to inject.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A task that completes when the message is queued.</returns>
+    /// <remarks>Only effective while the agent is actively running (processing a prompt).</remarks>
+    Task SteerAsync(string message, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Queues a follow-up message to be processed after the current agent run completes.
+    /// </summary>
+    /// <param name="message">The follow-up message to queue.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A task that completes when the message is queued.</returns>
+    Task FollowUpAsync(string message, CancellationToken cancellationToken = default);
 }

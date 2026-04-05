@@ -22,6 +22,8 @@ namespace BotNexus.Gateway.Api.WebSocket;
 /// <list type="bullet">
 ///   <item><c>{ "type": "message", "content": "..." }</c> — Send a message to the agent.</item>
 ///   <item><c>{ "type": "abort" }</c> — Abort the current agent execution.</item>
+///   <item><c>{ "type": "steer", "content": "..." }</c> — Inject steering message into active run.</item>
+///   <item><c>{ "type": "follow_up", "content": "..." }</c> — Queue follow-up for next run.</item>
 ///   <item><c>{ "type": "ping" }</c> — Keepalive ping.</item>
 /// </list>
 /// <para><b>Server → Client messages:</b></para>
@@ -138,6 +140,14 @@ public sealed class GatewayWebSocketHandler
                     }
                     break;
 
+                case "steer" when msg.Content is not null:
+                    await HandleSteerAsync(socket, agentId, sessionId, msg.Content, cancellationToken);
+                    break;
+
+                case "follow_up" when msg.Content is not null:
+                    await HandleFollowUpAsync(socket, agentId, sessionId, msg.Content, cancellationToken);
+                    break;
+
                 case "ping":
                     await SendJsonAsync(socket, new { type = "pong" }, cancellationToken);
                     break;
@@ -189,6 +199,32 @@ public sealed class GatewayWebSocketHandler
         {
             await _sessions.SaveAsync(session, cancellationToken);
         }
+    }
+
+    private async Task HandleSteerAsync(System.Net.WebSockets.WebSocket socket, string agentId, string sessionId, string content, CancellationToken cancellationToken)
+    {
+        var instance = _supervisor.GetInstance(agentId, sessionId);
+        if (instance is null)
+        {
+            await SendJsonAsync(socket, new { type = "error", message = "Agent session not found.", code = "SESSION_NOT_FOUND" }, cancellationToken);
+            return;
+        }
+
+        var handle = await _supervisor.GetOrCreateAsync(agentId, sessionId, cancellationToken);
+        await handle.SteerAsync(content, cancellationToken);
+    }
+
+    private async Task HandleFollowUpAsync(System.Net.WebSockets.WebSocket socket, string agentId, string sessionId, string content, CancellationToken cancellationToken)
+    {
+        var instance = _supervisor.GetInstance(agentId, sessionId);
+        if (instance is null)
+        {
+            await SendJsonAsync(socket, new { type = "error", message = "Agent session not found.", code = "SESSION_NOT_FOUND" }, cancellationToken);
+            return;
+        }
+
+        var handle = await _supervisor.GetOrCreateAsync(agentId, sessionId, cancellationToken);
+        await handle.FollowUpAsync(content, cancellationToken);
     }
 
     private static async Task SendJsonAsync(System.Net.WebSockets.WebSocket socket, object message, CancellationToken cancellationToken)

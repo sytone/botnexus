@@ -211,6 +211,8 @@ public sealed class CopilotIntegrationTests
         }
 
         public Task AbortAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task SteerAsync(string message, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task FollowUpAsync(string message, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
         public ValueTask DisposeAsync()
         {

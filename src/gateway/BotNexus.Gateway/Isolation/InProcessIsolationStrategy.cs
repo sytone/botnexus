@@ -8,6 +8,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Providers.Core;
 using BotNexus.Providers.Core.Models;
 using Microsoft.Extensions.Logging;
+using AgentCoreUserMessage = BotNexus.AgentCore.Types.UserMessage;
 
 namespace BotNexus.Gateway.Isolation;
 
@@ -207,6 +208,20 @@ internal sealed class InProcessAgentHandle : IAgentHandle
     public async Task AbortAsync(CancellationToken cancellationToken = default)
     {
         await _agent.AbortAsync();
+    }
+
+    /// <inheritdoc />
+    public Task SteerAsync(string message, CancellationToken cancellationToken = default)
+    {
+        _agent.Steer(new AgentCoreUserMessage(message));
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public Task FollowUpAsync(string message, CancellationToken cancellationToken = default)
+    {
+        _agent.FollowUp(new AgentCoreUserMessage(message));
+        return Task.CompletedTask;
     }
 
     /// <inheritdoc />
