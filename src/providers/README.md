@@ -40,8 +40,9 @@ Unified LLM API with provider abstraction, streaming, tool calling, thinking/rea
 | Provider | API | Description |
 |----------|-----|-------------|
 | OpenAI | `openai-completions` | Chat Completions API — GPT-4o, o3, etc. |
+| OpenAI | `openai-responses` | Responses API — GPT-5 series |
 | Anthropic | `anthropic-messages` | Messages API — Claude Sonnet 4, Opus 4, etc. |
-| GitHub Copilot | `github-copilot` | OAuth device flow, proxies to OpenAI/Anthropic models |
+| GitHub Copilot | *(static utility)* | OAuth device flow, proxies to OpenAI/Anthropic models |
 | OpenAI-Compatible | `openai-compat` | Ollama, vLLM, LM Studio, SGLang, Cerebras, xAI, DeepSeek, etc. |
 
 ## Quick Start
@@ -54,7 +55,9 @@ using BotNexus.Providers.Core.Registry;
 using BotNexus.Providers.Core.Streaming;
 
 // Get a model from the registry (fully typed with known provider/model IDs)
-var model = ModelRegistry.GetModel("openai", "gpt-4o-mini")
+var modelRegistry = new ModelRegistry();
+BuiltInModels.Register(modelRegistry);
+var model = modelRegistry.Get("openai", "gpt-4o-mini")
     ?? throw new InvalidOperationException("Model not found");
 
 // Define tools with JSON Schema for type safety and validation
@@ -84,8 +87,13 @@ var context = new Context(
     Tools: tools
 );
 
+// Create the client (instance-based)
+var apiProviderRegistry = new ApiProviderRegistry();
+apiProviderRegistry.Register(new OpenAICompletionsProvider(httpClient, logger));
+var llmClient = new LlmClient(apiProviderRegistry, modelRegistry);
+
 // Option 1: Stream events as they arrive
-var stream = LlmClient.Stream(model, context);
+var stream = llmClient.Stream(model, context);
 
 await foreach (var evt in stream)
 {
@@ -563,6 +571,9 @@ Every `AssistantMessage` includes a `StopReason` field that indicates how genera
 | `StopReason.ToolUse` | Model is calling tools and expects tool results |
 | `StopReason.Error` | An error occurred during generation |
 | `StopReason.Aborted` | Request was cancelled via `CancellationToken` |
+| `StopReason.Refusal` | Model refused to generate content |
+| `StopReason.PauseTurn` | Model paused mid-turn (multi-turn flows) |
+| `StopReason.Sensitive` | Content flagged as sensitive |
 
 `AssistantMessage` may also include `ResponseId`, a provider-specific upstream response or message identifier when the underlying API exposes one. Do not assume it is always present across providers.
 
@@ -672,9 +683,11 @@ The library uses a registry of API implementations. Built-in APIs include:
 | API | Namespace | Provider-specific options |
 |-----|-----------|--------------------------|
 | `openai-completions` | `BotNexus.Providers.OpenAI` | `OpenAICompletionsOptions` |
+| `openai-responses` | `BotNexus.Providers.OpenAI` | `OpenAIResponsesOptions` |
 | `anthropic-messages` | `BotNexus.Providers.Anthropic` | `AnthropicOptions` |
-| `github-copilot` | `BotNexus.Providers.Copilot` | Uses base `StreamOptions` |
 | `openai-compat` | `BotNexus.Providers.OpenAICompat` | `OpenAICompatOptions` |
+
+> **Note:** `CopilotProvider` (in `BotNexus.Providers.Copilot`) is a **static utility** — not an `IApiProvider` implementation. Copilot models route through `anthropic-messages` or `openai-completions`/`openai-responses` depending on the model.
 
 ### Providers and Models
 
@@ -682,7 +695,7 @@ A provider offers models through a specific API. For example:
 
 - **Anthropic** models use the `anthropic-messages` API
 - **OpenAI** models use the `openai-completions` API
-- **GitHub Copilot** models use the `github-copilot` API (proxies to OpenAI/Anthropic)
+- **GitHub Copilot** models route through `anthropic-messages` or `openai-completions`/`openai-responses` (Copilot is a static utility, not a separate API)
 - **Ollama, vLLM, LM Studio, SGLang** models use the `openai-compat` API
 
 ### Querying Providers and Models
@@ -1019,22 +1032,25 @@ src/providers/
       MessageTransformer.cs               — Cross-provider message transformation
       SimpleOptionsHelper.cs              — Thinking budget resolution
       CopilotHeaders.cs                   — GitHub Copilot dynamic headers
+      ContextOverflowDetector.cs          — Regex-based context overflow detection
       StreamingJsonParser.cs              — Partial JSON parsing for tool arg streaming
       UnicodeSanitizer.cs                 — Unpaired surrogate sanitization
     LlmClient.cs                          — Top-level Stream/Complete/StreamSimple/CompleteSimple
     StreamOptions.cs                      — StreamOptions, SimpleStreamOptions
     EnvironmentApiKeys.cs                 — Provider → env var resolution
 
-  BotNexus.Providers.OpenAI/             — OpenAI Chat Completions API
-    OpenAICompletionsProvider.cs          — IApiProvider implementation
+  BotNexus.Providers.OpenAI/             — OpenAI Chat Completions + Responses API
+    OpenAICompletionsProvider.cs          — IApiProvider implementation (Chat Completions)
     OpenAICompletionsOptions.cs           — ToolChoice, ReasoningEffort
+    OpenAIResponsesProvider.cs            — IApiProvider implementation (Responses API)
+    OpenAIResponsesOptions.cs             — Responses API options
 
   BotNexus.Providers.Anthropic/          — Anthropic Messages API
     AnthropicProvider.cs                  — IApiProvider implementation
     AnthropicOptions.cs                   — ThinkingEnabled, Effort, InterleavedThinking
 
   BotNexus.Providers.Copilot/            — GitHub Copilot (OAuth)
-    CopilotProvider.cs                    — IApiProvider with Copilot-specific headers
+    CopilotProvider.cs                    — Static utility with ResolveApiKey/ApplyDynamicHeaders
     CopilotOAuth.cs                       — Device code flow, token exchange, refresh
 
   BotNexus.Providers.OpenAICompat/       — Ollama, vLLM, LM Studio, SGLang, etc.

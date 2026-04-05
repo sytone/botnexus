@@ -120,7 +120,7 @@ dotnet run --project src/coding-agent/BotNexus.CodingAgent/ -- --verbose
 
 ## Built-in Tools
 
-The coding agent includes five core tools, available within any prompt:
+The coding agent includes six core tools, available within any prompt:
 
 ### read
 
@@ -391,11 +391,15 @@ public class MyCustomTool : IAgentTool
         """)
     );
     
-    public async Task<string> ExecuteAsync(JsonElement input, CancellationToken ct)
+    public async Task<AgentToolResult> ExecuteAsync(
+        string toolCallId,
+        IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken cancellationToken = default,
+        AgentToolUpdateCallback? onUpdate = null)
     {
-        var param1 = input.GetProperty("param1").GetString();
+        var param1 = arguments["param1"]?.ToString();
         // Implementation...
-        return "Result";
+        return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "Result")]);
     }
 }
 ```
@@ -602,26 +606,32 @@ src/coding-agent/BotNexus.CodingAgent/
 ├── CodingAgentConfig.cs        # Configuration loading
 ├── SystemPromptBuilder.cs      # System prompt assembly
 ├── Cli/
-│   ├── CommandParser.cs        # CLI argument parsing
-│   ├── CommandOptions.cs       # Parsed options record
+│   ├── CommandParser.cs        # CLI argument parsing + CommandOptions record
 │   ├── InteractiveLoop.cs      # REPL loop
 │   └── OutputFormatter.cs      # Formatted output
 ├── Tools/
 │   ├── ReadTool.cs             # File/directory reading
 │   ├── WriteTool.cs            # File writing
-│   ├── EditTool.cs             # In-place file editing
+│   ├── EditTool.cs             # In-place file editing (with BOM stripping)
 │   ├── ShellTool.cs            # Command execution
-│   └── GlobTool.cs             # Glob pattern matching
+│   ├── GrepTool.cs             # Regex search with context lines
+│   ├── GlobTool.cs             # Glob pattern matching
+│   └── FileMutationQueue.cs    # File mutation serialization
 ├── Extensions/
 │   ├── IExtension.cs           # Extension contract
 │   ├── ExtensionLoader.cs      # Assembly loading
+│   ├── ExtensionRunner.cs      # Extension lifecycle orchestration
 │   └── SkillsLoader.cs         # Skills file loading
+├── Auth/
+│   └── AuthManager.cs          # OAuth device flow + token management
 ├── Hooks/
 │   ├── SafetyHooks.cs          # Path & command validation
 │   └── AuditHooks.cs           # Execution logging
 ├── Session/
 │   ├── SessionInfo.cs          # Session metadata record
-│   └── SessionManager.cs       # Session persistence
+│   ├── SessionBranchInfo.cs    # Branch metadata record
+│   ├── SessionManager.cs       # Session persistence
+│   └── SessionCompactor.cs     # Token-aware context compaction
 ├── Utils/
 │   ├── PathUtils.cs            # Path resolution & security
 │   ├── GitUtils.cs             # Git branch/status detection

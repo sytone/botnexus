@@ -35,6 +35,7 @@ var options = new AgentOptions(
         Messages: []
     ),
     Model: new LlmModel("claude-3-5-sonnet", "anthropic"),
+    LlmClient: llmClient,
     ConvertToLlm: async (messages, ct) =>
     {
         // Convert AgentMessage timeline to provider Message[] for the LLM
@@ -516,8 +517,10 @@ public class SearchTool : IAgentTool
     }
 
     public async Task<AgentToolResult> ExecuteAsync(
+        string toolCallId,
         IReadOnlyDictionary<string, object?> arguments,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        AgentToolUpdateCallback? onUpdate = null)
     {
         var query = arguments["query"]?.ToString();
         var results = await PerformSearch(query, cancellationToken);

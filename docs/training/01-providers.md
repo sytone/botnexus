@@ -31,6 +31,7 @@ public interface IApiProvider
 |---|---|---|---|
 | `AnthropicProvider` | `"anthropic-messages"` | `HttpClient` | Anthropic Messages API |
 | `OpenAICompletionsProvider` | `"openai-completions"` | `HttpClient`, `ILogger<OpenAICompletionsProvider>` | OpenAI Chat Completions API |
+| `OpenAIResponsesProvider` | `"openai-responses"` | `HttpClient`, `ILogger<OpenAIResponsesProvider>` | OpenAI Responses API (GPT-5 series) |
 | `OpenAICompatProvider` | `"openai-compat"` | `HttpClient` | Any OpenAI-compatible endpoint |
 | `CopilotProvider` *(static)* | — | — | Utility class; provides `ResolveApiKey()` and `ApplyDynamicHeaders()` |
 
@@ -38,7 +39,7 @@ public interface IApiProvider
 
 ```csharp
 // CopilotProvider resolves keys with a cascading fallback
-string? key = CopilotProvider.ResolveApiKey();
+string? key = CopilotProvider.ResolveApiKey(configuredApiKey: null);
 
 // Apply request headers for a given message list
 CopilotProvider.ApplyDynamicHeaders(request.Headers, messages);
@@ -599,10 +600,24 @@ public enum CacheRetention { None, Short, Long }
 public enum ThinkingLevel  { Minimal, Low, Medium, High, ExtraHigh }
 ```
 
+### Default thinking budgets
+
+When no custom `ThinkingBudgets` are provided, `SimpleOptionsHelper` applies these per-level defaults (token-based providers only):
+
+| ThinkingLevel | Default budget (tokens) |
+|---|---|
+| `Minimal` | 1,024 |
+| `Low` | 2,048 |
+| `Medium` | 8,192 |
+| `High` | 16,384 |
+| `ExtraHigh` | 16,384 (clamped to `High` for non-adaptive models) |
+
+> **Note:** Adaptive thinking models (e.g., Opus 4.6) use effort strings (`"low"`, `"medium"`, `"high"`, `"max"`) instead of token budgets. For these models, `ExtraHigh` maps to `"max"` effort.
+
 | Property | Default | Notes |
 |---|---|---|
 | `Temperature` | `null` (provider default) | Sampling temperature. |
-| `MaxTokens` | `null` (model default) | Override the model's max output tokens. |
+| `MaxTokens` | `null` — `StreamSimple` caps at `min(model.MaxTokens, 32000)` | Override the model's max output tokens. |
 | `Transport` | `Sse` | SSE, WebSocket, or Auto. |
 | `CacheRetention` | `Short` | Prompt cache retention hint. |
 | `MaxRetryDelayMs` | `60000` | Max backoff delay for retries. |
@@ -790,7 +805,7 @@ public sealed class MyCustomProvider : IApiProvider
                 }
 
                 var finalMessage = BuildFinalMessage(model, partial);
-                stream.Push(new TextEndEvent(0, finalMessage.Content[0] as TextContent!.Text, finalMessage));
+                stream.Push(new TextEndEvent(0, ((TextContent)finalMessage.Content[0]).Text, finalMessage));
                 stream.Push(new DoneEvent(StopReason.Stop, finalMessage));
             }
             catch (Exception ex)

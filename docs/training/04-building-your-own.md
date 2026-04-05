@@ -142,7 +142,7 @@ For a full provider tutorial, see [Step 10: Adding a new LLM provider](#step-10-
 
 ## Step 2: Define custom tools
 
-Each tool implements `IAgentTool` (defined in `BotNexus.AgentCore.Tools`). The interface has six members:
+Each tool implements `IAgentTool` (defined in `BotNexus.AgentCore.Tools`). The interface has seven members:
 
 | Member | Purpose |
 |--------|---------|
@@ -297,11 +297,11 @@ ConvertToLlmDelegate convertToLlm = MessageConverter.ToProviderMessages;
 // ── TransformContext delegate ───────────────────────────
 // Identity (pass-through) — or implement compaction logic
 TransformContextDelegate transformContext =
-    (messages, ct) => ValueTask.FromResult(messages);
+    (messages, ct) => Task.FromResult(messages);
 
 // ── GetApiKey delegate ──────────────────────────────────
 GetApiKeyDelegate getApiKey = (provider, ct) =>
-    ValueTask.FromResult(Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY"));
+    Task.FromResult(Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY"));
 
 // ── GenerationSettings ──────────────────────────────────
 var generationSettings = new SimpleStreamOptions
@@ -487,10 +487,10 @@ BotNexus uses a JSONL-based session format for persisting agent conversations. T
 Each session is a `.jsonl` file in `.botnexus-agent/sessions/`. Every line is a JSON object:
 
 ```
-{"Type":"header","Version":1,"SessionId":"abc-123","Name":"My Session",...}
-{"Type":"message","EntryId":"e1","ParentEntryId":null,"Message":{...}}
-{"Type":"message","EntryId":"e2","ParentEntryId":"e1","Message":{...}}
-{"Type":"metadata","Key":"activeBranch","Value":"feature/weather"}
+{"type":"session_header","version":2,"sessionId":"abc-123","name":"My Session",...}
+{"type":"message","entryId":"e1","parentEntryId":null,"message":{...}}
+{"type":"message","entryId":"e2","parentEntryId":"e1","message":{...}}
+{"type":"metadata","key":"leaf","value":"e2"}
 ```
 
 Entry types:
@@ -544,14 +544,14 @@ As conversations grow, context windows fill up. Use the `TransformContext` deleg
 TransformContext: (messages, ct) =>
 {
     if (messages.Count <= 50)
-        return ValueTask.FromResult(messages);
+        return Task.FromResult(messages);
 
     // Keep the first message (system context) and the last 40
     var compacted = new List<AgentMessage>();
     compacted.Add(messages[0]);
     compacted.AddRange(messages.Skip(messages.Count - 40));
 
-    return ValueTask.FromResult<IReadOnlyList<AgentMessage>>(compacted);
+    return Task.FromResult<IReadOnlyList<AgentMessage>>(compacted);
 },
 ```
 
@@ -1452,9 +1452,9 @@ var options = new AgentOptions(
     Model: model,
     LlmClient: llmClient,
     ConvertToLlm: MessageConverter.ToProviderMessages,
-    TransformContext: (ctx, ct) => ValueTask.FromResult(ctx),
+    TransformContext: (ctx, ct) => Task.FromResult(ctx),
     GetApiKey: (provider, ct) =>
-        ValueTask.FromResult(
+        Task.FromResult(
             Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY")),
     GetSteeringMessages: null,
     GetFollowUpMessages: null,

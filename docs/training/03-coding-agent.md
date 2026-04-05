@@ -146,10 +146,11 @@ private static IReadOnlyList<IAgentTool> CreateTools(
 **Parameters:** `path` (required), `edits` (array of `{oldText, newText}`)
 
 **Behavior:**
-1. **Exact match** — tries literal string match first
-2. **Fuzzy fallback** — normalizes whitespace, Unicode quotes/dashes, and line endings
-3. **Validation** — rejects overlapping edits and ambiguous matches
-4. **Preservation** — detects and maintains original line endings (CRLF/LF)
+1. **BOM stripping** — removes UTF-8 BOM (`\uFEFF`) before processing
+2. **Exact match** — tries literal string match first
+3. **Fuzzy fallback** — normalizes whitespace, Unicode quotes/dashes, and line endings
+4. **Validation** — rejects overlapping edits and ambiguous matches
+5. **Preservation** — detects and maintains original line endings (CRLF/LF)
 
 ```json
 {
@@ -433,7 +434,7 @@ Key concepts:
 public sealed class SessionManager
 {
     Task<SessionInfo> CreateSessionAsync(
-        string workingDirectory, string name, string? parentSessionId = null);
+        string workingDirectory, string? name, string? parentSessionId = null);
 
     Task SaveSessionAsync(
         SessionInfo session, IReadOnlyList<AgentMessage> messages);
@@ -473,7 +474,11 @@ var options = new SessionCompactionOptions(
     KeepRecentTokens: 20_000,
     KeepRecentCount: 10,
     LlmClient: llmClient,     // For LLM-powered summarization
-    Model: model
+    Model: model,
+    ApiKey: apiKey,            // Required for authenticated summarization
+    Headers: headers,          // Optional custom headers
+    CustomInstructions: null,  // Optional summarization instructions
+    OnCompactionAsync: null    // Optional extension callback
 );
 
 IReadOnlyList<AgentMessage> compacted = await compactor.CompactAsync(messages, options, ct);
@@ -483,8 +488,9 @@ IReadOnlyList<AgentMessage> compacted = await compactor.CompactAsync(messages, o
 1. **Estimate tokens** — actual usage or `chars ÷ 4` heuristic
 2. **Check budget** — if within budget, return messages unchanged
 3. **Find cut point** — keep recent messages (≥20K tokens, ≥10 messages)
-4. **Summarize** — LLM-driven summarization of older messages; falls back to heuristic extraction if LLM is unavailable
-5. **Return** — `[SystemAgentMessage(summary), ...recentMessages]`
+4. **Validate cut point** — ensure cut never falls on a `ToolResultAgentMessage`; prefer `UserMessage` boundaries
+5. **Summarize** — LLM-driven summarization of older messages; falls back to heuristic extraction if LLM is unavailable
+6. **Return** — `[SystemAgentMessage(summary), ...recentMessages]`
 
 The summary includes file tracking metadata:
 
@@ -592,15 +598,32 @@ using BotNexus.Providers.Core.Registry;
 public sealed class MetricsTool : IAgentTool
 {
     public string Name => "metrics";
-    public string Description => "Report build and test metrics";
+    public string Label => "Metrics";
+
+    public Tool Definition => new Tool(
+        Name: "metrics",
+        Description: "Report build and test metrics",
+        Parameters: JsonSerializer.Deserialize<JsonElement>("""
+        { "type": "object", "properties": {} }
+        """));
+
+    public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(
+        IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken cancellationToken = default)
+        => Task.FromResult(arguments);
 
     public Task<AgentToolResult> ExecuteAsync(
-        string callId, JsonElement args, CancellationToken ct)
+        string toolCallId, IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken cancellationToken = default,
+        AgentToolUpdateCallback? onUpdate = null)
     {
         var report = GatherMetrics(); // your logic
         return Task.FromResult(new AgentToolResult(
-            new[] { new TextContent(report) }));
+            Content: [new AgentToolContent(AgentToolContentType.Text, report)]));
     }
+
+    public string? GetPromptSnippet() => null;
+    public IReadOnlyList<string> GetPromptGuidelines() => [];
 }
 
 // 2. Define a custom extension

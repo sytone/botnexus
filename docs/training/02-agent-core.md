@@ -271,7 +271,7 @@ The accumulator maintains a running snapshot of the `AssistantAgentMessage` as d
 ### Pipeline stages
 
 ```
-Tool Lookup (case-insensitive by Name)
+Tool Lookup (case-sensitive by Name)
     → PrepareArgumentsAsync (validate/transform arguments)
         → BeforeToolCall hook (can block execution)
             → ExecuteAsync (run the tool)
@@ -294,8 +294,8 @@ public static async Task<IReadOnlyList<ToolResultAgentMessage>> ExecuteAsync(
 
 Tools execute one at a time in the order they appear in the assistant message. For each tool:
 
-1. Emit `ToolExecutionStartEvent`
-2. Look up tool by name (case-insensitive)
+1. Emit `ToolExecutionStartEvent` (with raw arguments)
+2. Look up tool by name (case-sensitive)
 3. Call `PrepareArgumentsAsync` — validate and transform raw arguments
 4. Call `BeforeToolCall` hook — if it returns `Block = true`, skip execution and produce an error result
 5. Call `ExecuteAsync` — run the tool
@@ -495,7 +495,7 @@ AgentStartEvent
 | `MessageStartEvent` | When a message begins processing | `Message`, `Timestamp` |
 | `MessageUpdateEvent` | Streaming incremental update | `Message` (snapshot), `ContentDelta`, `IsThinking`, `ToolCallId`, `ToolName`, `ArgumentsDelta`, `FinishReason`, `InputTokens`, `OutputTokens`, `Timestamp` |
 | `MessageEndEvent` | When a message finishes processing | `Message`, `Timestamp` |
-| `ToolExecutionStartEvent` | After argument validation, before `ExecuteAsync` | `ToolCallId`, `ToolName`, `Args`, `Timestamp` |
+| `ToolExecutionStartEvent` | Before argument validation, before `ExecuteAsync` | `ToolCallId`, `ToolName`, `Args` (raw, unvalidated), `Timestamp` |
 | `ToolExecutionUpdateEvent` | Reserved for progress updates during execution | `ToolCallId`, `ToolName`, `Args`, `PartialResult`, `Timestamp` |
 | `ToolExecutionEndEvent` | After execution and after-hooks complete | `ToolCallId`, `ToolName`, `Result`, `IsError`, `Timestamp` |
 
@@ -544,12 +544,12 @@ Both queues support two drain modes:
 ```csharp
 public enum QueueMode
 {
+    OneAtATime,    // Drain one message per loop iteration (default: enum value 0)
     All,           // Drain all queued messages at once
-    OneAtATime,    // Drain one message per loop iteration
 }
 ```
 
-`QueueMode.All` is the default — all pending messages are added to the timeline in a single drain. `QueueMode.OneAtATime` drains one message per turn, which gives the LLM a chance to respond to each message individually.
+`QueueMode.All` is commonly used for steering — all pending messages are added to the timeline in a single drain. `QueueMode.OneAtATime` drains one message per turn, which gives the LLM a chance to respond to each message individually. Both must be specified explicitly in `AgentOptions`.
 
 **Example — Guided multi-step workflow:**
 
@@ -597,7 +597,7 @@ Exceptions in `BeforeToolCall` or `AfterToolCall` hooks are logged and ignored. 
 
 ### Concurrency
 
-Single-run concurrency is enforced by `_runLock` (`SemaphoreSlim(1, 1)`). If you call `PromptAsync` while a run is active, the second call blocks until the first completes. `AbortAsync` + `WaitForIdleAsync` is the pattern for preempting a running agent:
+Single-run concurrency is enforced by `_runLock` (`SemaphoreSlim(1, 1)`). If you call `PromptAsync` while a run is active, the second call throws `InvalidOperationException`. `AbortAsync` + `WaitForIdleAsync` is the pattern for preempting a running agent:
 
 ```csharp
 await agent.AbortAsync();
@@ -610,6 +610,7 @@ await agent.PromptAsync("Start fresh with a new approach.");
 ## Code example: creating a simple agent with custom tools
 
 ```csharp
+using System.Text.Json;
 using BotNexus.AgentCore;
 using BotNexus.AgentCore.Configuration;
 using BotNexus.AgentCore.Tools;
@@ -626,15 +627,15 @@ public class CalculatorTool : IAgentTool
     public Tool Definition => new Tool(
         Name: "calculator",
         Description: "Evaluate a mathematical expression.",
-        InputSchema: new
+        Parameters: JsonSerializer.Deserialize<JsonElement>("""
         {
-            type = "object",
-            properties = new
-            {
-                expression = new { type = "string", description = "Math expression to evaluate" }
+            "type": "object",
+            "properties": {
+                "expression": { "type": "string", "description": "Math expression to evaluate" }
             },
-            required = new[] { "expression" }
-        });
+            "required": ["expression"]
+        }
+        """));
 
     public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(
         IReadOnlyDictionary<string, object?> arguments,
