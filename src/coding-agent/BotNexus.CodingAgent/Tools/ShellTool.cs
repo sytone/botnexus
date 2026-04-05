@@ -296,14 +296,16 @@ public sealed class ShellTool : IAgentTool
             return string.Empty;
         }
 
+        var totalLines = ordered.Count;
         var lineLimitReached = ordered.Count > MaxOutputLines;
-        var lines = lineLimitReached ? ordered.Take(MaxOutputLines).ToList() : ordered;
+        var tailLines = lineLimitReached ? ordered.Skip(totalLines - MaxOutputLines).ToList() : ordered;
 
-        var builder = new StringBuilder();
         var bytes = 0;
         var bytesLimitReached = false;
-        foreach (var line in lines)
+        var selected = new List<string>(tailLines.Count);
+        for (var i = tailLines.Count - 1; i >= 0; i--)
         {
+            var line = tailLines[i];
             var text = line + Environment.NewLine;
             var lineBytes = Encoding.UTF8.GetByteCount(text);
             if (bytes + lineBytes > MaxOutputBytes)
@@ -312,21 +314,23 @@ public sealed class ShellTool : IAgentTool
                 break;
             }
 
-            builder.Append(text);
+            selected.Add(line);
             bytes += lineBytes;
         }
 
-        if (includeTruncationNotes)
-        {
-            if (lineLimitReached)
-            {
-                builder.AppendLine($"[Output truncated at {MaxOutputLines} lines]");
-            }
+        selected.Reverse();
+        var shownLines = selected.Count;
+        var wasTruncated = lineLimitReached || bytesLimitReached || shownLines < totalLines;
 
-            if (bytesLimitReached)
-            {
-                builder.AppendLine($"[Output truncated at {MaxOutputBytes} bytes]");
-            }
+        var builder = new StringBuilder();
+        if (includeTruncationNotes && wasTruncated)
+        {
+            builder.AppendLine($"[output truncated — showing last {shownLines} lines of {totalLines}]");
+        }
+
+        foreach (var line in selected)
+        {
+            builder.AppendLine(line);
         }
 
         return builder.ToString().TrimEnd();

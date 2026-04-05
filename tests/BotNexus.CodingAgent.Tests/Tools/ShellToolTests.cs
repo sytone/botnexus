@@ -76,7 +76,7 @@ public sealed class ShellToolTests
             ["command"] = "python -c \"print('a' * 52000 + 'TAIL-MARKER')\""
         });
 
-        result.Content[0].Value.Should().Contain("[Output truncated at 51200 bytes]");
+        result.Content[0].Value.Should().Contain("[output truncated — showing last 0 lines of 1]");
         result.Content[0].Value.Should().NotContain("TAIL-MARKER");
     }
 
