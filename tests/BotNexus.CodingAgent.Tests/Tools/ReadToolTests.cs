@@ -23,7 +23,7 @@ public sealed class ReadToolTests : IDisposable
         var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "sample.txt" });
 
         result.Content.Should().ContainSingle();
-        result.Content[0].Value.Should().Be($"1 | alpha{Environment.NewLine}2 | beta{Environment.NewLine}3 | gamma");
+        result.Content[0].Value.Should().Be($"alpha{Environment.NewLine}beta{Environment.NewLine}gamma");
     }
 
     [Fact]
@@ -51,11 +51,11 @@ public sealed class ReadToolTests : IDisposable
         var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["path"] = "range.txt",
-            ["start_line"] = 2,
-            ["end_line"] = 3
+            ["offset"] = 2,
+            ["limit"] = 2
         });
 
-        result.Content[0].Value.Should().Be($"2 | line2{Environment.NewLine}3 | line3");
+        result.Content[0].Value.Should().Be($"line2{Environment.NewLine}line3{Environment.NewLine}{Environment.NewLine}[1 more lines in file. Use offset=4 to continue.]");
     }
 
     [Fact]
@@ -70,7 +70,7 @@ public sealed class ReadToolTests : IDisposable
     public async Task ExecuteAsync_WhenReadingImage_ReturnsImageContent()
     {
         var filePath = Path.Combine(_tempDirectory, "sample.png");
-        var bytes = new byte[] { 0x01, 0x02, 0x03, 0x04 };
+        var bytes = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=");
         await File.WriteAllBytesAsync(filePath, bytes);
 
         var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "sample.png" });
@@ -92,8 +92,8 @@ public sealed class ReadToolTests : IDisposable
 
         var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "large.txt" });
 
-        result.Content[0].Value.Should().Contain("[Output truncated at 50000 bytes. Use start_line=");
-        result.Content[0].Value.Should().Contain("to continue reading.]");
+        result.Content[0].Value.Should().Contain("50000 byte limit");
+        result.Content[0].Value.Should().Contain("Use offset=");
     }
 
     public void Dispose()

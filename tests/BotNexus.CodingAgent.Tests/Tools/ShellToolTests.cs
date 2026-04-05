@@ -27,20 +27,24 @@ public sealed class ShellToolTests
             ["command"] = "exit 7"
         });
 
-        result.Content[0].Value.Should().Contain("Exit Code: 7");
+        result.Content[0].Value.Should().BeEmpty();
+        result.Details.Should().BeOfType<ShellTool.ShellToolDetails>();
+        result.Details.As<ShellTool.ShellToolDetails>().IsError.Should().BeTrue();
+        result.Details.As<ShellTool.ShellToolDetails>().ExitCode.Should().Be(7);
     }
 
     [Fact]
     public async Task ExecuteAsync_WhenTimeoutReached_ThrowsTimeoutException()
     {
-        var action = () => _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["command"] = "Start-Sleep -Seconds 2",
             ["timeout"] = 1
         });
 
-        await action.Should().ThrowAsync<TimeoutException>()
-            .WithMessage("*timed out*");
+        result.Content[0].Value.Should().Contain("timed out");
+        result.Details.Should().BeOfType<ShellTool.ShellToolDetails>();
+        result.Details.As<ShellTool.ShellToolDetails>().TimedOut.Should().BeTrue();
     }
 
     [Fact]
@@ -51,7 +55,7 @@ public sealed class ShellToolTests
             ["command"] = "$payload = ('a' * 52000) + 'TAIL-MARKER'; Write-Output $payload"
         });
 
-        result.Content[0].Value.Should().Contain("[Output truncated — showing last 50000 characters]")
-            .And.Contain("TAIL-MARKER");
+        result.Content[0].Value.Should().Contain("[Output truncated at 50000 bytes]");
+        result.Content[0].Value.Should().NotContain("TAIL-MARKER");
     }
 }

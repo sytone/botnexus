@@ -51,7 +51,7 @@ public sealed class GrepToolTests : IDisposable
         var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["pattern"] = "match",
-            ["max_results"] = 2
+            ["limit"] = 2
         });
 
         var lines = result.Content[0].Value.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
@@ -80,7 +80,7 @@ public sealed class GrepToolTests : IDisposable
         var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["pattern"] = "target",
-            ["include"] = "*.cs"
+            ["glob"] = "*.cs"
         });
 
         result.Content[0].Value.Should().Contain("file.cs:1: target");

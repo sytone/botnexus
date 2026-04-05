@@ -22,12 +22,11 @@ public sealed class ListDirectoryToolTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(_tempDirectory, "root.txt"), "root");
         await File.WriteAllTextAsync(Path.Combine(nestedDirectory, "child.txt"), "child");
 
-        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = ".", ["depth"] = 2 });
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "." });
 
-        result.Content[0].Value.Should().Contain($".{Path.DirectorySeparatorChar}");
-        result.Content[0].Value.Should().Contain($"src{Path.DirectorySeparatorChar} [dir]");
-        result.Content[0].Value.Should().Contain("root.txt [file, 4 bytes]");
-        result.Content[0].Value.Should().Contain("child.txt [file, 5 bytes]");
+        result.Content[0].Value.Should().Contain("src/");
+        result.Content[0].Value.Should().Contain("root.txt");
+        result.Content[0].Value.Should().NotContain("child.txt");
     }
 
     [Fact]
@@ -37,14 +36,15 @@ public sealed class ListDirectoryToolTests : IDisposable
         var levelTwo = Path.Combine(levelOne, "level2");
         Directory.CreateDirectory(levelTwo);
         await File.WriteAllTextAsync(Path.Combine(levelTwo, "file.txt"), "content");
+        await File.WriteAllTextAsync(Path.Combine(_tempDirectory, "another.txt"), "x");
 
-        var depthOne = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = ".", ["depth"] = 1 });
-        var depthTwo = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = ".", ["depth"] = 2 });
+        var depthOne = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "." });
+        var depthTwo = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = ".", ["limit"] = 1 });
 
-        depthOne.Content[0].Value.Should().Contain($"level1{Path.DirectorySeparatorChar} [dir]");
-        depthOne.Content[0].Value.Should().NotContain($"level2{Path.DirectorySeparatorChar} [dir]");
-        depthTwo.Content[0].Value.Should().Contain($"level2{Path.DirectorySeparatorChar} [dir]");
-        depthTwo.Content[0].Value.Should().NotContain("file.txt [file, 7 bytes]");
+        depthOne.Content[0].Value.Should().Contain("level1/");
+        depthOne.Content[0].Value.Should().NotContain("level2/");
+        depthOne.Content[0].Value.Should().NotContain("file.txt");
+        depthTwo.Content[0].Value.Should().Contain("entries limit reached");
     }
 
     [Fact]
@@ -53,12 +53,10 @@ public sealed class ListDirectoryToolTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(_tempDirectory, "visible.txt"), "visible");
         await File.WriteAllTextAsync(Path.Combine(_tempDirectory, ".hidden.txt"), "hidden");
 
-        var hiddenExcluded = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = ".", ["showHidden"] = false });
-        var hiddenIncluded = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = ".", ["showHidden"] = true });
+        var listing = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "." });
 
-        hiddenExcluded.Content[0].Value.Should().Contain("visible.txt");
-        hiddenExcluded.Content[0].Value.Should().NotContain(".hidden.txt");
-        hiddenIncluded.Content[0].Value.Should().Contain(".hidden.txt");
+        listing.Content[0].Value.Should().Contain("visible.txt");
+        listing.Content[0].Value.Should().Contain(".hidden.txt");
     }
 
     [Fact]
@@ -75,7 +73,7 @@ public sealed class ListDirectoryToolTests : IDisposable
         Directory.CreateDirectory(empty);
 
         var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "empty" });
-        result.Content[0].Value.Should().Contain("is empty.");
+        result.Content[0].Value.Should().Be("(empty directory)");
     }
 
     [Fact]
