@@ -26,6 +26,7 @@ public sealed class BuiltInModelsTests
 
         models.Should().Contain(model => model.Id == "claude-sonnet-4-20250514");
         models.Should().Contain(model => model.Id == "claude-opus-4-5-20250929");
+        models.Should().Contain(model => model.Id.StartsWith("claude-sonnet-4", StringComparison.Ordinal));
     }
 
     [Fact]
