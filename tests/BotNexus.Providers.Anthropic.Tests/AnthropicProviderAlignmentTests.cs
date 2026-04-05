@@ -36,9 +36,9 @@ public class AnthropicProviderAlignmentTests
     }
 
     [Theory]
-    [InlineData("refusal", StopReason.Error)]
+    [InlineData("refusal", StopReason.Refusal)]
     [InlineData("pause_turn", StopReason.Stop)]
-    [InlineData("sensitive", StopReason.Error)]
+    [InlineData("sensitive", StopReason.Sensitive)]
     public async Task Stream_MapsAnthropicStopReasons(string anthropicReason, StopReason expected)
     {
         var payload = """

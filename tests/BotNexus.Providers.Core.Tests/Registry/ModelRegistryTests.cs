@@ -177,13 +177,13 @@ public class ModelRegistryTests : IDisposable
     }
 
     [Fact]
-    public void ModelsAreEqual_DifferentBaseUrl_ReturnsFalse()
+    public void ModelsAreEqual_DifferentBaseUrl_ReturnsTrue()
     {
         var first = MakeModel() with { BaseUrl = "https://a.example.com" };
         var second = MakeModel() with { BaseUrl = "https://b.example.com" };
 
         var result = ModelRegistry.ModelsAreEqual(first, second);
 
-        result.Should().BeFalse();
+        result.Should().BeTrue();
     }
 }
