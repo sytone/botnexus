@@ -261,10 +261,14 @@ public sealed class Agent
 
         if (shouldDrainQueues)
         {
-            var queued = DrainQueuedMessages();
+            var queued = DrainQueuedMessagesWithSource(out var fromSteeringQueue);
             if (queued.Count > 0)
             {
-                _skipInitialSteeringPollForNextRun = true;
+                if (fromSteeringQueue)
+                {
+                    _skipInitialSteeringPollForNextRun = true;
+                }
+
                 return PromptAsync(queued, cancellationToken);
             }
 
@@ -612,12 +616,19 @@ public sealed class Agent
 
     private IReadOnlyList<AgentMessage> DrainQueuedMessages()
     {
+        return DrainQueuedMessagesWithSource(out _);
+    }
+
+    private IReadOnlyList<AgentMessage> DrainQueuedMessagesWithSource(out bool fromSteeringQueue)
+    {
         var steering = _steeringQueue.Drain().ToList();
         if (steering.Count > 0)
         {
+            fromSteeringQueue = true;
             return steering;
         }
 
+        fromSteeringQueue = false;
         return _followUpQueue.Drain().ToList();
     }
 
