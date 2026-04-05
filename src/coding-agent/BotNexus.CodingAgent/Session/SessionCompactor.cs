@@ -156,6 +156,7 @@ public sealed class SessionCompactor
         var minRecent = Math.Min(Math.Max(1, options.KeepRecentCount), messages.Count);
         var minCut = Math.Max(0, messages.Count - minRecent);
         var runningRecentTokens = 0;
+        var cutIndex = minCut;
 
         for (var i = messages.Count - 1; i >= 0; i--)
         {
@@ -163,11 +164,41 @@ public sealed class SessionCompactor
             var recentCount = messages.Count - i;
             if (runningRecentTokens >= options.KeepRecentTokens && recentCount >= minRecent)
             {
-                return i;
+                cutIndex = i;
+                break;
             }
         }
 
-        return minCut;
+        return FindNextValidCutIndex(messages, cutIndex);
+    }
+
+    private static int FindNextValidCutIndex(IReadOnlyList<AgentMessage> messages, int startIndex)
+    {
+        var firstValidBoundary = -1;
+        for (var index = Math.Max(1, startIndex); index < messages.Count; index++)
+        {
+            if (messages[index] is ToolResultAgentMessage)
+            {
+                continue;
+            }
+
+            if (firstValidBoundary < 0)
+            {
+                firstValidBoundary = index;
+            }
+
+            if (messages[index] is AgentUserMessage)
+            {
+                return index;
+            }
+        }
+
+        if (firstValidBoundary >= 0)
+        {
+            return firstValidBoundary;
+        }
+
+        return messages.Count;
     }
 
     private static int FindTurnStartIndex(IReadOnlyList<AgentMessage> messages, int cutIndex)
