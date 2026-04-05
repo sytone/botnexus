@@ -152,6 +152,18 @@ public sealed class ShellTool : IAgentTool
         {
             await process.WaitForExitAsync(linkedCts.Token).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (!timeoutCts.IsCancellationRequested)
+        {
+            var cancelledOutput = BuildOutput(outputBuffer, includeTruncationNotes: true);
+            cancelledOutput = PrependWarning(cancelledOutput, invocation.WarningPrefix);
+            TryKill(process);
+            var cancelledMessage = string.IsNullOrWhiteSpace(cancelledOutput)
+                ? "Command cancelled."
+                : $"Command cancelled.{Environment.NewLine}{Environment.NewLine}{cancelledOutput}";
+            return new AgentToolResult(
+                [new AgentToolContent(AgentToolContentType.Text, cancelledMessage)],
+                new ShellToolDetails(-1, TimedOut: false, IsError: true));
+        }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             var timeoutOutput = BuildOutput(outputBuffer, includeTruncationNotes: true);
