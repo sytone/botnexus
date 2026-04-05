@@ -2,6 +2,7 @@ using System.Text.Json;
 using BotNexus.AgentCore;
 using BotNexus.AgentCore.Types;
 using BotNexus.CodingAgent.Auth;
+using BotNexus.CodingAgent.Extensions;
 using BotNexus.CodingAgent.Session;
 using BotNexus.Providers.Core;
 using BotNexus.Providers.Core.Registry;
@@ -19,6 +20,7 @@ public sealed class InteractiveLoop
         LlmClient llmClient,
         ModelRegistry modelRegistry,
         AuthManager authManager,
+        ExtensionRunner extensionRunner,
         SessionManager sessionManager,
         SessionInfo session,
         OutputFormatter output,
@@ -27,12 +29,16 @@ public sealed class InteractiveLoop
         ArgumentNullException.ThrowIfNull(agent);
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(llmClient);
+        ArgumentNullException.ThrowIfNull(extensionRunner);
         ArgumentNullException.ThrowIfNull(sessionManager);
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(output);
 
         var currentSession = session;
         var sessionCompactor = new SessionCompactor();
+        await extensionRunner
+            .OnSessionStartAsync(new SessionLifecycleContext(currentSession, currentSession.WorkingDirectory, agent.State.Model.Id), ct)
+            .ConfigureAwait(false);
         output.WriteWelcome(agent.State.Model.Id, currentSession);
 
         using var loopCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -64,7 +70,7 @@ public sealed class InteractiveLoop
                     output.WriteToolEnd(toolEnd.ToolName, !toolEnd.IsError);
                     break;
                 case TurnEndEvent:
-                    await CompactIfNeededAsync(agent, config, llmClient, authManager, sessionCompactor, eventCt).ConfigureAwait(false);
+                    await CompactIfNeededAsync(agent, config, llmClient, authManager, extensionRunner, sessionCompactor, eventCt).ConfigureAwait(false);
                     output.WriteTurnSeparator();
                     currentSession = UpdateSessionSnapshot(currentSession, agent);
                     await sessionManager.SaveSessionAsync(currentSession, agent.State.Messages).ConfigureAwait(false);
@@ -137,6 +143,9 @@ public sealed class InteractiveLoop
             Console.CancelKeyPress -= cancelHandler;
             currentSession = UpdateSessionSnapshot(currentSession, agent);
             await sessionManager.SaveSessionAsync(currentSession, agent.State.Messages).ConfigureAwait(false);
+            await extensionRunner
+                .OnSessionEndAsync(new SessionLifecycleContext(currentSession, currentSession.WorkingDirectory, agent.State.Model.Id), ct)
+                .ConfigureAwait(false);
         }
     }
 
@@ -145,6 +154,7 @@ public sealed class InteractiveLoop
         CodingAgentConfig config,
         LlmClient llmClient,
         AuthManager authManager,
+        ExtensionRunner extensionRunner,
         SessionCompactor compactor,
         CancellationToken cancellationToken)
     {
@@ -159,7 +169,17 @@ public sealed class InteractiveLoop
                     LlmClient: llmClient,
                     Model: agent.State.Model,
                     ApiKey: apiKey,
-                    Headers: agent.State.Model.Headers),
+                    Headers: agent.State.Model.Headers,
+                    OnCompactionAsync: async (context, hookCt) =>
+                        await extensionRunner.OnCompactionAsync(
+                                new CompactionLifecycleContext(
+                                    context.MessagesToSummarize,
+                                    context.RecentMessages,
+                                    context.ReadFiles,
+                                    context.ModifiedFiles,
+                                    context.Summary),
+                                hookCt)
+                            .ConfigureAwait(false)),
                 cancellationToken)
             .ConfigureAwait(false);
 

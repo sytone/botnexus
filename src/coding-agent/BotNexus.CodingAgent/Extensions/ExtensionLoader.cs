@@ -9,13 +9,14 @@ namespace BotNexus.CodingAgent.Extensions;
 /// </summary>
 public sealed class ExtensionLoader
 {
-    public IReadOnlyList<IAgentTool> LoadExtensions(string extensionsDirectory)
+    public ExtensionLoadResult LoadExtensions(string extensionsDirectory)
     {
         if (string.IsNullOrWhiteSpace(extensionsDirectory) || !Directory.Exists(extensionsDirectory))
         {
-            return [];
+            return new ExtensionLoadResult([], []);
         }
 
+        var extensions = new List<IExtension>();
         var tools = new List<IAgentTool>();
         foreach (var dllPath in Directory.EnumerateFiles(extensionsDirectory, "*.dll", SearchOption.TopDirectoryOnly))
         {
@@ -35,6 +36,7 @@ public sealed class ExtensionLoader
                     try
                     {
                         var extension = (IExtension)Activator.CreateInstance(extensionType)!;
+                        extensions.Add(extension);
                         var extensionTools = extension.GetTools();
                         tools.AddRange(extensionTools);
                         Console.WriteLine($"Loaded {extensionTools.Count} tools from extension {extension.Name}");
@@ -56,6 +58,10 @@ public sealed class ExtensionLoader
             }
         }
 
-        return tools;
+        return new ExtensionLoadResult(extensions, tools);
     }
 }
+
+public sealed record ExtensionLoadResult(
+    IReadOnlyList<IExtension> Extensions,
+    IReadOnlyList<IAgentTool> Tools);

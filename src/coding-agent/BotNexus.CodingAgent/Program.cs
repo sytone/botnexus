@@ -47,6 +47,7 @@ internal static class Program
 
         var authManager = new AuthManager(config.ConfigDirectory);
         var extensionLoadResult = new ExtensionLoader().LoadExtensions(config.ExtensionsDirectory);
+        var extensionRunner = new ExtensionRunner(extensionLoadResult.Extensions);
         var skills = new SkillsLoader().LoadSkills(workingDirectory, config);
         var sessionManager = new SessionManager();
         var output = new OutputFormatter();
@@ -70,6 +71,7 @@ internal static class Program
             authManager,
             llmClient,
             modelRegistry,
+            extensionRunner,
             extensionLoadResult.Tools,
             skills).ConfigureAwait(false);
         if (resumedMessages.Count > 0)
@@ -92,11 +94,23 @@ internal static class Program
                 return 1;
             }
 
-            output.WriteWelcome(agent.State.Model.Id, session);
-            await RunSinglePromptAsync(agent, command.InitialPrompt, output).ConfigureAwait(false);
-            session = UpdateSessionSnapshot(session, agent);
-            await sessionManager.SaveSessionAsync(session, agent.State.Messages).ConfigureAwait(false);
-            return 0;
+            await extensionRunner
+                .OnSessionStartAsync(new SessionLifecycleContext(session, workingDirectory, agent.State.Model.Id))
+                .ConfigureAwait(false);
+            try
+            {
+                output.WriteWelcome(agent.State.Model.Id, session);
+                await RunSinglePromptAsync(agent, command.InitialPrompt, output).ConfigureAwait(false);
+                session = UpdateSessionSnapshot(session, agent);
+                await sessionManager.SaveSessionAsync(session, agent.State.Messages).ConfigureAwait(false);
+                return 0;
+            }
+            finally
+            {
+                await extensionRunner
+                    .OnSessionEndAsync(new SessionLifecycleContext(session, workingDirectory, agent.State.Model.Id))
+                    .ConfigureAwait(false);
+            }
         }
 
         if (!authManager.HasCredentials() && string.IsNullOrWhiteSpace(config.ApiKey))
@@ -114,6 +128,7 @@ internal static class Program
             llmClient,
             modelRegistry,
             authManager,
+            extensionRunner,
             sessionManager,
             session,
             output,

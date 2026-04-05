@@ -5,6 +5,7 @@ using BotNexus.AgentCore.Hooks;
 using BotNexus.AgentCore.Tools;
 using BotNexus.AgentCore.Types;
 using BotNexus.CodingAgent.Auth;
+using BotNexus.CodingAgent.Extensions;
 using BotNexus.CodingAgent.Hooks;
 using BotNexus.CodingAgent.Tools;
 using BotNexus.CodingAgent.Utils;
@@ -23,6 +24,7 @@ public static class CodingAgent
         AuthManager authManager,
         LlmClient llmClient,
         ModelRegistry modelRegistry,
+        ExtensionRunner? extensionRunner = null,
         IReadOnlyList<IAgentTool>? extensionTools = null,
         IReadOnlyList<string>? skills = null)
     {
@@ -72,11 +74,15 @@ public static class CodingAgent
             GetSteeringMessages: null,
             GetFollowUpMessages: null,
             ToolExecutionMode: ToolExecutionMode.Sequential,
-            BeforeToolCall: (context, _) => ExecuteBeforeHookAsync(context, safetyHooks, auditHooks, config),
-            AfterToolCall: (context, _) => auditHooks.AuditAsync(context),
+            BeforeToolCall: (context, ct) => ExecuteBeforeHookAsync(context, safetyHooks, auditHooks, extensionRunner, config, ct),
+            AfterToolCall: (context, ct) => ExecuteAfterHookAsync(context, auditHooks, extensionRunner, ct),
             GenerationSettings: new SimpleStreamOptions
             {
-                MaxTokens = model.MaxTokens
+                MaxTokens = model.MaxTokens,
+                OnPayload = async (payload, payloadModel) =>
+                    extensionRunner is null
+                        ? payload
+                        : await extensionRunner.OnModelRequestAsync(payload, payloadModel).ConfigureAwait(false)
             },
             SteeringMode: QueueMode.OneAtATime,
             FollowUpMode: QueueMode.OneAtATime,
@@ -89,10 +95,93 @@ public static class CodingAgent
         BeforeToolCallContext context,
         SafetyHooks safetyHooks,
         AuditHooks auditHooks,
-        CodingAgentConfig config)
+        ExtensionRunner? extensionRunner,
+        CodingAgentConfig config,
+        CancellationToken cancellationToken)
     {
         auditHooks.RegisterToolCallStart(context.ToolCallRequest.Id);
-        return safetyHooks.ValidateAsync(context, config);
+        return ExecuteBeforeHookCoreAsync(context, safetyHooks, extensionRunner, config, cancellationToken);
+    }
+
+    private static async Task<BeforeToolCallResult?> ExecuteBeforeHookCoreAsync(
+        BeforeToolCallContext context,
+        SafetyHooks safetyHooks,
+        ExtensionRunner? extensionRunner,
+        CodingAgentConfig config,
+        CancellationToken cancellationToken)
+    {
+        var safetyResult = await safetyHooks.ValidateAsync(context, config).ConfigureAwait(false);
+        if (safetyResult?.Block == true)
+        {
+            return safetyResult;
+        }
+
+        if (extensionRunner is null)
+        {
+            return null;
+        }
+
+        return await extensionRunner.OnToolCallAsync(
+                new ToolCallLifecycleContext(
+                    ToolCallLifecycleStage.BeforeExecution,
+                    context.ToolCallRequest.Id,
+                    context.ToolCallRequest.Name,
+                    context.ValidatedArgs),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private static async Task<AfterToolCallResult?> ExecuteAfterHookAsync(
+        AfterToolCallContext context,
+        AuditHooks auditHooks,
+        ExtensionRunner? extensionRunner,
+        CancellationToken cancellationToken)
+    {
+        var auditResult = await auditHooks.AuditAsync(context).ConfigureAwait(false);
+        if (extensionRunner is null)
+        {
+            return auditResult;
+        }
+
+        await extensionRunner.OnToolCallAsync(
+                new ToolCallLifecycleContext(
+                    ToolCallLifecycleStage.AfterExecution,
+                    context.ToolCallRequest.Id,
+                    context.ToolCallRequest.Name,
+                    context.ValidatedArgs,
+                    context.IsError),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        var extensionResult = await extensionRunner.OnToolResultAsync(
+                new ToolResultLifecycleContext(
+                    context.ToolCallRequest.Id,
+                    context.ToolCallRequest.Name,
+                    context.ValidatedArgs,
+                    context.Result,
+                    context.IsError),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return MergeAfterResults(auditResult, extensionResult);
+    }
+
+    private static AfterToolCallResult? MergeAfterResults(AfterToolCallResult? first, AfterToolCallResult? second)
+    {
+        if (first is null)
+        {
+            return second;
+        }
+
+        if (second is null)
+        {
+            return first;
+        }
+
+        return new AfterToolCallResult(
+            Content: second.Content ?? first.Content,
+            Details: second.Details ?? first.Details,
+            IsError: second.IsError ?? first.IsError);
     }
 
     private static IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, IReadOnlyList<IAgentTool>? extensionTools)
