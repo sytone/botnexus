@@ -68,6 +68,17 @@ public class OpenAICompletionsProviderTests
         convertMessages.Should().NotBeNull();
 
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var model = new LlmModel(
+            Id: "gpt-4o",
+            Name: "GPT-4o",
+            Api: "openai-completions",
+            Provider: "openai",
+            BaseUrl: "https://api.openai.com/v1",
+            Reasoning: true,
+            Input: ["text"],
+            Cost: new ModelCost(0, 0, 0, 0),
+            ContextWindow: 128000,
+            MaxTokens: 32768);
         var messages = new Message[]
         {
             new UserMessage(new UserMessageContent("start"), timestamp),
@@ -86,7 +97,7 @@ public class OpenAICompletionsProviderTests
 
         var converted = convertMessages!.Invoke(
             null,
-            [null, messages, new OpenAICompletionsCompat()]) as JsonArray;
+            [null, model, messages, new OpenAICompletionsCompat()]) as JsonArray;
 
         converted.Should().NotBeNull();
         converted!

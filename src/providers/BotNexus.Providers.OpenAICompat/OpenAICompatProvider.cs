@@ -50,7 +50,7 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
         if (options?.Reasoning is not null)
         {
             var compat = CompatDetector.Detect(model);
-            if (compat.SupportsReasoningEffort && compat.ReasoningEffortMap is not null)
+            if (compat.SupportsReasoningEffort != false && compat.ReasoningEffortMap is not null)
             {
                 var compatOptions = new OpenAICompatOptions
                 {
@@ -311,15 +311,15 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
             body["temperature"] = options.Temperature;
 
         // Store
-        if (compat.SupportsStore)
-            body["store"] = true;
+        if (compat.SupportsStore == true)
+            body["store"] = false;
 
         // Stream options for usage in streaming
-        if (compat.SupportsUsageInStreaming)
+        if (compat.SupportsUsageInStreaming != false)
             body["stream_options"] = new Dictionary<string, object?> { ["include_usage"] = true };
 
         // Reasoning effort
-        if (options is OpenAICompatOptions compatOpts && compatOpts.ReasoningEffort is not null && compat.SupportsReasoningEffort)
+        if (options is OpenAICompatOptions compatOpts && compatOpts.ReasoningEffort is not null && compat.SupportsReasoningEffort != false)
             body["reasoning_effort"] = compatOpts.ReasoningEffort;
 
         // Tool choice
@@ -339,7 +339,7 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
                     ["parameters"] = tool.Parameters,
                 };
 
-                if (compat.SupportsStrictMode)
+                if (compat.SupportsStrictMode != false)
                     fn["strict"] = true;
 
                 tools.Add(new Dictionary<string, object?>
@@ -363,7 +363,7 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
         // System prompt
         if (!string.IsNullOrEmpty(context.SystemPrompt))
         {
-            var role = compat.SupportsDeveloperRole ? "developer" : "system";
+            var role = compat.SupportsDeveloperRole != false ? "developer" : "system";
             messages.Add(new Dictionary<string, object?>
             {
                 ["role"] = role,
@@ -389,7 +389,7 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
                     messages.Add(BuildToolResultMessage(toolResult, compat));
 
                     // Insert synthetic assistant message after tool result if required
-                    if (compat.RequiresAssistantAfterToolResult)
+                    if (compat.RequiresAssistantAfterToolResult == true)
                     {
                         var nextIsAssistant = i + 1 < context.Messages.Count
                             && context.Messages[i + 1] is AssistantMessage;
@@ -473,7 +473,7 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
                     textParts.Add(text.Text);
                     break;
 
-                case ThinkingContent thinking when compat.RequiresThinkingAsText:
+                case ThinkingContent thinking when compat.RequiresThinkingAsText == true:
                     textParts.Add($"<thinking>{thinking.Thinking}</thinking>");
                     break;
 
@@ -520,7 +520,7 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
             ["content"] = contentText,
         };
 
-        if (compat.RequiresToolResultName)
+        if (compat.RequiresToolResultName == true)
             msg["name"] = toolResult.ToolName;
 
         return msg;

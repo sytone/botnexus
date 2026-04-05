@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -129,7 +130,7 @@ public sealed class OpenAIResponsesProvider(
 
         using var responseStream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(responseStream, Encoding.UTF8);
-        await ParseSseStream(stream, reader, model, ct);
+        await ParseSseStream(stream, reader, model, options, ct);
     }
 
     private static JsonObject BuildRequestPayload(
@@ -170,6 +171,9 @@ public sealed class OpenAIResponsesProvider(
 
         if (options?.Temperature is not null)
             payload["temperature"] = options.Temperature.Value;
+
+        if (options is OpenAIResponsesOptions { ServiceTier: not null } responsesOptions)
+            payload["service_tier"] = responsesOptions.ServiceTier;
 
         if (options?.CacheRetention != CacheRetention.None && !string.IsNullOrWhiteSpace(options?.SessionId))
             payload["prompt_cache_key"] = options.SessionId;
@@ -224,7 +228,7 @@ public sealed class OpenAIResponsesProvider(
                     break;
 
                 case AssistantMessage assistant:
-                    foreach (var item in ConvertAssistantMessage(assistant))
+                    foreach (var item in ConvertAssistantMessage(assistant, model))
                         result.Add(item);
                     break;
 
@@ -288,26 +292,71 @@ public sealed class OpenAIResponsesProvider(
         };
     }
 
-    private static IReadOnlyList<JsonObject> ConvertAssistantMessage(AssistantMessage assistant)
+    private static IReadOnlyList<JsonObject> ConvertAssistantMessage(AssistantMessage assistant, LlmModel model)
     {
         var items = new List<JsonObject>();
-        var text = new StringBuilder();
+        var isDifferentModel = !string.Equals(assistant.ModelId, model.Id, StringComparison.Ordinal) &&
+                               string.Equals(assistant.Provider, model.Provider, StringComparison.Ordinal) &&
+                               string.Equals(assistant.Api, model.Api, StringComparison.Ordinal);
+        var msgIndex = 0;
 
         foreach (var block in assistant.Content)
         {
             switch (block)
             {
                 case TextContent textBlock:
-                    text.Append(UnicodeSanitizer.SanitizeSurrogates(textBlock.Text));
+                    var parsedSignature = ParseTextSignature(textBlock.TextSignature);
+                    var msgId = parsedSignature?.Id;
+                    if (string.IsNullOrWhiteSpace(msgId))
+                    {
+                        msgId = $"msg_{msgIndex}";
+                    }
+                    else if (msgId.Length > 64)
+                    {
+                        msgId = $"msg_{ShortHash(msgId)}";
+                    }
+
+                    var textItem = new JsonObject
+                    {
+                        ["type"] = "message",
+                        ["role"] = "assistant",
+                        ["content"] = new JsonArray
+                        {
+                            new JsonObject
+                            {
+                                ["type"] = "output_text",
+                                ["text"] = UnicodeSanitizer.SanitizeSurrogates(textBlock.Text),
+                                ["annotations"] = new JsonArray()
+                            }
+                        },
+                        ["status"] = "completed",
+                        ["id"] = msgId
+                    };
+                    if (parsedSignature?.Phase is not null)
+                        textItem["phase"] = parsedSignature.Phase;
+                    items.Add(textItem);
+                    msgIndex++;
                     break;
 
                 case ThinkingContent thinking:
-                    if (!string.IsNullOrWhiteSpace(thinking.Thinking))
-                        text.Append(UnicodeSanitizer.SanitizeSurrogates(thinking.Thinking));
+                    if (!string.IsNullOrWhiteSpace(thinking.ThinkingSignature))
+                    {
+                        try
+                        {
+                            var parsed = JsonNode.Parse(thinking.ThinkingSignature);
+                            if (parsed is JsonObject reasoningItem)
+                                items.Add(reasoningItem);
+                        }
+                        catch (JsonException)
+                        {
+                        }
+                    }
                     break;
 
                 case ToolCallContent toolCall:
                     var (callId, itemId) = SplitToolCallId(toolCall.Id);
+                    if (isDifferentModel && itemId?.StartsWith("fc_", StringComparison.Ordinal) == true)
+                        itemId = null;
                     items.Add(new JsonObject
                     {
                         ["type"] = "function_call",
@@ -318,23 +367,6 @@ public sealed class OpenAIResponsesProvider(
                     });
                     break;
             }
-        }
-
-        if (text.Length > 0)
-        {
-            items.Insert(0, new JsonObject
-            {
-                ["type"] = "message",
-                ["role"] = "assistant",
-                ["content"] = new JsonArray
-                {
-                    new JsonObject
-                    {
-                        ["type"] = "output_text",
-                        ["text"] = text.ToString()
-                    }
-                }
-            });
         }
 
         return items;
@@ -374,7 +406,7 @@ public sealed class OpenAIResponsesProvider(
         else
         {
             output = JsonValue.Create(UnicodeSanitizer.SanitizeSurrogates(
-                string.IsNullOrWhiteSpace(textResult) ? "(no output)" : textResult))!;
+                string.IsNullOrWhiteSpace(textResult) ? "(see attached image)" : textResult))!;
         }
 
         return new JsonObject
@@ -395,7 +427,8 @@ public sealed class OpenAIResponsesProvider(
                 ["type"] = "function",
                 ["name"] = tool.Name,
                 ["description"] = tool.Description,
-                ["parameters"] = JsonNode.Parse(tool.Parameters.GetRawText())
+                ["parameters"] = JsonNode.Parse(tool.Parameters.GetRawText()),
+                ["strict"] = false
             });
         }
 
@@ -406,6 +439,7 @@ public sealed class OpenAIResponsesProvider(
         LlmStream stream,
         StreamReader reader,
         LlmModel model,
+        StreamOptions? options,
         CancellationToken ct)
     {
         var contentBlocks = new List<ContentBlock>();
@@ -615,11 +649,18 @@ public sealed class OpenAIResponsesProvider(
                     switch (itemType)
                     {
                         case "reasoning" when itemId is not null && thinkingStates.TryGetValue(itemId, out var thinkingState):
+                            contentBlocks[thinkingState.ContentIndex] = new ThinkingContent(
+                                thinkingState.Text.ToString(),
+                                JsonSerializer.Serialize(item));
                             stream.Push(new ThinkingEndEvent(thinkingState.ContentIndex, thinkingState.Text.ToString(), BuildPartial()));
                             thinkingStates.Remove(itemId);
                             break;
 
                         case "message" when itemId is not null && textStates.TryGetValue(itemId, out var textState):
+                            var phase = GetString(item, "phase");
+                            contentBlocks[textState.ContentIndex] = new TextContent(
+                                textState.Text.ToString(),
+                                EncodeTextSignatureV1(itemId, phase));
                             stream.Push(new TextEndEvent(textState.ContentIndex, textState.Text.ToString(), BuildPartial()));
                             textStates.Remove(itemId);
                             break;
@@ -660,6 +701,9 @@ public sealed class OpenAIResponsesProvider(
                         usageEl.ValueKind == JsonValueKind.Object)
                     {
                         usage = ParseUsage(usageEl, model);
+                        var configuredTier = options is OpenAIResponsesOptions ro ? ro.ServiceTier : null;
+                        var responseTier = GetString(responseEl, "service_tier");
+                        usage = ApplyServiceTierPricing(usage, responseTier ?? configuredTier);
                     }
 
                     if (contentBlocks.OfType<ToolCallContent>().Any() && stopReason == StopReason.Stop)
@@ -792,6 +836,87 @@ public sealed class OpenAIResponsesProvider(
         ThinkingLevel.ExtraHigh => "xhigh",
         _ => "medium"
     };
+
+    private static string EncodeTextSignatureV1(string id, string? phase)
+    {
+        var payload = new JsonObject
+        {
+            ["v"] = 1,
+            ["id"] = id
+        };
+        if (phase is "commentary" or "final_answer")
+            payload["phase"] = phase;
+        return payload.ToJsonString();
+    }
+
+    private sealed record ParsedTextSignature(string Id, string? Phase);
+
+    private static ParsedTextSignature? ParseTextSignature(string? signature)
+    {
+        if (string.IsNullOrWhiteSpace(signature))
+            return null;
+
+        if (signature.StartsWith("{", StringComparison.Ordinal))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(signature);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("v", out var version) &&
+                    version.ValueKind == JsonValueKind.Number &&
+                    version.GetInt32() == 1 &&
+                    root.TryGetProperty("id", out var idProp) &&
+                    idProp.ValueKind == JsonValueKind.String)
+                {
+                    var id = idProp.GetString()!;
+                    var phase = root.TryGetProperty("phase", out var phaseProp) &&
+                                phaseProp.ValueKind == JsonValueKind.String
+                        ? phaseProp.GetString()
+                        : null;
+                    if (phase is not ("commentary" or "final_answer"))
+                        phase = null;
+                    return new ParsedTextSignature(id, phase);
+                }
+            }
+            catch (JsonException)
+            {
+            }
+        }
+
+        return new ParsedTextSignature(signature, null);
+    }
+
+    private static string ShortHash(string value)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value));
+        return Convert.ToHexString(bytes)[..8].ToLowerInvariant();
+    }
+
+    private static Usage ApplyServiceTierPricing(Usage usage, string? serviceTier)
+    {
+        var multiplier = serviceTier switch
+        {
+            "flex" => 0.5m,
+            "priority" => 2m,
+            _ => 1m
+        };
+        if (multiplier == 1m)
+            return usage;
+
+        var cost = usage.Cost with
+        {
+            Input = usage.Cost.Input * multiplier,
+            Output = usage.Cost.Output * multiplier,
+            CacheRead = usage.Cost.CacheRead * multiplier,
+            CacheWrite = usage.Cost.CacheWrite * multiplier
+        };
+        cost = cost with
+        {
+            Total = cost.Input + cost.Output + cost.CacheRead + cost.CacheWrite
+        };
+
+        return usage with { Cost = cost };
+    }
 
     private static string? GetPromptCacheRetention(string baseUrl, CacheRetention retention)
     {

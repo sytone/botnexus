@@ -8,4 +8,5 @@ public record class OpenAIResponsesOptions : BotNexus.Providers.Core.StreamOptio
     public string? ReasoningEffort { get; set; }
     public string? ReasoningSummary { get; set; }
     public string? PreviousResponseId { get; set; }
+    public string? ServiceTier { get; set; }
 }

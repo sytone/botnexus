@@ -28,7 +28,7 @@ public class MessageConversionWithCompatTests
         var model = MakeModel(compat);
 
         // When SupportsDeveloperRole is false, the role should be "system"
-        var role = compat.SupportsDeveloperRole ? "developer" : "system";
+        var role = compat.SupportsDeveloperRole != false ? "developer" : "system";
         role.Should().Be("system");
     }
 
@@ -38,7 +38,7 @@ public class MessageConversionWithCompatTests
         var compat = new OpenAICompletionsCompat { SupportsDeveloperRole = true };
         var model = MakeModel(compat, reasoning: true);
 
-        var role = compat.SupportsDeveloperRole ? "developer" : "system";
+        var role = compat.SupportsDeveloperRole != false ? "developer" : "system";
         role.Should().Be("developer");
     }
 

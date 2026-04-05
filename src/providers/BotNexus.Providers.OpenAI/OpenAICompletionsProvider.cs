@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using BotNexus.Providers.Core;
 using BotNexus.Providers.Core.Compatibility;
 using BotNexus.Providers.Core.Models;
@@ -17,7 +18,7 @@ namespace BotNexus.Providers.OpenAI;
 /// Port of pi-mono's providers/openai-completions.ts.
 /// Uses raw HttpClient for SSE streaming — full control over headers, compat, and streaming.
 /// </summary>
-public sealed class OpenAICompletionsProvider(
+public sealed partial class OpenAICompletionsProvider(
     HttpClient httpClient,
     ILogger<OpenAICompletionsProvider> logger) : IApiProvider
 {
@@ -184,7 +185,8 @@ public sealed class OpenAICompletionsProvider(
         if (!response.IsSuccessStatusCode)
         {
             var errorBody = await response.Content.ReadAsStringAsync(ct);
-            throw new HttpRequestException($"HTTP {(int)response.StatusCode}: {errorBody}");
+            var providerError = ExtractProviderErrorMessage(errorBody, model);
+            throw new HttpRequestException($"HTTP {(int)response.StatusCode}: {providerError}");
         }
 
         using var responseStream = await response.Content.ReadAsStreamAsync(ct);
@@ -212,40 +214,92 @@ public sealed class OpenAICompletionsProvider(
         if (options?.MaxTokens is not null)
             payload[compat.MaxTokensField] = options.MaxTokens.Value;
 
-        if (compat.SupportsTemperature && options?.Temperature is not null)
+        if (compat.SupportsTemperature != false && options?.Temperature is not null)
             payload["temperature"] = options.Temperature.Value;
 
-        if (compat.SupportsStore && compat.SupportsStoreParam)
+        if (compat.SupportsStore == true && compat.SupportsStoreParam != false)
             payload["store"] = false;
 
-        if (compat.SupportsMetadata && options?.Metadata is { Count: > 0 })
+        if (compat.SupportsMetadata != false && options?.Metadata is { Count: > 0 })
             payload["metadata"] = JsonSerializer.SerializeToNode(options.Metadata);
 
-        if (compat.SupportsUsageInStreaming)
+        if (compat.SupportsUsageInStreaming != false)
             payload["stream_options"] = new JsonObject { ["include_usage"] = true };
 
         // Reasoning / thinking support
-        if (options is OpenAICompletionsOptions { ReasoningEffort: not null } compOptions)
+        if (options is OpenAICompletionsOptions { ReasoningEffort: not null } compOptions && model.Reasoning)
         {
-            if (compat.ThinkingFormat is "openai")
+            if (compat.ThinkingFormat is "openai" && compat.SupportsReasoningEffort != false)
             {
                 payload["reasoning_effort"] = compOptions.ReasoningEffort;
             }
+            else if (compat.ThinkingFormat is "qwen")
+            {
+                payload["enable_thinking"] = true;
+            }
+            else if (compat.ThinkingFormat is "qwen-chat-template")
+            {
+                payload["chat_template_kwargs"] = new JsonObject { ["enable_thinking"] = true };
+            }
+            else if (compat.ThinkingFormat is "openrouter")
+            {
+                payload["reasoning"] = new JsonObject
+                {
+                    ["effort"] = compOptions.ReasoningEffort
+                };
+            }
             else
             {
-                // zAI / qwen / openrouter style
                 payload["enable_thinking"] = true;
                 payload["thinking_format"] = compat.ThinkingFormat;
             }
+        }
+        else if (compat.ThinkingFormat is "openrouter" && model.Reasoning)
+        {
+            payload["reasoning"] = new JsonObject
+            {
+                ["effort"] = "none"
+            };
         }
 
         if (options is OpenAICompletionsOptions { ToolChoice: not null } tcOptions)
             payload["tool_choice"] = tcOptions.ToolChoice;
 
-        payload["messages"] = ConvertMessages(systemPrompt, messages, compat);
+        payload["messages"] = ConvertMessages(systemPrompt, model, messages, compat);
 
         if (tools is { Count: > 0 })
+        {
             payload["tools"] = ConvertTools(tools, compat);
+            if (compat.ZaiToolStream == true)
+                payload["tool_stream"] = true;
+        }
+        else if (HasToolHistory(messages))
+        {
+            payload["tools"] = new JsonArray();
+        }
+
+        if (model.BaseUrl.Contains("openrouter.ai", StringComparison.OrdinalIgnoreCase) &&
+            compat.OpenRouterRouting is { Count: > 0 })
+        {
+            payload["provider"] = JsonSerializer.SerializeToNode(compat.OpenRouterRouting);
+        }
+
+        if (model.BaseUrl.Contains("ai-gateway.vercel.sh", StringComparison.OrdinalIgnoreCase) &&
+            compat.VercelGatewayRouting is { } routing &&
+            (routing.Only is { Count: > 0 } || routing.Order is { Count: > 0 }))
+        {
+            var gateway = new JsonObject();
+            if (routing.Only is { Count: > 0 })
+                gateway["only"] = JsonSerializer.SerializeToNode(routing.Only);
+            if (routing.Order is { Count: > 0 })
+                gateway["order"] = JsonSerializer.SerializeToNode(routing.Order);
+            payload["providerOptions"] = new JsonObject
+            {
+                ["gateway"] = gateway
+            };
+        }
+
+        MaybeAddOpenRouterAnthropicCacheControl(model, payload);
 
         return payload;
     }
@@ -254,42 +308,192 @@ public sealed class OpenAICompletionsProvider(
 
     #region Message Conversion
 
+    private static bool HasToolHistory(IReadOnlyList<Message> messages)
+    {
+        foreach (var message in messages)
+        {
+            if (message is ToolResultMessage)
+                return true;
+
+            if (message is AssistantMessage assistant &&
+                assistant.Content.Any(block => block is ToolCallContent))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string NormalizeToolCallId(string id, LlmModel model)
+    {
+        if (id.Contains('|'))
+        {
+            var callId = id.Split('|', 2)[0];
+            return NormalizeToolCallIdPart(callId, 40);
+        }
+
+        if (string.Equals(model.Provider, "openai", StringComparison.OrdinalIgnoreCase) && id.Length > 40)
+            return id[..40];
+
+        return id;
+    }
+
+    private static string NormalizeToolCallIdPart(string id, int maxLength)
+    {
+        var normalized = NonAlphanumericRegex().Replace(id, "_");
+        return normalized.Length > maxLength ? normalized[..maxLength] : normalized;
+    }
+
+    private static void MaybeAddOpenRouterAnthropicCacheControl(LlmModel model, JsonObject payload)
+    {
+        if (!string.Equals(model.Provider, "openrouter", StringComparison.OrdinalIgnoreCase) ||
+            !model.Id.StartsWith("anthropic/", StringComparison.OrdinalIgnoreCase) ||
+            payload["messages"] is not JsonArray messages)
+        {
+            return;
+        }
+
+        for (var i = messages.Count - 1; i >= 0; i--)
+        {
+            if (messages[i] is not JsonObject message)
+                continue;
+
+            var role = message["role"]?.GetValue<string>();
+            if (role is not ("user" or "assistant"))
+                continue;
+
+            var content = message["content"];
+            if (content is JsonValue stringContent)
+            {
+                message["content"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["type"] = "text",
+                        ["text"] = stringContent.ToString(),
+                        ["cache_control"] = new JsonObject { ["type"] = "ephemeral" }
+                    }
+                };
+                return;
+            }
+
+            if (content is not JsonArray contentParts)
+                continue;
+
+            for (var j = contentParts.Count - 1; j >= 0; j--)
+            {
+                if (contentParts[j] is JsonObject part &&
+                    string.Equals(part["type"]?.GetValue<string>(), "text", StringComparison.OrdinalIgnoreCase))
+                {
+                    part["cache_control"] = new JsonObject { ["type"] = "ephemeral" };
+                    return;
+                }
+            }
+        }
+    }
+
     private static JsonArray ConvertMessages(
         string? systemPrompt,
+        LlmModel model,
         IReadOnlyList<Message> messages,
         OpenAICompletionsCompat compat)
     {
         var result = new JsonArray();
+        var transformedMessages = MessageTransformer.TransformMessages(messages, model, id => NormalizeToolCallId(id, model));
+        string? lastRole = null;
 
         if (systemPrompt is not null)
         {
-            var role = compat.SupportsDeveloperRole ? "developer" : "system";
+            var role = model.Reasoning && compat.SupportsDeveloperRole != false ? "developer" : "system";
             result.Add(new JsonObject { ["role"] = role, ["content"] = systemPrompt });
         }
 
-        for (var i = 0; i < messages.Count; i++)
+        for (var i = 0; i < transformedMessages.Count; i++)
         {
-            switch (messages[i])
+            var message = transformedMessages[i];
+            if (compat.RequiresAssistantAfterToolResult == true &&
+                lastRole == "toolResult" &&
+                message is UserMessage)
+            {
+                result.Add(new JsonObject { ["role"] = "assistant", ["content"] = "I have processed the tool results." });
+            }
+
+            switch (message)
             {
                 case UserMessage user:
                     result.Add(ConvertUserMessage(user));
+                    lastRole = "user";
                     break;
 
                 case AssistantMessage assistant:
-                    var assistantMessage = ConvertAssistantMessage(assistant, compat);
+                    var assistantMessage = ConvertAssistantMessage(assistant, compat, model);
                     if (assistantMessage is not null)
+                    {
                         result.Add(assistantMessage);
+                        lastRole = "assistant";
+                    }
                     break;
 
                 case ToolResultMessage toolResult:
-                    result.Add(ConvertToolResultMessage(toolResult, compat));
-                    if (compat.RequiresAssistantAfterToolResult
-                        && i + 1 < messages.Count
-                        && messages[i + 1] is UserMessage)
+                {
+                    var imageBlocks = new JsonArray();
+                    var j = i;
+                    for (; j < transformedMessages.Count && transformedMessages[j] is ToolResultMessage; j++)
                     {
-                        result.Add(new JsonObject { ["role"] = "assistant", ["content"] = "" });
+                        var tr = (ToolResultMessage)transformedMessages[j];
+                        result.Add(ConvertToolResultMessage(tr, compat));
+
+                        var hasImages = tr.Content.Any(c => c is ImageContent);
+                        if (hasImages && model.Input.Contains("image"))
+                        {
+                            foreach (var image in tr.Content.OfType<ImageContent>())
+                            {
+                                imageBlocks.Add(new JsonObject
+                                {
+                                    ["type"] = "image_url",
+                                    ["image_url"] = new JsonObject
+                                    {
+                                        ["url"] = $"data:{image.MimeType};base64,{image.Data}"
+                                    }
+                                });
+                            }
+                        }
                     }
+
+                    i = j - 1;
+                    if (imageBlocks.Count > 0)
+                    {
+                        if (compat.RequiresAssistantAfterToolResult == true)
+                        {
+                            result.Add(new JsonObject
+                            {
+                                ["role"] = "assistant",
+                                ["content"] = "I have processed the tool results."
+                            });
+                        }
+
+                        var userContent = new JsonArray
+                        {
+                            new JsonObject { ["type"] = "text", ["text"] = "Attached image(s) from tool result:" }
+                        };
+                        foreach (var image in imageBlocks)
+                            userContent.Add(image?.DeepClone());
+
+                        result.Add(new JsonObject
+                        {
+                            ["role"] = "user",
+                            ["content"] = userContent
+                        });
+                        lastRole = "user";
+                    }
+                    else
+                    {
+                        lastRole = "toolResult";
+                    }
+
                     break;
+                }
             }
         }
 
@@ -326,28 +530,56 @@ public sealed class OpenAICompletionsProvider(
         return new JsonObject { ["role"] = "user", ["content"] = contentArray };
     }
 
-    private static JsonObject? ConvertAssistantMessage(AssistantMessage assistant, OpenAICompletionsCompat compat)
+    private static JsonObject? ConvertAssistantMessage(AssistantMessage assistant, OpenAICompletionsCompat compat, LlmModel model)
     {
         var msg = new JsonObject { ["role"] = "assistant" };
         var textParts = new List<string>();
+        var thinkingParts = new List<string>();
         var toolCalls = new JsonArray();
+        var reasoningDetails = new JsonArray();
 
         foreach (var block in assistant.Content)
         {
             switch (block)
             {
                 case TextContent text:
-                    textParts.Add(text.Text);
+                    if (!string.IsNullOrWhiteSpace(text.Text))
+                        textParts.Add(UnicodeSanitizer.SanitizeSurrogates(text.Text));
                     break;
 
-                case ThinkingContent thinking when compat.RequiresThinkingAsText:
-                    textParts.Add($"<thinking>\n{thinking.Thinking}\n</thinking>");
+                case ThinkingContent thinking:
+                    if (string.IsNullOrWhiteSpace(thinking.Thinking))
+                        break;
+
+                    if (compat.RequiresThinkingAsText == true)
+                    {
+                        thinkingParts.Add(UnicodeSanitizer.SanitizeSurrogates(thinking.Thinking));
+                    }
+                    else if (!string.IsNullOrWhiteSpace(thinking.ThinkingSignature))
+                    {
+                        var signature = thinking.ThinkingSignature;
+                        msg[signature] = string.Join("\n", assistant.Content.OfType<ThinkingContent>()
+                            .Where(t => !string.IsNullOrWhiteSpace(t.Thinking))
+                            .Select(t => UnicodeSanitizer.SanitizeSurrogates(t.Thinking)));
+                    }
                     break;
 
                 case ToolCallContent tc:
+                    if (!string.IsNullOrWhiteSpace(tc.ThoughtSignature))
+                    {
+                        try
+                        {
+                            var parsed = JsonNode.Parse(tc.ThoughtSignature);
+                            if (parsed is not null)
+                                reasoningDetails.Add(parsed);
+                        }
+                        catch (JsonException)
+                        {
+                        }
+                    }
                     toolCalls.Add(new JsonObject
                     {
-                        ["id"] = tc.Id,
+                        ["id"] = NormalizeToolCallId(tc.Id, model),
                         ["type"] = "function",
                         ["function"] = new JsonObject
                         {
@@ -359,6 +591,9 @@ public sealed class OpenAICompletionsProvider(
             }
         }
 
+        if (thinkingParts.Count > 0)
+            textParts.Insert(0, string.Join("\n\n", thinkingParts));
+
         var textContent = textParts.Count > 0 ? string.Join("", textParts) : null;
         if (string.IsNullOrWhiteSpace(textContent) && toolCalls.Count == 0)
             return null;
@@ -367,24 +602,26 @@ public sealed class OpenAICompletionsProvider(
 
         if (toolCalls.Count > 0)
             msg["tool_calls"] = toolCalls;
+        if (reasoningDetails.Count > 0)
+            msg["reasoning_details"] = reasoningDetails;
 
         return msg;
     }
 
     private static JsonObject ConvertToolResultMessage(ToolResultMessage toolResult, OpenAICompletionsCompat compat)
     {
-        var content = string.Join("", toolResult.Content
+        var content = string.Join("\n", toolResult.Content
             .OfType<TextContent>()
-            .Select(t => t.Text));
+            .Select(t => UnicodeSanitizer.SanitizeSurrogates(t.Text)));
 
         var msg = new JsonObject
         {
             ["role"] = "tool",
             ["tool_call_id"] = toolResult.ToolCallId,
-            ["content"] = content
+            ["content"] = string.IsNullOrWhiteSpace(content) ? "(see attached image)" : content
         };
 
-        if (compat.RequiresToolResultName)
+        if (compat.RequiresToolResultName == true)
             msg["name"] = toolResult.ToolName;
 
         return msg;
@@ -407,7 +644,7 @@ public sealed class OpenAICompletionsProvider(
                 ["parameters"] = JsonNode.Parse(tool.Parameters.GetRawText())
             };
 
-            if (compat.SupportsStrictMode)
+            if (compat.SupportsStrictMode != false)
                 fn["strict"] = false;
 
             result.Add(new JsonObject
@@ -440,11 +677,12 @@ public sealed class OpenAICompletionsProvider(
         var textAccumulator = new StringBuilder();
         var thinkingAccumulator = new StringBuilder();
 
-        // SSE tool_calls index → (Id, Name, ArgsBuilder, ContentBlockIndex)
-        var toolCallState = new Dictionary<int, (string Id, string Name, StringBuilder Args, int ContentIndex)>();
+        // SSE tool_calls index → (Id, Name, ArgsBuilder, ContentBlockIndex, ThoughtSignature)
+        var toolCallState = new Dictionary<int, (string Id, string Name, StringBuilder Args, int ContentIndex, string? ThoughtSignature)>();
 
         var startEmitted = false;
         StopReason? stopReason = null;
+        string? errorMessage = null;
 
         AssistantMessage BuildPartial() => new(
             Content: contentBlocks.ToList(),
@@ -453,7 +691,7 @@ public sealed class OpenAICompletionsProvider(
             ModelId: model.Id,
             Usage: usage,
             StopReason: stopReason ?? StopReason.Stop,
-            ErrorMessage: null,
+            ErrorMessage: errorMessage,
             ResponseId: responseId,
             Timestamp: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
 
@@ -486,9 +724,7 @@ public sealed class OpenAICompletionsProvider(
                 // Error in the SSE stream
                 if (root.TryGetProperty("error", out var errorProp))
                 {
-                    var errorMsg = errorProp.TryGetProperty("message", out var msgProp)
-                        ? msgProp.GetString() ?? "Unknown API error"
-                        : "Unknown API error";
+                    var errorMsg = ExtractProviderErrorMessage(root.GetRawText(), model);
 
                     EmitError(stream, model, errorMsg, contentBlocks);
                     return;
@@ -519,7 +755,10 @@ public sealed class OpenAICompletionsProvider(
                     if (choice.TryGetProperty("finish_reason", out var finishProp) &&
                         finishProp.ValueKind == JsonValueKind.String)
                     {
-                        stopReason = MapStopReason(finishProp.GetString());
+                        var mapped = MapStopReason(finishProp.GetString());
+                        stopReason = mapped.StopReason;
+                        if (!string.IsNullOrWhiteSpace(mapped.ErrorMessage))
+                            errorMessage = mapped.ErrorMessage;
                     }
 
                     if (!choice.TryGetProperty("delta", out var delta))
@@ -609,6 +848,13 @@ public sealed class OpenAICompletionsProvider(
                             var tcIndex = tc.TryGetProperty("index", out var idxProp)
                                 ? idxProp.GetInt32()
                                 : 0;
+                            string? thoughtSignature = null;
+                            if (delta.TryGetProperty("reasoning_details", out var reasoningDetailsProp) &&
+                                reasoningDetailsProp.ValueKind == JsonValueKind.Array &&
+                                reasoningDetailsProp.GetArrayLength() > tcIndex)
+                            {
+                                thoughtSignature = reasoningDetailsProp[tcIndex].GetRawText();
+                            }
 
                             if (!toolCallState.ContainsKey(tcIndex))
                             {
@@ -628,7 +874,7 @@ public sealed class OpenAICompletionsProvider(
 
                                 var contentIndex = contentBlocks.Count;
                                 contentBlocks.Add(new ToolCallContent(tcId, fnName, []));
-                                toolCallState[tcIndex] = (tcId, fnName, new StringBuilder(), contentIndex);
+                                toolCallState[tcIndex] = (tcId, fnName, new StringBuilder(), contentIndex, thoughtSignature);
 
                                 stream.Push(new ToolCallStartEvent(contentIndex, BuildPartial()));
                             }
@@ -643,11 +889,13 @@ public sealed class OpenAICompletionsProvider(
                                 {
                                     var state = toolCallState[tcIndex];
                                     state.Args.Append(argsChunk);
+                                    if (thoughtSignature is not null)
+                                        state.ThoughtSignature = thoughtSignature;
                                     toolCallState[tcIndex] = state;
 
                                     var parsedArgs = StreamingJsonParser.Parse(state.Args.ToString());
                                     contentBlocks[state.ContentIndex] =
-                                        new ToolCallContent(state.Id, state.Name, parsedArgs);
+                                        new ToolCallContent(state.Id, state.Name, parsedArgs, state.ThoughtSignature);
 
                                     stream.Push(new ToolCallDeltaEvent(
                                         state.ContentIndex, argsChunk, BuildPartial()));
@@ -668,13 +916,17 @@ public sealed class OpenAICompletionsProvider(
 
         foreach (var (_, state) in toolCallState)
         {
-            var parsedArgs = StreamingJsonParser.Parse(state.Args.ToString());
-            var toolCall = new ToolCallContent(state.Id, state.Name, parsedArgs);
+                    var parsedArgs = StreamingJsonParser.Parse(state.Args.ToString());
+            var toolCall = new ToolCallContent(state.Id, state.Name, parsedArgs, state.ThoughtSignature);
             contentBlocks[state.ContentIndex] = toolCall;
             stream.Push(new ToolCallEndEvent(state.ContentIndex, toolCall, BuildPartial()));
         }
 
-        var finalMessage = BuildPartial() with { StopReason = stopReason ?? StopReason.Stop };
+        var finalMessage = BuildPartial() with
+        {
+            StopReason = stopReason ?? StopReason.Stop,
+            ErrorMessage = errorMessage
+        };
         stream.Push(new DoneEvent(stopReason ?? StopReason.Stop, finalMessage));
         stream.End(finalMessage);
     }
@@ -756,16 +1008,17 @@ public sealed class OpenAICompletionsProvider(
         return updated;
     }
 
-    private static StopReason MapStopReason(string? reason) => reason switch
+    private static (StopReason StopReason, string? ErrorMessage) MapStopReason(string? reason) => reason switch
     {
-        "stop" => StopReason.Stop,
-        "end" => StopReason.Stop,
-        "length" => StopReason.Length,
-        "function_call" => StopReason.ToolUse,
-        "tool_calls" => StopReason.ToolUse,
-        "content_filter" => StopReason.Sensitive,
-        "network_error" => StopReason.Error,
-        _ => StopReason.Error
+        "stop" => (StopReason.Stop, null),
+        "end" => (StopReason.Stop, null),
+        "length" => (StopReason.Length, null),
+        "function_call" => (StopReason.ToolUse, null),
+        "tool_calls" => (StopReason.ToolUse, null),
+        "content_filter" => (StopReason.Error, "Provider finish_reason: content_filter"),
+        "network_error" => (StopReason.Error, "Provider finish_reason: network_error"),
+        null => (StopReason.Stop, null),
+        _ => (StopReason.Error, $"Provider finish_reason: {reason}")
     };
 
     private static string MapThinkingLevel(ThinkingLevel level, OpenAICompletionsCompat? compat)
@@ -780,7 +1033,7 @@ public sealed class OpenAICompletionsProvider(
             ThinkingLevel.Low => "low",
             ThinkingLevel.Medium => "medium",
             ThinkingLevel.High => "high",
-            ThinkingLevel.ExtraHigh => "high",
+            ThinkingLevel.ExtraHigh => "xhigh",
             _ => "medium"
         };
     }
@@ -794,20 +1047,23 @@ public sealed class OpenAICompletionsProvider(
 
         return detected with
         {
-            SupportsStoreParam = configured.SupportsStoreParam,
-            SupportsStore = configured.SupportsStore,
-            SupportsDeveloperRole = configured.SupportsDeveloperRole,
-            SupportsTemperature = configured.SupportsTemperature,
-            SupportsMetadata = configured.SupportsMetadata,
-            SupportsReasoningEffort = configured.SupportsReasoningEffort,
+            SupportsStoreParam = configured.SupportsStoreParam ?? detected.SupportsStoreParam,
+            SupportsStore = configured.SupportsStore ?? detected.SupportsStore,
+            SupportsDeveloperRole = configured.SupportsDeveloperRole ?? detected.SupportsDeveloperRole,
+            SupportsTemperature = configured.SupportsTemperature ?? detected.SupportsTemperature,
+            SupportsMetadata = configured.SupportsMetadata ?? detected.SupportsMetadata,
+            SupportsReasoningEffort = configured.SupportsReasoningEffort ?? detected.SupportsReasoningEffort,
             ReasoningEffortMap = configured.ReasoningEffortMap ?? detected.ReasoningEffortMap,
-            SupportsUsageInStreaming = configured.SupportsUsageInStreaming,
+            SupportsUsageInStreaming = configured.SupportsUsageInStreaming ?? detected.SupportsUsageInStreaming,
             MaxTokensField = configured.MaxTokensField,
-            RequiresToolResultName = configured.RequiresToolResultName,
-            RequiresAssistantAfterToolResult = configured.RequiresAssistantAfterToolResult,
-            RequiresThinkingAsText = configured.RequiresThinkingAsText,
+            RequiresToolResultName = configured.RequiresToolResultName ?? detected.RequiresToolResultName,
+            RequiresAssistantAfterToolResult = configured.RequiresAssistantAfterToolResult ?? detected.RequiresAssistantAfterToolResult,
+            RequiresThinkingAsText = configured.RequiresThinkingAsText ?? detected.RequiresThinkingAsText,
             ThinkingFormat = configured.ThinkingFormat,
-            SupportsStrictMode = configured.SupportsStrictMode
+            OpenRouterRouting = configured.OpenRouterRouting ?? detected.OpenRouterRouting,
+            VercelGatewayRouting = configured.VercelGatewayRouting ?? detected.VercelGatewayRouting,
+            ZaiToolStream = configured.ZaiToolStream ?? detected.ZaiToolStream,
+            SupportsStrictMode = configured.SupportsStrictMode ?? detected.SupportsStrictMode
         };
     }
 
@@ -846,6 +1102,11 @@ public sealed class OpenAICompletionsProvider(
             };
         }
 
+        if (model.Id.Contains("qwen-chat-template", StringComparison.OrdinalIgnoreCase))
+            flags.ThinkingFormat = "qwen-chat-template";
+        else if (model.Id.StartsWith("qwen/", StringComparison.OrdinalIgnoreCase))
+            flags.ThinkingFormat = "qwen";
+
         return new OpenAICompletionsCompat
         {
             SupportsStoreParam = flags.SupportsStoreParam,
@@ -861,6 +1122,9 @@ public sealed class OpenAICompletionsProvider(
             RequiresAssistantAfterToolResult = false,
             RequiresThinkingAsText = false,
             ThinkingFormat = flags.ThinkingFormat,
+            OpenRouterRouting = [],
+            VercelGatewayRouting = new(),
+            ZaiToolStream = false,
             SupportsStrictMode = true
         };
     }
@@ -876,6 +1140,42 @@ public sealed class OpenAICompletionsProvider(
         public string MaxTokensField { get; set; } = "max_completion_tokens";
         public string ThinkingFormat { get; set; } = "openai";
         public Dictionary<ThinkingLevel, string>? ReasoningEffortMap { get; set; }
+    }
+
+    private static string ExtractProviderErrorMessage(string rawError, LlmModel model)
+    {
+        if (string.IsNullOrWhiteSpace(rawError))
+            return "Unknown API error";
+
+        try
+        {
+            using var doc = JsonDocument.Parse(rawError);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("error", out var error))
+            {
+                var message = error.TryGetProperty("message", out var messageEl)
+                    ? messageEl.GetString()
+                    : null;
+
+                if (string.Equals(model.Provider, "openrouter", StringComparison.OrdinalIgnoreCase) &&
+                    error.TryGetProperty("metadata", out var metadata) &&
+                    metadata.ValueKind == JsonValueKind.Object)
+                {
+                    var code = metadata.TryGetProperty("code", out var codeEl) ? codeEl.GetString() : null;
+                    var providerName = metadata.TryGetProperty("provider_name", out var providerEl) ? providerEl.GetString() : null;
+                    var suffix = string.Join(", ", new[] { code, providerName }.Where(v => !string.IsNullOrWhiteSpace(v)));
+                    if (!string.IsNullOrWhiteSpace(suffix))
+                        return $"{message ?? "OpenRouter error"} ({suffix})";
+                }
+
+                return message ?? rawError;
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        return rawError;
     }
 
     #endregion
@@ -918,4 +1218,7 @@ public sealed class OpenAICompletionsProvider(
     }
 
     #endregion
+
+    [GeneratedRegex("[^a-zA-Z0-9_-]")]
+    private static partial Regex NonAlphanumericRegex();
 }
