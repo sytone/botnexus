@@ -200,8 +200,8 @@ public sealed class ShellTool : IAgentTool
                 "[warning: bash not found, using PowerShell — install Git for Windows for best compatibility]\n");
         }
 
-        var bashEscaped = command.Replace("'", "'\"'\"'", StringComparison.Ordinal);
-        return new ShellInvocation("/bin/bash", $"-lc '{bashEscaped}'", null);
+        var unixBashEscaped = command.Replace("'", "'\"'\"'", StringComparison.Ordinal);
+        return new ShellInvocation("/bin/bash", $"-lc '{unixBashEscaped}'", null);
     }
 
     private static string? FindBashExecutable()
