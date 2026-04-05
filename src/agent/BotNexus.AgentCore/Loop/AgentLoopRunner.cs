@@ -320,7 +320,7 @@ public static class AgentLoopRunner
     {
         if (messages.Count <= 12)
         {
-            return messages;
+            return messages.ToList(); // Return a copy to avoid aliasing with the source list
         }
 
         var keep = Math.Max(8, messages.Count / 3);

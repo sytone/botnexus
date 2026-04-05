@@ -59,7 +59,7 @@ public class AgentLoopRunnerTests
     private static AgentLoopConfig CreateConfig(TransformContextDelegate transformContext)
     {
         return new AgentLoopConfig(
-            Model: TestHelpers.CreateTestModel("test-api"),
+            Model: TestHelpers.CreateTestModel("test-api-retry"),
             LlmClient: TestHelpers.CreateLlmClient(),
             ConvertToLlm: (messages, _) => Task.FromResult<IReadOnlyList<Message>>(ToProviderMessages(messages)),
             TransformContext: transformContext,
@@ -85,12 +85,12 @@ public class AgentLoopRunnerTests
     {
         var streamAttempt = 0;
         var provider = new TestApiProvider(
-            "test-api",
+            "test-api-retry",
             simpleStreamFactory: (_, _, _) =>
             {
                 if (Interlocked.Increment(ref streamAttempt) == 1)
                 {
-                    throw new InvalidOperationException("prompt is too long");
+                    throw new InvalidOperationException("context length exceeded");
                 }
 
                 return TestStreamFactory.CreateTextResponse("assistant");

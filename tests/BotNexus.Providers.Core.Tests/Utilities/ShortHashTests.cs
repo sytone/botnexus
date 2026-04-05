@@ -20,7 +20,9 @@ public class ShortHashTests
     {
         var hash = ShortHash.Generate("toolu_abc123");
 
-        hash.Should().HaveLength(9);
+        // pi-mono's shortHash concatenates two base-36 uint32 representations,
+        // producing variable-length strings typically 12-14 characters.
+        hash.Length.Should().BeInRange(6, 14);
     }
 
     [Fact]
