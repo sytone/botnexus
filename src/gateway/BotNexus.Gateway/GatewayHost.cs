@@ -36,7 +36,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
     private readonly IMessageRouter _router;
     private readonly ISessionStore _sessions;
     private readonly IActivityBroadcaster _activity;
-    private readonly ChannelManager _channelManager;
+    private readonly IChannelManager _channelManager;
     private readonly ILogger<GatewayHost> _logger;
 
     public GatewayHost(
@@ -44,7 +44,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
         IMessageRouter router,
         ISessionStore sessions,
         IActivityBroadcaster activity,
-        ChannelManager channelManager,
+        IChannelManager channelManager,
         ILogger<GatewayHost> logger)
     {
         _supervisor = supervisor;

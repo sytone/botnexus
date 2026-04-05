@@ -5,7 +5,7 @@ namespace BotNexus.Channels.Core;
 /// <summary>
 /// Read-only registry for registered channel adapters.
 /// </summary>
-public sealed class ChannelManager
+public sealed class ChannelManager : IChannelManager
 {
     private readonly List<IChannelAdapter> _adapters = [];
 

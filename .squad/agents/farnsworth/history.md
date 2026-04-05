@@ -558,3 +558,7 @@ Participated in design review ceremony for Phase 3 architecture. All ADs approve
 
 **Next:** Parallel execution tracks. Farnsworth + Bender begin implementation. Kif writes training docs. Nibbler runs consistency review.
 
+
+## Session: P1 Design Review Fixes — Channel Stubs (2026-04-05)
+Implemented three review P1s: channel stubs now inherit `ChannelAdapterBase`, Telegram options moved to DI options pattern, and `IChannelManager` abstraction added with GatewayHost/DI updated.
+Verification: `dotnet build` and `dotnet test tests\BotNexus.Gateway.Tests\` both passed after changes.
