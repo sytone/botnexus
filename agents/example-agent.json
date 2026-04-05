@@ -1,0 +1,31 @@
+{
+  "$schema": "https://botnexus.dev/schemas/agent-descriptor.json",
+  "agentId": "example-agent",
+  "displayName": "Example Agent",
+  "description": "Reference configuration demonstrating all AD-20 fields for file-based registration.",
+  "modelId": "claude-sonnet-4-20250514",
+  "apiProvider": "copilot",
+  "systemPrompt": "You are Example Agent. Keep answers concise, accurate, and safe.",
+  "toolIds": [
+    "read_file",
+    "write_file"
+  ],
+  "subAgents": [
+    "search-agent",
+    "review-agent"
+  ],
+  "isolationStrategy": "in-process",
+  "isolationOptions": {
+    "workingDirectory": "Q:\\repos\\botnexus",
+    "allowNetwork": false
+  },
+  "maxConcurrentSessions": 5,
+  "metadata": {
+    "owner": "platform-team",
+    "tags": [
+      "example",
+      "documentation"
+    ],
+    "notes": "Use this file as a template when adding new agents under the agents directory."
+  }
+}

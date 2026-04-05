@@ -170,6 +170,8 @@
 - 2026-04-05: Direct-provider baseline models are now registered in Providers.Core for `anthropic` and `openai` with `FreeCost` placeholders, explicit API model IDs, and provider base URLs.
 - 2026-04-05: `LlmModel` now carries `SupportsExtraHighThinking`; `ModelRegistry.SupportsExtraHigh()` is capability-based instead of model-id string matching.
 - 2026-04-06: Gateway now ships `DefaultAgentCommunicator` (sub-agent sessions scoped as `{parentSessionId}::sub::{childAgentId}` with Phase 2 cross-agent stub) and default `ApiKeyGatewayAuthHandler` registration in `AddBotNexusGateway`.
+- 2026-04-06: Gateway now supports AD-20 JSON agent configuration via `IAgentConfigurationSource`, `FileAgentConfigurationSource` (with watcher hot-reload), and hosted merge loading where code-registered agents always override config-sourced descriptors.
+- 2026-04-06: `AgentDescriptor` now includes `SubAgentIds`, `SystemPromptFile`, and `IsolationOptions`; file-backed prompts are loaded relative to each agent config file and validated through `AgentDescriptorValidator`.
 
 ## Sprint 1 Summary — 2026-04-01T17:33Z
 

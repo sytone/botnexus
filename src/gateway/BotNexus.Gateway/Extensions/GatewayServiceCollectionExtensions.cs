@@ -57,7 +57,7 @@ public static class GatewayServiceCollectionExtensions
         // Gateway host
         services.AddHostedService<GatewayHost>();
 
-        var defaultAgentConfigPath = Path.GetFullPath("agents");
+        var defaultAgentConfigPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "agents"));
         if (Directory.Exists(defaultAgentConfigPath) &&
             services.All(descriptor => descriptor.ServiceType != typeof(IAgentConfigurationSource)))
         {
