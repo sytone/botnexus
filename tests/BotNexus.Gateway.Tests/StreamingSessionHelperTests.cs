@@ -64,6 +64,20 @@ public sealed class StreamingSessionHelperTests
         callbackTypes.Should().Contain(AgentStreamEventType.ThinkingDelta);
     }
 
+    [Fact]
+    public async Task ProcessAndSaveAsync_WithEmptyStream_DoesNotPersistAssistantEntry()
+    {
+        var session = new GatewaySession { SessionId = "session-3", AgentId = "agent-1" };
+        var store = new Mock<ISessionStore>();
+
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable([]),
+            session,
+            store.Object);
+
+        session.History.Should().BeEmpty();
+    }
+
     private static async IAsyncEnumerable<AgentStreamEvent> ToAsyncEnumerable(IEnumerable<AgentStreamEvent> events)
     {
         foreach (var evt in events)

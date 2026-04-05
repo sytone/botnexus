@@ -70,7 +70,8 @@ public static class StreamingSessionHelper
         }
 
         session.History.AddRange(streamedHistory);
-        session.History.Add(new SessionEntry { Role = "assistant", Content = streamedContent.ToString() });
+        if (streamedContent.Length > 0)
+            session.History.Add(new SessionEntry { Role = "assistant", Content = streamedContent.ToString() });
         session.UpdatedAt = DateTimeOffset.UtcNow;
         await sessionStore.SaveAsync(session, cancellationToken);
 
