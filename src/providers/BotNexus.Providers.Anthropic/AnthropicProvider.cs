@@ -156,6 +156,11 @@ public sealed partial class AnthropicProvider : IApiProvider
     {
         var anthropicOpts = options as AnthropicOptions;
         var apiKey = options?.ApiKey ?? EnvironmentApiKeys.GetApiKey(model.Provider) ?? "";
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            throw new InvalidOperationException(
+                $"No API key for {model.Provider}. Set credentials before using model '{model.Id}'.");
+        }
         var baseUrl = model.BaseUrl.TrimEnd('/');
         var authMode = DetectAuthMode(apiKey, model);
 

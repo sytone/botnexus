@@ -82,6 +82,11 @@ public sealed class OpenAICompletionsProvider(
     {
         var compat = model.Compat ?? new OpenAICompletionsCompat();
         var apiKey = options?.ApiKey ?? EnvironmentApiKeys.GetApiKey(model.Provider) ?? "";
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            throw new InvalidOperationException(
+                $"No API key for {model.Provider}. Set credentials before using model '{model.Id}'.");
+        }
 
         var messages = MessageTransformer.TransformMessages(context.Messages, model);
 
