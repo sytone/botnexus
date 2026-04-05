@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Configuration;
 
@@ -21,16 +22,39 @@ public static class PlatformConfigLoader
     public static string DefaultConfigPath =>
         Path.Combine(DefaultConfigDirectory, "config.json");
 
-    /// <summary>Loads config from the default path, returning defaults if file doesn't exist.</summary>
-    public static async Task<PlatformConfig> LoadAsync(string? configPath = null, CancellationToken cancellationToken = default)
+    /// <summary>Loads config from disk and optionally validates it.</summary>
+    public static async Task<PlatformConfig> LoadAsync(
+        string? configPath = null,
+        CancellationToken cancellationToken = default,
+        bool validateOnLoad = true)
     {
         var path = configPath ?? DefaultConfigPath;
         if (!File.Exists(path))
             return new PlatformConfig();
 
-        await using var stream = File.OpenRead(path);
-        return await JsonSerializer.DeserializeAsync<PlatformConfig>(stream, JsonOptions, cancellationToken)
-            ?? new PlatformConfig();
+        PlatformConfig config;
+        try
+        {
+            await using var stream = File.OpenRead(path);
+            config = await JsonSerializer.DeserializeAsync<PlatformConfig>(stream, JsonOptions, cancellationToken)
+                ?? new PlatformConfig();
+        }
+        catch (JsonException ex)
+        {
+            throw new OptionsValidationException(
+                nameof(PlatformConfig),
+                typeof(PlatformConfig),
+                [$"Invalid JSON in '{path}'. {ex.Message}"]);
+        }
+
+        if (!validateOnLoad)
+            return config;
+
+        var errors = Validate(config);
+        if (errors.Count > 0)
+            throw new OptionsValidationException(nameof(PlatformConfig), typeof(PlatformConfig), errors);
+
+        return config;
     }
 
     /// <summary>Validates the configuration and returns any errors.</summary>
@@ -40,25 +64,32 @@ public static class PlatformConfigLoader
 
         List<string> errors = [];
         Uri? listenUri = null;
+        var listenUrl = config.GetListenUrl();
 
-        if (!string.IsNullOrWhiteSpace(config.ListenUrl) &&
-            !Uri.TryCreate(config.ListenUrl, UriKind.Absolute, out listenUri))
+        if (!string.IsNullOrWhiteSpace(listenUrl) &&
+            !Uri.TryCreate(listenUrl, UriKind.Absolute, out listenUri))
         {
-            errors.Add("ListenUrl must be a valid absolute URL.");
+            errors.Add("gateway.listenUrl must be a valid absolute URL (example: http://localhost:5005).");
         }
         else if (listenUri is not null && !(listenUri.Scheme == Uri.UriSchemeHttp || listenUri.Scheme == Uri.UriSchemeHttps))
         {
-            errors.Add("ListenUrl must use http or https.");
+            errors.Add("gateway.listenUrl must use http or https.");
         }
 
-        ValidatePath(config.AgentsDirectory, nameof(config.AgentsDirectory), errors);
-        ValidatePath(config.SessionsDirectory, nameof(config.SessionsDirectory), errors);
+        ValidatePath(config.GetAgentsDirectory(), "gateway.agentsDirectory", errors);
+        ValidatePath(config.GetSessionsDirectory(), "gateway.sessionsDirectory", errors);
 
-        if (!string.IsNullOrWhiteSpace(config.LogLevel) &&
-            !Enum.TryParse<LogLevel>(config.LogLevel, ignoreCase: true, out _))
+        var logLevel = config.GetLogLevel();
+        if (!string.IsNullOrWhiteSpace(logLevel) &&
+            !Enum.TryParse<LogLevel>(logLevel, ignoreCase: true, out _))
         {
-            errors.Add("LogLevel must be one of: Trace, Debug, Information, Warning, Error, Critical.");
+            errors.Add("gateway.logLevel must be one of: Trace, Debug, Information, Warning, Error, Critical.");
         }
+
+        ValidateProviders(config.Providers, errors);
+        ValidateChannels(config.Channels, errors);
+        ValidateAgents(config.Agents, errors);
+        ValidateApiKeys(config.GetApiKeys(), errors);
 
         return errors;
     }
@@ -88,6 +119,100 @@ public static class PlatformConfigLoader
         catch (Exception)
         {
             errors.Add($"{fieldName} must be a valid path.");
+        }
+    }
+
+    private static void ValidateProviders(Dictionary<string, ProviderConfig>? providers, List<string> errors)
+    {
+        if (providers is null)
+            return;
+
+        foreach (var (providerKey, providerConfig) in providers)
+        {
+            if (string.IsNullOrWhiteSpace(providerKey))
+            {
+                errors.Add("providers contains an empty provider key. Use a provider ID (example: 'copilot').");
+                continue;
+            }
+
+            if (providerConfig is null)
+            {
+                errors.Add($"providers.{providerKey} configuration is required.");
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(providerConfig.ApiKey) && string.IsNullOrWhiteSpace(providerConfig.BaseUrl))
+            {
+                errors.Add($"providers.{providerKey} must define apiKey or baseUrl.");
+            }
+
+            if (!string.IsNullOrWhiteSpace(providerConfig.BaseUrl) &&
+                (!Uri.TryCreate(providerConfig.BaseUrl, UriKind.Absolute, out var providerUri) ||
+                 (providerUri.Scheme != Uri.UriSchemeHttp && providerUri.Scheme != Uri.UriSchemeHttps)))
+            {
+                errors.Add($"providers.{providerKey}.baseUrl must be a valid http or https absolute URL.");
+            }
+        }
+    }
+
+    private static void ValidateChannels(Dictionary<string, ChannelConfig>? channels, List<string> errors)
+    {
+        if (channels is null)
+            return;
+
+        foreach (var (channelKey, channelConfig) in channels)
+        {
+            if (string.IsNullOrWhiteSpace(channelKey))
+            {
+                errors.Add("channels contains an empty channel key. Use a channel ID (example: 'web').");
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(channelConfig.Type))
+                errors.Add($"channels.{channelKey}.type is required (example: 'websocket' or 'slack').");
+        }
+    }
+
+    private static void ValidateAgents(Dictionary<string, AgentDefinitionConfig>? agents, List<string> errors)
+    {
+        if (agents is null)
+            return;
+
+        foreach (var (agentId, agentConfig) in agents)
+        {
+            if (string.IsNullOrWhiteSpace(agentId))
+            {
+                errors.Add("agents contains an empty agent ID. Use a stable ID (example: 'assistant').");
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(agentConfig.Provider))
+                errors.Add($"agents.{agentId}.provider is required (example: 'copilot').");
+            if (string.IsNullOrWhiteSpace(agentConfig.Model))
+                errors.Add($"agents.{agentId}.model is required (example: 'gpt-4.1').");
+        }
+    }
+
+    private static void ValidateApiKeys(Dictionary<string, ApiKeyConfig>? apiKeys, List<string> errors)
+    {
+        if (apiKeys is null)
+            return;
+
+        foreach (var (keyId, keyConfig) in apiKeys)
+        {
+            if (string.IsNullOrWhiteSpace(keyId))
+            {
+                errors.Add("gateway.apiKeys contains an empty key ID. Use a stable key name (example: 'tenant-a').");
+                continue;
+            }
+
+            var keyPath = $"gateway.apiKeys.{keyId}";
+            if (string.IsNullOrWhiteSpace(keyConfig.ApiKey))
+                errors.Add($"{keyPath}.apiKey is required.");
+            if (string.IsNullOrWhiteSpace(keyConfig.TenantId))
+                errors.Add($"{keyPath}.tenantId is required.");
+            if (keyConfig.Permissions is null || keyConfig.Permissions.Count == 0)
+                errors.Add($"{keyPath}.permissions must contain at least one permission (example: ['chat:send']).");
         }
     }
 }

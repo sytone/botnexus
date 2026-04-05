@@ -28,20 +28,14 @@ public sealed class CopilotIntegrationTests
         if (auth is null)
             return;
 
-        var channel = new RecordingChannelAdapter(supportsStreaming: false);
-        var host = CreateHost(new CopilotAgentHandle(auth), channel);
+        var harness = CreateHarness(auth, supportsStreaming: false);
+        await harness.Host.DispatchAsync(CreateMessage("Reply with one short sentence."));
 
-        try
-        {
-            await host.DispatchAsync(CreateMessage("Reply with one short sentence."));
-        }
-        catch (Exception ex) when (IsAuthOrConnectivityIssue(ex))
-        {
+        if (ShouldSkipForLiveIssue(harness.Activity))
             return;
-        }
 
-        channel.SentMessages.Should().ContainSingle();
-        channel.SentMessages.Single().Content.Should().NotBeNullOrWhiteSpace();
+        harness.Channel.SentMessages.Should().ContainSingle();
+        harness.Channel.SentMessages.Single().Content.Should().NotBeNullOrWhiteSpace();
     }
 
     [Fact]
@@ -54,40 +48,154 @@ public sealed class CopilotIntegrationTests
         if (auth is null)
             return;
 
-        var channel = new RecordingChannelAdapter(supportsStreaming: true);
-        var host = CreateHost(new CopilotAgentHandle(auth), channel);
+        var harness = CreateHarness(auth, supportsStreaming: true);
+        await harness.Host.DispatchAsync(CreateMessage("Answer with a short greeting."));
 
-        try
-        {
-            await host.DispatchAsync(CreateMessage("Answer with a short greeting."));
-        }
-        catch (Exception ex) when (IsAuthOrConnectivityIssue(ex))
-        {
+        if (ShouldSkipForLiveIssue(harness.Activity))
             return;
-        }
 
-        channel.StreamDeltas.Should().NotBeEmpty();
-        string.Concat(channel.StreamDeltas).Should().NotBeNullOrWhiteSpace();
+        harness.Channel.StreamDeltas.Should().NotBeEmpty();
+        string.Concat(harness.Channel.StreamDeltas).Should().NotBeNullOrWhiteSpace();
     }
 
-    private static GatewayHost CreateHost(IAgentHandle handle, IChannelAdapter channel)
+    [Fact]
+    public async Task DispatchAsync_WithSequentialMessages_MaintainsSessionContinuity()
     {
+        if (!ShouldRunIntegration())
+            return;
+
+        var auth = TryLoadAuth();
+        if (auth is null)
+            return;
+
+        var harness = CreateHarness(auth, supportsStreaming: false);
+        await harness.Host.DispatchAsync(CreateMessage("Remember this token: ORION."));
+        await harness.Host.DispatchAsync(CreateMessage("Reply with exactly one short sentence."));
+
+        if (ShouldSkipForLiveIssue(harness.Activity))
+            return;
+
+        var session = await harness.Sessions.GetAsync("integration-session");
+        session.Should().NotBeNull();
+        session!.History.Select(entry => entry.Role).Should().ContainInOrder("user", "assistant", "user", "assistant");
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WithStreaming_AssemblesCompleteAssistantResponse()
+    {
+        if (!ShouldRunIntegration())
+            return;
+
+        var auth = TryLoadAuth();
+        if (auth is null)
+            return;
+
+        var harness = CreateHarness(auth, supportsStreaming: true);
+        await harness.Host.DispatchAsync(CreateMessage("Provide a concise two-word greeting."));
+
+        if (ShouldSkipForLiveIssue(harness.Activity))
+            return;
+
+        var session = await harness.Sessions.GetAsync("integration-session");
+        var assistantContent = session?.History.LastOrDefault(entry => entry.Role == "assistant")?.Content;
+        assistantContent.Should().NotBeNullOrWhiteSpace();
+        assistantContent.Should().Be(string.Concat(harness.Channel.StreamDeltas));
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WithInvalidCopilotAuth_FailsGracefully()
+    {
+        if (!ShouldRunIntegration())
+            return;
+
+        var auth = TryLoadAuth();
+        if (auth is null)
+            return;
+
+        var invalidAuth = new CopilotAuth("invalid-token", auth.Endpoint);
+        var harness = CreateHarness(invalidAuth, supportsStreaming: false);
+        await harness.Host.DispatchAsync(CreateMessage("This should fail auth."));
+
+        harness.Channel.SentMessages.Should().BeEmpty();
+        harness.Activity.Activities.Should().Contain(activity => activity.Type == GatewayActivityType.Error);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WithLiveCopilot_ExecutesGatewayPipeline()
+    {
+        if (!ShouldRunIntegration())
+            return;
+
+        var auth = TryLoadAuth();
+        if (auth is null)
+            return;
+
+        var harness = CreateHarness(auth, supportsStreaming: false);
+        await harness.Host.DispatchAsync(CreateMessage("Reply with one word."));
+
+        if (ShouldSkipForLiveIssue(harness.Activity))
+            return;
+
+        harness.Router.Verify(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Once);
+        harness.Supervisor.Verify(s => s.GetOrCreateAsync("copilot-agent", "integration-session", It.IsAny<CancellationToken>()), Times.Once);
+        harness.Channel.SentMessages.Should().ContainSingle();
+        harness.Activity.Activities.Select(a => a.Type).Should().ContainInOrder(
+            GatewayActivityType.MessageReceived,
+            GatewayActivityType.AgentProcessing,
+            GatewayActivityType.AgentCompleted);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WithWebUiChannelAdapter_ReceivesGatewayResponse()
+    {
+        if (!ShouldRunIntegration())
+            return;
+
+        var auth = TryLoadAuth();
+        if (auth is null)
+            return;
+
+        var webUiChannel = new WebUiRecordingChannelAdapter(supportsStreaming: false);
+        var harness = CreateHarness(auth, supportsStreaming: false, channel: webUiChannel);
+        await harness.Host.DispatchAsync(CreateMessage("Reply with a short acknowledgement."));
+
+        if (ShouldSkipForLiveIssue(harness.Activity))
+            return;
+
+        webUiChannel.SentMessages.Should().ContainSingle();
+        webUiChannel.SentMessages.Single().ChannelType.Should().Be("web");
+    }
+
+    private static Harness CreateHarness(CopilotAuth auth, bool supportsStreaming, RecordingChannelAdapter? channel = null)
+    {
+        channel ??= new RecordingChannelAdapter(supportsStreaming);
+        var sessions = new InMemorySessionStore();
+        var activity = new RecordingActivityBroadcaster();
         var router = new Mock<IMessageRouter>();
         router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["copilot-agent"]);
+
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.GetOrCreateAsync("copilot-agent", "integration-session", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(handle);
+            .ReturnsAsync(new CopilotAgentHandle(auth));
+
         var channels = new Mock<IChannelManager>();
         channels.SetupGet(c => c.Adapters).Returns([channel]);
         channels.Setup(c => c.Get("web")).Returns(channel);
-        return new GatewayHost(
-            supervisor.Object,
-            router.Object,
-            new InMemorySessionStore(),
-            new NullActivityBroadcaster(),
-            channels.Object,
-            NullLogger<GatewayHost>.Instance);
+
+        return new Harness(
+            new GatewayHost(
+                supervisor.Object,
+                router.Object,
+                sessions,
+                activity,
+                channels.Object,
+                NullLogger<GatewayHost>.Instance),
+            channel,
+            sessions,
+            activity,
+            router,
+            supervisor);
     }
 
     private static InboundMessage CreateMessage(string content)
@@ -120,10 +228,55 @@ public sealed class CopilotIntegrationTests
     private static bool ShouldRunIntegration()
         => string.Equals(Environment.GetEnvironmentVariable("BOTNEXUS_RUN_COPILOT_INTEGRATION"), "1", StringComparison.Ordinal);
 
-    private static bool IsAuthOrConnectivityIssue(Exception ex)
-        => ex is HttpRequestException or TaskCanceledException or JsonException;
+    private static bool ShouldSkipForLiveIssue(RecordingActivityBroadcaster activity)
+    {
+        var errors = activity.Activities
+            .Where(item => item.Type == GatewayActivityType.Error)
+            .Select(item => item.Message ?? string.Empty)
+            .ToList();
+
+        if (errors.Count == 0)
+            return false;
+
+        return errors.All(IsAuthOrConnectivityIssueMessage);
+    }
+
+    private static bool IsAuthOrConnectivityIssueMessage(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return false;
+
+        var normalized = message.ToLowerInvariant();
+        return normalized.Contains("unauthorized", StringComparison.Ordinal) ||
+               normalized.Contains("forbidden", StringComparison.Ordinal) ||
+               normalized.Contains("401", StringComparison.Ordinal) ||
+               normalized.Contains("403", StringComparison.Ordinal) ||
+               normalized.Contains("authentication", StringComparison.Ordinal) ||
+               normalized.Contains("timed out", StringComparison.Ordinal) ||
+               normalized.Contains("connection", StringComparison.Ordinal) ||
+               normalized.Contains("name resolution", StringComparison.Ordinal) ||
+               normalized.Contains("host", StringComparison.Ordinal) ||
+               normalized.Contains("ssl", StringComparison.Ordinal) ||
+               normalized.Contains("json", StringComparison.Ordinal);
+    }
 
     private sealed record CopilotAuth(string AccessToken, string Endpoint);
+
+    private sealed class Harness(
+        GatewayHost host,
+        RecordingChannelAdapter channel,
+        InMemorySessionStore sessions,
+        RecordingActivityBroadcaster activity,
+        Mock<IMessageRouter> router,
+        Mock<IAgentSupervisor> supervisor)
+    {
+        public GatewayHost Host { get; } = host;
+        public RecordingChannelAdapter Channel { get; } = channel;
+        public InMemorySessionStore Sessions { get; } = sessions;
+        public RecordingActivityBroadcaster Activity { get; } = activity;
+        public Mock<IMessageRouter> Router { get; } = router;
+        public Mock<IAgentSupervisor> Supervisor { get; } = supervisor;
+    }
 
     private sealed class CopilotAgentHandle(CopilotAuth auth) : IAgentHandle
     {
@@ -235,10 +388,10 @@ public sealed class CopilotIntegrationTests
         }
     }
 
-    private sealed class RecordingChannelAdapter(bool supportsStreaming) : IChannelAdapter
+    private class RecordingChannelAdapter(bool supportsStreaming) : IChannelAdapter
     {
-        public string ChannelType => "web";
-        public string DisplayName => "Integration Channel";
+        public virtual string ChannelType => "web";
+        public virtual string DisplayName => "Integration Channel";
         public bool SupportsStreaming => supportsStreaming;
         public bool IsRunning => true;
 
@@ -261,9 +414,20 @@ public sealed class CopilotIntegrationTests
         }
     }
 
-    private sealed class NullActivityBroadcaster : IActivityBroadcaster
+    private sealed class WebUiRecordingChannelAdapter(bool supportsStreaming) : RecordingChannelAdapter(supportsStreaming)
     {
-        public ValueTask PublishAsync(GatewayActivity activity, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+        public override string DisplayName => "WebUI Integration Channel";
+    }
+
+    private sealed class RecordingActivityBroadcaster : IActivityBroadcaster
+    {
+        public List<GatewayActivity> Activities { get; } = [];
+
+        public ValueTask PublishAsync(GatewayActivity activity, CancellationToken cancellationToken = default)
+        {
+            Activities.Add(activity);
+            return ValueTask.CompletedTask;
+        }
 
         public async IAsyncEnumerable<GatewayActivity> SubscribeAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {

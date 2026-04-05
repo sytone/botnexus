@@ -130,4 +130,24 @@ public sealed class DefaultAgentCommunicatorTests
 
         await act.Should().ThrowAsync<KeyNotFoundException>();
     }
+
+    [Fact(Skip = "Pending recursion detection implementation for sub-agent self-calls.")]
+    public async Task CallSubAgentAsync_WhenChildMatchesParent_RejectsRecursiveCall()
+    {
+        var communicator = new DefaultAgentCommunicator(Mock.Of<IAgentSupervisor>(), NullLogger<DefaultAgentCommunicator>.Instance);
+
+        var act = () => communicator.CallSubAgentAsync("shared-agent", "session-1", "shared-agent", "hello");
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+    }
+
+    [Fact(Skip = "Pending recursion detection implementation for nested sub-agent cycles.")]
+    public async Task CallSubAgentAsync_WhenParentSessionAlreadyTargetsChild_RejectsRecursiveCall()
+    {
+        var communicator = new DefaultAgentCommunicator(Mock.Of<IAgentSupervisor>(), NullLogger<DefaultAgentCommunicator>.Instance);
+
+        var act = () => communicator.CallSubAgentAsync("parent-agent", "session-1::sub::child-agent", "child-agent", "hello");
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+    }
 }

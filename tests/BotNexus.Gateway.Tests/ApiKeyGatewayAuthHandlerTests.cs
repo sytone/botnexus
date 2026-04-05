@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Security;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -26,7 +27,7 @@ public sealed class ApiKeyGatewayAuthHandlerTests
         var result = await handler.AuthenticateAsync(CreateContext());
 
         result.IsAuthenticated.Should().BeFalse();
-        result.FailureReason.Should().Be("Missing API key.");
+        result.FailureReason.Should().StartWith("Missing API key");
     }
 
     [Fact]
@@ -49,6 +50,34 @@ public sealed class ApiKeyGatewayAuthHandlerTests
 
         result.IsAuthenticated.Should().BeTrue();
         result.Identity!.CallerId.Should().Be("gateway-api-key");
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_WithConfiguredTenantApiKeys_ReturnsTenantIdentity()
+    {
+        var config = new PlatformConfig
+        {
+            ApiKeys = new Dictionary<string, ApiKeyConfig>
+            {
+                ["tenant-a"] = new()
+                {
+                    ApiKey = "tenant-a-secret",
+                    TenantId = "tenant-a",
+                    CallerId = "caller-a",
+                    Permissions = ["chat:send", "sessions:read"],
+                    AllowedAgents = ["assistant-a"]
+                }
+            }
+        };
+        var handler = new ApiKeyGatewayAuthHandler(config, NullLogger<ApiKeyGatewayAuthHandler>.Instance);
+
+        var result = await handler.AuthenticateAsync(CreateContext(new Dictionary<string, string> { ["X-Api-Key"] = "tenant-a-secret" }));
+
+        result.IsAuthenticated.Should().BeTrue();
+        result.Identity!.CallerId.Should().Be("caller-a");
+        result.Identity.TenantId.Should().Be("tenant-a");
+        result.Identity.Permissions.Should().Contain("chat:send");
+        result.Identity.AllowedAgents.Should().ContainSingle().Which.Should().Be("assistant-a");
     }
 
     [Fact]

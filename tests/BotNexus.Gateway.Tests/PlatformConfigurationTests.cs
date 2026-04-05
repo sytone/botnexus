@@ -44,13 +44,29 @@ public sealed class PlatformConfigurationTests
 
         var config = await PlatformConfigLoader.LoadAsync(configPath);
 
-        config.ListenUrl.Should().Be("http://localhost:18790");
-        config.DefaultAgentId.Should().Be("agent-a");
-        config.LogLevel.Should().Be("Debug");
+        config.GetListenUrl().Should().Be("http://localhost:18790");
+        config.GetDefaultAgentId().Should().Be("agent-a");
+        config.GetLogLevel().Should().Be("Debug");
         config.Providers.Should().ContainKey("copilot");
         config.Providers!["copilot"].ApiKey.Should().Be("test-key");
         config.Providers["copilot"].BaseUrl.Should().Be("https://api.githubcopilot.com");
         config.Providers["copilot"].DefaultModel.Should().Be("gpt-4.1");
+    }
+
+    [Fact]
+    public async Task PlatformConfigLoader_LoadAsync_WithExplicitConfigPath_LoadsSpecifiedFile()
+    {
+        using var fixture = new PlatformConfigFixture();
+        var configPath = Path.Combine(fixture.RootPath, "custom-path.json");
+        await File.WriteAllTextAsync(configPath, """
+                                                {
+                                                  "defaultAgentId": "custom-agent"
+                                                }
+                                                """);
+
+        var config = await PlatformConfigLoader.LoadAsync(configPath);
+
+        config.DefaultAgentId.Should().Be("custom-agent");
     }
 
     [Fact]
@@ -63,9 +79,9 @@ public sealed class PlatformConfigurationTests
             AgentsDirectory = "bad\0path"
         });
 
-        errors.Should().Contain(e => e.Contains("ListenUrl", StringComparison.Ordinal));
-        errors.Should().Contain(e => e.Contains("LogLevel", StringComparison.Ordinal));
-        errors.Should().Contain(e => e.Contains("AgentsDirectory", StringComparison.Ordinal));
+        errors.Should().Contain(e => e.Contains("listenUrl", StringComparison.Ordinal));
+        errors.Should().Contain(e => e.Contains("logLevel", StringComparison.Ordinal));
+        errors.Should().Contain(e => e.Contains("agentsDirectory", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -73,7 +89,7 @@ public sealed class PlatformConfigurationTests
     {
         var errors = PlatformConfigLoader.Validate(new PlatformConfig { ListenUrl = "ws://localhost:8080" });
 
-        errors.Should().ContainSingle(e => e.Contains("ListenUrl", StringComparison.Ordinal));
+        errors.Should().ContainSingle(e => e.Contains("listenUrl", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -81,7 +97,39 @@ public sealed class PlatformConfigurationTests
     {
         var errors = PlatformConfigLoader.Validate(new PlatformConfig { LogLevel = "chatty" });
 
-        errors.Should().ContainSingle(e => e.Contains("LogLevel", StringComparison.Ordinal));
+        errors.Should().ContainSingle(e => e.Contains("logLevel", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PlatformConfigLoader_Validate_WithMissingProviderFields_ReturnsProviderErrors()
+    {
+        var errors = PlatformConfigLoader.Validate(new PlatformConfig
+        {
+            Providers = new Dictionary<string, ProviderConfig>
+            {
+                ["copilot"] = new()
+            }
+        });
+
+        errors.Should().ContainSingle(e => e.Contains("providers.copilot must define apiKey or baseUrl", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PlatformConfigLoader_Validate_WithInvalidProviderValues_ReturnsProviderErrors()
+    {
+        var errors = PlatformConfigLoader.Validate(new PlatformConfig
+        {
+            Providers = new Dictionary<string, ProviderConfig>
+            {
+                ["copilot"] = new()
+                {
+                    ApiKey = "test",
+                    BaseUrl = "ftp://invalid-endpoint"
+                }
+            }
+        });
+
+        errors.Should().ContainSingle(e => e.Contains("providers.copilot.baseUrl", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -107,6 +155,10 @@ public sealed class PlatformConfigurationTests
         config.AgentsDirectory.Should().BeNull();
         config.SessionsDirectory.Should().BeNull();
         config.ApiKey.Should().BeNull();
+        config.ApiKeys.Should().BeNull();
+        config.Gateway.Should().BeNull();
+        config.Agents.Should().BeNull();
+        config.Channels.Should().BeNull();
         config.LogLevel.Should().BeNull();
         config.Providers.Should().BeNull();
     }
@@ -146,6 +198,50 @@ public sealed class PlatformConfigurationTests
         agentSources.Should().ContainSingle();
     }
 
+    [Fact]
+    public void PlatformConfigLoader_Validate_WithMissingApiKeyFields_ReturnsActionableErrors()
+    {
+        var errors = PlatformConfigLoader.Validate(new PlatformConfig
+        {
+            ApiKeys = new Dictionary<string, ApiKeyConfig>
+            {
+                ["tenant-a"] = new()
+            }
+        });
+
+        errors.Should().Contain(e => e.Contains("gateway.apiKeys.tenant-a.apiKey", StringComparison.Ordinal));
+        errors.Should().Contain(e => e.Contains("gateway.apiKeys.tenant-a.tenantId", StringComparison.Ordinal));
+        errors.Should().Contain(e => e.Contains("gateway.apiKeys.tenant-a.permissions", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PlatformConfigLoader_Validate_WithMissingAgentFields_ReturnsActionableErrors()
+    {
+        var errors = PlatformConfigLoader.Validate(new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["assistant"] = new()
+            }
+        });
+
+        errors.Should().Contain(e => e.Contains("agents.assistant.provider", StringComparison.Ordinal));
+        errors.Should().Contain(e => e.Contains("agents.assistant.model", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task PlatformConfigLoader_LoadAsync_WithInvalidConfig_ThrowsValidationException()
+    {
+        using var fixture = new PlatformConfigFixture();
+        var configPath = Path.Combine(fixture.RootPath, "invalid-config.json");
+        await File.WriteAllTextAsync(configPath, """{"apiKeys":{"tenant-a":{}}}""");
+
+        Func<Task> act = async () => await PlatformConfigLoader.LoadAsync(configPath);
+
+        await act.Should().ThrowAsync<OptionsValidationException>()
+            .WithMessage("*gateway.apiKeys.tenant-a.apiKey*");
+    }
+
     private sealed class PlatformConfigFixture : IDisposable
     {
         public PlatformConfigFixture()
@@ -159,7 +255,16 @@ public sealed class PlatformConfigurationTests
                 DefaultAgentId = "config-agent",
                 AgentsDirectory = "agents",
                 SessionsDirectory = "sessions",
-                LogLevel = "Information"
+                LogLevel = "Information",
+                ApiKeys = new Dictionary<string, ApiKeyConfig>
+                {
+                    ["tenant-a"] = new()
+                    {
+                        ApiKey = "tenant-a-secret",
+                        TenantId = "tenant-a",
+                        Permissions = ["chat:send"]
+                    }
+                }
             };
 
             File.WriteAllText(ConfigPath, JsonSerializer.Serialize(config));
