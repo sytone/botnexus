@@ -23,6 +23,40 @@ public static class PlatformConfigLoader
         Path.Combine(DefaultConfigDirectory, "config.json");
 
     /// <summary>Loads config from disk and optionally validates it.</summary>
+    public static PlatformConfig Load(
+        string? configPath = null,
+        bool validateOnLoad = true)
+    {
+        var path = configPath ?? DefaultConfigPath;
+        if (!File.Exists(path))
+            return new PlatformConfig();
+
+        PlatformConfig config;
+        try
+        {
+            using var stream = File.OpenRead(path);
+            config = JsonSerializer.Deserialize<PlatformConfig>(stream, JsonOptions)
+                ?? new PlatformConfig();
+        }
+        catch (JsonException ex)
+        {
+            throw new OptionsValidationException(
+                nameof(PlatformConfig),
+                typeof(PlatformConfig),
+                [$"Invalid JSON in '{path}'. {ex.Message}"]);
+        }
+
+        if (!validateOnLoad)
+            return config;
+
+        var errors = Validate(config);
+        if (errors.Count > 0)
+            throw new OptionsValidationException(nameof(PlatformConfig), typeof(PlatformConfig), errors);
+
+        return config;
+    }
+
+    /// <summary>Loads config from disk and optionally validates it.</summary>
     public static async Task<PlatformConfig> LoadAsync(
         string? configPath = null,
         CancellationToken cancellationToken = default,

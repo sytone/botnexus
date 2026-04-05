@@ -85,21 +85,26 @@ public static class GatewayServiceCollectionExtensions
         var configDirectory = Path.GetDirectoryName(resolvedConfigPath) ?? PlatformConfigLoader.DefaultConfigDirectory;
 
         PlatformConfigLoader.EnsureConfigDirectory(configDirectory);
-        var config = PlatformConfigLoader.LoadAsync(resolvedConfigPath).GetAwaiter().GetResult();
-        var errors = PlatformConfigLoader.Validate(config);
-        if (errors.Count > 0)
-            throw new OptionsValidationException(nameof(PlatformConfig), typeof(PlatformConfig), errors);
+        var config = PlatformConfigLoader.Load(resolvedConfigPath);
+        services.AddOptions<PlatformConfig>()
+            .Configure(options => ApplyPlatformConfig(options, config));
+        services.Replace(ServiceDescriptor.Singleton(serviceProvider =>
+            serviceProvider.GetRequiredService<IOptions<PlatformConfig>>().Value));
+        services.Replace(ServiceDescriptor.Singleton<IGatewayAuthHandler>(serviceProvider =>
+            new ApiKeyGatewayAuthHandler(
+                serviceProvider.GetRequiredService<IOptions<PlatformConfig>>().Value,
+                serviceProvider.GetRequiredService<ILogger<ApiKeyGatewayAuthHandler>>())));
 
-        services.AddSingleton(config);
-
-        if (!string.IsNullOrWhiteSpace(config.DefaultAgentId))
+        var defaultAgentId = config.GetDefaultAgentId();
+        if (!string.IsNullOrWhiteSpace(defaultAgentId))
         {
-            services.PostConfigure<GatewayOptions>(options => options.DefaultAgentId = config.DefaultAgentId);
+            services.PostConfigure<GatewayOptions>(options => options.DefaultAgentId = defaultAgentId);
         }
 
-        if (!string.IsNullOrWhiteSpace(config.SessionsDirectory))
+        var sessionsDirectory = config.GetSessionsDirectory();
+        if (!string.IsNullOrWhiteSpace(sessionsDirectory))
         {
-            var sessionsPath = ResolveConfiguredPath(configDirectory, config.SessionsDirectory);
+            var sessionsPath = ResolveConfiguredPath(configDirectory, sessionsDirectory);
             Directory.CreateDirectory(sessionsPath);
             services.Replace(ServiceDescriptor.Singleton<ISessionStore>(serviceProvider =>
                 new FileSessionStore(
@@ -107,9 +112,10 @@ public static class GatewayServiceCollectionExtensions
                     serviceProvider.GetRequiredService<ILogger<FileSessionStore>>())));
         }
 
-        if (!string.IsNullOrWhiteSpace(config.AgentsDirectory))
+        var agentsDirectory = config.GetAgentsDirectory();
+        if (!string.IsNullOrWhiteSpace(agentsDirectory))
         {
-            var agentsPath = ResolveConfiguredPath(configDirectory, config.AgentsDirectory);
+            var agentsPath = ResolveConfiguredPath(configDirectory, agentsDirectory);
             services.RemoveAll<IAgentConfigurationSource>();
             services.AddFileAgentConfiguration(agentsPath);
         }
@@ -121,6 +127,21 @@ public static class GatewayServiceCollectionExtensions
         => Path.IsPathRooted(configuredPath)
             ? Path.GetFullPath(configuredPath)
             : Path.GetFullPath(Path.Combine(configDirectory, configuredPath));
+
+    private static void ApplyPlatformConfig(PlatformConfig target, PlatformConfig source)
+    {
+        target.Gateway = source.Gateway;
+        target.Agents = source.Agents;
+        target.Providers = source.Providers;
+        target.Channels = source.Channels;
+        target.ApiKey = source.ApiKey;
+        target.ApiKeys = source.ApiKeys;
+        target.ListenUrl = source.ListenUrl;
+        target.DefaultAgentId = source.DefaultAgentId;
+        target.AgentsDirectory = source.AgentsDirectory;
+        target.SessionsDirectory = source.SessionsDirectory;
+        target.LogLevel = source.LogLevel;
+    }
 
     /// <summary>
     /// Sets the default routed agent through options configuration.
