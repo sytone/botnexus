@@ -148,7 +148,7 @@ public sealed class GatewayWebSocketHandler
     private async Task HandleUserMessageAsync(System.Net.WebSockets.WebSocket socket, string agentId, string sessionId, string content, CancellationToken cancellationToken)
     {
         var session = await _sessions.GetOrCreateAsync(sessionId, agentId, cancellationToken);
-        session.History.Add(new SessionEntry { Role = "user", Content = content });
+        session.AddEntry(new SessionEntry { Role = "user", Content = content });
         var sessionSaved = false;
 
         try
@@ -187,7 +187,6 @@ public sealed class GatewayWebSocketHandler
 
         if (!sessionSaved)
         {
-            session.UpdatedAt = DateTimeOffset.UtcNow;
             await _sessions.SaveAsync(session, cancellationToken);
         }
     }

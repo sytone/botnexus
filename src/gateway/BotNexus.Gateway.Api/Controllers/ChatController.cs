@@ -31,13 +31,12 @@ public sealed class ChatController : ControllerBase
         var sessionId = request.SessionId ?? Guid.NewGuid().ToString("N");
         var session = await _sessions.GetOrCreateAsync(sessionId, request.AgentId, cancellationToken);
 
-        session.History.Add(new SessionEntry { Role = "user", Content = request.Message });
+        session.AddEntry(new SessionEntry { Role = "user", Content = request.Message });
 
         var handle = await _supervisor.GetOrCreateAsync(request.AgentId, sessionId, cancellationToken);
         var response = await handle.PromptAsync(request.Message, cancellationToken);
 
-        session.History.Add(new SessionEntry { Role = "assistant", Content = response.Content });
-        session.UpdatedAt = DateTimeOffset.UtcNow;
+        session.AddEntry(new SessionEntry { Role = "assistant", Content = response.Content });
         await _sessions.SaveAsync(session, cancellationToken);
 
         return Ok(new ChatResponse(sessionId, response.Content, response.Usage));

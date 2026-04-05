@@ -7,6 +7,8 @@ namespace BotNexus.Gateway.Abstractions.Models;
 /// </summary>
 public sealed class GatewaySession
 {
+    private readonly Lock _historyLock = new();
+
     /// <summary>Unique session identifier.</summary>
     public required string SessionId { get; init; }
 
@@ -33,6 +35,35 @@ public sealed class GatewaySession
 
     /// <summary>Session-level metadata for extensibility.</summary>
     public Dictionary<string, object?> Metadata { get; init; } = [];
+
+    /// <summary>Thread-safe append to conversation history.</summary>
+    public void AddEntry(SessionEntry entry)
+    {
+        lock (_historyLock)
+        {
+            History.Add(entry);
+            UpdatedAt = DateTimeOffset.UtcNow;
+        }
+    }
+
+    /// <summary>Thread-safe append of multiple entries.</summary>
+    public void AddEntries(IEnumerable<SessionEntry> entries)
+    {
+        lock (_historyLock)
+        {
+            History.AddRange(entries);
+            UpdatedAt = DateTimeOffset.UtcNow;
+        }
+    }
+
+    /// <summary>Returns a snapshot of the history (safe to iterate).</summary>
+    public IReadOnlyList<SessionEntry> GetHistorySnapshot()
+    {
+        lock (_historyLock)
+        {
+            return History.ToList();
+        }
+    }
 }
 
 /// <summary>

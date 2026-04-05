@@ -121,8 +121,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
             var session = await _sessions.GetOrCreateAsync(sessionId, agentId, cancellationToken);
 
             // Record user message
-            session.History.Add(new SessionEntry { Role = "user", Content = message.Content });
-            session.UpdatedAt = DateTimeOffset.UtcNow;
+            session.AddEntry(new SessionEntry { Role = "user", Content = message.Content });
 
             try
             {
@@ -171,12 +170,11 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
                         }, cancellationToken);
                     }
 
-                    session.History.Add(new SessionEntry { Role = "assistant", Content = response.Content });
+                    session.AddEntry(new SessionEntry { Role = "assistant", Content = response.Content });
                 }
 
                 if (!sessionSaved)
                 {
-                    session.UpdatedAt = DateTimeOffset.UtcNow;
                     await _sessions.SaveAsync(session, cancellationToken);
                 }
 

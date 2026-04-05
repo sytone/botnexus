@@ -148,11 +148,17 @@ public sealed class FileSessionStore : ISessionStore
         if (File.Exists(historyPath))
         {
             var lines = await File.ReadAllLinesAsync(historyPath, cancellationToken).ConfigureAwait(false);
+            var entries = new List<SessionEntry>();
             foreach (var line in lines.Where(l => !string.IsNullOrWhiteSpace(l)))
             {
                 var entry = JsonSerializer.Deserialize<SessionEntry>(line, JsonOptions);
-                if (entry is not null) session.History.Add(entry);
+                if (entry is not null) entries.Add(entry);
             }
+
+            if (entries.Count > 0)
+                session.AddEntries(entries);
+
+            session.UpdatedAt = meta.UpdatedAt;
         }
 
         return session;
@@ -162,7 +168,7 @@ public sealed class FileSessionStore : ISessionStore
     {
         // Write history as JSONL
         var historyPath = GetHistoryPath(session.SessionId);
-        var lines = session.History.Select(e => JsonSerializer.Serialize(e, JsonOptions));
+        var lines = session.GetHistorySnapshot().Select(e => JsonSerializer.Serialize(e, JsonOptions));
         await File.WriteAllLinesAsync(historyPath, lines, cancellationToken).ConfigureAwait(false);
 
         // Write metadata sidecar
