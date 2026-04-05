@@ -106,4 +106,17 @@ public class OpenAICompletionsProviderTests
             .Should()
             .NotContain("assistant");
     }
+
+    [Fact]
+    public void MapStopReason_ContentFilter_MapsToSensitive()
+    {
+        var mapStopReason = typeof(OpenAICompletionsProvider).GetMethod(
+            "MapStopReason",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        mapStopReason.Should().NotBeNull();
+
+        var mapped = ((StopReason StopReason, string? ErrorMessage))mapStopReason!.Invoke(null, ["content_filter"])!;
+
+        mapped.StopReason.Should().Be(StopReason.Sensitive);
+    }
 }

@@ -48,6 +48,34 @@ public class SimpleOptionsHelperTests
         result.CacheRetention.Should().Be(CacheRetention.Short);
     }
 
+    [Fact]
+    public void BuildBaseOptions_NullApiKey_FallsBackToOptionsApiKey()
+    {
+        var model = MakeModel();
+        var simple = new SimpleStreamOptions
+        {
+            ApiKey = "fallback-key"
+        };
+
+        var result = SimpleOptionsHelper.BuildBaseOptions(model, simple, null!);
+
+        result.ApiKey.Should().Be("fallback-key");
+    }
+
+    [Fact]
+    public void BuildBaseOptions_EmptyApiKey_FallsBackToOptionsApiKey()
+    {
+        var model = MakeModel();
+        var simple = new SimpleStreamOptions
+        {
+            ApiKey = "fallback-key"
+        };
+
+        var result = SimpleOptionsHelper.BuildBaseOptions(model, simple, string.Empty);
+
+        result.ApiKey.Should().Be("fallback-key");
+    }
+
     [Theory]
     [InlineData(16000, 16000)]
     [InlineData(64000, 32000)]
