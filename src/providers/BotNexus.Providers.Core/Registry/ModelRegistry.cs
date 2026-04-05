@@ -55,11 +55,7 @@ public sealed class ModelRegistry
 
     public static bool SupportsExtraHigh(LlmModel model)
     {
-        return model.Id.Contains("gpt-5.2", StringComparison.OrdinalIgnoreCase) ||
-               model.Id.Contains("gpt-5.3", StringComparison.OrdinalIgnoreCase) ||
-               model.Id.Contains("gpt-5.4", StringComparison.OrdinalIgnoreCase) ||
-               model.Id.Contains("opus-4-6", StringComparison.OrdinalIgnoreCase) ||
-               model.Id.Contains("opus-4.6", StringComparison.OrdinalIgnoreCase);
+        return model.SupportsExtraHighThinking;
     }
 
     public static bool ModelsAreEqual(LlmModel a, LlmModel b)

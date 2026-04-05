@@ -26,6 +26,7 @@ public record LlmModel(
     ModelCost Cost,
     int ContextWindow,
     int MaxTokens,
+    bool SupportsExtraHighThinking = false,
     IReadOnlyDictionary<string, string>? Headers = null,
     OpenAICompletionsCompat? Compat = null
 );

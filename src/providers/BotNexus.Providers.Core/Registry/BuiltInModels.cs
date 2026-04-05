@@ -41,7 +41,7 @@ public sealed class BuiltInModels
     {
         Register(modelRegistry, "github-copilot", "claude-haiku-4.5", "Claude Haiku 4.5", "anthropic-messages", CopilotBaseUrl, true, ["text", "image"], 144000, 32000, headers: CopilotHeaders);
         Register(modelRegistry, "github-copilot", "claude-opus-4.5", "Claude Opus 4.5", "anthropic-messages", CopilotBaseUrl, true, ["text", "image"], 160000, 32000, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "claude-opus-4.6", "Claude Opus 4.6", "anthropic-messages", CopilotBaseUrl, true, ["text", "image"], 1000000, 64000, headers: CopilotHeaders);
+        Register(modelRegistry, "github-copilot", "claude-opus-4.6", "Claude Opus 4.6", "anthropic-messages", CopilotBaseUrl, true, ["text", "image"], 1000000, 64000, supportsExtraHighThinking: true, headers: CopilotHeaders);
         Register(modelRegistry, "github-copilot", "claude-sonnet-4", "Claude Sonnet 4", "anthropic-messages", CopilotBaseUrl, true, ["text", "image"], 216000, 16000, headers: CopilotHeaders);
         Register(modelRegistry, "github-copilot", "claude-sonnet-4.5", "Claude Sonnet 4.5", "anthropic-messages", CopilotBaseUrl, true, ["text", "image"], 144000, 32000, headers: CopilotHeaders);
         Register(modelRegistry, "github-copilot", "claude-sonnet-4.6", "Claude Sonnet 4.6", "anthropic-messages", CopilotBaseUrl, true, ["text", "image"], 1000000, 32000, headers: CopilotHeaders);
@@ -60,11 +60,11 @@ public sealed class BuiltInModels
         Register(modelRegistry, "github-copilot", "gpt-5.1-codex", "GPT-5.1-Codex", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, headers: CopilotHeaders);
         Register(modelRegistry, "github-copilot", "gpt-5.1-codex-max", "GPT-5.1-Codex-max", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, headers: CopilotHeaders);
         Register(modelRegistry, "github-copilot", "gpt-5.1-codex-mini", "GPT-5.1-Codex-mini", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.2", "GPT-5.2", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 264000, 64000, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.2-codex", "GPT-5.2-Codex", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.3-codex", "GPT-5.3-Codex", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.4", "GPT-5.4", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.4-mini", "GPT-5.4 mini", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, headers: CopilotHeaders);
+        Register(modelRegistry, "github-copilot", "gpt-5.2", "GPT-5.2", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 264000, 64000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, "github-copilot", "gpt-5.2-codex", "GPT-5.2-Codex", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, "github-copilot", "gpt-5.3-codex", "GPT-5.3-Codex", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, "github-copilot", "gpt-5.4", "GPT-5.4", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, "github-copilot", "gpt-5.4-mini", "GPT-5.4 mini", "openai-responses", CopilotBaseUrl, true, ["text", "image"], 400000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
 
         Register(modelRegistry, "github-copilot", "grok-code-fast-1", "Grok Code Fast 1", "openai-completions", CopilotBaseUrl, true, ["text"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
     }
@@ -97,6 +97,7 @@ public sealed class BuiltInModels
         IReadOnlyList<string> input,
         int contextWindow,
         int maxTokens,
+        bool supportsExtraHighThinking = false,
         IReadOnlyDictionary<string, string>? headers = null,
         OpenAICompletionsCompat? compat = null)
     {
@@ -111,6 +112,7 @@ public sealed class BuiltInModels
             Cost: FreeCost,
             ContextWindow: contextWindow,
             MaxTokens: maxTokens,
+            SupportsExtraHighThinking: supportsExtraHighThinking,
             Headers: headers,
             Compat: compat));
     }

@@ -31,6 +31,7 @@ public class LlmModelTests
         model.Cost.Input.Should().Be(3.0m);
         model.ContextWindow.Should().Be(200000);
         model.MaxTokens.Should().Be(16384);
+        model.SupportsExtraHighThinking.Should().BeFalse();
     }
 
     [Fact]
@@ -50,6 +51,7 @@ public class LlmModelTests
 
         model.Headers.Should().BeNull();
         model.Compat.Should().BeNull();
+        model.SupportsExtraHighThinking.Should().BeFalse();
     }
 
     [Fact]

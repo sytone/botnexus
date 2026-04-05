@@ -19,7 +19,7 @@ public class ModelRegistryTests : IDisposable
     }
 
     private static LlmModel MakeModel(string id = "test-model", string provider = "test",
-        string api = "test-api", decimal inputCost = 1.0m, decimal outputCost = 2.0m) => new(
+        string api = "test-api", decimal inputCost = 1.0m, decimal outputCost = 2.0m, bool supportsExtraHighThinking = false) => new(
         Id: id,
         Name: id,
         Api: api,
@@ -29,7 +29,8 @@ public class ModelRegistryTests : IDisposable
         Input: ["text"],
         Cost: new ModelCost(inputCost, outputCost, 0, 0),
         ContextWindow: 4096,
-        MaxTokens: 1024);
+        MaxTokens: 1024,
+        SupportsExtraHighThinking: supportsExtraHighThinking);
 
     [Fact]
     public void Register_AndRetrieve_ReturnsModel()
@@ -114,9 +115,9 @@ public class ModelRegistryTests : IDisposable
     }
 
     [Fact]
-    public void SupportsExtraHigh_WithOpusReasoningModel_ReturnsTrue()
+    public void SupportsExtraHigh_WhenModelSupportsExtraHighThinking_ReturnsTrue()
     {
-        var model = MakeModel(id: "claude-opus-4.6") with { Reasoning = true };
+        var model = MakeModel(supportsExtraHighThinking: true);
 
         var result = ModelRegistry.SupportsExtraHigh(model);
 
@@ -124,9 +125,9 @@ public class ModelRegistryTests : IDisposable
     }
 
     [Fact]
-    public void SupportsExtraHigh_WithNonOpusModel_ReturnsFalse()
+    public void SupportsExtraHigh_WhenModelDoesNotSupportExtraHighThinking_ReturnsFalse()
     {
-        var model = MakeModel(id: "claude-sonnet-4.5") with { Reasoning = true };
+        var model = MakeModel(supportsExtraHighThinking: false);
 
         var result = ModelRegistry.SupportsExtraHigh(model);
 
@@ -134,9 +135,9 @@ public class ModelRegistryTests : IDisposable
     }
 
     [Fact]
-    public void SupportsExtraHigh_WithReasoningDisabled_ReturnsTrue()
+    public void SupportsExtraHigh_IgnoresReasoningFlagAndUsesModelCapability_ReturnsTrue()
     {
-        var model = MakeModel(id: "claude-opus-4.6") with { Reasoning = false };
+        var model = MakeModel(supportsExtraHighThinking: true) with { Reasoning = false };
 
         var result = ModelRegistry.SupportsExtraHigh(model);
 
