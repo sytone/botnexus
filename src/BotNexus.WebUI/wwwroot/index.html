@@ -40,10 +40,25 @@
             <div class="sidebar-section">
                 <div class="section-header" data-toggle="agents-list">
                     <span>🧠 Agents</span>
-                    <button id="btn-refresh-agents" class="btn-icon" title="Refresh agents" aria-label="Refresh agents">↻</button>
+                    <div class="section-header-actions">
+                        <button id="btn-add-agent" class="btn-icon" title="Add agent" aria-label="Add agent">＋</button>
+                        <button id="btn-refresh-agents" class="btn-icon" title="Refresh agents" aria-label="Refresh agents">↻</button>
+                    </div>
                 </div>
                 <div id="agents-list" class="section-content" role="list">
                     <div class="loading">Loading agents...</div>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="section-header" data-toggle="activity-feed">
+                    <span>📊 Activity</span>
+                    <label class="toggle-switch" title="Subscribe to activity events">
+                        <input type="checkbox" id="toggle-activity" aria-label="Toggle activity monitor">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div id="activity-feed" class="section-content activity-feed collapsed" role="log" aria-live="polite">
                 </div>
             </div>
 
@@ -78,6 +93,11 @@
                             <span class="toggle-slider"></span>
                         </label>
                         <span class="toggle-label">🔧 Tools</span>
+                        <label class="toggle-switch" title="Show/hide thinking">
+                            <input type="checkbox" id="toggle-thinking" aria-label="Toggle thinking visibility">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span class="toggle-label">💭 Thinking</span>
                         <button id="btn-abort" class="btn btn-danger hidden" title="Abort current request" aria-label="Abort">⏹ Abort</button>
                     </div>
                 </div>
@@ -115,6 +135,77 @@
                     <div class="modal-label">Result:</div>
                     <pre class="modal-code" id="modal-tool-result"></pre>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Agent Form Modal -->
+    <div id="agent-form-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="agent-form-title">
+        <div class="modal-overlay agent-form-overlay" aria-hidden="true"></div>
+        <div class="modal-content agent-form-content">
+            <div class="modal-header">
+                <h3 id="agent-form-title">Add Agent</h3>
+                <button class="modal-close agent-form-close" title="Close" aria-label="Close agent form">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="agent-form" autocomplete="off">
+                    <div class="form-group">
+                        <label class="form-label required" for="form-agent-name">Name</label>
+                        <input type="text" id="form-agent-name" class="form-input" required placeholder="my-agent" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label required" for="form-agent-provider">Provider</label>
+                        <select id="form-agent-provider" class="form-select" required>
+                            <option value="">Select provider...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label required" for="form-agent-model">Model</label>
+                        <select id="form-agent-model" class="form-select" required>
+                            <option value="">Select model...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="form-agent-system-prompt">System Prompt</label>
+                        <textarea id="form-agent-system-prompt" class="form-textarea" rows="3" placeholder="Optional system prompt..."></textarea>
+                    </div>
+                    <div class="form-group form-row">
+                        <div class="form-checkbox-wrapper">
+                            <input type="checkbox" id="form-agent-temperature-enabled" class="form-checkbox" />
+                            <label class="form-label" for="form-agent-temperature">Temperature</label>
+                        </div>
+                        <input type="number" id="form-agent-temperature" class="form-input form-input-sm" step="0.1" min="0" max="2" value="0.7" disabled />
+                    </div>
+                    <div class="form-group form-row">
+                        <div class="form-checkbox-wrapper">
+                            <input type="checkbox" id="form-agent-max-tokens-enabled" class="form-checkbox" />
+                            <label class="form-label" for="form-agent-max-tokens">Max Tokens</label>
+                        </div>
+                        <input type="number" id="form-agent-max-tokens" class="form-input form-input-sm" step="1" min="1" value="4096" disabled />
+                    </div>
+                    <div id="form-feedback" class="form-feedback hidden"></div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-cancel-agent" class="btn btn-secondary">Cancel</button>
+                <button id="btn-save-agent" class="btn btn-primary" style="width:auto;">Save Agent</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirm Dialog -->
+    <div id="confirm-dialog" class="modal hidden" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title">
+        <div class="modal-overlay confirm-overlay" aria-hidden="true"></div>
+        <div class="modal-content confirm-content">
+            <div class="modal-header">
+                <h3 id="confirm-title">Confirm</h3>
+            </div>
+            <div class="modal-body">
+                <p id="confirm-message">Are you sure?</p>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-confirm-cancel" class="btn btn-secondary">Cancel</button>
+                <button id="btn-confirm-ok" class="btn btn-danger" style="width:auto;">Delete</button>
             </div>
         </div>
     </div>

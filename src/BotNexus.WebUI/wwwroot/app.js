@@ -8,6 +8,7 @@
     const RECONNECT_BASE_MS = 1000;
     const RECONNECT_MAX_MS = 30000;
     const PING_INTERVAL_MS = 30000;
+    const MAX_ACTIVITY_ITEMS = 100;
 
     // --- State ---
     /** @type {WebSocket|null} */
@@ -21,16 +22,26 @@
     let isStreaming = false;
     let activeMessageId = null;
     let showTools = false;
-    /** @type {Object<string, {toolName:string, args:string, result:string}>} */
+    let showThinking = false;
+    let isActivitySubscribed = false;
+    /** @type {Object<string, {toolName:string, args:string, result:string, status:string}>} */
     let activeToolCalls = {};
+    let activeToolCount = 0;
     /** @type {Array} */
     let agentsCache = [];
+    /** @type {Array} */
+    let providersCache = [];
+    /** @type {Array} */
+    let modelsCache = [];
+    /** @type {string} */
+    let thinkingBuffer = '';
+    /** @type {function|null} */
+    let confirmCallback = null;
 
     // --- DOM refs ---
     const $ = (sel) => document.querySelector(sel);
     const $$ = (sel) => document.querySelectorAll(sel);
 
-    const elApp = $('#app');
     const elSessionsList = $('#sessions-list');
     const elAgentsList = $('#agents-list');
     const elConnectionStatus = $('#connection-status');
@@ -45,33 +56,26 @@
     const elBtnAbort = $('#btn-abort');
     const elAgentSelect = $('#agent-select');
     const elToggleTools = $('#toggle-tools');
+    const elToggleThinking = $('#toggle-thinking');
+    const elToggleActivity = $('#toggle-activity');
+    const elActivityFeed = $('#activity-feed');
     const elToolModal = $('#tool-modal');
-    const elModalClose = $('.modal-close');
-    const elModalOverlay = $('.modal-overlay');
+    const elModalClose = elToolModal.querySelector('.modal-close');
+    const elModalOverlay = elToolModal.querySelector('.modal-overlay');
+    const elAgentFormModal = $('#agent-form-modal');
+    const elAgentForm = $('#agent-form');
+    const elConfirmDialog = $('#confirm-dialog');
 
     // =========================================================================
     // Markdown rendering
     // =========================================================================
 
-    /**
-     * Configure marked.js for safe markdown rendering.
-     */
     function initMarkdown() {
         if (typeof marked !== 'undefined') {
-            marked.setOptions({
-                breaks: true,
-                gfm: true,
-                headerIds: false,
-                mangle: false
-            });
+            marked.setOptions({ breaks: true, gfm: true, headerIds: false, mangle: false });
         }
     }
 
-    /**
-     * Render markdown string to sanitized HTML.
-     * @param {string} text - Raw markdown text
-     * @returns {string} Sanitized HTML
-     */
     function renderMarkdown(text) {
         if (!text) return '';
         try {
@@ -89,11 +93,6 @@
     // Utilities
     // =========================================================================
 
-    /**
-     * Escape HTML special characters to prevent XSS.
-     * @param {string} str
-     * @returns {string}
-     */
     function escapeHtml(str) {
         if (!str) return '';
         const div = document.createElement('div');
@@ -101,26 +100,13 @@
         return div.innerHTML;
     }
 
-    /**
-     * Format an ISO timestamp to a short time string.
-     * @param {string} iso - ISO 8601 timestamp
-     * @returns {string}
-     */
     function formatTime(iso) {
         if (!iso) return '';
         try {
-            const d = new Date(iso);
-            return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        } catch {
-            return '';
-        }
+            return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        } catch { return ''; }
     }
 
-    /**
-     * Format a timestamp as a relative time string (e.g. "2m ago").
-     * @param {string} iso
-     * @returns {string}
-     */
     function relativeTime(iso) {
         if (!iso) return '';
         try {
@@ -131,24 +117,13 @@
             const hrs = Math.floor(mins / 60);
             if (hrs < 24) return `${hrs}h ago`;
             return `${Math.floor(hrs / 24)}d ago`;
-        } catch {
-            return '';
-        }
+        } catch { return ''; }
     }
 
-    /**
-     * Scroll the chat messages area to the bottom.
-     */
     function scrollToBottom() {
-        requestAnimationFrame(() => {
-            elChatMessages.scrollTop = elChatMessages.scrollHeight;
-        });
+        requestAnimationFrame(() => { elChatMessages.scrollTop = elChatMessages.scrollHeight; });
     }
 
-    /**
-     * Auto-resize textarea based on content.
-     * @param {HTMLTextAreaElement} el
-     */
     function autoResize(el) {
         el.style.height = 'auto';
         el.style.height = Math.min(el.scrollHeight, 200) + 'px';
@@ -158,40 +133,40 @@
     // Connection status
     // =========================================================================
 
-    /**
-     * Update the connection status indicator.
-     * @param {'connected'|'disconnected'|'connecting'} state
-     */
     function setStatus(state) {
         elConnectionStatus.className = `status ${state}`;
-        const labels = {
-            connected: 'Connected',
-            disconnected: 'Disconnected',
-            connecting: 'Connecting...'
-        };
+        const labels = { connected: 'Connected', disconnected: 'Disconnected', connecting: 'Connecting...', reconnecting: 'Reconnecting...' };
         elStatusText.textContent = labels[state] || state;
+    }
+
+    // =========================================================================
+    // Confirm dialog
+    // =========================================================================
+
+    function showConfirm(message, title, onConfirm) {
+        $('#confirm-title').textContent = title || 'Confirm';
+        $('#confirm-message').textContent = message;
+        confirmCallback = onConfirm;
+        elConfirmDialog.classList.remove('hidden');
+    }
+
+    function closeConfirm() {
+        elConfirmDialog.classList.add('hidden');
+        confirmCallback = null;
     }
 
     // =========================================================================
     // WebSocket connection
     // =========================================================================
 
-    /**
-     * Open a WebSocket connection to the Gateway for the current agent/session.
-     */
     function connectWebSocket() {
-        if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-            return;
-        }
-
+        if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
         if (!currentAgentId) return;
 
-        setStatus('connecting');
+        setStatus(reconnectAttempts > 0 ? 'reconnecting' : 'connecting');
         const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
         let url = `${proto}//${location.host}${WS_PATH}?agent=${encodeURIComponent(currentAgentId)}`;
-        if (currentSessionId) {
-            url += `&session=${encodeURIComponent(currentSessionId)}`;
-        }
+        if (currentSessionId) url += `&session=${encodeURIComponent(currentSessionId)}`;
 
         ws = new WebSocket(url);
 
@@ -199,6 +174,7 @@
             setStatus('connected');
             reconnectAttempts = 0;
             startPing();
+            if (isActivitySubscribed) sendWs({ type: 'subscribe' });
         };
 
         ws.onclose = () => {
@@ -208,208 +184,249 @@
             scheduleReconnect();
         };
 
-        ws.onerror = () => {
-            setStatus('disconnected');
-        };
+        ws.onerror = () => { setStatus('disconnected'); };
 
         ws.onmessage = (event) => {
-            try {
-                const msg = JSON.parse(event.data);
-                handleWsMessage(msg);
-            } catch (e) {
-                console.error('Failed to parse WS message:', e);
-            }
+            try { handleWsMessage(JSON.parse(event.data)); }
+            catch (e) { console.error('Failed to parse WS message:', e); }
         };
     }
 
-    /**
-     * Disconnect the current WebSocket connection.
-     */
     function disconnectWebSocket() {
         stopPing();
-        if (reconnectTimer) {
-            clearTimeout(reconnectTimer);
-            reconnectTimer = null;
-        }
-        if (ws) {
-            ws.onclose = null;
-            ws.close();
-            ws = null;
-        }
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        reconnectAttempts = 0;
+        if (ws) { ws.onclose = null; ws.close(); ws = null; }
         setStatus('disconnected');
         connectionId = null;
     }
 
-    /**
-     * Schedule a reconnection attempt with exponential backoff.
-     */
     function scheduleReconnect() {
         if (reconnectTimer) return;
         const delay = Math.min(RECONNECT_BASE_MS * Math.pow(2, reconnectAttempts), RECONNECT_MAX_MS);
         reconnectAttempts++;
-        reconnectTimer = setTimeout(() => {
-            reconnectTimer = null;
-            connectWebSocket();
-        }, delay);
+        setStatus('reconnecting');
+        reconnectTimer = setTimeout(() => { reconnectTimer = null; connectWebSocket(); }, delay);
     }
 
-    /**
-     * Start the ping keepalive interval.
-     */
     function startPing() {
         stopPing();
-        pingTimer = setInterval(() => {
-            sendWs({ type: 'ping' });
-        }, PING_INTERVAL_MS);
+        pingTimer = setInterval(() => { sendWs({ type: 'ping' }); }, PING_INTERVAL_MS);
     }
 
-    /**
-     * Stop the ping keepalive interval.
-     */
     function stopPing() {
-        if (pingTimer) {
-            clearInterval(pingTimer);
-            pingTimer = null;
-        }
+        if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
     }
 
-    /**
-     * Send a JSON message over WebSocket.
-     * @param {Object} obj
-     */
     function sendWs(obj) {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify(obj));
-        }
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
     }
 
     // =========================================================================
     // WebSocket message handler
     // =========================================================================
 
-    /**
-     * Route incoming WebSocket messages to appropriate handlers.
-     * @param {Object} msg - Parsed message object
-     */
     function handleWsMessage(msg) {
         switch (msg.type) {
             case 'connected':
                 connectionId = msg.connectionId;
-                if (msg.sessionId) {
-                    currentSessionId = msg.sessionId;
-                }
+                if (msg.sessionId) currentSessionId = msg.sessionId;
                 break;
-
             case 'message_start':
                 activeMessageId = msg.messageId;
                 isStreaming = true;
+                activeToolCount = 0;
+                thinkingBuffer = '';
                 elBtnAbort.classList.remove('hidden');
-                showThinkingIndicator();
+                showStreamingIndicator();
                 break;
-
             case 'content_delta':
-                removeThinkingIndicator();
+                removeStreamingIndicator();
                 appendDelta(msg.delta);
                 break;
-
+            case 'thinking_delta':
+                handleThinkingDelta(msg);
+                break;
             case 'tool_start':
                 handleToolStart(msg);
                 break;
-
             case 'tool_end':
                 handleToolEnd(msg);
                 break;
-
             case 'message_end':
                 finalizeMessage(msg);
                 break;
-
             case 'error':
                 handleError(msg);
                 break;
-
+            case 'activity':
+                handleActivityEvent(msg);
+                break;
             case 'pong':
-                // Keepalive acknowledged
                 break;
         }
     }
 
-    /**
-     * Handle tool_start WebSocket message.
-     * @param {Object} msg
-     */
-    function handleToolStart(msg) {
-        const callId = msg.toolCallId || 'unknown';
-        activeToolCalls[callId] = {
-            toolName: msg.toolName || 'unknown',
-            args: '',
-            result: ''
-        };
-        appendToolProgress(msg.toolName, 'running');
+    // =========================================================================
+    // Thinking display
+    // =========================================================================
+
+    function handleThinkingDelta(msg) {
+        if (!msg.delta) return;
+        thinkingBuffer += msg.delta;
+
+        let thinkingEl = elChatMessages.querySelector('.thinking-block');
+        if (!thinkingEl) {
+            removeStreamingIndicator();
+            thinkingEl = document.createElement('div');
+            thinkingEl.className = `thinking-block${showThinking ? '' : ' collapsed'}`;
+            thinkingEl.innerHTML = `
+                <div class="thinking-toggle" role="button" tabindex="0" aria-expanded="${showThinking}" aria-label="Toggle thinking details">
+                    <span class="thinking-icon" aria-hidden="true">💭</span>
+                    <span class="thinking-label">Thinking...</span>
+                    <span class="thinking-chevron" aria-hidden="true">${showThinking ? '▾' : '▸'}</span>
+                </div>
+                <div class="thinking-content"><pre class="thinking-pre"></pre></div>
+            `;
+            thinkingEl.querySelector('.thinking-toggle').addEventListener('click', () => {
+                thinkingEl.classList.toggle('collapsed');
+                const expanded = !thinkingEl.classList.contains('collapsed');
+                thinkingEl.querySelector('.thinking-toggle').setAttribute('aria-expanded', expanded);
+                thinkingEl.querySelector('.thinking-chevron').textContent = expanded ? '▾' : '▸';
+            });
+            elChatMessages.appendChild(thinkingEl);
+        }
+
+        thinkingEl.querySelector('.thinking-pre').textContent = thinkingBuffer;
+        scrollToBottom();
     }
 
-    /**
-     * Handle tool_end WebSocket message.
-     * @param {Object} msg
-     */
+    function finalizeThinkingBlock() {
+        const thinkingEl = elChatMessages.querySelector('.thinking-block');
+        if (thinkingEl) {
+            thinkingEl.querySelector('.thinking-label').textContent = 'Thought process';
+            thinkingEl.classList.add('complete');
+        }
+    }
+
+    // =========================================================================
+    // Tool call handling
+    // =========================================================================
+
+    function handleToolStart(msg) {
+        const callId = msg.toolCallId || `tc-${Date.now()}`;
+        activeToolCount++;
+        activeToolCalls[callId] = {
+            toolName: msg.toolName || 'unknown',
+            args: msg.toolArgs || '',
+            result: '',
+            status: 'running'
+        };
+        appendToolCall(callId, msg.toolName, 'running');
+    }
+
     function handleToolEnd(msg) {
         const callId = msg.toolCallId || 'unknown';
         if (activeToolCalls[callId]) {
             activeToolCalls[callId].result = msg.toolResult || '';
+            activeToolCalls[callId].status = 'complete';
         }
-        updateToolProgress(callId, 'complete');
+        updateToolCallStatus(callId, 'complete');
     }
 
-    /**
-     * Finalize a streamed message — clean up state, update usage.
-     * @param {Object} msg
-     */
+    function appendToolCall(callId, toolName, status) {
+        const div = document.createElement('div');
+        div.className = `message tool-call tool-${status}${showTools ? '' : ' hidden'}`;
+        div.dataset.callId = callId;
+        div.dataset.toolName = toolName;
+        div.setAttribute('role', 'status');
+        div.innerHTML = `
+            <span class="tool-icon" aria-hidden="true">🔧</span>
+            <span class="tool-name">${escapeHtml(toolName)}</span>
+            <span class="tool-status-badge ${status}">${status === 'running' ? '⏳ Running' : '✓ Done'}</span>
+        `;
+        elChatMessages.appendChild(div);
+        scrollToBottom();
+    }
+
+    function updateToolCallStatus(callId, status) {
+        const el = elChatMessages.querySelector(`.tool-call[data-call-id="${callId}"]`);
+        if (!el) return;
+        el.classList.remove('tool-running');
+        el.classList.add(`tool-${status}`);
+        const badge = el.querySelector('.tool-status-badge');
+        if (badge) {
+            badge.className = `tool-status-badge ${status}`;
+            badge.textContent = status === 'error' ? '✗ Error' : '✓ Done';
+        }
+        el.style.cursor = 'pointer';
+        el.addEventListener('click', () => {
+            const data = activeToolCalls[callId];
+            if (data) openToolModal(data);
+        });
+    }
+
+    // =========================================================================
+    // Streaming / message indicators
+    // =========================================================================
+
+    function showStreamingIndicator() {
+        removeStreamingIndicator();
+        const div = document.createElement('div');
+        div.className = 'message thinking streaming-indicator';
+        div.setAttribute('aria-label', 'Agent is processing');
+        div.innerHTML = '<span class="thinking-dots" aria-hidden="true">●●●</span> Agent is processing...';
+        elChatMessages.appendChild(div);
+        scrollToBottom();
+    }
+
+    function removeStreamingIndicator() {
+        elChatMessages.querySelectorAll('.streaming-indicator').forEach(el => el.remove());
+    }
+
+    // =========================================================================
+    // Message finalization
+    // =========================================================================
+
     function finalizeMessage(msg) {
         isStreaming = false;
         activeMessageId = null;
         elBtnAbort.classList.add('hidden');
-        removeThinkingIndicator();
+        removeStreamingIndicator();
+        finalizeThinkingBlock();
 
-        // Finalize any streaming element
         const streaming = elChatMessages.querySelector('.message.assistant.streaming');
         if (streaming) {
             streaming.classList.remove('streaming');
             const deltaEl = streaming.querySelector('.delta-content');
             if (deltaEl) {
-                const rawText = deltaEl.textContent;
-                deltaEl.innerHTML = renderMarkdown(rawText);
+                deltaEl.innerHTML = renderMarkdown(deltaEl.textContent);
             }
             const timeEl = streaming.querySelector('.msg-time');
-            if (timeEl) {
-                timeEl.textContent = formatTime(new Date().toISOString());
+            if (timeEl) timeEl.textContent = formatTime(new Date().toISOString());
+
+            // Message footer with tool count + usage
+            const footer = document.createElement('div');
+            footer.className = 'msg-footer';
+            const parts = [];
+            if (activeToolCount > 0) parts.push(`🔧 ${activeToolCount} tool call${activeToolCount > 1 ? 's' : ''}`);
+            if (msg.usage) {
+                const u = formatUsage(msg.usage);
+                if (u) parts.push(u);
+            }
+            if (parts.length > 0) {
+                footer.textContent = parts.join(' · ');
+                streaming.appendChild(footer);
             }
         }
 
-        // Display usage info if available
-        if (msg.usage) {
-            const usageStr = formatUsage(msg.usage);
-            if (usageStr) {
-                const badge = document.createElement('div');
-                badge.className = 'usage-badge';
-                badge.textContent = usageStr;
-                const target = streaming || elChatMessages.lastElementChild;
-                if (target) target.appendChild(badge);
-            }
-        }
-
-        // Clear active tool calls for this message
         activeToolCalls = {};
-
-        // Refresh sessions list (new session may have been created)
+        activeToolCount = 0;
+        thinkingBuffer = '';
         loadSessions();
         scrollToBottom();
     }
 
-    /**
-     * Format usage data into a short string.
-     * @param {Object} usage
-     * @returns {string}
-     */
     function formatUsage(usage) {
         if (!usage) return '';
         const parts = [];
@@ -419,50 +436,17 @@
         return parts.join(' ');
     }
 
-    /**
-     * Handle an error message from WebSocket.
-     * @param {Object} msg
-     */
     function handleError(msg) {
         isStreaming = false;
         elBtnAbort.classList.add('hidden');
-        removeThinkingIndicator();
-        appendSystemMessage(`Error: ${msg.message || 'Unknown error'}${msg.code ? ` (${msg.code})` : ''}`);
-    }
-
-    // =========================================================================
-    // Thinking indicator
-    // =========================================================================
-
-    /**
-     * Show a thinking/processing indicator in chat.
-     */
-    function showThinkingIndicator() {
-        removeThinkingIndicator();
-        const div = document.createElement('div');
-        div.className = 'message thinking';
-        div.setAttribute('aria-label', 'Agent is thinking');
-        div.innerHTML = '<span class="thinking-dots" aria-hidden="true">●●●</span> Agent is thinking...';
-        elChatMessages.appendChild(div);
-        scrollToBottom();
-    }
-
-    /**
-     * Remove the thinking indicator from chat.
-     */
-    function removeThinkingIndicator() {
-        elChatMessages.querySelectorAll('.message.thinking').forEach(el => el.remove());
+        removeStreamingIndicator();
+        appendSystemMessage(`Error: ${msg.message || 'Unknown error'}${msg.code ? ` (${msg.code})` : ''}`, 'error');
     }
 
     // =========================================================================
     // Chat message rendering
     // =========================================================================
 
-    /**
-     * Append a chat message bubble for a given role.
-     * @param {'user'|'assistant'|'system'} role
-     * @param {string} content
-     */
     function appendChatMessage(role, content) {
         if (!content || !content.trim()) return;
         const div = document.createElement('div');
@@ -480,22 +464,14 @@
         scrollToBottom();
     }
 
-    /**
-     * Append a system/status message to chat.
-     * @param {string} text
-     */
-    function appendSystemMessage(text) {
+    function appendSystemMessage(text, level) {
         const div = document.createElement('div');
-        div.className = 'message system-msg';
+        div.className = `message system-msg${level ? ' ' + level : ''}`;
         div.textContent = text;
         elChatMessages.appendChild(div);
         scrollToBottom();
     }
 
-    /**
-     * Append a streaming delta to the current assistant message.
-     * @param {string} content
-     */
     function appendDelta(content) {
         if (!content) return;
         let streaming = elChatMessages.querySelector('.message.assistant.streaming');
@@ -511,90 +487,35 @@
             `;
             elChatMessages.appendChild(streaming);
         }
-        const deltaEl = streaming.querySelector('.delta-content');
-        deltaEl.textContent += content;
+        streaming.querySelector('.delta-content').textContent += content;
         scrollToBottom();
     }
 
-    /**
-     * Append a tool progress indicator to the chat.
-     * @param {string} toolName
-     * @param {'running'|'complete'} status
-     */
-    function appendToolProgress(toolName, status) {
-        if (!showTools) return;
-        const div = document.createElement('div');
-        div.className = `message tool-call ${status === 'complete' ? 'tool-complete' : 'tool-running'}`;
-        div.dataset.toolName = toolName;
-        div.innerHTML = `
-            <span class="tool-icon" aria-hidden="true">🔧</span>
-            <span class="tool-name">${escapeHtml(toolName)}</span>
-            <span class="tool-status">${status === 'running' ? '⏳' : '✓'}</span>
-        `;
-        elChatMessages.appendChild(div);
-        scrollToBottom();
-    }
+    // =========================================================================
+    // History rendering
+    // =========================================================================
 
-    /**
-     * Update an existing tool progress indicator.
-     * @param {string} callId
-     * @param {'complete'} status
-     */
-    function updateToolProgress(callId, status) {
-        if (!showTools) return;
-        const toolData = activeToolCalls[callId];
-        if (!toolData) return;
-
-        // Find the last running tool indicator for this tool name
-        const indicators = elChatMessages.querySelectorAll('.message.tool-call.tool-running');
-        for (const el of indicators) {
-            if (el.dataset.toolName === toolData.toolName) {
-                el.classList.remove('tool-running');
-                el.classList.add('tool-complete');
-                el.querySelector('.tool-status').textContent = '✓';
-                el.style.cursor = 'pointer';
-                el.addEventListener('click', () => openToolModal(toolData));
-                break;
-            }
-        }
-    }
-
-    /**
-     * Render a history entry from a loaded session.
-     * @param {Object} entry - Message history entry
-     */
     function renderHistoryEntry(entry) {
         if (!entry) return;
-        if (entry.role === 'user' || entry.role === 'assistant') {
-            if (entry.content && entry.content.trim()) {
-                appendChatMessage(entry.role, entry.content);
-            }
+        if ((entry.role === 'user' || entry.role === 'assistant') && entry.content && entry.content.trim()) {
+            appendChatMessage(entry.role, entry.content);
         }
-        // Tool calls within assistant messages
         if (entry.role === 'assistant' && entry.toolCalls && entry.toolCalls.length > 0) {
-            for (const tc of entry.toolCalls) {
-                renderToolCallHistory(tc);
-            }
+            for (const tc of entry.toolCalls) renderToolCallHistory(tc);
         }
-        // Standalone tool results
-        if (entry.role === 'tool') {
-            renderToolCallHistory(entry);
-        }
+        if (entry.role === 'tool') renderToolCallHistory(entry);
     }
 
-    /**
-     * Render a historical tool call as a compact clickable summary.
-     * @param {Object} tc
-     */
     function renderToolCallHistory(tc) {
         const div = document.createElement('div');
-        div.className = `message tool-call tool-complete ${showTools ? '' : 'hidden'}`;
+        div.className = `message tool-call tool-complete${showTools ? '' : ' hidden'}`;
         const toolName = tc.toolName || tc.name || 'unknown';
         const argsPreview = formatToolArgsPreview(tc);
         div.innerHTML = `
             <span class="tool-icon" aria-hidden="true">🔧</span>
             <span class="tool-name">${escapeHtml(toolName)}</span>
             <span class="tool-args-preview">${escapeHtml(argsPreview)}</span>
+            <span class="tool-status-badge complete">✓ Done</span>
         `;
         div.style.cursor = 'pointer';
         div.addEventListener('click', () => openToolModal({
@@ -605,16 +526,9 @@
         elChatMessages.appendChild(div);
     }
 
-    /**
-     * Format tool arguments into a short preview string.
-     * @param {Object} entry
-     * @returns {string}
-     */
     function formatToolArgsPreview(entry) {
         const args = entry.arguments || entry.args || {};
-        if (typeof args === 'string') {
-            return args.length > 80 ? args.substring(0, 80) + '...' : args;
-        }
+        if (typeof args === 'string') return args.length > 80 ? args.substring(0, 80) + '...' : args;
         const pairs = [];
         for (const [key, value] of Object.entries(args)) {
             let valStr = typeof value === 'string'
@@ -631,60 +545,37 @@
     // Tool modal
     // =========================================================================
 
-    /**
-     * Open the tool detail modal.
-     * @param {Object} toolData - { toolName, args, result }
-     */
     function openToolModal(toolData) {
         $('#modal-tool-name').textContent = toolData.toolName || 'unknown';
         $('#modal-tool-args').textContent = typeof toolData.args === 'string'
-            ? toolData.args
-            : JSON.stringify(toolData.args || {}, null, 2);
+            ? toolData.args : JSON.stringify(toolData.args || {}, null, 2);
         $('#modal-tool-result').textContent = toolData.result || '(no result)';
         elToolModal.classList.remove('hidden');
     }
 
-    /**
-     * Close the tool detail modal.
-     */
-    function closeToolModal() {
-        elToolModal.classList.add('hidden');
-    }
+    function closeToolModal() { elToolModal.classList.add('hidden'); }
 
     // =========================================================================
     // Chat actions
     // =========================================================================
 
-    /**
-     * Send the user's current input as a chat message.
-     */
     function sendMessage() {
         const text = elChatInput.value.trim();
         if (!text) return;
         elChatInput.value = '';
         autoResize(elChatInput);
-
         appendChatMessage('user', text);
-        showThinkingIndicator();
 
-        // Send via WebSocket if connected
         if (ws && ws.readyState === WebSocket.OPEN) {
             sendWs({ type: 'message', content: text });
         } else {
-            // Fallback to REST /api/chat
             sendViaRest(text);
         }
     }
 
-    /**
-     * Send a message via the REST /api/chat endpoint (non-streaming fallback).
-     * @param {string} text
-     */
     async function sendViaRest(text) {
-        const body = {
-            agentId: currentAgentId || (elAgentSelect.value || undefined),
-            message: text
-        };
+        showStreamingIndicator();
+        const body = { agentId: currentAgentId || (elAgentSelect.value || undefined), message: text };
         if (currentSessionId) body.sessionId = currentSessionId;
 
         try {
@@ -693,7 +584,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body)
             });
-            removeThinkingIndicator();
+            removeStreamingIndicator();
             if (res.ok) {
                 const data = await res.json();
                 if (data.sessionId) currentSessionId = data.sessionId;
@@ -702,7 +593,7 @@
                     const usageStr = formatUsage(data.usage);
                     if (usageStr) {
                         const badge = document.createElement('div');
-                        badge.className = 'usage-badge';
+                        badge.className = 'msg-footer';
                         badge.textContent = usageStr;
                         const last = elChatMessages.lastElementChild;
                         if (last) last.appendChild(badge);
@@ -710,34 +601,29 @@
                 }
                 loadSessions();
             } else {
-                const errText = await res.text();
-                appendSystemMessage(`Error: ${res.status} — ${errText}`);
+                appendSystemMessage(`Error: ${res.status} — ${await res.text()}`, 'error');
             }
         } catch (e) {
-            removeThinkingIndicator();
-            appendSystemMessage(`Connection error: ${e.message}`);
+            removeStreamingIndicator();
+            appendSystemMessage(`Connection error: ${e.message}`, 'error');
         }
     }
 
-    /**
-     * Abort the currently streaming request.
-     */
     function abortRequest() {
         sendWs({ type: 'abort' });
         isStreaming = false;
         elBtnAbort.classList.add('hidden');
-        removeThinkingIndicator();
+        removeStreamingIndicator();
         appendSystemMessage('Request aborted.');
     }
 
-    /**
-     * Start a new chat session.
-     */
     function startNewChat() {
         disconnectWebSocket();
         currentSessionId = null;
         activeMessageId = null;
         activeToolCalls = {};
+        activeToolCount = 0;
+        thinkingBuffer = '';
 
         elWelcome.classList.add('hidden');
         elChatView.classList.remove('hidden');
@@ -746,15 +632,10 @@
         elChatMessages.innerHTML = '';
         elBtnSend.disabled = false;
         elAgentSelect.disabled = false;
-
-        // Deselect sidebar sessions
         elSessionsList.querySelectorAll('.list-item').forEach(el => el.classList.remove('active'));
 
         currentAgentId = elAgentSelect.value || null;
-        if (currentAgentId) {
-            connectWebSocket();
-        }
-
+        if (currentAgentId) connectWebSocket();
         elChatInput.focus();
     }
 
@@ -762,11 +643,6 @@
     // REST API helpers
     // =========================================================================
 
-    /**
-     * Fetch JSON from the Gateway REST API.
-     * @param {string} path
-     * @returns {Promise<any|null>}
-     */
     async function fetchJson(path) {
         try {
             const res = await fetch(`${API_BASE}${path}`);
@@ -782,9 +658,6 @@
     // Sessions
     // =========================================================================
 
-    /**
-     * Load sessions list from the Gateway.
-     */
     async function loadSessions() {
         elSessionsList.innerHTML = '<div class="loading">Loading...</div>';
         const sessions = await fetchJson('/sessions');
@@ -793,7 +666,6 @@
             return;
         }
         elSessionsList.innerHTML = '';
-        // Sort by most recently updated
         sessions.sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
 
         for (const s of sessions) {
@@ -805,61 +677,79 @@
             const agentName = s.agentId || s.agentName || 'Chat';
             const msgCount = s.messageCount || 0;
             el.innerHTML = `
-                <span class="item-title">${escapeHtml(agentName)}</span>
+                <div class="list-item-row">
+                    <span class="item-title">${escapeHtml(agentName)}</span>
+                    <button class="btn-delete-session" title="Delete session" aria-label="Delete session">✕</button>
+                </div>
                 <span class="item-meta">${msgCount} msgs · ${timeStr}</span>
             `;
-            el.addEventListener('click', () => openSession(s.sessionId, s.agentId || s.agentName));
+            el.querySelector('.btn-delete-session').addEventListener('click', (e) => {
+                e.stopPropagation();
+                deleteSession(s.sessionId);
+            });
+            el.addEventListener('click', (e) => {
+                if (e.target.closest('.btn-delete-session')) return;
+                openSession(s.sessionId, s.agentId || s.agentName);
+            });
             elSessionsList.appendChild(el);
         }
     }
 
-    /**
-     * Open an existing session by ID.
-     * @param {string} sessionId
-     * @param {string} [agentId]
-     */
+    async function deleteSession(sessionId) {
+        showConfirm(
+            `Delete session ${sessionId.substring(0, 8)}...? This cannot be undone.`,
+            'Delete Session',
+            async () => {
+                try {
+                    const res = await fetch(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
+                    if (res.ok || res.status === 204) {
+                        if (currentSessionId === sessionId) {
+                            disconnectWebSocket();
+                            currentSessionId = null;
+                            elChatView.classList.add('hidden');
+                            elWelcome.classList.remove('hidden');
+                        }
+                        loadSessions();
+                    } else {
+                        appendSystemMessage(`Failed to delete session: ${res.status}`, 'error');
+                    }
+                } catch (e) {
+                    appendSystemMessage(`Failed to delete session: ${e.message}`, 'error');
+                }
+            }
+        );
+    }
+
     async function openSession(sessionId, agentId) {
         disconnectWebSocket();
         currentSessionId = sessionId;
         currentAgentId = agentId || null;
 
-        // Update sidebar active state
         elSessionsList.querySelectorAll('.list-item').forEach(el => {
             el.classList.toggle('active', el.dataset.sessionId === sessionId);
         });
 
-        // Show chat view
         elWelcome.classList.add('hidden');
         elChatView.classList.remove('hidden');
         elChatTitle.textContent = agentId || 'Chat';
-        elChatMessages.innerHTML = '';
+        elChatMessages.innerHTML = '<div class="loading">Loading messages...</div>';
         elBtnSend.disabled = false;
 
-        // Set agent selector
-        if (agentId) {
-            elAgentSelect.value = agentId;
-        }
+        if (agentId) elAgentSelect.value = agentId;
         elAgentSelect.disabled = true;
 
-        // Load session details
         const session = await fetchJson(`/sessions/${encodeURIComponent(sessionId)}`);
+        elChatMessages.innerHTML = '';
+
         if (session) {
             const msgCount = session.history ? session.history.length : (session.messageCount || 0);
             elChatMeta.textContent = `Agent: ${agentId || 'unknown'} · ${msgCount} messages`;
-
-            // Render history
             if (session.history) {
-                for (const entry of session.history) {
-                    renderHistoryEntry(entry);
-                }
+                for (const entry of session.history) renderHistoryEntry(entry);
             }
         }
 
-        // Connect WebSocket for continued chat
-        if (currentAgentId) {
-            connectWebSocket();
-        }
-
+        if (currentAgentId) connectWebSocket();
         scrollToBottom();
         elChatInput.focus();
     }
@@ -868,9 +758,6 @@
     // Agents
     // =========================================================================
 
-    /**
-     * Load agents list from the Gateway.
-     */
     async function loadAgents() {
         elAgentsList.innerHTML = '<div class="loading">Loading...</div>';
         const agents = await fetchJson('/agents');
@@ -886,25 +773,22 @@
             el.setAttribute('role', 'listitem');
             const name = a.name || a.agentId || a.id || 'unknown';
             const model = a.model || a.defaultModel || '';
+            const statusClass = a.status === 'error' ? 'error' : (a.status === 'busy' ? 'warning' : 'success');
             el.innerHTML = `
-                <span class="item-title">${escapeHtml(name)}</span>
+                <div class="list-item-row">
+                    <span class="item-title">
+                        <span class="agent-status-dot ${statusClass}" aria-hidden="true"></span>
+                        ${escapeHtml(name)}
+                    </span>
+                </div>
                 <span class="item-meta">${model ? 'Model: ' + escapeHtml(model) : ''}</span>
             `;
-            el.addEventListener('click', () => {
-                elAgentSelect.value = name;
-                currentAgentId = name;
-            });
+            el.addEventListener('click', () => { elAgentSelect.value = name; currentAgentId = name; });
             elAgentsList.appendChild(el);
         }
-
-        // Populate agent selector dropdown
         populateAgentSelect(agents);
     }
 
-    /**
-     * Populate the agent selector dropdown.
-     * @param {Array} agents
-     */
     function populateAgentSelect(agents) {
         elAgentSelect.innerHTML = '';
         for (const a of agents) {
@@ -914,47 +798,173 @@
             opt.textContent = name;
             elAgentSelect.appendChild(opt);
         }
-        // Set currentAgentId if not already set
         if (!currentAgentId && agents.length > 0) {
             currentAgentId = agents[0].name || agents[0].agentId || agents[0].id;
         }
     }
 
     // =========================================================================
-    // Tool visibility toggle
+    // Agent form modal
     // =========================================================================
 
-    /**
-     * Toggle visibility of tool call messages in the chat.
-     */
+    async function openAddAgentForm() {
+        $('#agent-form-title').textContent = 'Add Agent';
+        elAgentForm.reset();
+        $('#form-agent-name').disabled = false;
+        $('#form-agent-temperature').disabled = true;
+        $('#form-agent-max-tokens').disabled = true;
+        $('#form-feedback').className = 'form-feedback hidden';
+
+        const providerSelect = $('#form-agent-provider');
+        providerSelect.innerHTML = '<option value="">Select provider...</option>';
+        const providers = await fetchJson('/providers');
+        if (providers && providers.length > 0) {
+            providersCache = providers;
+            for (const p of providers) {
+                const opt = document.createElement('option');
+                opt.value = p.name || p.providerId || p.id || 'unknown';
+                opt.textContent = opt.value;
+                providerSelect.appendChild(opt);
+            }
+        }
+
+        elAgentFormModal.classList.remove('hidden');
+    }
+
+    function closeAgentForm() {
+        elAgentFormModal.classList.add('hidden');
+        elAgentForm.reset();
+        $('#form-feedback').className = 'form-feedback hidden';
+    }
+
+    async function loadModelsForProvider(providerName) {
+        const modelSelect = $('#form-agent-model');
+        modelSelect.innerHTML = '<option value="">Loading models...</option>';
+        const models = await fetchJson('/models');
+        modelSelect.innerHTML = '<option value="">Select model...</option>';
+        if (models && models.length > 0) {
+            modelsCache = models;
+            const filtered = providerName
+                ? models.filter(m => (m.provider || '').toLowerCase() === providerName.toLowerCase())
+                : models;
+            for (const m of filtered) {
+                const opt = document.createElement('option');
+                opt.value = m.name || m.modelId || m.id || 'unknown';
+                opt.textContent = opt.value;
+                modelSelect.appendChild(opt);
+            }
+        }
+    }
+
+    async function saveAgent() {
+        const name = $('#form-agent-name').value.trim();
+        const provider = $('#form-agent-provider').value;
+        const model = $('#form-agent-model').value;
+        const systemPrompt = $('#form-agent-system-prompt').value.trim();
+        const feedback = $('#form-feedback');
+
+        if (!name || !provider || !model) {
+            feedback.textContent = 'Name, provider, and model are required.';
+            feedback.className = 'form-feedback form-error';
+            return;
+        }
+
+        const body = { name, provider, model };
+        if (systemPrompt) body.systemPrompt = systemPrompt;
+        if ($('#form-agent-temperature-enabled').checked) body.temperature = parseFloat($('#form-agent-temperature').value);
+        if ($('#form-agent-max-tokens-enabled').checked) body.maxTokens = parseInt($('#form-agent-max-tokens').value, 10);
+
+        try {
+            const res = await fetch(`${API_BASE}/agents`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (res.ok || res.status === 201) {
+                feedback.textContent = `Agent "${name}" created!`;
+                feedback.className = 'form-feedback form-success';
+                setTimeout(() => { closeAgentForm(); loadAgents(); }, 1000);
+            } else {
+                feedback.textContent = `Error: ${res.status} — ${await res.text()}`;
+                feedback.className = 'form-feedback form-error';
+            }
+        } catch (e) {
+            feedback.textContent = `Error: ${e.message}`;
+            feedback.className = 'form-feedback form-error';
+        }
+    }
+
+    // =========================================================================
+    // Activity monitor
+    // =========================================================================
+
+    function handleActivityEvent(evt) {
+        if (!isActivitySubscribed) return;
+        const el = document.createElement('div');
+        let cssClass = 'activity-item';
+        const eventType = evt.eventType || evt.event || 'unknown';
+        if (eventType.includes('Error') || eventType === 'error') cssClass += ' error';
+        else if (eventType.includes('Response') || eventType.includes('Sent')) cssClass += ' response-sent';
+        else if (eventType.includes('Message') || eventType.includes('Received')) cssClass += ' msg-received';
+        el.className = cssClass;
+
+        const time = formatTime(evt.timestamp || new Date().toISOString());
+        const channel = evt.channel || evt.source || '';
+        const preview = (evt.content || evt.message || '').substring(0, 80);
+        el.innerHTML = `
+            <span class="activity-time">${time}</span>
+            ${channel ? `<span class="activity-channel">[${escapeHtml(channel)}]</span>` : ''}
+            <strong>${escapeHtml(eventType)}</strong>${preview ? ': ' + escapeHtml(preview) : ''}${(evt.content || evt.message || '').length > 80 ? '...' : ''}
+        `;
+        elActivityFeed.insertBefore(el, elActivityFeed.firstChild);
+        while (elActivityFeed.children.length > MAX_ACTIVITY_ITEMS) {
+            elActivityFeed.removeChild(elActivityFeed.lastChild);
+        }
+    }
+
+    // =========================================================================
+    // Toggle visibility
+    // =========================================================================
+
     function toggleToolVisibility() {
         showTools = elToggleTools.checked;
         elChatMessages.querySelectorAll('.message.tool-call').forEach(el => {
-            if (showTools) {
-                el.classList.remove('hidden');
-            } else {
-                el.classList.add('hidden');
+            el.classList.toggle('hidden', !showTools);
+        });
+    }
+
+    function toggleThinkingVisibility() {
+        showThinking = elToggleThinking.checked;
+        elChatMessages.querySelectorAll('.thinking-block').forEach(el => {
+            el.classList.toggle('collapsed', !showThinking);
+            const toggle = el.querySelector('.thinking-toggle');
+            if (toggle) {
+                toggle.setAttribute('aria-expanded', showThinking);
+                el.querySelector('.thinking-chevron').textContent = showThinking ? '▾' : '▸';
             }
         });
+    }
+
+    function toggleActivity() {
+        isActivitySubscribed = elToggleActivity.checked;
+        if (isActivitySubscribed) {
+            sendWs({ type: 'subscribe' });
+            elActivityFeed.classList.remove('collapsed');
+        } else {
+            elActivityFeed.classList.add('collapsed');
+        }
     }
 
     // =========================================================================
     // Section toggle (sidebar collapsible sections)
     // =========================================================================
 
-    /**
-     * Wire up sidebar section toggle behavior.
-     */
     function initSectionToggles() {
         $$('.section-header[data-toggle]').forEach(header => {
             header.addEventListener('click', (e) => {
-                // Don't toggle if clicking a button inside the header
-                if (e.target.closest('.btn-icon')) return;
-                const targetId = header.dataset.toggle;
-                const target = document.getElementById(targetId);
-                if (target) {
-                    target.classList.toggle('collapsed');
-                }
+                if (e.target.closest('.btn-icon') || e.target.closest('.toggle-switch')) return;
+                const target = document.getElementById(header.dataset.toggle);
+                if (target) target.classList.toggle('collapsed');
             });
         });
     }
@@ -963,58 +973,53 @@
     // Event listeners
     // =========================================================================
 
-    /**
-     * Wire up all event listeners.
-     */
     function initEventListeners() {
-        // New chat
         $('#btn-new-chat').addEventListener('click', startNewChat);
-
-        // Send message
         elBtnSend.addEventListener('click', sendMessage);
-
-        // Abort
         elBtnAbort.addEventListener('click', abortRequest);
 
-        // Chat input — Enter to send, Shift+Enter for newline
         elChatInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-            }
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
         });
-
-        // Auto-resize textarea
         elChatInput.addEventListener('input', () => autoResize(elChatInput));
 
-        // Agent selector change
         elAgentSelect.addEventListener('change', () => {
             currentAgentId = elAgentSelect.value;
-            if (!currentSessionId && ws) {
-                disconnectWebSocket();
-                connectWebSocket();
-            }
+            if (!currentSessionId && ws) { disconnectWebSocket(); connectWebSocket(); }
         });
 
-        // Tool visibility toggle
         elToggleTools.addEventListener('change', toggleToolVisibility);
+        elToggleThinking.addEventListener('change', toggleThinkingVisibility);
+        elToggleActivity.addEventListener('change', toggleActivity);
 
-        // Refresh buttons
-        $('#btn-refresh-sessions').addEventListener('click', (e) => {
-            e.stopPropagation();
-            loadSessions();
-        });
-        $('#btn-refresh-agents').addEventListener('click', (e) => {
-            e.stopPropagation();
-            loadAgents();
-        });
+        $('#btn-refresh-sessions').addEventListener('click', (e) => { e.stopPropagation(); loadSessions(); });
+        $('#btn-refresh-agents').addEventListener('click', (e) => { e.stopPropagation(); loadAgents(); });
 
-        // Tool modal close
+        // Tool modal
         elModalClose.addEventListener('click', closeToolModal);
         elModalOverlay.addEventListener('click', closeToolModal);
+
+        // Agent form modal
+        $('#btn-add-agent').addEventListener('click', (e) => { e.stopPropagation(); openAddAgentForm(); });
+        elAgentFormModal.querySelector('.agent-form-close').addEventListener('click', closeAgentForm);
+        elAgentFormModal.querySelector('.agent-form-overlay').addEventListener('click', closeAgentForm);
+        $('#btn-cancel-agent').addEventListener('click', closeAgentForm);
+        $('#btn-save-agent').addEventListener('click', saveAgent);
+        $('#form-agent-provider').addEventListener('change', () => { loadModelsForProvider($('#form-agent-provider').value); });
+        $('#form-agent-temperature-enabled').addEventListener('change', (e) => { $('#form-agent-temperature').disabled = !e.target.checked; });
+        $('#form-agent-max-tokens-enabled').addEventListener('change', (e) => { $('#form-agent-max-tokens').disabled = !e.target.checked; });
+
+        // Confirm dialog
+        $('#btn-confirm-ok').addEventListener('click', () => { if (confirmCallback) confirmCallback(); closeConfirm(); });
+        $('#btn-confirm-cancel').addEventListener('click', closeConfirm);
+        elConfirmDialog.querySelector('.confirm-overlay').addEventListener('click', closeConfirm);
+
+        // Global escape
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && !elToolModal.classList.contains('hidden')) {
-                closeToolModal();
+            if (e.key === 'Escape') {
+                if (!elToolModal.classList.contains('hidden')) closeToolModal();
+                else if (!elAgentFormModal.classList.contains('hidden')) closeAgentForm();
+                else if (!elConfirmDialog.classList.contains('hidden')) closeConfirm();
             }
         });
     }
@@ -1023,9 +1028,6 @@
     // Initialization
     // =========================================================================
 
-    /**
-     * Bootstrap the application.
-     */
     function init() {
         initMarkdown();
         initSectionToggles();
@@ -1034,7 +1036,6 @@
         loadAgents();
     }
 
-    // Start on DOM ready
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
     } else {
