@@ -288,12 +288,6 @@
                 </div>
                 <div class="thinking-content"><pre class="thinking-pre"></pre></div>
             `;
-            thinkingEl.querySelector('.thinking-toggle').addEventListener('click', () => {
-                thinkingEl.classList.toggle('collapsed');
-                const expanded = !thinkingEl.classList.contains('collapsed');
-                thinkingEl.querySelector('.thinking-toggle').setAttribute('aria-expanded', expanded);
-                thinkingEl.querySelector('.thinking-chevron').textContent = expanded ? '▾' : '▸';
-            });
             elChatMessages.appendChild(thinkingEl);
         }
 
@@ -360,10 +354,6 @@
             badge.textContent = status === 'error' ? '✗ Error' : '✓ Done';
         }
         el.style.cursor = 'pointer';
-        el.addEventListener('click', () => {
-            const data = activeToolCalls[callId];
-            if (data) openToolModal(data);
-        });
     }
 
     // =========================================================================
@@ -507,8 +497,10 @@
     }
 
     function renderToolCallHistory(tc) {
+        const callId = `hist-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const div = document.createElement('div');
         div.className = `message tool-call tool-complete${showTools ? '' : ' hidden'}`;
+        div.dataset.callId = callId;
         const toolName = tc.toolName || tc.name || 'unknown';
         const argsPreview = formatToolArgsPreview(tc);
         div.innerHTML = `
@@ -518,11 +510,12 @@
             <span class="tool-status-badge complete">✓ Done</span>
         `;
         div.style.cursor = 'pointer';
-        div.addEventListener('click', () => openToolModal({
+        activeToolCalls[callId] = {
             toolName,
             args: JSON.stringify(tc.arguments || tc.args || {}, null, 2),
-            result: tc.content || tc.output || tc.result || '(no result)'
-        }));
+            result: tc.content || tc.output || tc.result || '(no result)',
+            status: 'complete'
+        };
         elChatMessages.appendChild(div);
     }
 
@@ -994,6 +987,29 @@
 
         $('#btn-refresh-sessions').addEventListener('click', (e) => { e.stopPropagation(); loadSessions(); });
         $('#btn-refresh-agents').addEventListener('click', (e) => { e.stopPropagation(); loadAgents(); });
+
+        // Delegated click handlers for dynamic chat content
+        elChatMessages.addEventListener('click', (e) => {
+            const toggle = e.target.closest('.thinking-toggle');
+            if (toggle) {
+                const block = toggle.closest('.thinking-block');
+                if (block) {
+                    block.classList.toggle('collapsed');
+                    const expanded = !block.classList.contains('collapsed');
+                    toggle.setAttribute('aria-expanded', expanded);
+                    const chevron = block.querySelector('.thinking-chevron');
+                    if (chevron) chevron.textContent = expanded ? '▾' : '▸';
+                }
+                return;
+            }
+
+            const toolCall = e.target.closest('.tool-call');
+            if (toolCall && !toolCall.classList.contains('tool-running')) {
+                const callId = toolCall.dataset.callId;
+                const data = callId && activeToolCalls[callId];
+                if (data) openToolModal(data);
+            }
+        });
 
         // Tool modal
         elModalClose.addEventListener('click', closeToolModal);
