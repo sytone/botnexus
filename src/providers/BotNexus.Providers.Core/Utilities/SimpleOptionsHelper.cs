@@ -27,7 +27,7 @@ public static class SimpleOptionsHelper
             Temperature = options?.Temperature,
             MaxTokens = options?.MaxTokens ?? Math.Min(model.MaxTokens, 32000),
             CancellationToken = options?.CancellationToken ?? CancellationToken.None,
-            ApiKey = apiKey,
+            ApiKey = string.IsNullOrEmpty(apiKey) ? options?.ApiKey : apiKey,
             Transport = options?.Transport ?? new StreamOptions().Transport,
             CacheRetention = options?.CacheRetention ?? new StreamOptions().CacheRetention,
             SessionId = options?.SessionId,
