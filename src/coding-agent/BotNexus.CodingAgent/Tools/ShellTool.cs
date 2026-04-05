@@ -27,15 +27,15 @@ public sealed class ShellTool : IAgentTool
     private const int MaxOutputCharacters = 10000;
 
     /// <inheritdoc />
-    public string Name => "shell";
+    public string Name => "bash";
 
     /// <inheritdoc />
-    public string Label => "Run Shell Command";
+    public string Label => "Bash";
 
     /// <inheritdoc />
     public Tool Definition => new(
         Name,
-        "Run a shell command with timeout and captured stdout/stderr.",
+        "Execute a bash command in the current working directory and return stdout/stderr.",
         JsonDocument.Parse("""
             {
               "type": "object",

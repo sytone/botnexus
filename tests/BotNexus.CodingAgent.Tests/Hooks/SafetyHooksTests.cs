@@ -46,7 +46,7 @@ public sealed class SafetyHooksTests : IDisposable
     [Fact]
     public async Task ValidateAsync_BlocksDangerousCommand()
     {
-        var context = CreateContext("shell", new Dictionary<string, object?>
+        var context = CreateContext("bash", new Dictionary<string, object?>
         {
             ["command"] = "rm -rf /"
         });
@@ -66,7 +66,7 @@ public sealed class SafetyHooksTests : IDisposable
             ["path"] = "safe.txt",
             ["content"] = "ok"
         });
-        var shellContext = CreateContext("shell", new Dictionary<string, object?>
+        var shellContext = CreateContext("bash", new Dictionary<string, object?>
         {
             ["command"] = "echo hello"
         });

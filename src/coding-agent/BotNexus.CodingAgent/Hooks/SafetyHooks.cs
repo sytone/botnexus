@@ -52,7 +52,8 @@ public sealed class SafetyHooks
 
     private static bool IsShellTool(string toolName)
     {
-        return toolName.Equals("shell", StringComparison.OrdinalIgnoreCase);
+        return toolName.Equals("bash", StringComparison.OrdinalIgnoreCase)
+               || toolName.Equals("shell", StringComparison.OrdinalIgnoreCase);
     }
 
     private static BeforeToolCallResult? ValidatePath(BeforeToolCallContext context, CodingAgentConfig config)
@@ -132,7 +133,9 @@ public sealed class SafetyHooks
     private static void EmitLargeWriteWarning(BeforeToolCallContext context)
     {
         var payload = ReadString(context.ValidatedArgs, "content")
-                      ?? ReadString(context.ValidatedArgs, "new_str");
+                      ?? ReadString(context.ValidatedArgs, "new_str")
+                      ?? ReadString(context.ValidatedArgs, "newText")
+                      ?? ReadFirstEditNewText(context.ValidatedArgs);
         if (string.IsNullOrEmpty(payload))
         {
             return;
@@ -150,6 +153,24 @@ public sealed class SafetyHooks
         return args.TryGetValue(key, out var value)
             ? value?.ToString()
             : null;
+    }
+
+    private static string? ReadFirstEditNewText(IReadOnlyDictionary<string, object?> args)
+    {
+        if (!args.TryGetValue("edits", out var edits) || edits is not IEnumerable<object?> list)
+        {
+            return null;
+        }
+
+        foreach (var entry in list)
+        {
+            if (entry is IReadOnlyDictionary<string, object?> dictionary)
+            {
+                return ReadString(dictionary, "newText");
+            }
+        }
+
+        return null;
     }
 }
 

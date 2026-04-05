@@ -15,7 +15,7 @@ public sealed class SystemPromptBuilderTests
             GitBranch: "main",
             GitStatus: "clean",
             PackageManager: "npm",
-            ToolNames: ["read", "write", "shell"],
+            ToolNames: ["read", "write", "bash"],
             Skills: [],
             CustomInstructions: null);
 
@@ -24,7 +24,7 @@ public sealed class SystemPromptBuilderTests
         prompt.Should().Contain("You are a coding assistant");
         prompt.Should().Contain("## Environment");
         prompt.Should().Contain("- Working directory: C:\\repo");
-        prompt.Should().Contain("- Tools: read, write, shell");
+        prompt.Should().Contain("- Tools: read, write, bash");
         prompt.Should().Contain("## Tool Guidelines");
     }
 

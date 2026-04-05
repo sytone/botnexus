@@ -19,7 +19,7 @@ public sealed class SystemPromptBuilder
         ArgumentNullException.ThrowIfNull(context);
 
         var builder = new StringBuilder();
-        builder.AppendLine("You are a coding assistant with access to tools for reading, writing, and editing files, and executing shell commands.")
+        builder.AppendLine("You are a coding assistant with access to tools for reading, writing, and editing files, and executing bash commands.")
             .AppendLine()
             .AppendLine("## Environment")
             .AppendLine($"- OS: {RuntimeInformation.OSDescription}")
