@@ -26,12 +26,12 @@ public sealed record AgentStartEvent(DateTimeOffset Timestamp) : AgentEvent(Agen
 /// <summary>
 /// Raised when an agent run ends.
 /// </summary>
-/// <param name="Messages">The final message timeline including all new messages.</param>
+/// <param name="Messages">The new messages produced during this run.</param>
 /// <param name="Timestamp">The event timestamp.</param>
 /// <remarks>
 /// <para>
 /// The final event for a run. The agent becomes idle after all listeners settle.
-/// Messages includes the full timeline, not just new messages from this run.
+/// Messages includes only messages produced during this run.
 /// </para>
 /// <para>
 /// Emitted after all turns and tool executions complete, or after an error/abort.

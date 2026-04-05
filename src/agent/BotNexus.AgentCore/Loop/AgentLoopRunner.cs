@@ -37,6 +37,7 @@ public static class AgentLoopRunner
     {
         cancellationToken.ThrowIfCancellationRequested();
 
+        var runStartIndex = context.Messages.Count;
         var timeline = context.Messages.ToList();
         var newMessages = new List<AgentMessage>(prompts.Count);
 
@@ -57,6 +58,7 @@ public static class AgentLoopRunner
                 config,
                 emit,
                 cancellationToken,
+                runStartIndex,
                 firstTurn: true)
             .ConfigureAwait(false);
 
@@ -90,17 +92,22 @@ public static class AgentLoopRunner
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (context.Messages.Count == 0)
+        {
+            throw new InvalidOperationException("Cannot continue: no messages in context");
+        }
 
-        if (context.Messages.Count > 0 && context.Messages[^1] is AssistantAgentMessage)
+        if (context.Messages[^1] is AssistantAgentMessage)
         {
             throw new InvalidOperationException("Cannot continue when the last message is from the assistant.");
         }
 
+        var runStartIndex = context.Messages.Count;
         var newMessages = new List<AgentMessage>();
         await emit(new AgentStartEvent(DateTimeOffset.UtcNow)).ConfigureAwait(false);
         await emit(new TurnStartEvent(DateTimeOffset.UtcNow)).ConfigureAwait(false);
 
-        await RunLoopAsync(context, newMessages, config, emit, cancellationToken, firstTurn: true)
+        await RunLoopAsync(context, newMessages, config, emit, cancellationToken, runStartIndex, firstTurn: true)
             .ConfigureAwait(false);
 
         return newMessages;
@@ -112,6 +119,7 @@ public static class AgentLoopRunner
         AgentLoopConfig config,
         Func<AgentEvent, Task> emit,
         CancellationToken cancellationToken,
+        int runStartIndex,
         bool firstTurn)
     {
         var messages = currentContext.Messages.ToList();
@@ -172,7 +180,7 @@ public static class AgentLoopRunner
                 if (assistantMessage.FinishReason is StopReason.Error or StopReason.Aborted or StopReason.Refusal or StopReason.Sensitive)
                 {
                     await emit(new TurnEndEvent(assistantMessage, [], DateTimeOffset.UtcNow)).ConfigureAwait(false);
-                    await emit(new AgentEndEvent(messages, DateTimeOffset.UtcNow)).ConfigureAwait(false);
+                    await emit(new AgentEndEvent(messages.Skip(runStartIndex).ToList(), DateTimeOffset.UtcNow)).ConfigureAwait(false);
                     return;
                 }
 
@@ -215,7 +223,7 @@ public static class AgentLoopRunner
             break;
         }
 
-        await emit(new AgentEndEvent(messages, DateTimeOffset.UtcNow)).ConfigureAwait(false);
+        await emit(new AgentEndEvent(messages.Skip(runStartIndex).ToList(), DateTimeOffset.UtcNow)).ConfigureAwait(false);
     }
 
     private static async Task<SimpleStreamOptions> BuildStreamOptionsAsync(

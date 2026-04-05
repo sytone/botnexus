@@ -30,6 +30,7 @@ internal static class StreamAccumulator
         Func<AgentEvent, Task> emit,
         CancellationToken cancellationToken)
     {
+        var _startEmitted = false;
         AssistantAgentMessage? current = null;
         AssistantAgentMessage? final = null;
         var toolCallState = new Dictionary<int, (string? Id, string? Name)>();
@@ -43,6 +44,7 @@ internal static class StreamAccumulator
                 case StartEvent start:
                     current = MessageConverter.ToAgentMessage(start.Partial);
                     await emit(new MessageStartEvent(current, DateTimeOffset.UtcNow)).ConfigureAwait(false);
+                    _startEmitted = true;
                     break;
 
                 case TextStartEvent textStart:
@@ -193,11 +195,23 @@ internal static class StreamAccumulator
 
                 case DoneEvent done:
                     final = MessageConverter.ToAgentMessage(done.Message);
+                    if (!_startEmitted)
+                    {
+                        await emit(new MessageStartEvent(final, DateTimeOffset.UtcNow)).ConfigureAwait(false);
+                        _startEmitted = true;
+                    }
+
                     await emit(new MessageEndEvent(final, DateTimeOffset.UtcNow)).ConfigureAwait(false);
                     break;
 
                 case ErrorEvent error:
                     final = MessageConverter.ToAgentMessage(error.Error) with { FinishReason = StopReason.Error };
+                    if (!_startEmitted)
+                    {
+                        await emit(new MessageStartEvent(final, DateTimeOffset.UtcNow)).ConfigureAwait(false);
+                        _startEmitted = true;
+                    }
+
                     await emit(new MessageEndEvent(final, DateTimeOffset.UtcNow)).ConfigureAwait(false);
                     break;
             }
@@ -209,7 +223,15 @@ internal static class StreamAccumulator
         }
 
         var result = await stream.GetResultAsync().ConfigureAwait(false);
-        return MessageConverter.ToAgentMessage(result);
+        final = MessageConverter.ToAgentMessage(result);
+
+        if (!_startEmitted)
+        {
+            await emit(new MessageStartEvent(final, DateTimeOffset.UtcNow)).ConfigureAwait(false);
+        }
+
+        await emit(new MessageEndEvent(final, DateTimeOffset.UtcNow)).ConfigureAwait(false);
+        return final;
     }
 
     private static (string? Id, string? Name) ResolveToolCallIdentity(

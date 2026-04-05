@@ -1,7 +1,9 @@
 using BotNexus.AgentCore.Configuration;
 using BotNexus.AgentCore.Hooks;
+using BotNexus.AgentCore.Tools;
 using BotNexus.AgentCore.Types;
 using BotNexus.Providers.Core.Models;
+using System.Collections.Concurrent;
 
 namespace BotNexus.AgentCore.Loop;
 
@@ -58,20 +60,44 @@ internal static class ToolExecutor
             await emit(new ToolExecutionStartEvent(toolCall.Id, toolCall.Name, rawArgs, DateTimeOffset.UtcNow))
                 .ConfigureAwait(false);
 
-            var outcome = await ExecuteToolCallCoreAsync(context, assistantMessage, toolCall, rawArgs, config, emit, cancellationToken)
+            var preparation = await PrepareToolCallAsync(
+                    context,
+                    assistantMessage,
+                    toolCall,
+                    rawArgs,
+                    config,
+                    cancellationToken)
                 .ConfigureAwait(false);
+
+            var (result, isError) = preparation.Prepared is null
+                ? (preparation.Result!, preparation.IsError)
+                : await ExecutePreparedToolCallAsync(preparation.Prepared, emit, cancellationToken).ConfigureAwait(false);
+
+            if (preparation.Prepared is not null)
+            {
+                (result, isError) = await ApplyAfterToolCallAsync(
+                        context,
+                        assistantMessage,
+                        toolCall,
+                        preparation.Prepared.ValidatedArgs,
+                        result,
+                        isError,
+                        config,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
 
             await emit(new ToolExecutionEndEvent(
                 toolCall.Id,
                 toolCall.Name,
-                outcome.Result,
-                outcome.IsError,
+                result,
+                isError,
                 DateTimeOffset.UtcNow)).ConfigureAwait(false);
 
             results.Add(await EmitToolResultMessageAsync(
                     toolCall,
-                    outcome.Result,
-                    outcome.IsError,
+                    result,
+                    isError,
                     emit,
                     cancellationToken)
                 .ConfigureAwait(false));
@@ -88,52 +114,83 @@ internal static class ToolExecutor
         Func<AgentEvent, Task> emit,
         CancellationToken cancellationToken)
     {
-        var workItems = toolCalls.Select((toolCall, index) => new ToolWorkItem(
-            index,
-            toolCall,
-            new Dictionary<string, object?>(toolCall.Arguments, StringComparer.Ordinal)))
-            .ToList();
+        var preparedItems = new List<PreparedToolWorkItem>(toolCalls.Count);
+        var completedItems = new List<ToolExecutionOutcome>(toolCalls.Count);
 
-        foreach (var item in workItems)
+        foreach (var (toolCall, index) in toolCalls.Select((toolCall, index) => (toolCall, index)))
         {
+            var rawArgs = new Dictionary<string, object?>(toolCall.Arguments, StringComparer.Ordinal);
             await emit(new ToolExecutionStartEvent(
-                item.ToolCall.Id,
-                item.ToolCall.Name,
-                item.RawArgs,
+                toolCall.Id,
+                toolCall.Name,
+                rawArgs,
                 DateTimeOffset.UtcNow)).ConfigureAwait(false);
-        }
 
-        var tasks = workItems.Select(async item =>
-        {
-            var outcome = await ExecuteToolCallCoreAsync(
+            var preparation = await PrepareToolCallAsync(
                     context,
                     assistantMessage,
-                    item.ToolCall,
-                    item.RawArgs,
+                    toolCall,
+                    rawArgs,
                     config,
-                    emit,
                     cancellationToken)
                 .ConfigureAwait(false);
-            return new ToolExecutionOutcome(item.Index, item.ToolCall, outcome.Result, outcome.IsError);
+
+            if (preparation.Prepared is null)
+            {
+                completedItems.Add(new ToolExecutionOutcome(index, toolCall, preparation.Result!, preparation.IsError, null, false));
+            }
+            else
+            {
+                preparedItems.Add(new PreparedToolWorkItem(index, preparation.Prepared));
+            }
+        }
+
+        var executionTasks = preparedItems.Select(async item =>
+        {
+            var execution = await ExecutePreparedToolCallAsync(item.Prepared, emit, cancellationToken).ConfigureAwait(false);
+            return new ToolExecutionOutcome(
+                item.Index,
+                item.Prepared.ToolCall,
+                execution.Result,
+                execution.IsError,
+                item.Prepared.ValidatedArgs,
+                true);
         });
 
-        var completed = await Task.WhenAll(tasks).ConfigureAwait(false);
-        var ordered = completed.OrderBy(result => result.Index).ToList();
+        completedItems.AddRange(await Task.WhenAll(executionTasks).ConfigureAwait(false));
+        var ordered = completedItems.OrderBy(result => result.Index).ToList();
 
         var results = new List<ToolResultAgentMessage>(ordered.Count);
         foreach (var outcome in ordered)
         {
+            var result = outcome.Result;
+            var isError = outcome.IsError;
+
+            if (outcome.ApplyAfterHook && outcome.ValidatedArgs is not null)
+            {
+                (result, isError) = await ApplyAfterToolCallAsync(
+                        context,
+                        assistantMessage,
+                        outcome.ToolCall,
+                        outcome.ValidatedArgs,
+                        outcome.Result,
+                        outcome.IsError,
+                        config,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             await emit(new ToolExecutionEndEvent(
                 outcome.ToolCall.Id,
                 outcome.ToolCall.Name,
-                outcome.Result,
-                outcome.IsError,
+                result,
+                isError,
                 DateTimeOffset.UtcNow)).ConfigureAwait(false);
 
             results.Add(await EmitToolResultMessageAsync(
                     outcome.ToolCall,
-                    outcome.Result,
-                    outcome.IsError,
+                    result,
+                    isError,
                     emit,
                     cancellationToken)
                 .ConfigureAwait(false));
@@ -142,13 +199,12 @@ internal static class ToolExecutor
         return results;
     }
 
-    private static async Task<(AgentToolResult Result, bool IsError)> ExecuteToolCallCoreAsync(
+    private static async Task<ToolPreparation> PrepareToolCallAsync(
         AgentContext context,
         AssistantAgentMessage assistantMessage,
         ToolCallContent toolCall,
         IReadOnlyDictionary<string, object?> rawArgs,
         AgentLoopConfig config,
-        Func<AgentEvent, Task> emit,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -158,7 +214,7 @@ internal static class ToolExecutor
 
         if (tool is null)
         {
-            return (BuildErrorResult($"Tool '{toolCall.Name}' is not registered."), true);
+            return new ToolPreparation(null, BuildErrorResult($"Tool '{toolCall.Name}' is not registered."), true);
         }
 
         IReadOnlyDictionary<string, object?> validatedArgs;
@@ -168,7 +224,7 @@ internal static class ToolExecutor
         }
         catch (Exception ex)
         {
-            return (BuildErrorResult($"Invalid arguments for '{toolCall.Name}': {ex.Message}"), true);
+            return new ToolPreparation(null, BuildErrorResult($"Invalid arguments for '{toolCall.Name}': {ex.Message}"), true);
         }
 
         if (config.BeforeToolCall is not null)
@@ -180,32 +236,62 @@ internal static class ToolExecutor
                 var reason = string.IsNullOrWhiteSpace(beforeResult.Reason)
                     ? "Tool call was blocked by policy."
                     : beforeResult.Reason!;
-                return (BuildErrorResult(reason), true);
+                return new ToolPreparation(null, BuildErrorResult(reason), true);
             }
         }
 
+        return new ToolPreparation(
+            new PreparedToolCall(toolCall, tool, validatedArgs),
+            null,
+            false);
+    }
+
+    private static async Task<(AgentToolResult Result, bool IsError)> ExecutePreparedToolCallAsync(
+        PreparedToolCall prepared,
+        Func<AgentEvent, Task> emit,
+        CancellationToken cancellationToken)
+    {
         AgentToolResult result;
         var isError = false;
+        var updateTasks = new ConcurrentBag<Task>();
+
         try
         {
-            result = await tool.ExecuteAsync(
-                toolCall.Id,
-                validatedArgs,
+            result = await prepared.Tool.ExecuteAsync(
+                prepared.ToolCall.Id,
+                prepared.ValidatedArgs,
                 cancellationToken,
-                partialResult =>
-                    emit(new ToolExecutionUpdateEvent(
-                        toolCall.Id,
-                        toolCall.Name,
-                        validatedArgs,
-                        partialResult,
-                        DateTimeOffset.UtcNow)).GetAwaiter().GetResult()).ConfigureAwait(false);
+                partialResult => updateTasks.Add(emit(new ToolExecutionUpdateEvent(
+                    prepared.ToolCall.Id,
+                    prepared.ToolCall.Name,
+                    prepared.ValidatedArgs,
+                    partialResult,
+                    DateTimeOffset.UtcNow)))).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            result = BuildErrorResult($"Tool '{toolCall.Name}' failed: {ex.Message}");
+            result = BuildErrorResult($"Tool '{prepared.ToolCall.Name}' failed: {ex.Message}");
             isError = true;
         }
 
+        if (!updateTasks.IsEmpty)
+        {
+            await Task.WhenAll(updateTasks).ConfigureAwait(false);
+        }
+
+        return (result, isError);
+    }
+
+    private static async Task<(AgentToolResult Result, bool IsError)> ApplyAfterToolCallAsync(
+        AgentContext context,
+        AssistantAgentMessage assistantMessage,
+        ToolCallContent toolCall,
+        IReadOnlyDictionary<string, object?> validatedArgs,
+        AgentToolResult result,
+        bool isError,
+        AgentLoopConfig config,
+        CancellationToken cancellationToken)
+    {
         if (config.AfterToolCall is not null)
         {
             var afterContext = new AfterToolCallContext(
@@ -255,14 +341,25 @@ internal static class ToolExecutor
         return message;
     }
 
-    private sealed record ToolWorkItem(
+    private sealed record PreparedToolWorkItem(
         int Index,
+        PreparedToolCall Prepared);
+
+    private sealed record PreparedToolCall(
         ToolCallContent ToolCall,
-        IReadOnlyDictionary<string, object?> RawArgs);
+        IAgentTool Tool,
+        IReadOnlyDictionary<string, object?> ValidatedArgs);
+
+    private sealed record ToolPreparation(
+        PreparedToolCall? Prepared,
+        AgentToolResult? Result,
+        bool IsError);
 
     private sealed record ToolExecutionOutcome(
         int Index,
         ToolCallContent ToolCall,
         AgentToolResult Result,
-        bool IsError);
+        bool IsError,
+        IReadOnlyDictionary<string, object?>? ValidatedArgs,
+        bool ApplyAfterHook);
 }
