@@ -66,15 +66,15 @@ public class ThinkingConfigTests
     {
         var budgets = new ThinkingBudgets
         {
-            Minimal = new ThinkingBudgetLevel(1024, 4096),
-            Low = new ThinkingBudgetLevel(4096, 8192),
-            Medium = new ThinkingBudgetLevel(10000, 16384),
-            High = new ThinkingBudgetLevel(32000, 32768),
-            ExtraHigh = new ThinkingBudgetLevel(64000, 65536)
+            Minimal = 1024,
+            Low = 4096,
+            Medium = 10000,
+            High = 32000,
+            ExtraHigh = 64000
         };
 
-        budgets.Minimal!.ThinkingBudget.Should().Be(1024);
-        budgets.High!.ThinkingBudget.Should().Be(32000);
-        budgets.ExtraHigh!.MaxTokens.Should().Be(65536);
+        budgets.Minimal.Should().Be(1024);
+        budgets.High.Should().Be(32000);
+        budgets.ExtraHigh.Should().Be(64000);
     }
 }

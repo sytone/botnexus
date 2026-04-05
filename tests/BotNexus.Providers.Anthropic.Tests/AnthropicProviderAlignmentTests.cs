@@ -36,9 +36,9 @@ public class AnthropicProviderAlignmentTests
     }
 
     [Theory]
-    [InlineData("refusal", StopReason.Refusal)]
-    [InlineData("pause_turn", StopReason.PauseTurn)]
-    [InlineData("sensitive", StopReason.Sensitive)]
+    [InlineData("refusal", StopReason.Error)]
+    [InlineData("pause_turn", StopReason.Stop)]
+    [InlineData("sensitive", StopReason.Error)]
     public async Task Stream_MapsAnthropicStopReasons(string anthropicReason, StopReason expected)
     {
         var payload = """
@@ -285,7 +285,7 @@ public class AnthropicProviderAlignmentTests
             .GetProperty("text")
             .GetString()
             .Should()
-            .Be("hello \uFFFD world");
+            .Be("hello  world");
     }
 
     [Fact]

@@ -125,7 +125,7 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
                     ThinkingLevel.Medium => "medium",
                     ThinkingLevel.High => "high",
                     ThinkingLevel.ExtraHigh => IsOpus46Model(model.Id) ? "max" : "high",
-                    _ => "medium"
+                    _ => "high"
                 };
             }
             else if (model.Reasoning)
@@ -134,18 +134,8 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
                     clamped ?? ThinkingLevel.Medium, options?.ThinkingBudgets);
 
                 int budgetTokens;
-                int? maxTokens;
-
-                if (budgetLevel is not null)
-                {
-                    budgetTokens = budgetLevel.ThinkingBudget;
-                    maxTokens = budgetLevel.MaxTokens;
-                }
-                else
-                {
-                    budgetTokens = SimpleOptionsHelper.GetDefaultThinkingBudget(clamped ?? ThinkingLevel.Medium);
-                    maxTokens = anthropicOpts.MaxTokens;
-                }
+                var maxTokens = anthropicOpts.MaxTokens;
+                budgetTokens = budgetLevel ?? SimpleOptionsHelper.GetDefaultThinkingBudget(clamped ?? ThinkingLevel.Medium);
 
                 var (adjustedMax, adjustedBudget) = SimpleOptionsHelper.AdjustMaxTokensForThinking(
                     model, maxTokens, budgetTokens);
@@ -357,7 +347,8 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
                 break;
             case "redacted_thinking":
                 if (block.TryGetProperty("data", out var redactedData))
-                    textAccumulators[index].Append(redactedData.GetString());
+                    signatureAccumulators[index].Append(redactedData.GetString());
+                textAccumulators[index].Append("[Reasoning redacted]");
                 stream.Push(new ThinkingStartEvent(index, partial));
                 break;
             case "tool_use":
@@ -525,7 +516,7 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
             {
                 ["name"] = isOAuthToken ? ToClaudeCodeName(t.Name) : t.Name,
                 ["description"] = t.Description,
-                ["input_schema"] = t.Parameters
+                ["input_schema"] = NormalizeToolSchema(t.Parameters)
             }).ToList();
         }
 
@@ -553,7 +544,7 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
         }
 
         // Thinking and temperature are mutually exclusive
-        if (anthropicOpts?.ThinkingEnabled == true)
+        if (model.Reasoning && anthropicOpts?.ThinkingEnabled == true)
         {
             if (anthropicOpts.Effort is not null && IsAdaptiveThinkingModel(model.Id))
             {
@@ -581,7 +572,7 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
                 };
             }
         }
-        else if (model.Reasoning)
+        else if (model.Reasoning && anthropicOpts?.ThinkingEnabled == false)
         {
             body["thinking"] = new Dictionary<string, object?> { ["type"] = "disabled" };
             if (options?.Temperature.HasValue == true)
@@ -604,6 +595,40 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
 
     #region Message Conversion
 
+    private static object NormalizeToolSchema(JsonElement schema)
+    {
+        if (schema.ValueKind != JsonValueKind.Object)
+        {
+            return new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object?>(),
+                ["required"] = Array.Empty<string>()
+            };
+        }
+
+        if (schema.TryGetProperty("type", out var typeElement) &&
+            string.Equals(typeElement.GetString(), "object", StringComparison.OrdinalIgnoreCase))
+        {
+            return schema;
+        }
+
+        var properties = schema.TryGetProperty("properties", out var propertiesElement)
+            ? JsonSerializer.Deserialize<object>(propertiesElement.GetRawText())
+            : new Dictionary<string, object?>();
+        var required = schema.TryGetProperty("required", out var requiredElement) &&
+                       requiredElement.ValueKind == JsonValueKind.Array
+            ? JsonSerializer.Deserialize<object>(requiredElement.GetRawText())
+            : Array.Empty<string>();
+
+        return new Dictionary<string, object?>
+        {
+            ["type"] = "object",
+            ["properties"] = properties,
+            ["required"] = required
+        };
+    }
+
     private static List<Dictionary<string, object?>> ConvertMessages(
         IReadOnlyList<Message> messages, LlmModel model, bool isOAuthToken)
     {
@@ -617,7 +642,7 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
             {
                 case UserMessage user:
                     isLastToolResult = false;
-                    var userMessage = ConvertUserMessage(user);
+                    var userMessage = ConvertUserMessage(user, model);
                     if (userMessage is not null)
                         result.Add(userMessage);
                     break;
@@ -652,7 +677,7 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
         return result;
     }
 
-    private static Dictionary<string, object?>? ConvertUserMessage(UserMessage msg)
+    private static Dictionary<string, object?>? ConvertUserMessage(UserMessage msg, LlmModel model)
     {
         object content;
 
@@ -681,6 +706,8 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
                         });
                         break;
                     case ImageContent image:
+                        if (!model.Input.Contains("image"))
+                            break;
                         blocks.Add(new Dictionary<string, object?>
                         {
                             ["type"] = "image",
@@ -790,36 +817,51 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
     private static Dictionary<string, object?> MakeToolResultBlock(ToolResultMessage toolResult)
     {
         object content;
+        var textBlocks = toolResult.Content.OfType<TextContent>()
+            .Select(t => UnicodeSanitizer.SanitizeSurrogates(t.Text))
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .ToList();
+        var hasImages = toolResult.Content.Any(c => c is ImageContent);
 
-        if (toolResult.Content.Count == 1 && toolResult.Content[0] is TextContent singleText)
+        if (!hasImages && textBlocks.Count == 1)
         {
-            content = singleText.Text;
+            content = textBlocks[0];
         }
         else
         {
-            content = toolResult.Content.Select<ContentBlock, object>(b => b switch
+            var blocks = new List<object>();
+            if (textBlocks.Count > 0)
             {
-                TextContent t => new Dictionary<string, object?>
+                blocks.Add(new Dictionary<string, object?>
                 {
                     ["type"] = "text",
-                    ["text"] = t.Text
-                },
-                ImageContent i => new Dictionary<string, object?>
+                    ["text"] = string.Join("\n", textBlocks)
+                });
+            }
+            else if (hasImages)
+            {
+                blocks.Add(new Dictionary<string, object?>
+                {
+                    ["type"] = "text",
+                    ["text"] = "(see attached image)"
+                });
+            }
+
+            foreach (var image in toolResult.Content.OfType<ImageContent>())
+            {
+                blocks.Add(new Dictionary<string, object?>
                 {
                     ["type"] = "image",
                     ["source"] = new Dictionary<string, object?>
                     {
                         ["type"] = "base64",
-                        ["media_type"] = i.MimeType,
-                        ["data"] = i.Data
+                        ["media_type"] = image.MimeType,
+                        ["data"] = image.Data
                     }
-                },
-                _ => new Dictionary<string, object?>
-                {
-                    ["type"] = "text",
-                    ["text"] = b.ToString() ?? ""
-                }
-            }).ToList();
+                });
+            }
+
+            content = blocks;
         }
 
         return new Dictionary<string, object?>
@@ -869,7 +911,7 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
         if (authMode != AuthMode.Copilot)
             betaFeatures.Add("fine-grained-tool-streaming-2025-05-14");
 
-        if (opts?.InterleavedThinking == true)
+        if (opts?.InterleavedThinking == true && !IsAdaptiveThinkingModel(model.Id))
             betaFeatures.Add("interleaved-thinking-2025-05-14");
 
         switch (authMode)
@@ -944,10 +986,10 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
         "end_turn" => StopReason.Stop,
         "max_tokens" => StopReason.Length,
         "tool_use" => StopReason.ToolUse,
-        "refusal" => StopReason.Refusal,
-        "pause_turn" => StopReason.PauseTurn,
+        "refusal" => StopReason.Error,
+        "pause_turn" => StopReason.Stop,
         "stop_sequence" => StopReason.Stop,
-        "sensitive" => StopReason.Sensitive,
+        "sensitive" => StopReason.Error,
         _ => throw new InvalidOperationException($"Unhandled Anthropic stop reason: {reason}")
     };
 
