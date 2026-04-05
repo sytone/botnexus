@@ -15,6 +15,7 @@ namespace BotNexus.CodingAgent.Tools;
 public sealed class GrepTool : IAgentTool
 {
     private const int DefaultMaxResults = 50;
+    private const int MaxLineLength = 500;
     private const int BinaryProbeBytes = 4096;
     private readonly string _workingDirectory;
 
@@ -39,6 +40,8 @@ public sealed class GrepTool : IAgentTool
                 "pattern": { "type": "string", "description": "Search pattern (supports regex)" },
                 "path": { "type": "string", "description": "Directory or file to search (default: working directory)" },
                 "include": { "type": "string", "description": "Glob pattern to include files (e.g., *.cs, *.ts)" },
+                "ignore_case": { "type": "boolean", "description": "Perform case-insensitive matching (default: false)" },
+                "context": { "type": "integer", "description": "Number of lines to show before and after each match (default: 0)" },
                 "max_results": { "type": "integer", "description": "Maximum results to return (default: 50)" }
               },
               "required": ["pattern"]
@@ -81,6 +84,22 @@ public sealed class GrepTool : IAgentTool
             prepared["include"] = ReadString(includeObj, "include");
         }
 
+        if (arguments.TryGetValue("ignore_case", out var ignoreCaseObj) && ignoreCaseObj is not null)
+        {
+            prepared["ignore_case"] = ReadBool(ignoreCaseObj, "ignore_case");
+        }
+
+        if (arguments.TryGetValue("context", out var contextObj) && contextObj is not null)
+        {
+            var contextLines = ReadInt(contextObj, "context");
+            if (contextLines < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(arguments), "context must be >= 0.");
+            }
+
+            prepared["context"] = contextLines;
+        }
+
         if (arguments.TryGetValue("max_results", out var maxResultsObj) && maxResultsObj is not null)
         {
             var maxResults = ReadInt(maxResultsObj, "max_results");
@@ -105,7 +124,11 @@ public sealed class GrepTool : IAgentTool
 
         var pattern = arguments["pattern"]?.ToString()
                       ?? throw new ArgumentException("Missing required argument: pattern.");
-        var regex = new Regex(pattern, RegexOptions.Compiled);
+        var ignoreCase = arguments.TryGetValue("ignore_case", out var ignoreCaseObj) && ignoreCaseObj is bool parsedIgnoreCase && parsedIgnoreCase;
+        var regex = new Regex(pattern, ignoreCase ? RegexOptions.Compiled | RegexOptions.IgnoreCase : RegexOptions.Compiled);
+        var contextLines = arguments.TryGetValue("context", out var contextObj) && contextObj is int parsedContext
+            ? Math.Max(0, parsedContext)
+            : 0;
         var maxResults = arguments.TryGetValue("max_results", out var maxObj) && maxObj is int parsedMax
             ? parsedMax
             : DefaultMaxResults;
@@ -123,6 +146,7 @@ public sealed class GrepTool : IAgentTool
 
         var matches = new List<string>(capacity: maxResults);
         var hadReadErrors = false;
+        var matchCount = 0;
 
         foreach (var file in EnumerateCandidateFiles(targetPath, include))
         {
@@ -137,21 +161,40 @@ public sealed class GrepTool : IAgentTool
             {
                 using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 using var reader = new StreamReader(stream);
-                var lineNumber = 0;
-
+                var allLines = new List<string>();
                 while (!reader.EndOfStream)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) ?? string.Empty;
-                    lineNumber++;
-                    if (!regex.IsMatch(line))
+                    allLines.Add(line);
+                }
+
+                for (var lineNumber = 1; lineNumber <= allLines.Count; lineNumber++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!regex.IsMatch(allLines[lineNumber - 1]))
                     {
                         continue;
                     }
 
                     var relativePath = PathUtils.GetRelativePath(file, _workingDirectory);
-                    matches.Add($"{relativePath}:{lineNumber}: {line}");
-                    if (matches.Count >= maxResults)
+                    if (contextLines == 0)
+                    {
+                        matches.Add($"{relativePath}:{lineNumber}: {TruncateLine(allLines[lineNumber - 1])}");
+                    }
+                    else
+                    {
+                        var start = Math.Max(1, lineNumber - contextLines);
+                        var end = Math.Min(allLines.Count, lineNumber + contextLines);
+                        for (var contextLineNumber = start; contextLineNumber <= end; contextLineNumber++)
+                        {
+                            var separator = contextLineNumber == lineNumber ? ":" : "-";
+                            matches.Add($"{relativePath}{separator}{contextLineNumber}{separator} {TruncateLine(allLines[contextLineNumber - 1])}");
+                        }
+                    }
+
+                    matchCount++;
+                    if (matchCount >= maxResults)
                     {
                         break;
                     }
@@ -166,7 +209,7 @@ public sealed class GrepTool : IAgentTool
                 hadReadErrors = true;
             }
 
-            if (matches.Count >= maxResults)
+            if (matchCount >= maxResults)
             {
                 break;
             }
@@ -183,7 +226,7 @@ public sealed class GrepTool : IAgentTool
             builder.AppendLine(match);
         }
 
-        if (matches.Count >= maxResults)
+        if (matchCount >= maxResults)
         {
             builder.AppendLine($"[warning] Results truncated at {maxResults} matches.");
         }
@@ -285,5 +328,28 @@ public sealed class GrepTool : IAgentTool
             string text when int.TryParse(text, out var parsedText) => parsedText,
             _ => throw new ArgumentException($"Argument '{key}' must be an integer.")
         };
+    }
+
+    private static bool ReadBool(object value, string key)
+    {
+        return value switch
+        {
+            bool b => b,
+            JsonElement { ValueKind: JsonValueKind.True } => true,
+            JsonElement { ValueKind: JsonValueKind.False } => false,
+            JsonElement { ValueKind: JsonValueKind.String } element when bool.TryParse(element.GetString(), out var parsedBool) => parsedBool,
+            string text when bool.TryParse(text, out var parsedBool) => parsedBool,
+            _ => throw new ArgumentException($"Argument '{key}' must be a boolean.")
+        };
+    }
+
+    private static string TruncateLine(string line)
+    {
+        if (line.Length <= MaxLineLength)
+        {
+            return line;
+        }
+
+        return $"{line[..MaxLineLength]}...";
     }
 }

@@ -87,6 +87,51 @@ public sealed class GrepToolTests : IDisposable
         result.Content[0].Value.Should().NotContain("file.txt");
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WhenIgnoreCaseEnabled_MatchesWithoutCaseSensitivity()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_tempDirectory, "case.txt"), "NeedLe");
+
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        {
+            ["pattern"] = "needle",
+            ["ignore_case"] = true
+        });
+
+        result.Content[0].Value.Should().Contain("case.txt:1: NeedLe");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenContextProvided_IncludesNeighboringLines()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_tempDirectory, "context.txt"), "line1\nneedle\nline3");
+
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        {
+            ["pattern"] = "needle",
+            ["context"] = 1
+        });
+
+        result.Content[0].Value.Should().Contain("context.txt-1- line1");
+        result.Content[0].Value.Should().Contain("context.txt:2: needle");
+        result.Content[0].Value.Should().Contain("context.txt-3- line3");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenLineExceedsLimit_TruncatesLine()
+    {
+        var longLine = new string('x', 600);
+        await File.WriteAllTextAsync(Path.Combine(_tempDirectory, "long.txt"), longLine);
+
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        {
+            ["pattern"] = "x+"
+        });
+
+        result.Content[0].Value.Should().Contain($"{new string('x', 500)}...");
+        result.Content[0].Value.Should().NotContain(longLine);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_tempDirectory))
