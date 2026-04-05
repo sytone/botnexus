@@ -17,13 +17,13 @@ public sealed class DefaultMessageRouter : IMessageRouter
     private readonly IAgentRegistry _registry;
     private readonly ISessionStore _sessions;
     private readonly ILogger<DefaultMessageRouter> _logger;
-    private readonly IOptions<GatewayOptions> _options;
+    private readonly IOptionsMonitor<GatewayOptions> _options;
 
     public DefaultMessageRouter(
         IAgentRegistry registry,
         ISessionStore sessions,
         ILogger<DefaultMessageRouter> logger,
-        IOptions<GatewayOptions> options)
+        IOptionsMonitor<GatewayOptions> options)
     {
         _registry = registry;
         _sessions = sessions;
@@ -53,7 +53,7 @@ public sealed class DefaultMessageRouter : IMessageRouter
         }
 
         // Priority 3: Default agent
-        var defaultAgentId = _options.Value.DefaultAgentId;
+        var defaultAgentId = _options.CurrentValue.DefaultAgentId;
         if (!string.IsNullOrWhiteSpace(defaultAgentId) && _registry.Contains(defaultAgentId))
             return [defaultAgentId];
 

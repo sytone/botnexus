@@ -48,4 +48,16 @@ public static class GatewayServiceCollectionExtensions
 
         return services;
     }
+
+    /// <summary>
+    /// Sets the default routed agent through options configuration.
+    /// </summary>
+    /// <param name="services">Service collection.</param>
+    /// <param name="agentId">Default agent ID to route to.</param>
+    public static IServiceCollection SetDefaultAgent(this IServiceCollection services, string agentId)
+    {
+        ArgumentNullException.ThrowIfNull(agentId);
+        services.PostConfigure<GatewayOptions>(options => options.DefaultAgentId = agentId);
+        return services;
+    }
 }
