@@ -462,12 +462,15 @@ public sealed class Agent
     private AgentLoopConfig BuildLoopConfig()
     {
         BotNexus.Providers.Core.Models.LlmModel model;
+        BotNexus.Providers.Core.Models.ThinkingLevel? thinkingLevel;
         lock (_stateLock)
         {
             model = _state.Model;
+            thinkingLevel = _state.ThinkingLevel;
         }
 
         var generationSettings = CloneGenerationSettings(_options.GenerationSettings);
+        generationSettings.Reasoning = thinkingLevel;
         if (!string.IsNullOrWhiteSpace(_options.SessionId))
         {
             generationSettings.SessionId = _options.SessionId;
@@ -556,14 +559,20 @@ public sealed class Agent
             switch (@event)
             {
                 case MessageStartEvent messageStart:
-                    _state.SetStreamingMessage(messageStart.Message);
+                    if (messageStart.Message is AssistantAgentMessage startingAssistant)
+                    {
+                        _state.SetStreamingMessage(startingAssistant);
+                    }
                     break;
                 case MessageUpdateEvent messageUpdate:
                     _state.SetStreamingMessage(messageUpdate.Message);
                     break;
                 case MessageEndEvent messageEnd:
                 {
-                    _state.SetStreamingMessage(null);
+                    if (messageEnd.Message is AssistantAgentMessage)
+                    {
+                        _state.SetStreamingMessage(null);
+                    }
                     var messages = _state.Messages.ToList();
                     messages.Add(messageEnd.Message);
                     _state.Messages = messages;

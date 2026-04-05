@@ -32,8 +32,12 @@ public class ToolExecutorTests
         events.Select(evt => evt.Type).Should().Equal(
             AgentEventType.ToolExecutionStart,
             AgentEventType.ToolExecutionEnd,
+            AgentEventType.MessageStart,
+            AgentEventType.MessageEnd,
             AgentEventType.ToolExecutionStart,
-            AgentEventType.ToolExecutionEnd);
+            AgentEventType.ToolExecutionEnd,
+            AgentEventType.MessageStart,
+            AgentEventType.MessageEnd);
     }
 
     [Fact]

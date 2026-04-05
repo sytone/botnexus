@@ -68,12 +68,13 @@ internal static class ToolExecutor
                 outcome.IsError,
                 DateTimeOffset.UtcNow)).ConfigureAwait(false);
 
-            results.Add(new ToolResultAgentMessage(
-                ToolCallId: toolCall.Id,
-                ToolName: toolCall.Name,
-                Result: outcome.Result,
-                IsError: outcome.IsError,
-                Timestamp: DateTimeOffset.UtcNow));
+            results.Add(await EmitToolResultMessageAsync(
+                    toolCall,
+                    outcome.Result,
+                    outcome.IsError,
+                    emit,
+                    cancellationToken)
+                .ConfigureAwait(false));
         }
 
         return results;
@@ -129,12 +130,13 @@ internal static class ToolExecutor
                 outcome.IsError,
                 DateTimeOffset.UtcNow)).ConfigureAwait(false);
 
-            results.Add(new ToolResultAgentMessage(
-                ToolCallId: outcome.ToolCall.Id,
-                ToolName: outcome.ToolCall.Name,
-                Result: outcome.Result,
-                IsError: outcome.IsError,
-                Timestamp: DateTimeOffset.UtcNow));
+            results.Add(await EmitToolResultMessageAsync(
+                    outcome.ToolCall,
+                    outcome.Result,
+                    outcome.IsError,
+                    emit,
+                    cancellationToken)
+                .ConfigureAwait(false));
         }
 
         return results;
@@ -230,6 +232,27 @@ internal static class ToolExecutor
     private static AgentToolResult BuildErrorResult(string message)
     {
         return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, message)]);
+    }
+
+    private static async Task<ToolResultAgentMessage> EmitToolResultMessageAsync(
+        ToolCallContent toolCall,
+        AgentToolResult result,
+        bool isError,
+        Func<AgentEvent, Task> emit,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var timestamp = DateTimeOffset.UtcNow;
+        var message = new ToolResultAgentMessage(
+            ToolCallId: toolCall.Id,
+            ToolName: toolCall.Name,
+            Result: result,
+            IsError: isError,
+            Timestamp: timestamp);
+
+        await emit(new MessageStartEvent(message, timestamp)).ConfigureAwait(false);
+        await emit(new MessageEndEvent(message, timestamp)).ConfigureAwait(false);
+        return message;
     }
 
     private sealed record ToolWorkItem(

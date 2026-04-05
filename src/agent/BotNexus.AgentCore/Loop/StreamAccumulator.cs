@@ -8,8 +8,8 @@ namespace BotNexus.AgentCore.Loop;
 /// Accumulates streaming LLM events into a final AssistantAgentMessage.
 /// </summary>
 /// <remarks>
-/// Handles StartEvent, TextDeltaEvent, ToolCallStartEvent, ToolCallDeltaEvent, ToolCallEndEvent,
-/// DoneEvent, and ErrorEvent. Emits corresponding AgentEvent for each provider event.
+/// Handles StartEvent, text/thinking/tool-call delta lifecycle events, DoneEvent, and ErrorEvent.
+/// Emits corresponding AgentEvent for each provider event.
 /// Maintains tool call state to correlate deltas with tool IDs/names.
 /// </remarks>
 internal static class StreamAccumulator
@@ -45,11 +45,87 @@ internal static class StreamAccumulator
                     await emit(new MessageStartEvent(current, DateTimeOffset.UtcNow)).ConfigureAwait(false);
                     break;
 
+                case TextStartEvent textStart:
+                    current = MessageConverter.ToAgentMessage(textStart.Partial);
+                    await emit(new MessageUpdateEvent(
+                        Message: current,
+                        ContentDelta: null,
+                        IsThinking: false,
+                        ToolCallId: null,
+                        ToolName: null,
+                        ArgumentsDelta: null,
+                        FinishReason: null,
+                        InputTokens: current.Usage?.InputTokens,
+                        OutputTokens: current.Usage?.OutputTokens,
+                        Timestamp: DateTimeOffset.UtcNow)).ConfigureAwait(false);
+                    break;
+
                 case TextDeltaEvent textDelta:
                     current = MessageConverter.ToAgentMessage(textDelta.Partial);
                     await emit(new MessageUpdateEvent(
                         Message: current,
                         ContentDelta: textDelta.Delta,
+                        IsThinking: false,
+                        ToolCallId: null,
+                        ToolName: null,
+                        ArgumentsDelta: null,
+                        FinishReason: null,
+                        InputTokens: current.Usage?.InputTokens,
+                        OutputTokens: current.Usage?.OutputTokens,
+                        Timestamp: DateTimeOffset.UtcNow)).ConfigureAwait(false);
+                    break;
+
+                case TextEndEvent textEnd:
+                    current = MessageConverter.ToAgentMessage(textEnd.Partial);
+                    await emit(new MessageUpdateEvent(
+                        Message: current,
+                        ContentDelta: null,
+                        IsThinking: false,
+                        ToolCallId: null,
+                        ToolName: null,
+                        ArgumentsDelta: null,
+                        FinishReason: null,
+                        InputTokens: current.Usage?.InputTokens,
+                        OutputTokens: current.Usage?.OutputTokens,
+                        Timestamp: DateTimeOffset.UtcNow)).ConfigureAwait(false);
+                    break;
+
+                case ThinkingStartEvent thinkingStart:
+                    current = MessageConverter.ToAgentMessage(thinkingStart.Partial);
+                    await emit(new MessageUpdateEvent(
+                        Message: current,
+                        ContentDelta: null,
+                        IsThinking: true,
+                        ToolCallId: null,
+                        ToolName: null,
+                        ArgumentsDelta: null,
+                        FinishReason: null,
+                        InputTokens: current.Usage?.InputTokens,
+                        OutputTokens: current.Usage?.OutputTokens,
+                        Timestamp: DateTimeOffset.UtcNow)).ConfigureAwait(false);
+                    break;
+
+                case ThinkingDeltaEvent thinkingDelta:
+                    current = MessageConverter.ToAgentMessage(thinkingDelta.Partial);
+                    await emit(new MessageUpdateEvent(
+                        Message: current,
+                        ContentDelta: thinkingDelta.Delta,
+                        IsThinking: true,
+                        ToolCallId: null,
+                        ToolName: null,
+                        ArgumentsDelta: null,
+                        FinishReason: null,
+                        InputTokens: current.Usage?.InputTokens,
+                        OutputTokens: current.Usage?.OutputTokens,
+                        Timestamp: DateTimeOffset.UtcNow)).ConfigureAwait(false);
+                    break;
+
+                case ThinkingEndEvent thinkingEnd:
+                    current = MessageConverter.ToAgentMessage(thinkingEnd.Partial);
+                    await emit(new MessageUpdateEvent(
+                        Message: current,
+                        ContentDelta: null,
+                        IsThinking: true,
                         ToolCallId: null,
                         ToolName: null,
                         ArgumentsDelta: null,
@@ -67,6 +143,7 @@ internal static class StreamAccumulator
                     await emit(new MessageUpdateEvent(
                         Message: current,
                         ContentDelta: null,
+                        IsThinking: false,
                         ToolCallId: startedTool.Id,
                         ToolName: startedTool.Name,
                         ArgumentsDelta: null,
@@ -87,6 +164,7 @@ internal static class StreamAccumulator
                     await emit(new MessageUpdateEvent(
                         Message: current,
                         ContentDelta: null,
+                        IsThinking: false,
                         ToolCallId: deltaTool.Id,
                         ToolName: deltaTool.Name,
                         ArgumentsDelta: toolDelta.Delta,
@@ -103,6 +181,7 @@ internal static class StreamAccumulator
                     await emit(new MessageUpdateEvent(
                         Message: current,
                         ContentDelta: null,
+                        IsThinking: false,
                         ToolCallId: toolEnd.ToolCall.Id,
                         ToolName: toolEnd.ToolCall.Name,
                         ArgumentsDelta: null,

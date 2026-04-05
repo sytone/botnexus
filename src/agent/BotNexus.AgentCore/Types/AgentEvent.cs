@@ -66,15 +66,15 @@ public sealed record TurnEndEvent(
     DateTimeOffset Timestamp) : AgentEvent(AgentEventType.TurnEnd, Timestamp);
 
 /// <summary>
-/// Raised when assistant message generation starts.
+/// Raised when message processing starts.
 /// </summary>
-/// <param name="Message">The initial (empty or partial) assistant message.</param>
+/// <param name="Message">The message that started processing.</param>
 /// <param name="Timestamp">The event timestamp.</param>
 /// <remarks>
 /// Followed by zero or more MessageUpdateEvents, then MessageEndEvent.
 /// Use for UI streaming start markers.
 /// </remarks>
-public sealed record MessageStartEvent(AssistantAgentMessage Message, DateTimeOffset Timestamp)
+public sealed record MessageStartEvent(AgentMessage Message, DateTimeOffset Timestamp)
     : AgentEvent(AgentEventType.MessageStart, Timestamp);
 
 /// <summary>
@@ -82,6 +82,7 @@ public sealed record MessageStartEvent(AssistantAgentMessage Message, DateTimeOf
 /// </summary>
 /// <param name="Message">The current assistant message snapshot (accumulated content).</param>
 /// <param name="ContentDelta">The streamed content delta (new text since last update).</param>
+/// <param name="IsThinking">Indicates whether ContentDelta is thinking content rather than response text.</param>
 /// <param name="ToolCallId">The active streamed tool call identifier when streaming tool calls.</param>
 /// <param name="ToolName">The active streamed tool name when streaming tool calls.</param>
 /// <param name="ArgumentsDelta">The streamed tool arguments delta (new JSON text since last update).</param>
@@ -96,6 +97,7 @@ public sealed record MessageStartEvent(AssistantAgentMessage Message, DateTimeOf
 public sealed record MessageUpdateEvent(
     AssistantAgentMessage Message,
     string? ContentDelta,
+    bool IsThinking,
     string? ToolCallId,
     string? ToolName,
     string? ArgumentsDelta,
@@ -105,15 +107,15 @@ public sealed record MessageUpdateEvent(
     DateTimeOffset Timestamp) : AgentEvent(AgentEventType.MessageUpdate, Timestamp);
 
 /// <summary>
-/// Raised when assistant message generation ends.
+/// Raised when message processing ends.
 /// </summary>
-/// <param name="Message">The completed assistant message.</param>
+/// <param name="Message">The completed message.</param>
 /// <param name="Timestamp">The event timestamp.</param>
 /// <remarks>
 /// The final message event for a turn. Message contains the complete content and tool calls.
 /// Followed by ToolExecutionStartEvent if Message.ToolCalls is non-empty.
 /// </remarks>
-public sealed record MessageEndEvent(AssistantAgentMessage Message, DateTimeOffset Timestamp)
+public sealed record MessageEndEvent(AgentMessage Message, DateTimeOffset Timestamp)
     : AgentEvent(AgentEventType.MessageEnd, Timestamp);
 
 /// <summary>

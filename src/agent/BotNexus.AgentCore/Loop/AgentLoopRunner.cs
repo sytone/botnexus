@@ -5,8 +5,6 @@ using BotNexus.Providers.Core.Models;
 
 namespace BotNexus.AgentCore.Loop;
 
-using AgentUserMessage = BotNexus.AgentCore.Types.UserMessage;
-
 /// <summary>
 /// Agent loop that works with AgentMessage throughout.
 /// Transforms to provider Message[] only at the LLM call boundary.
@@ -47,11 +45,10 @@ public static class AgentLoopRunner
 
         foreach (var prompt in prompts)
         {
-            var promptSnapshot = ToDisplayMessage(prompt);
-            await emit(new MessageStartEvent(promptSnapshot, DateTimeOffset.UtcNow)).ConfigureAwait(false);
+            await emit(new MessageStartEvent(prompt, DateTimeOffset.UtcNow)).ConfigureAwait(false);
             timeline.Add(prompt);
             newMessages.Add(prompt);
-            await emit(new MessageEndEvent(promptSnapshot, DateTimeOffset.UtcNow)).ConfigureAwait(false);
+            await emit(new MessageEndEvent(prompt, DateTimeOffset.UtcNow)).ConfigureAwait(false);
         }
 
         await RunLoopAsync(
@@ -144,11 +141,10 @@ public static class AgentLoopRunner
 
                 foreach (var pending in pendingMessages)
                 {
-                    var pendingSnapshot = ToDisplayMessage(pending);
-                    await emit(new MessageStartEvent(pendingSnapshot, DateTimeOffset.UtcNow)).ConfigureAwait(false);
+                    await emit(new MessageStartEvent(pending, DateTimeOffset.UtcNow)).ConfigureAwait(false);
                     messages.Add(pending);
                     newMessages.Add(pending);
-                    await emit(new MessageEndEvent(pendingSnapshot, DateTimeOffset.UtcNow)).ConfigureAwait(false);
+                    await emit(new MessageEndEvent(pending, DateTimeOffset.UtcNow)).ConfigureAwait(false);
                 }
 
                 pendingMessages.Clear();
@@ -266,23 +262,5 @@ public static class AgentLoopRunner
         }
 
         return await getMessages(cancellationToken).ConfigureAwait(false) ?? [];
-    }
-
-    private static AssistantAgentMessage ToDisplayMessage(AgentMessage message)
-    {
-        return message switch
-        {
-            AssistantAgentMessage assistant => assistant,
-            AgentUserMessage user => new AssistantAgentMessage(user.Content, Timestamp: DateTimeOffset.UtcNow),
-            SystemAgentMessage system => new AssistantAgentMessage(system.Content, Timestamp: DateTimeOffset.UtcNow),
-            ToolResultAgentMessage tool => new AssistantAgentMessage(
-                Content: string.Join(
-                    Environment.NewLine,
-                    tool.Result.Content
-                        .Where(content => content.Type == AgentToolContentType.Text)
-                        .Select(content => content.Value)),
-                Timestamp: DateTimeOffset.UtcNow),
-            _ => new AssistantAgentMessage(string.Empty, Timestamp: DateTimeOffset.UtcNow)
-        };
     }
 }
