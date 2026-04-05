@@ -9,7 +9,7 @@ public class AnthropicProviderTests
     [Fact]
     public void Provider_HasCorrectApiValue()
     {
-        var provider = new AnthropicProvider();
+        var provider = new AnthropicProvider(new HttpClient());
 
         provider.Api.Should().Be("anthropic-messages");
     }
@@ -17,7 +17,7 @@ public class AnthropicProviderTests
     [Fact]
     public void StreamSimple_WithOpus4Model_ReturnsStream()
     {
-        var provider = new AnthropicProvider();
+        var provider = new AnthropicProvider(new HttpClient());
         var model = TestHelpers.MakeModel(id: "claude-opus-4.6");
         var context = TestHelpers.MakeContext();
         var options = new Core.SimpleStreamOptions
@@ -34,7 +34,7 @@ public class AnthropicProviderTests
     [Fact]
     public void StreamSimple_WithOlderModel_ReturnsStream()
     {
-        var provider = new AnthropicProvider();
+        var provider = new AnthropicProvider(new HttpClient());
         var model = TestHelpers.MakeModel(id: "claude-sonnet-4");
         var context = TestHelpers.MakeContext();
         var options = new Core.SimpleStreamOptions
@@ -50,7 +50,7 @@ public class AnthropicProviderTests
     [Fact]
     public void StreamSimple_WithoutReasoning_ReturnsStream()
     {
-        var provider = new AnthropicProvider();
+        var provider = new AnthropicProvider(new HttpClient());
         var model = TestHelpers.MakeModel(reasoning: false);
         var context = TestHelpers.MakeContext();
 

@@ -14,13 +14,8 @@ namespace BotNexus.Providers.OpenAICompat;
 /// Provider for OpenAI-compatible APIs (Ollama, vLLM, LM Studio, SGLang, etc.).
 /// Uses raw HttpClient — no external SDK dependency.
 /// </summary>
-public sealed class OpenAICompatProvider : IApiProvider
+public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
 {
-    private static readonly HttpClient SharedHttpClient = new()
-    {
-        Timeout = TimeSpan.FromMinutes(10)
-    };
-
     public string Api => "openai-compat";
 
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
@@ -79,7 +74,7 @@ public sealed class OpenAICompatProvider : IApiProvider
         return Stream(model, context, baseOptions);
     }
 
-    private static async Task StreamCoreAsync(
+    private async Task StreamCoreAsync(
         LlmModel model, Context context, StreamOptions? options, LlmStream stream)
     {
         var compat = CompatDetector.Detect(model);
@@ -121,7 +116,7 @@ public sealed class OpenAICompatProvider : IApiProvider
 
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
 
-        using var response = await SharedHttpClient.SendAsync(
+        using var response = await httpClient.SendAsync(
             request, HttpCompletionOption.ResponseHeadersRead, ct);
 
         if (!response.IsSuccessStatusCode)

@@ -14,14 +14,9 @@ namespace BotNexus.Providers.Anthropic;
 /// Anthropic Messages API provider. Port of pi-mono's providers/anthropic.ts.
 /// Handles SSE streaming, three auth modes, thinking configuration, and message conversion.
 /// </summary>
-public sealed partial class AnthropicProvider : IApiProvider
+public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvider
 {
     private const string ApiVersion = "2023-06-01";
-
-    private static readonly HttpClient SharedHttpClient = new()
-    {
-        Timeout = Timeout.InfiniteTimeSpan
-    };
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -192,7 +187,7 @@ public sealed partial class AnthropicProvider : IApiProvider
                 httpRequest.Headers.TryAddWithoutValidation(key, value);
         }
 
-        using var response = await SharedHttpClient.SendAsync(
+        using var response = await httpClient.SendAsync(
             httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
 
         if (!response.IsSuccessStatusCode)

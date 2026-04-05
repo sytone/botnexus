@@ -203,9 +203,9 @@ internal static class Program
         new BuiltInModels().RegisterAll(modelRegistry);
 
         var httpClient = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMinutes(10) };
-        apiProviderRegistry.Register(new AnthropicProvider());
+        apiProviderRegistry.Register(new AnthropicProvider(httpClient));
         apiProviderRegistry.Register(new OpenAICompletionsProvider(httpClient, Microsoft.Extensions.Logging.Abstractions.NullLogger<OpenAICompletionsProvider>.Instance));
-        apiProviderRegistry.Register(new OpenAICompatProvider());
+        apiProviderRegistry.Register(new OpenAICompatProvider(httpClient));
         return (apiProviderRegistry, modelRegistry);
     }
 }

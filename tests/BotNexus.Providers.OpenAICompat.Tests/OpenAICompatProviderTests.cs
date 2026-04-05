@@ -8,7 +8,7 @@ public class OpenAICompatProviderTests
     [Fact]
     public void Api_ReturnsOpenAICompat()
     {
-        var provider = new OpenAICompatProvider();
+        var provider = new OpenAICompatProvider(new HttpClient());
 
         provider.Api.Should().Be("openai-compat");
     }
@@ -16,7 +16,7 @@ public class OpenAICompatProviderTests
     [Fact]
     public void CanConstructProviderInstance()
     {
-        var provider = new OpenAICompatProvider();
+        var provider = new OpenAICompatProvider(new HttpClient());
 
         provider.Should().NotBeNull();
         provider.Should().BeAssignableTo<Core.Registry.IApiProvider>();
