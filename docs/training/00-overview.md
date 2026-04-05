@@ -239,3 +239,7 @@ A typical request flows through all three layers:
 - **[Agent core](02-agent-core.md)** — how the agent loop drives everything
 - **[Coding agent](03-coding-agent.md)** — how the coding agent wires it all together
 - **[Building your own](04-building-your-own.md)** — build a custom agent from scratch
+- **[Context file discovery](06-context-file-discovery.md)** — how project documentation is auto-discovered
+- **[Thinking levels](07-thinking-levels.md)** — how extended reasoning works end-to-end
+- **[Building custom coding agent](08-building-custom-coding-agent.md)** — hands-on guide with complete examples
+- **[Tool development](09-tool-development.md)** — design and implement custom tools

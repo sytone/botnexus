@@ -516,3 +516,48 @@ Union type for user message payloads: either a plain `string` or an array of `Co
 
 **Source:** `BotNexus.Providers.Core.Models`
 **Training:** [Provider System — Message Types](01-providers.md)
+
+---
+
+### ContextFileDiscovery
+
+Automatic mechanism that scans the working directory for project documentation (README.md, copilot-instructions.md, docs/*.md) and injects them into the system prompt. Respects a token budget and truncates files that exceed available space.
+
+**Source:** `BotNexus.CodingAgent.Utils`
+**Training:** [Context File Discovery](06-context-file-discovery.md)
+
+---
+
+### ThinkingLevel
+
+Enum controlling reasoning intensity for models that support extended thinking: `Minimal`, `Low`, `Medium`, `High`, `ExtraHigh`. Each level has a corresponding thinking token budget.
+
+**Source:** `BotNexus.Providers.Core.Models`
+**Training:** [Thinking Levels](07-thinking-levels.md) · [Provider System](01-providers.md)
+
+---
+
+### ThinkingBudget
+
+Token allocation for internal LLM reasoning at a specific thinking level. For example, `ThinkingLevel.High` has a default budget of 16,384 tokens. Custom budgets can be provided via `ThinkingBudgets`.
+
+**Source:** `BotNexus.Providers.Core.Models`
+**Training:** [Thinking Levels](07-thinking-levels.md)
+
+---
+
+### SimpleStreamOptions
+
+Extended `StreamOptions` that adds reasoning support via `Reasoning` (`ThinkingLevel`) and `ThinkingBudgets` fields. Used when calling LLMs that support extended thinking.
+
+**Source:** `BotNexus.Providers.Core`
+**Training:** [Thinking Levels](07-thinking-levels.md)
+
+---
+
+### SimpleOptionsHelper
+
+Utility class that calculates thinking budgets, clamps reasoning levels to supported ranges, and adjusts maxTokens to ensure room for both thinking and output tokens. Port of pi-mono's providers/simple-options.ts.
+
+**Source:** `BotNexus.Providers.Core.Utilities`
+**Training:** [Thinking Levels](07-thinking-levels.md)

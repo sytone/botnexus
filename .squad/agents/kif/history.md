@@ -190,3 +190,40 @@
 - Kif: 7 training guides (~2500 lines) — 1 commit, docs ✓
 
 **All systems green. Ready for integration.**
+
+---
+
+## 2026-04-05 (Phase 3) — Training Documentation Expansion
+
+**Status:** ✅ Complete  
+**Scope:** 4 new comprehensive training modules covering Phase 3 enhancements  
+
+**Deliverables:**
+- **06-context-file-discovery.md** (580 lines) — Auto-discovery of README, copilot-instructions.md, and docs files. Covers budget management, truncation algorithm, integration with SystemPromptBuilder. Includes algorithm walkthrough and best practices.
+- **07-thinking-levels.md** (390 lines) — End-to-end thinking levels pipeline from CLI through provider implementation. Covers ThinkingLevel enum, SimpleStreamOptions, SimpleOptionsHelper budget calculation, Anthropic provider example, and complete usage walkthrough.
+- **08-building-custom-coding-agent.md** (425 lines) — Hands-on guide for building a coding agent from scratch. Covers agent creation, DefaultMessageConverter usage, SystemPromptBuilder, tool registration, session management, and safety/audit hooks. Includes complete 10-step minimal working example.
+- **09-tool-development.md** (570 lines) — Comprehensive tool development guide with 3 full examples (echo, calculator, database query). Covers IAgentTool interface, lifecycle, streaming results, system prompt contribution, error handling, testing patterns, and best practices.
+
+**Documentation Updates:**
+- Updated README.md with table of 4 new training modules + cross-references
+- Updated 00-overview.md "What's next" section with links to new modules
+- Extended 05-glossary.md with 6 new terms: ContextFileDiscovery, ThinkingLevel, ThinkingBudget, SimpleStreamOptions, SimpleOptionsHelper, PromptContextFile
+
+**Quality Metrics:**
+- 1,965 lines of new training content
+- 4 independent modules with complete coverage of Phase 3 features
+- 13 code examples (echo tool, calculator tool, DB query tool, provider examples, system prompt examples)
+- Cross-references to source code implementations (ContextFileDiscovery.cs, SimpleOptionsHelper.cs, etc.)
+- All modules follow existing documentation style and structure
+
+**Key Coverage Areas:**
+- **Context discovery:** 16 KB budget, file prioritization, truncation logic, binary search algorithm, integration with system prompt
+- **Thinking levels:** 5 levels (Minimal-ExtraHigh), default budgets, custom budgets, budget adjustment for output room, provider clamping, end-to-end flow example
+- **Custom coding agent:** AgentOptions wiring, DefaultMessageConverter usage, system prompt construction, tool registration, session lifecycle, hooks
+- **Tool development:** Full tool lifecycle (PrepareArgumentsAsync → BeforeToolCall hook → ExecuteAsync → AfterToolCall hook), streaming with updateCallback, error handling patterns, testing
+
+**Cross-Team Alignment:**
+- Aligns with Farnsworth's Phase 3 provider work (SimpleOptionsHelper, thinking budgets)
+- Aligns with Bender's DefaultMessageConverter moved to AgentCore.Configuration
+- Aligns with Hermes' test coverage expansion
+- Addresses training gaps identified in Phase 1/2

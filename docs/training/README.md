@@ -13,6 +13,10 @@ BotNexus is a modular AI agent execution platform built in C#/.NET. This guide w
 | [02 — Agent core](02-agent-core.md) | The agent loop | State management, tool execution, hooks, events |
 | [03 — Coding agent](03-coding-agent.md) | Building a coding agent | Factory, tools, sessions, extensions, safety |
 | [04 — Building your own](04-building-your-own.md) | Tutorial | Step-by-step: custom agent, tool, provider, and extension |
+| [06 — Context file discovery](06-context-file-discovery.md) | Project documentation | How the agent auto-discovers and injects README, copilot-instructions, and docs |
+| [07 — Thinking levels](07-thinking-levels.md) | Extended reasoning | How thinking levels work from CLI to provider implementation |
+| [08 — Building custom coding agent](08-building-custom-coding-agent.md) | Hands-on guide | Create a coding agent: AgentOptions, tools, system prompt, full example |
+| [09 — Tool development](09-tool-development.md) | Tool reference | Design and implement custom tools with full examples |
 | [05 — Glossary](05-glossary.md) | Reference | All key terms and concepts in the codebase |
 
 ## Prerequisites
