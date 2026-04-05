@@ -1522,3 +1522,17 @@ Participated in design review ceremony for Phase 3 architecture. All ADs approve
 **Build Status:** ✅ All P0/P1 implementations passing
 
 **Next Phase:** E2E testing and merge validation.
+
+## Learnings — Port Audit Remediation Retrospective (2026-07-15)
+
+- **Design review gates catch audit false positives.** 3 of 17 audit findings were wrong — an 18% false-positive rate. All three were caught at design review before any code was written. The gate saved three agents from building unnecessary fixes. Never skip the design review even when audit confidence seems high.
+
+- **Surface-level pattern matching causes false audit findings.** All three false findings came from the same root cause: checking method names, class names, or single code paths without following the full execution path. ShellTool's `Kill(entireProcessTree: true)` was missed because only the method name was grepped. Compaction's token-based primary path was missed because the auditor stopped at the count-based fallback. GlobTool's `"find"` registration was missed because the auditor compared class names. Future audits must require full call-chain evidence.
+
+- **Parallel fan-out at 4 agents with zero conflicts is repeatable.** Bender (P0 safety), Farnsworth (P1 alignment), Hermes (tests), Kif (docs) ran in parallel with zero merge conflicts and zero rework. The key: scoping assigns non-overlapping file sets per agent. This is now proven across multiple sprints.
+
+- **P0/P1 prioritization keeps safety work from drowning in alignment work.** Separating "could crash production" (P0) from "diverges from reference" (P1) prevents scope creep. The team never confused urgency with importance.
+
+- **Deferred backlog needs active grooming.** Six items were deferred across this sprint. Without explicit prioritization, deferred items drift indefinitely. Schedule backlog grooming at sprint planning — ripgrep adapter and schema validation are highest-value next items.
+
+- **Audit confidence ratings would reduce false positives.** Adding a High/Medium/Low confidence column forces the auditor to self-assess. Medium/Low findings get mandatory second review before becoming work items. This is a low-cost process change with high impact on audit accuracy.
