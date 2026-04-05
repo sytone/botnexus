@@ -8118,3 +8118,81 @@ All P0 items must merge before P1 work begins on overlapping files.
 - [ ] Hermes — Acknowledged
 - [ ] Kif — Acknowledged
 
+
+---
+
+## Decisions from Port Audit Sprint (2026-04-05)
+
+### Design Review Decisions — Port Audit Fixes
+
+**By:** Leela (Lead)  
+**Date:** 2026-04-05  
+**Status:** Implemented
+
+#### Summary Table
+
+| Fix | Verdict | Action |
+|-----|---------|--------|
+| #1 Tool lookup case | AGREE | Fix — StringComparison.OrdinalIgnoreCase + doc update |
+| #2 StopReason refusal | DISAGREE | Close — intentional BotNexus improvement |
+| #3 Tool result merging | ALREADY DONE | Close — confirmed in AnthropicMessageConverter |
+| #4 Thinking sig in tool_use | AGREE | Fix — add signature field when not null |
+| #5 Auto-retry | ALREADY DONE | Close — in AgentLoopRunner.ExecuteWithRetryAsync |
+| #6 Auto-compaction | ALREADY DONE | Close — in AgentLoopRunner + SessionCompactor |
+| #7 Event subscription | ALREADY DONE | Close — Agent.Subscribe exists |
+| #8 Session persistence | AGREE | Fix — wire Subscribe → SessionManager in CodingAgent |
+| #9 ShellTool cancellation | AGREE | Fix — explicit cancel handling + tree kill |
+| #10 InterleavedThinking | ALREADY DONE | Close — fully implemented |
+| #11 ToolChoice object | AGREE | Fix — accept object? passthrough |
+| #12 .gitignore respect | AGREE | Fix — add GitignoreFilter utility |
+| #13 Thinking sig preservation | MERGE INTO #4 | MessageTransformer correct; fix in converter |
+| #14 Stream event ordering | AGREE | Test-only — no code change needed |
+
+**Net result:** 6 fixes needed, 5 already implemented, 2 closed as intentional, 1 merged into #4.
+
+#### Key Decisions
+
+1. **Fix #1 (Tool lookup):** Change to OrdinalIgnoreCase. Update IAgentTool.Name contract doc.
+2. **Fix #2 (StopReason):** Intentional divergence — BotNexus model is superior (better signal, richer enum).
+3. **Fix #4 & #13 (Thinking signatures):** Merge into single fix. MessageTransformer is correct; real issue in AnthropicMessageConverter outbound path.
+4. **Fix #8 (Session persistence):** Subscribe to MessageEndEvent, call SessionManager.SaveSessionAsync fire-and-forget on assistant boundaries.
+5. **Fix #11 (ToolChoice):** Change to object? and duck-type in builder. No strict typing needed.
+6. **Fix #12 (.gitignore):** Add lightweight glob-based filter (~90% git-compatible).
+
+---
+
+### Retrospective Decisions — Process Improvements
+
+**By:** Leela (Lead)  
+**Date:** 2026-04-05  
+**Status:** Active for next iteration
+
+#### Audit Accuracy Root Cause
+
+Three of 17 findings were false positives (18% false-positive rate). Root causes:
+
+| Finding | Cause | Category |
+|---------|-------|----------|
+| ShellTool tree-kill | Only checked method name, not parameter | Shallow pattern matching |
+| Compaction is count-based | Found fallback path, missed primary path | Incomplete traversal |
+| GlobTool = find | Compared class name, not registration | Name vs. registration confusion |
+
+#### Prevention Measures (Mandatory)
+
+1. **Confidence ratings:** Add to audit template. Medium/Low findings get mandatory second review.
+2. **Full call-chain evidence:** Audit findings must include execution path, not just grep matches.
+3. **Runtime registration checks:** Cross-reference ToolName properties and registration calls.
+4. **Design review gate:** Remains mandatory for all audit outputs.
+
+#### Deferred Backlog (Prioritized for Next Sprint)
+
+| Priority | Item | Rationale |
+|----------|------|-----------|
+| Next | ripgrep adapter for GrepTool | Performance on monorepos |
+| Next | Tool parameter schema validation | Safety improvement |
+| Later | Proxy stream function | Feature addition |
+| Later | Interactive mode / session tree | Feature work |
+| Later | RPC mode | Architectural |
+
+---
+
