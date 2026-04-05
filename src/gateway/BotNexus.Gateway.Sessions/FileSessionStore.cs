@@ -5,6 +5,9 @@ using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Sessions;
 
+// Gateway library code uses ConfigureAwait(false) on awaited tasks to avoid deadlocks
+// in synchronization-context-bound callers.
+
 /// <summary>
 /// File-backed session store using JSONL format (one entry per line) with a JSON metadata sidecar.
 /// Inspired by the archive's <c>SessionManager</c> but implements the new <see cref="ISessionStore"/> contract.
@@ -39,13 +42,13 @@ public sealed class FileSessionStore : ISessionStore
     /// <inheritdoc />
     public async Task<GatewaySession?> GetAsync(string sessionId, CancellationToken cancellationToken = default)
     {
-        await _lock.WaitAsync(cancellationToken);
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (_cache.TryGetValue(sessionId, out var cached))
                 return cached;
 
-            return await LoadFromFileAsync(sessionId, cancellationToken);
+            return await LoadFromFileAsync(sessionId, cancellationToken).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
@@ -53,13 +56,13 @@ public sealed class FileSessionStore : ISessionStore
     /// <inheritdoc />
     public async Task<GatewaySession> GetOrCreateAsync(string sessionId, string agentId, CancellationToken cancellationToken = default)
     {
-        await _lock.WaitAsync(cancellationToken);
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (_cache.TryGetValue(sessionId, out var cached))
                 return cached;
 
-            var loaded = await LoadFromFileAsync(sessionId, cancellationToken);
+            var loaded = await LoadFromFileAsync(sessionId, cancellationToken).ConfigureAwait(false);
             if (loaded is not null)
             {
                 _cache[sessionId] = loaded;
@@ -76,11 +79,11 @@ public sealed class FileSessionStore : ISessionStore
     /// <inheritdoc />
     public async Task SaveAsync(GatewaySession session, CancellationToken cancellationToken = default)
     {
-        await _lock.WaitAsync(cancellationToken);
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             _cache[session.SessionId] = session;
-            await WriteToFileAsync(session, cancellationToken);
+            await WriteToFileAsync(session, cancellationToken).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
@@ -88,7 +91,7 @@ public sealed class FileSessionStore : ISessionStore
     /// <inheritdoc />
     public async Task DeleteAsync(string sessionId, CancellationToken cancellationToken = default)
     {
-        await _lock.WaitAsync(cancellationToken);
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             _cache.Remove(sessionId);
@@ -103,7 +106,7 @@ public sealed class FileSessionStore : ISessionStore
     /// <inheritdoc />
     public async Task<IReadOnlyList<GatewaySession>> ListAsync(string? agentId = null, CancellationToken cancellationToken = default)
     {
-        await _lock.WaitAsync(cancellationToken);
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             // Load all meta files from disk
@@ -111,7 +114,7 @@ public sealed class FileSessionStore : ISessionStore
             foreach (var metaFile in Directory.GetFiles(_storePath, "*.meta.json"))
             {
                 var sessionId = Path.GetFileNameWithoutExtension(Path.GetFileNameWithoutExtension(metaFile));
-                var session = _cache.GetValueOrDefault(sessionId) ?? await LoadFromFileAsync(sessionId, cancellationToken);
+                var session = _cache.GetValueOrDefault(sessionId) ?? await LoadFromFileAsync(sessionId, cancellationToken).ConfigureAwait(false);
                 if (session is not null && (agentId is null || session.AgentId == agentId))
                     sessions.Add(session);
             }
@@ -125,7 +128,7 @@ public sealed class FileSessionStore : ISessionStore
         var metaPath = GetMetaPath(sessionId);
         if (!File.Exists(metaPath)) return null;
 
-        var metaJson = await File.ReadAllTextAsync(metaPath, cancellationToken);
+        var metaJson = await File.ReadAllTextAsync(metaPath, cancellationToken).ConfigureAwait(false);
         var meta = JsonSerializer.Deserialize<SessionMeta>(metaJson, JsonOptions);
         if (meta is null) return null;
 
@@ -142,7 +145,7 @@ public sealed class FileSessionStore : ISessionStore
         var historyPath = GetHistoryPath(sessionId);
         if (File.Exists(historyPath))
         {
-            var lines = await File.ReadAllLinesAsync(historyPath, cancellationToken);
+            var lines = await File.ReadAllLinesAsync(historyPath, cancellationToken).ConfigureAwait(false);
             foreach (var line in lines.Where(l => !string.IsNullOrWhiteSpace(l)))
             {
                 var entry = JsonSerializer.Deserialize<SessionEntry>(line, JsonOptions);
@@ -158,13 +161,13 @@ public sealed class FileSessionStore : ISessionStore
         // Write history as JSONL
         var historyPath = GetHistoryPath(session.SessionId);
         var lines = session.History.Select(e => JsonSerializer.Serialize(e, JsonOptions));
-        await File.WriteAllLinesAsync(historyPath, lines, cancellationToken);
+        await File.WriteAllLinesAsync(historyPath, lines, cancellationToken).ConfigureAwait(false);
 
         // Write metadata sidecar
         var metaPath = GetMetaPath(session.SessionId);
         var meta = new SessionMeta(session.AgentId, session.ChannelType, session.CallerId, session.CreatedAt, session.UpdatedAt);
         var metaJson = JsonSerializer.Serialize(meta, JsonOptions);
-        await File.WriteAllTextAsync(metaPath, metaJson, cancellationToken);
+        await File.WriteAllTextAsync(metaPath, metaJson, cancellationToken).ConfigureAwait(false);
     }
 
     private string GetHistoryPath(string sessionId) => Path.Combine(_storePath, $"{SanitizeFileName(sessionId)}.jsonl");
