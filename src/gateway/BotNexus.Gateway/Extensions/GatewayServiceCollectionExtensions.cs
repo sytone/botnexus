@@ -11,6 +11,7 @@ using BotNexus.Gateway.Isolation;
 using BotNexus.Gateway.Routing;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Security;
+using BotNexus.Channels.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -36,6 +37,7 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IAgentSupervisor, DefaultAgentSupervisor>();
         services.AddSingleton<IAgentCommunicator, DefaultAgentCommunicator>();
         services.AddSingleton<IMessageRouter, DefaultMessageRouter>();
+        services.TryAddSingleton<ChannelManager>();
         services.TryAddSingleton<ISessionStore, InMemorySessionStore>();
         services.AddSingleton<IActivityBroadcaster, InMemoryActivityBroadcaster>();
         services.AddSingleton<IGatewayAuthHandler, ApiKeyGatewayAuthHandler>();

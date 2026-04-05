@@ -4,6 +4,7 @@ using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Channels.Core;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Text;
@@ -35,35 +36,31 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
     private readonly IMessageRouter _router;
     private readonly ISessionStore _sessions;
     private readonly IActivityBroadcaster _activity;
-    private readonly IEnumerable<IChannelAdapter> _channels;
+    private readonly ChannelManager _channelManager;
     private readonly ILogger<GatewayHost> _logger;
-
-    // Channel adapters indexed by type for response routing
-    private readonly Dictionary<string, IChannelAdapter> _channelMap = new(StringComparer.OrdinalIgnoreCase);
 
     public GatewayHost(
         IAgentSupervisor supervisor,
         IMessageRouter router,
         ISessionStore sessions,
         IActivityBroadcaster activity,
-        IEnumerable<IChannelAdapter> channels,
+        ChannelManager channelManager,
         ILogger<GatewayHost> logger)
     {
         _supervisor = supervisor;
         _router = router;
         _sessions = sessions;
         _activity = activity;
-        _channels = channels;
+        _channelManager = channelManager;
         _logger = logger;
     }
 
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Build channel map and start all adapters
-        foreach (var channel in _channels)
+        // Start all registered adapters
+        foreach (var channel in _channelManager.Adapters)
         {
-            _channelMap[channel.ChannelType] = channel;
             try
             {
                 await channel.StartAsync(this, stoppingToken);
@@ -75,7 +72,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
             }
         }
 
-        _logger.LogInformation("Gateway started with {ChannelCount} channel adapter(s)", _channelMap.Count);
+        _logger.LogInformation("Gateway started with {ChannelCount} channel adapter(s)", _channelManager.Adapters.Count);
 
         // Keep running until shutdown
         try { await Task.Delay(Timeout.Infinite, stoppingToken); }
@@ -85,7 +82,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
         _logger.LogInformation("Gateway shutting down...");
         await _supervisor.StopAllAsync(CancellationToken.None);
 
-        foreach (var channel in _channels)
+        foreach (var channel in _channelManager.Adapters)
         {
             try { await channel.StopAsync(CancellationToken.None); }
             catch (Exception ex) { _logger.LogWarning(ex, "Error stopping channel adapter: {ChannelType}", channel.ChannelType); }
@@ -132,7 +129,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
                 }, cancellationToken);
 
                 // Stream if the channel supports it, otherwise collect and send
-                if (_channelMap.TryGetValue(message.ChannelType, out var channel) && channel.SupportsStreaming)
+                if (_channelManager.Get(message.ChannelType) is { SupportsStreaming: true } channel)
                 {
                     var streamedContent = new StringBuilder();
                     var streamedHistory = new List<SessionEntry>();
@@ -178,7 +175,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
                 else
                 {
                     var response = await handle.PromptAsync(message.Content, cancellationToken);
-                    if (_channelMap.TryGetValue(message.ChannelType, out var ch))
+                    if (_channelManager.Get(message.ChannelType) is { } ch)
                     {
                         await ch.SendAsync(new OutboundMessage
                         {
