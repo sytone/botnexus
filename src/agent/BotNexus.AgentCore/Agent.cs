@@ -608,9 +608,6 @@ public sealed class Agent
                     if (messageStart.Message is AssistantAgentMessage startingAssistant)
                     {
                         _state.SetStreamingMessage(startingAssistant);
-                        var startedMessages = _state.Messages.ToList();
-                        startedMessages.Add(startingAssistant);
-                        _state.Messages = startedMessages;
                     }
                     break;
                 case MessageUpdateEvent messageUpdate:
@@ -627,13 +624,10 @@ public sealed class Agent
                     if (messageEnd.Message is AssistantAgentMessage)
                     {
                         _state.SetStreamingMessage(null);
-                        if (_state.Messages.Count > 0 && _state.Messages[^1] is AssistantAgentMessage)
-                        {
-                            var finalizedMessages = _state.Messages.ToList();
-                            finalizedMessages[^1] = messageEnd.Message;
-                            _state.Messages = finalizedMessages;
-                            break;
-                        }
+                        var finalizedMessages = _state.Messages.ToList();
+                        finalizedMessages.Add(messageEnd.Message);
+                        _state.Messages = finalizedMessages;
+                        break;
                     }
                     var messages = _state.Messages.ToList();
                     messages.Add(messageEnd.Message);
