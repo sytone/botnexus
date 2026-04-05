@@ -1,5 +1,6 @@
 using BotNexus.AgentCore;
 using BotNexus.AgentCore.Types;
+using BotNexus.CodingAgent.Auth;
 using BotNexus.CodingAgent.Cli;
 using BotNexus.CodingAgent.Extensions;
 using BotNexus.CodingAgent.Session;
@@ -35,6 +36,7 @@ internal static class Program
         CodingAgentConfig.EnsureDirectories(workingDirectory);
         ApplyOverrides(config, command);
 
+        var authManager = new AuthManager(config.ConfigDirectory);
         var extensionTools = new ExtensionLoader().LoadExtensions(config.ExtensionsDirectory);
         var skills = new SkillsLoader().LoadSkills(workingDirectory, config);
         var sessionManager = new SessionManager();
@@ -53,7 +55,7 @@ internal static class Program
             session = await sessionManager.CreateSessionAsync(workingDirectory, "cli-session").ConfigureAwait(false);
         }
 
-        var agent = await CodingAgent.CreateAsync(config, workingDirectory, extensionTools, skills).ConfigureAwait(false);
+        var agent = await CodingAgent.CreateAsync(config, workingDirectory, authManager, extensionTools, skills).ConfigureAwait(false);
         if (resumedMessages.Count > 0)
         {
             agent.State.Messages = resumedMessages;
@@ -81,8 +83,16 @@ internal static class Program
             return 0;
         }
 
+        if (!authManager.HasCredentials() && string.IsNullOrWhiteSpace(config.ApiKey))
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("⚠ No credentials found. Use /login to authenticate with GitHub Copilot.");
+            Console.ResetColor();
+            Console.WriteLine();
+        }
+
         var loop = new InteractiveLoop();
-        await loop.RunAsync(agent, config, sessionManager, session, output, CancellationToken.None).ConfigureAwait(false);
+        await loop.RunAsync(agent, config, authManager, sessionManager, session, output, CancellationToken.None).ConfigureAwait(false);
         return 0;
     }
 

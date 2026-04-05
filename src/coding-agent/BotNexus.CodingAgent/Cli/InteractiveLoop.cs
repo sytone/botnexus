@@ -1,6 +1,7 @@
 using System.Text.Json;
 using BotNexus.AgentCore;
 using BotNexus.AgentCore.Types;
+using BotNexus.CodingAgent.Auth;
 using BotNexus.CodingAgent.Session;
 using BotNexus.Providers.Core.Registry;
 
@@ -16,6 +17,7 @@ public sealed class InteractiveLoop
     public async Task RunAsync(
         Agent agent,
         CodingAgentConfig config,
+        AuthManager authManager,
         SessionManager sessionManager,
         SessionInfo session,
         OutputFormatter output,
@@ -94,8 +96,9 @@ public sealed class InteractiveLoop
                     continue;
                 }
 
-                if (HandleCommand(trimmed, agent, config, output, ref currentSession))
+                if (await HandleCommandAsync(trimmed, agent, config, authManager, output, currentSession) is { } updatedSession)
                 {
+                    currentSession = updatedSession;
                     if (trimmed.Equals("/quit", StringComparison.OrdinalIgnoreCase) ||
                         trimmed.Equals("/exit", StringComparison.OrdinalIgnoreCase))
                     {
@@ -145,38 +148,71 @@ public sealed class InteractiveLoop
         agent.State.Messages = compactor.Compact(agent.State.Messages);
     }
 
-    private static bool HandleCommand(
+    /// <summary>
+    /// Handle slash commands. Returns the updated session if a command was handled, null otherwise.
+    /// </summary>
+    private static async Task<SessionInfo?> HandleCommandAsync(
         string input,
         Agent agent,
         CodingAgentConfig config,
+        AuthManager authManager,
         OutputFormatter output,
-        ref SessionInfo session)
+        SessionInfo session)
     {
         if (input.Equals("/quit", StringComparison.OrdinalIgnoreCase) ||
             input.Equals("/exit", StringComparison.OrdinalIgnoreCase))
         {
-            return true;
+            return session;
+        }
+
+        if (input.Equals("/login", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                await authManager.LoginAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                output.WriteError($"Login failed: {ex.Message}");
+            }
+
+            return session;
+        }
+
+        if (input.Equals("/logout", StringComparison.OrdinalIgnoreCase))
+        {
+            authManager.Logout();
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("Logged out. Credentials removed from auth.json.");
+            Console.ResetColor();
+            return session;
         }
 
         if (input.Equals("/clear", StringComparison.OrdinalIgnoreCase))
         {
             agent.Reset();
-            session = UpdateSessionSnapshot(session, agent);
-            output.WriteSessionInfo(session);
-            return true;
+            var updated = UpdateSessionSnapshot(session, agent);
+            output.WriteSessionInfo(updated);
+            return updated;
         }
 
         if (input.Equals("/session", StringComparison.OrdinalIgnoreCase))
         {
-            session = UpdateSessionSnapshot(session, agent);
-            output.WriteSessionInfo(session);
-            return true;
+            var updated = UpdateSessionSnapshot(session, agent);
+            output.WriteSessionInfo(updated);
+            return updated;
         }
 
         if (input.Equals("/help", StringComparison.OrdinalIgnoreCase))
         {
-            Console.WriteLine("Commands: /help, /session, /clear, /model <name>, /quit");
-            return true;
+            Console.WriteLine("Commands:");
+            Console.WriteLine("  /login        Authenticate with GitHub Copilot (OAuth device flow)");
+            Console.WriteLine("  /logout       Remove saved credentials");
+            Console.WriteLine("  /model <name> Switch model");
+            Console.WriteLine("  /session      Show session info");
+            Console.WriteLine("  /clear        Reset conversation");
+            Console.WriteLine("  /quit         Exit");
+            return session;
         }
 
         if (input.StartsWith("/model ", StringComparison.OrdinalIgnoreCase))
@@ -185,17 +221,17 @@ public sealed class InteractiveLoop
             if (string.IsNullOrWhiteSpace(modelId))
             {
                 output.WriteError("Usage: /model <name>");
-                return true;
+                return session;
             }
 
             var provider = config.Provider ?? agent.State.Model.Provider;
             agent.State.Model = ResolveModel(provider, modelId, config.MaxContextTokens);
-            session = UpdateSessionSnapshot(session, agent);
-            output.WriteSessionInfo(session);
-            return true;
+            var updated = UpdateSessionSnapshot(session, agent);
+            output.WriteSessionInfo(updated);
+            return updated;
         }
 
-        return false;
+        return null;
     }
 
     private static SessionInfo UpdateSessionSnapshot(SessionInfo session, Agent agent)

@@ -5,6 +5,7 @@ using BotNexus.AgentCore.Configuration;
 using BotNexus.AgentCore.Hooks;
 using BotNexus.AgentCore.Tools;
 using BotNexus.AgentCore.Types;
+using BotNexus.CodingAgent.Auth;
 using BotNexus.CodingAgent.Hooks;
 using BotNexus.CodingAgent.Tools;
 using BotNexus.CodingAgent.Utils;
@@ -19,6 +20,7 @@ public static class CodingAgent
     public static async Task<Agent> CreateAsync(
         CodingAgentConfig config,
         string workingDirectory,
+        AuthManager authManager,
         IReadOnlyList<IAgentTool>? extensionTools = null,
         IReadOnlyList<string>? skills = null)
     {
@@ -46,7 +48,11 @@ public static class CodingAgent
             Skills: skills ?? [],
             CustomInstructions: null));
 
+        // Resolve initial API key via AuthManager (auto-refreshes saved creds)
         var model = ResolveModel(config);
+        var capturedAuthManager = authManager;
+        var capturedConfig = config;
+
         var auditHooks = new AuditHooks(verbose: ResolveVerbose(config));
         var safetyHooks = new SafetyHooks();
 
@@ -58,7 +64,8 @@ public static class CodingAgent
             Model: model,
             ConvertToLlm: BuildConvertToLlmDelegate(),
             TransformContext: (messages, _) => Task.FromResult(messages),
-            GetApiKey: (_, _) => Task.FromResult(ResolveApiKey(config, model.Provider)),
+            GetApiKey: async (provider, ct) =>
+                await capturedAuthManager.GetApiKeyAsync(capturedConfig, provider, ct),
             GetSteeringMessages: null,
             GetFollowUpMessages: null,
             ToolExecutionMode: ToolExecutionMode.Sequential,
@@ -124,24 +131,6 @@ public static class CodingAgent
 
             return Task.FromResult(converted);
         };
-    }
-
-    private static string? ResolveApiKey(CodingAgentConfig config, string provider)
-    {
-        if (!string.IsNullOrWhiteSpace(config.ApiKey))
-        {
-            return config.ApiKey;
-        }
-
-        var providerKey = Environment.GetEnvironmentVariable($"{provider.ToUpperInvariant()}_API_KEY");
-        if (!string.IsNullOrWhiteSpace(providerKey))
-        {
-            return providerKey;
-        }
-
-        return Environment.GetEnvironmentVariable("OPENAI_API_KEY")
-               ?? Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY")
-               ?? Environment.GetEnvironmentVariable("GITHUB_TOKEN");
     }
 
     private static LlmModel ResolveModel(CodingAgentConfig config)
