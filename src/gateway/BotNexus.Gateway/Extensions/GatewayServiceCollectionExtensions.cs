@@ -26,6 +26,12 @@ public static class GatewayServiceCollectionExtensions
     /// Registers the core Gateway services: registry, supervisor, router, broadcaster,
     /// in-process isolation strategy, and the Gateway host background service.
     /// </summary>
+    /// <remarks>
+    /// Registers <see cref="InMemorySessionStore"/> as the default <see cref="ISessionStore"/> via
+    /// <see cref="ServiceCollectionDescriptorExtensions.TryAddSingleton(IServiceCollection, Type, Type)"/>.
+    /// Consumers can replace it by registering their own <see cref="ISessionStore"/> implementation
+    /// before or after calling this method.
+    /// </remarks>
     public static IServiceCollection AddBotNexusGateway(this IServiceCollection services, Action<GatewayOptions>? configure = null)
     {
         services.AddOptions<GatewayOptions>();

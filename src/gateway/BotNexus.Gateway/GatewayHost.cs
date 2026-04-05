@@ -58,6 +58,13 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (_sessions is null)
+        {
+            _logger.LogWarning(
+                "No ISessionStore is configured. Register an ISessionStore implementation in DI (e.g. services.AddSingleton<ISessionStore, InMemorySessionStore>()).");
+            return;
+        }
+
         // Start all registered adapters
         foreach (var channel in _channelManager.Adapters)
         {
