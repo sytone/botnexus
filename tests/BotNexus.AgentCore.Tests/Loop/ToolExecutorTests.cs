@@ -98,7 +98,7 @@ public class ToolExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_ToolLookup_IsCaseSensitive()
+    public async Task ExecuteAsync_ToolLookup_IsCaseInsensitive()
     {
         var tool = new RecordingTool("ReadFile");
         var context = new AgentContext(null, [], [tool]);
@@ -108,8 +108,8 @@ public class ToolExecutorTests
         var results = await ToolExecutor.ExecuteAsync(context, assistant, config, _ => Task.CompletedTask, CancellationToken.None);
 
         results.Should().ContainSingle();
-        results[0].IsError.Should().BeTrue();
-        results[0].Result.Content[0].Value.Should().Contain("not registered");
+        results[0].IsError.Should().BeFalse();
+        results[0].Result.Content[0].Value.Should().Be("first");
     }
 
     [Fact]

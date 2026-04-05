@@ -18,7 +18,7 @@ public interface IAgentTool
     /// </summary>
     /// <remarks>
     /// Must match the Name in Definition. Used for routing tool calls.
-    /// Case-sensitive comparison (StringComparison.Ordinal) is used during lookup.
+    /// Case-insensitive comparison (StringComparison.OrdinalIgnoreCase) is used during lookup.
     /// </remarks>
     string Name { get; }
 
