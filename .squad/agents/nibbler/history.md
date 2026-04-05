@@ -319,3 +319,41 @@ Participated in design review ceremony for Phase 3 architecture. All ADs approve
 - ToolExecutionStartEvent XML docs were wrong since inception — event fires before validation, not after. The ToolExecutor passes raw args to the event, not validated ones. This is the kind of subtle XML doc drift that's invisible unless you trace the exact call order in code.
 - New record properties with default values (SupportsExtraHighThinking=false, MaxRetryDelayMs=null) don't cause compile errors in existing code, so they silently go undocumented. Every new public property needs a grep sweep of all doc files showing the record definition.
 - IsUnderRoot uses OrdinalIgnoreCase unconditionally — the platform-aware PathComparer is only used for gitignore matching, not containment checks. This makes the security model slightly more permissive than documented on Unix.
+
+## 2026-04-05 — Post-Sprint Consistency Review: Provider/Agent/CodingAgent Fix Sprint
+
+**Requested by:** sytone (Jon Bullen)
+**Sprint:** 11-commit fix sprint (providers, agent-core, coding-agent) + training docs update
+
+**Review Scope:**
+1. Port audit findings ↔ Recent fixes (16 findings checked)
+2. Training docs ↔ Code (01-providers.md, 02-agent-core.md, 03-coding-agent.md)
+3. READMEs ↔ Reality (3 READMEs)
+4. Test coverage for new behaviors
+5. Stale references in documentation
+
+**Results:**
+- **16 port audit findings confirmed FIXED** — all marked with status and commit refs
+- **12 documentation gaps found** across 7 files
+- **All fixed** in commit e61c1c8
+- ✅ Build: 0 errors, 0 warnings
+- ✅ Tests: 460/460 pass (6 of 7 projects verified; CodingAgent tests slow due to shell process tests)
+
+**Key Fixes:**
+- docs/port-audit-findings.md: Added status update table, marked 16 findings FIXED inline with commit refs
+- 01-providers.md: Added GuardedProvider docs to ApiProviderRegistry, updated LlmStream Push() to show auto-complete
+- 02-agent-core.md: Updated StreamAccumulator with contextMessages param and Phase 5 streaming partials note; added steering poll skip documentation
+- 03-coding-agent.md: Added INSTRUCTIONS.md + .botnexus-agent/AGENTS.md to context discovery; added skill validation rules table; added piped stdin section; added CurrentDateTime/CustomPrompt/tool-adaptive guidelines to system prompt
+- providers/README.md: Added GuardedProvider comment in quick start
+- AgentCore/README.md: Updated message flow for streaming partials
+- CodingAgent/README.md: Added piped stdin usage, skill validation, context discovery, system prompt features
+
+**Test Coverage Assessment:**
+- ✅ 9/10 behaviors have test coverage: thinking disable, headers, skills validation, system prompt, streaming partials, steering poll, finish reason mappings, context discovery, tool call validator
+- ❌ 1 gap: Piped stdin detection (no tests for Console.IsInputRedirected path)
+
+**Learnings:**
+- Port audit findings need a living status column — without it, 16 fixes were invisible to future readers
+- GuardedProvider (API mismatch guard) was a significant architectural addition but absent from all docs
+- StreamAccumulator's contextMessages parameter (streaming partials) changes the streaming contract — must be documented prominently
+- Piped stdin detection has no test coverage — Console.IsInputRedirected is hard to test without process spawning
