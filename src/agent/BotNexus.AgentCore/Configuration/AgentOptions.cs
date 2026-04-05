@@ -21,6 +21,7 @@ namespace BotNexus.AgentCore.Configuration;
 /// <param name="SteeringMode">Controls steering message queue consumption (All or OneAtATime).</param>
 /// <param name="FollowUpMode">Controls follow-up message queue consumption (All or OneAtATime).</param>
 /// <param name="SessionId">Optional caller-provided session identifier (overrides GenerationSettings.SessionId if set).</param>
+/// <param name="OnDiagnostic">Optional callback for non-fatal runtime diagnostics.</param>
 /// <remarks>
 /// AgentOptions is passed to the Agent constructor and frozen for the lifetime of the agent.
 /// InitialState is used to seed AgentState — changes to InitialState after construction have no effect.
@@ -40,4 +41,5 @@ public record AgentOptions(
     SimpleStreamOptions GenerationSettings,
     QueueMode SteeringMode,
     QueueMode FollowUpMode,
-    string? SessionId = null);
+    string? SessionId = null,
+    Action<string>? OnDiagnostic = null);

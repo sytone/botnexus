@@ -441,8 +441,9 @@ public sealed class Agent
                         CancellationToken.None)
                     .ConfigureAwait(false);
             }
-            catch
+            catch (Exception listenerEx)
             {
+                _options.OnDiagnostic?.Invoke($"Listener error during agent_end: {listenerEx.Message}");
             }
 
             return [abortedMessage];
@@ -470,8 +471,9 @@ public sealed class Agent
                         CancellationToken.None)
                     .ConfigureAwait(false);
             }
-            catch
+            catch (Exception listenerEx)
             {
+                _options.OnDiagnostic?.Invoke($"Listener error during agent_end: {listenerEx.Message}");
             }
 
             return [failureMessage];
