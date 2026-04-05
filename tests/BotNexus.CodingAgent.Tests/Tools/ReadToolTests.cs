@@ -66,6 +66,36 @@ public sealed class ReadToolTests : IDisposable
         await action.Should().ThrowAsync<FileNotFoundException>();
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WhenReadingImage_ReturnsImageContent()
+    {
+        var filePath = Path.Combine(_tempDirectory, "sample.png");
+        var bytes = new byte[] { 0x01, 0x02, 0x03, 0x04 };
+        await File.WriteAllBytesAsync(filePath, bytes);
+
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "sample.png" });
+
+        result.Content.Should().HaveCount(2);
+        result.Content[0].Type.Should().Be(BotNexus.AgentCore.Types.AgentToolContentType.Text);
+        result.Content[0].Value.Should().Contain("Read image file");
+        result.Content[1].Type.Should().Be(BotNexus.AgentCore.Types.AgentToolContentType.Image);
+        result.Content[1].Value.Should().Be($"data:image/png;base64,{Convert.ToBase64String(bytes)}");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenByteLimitReached_ReturnsContinuationHint()
+    {
+        var line = new string('a', 200);
+        var content = string.Join('\n', Enumerable.Range(1, 500).Select(_ => line));
+        var filePath = Path.Combine(_tempDirectory, "large.txt");
+        await File.WriteAllTextAsync(filePath, content);
+
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "large.txt" });
+
+        result.Content[0].Value.Should().Contain("[Output truncated at 50000 bytes. Use start_line=");
+        result.Content[0].Value.Should().Contain("to continue reading.]");
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_tempDirectory))

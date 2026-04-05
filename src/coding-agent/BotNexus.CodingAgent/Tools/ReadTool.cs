@@ -23,6 +23,7 @@ namespace BotNexus.CodingAgent.Tools;
 public sealed class ReadTool : IAgentTool
 {
     private const int MaxOutputLines = 2000;
+    private const int MaxOutputBytes = 50_000;
     private readonly string _workingDirectory;
 
     /// <summary>
@@ -134,6 +135,20 @@ public sealed class ReadTool : IAgentTool
 
         if (File.Exists(resolvedPath))
         {
+            if (TryGetImageMimeType(resolvedPath, out var mimeType))
+            {
+                var bytes = await File.ReadAllBytesAsync(resolvedPath, cancellationToken).ConfigureAwait(false);
+                var base64 = Convert.ToBase64String(bytes);
+                var imageValue = $"data:{mimeType};base64,{base64}";
+                var relativeResolvedPath = PathUtils.GetRelativePath(resolvedPath, _workingDirectory);
+                var imageNote = $"Read image file '{relativeResolvedPath}' [{mimeType}] ({bytes.Length} bytes).";
+                return new AgentToolResult(
+                [
+                    new AgentToolContent(AgentToolContentType.Text, imageNote),
+                    new AgentToolContent(AgentToolContentType.Image, imageValue)
+                ]);
+            }
+
             var startLine = arguments.TryGetValue("start_line", out var startObj) && startObj is int start ? start : 1;
             var endLine = arguments.TryGetValue("end_line", out var endObj) && endObj is int end ? end : int.MaxValue;
             var content = await ReadFileAsync(resolvedPath, startLine, endLine, cancellationToken).ConfigureAwait(false);
@@ -158,7 +173,8 @@ public sealed class ReadTool : IAgentTool
         var output = new StringBuilder();
         var absoluteLineNumber = 0;
         var emittedLines = 0;
-        var reachedLineCap = false;
+        var emittedBytes = 0;
+        var truncationMessage = string.Empty;
         var skippedBeforeStart = 0;
 
         using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
@@ -183,14 +199,21 @@ public sealed class ReadTool : IAgentTool
 
             if (emittedLines >= MaxOutputLines)
             {
-                reachedLineCap = true;
+                truncationMessage = $"[Output truncated at {MaxOutputLines} lines. Use start_line={absoluteLineNumber} to continue reading.]";
                 break;
             }
 
-            output.Append(absoluteLineNumber)
-                .Append(" | ")
-                .AppendLine(line);
+            var formattedLine = $"{absoluteLineNumber} | {line}";
+            var lineBytes = Encoding.UTF8.GetByteCount($"{formattedLine}{Environment.NewLine}");
+            if (emittedBytes + lineBytes > MaxOutputBytes)
+            {
+                truncationMessage = $"[Output truncated at {MaxOutputBytes} bytes. Use start_line={absoluteLineNumber} to continue reading.]";
+                break;
+            }
+
+            output.AppendLine(formattedLine);
             emittedLines++;
+            emittedBytes += lineBytes;
         }
 
         if (output.Length == 0 && skippedBeforeStart == 0)
@@ -203,12 +226,44 @@ public sealed class ReadTool : IAgentTool
             return $"Requested range {startLine}-{endLine} returned no lines.";
         }
 
-        if (reachedLineCap)
+        if (!string.IsNullOrEmpty(truncationMessage))
         {
-            output.AppendLine($"[warning] Output truncated at {MaxOutputLines} lines.");
+            output.AppendLine(truncationMessage);
         }
 
         return output.ToString().TrimEnd();
+    }
+
+    private static bool TryGetImageMimeType(string fullPath, out string mimeType)
+    {
+        mimeType = string.Empty;
+        var extension = Path.GetExtension(fullPath);
+        if (string.IsNullOrWhiteSpace(extension))
+        {
+            return false;
+        }
+
+        switch (extension.ToLowerInvariant())
+        {
+            case ".jpg":
+            case ".jpeg":
+                mimeType = "image/jpeg";
+                return true;
+            case ".png":
+                mimeType = "image/png";
+                return true;
+            case ".gif":
+                mimeType = "image/gif";
+                return true;
+            case ".webp":
+                mimeType = "image/webp";
+                return true;
+            case ".svg":
+                mimeType = "image/svg+xml";
+                return true;
+            default:
+                return false;
+        }
     }
 
     private static string ListDirectory(string fullPath)
