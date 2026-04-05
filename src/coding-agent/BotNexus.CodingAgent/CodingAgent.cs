@@ -116,8 +116,11 @@ public static class CodingAgent
     {
         return (messages, _) =>
         {
-            var converted = messages
-                .Where(message => message is AgentUserMessage or AssistantAgentMessage or ToolResultAgentMessage)
+            var filtered = messages
+                .Where(message => message.Role is "user" or "assistant" or "tool")
+                .ToList();
+
+            var converted = filtered
                 .Select(ToProviderMessage)
                 .ToList();
             return Task.FromResult<IReadOnlyList<Message>>(converted);
