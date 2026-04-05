@@ -6,6 +6,7 @@ using BotNexus.Gateway.Sessions;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Moq;
 
 namespace BotNexus.Gateway.Tests;
 
@@ -81,8 +82,9 @@ public sealed class DefaultMessageRouterTests
         InMemorySessionStore sessions,
         string? defaultAgentId = null)
     {
-        var options = Options.Create(new GatewayOptions { DefaultAgentId = defaultAgentId });
-        return new DefaultMessageRouter(registry, sessions, NullLogger<DefaultMessageRouter>.Instance, options);
+        var options = new Mock<IOptionsMonitor<GatewayOptions>>();
+        options.SetupGet(x => x.CurrentValue).Returns(new GatewayOptions { DefaultAgentId = defaultAgentId });
+        return new DefaultMessageRouter(registry, sessions, NullLogger<DefaultMessageRouter>.Instance, options.Object);
     }
 
     private static AgentDescriptor CreateDescriptor(string agentId)

@@ -524,3 +524,10 @@ All Sprints 1-2 foundation work completed by Farnsworth and Bender. Hermes ready
 - For Gateway unit tests, file names must exactly match the contained test class names to keep review and navigation friction low.
 - Test classes in `tests/BotNexus.Gateway.Tests` should be declared `sealed` for consistency with team test-style rules and audit expectations.
 - Verified quality gate after structural refactors: `dotnet build tests\BotNexus.Gateway.Tests\` and `dotnet test tests\BotNexus.Gateway.Tests\ --no-build` remained green (30/30).
+
+### 2026-04-05 — Gateway coverage expansion (isolation, sessions, communication, websocket)
+
+- Verified the six existing Gateway test files already had filename/class alignment and `sealed` test classes; no rename refactor was needed.
+- Added coverage for previously untested components with new suites: `InProcessIsolationStrategyTests`, `FileSessionStoreTests`, `DefaultAgentCommunicatorTests`, and `GatewayWebSocketHandlerTests`.
+- File-session persistence assertions now validate `.jsonl` and `.meta.json` behavior, filtering/listing contracts, and concurrent save/list integrity using isolated per-test store directories.
+- Quality gate after expansion: `dotnet build tests\BotNexus.Gateway.Tests\` and `dotnet test tests\BotNexus.Gateway.Tests\` passed (48/48).
