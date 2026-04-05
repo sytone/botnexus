@@ -7,4 +7,8 @@ public sealed record SessionInfo(
     DateTimeOffset UpdatedAt,
     int MessageCount,
     string? Model,
-    string WorkingDirectory);
+    string WorkingDirectory,
+    int Version = 1,
+    string? ParentSessionId = null,
+    string? ActiveLeafId = null,
+    string? SessionFilePath = null);

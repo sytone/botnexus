@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BotNexus.AgentCore.Types;
 using BotNexus.CodingAgent.Session;
 using FluentAssertions;
@@ -21,28 +22,34 @@ public sealed class SessionManagerTests : IDisposable
 
         session.Name.Should().Be("my-session");
         session.WorkingDirectory.Should().Be(Path.GetFullPath(_workingDirectory));
-        var sessionDirectory = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions", session.Id);
-        File.Exists(Path.Combine(sessionDirectory, "session.json")).Should().BeTrue();
-        File.Exists(Path.Combine(sessionDirectory, "messages.jsonl")).Should().BeTrue();
+
+        var sessionPath = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions", $"{session.Id}.jsonl");
+        File.Exists(sessionPath).Should().BeTrue();
+
+        var lines = await File.ReadAllLinesAsync(sessionPath);
+        lines.Should().HaveCount(1);
+        lines[0].Should().Contain("\"type\":\"session_header\"");
+        lines[0].Should().Contain($"\"sessionId\":\"{session.Id}\"");
     }
 
     [Fact]
-    public async Task SaveSessionAsync_WritesMessagesFile()
+    public async Task SaveSessionAsync_WritesTypedEntries()
     {
         var created = await _manager.CreateSessionAsync(_workingDirectory, "resume-test");
         var messages = new AgentMessage[]
         {
             new UserMessage("hello"),
-            new SystemAgentMessage("session metadata")
+            new ToolResultAgentMessage("tc-1", "shell", new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "ok")]))
         };
 
         await _manager.SaveSessionAsync(created, messages);
-        var messagesPath = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions", created.Id, "messages.jsonl");
-        var fileContent = await File.ReadAllTextAsync(messagesPath);
 
-        fileContent.Should().Contain("\"Type\": \"user\"");
-        fileContent.Should().Contain("\"Type\": \"system\"");
-        fileContent.Should().Contain("\"Content\": \"hello\"");
+        var sessionPath = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions", $"{created.Id}.jsonl");
+        var fileContent = await File.ReadAllTextAsync(sessionPath);
+
+        fileContent.Should().Contain("\"type\":\"message\"");
+        fileContent.Should().Contain("\"type\":\"tool_result\"");
+        fileContent.Should().Contain("\"type\":\"metadata\"");
     }
 
     [Fact]
@@ -71,14 +78,68 @@ public sealed class SessionManagerTests : IDisposable
     }
 
     [Fact]
-    public async Task DeleteSessionAsync_RemovesSessionDirectory()
+    public async Task DeleteSessionAsync_RemovesSessionFile()
     {
         var session = await _manager.CreateSessionAsync(_workingDirectory, "delete-me");
-        var sessionDirectory = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions", session.Id);
+        var sessionPath = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions", $"{session.Id}.jsonl");
 
         await _manager.DeleteSessionAsync(session.Id, _workingDirectory);
 
-        Directory.Exists(sessionDirectory).Should().BeFalse();
+        File.Exists(sessionPath).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ListBranchesAndSwitchBranch_WorksForBranchedSession()
+    {
+        var session = await _manager.CreateSessionAsync(_workingDirectory, "branching");
+        await _manager.SaveSessionAsync(session, [new UserMessage("root"), new AssistantAgentMessage("main")]);
+
+        var sessionPath = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions", $"{session.Id}.jsonl");
+        var lines = await File.ReadAllLinesAsync(sessionPath);
+        var rootEntryId = JsonDocument.Parse(lines[1]).RootElement.GetProperty("entryId").GetString();
+        rootEntryId.Should().NotBeNullOrWhiteSpace();
+
+        await _manager.SaveSessionAsync(session with { ActiveLeafId = rootEntryId }, [new UserMessage("root"), new AssistantAgentMessage("branch")]);
+
+        var branches = await _manager.ListBranchesAsync(session.Id, _workingDirectory);
+        branches.Should().HaveCount(2);
+
+        var inactiveBranch = branches.Single(branch => !branch.IsActive);
+        var switched = await _manager.SwitchBranchAsync(session.Id, _workingDirectory, inactiveBranch.LeafEntryId, "alternate");
+        switched.ActiveLeafId.Should().Be(inactiveBranch.LeafEntryId);
+
+        var resumed = await _manager.ResumeSessionAsync(session.Id, _workingDirectory);
+        resumed.Session.ActiveLeafId.Should().Be(inactiveBranch.LeafEntryId);
+    }
+
+    [Fact]
+    public async Task ResumeSessionAsync_LoadsLegacyFlatSession()
+    {
+        var root = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions");
+        Directory.CreateDirectory(root);
+        var sessionId = "legacy-session";
+        var legacyDirectory = Path.Combine(root, sessionId);
+        Directory.CreateDirectory(legacyDirectory);
+
+        var metadata = new SessionInfo(
+            Id: sessionId,
+            Name: "legacy",
+            CreatedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
+            UpdatedAt: DateTimeOffset.UtcNow.AddMinutes(-1),
+            MessageCount: 1,
+            Model: null,
+            WorkingDirectory: Path.GetFullPath(_workingDirectory));
+        await File.WriteAllTextAsync(Path.Combine(legacyDirectory, "session.json"), JsonSerializer.Serialize(metadata));
+
+        var userPayload = JsonSerializer.SerializeToElement(new UserMessage("legacy hello"));
+        await File.WriteAllTextAsync(
+            Path.Combine(legacyDirectory, "messages.jsonl"),
+            JsonSerializer.Serialize(new { Type = "user", Payload = userPayload }) + Environment.NewLine);
+
+        var resumed = await _manager.ResumeSessionAsync(sessionId, _workingDirectory);
+        resumed.Messages.Should().ContainSingle();
+        resumed.Messages[0].Should().BeOfType<UserMessage>();
+        ((UserMessage)resumed.Messages[0]).Content.Should().Be("legacy hello");
     }
 
     public void Dispose()

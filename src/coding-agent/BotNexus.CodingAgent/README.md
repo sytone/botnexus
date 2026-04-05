@@ -241,13 +241,18 @@ Sessions persist agent state, allowing you to resume conversations across invoca
 
 ### Session Structure
 
-Sessions are stored in `.botnexus-agent/sessions/<session-id>/`:
+Sessions are stored in `.botnexus-agent/sessions/<session-id>.jsonl`:
 
 ```
-<session-id>/
-├── session.json    # Metadata (created_at, model, message count)
-└── messages.jsonl  # Agent messages in JSON Lines format
+<session-id>.jsonl
+├── session_header      # Session metadata, version, and parent-session reference
+├── message             # User/assistant/system timeline entries
+├── tool_result         # Tool result entries
+├── compaction_summary  # Compaction summary entries
+└── metadata            # Leaf pointer + branch metadata
 ```
+
+Legacy folder sessions (`session.json` + `messages.jsonl`) are still supported and auto-loaded.
 
 ### Creating Sessions
 
