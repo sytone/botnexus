@@ -66,7 +66,7 @@ public class MessageTransformerTests
         assistantResult.Should().NotBeNull();
         assistantResult!.Content[0].Should().BeOfType<TextContent>();
         var text = (TextContent)assistantResult.Content[0];
-        text.Text.Should().Contain("<thinking>");
+        text.Text.Should().Be("deep thought");
     }
 
     [Fact]
@@ -92,7 +92,7 @@ public class MessageTransformerTests
         var assistant = MakeAssistant([tc]);
         var toolResult = new ToolResultMessage("tc-original", "tool", [new TextContent("ok")], false, Ts);
         var messages = new Message[] { assistant, toolResult };
-        var model = MakeModel();
+        var model = MakeModel("anthropic", "anthropic-messages") with { Id = "different-model" };
 
         var result = MessageTransformer.TransformMessages(messages, model,
             id => "normalized-" + id);
@@ -156,12 +156,44 @@ public class MessageTransformerTests
         var assistant = MakeAssistant([tc]);
         var toolResult = new ToolResultMessage("abc!@#", "tool", [new TextContent("done")], false, Ts);
         var messages = new Message[] { assistant, toolResult };
-        var model = MakeModel();
+        var model = MakeModel("anthropic", "anthropic-messages") with { Id = "different-model" };
 
         var result = MessageTransformer.TransformMessages(messages, model,
             id => id.Replace("!", "").Replace("@", "").Replace("#", ""));
 
         var trMsg = result[1] as ToolResultMessage;
         trMsg!.ToolCallId.Should().Be("abc");
+    }
+
+    [Fact]
+    public void RedactedThinking_Dropped_WhenSwitchingProviders()
+    {
+        var assistant = MakeAssistant(
+            [new ThinkingContent("encrypted", Redacted: true)],
+            provider: "openai",
+            api: "openai-completions");
+        var messages = new Message[] { assistant };
+        var model = MakeModel("anthropic", "anthropic-messages");
+
+        var result = MessageTransformer.TransformMessages(messages, model);
+
+        var transformedAssistant = (AssistantMessage)result[0];
+        transformedAssistant.Content.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ToolCallThoughtSignature_Removed_WhenSwitchingProviders()
+    {
+        var assistant = MakeAssistant(
+            [new ToolCallContent("tc-1", "test", new Dictionary<string, object?>(), ThoughtSignature: "sig")],
+            provider: "openai",
+            api: "openai-completions");
+        var model = MakeModel("anthropic", "anthropic-messages");
+
+        var result = MessageTransformer.TransformMessages([assistant], model);
+
+        var transformedAssistant = (AssistantMessage)result[0];
+        var toolCall = transformedAssistant.Content.OfType<ToolCallContent>().Single();
+        toolCall.ThoughtSignature.Should().BeNull();
     }
 }

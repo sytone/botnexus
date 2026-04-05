@@ -20,112 +20,200 @@ public static class MessageTransformer
         LlmModel targetModel,
         Func<string, string>? normalizeToolCallId = null)
     {
-        var result = new List<Message>();
-        var pendingToolCallIds = new HashSet<string>();
-        var isSameModel = IsSameModel(messages, targetModel);
+        var transformed = new List<Message>(messages.Count);
+        var toolCallIdMap = new Dictionary<string, string>(StringComparer.Ordinal);
 
         foreach (var message in messages)
         {
             switch (message)
             {
+                case UserMessage:
+                    transformed.Add(message);
+                    break;
+
                 case AssistantMessage assistant:
-                    // Skip errored/aborted messages
-                    if (assistant.StopReason is StopReason.Error or StopReason.Aborted)
-                        continue;
-
-                    var transformedContent = TransformAssistantContent(
-                        assistant.Content, isSameModel, normalizeToolCallId);
-
-                    // Track tool calls that need results
-                    foreach (var block in transformedContent)
-                    {
-                        if (block is ToolCallContent tc)
-                            pendingToolCallIds.Add(tc.Id);
-                    }
-
-                    result.Add(assistant with { Content = transformedContent });
+                    transformed.Add(TransformAssistantMessage(assistant, targetModel, normalizeToolCallId, toolCallIdMap));
                     break;
 
                 case ToolResultMessage toolResult:
-                    var toolCallId = normalizeToolCallId is not null
-                        ? normalizeToolCallId(toolResult.ToolCallId)
-                        : toolResult.ToolCallId;
-
-                    pendingToolCallIds.Remove(toolCallId);
-                    result.Add(toolResult with { ToolCallId = toolCallId });
+                    if (toolCallIdMap.TryGetValue(toolResult.ToolCallId, out var normalizedId) &&
+                        !string.Equals(normalizedId, toolResult.ToolCallId, StringComparison.Ordinal))
+                    {
+                        transformed.Add(toolResult with { ToolCallId = normalizedId });
+                    }
+                    else
+                    {
+                        transformed.Add(toolResult);
+                    }
                     break;
 
                 default:
-                    // Flush any orphaned tool calls before adding next message
-                    FlushOrphanedToolCalls(result, pendingToolCallIds);
+                    transformed.Add(message);
+                    break;
+            }
+        }
+
+        var result = new List<Message>(transformed.Count);
+        var pendingToolCalls = new List<ToolCallContent>();
+        var existingToolResultIds = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var message in transformed)
+        {
+            switch (message)
+            {
+                case AssistantMessage assistant:
+                    if (pendingToolCalls.Count > 0)
+                    {
+                        FlushOrphanedToolCalls(result, pendingToolCalls, existingToolResultIds);
+                    }
+
+                    if (assistant.StopReason is StopReason.Error or StopReason.Aborted)
+                    {
+                        continue;
+                    }
+
+                    pendingToolCalls = assistant.Content
+                        .OfType<ToolCallContent>()
+                        .ToList();
+                    if (pendingToolCalls.Count > 0)
+                    {
+                        existingToolResultIds = new HashSet<string>(StringComparer.Ordinal);
+                    }
+
+                    result.Add(assistant);
+                    break;
+
+                case ToolResultMessage toolResult:
+                    existingToolResultIds.Add(toolResult.ToolCallId);
+                    result.Add(toolResult);
+                    break;
+
+                case UserMessage:
+                    if (pendingToolCalls.Count > 0)
+                    {
+                        FlushOrphanedToolCalls(result, pendingToolCalls, existingToolResultIds);
+                    }
+
+                    result.Add(message);
+                    break;
+
+                default:
                     result.Add(message);
                     break;
             }
         }
 
-        // Flush any remaining orphaned tool calls
-        FlushOrphanedToolCalls(result, pendingToolCallIds);
-
         return result;
     }
 
-    private static bool IsSameModel(IReadOnlyList<Message> messages, LlmModel targetModel)
+    private static AssistantMessage TransformAssistantMessage(
+        AssistantMessage assistant,
+        LlmModel targetModel,
+        Func<string, string>? normalizeToolCallId,
+        Dictionary<string, string> toolCallIdMap)
     {
-        for (var i = messages.Count - 1; i >= 0; i--)
-        {
-            if (messages[i] is AssistantMessage assistant)
-                return assistant.Provider == targetModel.Provider && assistant.Api == targetModel.Api;
-        }
-        return true;
-    }
+        var isSameModel =
+            string.Equals(assistant.Provider, targetModel.Provider, StringComparison.Ordinal) &&
+            string.Equals(assistant.Api, targetModel.Api, StringComparison.Ordinal) &&
+            string.Equals(assistant.ModelId, targetModel.Id, StringComparison.Ordinal);
 
-    private static List<ContentBlock> TransformAssistantContent(
-        IReadOnlyList<ContentBlock> content,
-        bool isSameModel,
-        Func<string, string>? normalizeToolCallId)
-    {
-        var transformed = new List<ContentBlock>(content.Count);
+        var transformedContent = new List<ContentBlock>(assistant.Content.Count);
 
-        foreach (var block in content)
+        foreach (var block in assistant.Content)
         {
             switch (block)
             {
-                case ThinkingContent thinking when !isSameModel:
-                    // Convert thinking to text with delimiters when crossing providers
-                    transformed.Add(new TextContent($"<thinking>\n{thinking.Thinking}\n</thinking>"));
+                case ThinkingContent thinking:
+                    if (thinking.Redacted is true)
+                    {
+                        if (isSameModel)
+                        {
+                            transformedContent.Add(thinking);
+                        }
+
+                        break;
+                    }
+
+                    if (isSameModel && !string.IsNullOrWhiteSpace(thinking.ThinkingSignature))
+                    {
+                        transformedContent.Add(thinking);
+                        break;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(thinking.Thinking))
+                    {
+                        break;
+                    }
+
+                    if (isSameModel)
+                    {
+                        transformedContent.Add(thinking);
+                        break;
+                    }
+
+                    transformedContent.Add(new TextContent(thinking.Thinking));
                     break;
 
-                case ToolCallContent tc when normalizeToolCallId is not null:
-                    transformed.Add(tc with { Id = normalizeToolCallId(tc.Id) });
+                case TextContent text:
+                    transformedContent.Add(isSameModel ? text : new TextContent(text.Text));
+                    break;
+
+                case ToolCallContent toolCall:
+                    var transformedToolCall = toolCall;
+
+                    if (!isSameModel && !string.IsNullOrWhiteSpace(transformedToolCall.ThoughtSignature))
+                    {
+                        transformedToolCall = transformedToolCall with { ThoughtSignature = null };
+                    }
+
+                    if (!isSameModel && normalizeToolCallId is not null)
+                    {
+                        var normalizedId = normalizeToolCallId(toolCall.Id);
+                        if (!string.Equals(normalizedId, toolCall.Id, StringComparison.Ordinal))
+                        {
+                            toolCallIdMap[toolCall.Id] = normalizedId;
+                            transformedToolCall = transformedToolCall with { Id = normalizedId };
+                        }
+                    }
+
+                    transformedContent.Add(transformedToolCall);
                     break;
 
                 default:
-                    transformed.Add(block);
+                    transformedContent.Add(block);
                     break;
             }
         }
 
-        return transformed;
+        return assistant with { Content = transformedContent };
     }
 
-    private static void FlushOrphanedToolCalls(List<Message> result, HashSet<string> pendingToolCallIds)
+    private static void FlushOrphanedToolCalls(
+        List<Message> result,
+        List<ToolCallContent> pendingToolCalls,
+        HashSet<string> existingToolResultIds)
     {
-        if (pendingToolCallIds.Count == 0)
+        if (pendingToolCalls.Count == 0)
             return;
 
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        foreach (var orphanId in pendingToolCallIds)
+        foreach (var toolCall in pendingToolCalls)
         {
+            if (existingToolResultIds.Contains(toolCall.Id))
+            {
+                continue;
+            }
+
             result.Add(new ToolResultMessage(
-                ToolCallId: orphanId,
-                ToolName: "unknown",
-                Content: [new TextContent("[Tool call result not available]")],
+                ToolCallId: toolCall.Id,
+                ToolName: toolCall.Name,
+                Content: [new TextContent("No result provided")],
                 IsError: true,
-                Timestamp: timestamp
-            ));
+                Timestamp: timestamp));
         }
 
-        pendingToolCallIds.Clear();
+        pendingToolCalls.Clear();
+        existingToolResultIds.Clear();
     }
 }

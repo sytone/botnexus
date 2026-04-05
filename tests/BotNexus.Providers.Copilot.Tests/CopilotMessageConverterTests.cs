@@ -75,7 +75,7 @@ public class CopilotMessageConverterTests
         var messages = new List<Message> { assistant };
         var transformed = MessageTransformer.TransformMessages(messages, TestModel);
 
-        transformed.Should().HaveCount(2); // assistant + orphaned tool result
+        transformed.Should().HaveCount(1); // no synthetic tool result at end-of-context
         var result = (AssistantMessage)transformed[0];
         result.Content.OfType<ToolCallContent>().Should().Contain(tc => tc.Id == "call_123" && tc.Name == "get_weather");
     }
