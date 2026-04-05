@@ -39,7 +39,8 @@ public static class CodingAgent
         var tools = CreateTools(root, extensionTools);
         var gitBranch = await GitUtils.GetBranchAsync(root).ConfigureAwait(false);
         var gitStatus = await GitUtils.GetStatusAsync(root).ConfigureAwait(false);
-        var packageManager = PackageManagerDetector.Detect(root);`r`n        var contextFiles = await ContextFileDiscovery.DiscoverAsync(root, CancellationToken.None).ConfigureAwait(false);
+        var packageManager = PackageManagerDetector.Detect(root);
+        var contextFiles = await ContextFileDiscovery.DiscoverAsync(root, CancellationToken.None).ConfigureAwait(false);
 
         var promptBuilder = new SystemPromptBuilder();
         var systemPrompt = promptBuilder.Build(new SystemPromptContext(
@@ -49,7 +50,8 @@ public static class CodingAgent
             PackageManager: packageManager,
             ToolNames: tools.Select(tool => tool.Name).ToList(),
             Skills: skills ?? [],
-            CustomInstructions: null));
+            CustomInstructions: null,
+            ContextFiles: contextFiles));
 
         // Resolve initial API key via AuthManager (auto-refreshes saved creds)
         var model = ResolveModel(config, modelRegistry);
@@ -188,6 +190,7 @@ public static class CodingAgent
         var tools = new List<IAgentTool>
         {
             new ReadTool(workingDirectory),
+            new ListDirectoryTool(workingDirectory),
             new WriteTool(workingDirectory),
             new EditTool(workingDirectory),
             new ShellTool(),

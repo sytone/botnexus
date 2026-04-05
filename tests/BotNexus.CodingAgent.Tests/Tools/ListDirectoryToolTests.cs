@@ -65,7 +65,6 @@ public sealed class ListDirectoryToolTests : IDisposable
     public async Task ExecuteAsync_WhenPathMissing_ReturnsErrorResult()
     {
         var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "missing" });
-
         result.Content[0].Value.Should().Contain("does not exist or is not a directory");
     }
 
@@ -76,7 +75,6 @@ public sealed class ListDirectoryToolTests : IDisposable
         Directory.CreateDirectory(empty);
 
         var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "empty" });
-
         result.Content[0].Value.Should().Contain("is empty.");
     }
 
@@ -84,7 +82,6 @@ public sealed class ListDirectoryToolTests : IDisposable
     public async Task ExecuteAsync_WhenPathEscapesWorkingDirectory_Throws()
     {
         var action = () => _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "..\\outside" });
-
         await action.Should().ThrowAsync<InvalidOperationException>();
     }
 

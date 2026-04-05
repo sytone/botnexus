@@ -41,7 +41,6 @@ public sealed class ListDirectoryTool : IAgentTool
         cancellationToken.ThrowIfCancellationRequested();
         var path = ReadRequiredString(arguments, "path");
         var prepared = new Dictionary<string, object?>(StringComparer.Ordinal) { ["path"] = path };
-
         if (arguments.TryGetValue("depth", out var depthObj) && depthObj is not null)
         {
             var depth = ReadInt(depthObj, "depth");
@@ -64,7 +63,6 @@ public sealed class ListDirectoryTool : IAgentTool
     public Task<AgentToolResult> ExecuteAsync(string toolCallId, IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken = default, AgentToolUpdateCallback? onUpdate = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
-
         var rawPath = arguments["path"]?.ToString() ?? throw new ArgumentException("Missing required argument: path.");
         var depth = arguments.TryGetValue("depth", out var depthObj) && depthObj is int parsedDepth ? parsedDepth : DefaultDepth;
         var showHidden = arguments.TryGetValue("showHidden", out var showHiddenObj) && showHiddenObj is bool parsedShowHidden && parsedShowHidden;
@@ -83,7 +81,6 @@ public sealed class ListDirectoryTool : IAgentTool
 
         var lines = new List<string> { $"{rootDisplay}{Path.DirectorySeparatorChar}" };
         AppendDirectoryTree(lines, resolvedPath, string.Empty, depth, showHidden, cancellationToken);
-
         if (lines.Count == 1)
         {
             return Task.FromResult(new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, $"Directory '{rootDisplay}' is empty.")]));
