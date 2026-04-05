@@ -67,7 +67,7 @@ public static class MessageTransformer
                         FlushOrphanedToolCalls(result, pendingToolCalls, existingToolResultIds);
                     }
 
-                    if (assistant.StopReason is StopReason.Error or StopReason.Aborted)
+                    if (assistant.StopReason is StopReason.Error or StopReason.Aborted or StopReason.Refusal or StopReason.Sensitive)
                     {
                         continue;
                     }

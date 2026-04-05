@@ -169,7 +169,7 @@ public static class AgentLoopRunner
                 messages.Add(assistantMessage);
                 newMessages.Add(assistantMessage);
 
-                if (assistantMessage.FinishReason is StopReason.Error or StopReason.Aborted)
+                if (assistantMessage.FinishReason is StopReason.Error or StopReason.Aborted or StopReason.Refusal or StopReason.Sensitive)
                 {
                     await emit(new TurnEndEvent(assistantMessage, [], DateTimeOffset.UtcNow)).ConfigureAwait(false);
                     await emit(new AgentEndEvent(messages, DateTimeOffset.UtcNow)).ConfigureAwait(false);

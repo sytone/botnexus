@@ -448,7 +448,7 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
         {
             ["model"] = model.Id,
             ["messages"] = messages,
-            ["max_tokens"] = options?.MaxTokens ?? model.MaxTokens,
+            ["max_tokens"] = options?.MaxTokens ?? (model.MaxTokens / 3),
             ["stream"] = true
         };
 
@@ -804,7 +804,7 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
     {
         var usageWithTotals = usage with
         {
-            TotalTokens = usage.Input + usage.Output
+            TotalTokens = usage.Input + usage.Output + usage.CacheRead + usage.CacheWrite
         };
         usageWithTotals = usageWithTotals with
         {
@@ -843,7 +843,11 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
         "end_turn" => StopReason.Stop,
         "max_tokens" => StopReason.Length,
         "tool_use" => StopReason.ToolUse,
-        _ => StopReason.Stop
+        "refusal" => StopReason.Refusal,
+        "pause_turn" => StopReason.PauseTurn,
+        "stop_sequence" => StopReason.Stop,
+        "sensitive" => StopReason.Sensitive,
+        _ => throw new InvalidOperationException($"Unhandled Anthropic stop reason: {reason}")
     };
 
     private static bool IsAdaptiveThinkingModel(string modelId) =>

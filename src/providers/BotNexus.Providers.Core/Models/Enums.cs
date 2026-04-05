@@ -9,7 +9,10 @@ public enum StopReason
     [JsonStringEnumMemberName("length")] Length,
     [JsonStringEnumMemberName("toolUse")] ToolUse,
     [JsonStringEnumMemberName("error")] Error,
-    [JsonStringEnumMemberName("aborted")] Aborted
+    [JsonStringEnumMemberName("aborted")] Aborted,
+    [JsonStringEnumMemberName("refusal")] Refusal,
+    [JsonStringEnumMemberName("pause_turn")] PauseTurn,
+    [JsonStringEnumMemberName("sensitive")] Sensitive
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<ThinkingLevel>))]

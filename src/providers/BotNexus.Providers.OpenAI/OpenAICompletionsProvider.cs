@@ -448,6 +448,13 @@ public sealed class OpenAICompletionsProvider(
 
                 foreach (var choice in choices.EnumerateArray())
                 {
+                    if (!root.TryGetProperty("usage", out _) &&
+                        choice.TryGetProperty("usage", out var choiceUsageProp) &&
+                        choiceUsageProp.ValueKind == JsonValueKind.Object)
+                    {
+                        usage = ParseUsage(choiceUsageProp, usage, model);
+                    }
+
                     if (choice.TryGetProperty("finish_reason", out var finishProp) &&
                         finishProp.ValueKind == JsonValueKind.String)
                     {
@@ -464,10 +471,29 @@ public sealed class OpenAICompletionsProvider(
                     }
 
                     // --- Reasoning / thinking content ---
-                    if (delta.TryGetProperty("reasoning_content", out var reasoningProp) &&
-                        reasoningProp.ValueKind == JsonValueKind.String)
+                    string? reasoningField = null;
+                    if (delta.TryGetProperty("reasoning_content", out var reasoningContentProp) &&
+                        reasoningContentProp.ValueKind == JsonValueKind.String &&
+                        !string.IsNullOrEmpty(reasoningContentProp.GetString()))
                     {
-                        var thinking = reasoningProp.GetString() ?? "";
+                        reasoningField = "reasoning_content";
+                    }
+                    else if (delta.TryGetProperty("reasoning", out var reasoningProp) &&
+                             reasoningProp.ValueKind == JsonValueKind.String &&
+                             !string.IsNullOrEmpty(reasoningProp.GetString()))
+                    {
+                        reasoningField = "reasoning";
+                    }
+                    else if (delta.TryGetProperty("reasoning_text", out var reasoningTextProp) &&
+                             reasoningTextProp.ValueKind == JsonValueKind.String &&
+                             !string.IsNullOrEmpty(reasoningTextProp.GetString()))
+                    {
+                        reasoningField = "reasoning_text";
+                    }
+
+                    if (reasoningField is not null)
+                    {
+                        var thinking = delta.GetProperty(reasoningField).GetString() ?? "";
                         if (thinking.Length > 0)
                         {
                             if (currentThinkingIndex < 0)
@@ -620,20 +646,51 @@ public sealed class OpenAICompletionsProvider(
 
     private static Usage ParseUsage(JsonElement usageElement, Usage usage, LlmModel model)
     {
-        var updated = usage;
+        var promptTokens = usage.Input + usage.CacheRead + usage.CacheWrite;
+        var completionTokens = usage.Output;
+        var reportedCachedTokens = usage.CacheRead;
+        var cacheWriteTokens = usage.CacheWrite;
+        var reasoningTokens = 0;
+
         if (usageElement.TryGetProperty("prompt_tokens", out var pt))
-            updated = updated with { Input = pt.GetInt32() };
+            promptTokens = pt.GetInt32();
 
         if (usageElement.TryGetProperty("completion_tokens", out var ct))
-            updated = updated with { Output = ct.GetInt32() };
+            completionTokens = ct.GetInt32();
 
         if (usageElement.TryGetProperty("prompt_tokens_details", out var ptDetails) &&
             ptDetails.TryGetProperty("cached_tokens", out var cached))
         {
-            updated = updated with { CacheRead = cached.GetInt32() };
+            reportedCachedTokens = cached.GetInt32();
         }
 
-        updated = updated with { TotalTokens = updated.Input + updated.Output };
+        if (usageElement.TryGetProperty("prompt_tokens_details", out ptDetails) &&
+            ptDetails.TryGetProperty("cache_write_tokens", out var cacheWrite))
+        {
+            cacheWriteTokens = cacheWrite.GetInt32();
+        }
+
+        if (usageElement.TryGetProperty("completion_tokens_details", out var completionDetails) &&
+            completionDetails.TryGetProperty("reasoning_tokens", out var reasoning))
+        {
+            reasoningTokens = reasoning.GetInt32();
+        }
+
+        var cacheReadTokens = cacheWriteTokens > 0
+            ? Math.Max(0, reportedCachedTokens - cacheWriteTokens)
+            : reportedCachedTokens;
+
+        var inputTokens = Math.Max(0, promptTokens - cacheReadTokens - cacheWriteTokens);
+        var outputTokens = completionTokens + reasoningTokens;
+
+        var updated = usage with
+        {
+            Input = inputTokens,
+            Output = outputTokens,
+            CacheRead = cacheReadTokens,
+            CacheWrite = cacheWriteTokens,
+            TotalTokens = inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens
+        };
         updated = updated with { Cost = ModelRegistry.CalculateCost(model, updated) };
         return updated;
     }
@@ -641,10 +698,13 @@ public sealed class OpenAICompletionsProvider(
     private static StopReason MapStopReason(string? reason) => reason switch
     {
         "stop" => StopReason.Stop,
+        "end" => StopReason.Stop,
         "length" => StopReason.Length,
+        "function_call" => StopReason.ToolUse,
         "tool_calls" => StopReason.ToolUse,
-        "content_filter" => StopReason.Error,
-        _ => StopReason.Stop
+        "content_filter" => StopReason.Sensitive,
+        "network_error" => StopReason.Error,
+        _ => StopReason.Error
     };
 
     private static string MapThinkingLevel(ThinkingLevel level, OpenAICompletionsCompat? compat)
