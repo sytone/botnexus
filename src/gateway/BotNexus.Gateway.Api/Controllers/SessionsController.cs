@@ -17,22 +17,22 @@ public sealed class SessionsController : ControllerBase
 
     /// <summary>Lists sessions, optionally filtered by agent ID.</summary>
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<GatewaySession>>> List([FromQuery] string? agentId, CancellationToken ct)
-        => Ok(await _sessions.ListAsync(agentId, ct));
+    public async Task<ActionResult<IReadOnlyList<GatewaySession>>> List([FromQuery] string? agentId, CancellationToken cancellationToken)
+        => Ok(await _sessions.ListAsync(agentId, cancellationToken));
 
     /// <summary>Gets a specific session by ID.</summary>
     [HttpGet("{sessionId}")]
-    public async Task<ActionResult<GatewaySession>> Get(string sessionId, CancellationToken ct)
+    public async Task<ActionResult<GatewaySession>> Get(string sessionId, CancellationToken cancellationToken)
     {
-        var session = await _sessions.GetAsync(sessionId, ct);
+        var session = await _sessions.GetAsync(sessionId, cancellationToken);
         return session is not null ? Ok(session) : NotFound();
     }
 
     /// <summary>Deletes a session.</summary>
     [HttpDelete("{sessionId}")]
-    public async Task<ActionResult> Delete(string sessionId, CancellationToken ct)
+    public async Task<ActionResult> Delete(string sessionId, CancellationToken cancellationToken)
     {
-        await _sessions.DeleteAsync(sessionId, ct);
+        await _sessions.DeleteAsync(sessionId, cancellationToken);
         return NoContent();
     }
 }

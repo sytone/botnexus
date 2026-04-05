@@ -6,10 +6,13 @@ using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Activity;
 using BotNexus.Gateway.Agents;
+using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Isolation;
 using BotNexus.Gateway.Routing;
+using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Security;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace BotNexus.Gateway.Extensions;
 
@@ -22,14 +25,18 @@ public static class GatewayServiceCollectionExtensions
     /// Registers the core Gateway services: registry, supervisor, router, broadcaster,
     /// in-process isolation strategy, and the Gateway host background service.
     /// </summary>
-    public static IServiceCollection AddBotNexusGateway(this IServiceCollection services)
+    public static IServiceCollection AddBotNexusGateway(this IServiceCollection services, Action<GatewayOptions>? configure = null)
     {
+        services.AddOptions<GatewayOptions>();
+        if (configure is not null)
+            services.Configure(configure);
+
         // Core services
         services.AddSingleton<IAgentRegistry, DefaultAgentRegistry>();
         services.AddSingleton<IAgentSupervisor, DefaultAgentSupervisor>();
         services.AddSingleton<IAgentCommunicator, DefaultAgentCommunicator>();
-        services.AddSingleton<DefaultMessageRouter>();
-        services.AddSingleton<IMessageRouter>(sp => sp.GetRequiredService<DefaultMessageRouter>());
+        services.AddSingleton<IMessageRouter, DefaultMessageRouter>();
+        services.TryAddSingleton<ISessionStore, InMemorySessionStore>();
         services.AddSingleton<IActivityBroadcaster, InMemoryActivityBroadcaster>();
         services.AddSingleton<IGatewayAuthHandler, ApiKeyGatewayAuthHandler>();
 

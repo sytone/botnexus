@@ -735,3 +735,10 @@ Participated in design review ceremony for Phase 3 architecture. All ADs approve
 - `ShellTool` timeout is now configuration-driven via `CodingAgentConfig.DefaultShellTimeoutSeconds` (default 600s), with per-call `timeout` still overriding.
 - Runtime wiring in `CodingAgent.CreateTools` now passes config timeout into `ShellTool`, removing the old 120s hardcoded default.
 
+## Learnings
+
+### 2026-04-05 — Gateway P1 design-review hardening
+
+- Streaming responses in `GatewayHost` must always persist assistant content into `session.History`; streaming-only delta forwarding causes history drift.
+- Router defaults should be configured via `GatewayOptions.DefaultAgentId` and `IOptions<GatewayOptions>` to avoid leaking concrete router APIs through DI.
+- `AddBotNexusGateway()` should `TryAddSingleton<ISessionStore, InMemorySessionStore>` so the runtime has a safe default while still allowing consumer overrides.

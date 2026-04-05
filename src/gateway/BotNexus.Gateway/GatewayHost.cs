@@ -6,6 +6,7 @@ using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System.Text;
 
 namespace BotNexus.Gateway;
 
@@ -133,11 +134,17 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
                 // Stream if the channel supports it, otherwise collect and send
                 if (_channelMap.TryGetValue(message.ChannelType, out var channel) && channel.SupportsStreaming)
                 {
+                    var streamedContent = new StringBuilder();
                     await foreach (var evt in handle.StreamAsync(message.Content, cancellationToken))
                     {
                         if (evt.Type == AgentStreamEventType.ContentDelta && evt.ContentDelta is not null)
+                        {
+                            streamedContent.Append(evt.ContentDelta);
                             await channel.SendStreamDeltaAsync(message.ConversationId, evt.ContentDelta, cancellationToken);
+                        }
                     }
+
+                    session.History.Add(new SessionEntry { Role = "assistant", Content = streamedContent.ToString() });
                 }
                 else
                 {

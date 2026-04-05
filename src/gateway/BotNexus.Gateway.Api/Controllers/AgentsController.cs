@@ -69,9 +69,9 @@ public sealed class AgentsController : ControllerBase
 
     /// <summary>Stops a specific agent instance.</summary>
     [HttpPost("{agentId}/sessions/{sessionId}/stop")]
-    public async Task<ActionResult> StopInstance(string agentId, string sessionId, CancellationToken ct)
+    public async Task<ActionResult> StopInstance(string agentId, string sessionId, CancellationToken cancellationToken)
     {
-        await _supervisor.StopAsync(agentId, sessionId, ct);
+        await _supervisor.StopAsync(agentId, sessionId, cancellationToken);
         return NoContent();
     }
 }

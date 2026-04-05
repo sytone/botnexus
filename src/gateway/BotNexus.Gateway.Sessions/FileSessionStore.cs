@@ -120,12 +120,12 @@ public sealed class FileSessionStore : ISessionStore
         finally { _lock.Release(); }
     }
 
-    private async Task<GatewaySession?> LoadFromFileAsync(string sessionId, CancellationToken ct)
+    private async Task<GatewaySession?> LoadFromFileAsync(string sessionId, CancellationToken cancellationToken)
     {
         var metaPath = GetMetaPath(sessionId);
         if (!File.Exists(metaPath)) return null;
 
-        var metaJson = await File.ReadAllTextAsync(metaPath, ct);
+        var metaJson = await File.ReadAllTextAsync(metaPath, cancellationToken);
         var meta = JsonSerializer.Deserialize<SessionMeta>(metaJson, JsonOptions);
         if (meta is null) return null;
 
@@ -142,7 +142,7 @@ public sealed class FileSessionStore : ISessionStore
         var historyPath = GetHistoryPath(sessionId);
         if (File.Exists(historyPath))
         {
-            var lines = await File.ReadAllLinesAsync(historyPath, ct);
+            var lines = await File.ReadAllLinesAsync(historyPath, cancellationToken);
             foreach (var line in lines.Where(l => !string.IsNullOrWhiteSpace(l)))
             {
                 var entry = JsonSerializer.Deserialize<SessionEntry>(line, JsonOptions);
@@ -153,18 +153,18 @@ public sealed class FileSessionStore : ISessionStore
         return session;
     }
 
-    private async Task WriteToFileAsync(GatewaySession session, CancellationToken ct)
+    private async Task WriteToFileAsync(GatewaySession session, CancellationToken cancellationToken)
     {
         // Write history as JSONL
         var historyPath = GetHistoryPath(session.SessionId);
         var lines = session.History.Select(e => JsonSerializer.Serialize(e, JsonOptions));
-        await File.WriteAllLinesAsync(historyPath, lines, ct);
+        await File.WriteAllLinesAsync(historyPath, lines, cancellationToken);
 
         // Write metadata sidecar
         var metaPath = GetMetaPath(session.SessionId);
         var meta = new SessionMeta(session.AgentId, session.ChannelType, session.CallerId, session.CreatedAt, session.UpdatedAt);
         var metaJson = JsonSerializer.Serialize(meta, JsonOptions);
-        await File.WriteAllTextAsync(metaPath, metaJson, ct);
+        await File.WriteAllTextAsync(metaPath, metaJson, cancellationToken);
     }
 
     private string GetHistoryPath(string sessionId) => Path.Combine(_storePath, $"{SanitizeFileName(sessionId)}.jsonl");

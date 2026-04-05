@@ -26,19 +26,19 @@ public sealed class ChatController : ControllerBase
     /// For streaming, connect via <c>ws://host/ws</c>.
     /// </summary>
     [HttpPost]
-    public async Task<ActionResult<ChatResponse>> Send([FromBody] ChatRequest request, CancellationToken ct)
+    public async Task<ActionResult<ChatResponse>> Send([FromBody] ChatRequest request, CancellationToken cancellationToken)
     {
         var sessionId = request.SessionId ?? Guid.NewGuid().ToString("N");
-        var session = await _sessions.GetOrCreateAsync(sessionId, request.AgentId, ct);
+        var session = await _sessions.GetOrCreateAsync(sessionId, request.AgentId, cancellationToken);
 
         session.History.Add(new SessionEntry { Role = "user", Content = request.Message });
 
-        var handle = await _supervisor.GetOrCreateAsync(request.AgentId, sessionId, ct);
-        var response = await handle.PromptAsync(request.Message, ct);
+        var handle = await _supervisor.GetOrCreateAsync(request.AgentId, sessionId, cancellationToken);
+        var response = await handle.PromptAsync(request.Message, cancellationToken);
 
         session.History.Add(new SessionEntry { Role = "assistant", Content = response.Content });
         session.UpdatedAt = DateTimeOffset.UtcNow;
-        await _sessions.SaveAsync(session, ct);
+        await _sessions.SaveAsync(session, cancellationToken);
 
         return Ok(new ChatResponse(sessionId, response.Content, response.Usage));
     }
