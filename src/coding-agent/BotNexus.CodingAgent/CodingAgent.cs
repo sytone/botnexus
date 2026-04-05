@@ -209,7 +209,7 @@ public static class CodingAgent
         return (messages, _) =>
         {
             var filtered = messages
-                .Where(message => message.Role is "user" or "assistant" or "tool")
+                .Where(message => message.Role is "user" or "assistant" or "tool" or "system")
                 .ToList();
 
             var converted = filtered
@@ -226,8 +226,17 @@ public static class CodingAgent
             AgentUserMessage user => ToProviderUserMessage(user),
             AssistantAgentMessage assistant => ToProviderAssistantMessage(assistant),
             ToolResultAgentMessage toolResult => ToProviderToolResultMessage(toolResult),
+            SystemAgentMessage system => ToProviderSummaryMessage(system),
             _ => throw new InvalidOperationException($"Unsupported message type: {message.GetType().Name}")
         };
+    }
+
+    private static Message ToProviderSummaryMessage(SystemAgentMessage system)
+    {
+        var content = $"<summary>\n{system.Content}\n</summary>";
+        return new BotNexus.Providers.Core.Models.UserMessage(
+            Content: new UserMessageContent(content),
+            Timestamp: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
     }
 
     private static Message ToProviderUserMessage(AgentUserMessage user)
