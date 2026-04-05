@@ -722,3 +722,10 @@ Participated in design review ceremony for Phase 3 architecture. All ADs approve
 
 **Next Phase:** Ready for E2E integration testing with full provider + AgentCore + CodingAgent stack.
 
+### 2026-04-05 — P0 Safety Fixes (Design Review)
+
+- Listener dispatch in `Agent.HandleEventAsync` is now exception-safe; non-cancel listener failures are isolated and surfaced through `OnDiagnostic`.
+- Tool hook execution is guarded: `BeforeToolCall` failures degrade to blocked error results, and `AfterToolCall` failures preserve original tool output.
+- `PathUtils.ResolvePath` now resolves symlink targets and rejects only final targets escaping root; internal symlinks remain allowed.
+- Retry backoff now supports `MaxRetryDelayMs` via `AgentOptions` → `AgentLoopConfig` with runtime validation (`> 0` when set) and capped delay application in `AgentLoopRunner`.
+
