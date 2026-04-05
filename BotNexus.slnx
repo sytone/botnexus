@@ -9,6 +9,15 @@
     <Project Path="src/providers/BotNexus.Providers.OpenAICompat/BotNexus.Providers.OpenAICompat.csproj" />
     <Project Path="src/providers/BotNexus.Providers.Copilot/BotNexus.Providers.Copilot.csproj" />
   </Folder>
+  <Folder Name="/src/gateway/">
+    <Project Path="src/gateway/BotNexus.Gateway.Abstractions/BotNexus.Gateway.Abstractions.csproj" />
+    <Project Path="src/gateway/BotNexus.Gateway/BotNexus.Gateway.csproj" />
+    <Project Path="src/gateway/BotNexus.Gateway.Api/BotNexus.Gateway.Api.csproj" />
+    <Project Path="src/gateway/BotNexus.Gateway.Sessions/BotNexus.Gateway.Sessions.csproj" />
+  </Folder>
+  <Folder Name="/src/channels/">
+    <Project Path="src/channels/BotNexus.Channels.Core/BotNexus.Channels.Core.csproj" />
+  </Folder>
   <Folder Name="/src/coding-agent/">
     <Project Path="src/coding-agent/BotNexus.CodingAgent/BotNexus.CodingAgent.csproj" />
   </Folder>

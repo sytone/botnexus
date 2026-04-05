@@ -1,0 +1,60 @@
+using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Sessions;
+
+namespace BotNexus.Gateway.Sessions;
+
+/// <summary>
+/// In-memory session store for development and testing.
+/// Not durable — all sessions are lost on restart.
+/// </summary>
+public sealed class InMemorySessionStore : ISessionStore
+{
+    private readonly Dictionary<string, GatewaySession> _sessions = [];
+    private readonly Lock _sync = new();
+
+    /// <inheritdoc />
+    public Task<GatewaySession?> GetAsync(string sessionId, CancellationToken cancellationToken = default)
+    {
+        lock (_sync) return Task.FromResult(_sessions.GetValueOrDefault(sessionId));
+    }
+
+    /// <inheritdoc />
+    public Task<GatewaySession> GetOrCreateAsync(string sessionId, string agentId, CancellationToken cancellationToken = default)
+    {
+        lock (_sync)
+        {
+            if (_sessions.TryGetValue(sessionId, out var existing))
+                return Task.FromResult(existing);
+
+            var session = new GatewaySession { SessionId = sessionId, AgentId = agentId };
+            _sessions[sessionId] = session;
+            return Task.FromResult(session);
+        }
+    }
+
+    /// <inheritdoc />
+    public Task SaveAsync(GatewaySession session, CancellationToken cancellationToken = default)
+    {
+        lock (_sync) _sessions[session.SessionId] = session;
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public Task DeleteAsync(string sessionId, CancellationToken cancellationToken = default)
+    {
+        lock (_sync) _sessions.Remove(sessionId);
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<GatewaySession>> ListAsync(string? agentId = null, CancellationToken cancellationToken = default)
+    {
+        lock (_sync)
+        {
+            IReadOnlyList<GatewaySession> result = agentId is null
+                ? [.. _sessions.Values]
+                : _sessions.Values.Where(s => s.AgentId == agentId).ToList();
+            return Task.FromResult(result);
+        }
+    }
+}

@@ -1576,3 +1576,24 @@ Design review filtered 14 audit findings down to 6 real fixes (5 already impleme
 - **Multi-agent git commits need a coordination protocol.** File locks from testhost processes and concurrent git operations caused failures requiring manual cleanup. Agents committing independently to the same repo is unsustainable beyond 2 parallel agents. Next sprint must implement either a commit queue, worktree-per-agent, or a coordinator-commits-all pattern.
 
 - **Design specs should distinguish assumed vs verified behavior.** The ShortHash spec stated a 9-char trim step that doesn't exist in the reference implementation. Had the spec marked this as "assumed — verify against pi-mono" instead of stating it as fact, the test would have been written differently. Spec templates need an explicit confidence/verification column.
+
+## Learnings -- Gateway Service Architecture (2026-04-06)
+
+### Architecture Decisions
+
+1. **Five-project decomposition**: Gateway.Abstractions (pure interfaces) -> Gateway (runtime) -> Gateway.Api (ASP.NET Core surface), plus Gateway.Sessions and Channels.Core as leaf projects.
+
+2. **Push-based channel dispatch over message bus**: Channel adapters call IChannelDispatcher.DispatchAsync() directly instead of a shared IMessageBus. Gateway itself implements IChannelDispatcher.
+
+3. **IAgentHandle as the isolation boundary**: Abstracts the isolation strategy. In-process wraps AgentCore.Agent; future handles can proxy to containers or remote services.
+
+4. **AgentCore integration**: ModelRegistry.GetModel(provider, modelId) requires both params. AgentOptions is a positional record requiring all params.
+
+### Key File Paths
+
+- Abstractions: src/gateway/BotNexus.Gateway.Abstractions/
+- Runtime: src/gateway/BotNexus.Gateway/GatewayHost.cs
+- API: src/gateway/BotNexus.Gateway.Api/
+- Sessions: src/gateway/BotNexus.Gateway.Sessions/
+- Channels: src/channels/BotNexus.Channels.Core/
+- ADR: .squad/decisions/inbox/leela-gateway-architecture.md
