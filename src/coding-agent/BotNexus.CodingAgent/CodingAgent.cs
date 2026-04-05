@@ -60,11 +60,13 @@ public static class CodingAgent
 
         var auditHooks = new AuditHooks(verbose: ResolveVerbose(config));
         var safetyHooks = new SafetyHooks();
+        var thinkingLevel = ResolveThinkingLevel(config);
 
         var options = new AgentOptions(
             InitialState: new AgentInitialState(
                 SystemPrompt: systemPrompt,
                 Model: model,
+                ThinkingLevel: thinkingLevel,
                 Tools: tools),
             Model: model,
             LlmClient: llmClient,
@@ -80,6 +82,7 @@ public static class CodingAgent
             GenerationSettings: new SimpleStreamOptions
             {
                 MaxTokens = model.MaxTokens,
+                Reasoning = thinkingLevel,
                 OnPayload = async (payload, payloadModel) =>
                     extensionRunner is null
                         ? payload
@@ -256,6 +259,38 @@ public static class CodingAgent
             JsonElement { ValueKind: JsonValueKind.False } => false,
             string text when bool.TryParse(text, out var parsed) => parsed,
             _ => false
+        };
+    }
+
+    private static ThinkingLevel? ResolveThinkingLevel(CodingAgentConfig config)
+    {
+        if (!config.Custom.TryGetValue("thinking", out var value))
+        {
+            return null;
+        }
+
+        return value switch
+        {
+            null => null,
+            ThinkingLevel level => level,
+            JsonElement { ValueKind: JsonValueKind.String } element => ParseThinkingLevel(element.GetString()),
+            string text => ParseThinkingLevel(text),
+            _ => null
+        };
+    }
+
+    private static ThinkingLevel? ParseThinkingLevel(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            null => null,
+            "off" => null,
+            "minimal" => ThinkingLevel.Minimal,
+            "low" => ThinkingLevel.Low,
+            "medium" => ThinkingLevel.Medium,
+            "high" => ThinkingLevel.High,
+            "xhigh" => ThinkingLevel.ExtraHigh,
+            _ => null
         };
     }
 }

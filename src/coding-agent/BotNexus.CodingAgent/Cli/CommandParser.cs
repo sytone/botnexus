@@ -1,3 +1,5 @@
+using BotNexus.Providers.Core.Models;
+
 namespace BotNexus.CodingAgent.Cli;
 
 /// <summary>
@@ -11,6 +13,8 @@ public sealed class CommandParser
         string? model = null;
         string? provider = null;
         string? resume = null;
+        ThinkingLevel? thinkingLevel = null;
+        var thinkingSpecified = false;
         var nonInteractive = false;
         var verbose = false;
         var showHelp = false;
@@ -28,6 +32,10 @@ public sealed class CommandParser
                     break;
                 case "--resume":
                     resume = ReadValue(args, ref index, "--resume");
+                    break;
+                case "--thinking":
+                    thinkingSpecified = true;
+                    thinkingLevel = ParseThinkingLevel(ReadValue(args, ref index, "--thinking"));
                     break;
                 case "--non-interactive":
                     nonInteractive = true;
@@ -53,6 +61,8 @@ public sealed class CommandParser
             Model: model,
             Provider: provider,
             ResumeSessionId: resume,
+            ThinkingLevel: thinkingLevel,
+            ThinkingSpecified: thinkingSpecified,
             NonInteractive: nonInteractive,
             Verbose: verbose,
             ShowHelp: showHelp,
@@ -71,6 +81,7 @@ public sealed class CommandParser
                  --model <model>          Override model id
                  --provider <provider>    Override provider id
                  --resume <session-id>    Resume an existing session
+                 --thinking <level>       Set reasoning level: off|minimal|low|medium|high|xhigh
                  --non-interactive        Run one prompt and exit
                  --verbose                Enable verbose logs
                  --help                   Show this help
@@ -87,6 +98,20 @@ public sealed class CommandParser
         index++;
         return args[index];
     }
+
+    private static ThinkingLevel? ParseThinkingLevel(string value)
+    {
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "off" => null,
+            "minimal" => ThinkingLevel.Minimal,
+            "low" => ThinkingLevel.Low,
+            "medium" => ThinkingLevel.Medium,
+            "high" => ThinkingLevel.High,
+            "xhigh" => ThinkingLevel.ExtraHigh,
+            _ => throw new ArgumentException("Invalid value for --thinking. Valid values: off, minimal, low, medium, high, xhigh.")
+        };
+    }
 }
 
 /// <summary>
@@ -96,6 +121,8 @@ public sealed record CommandOptions(
     string? Model,
     string? Provider,
     string? ResumeSessionId,
+    ThinkingLevel? ThinkingLevel,
+    bool ThinkingSpecified,
     bool NonInteractive,
     bool Verbose,
     bool ShowHelp,

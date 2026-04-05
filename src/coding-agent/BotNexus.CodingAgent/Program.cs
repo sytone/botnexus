@@ -229,6 +229,11 @@ internal static class Program
         {
             config.Custom["verbose"] = true;
         }
+
+        if (command.ThinkingSpecified)
+        {
+            config.Custom["thinking"] = command.ThinkingLevel;
+        }
     }
 
     private static SessionInfo UpdateSessionSnapshot(SessionInfo session, Agent agent)
