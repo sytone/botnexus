@@ -132,6 +132,51 @@ public sealed class EditToolTests : IDisposable
         (await File.ReadAllTextAsync(filePath)).Should().Be("alpha BETA gamma DELTA");
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WhenEditProducesNoChange_Throws()
+    {
+        var filePath = Path.Combine(_tempDirectory, "no-change.txt");
+        await File.WriteAllTextAsync(filePath, "same");
+
+        var action = () => _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        {
+            ["path"] = "no-change.txt",
+            ["edits"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["oldText"] = "same",
+                    ["newText"] = "same"
+                }
+            }
+        });
+
+        await action.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Edit produced no change*");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FuzzyMatchNormalizesSmartQuotesAndTrailingWhitespace()
+    {
+        var filePath = Path.Combine(_tempDirectory, "smart-quotes.txt");
+        await File.WriteAllTextAsync(filePath, "Console.WriteLine(“hello”);   \n");
+
+        await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        {
+            ["path"] = "smart-quotes.txt",
+            ["edits"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["oldText"] = "Console.WriteLine(\"hello\");",
+                    ["newText"] = "Console.WriteLine(\"updated\");"
+                }
+            }
+        });
+
+        (await File.ReadAllTextAsync(filePath)).Should().Contain("Console.WriteLine(\"updated\");");
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_tempDirectory))

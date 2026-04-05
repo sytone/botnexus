@@ -47,6 +47,23 @@ public sealed class GlobToolTests : IDisposable
         result.Content[0].Value.Should().Be("No matches.");
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WhenResultsExceedLimit_ShowsTruncationNotice()
+    {
+        Directory.CreateDirectory(Path.Combine(_tempDirectory, "many"));
+        for (var index = 0; index < 1005; index++)
+        {
+            await File.WriteAllTextAsync(Path.Combine(_tempDirectory, "many", $"{index}.txt"), "x");
+        }
+
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        {
+            ["pattern"] = "**/*.txt"
+        });
+
+        result.Content[0].Value.Should().Contain("[Showing first 1000 of 1005 matches]");
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_tempDirectory))

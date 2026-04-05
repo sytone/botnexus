@@ -23,6 +23,7 @@ namespace BotNexus.CodingAgent.Tools;
 /// </remarks>
 public sealed class GlobTool : IAgentTool
 {
+    private const int MaxResults = 1000;
     private readonly string _workingDirectory;
 
     /// <summary>
@@ -125,9 +126,15 @@ public sealed class GlobTool : IAgentTool
         }
 
         var builder = new StringBuilder();
-        foreach (var match in matches)
+        var displayedMatches = matches.Take(MaxResults).ToList();
+        foreach (var match in displayedMatches)
         {
             builder.AppendLine(match);
+        }
+
+        if (matches.Count > MaxResults)
+        {
+            builder.AppendLine($"[Showing first {MaxResults} of {matches.Count} matches]");
         }
 
         return Task.FromResult(new AgentToolResult(

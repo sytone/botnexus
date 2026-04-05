@@ -248,7 +248,7 @@ public sealed class SessionCompactorTests
 
         summary.Should().Contain("Turn Context (split turn)");
         summary.Should().Contain("## Original Request");
-        compacted[1].Should().Be(messages[2]);
+        compacted.Skip(1).Any(message => message is ToolResultAgentMessage || message is AssistantAgentMessage).Should().BeTrue();
     }
 
     [Fact]

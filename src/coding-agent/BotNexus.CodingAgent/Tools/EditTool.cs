@@ -10,12 +10,14 @@ namespace BotNexus.CodingAgent.Tools;
 public sealed class EditTool : IAgentTool
 {
     private readonly string _workingDirectory;
+    private readonly FileMutationQueue _fileMutationQueue;
 
     public EditTool(string workingDirectory)
     {
         _workingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
             ? throw new ArgumentException("Working directory cannot be empty.", nameof(workingDirectory))
             : Path.GetFullPath(workingDirectory);
+        _fileMutationQueue = FileMutationQueue.Shared;
     }
 
     public string Name => "edit";
@@ -89,21 +91,28 @@ public sealed class EditTool : IAgentTool
             throw new FileNotFoundException($"File '{rawPath}' does not exist.", fullPath);
         }
 
-        var original = await File.ReadAllTextAsync(fullPath, cancellationToken).ConfigureAwait(false);
-        var originalLineEnding = DetectLineEnding(original);
-        var normalizedOriginal = NormalizeLineEndings(original);
-        var replacements = ResolveReplacements(normalizedOriginal, edits);
-        var updatedNormalized = ApplyReplacements(normalizedOriginal, replacements);
-        var updatedText = ApplyLineEnding(updatedNormalized, originalLineEnding);
+        return await _fileMutationQueue.WithFileLockAsync(fullPath, async () =>
+        {
+            var original = await File.ReadAllTextAsync(fullPath, cancellationToken).ConfigureAwait(false);
+            var originalLineEnding = DetectLineEnding(original);
+            var normalizedOriginal = NormalizeLineEndings(original);
+            var replacements = ResolveReplacements(normalizedOriginal, edits);
+            var updatedNormalized = ApplyReplacements(normalizedOriginal, replacements);
+            var updatedText = ApplyLineEnding(updatedNormalized, originalLineEnding);
+            if (string.Equals(updatedText, original, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("Edit produced no change — the replacement text is identical to the original.");
+            }
 
-        await File.WriteAllTextAsync(fullPath, updatedText, new UTF8Encoding(false), cancellationToken).ConfigureAwait(false);
+            await File.WriteAllTextAsync(fullPath, updatedText, new UTF8Encoding(false), cancellationToken).ConfigureAwait(false);
 
-        var firstChange = replacements[0];
-        var snippet = BuildSnippet(updatedNormalized, firstChange.StartIndex, firstChange.NewText.Length);
-        var relativePath = PathUtils.GetRelativePath(fullPath, _workingDirectory);
-        var message = $"Successfully replaced {replacements.Count} block(s) in '{relativePath}'.\nContext:\n{snippet}";
+            var firstChange = replacements[0];
+            var snippet = BuildSnippet(updatedNormalized, firstChange.StartIndex, firstChange.NewText.Length);
+            var relativePath = PathUtils.GetRelativePath(fullPath, _workingDirectory);
+            var message = $"Successfully replaced {replacements.Count} block(s) in '{relativePath}'.\nContext:\n{snippet}";
 
-        return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, message)]);
+            return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, message)]);
+        }).ConfigureAwait(false);
     }
 
     private static IReadOnlyList<EditEntry> ReadEdits(IReadOnlyDictionary<string, object?> arguments)

@@ -23,6 +23,7 @@ namespace BotNexus.CodingAgent.Tools;
 public sealed class WriteTool : IAgentTool
 {
     private readonly string _workingDirectory;
+    private readonly FileMutationQueue _fileMutationQueue;
 
     /// <summary>
     /// Initializes the write tool.
@@ -33,6 +34,7 @@ public sealed class WriteTool : IAgentTool
         _workingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
             ? throw new ArgumentException("Working directory cannot be empty.", nameof(workingDirectory))
             : Path.GetFullPath(workingDirectory);
+        _fileMutationQueue = FileMutationQueue.Shared;
     }
 
     /// <inheritdoc />
@@ -100,13 +102,16 @@ public sealed class WriteTool : IAgentTool
             Directory.CreateDirectory(parent);
         }
 
-        await File.WriteAllTextAsync(fullPath, content, new UTF8Encoding(false), cancellationToken).ConfigureAwait(false);
+        return await _fileMutationQueue.WithFileLockAsync(fullPath, async () =>
+        {
+            await File.WriteAllTextAsync(fullPath, content, new UTF8Encoding(false), cancellationToken).ConfigureAwait(false);
 
-        var byteCount = Encoding.UTF8.GetByteCount(content);
-        var relativePath = PathUtils.GetRelativePath(fullPath, _workingDirectory);
-        var message = $"Wrote '{relativePath}' ({byteCount} bytes).";
+            var byteCount = Encoding.UTF8.GetByteCount(content);
+            var relativePath = PathUtils.GetRelativePath(fullPath, _workingDirectory);
+            var message = $"Wrote '{relativePath}' ({byteCount} bytes).";
 
-        return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, message)]);
+            return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, message)]);
+        }).ConfigureAwait(false);
     }
 
     private static string ReadRequiredString(IReadOnlyDictionary<string, object?> arguments, string key)
