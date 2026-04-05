@@ -172,6 +172,10 @@ See decisions.md "Part 4: Implementation Phases & Work Items" for full roadmap w
 - **ExtensionLoadReport** is a DI singleton with load counts, health status, and per-extension results.
 - **Dark theme CSS vars**: `--bg-primary`, `--bg-secondary`, `--bg-tertiary`, `--accent`, `--success`, `--error`, `--border`, `--text-primary/secondary/muted`. Always use these for consistency.
 - **Build/test**: `dotnet build BotNexus.slnx` and `dotnet test BotNexus.slnx`. 158 unit + 19 integration tests.
+- **New Gateway API surface**: WebSocket at `/ws?agent={agentId}&session={sessionId}` with message types: `connected`, `message_start`, `content_delta`, `tool_start`, `tool_end`, `message_end`, `error`, `pong`. REST: `GET /api/agents`, `GET /api/sessions`, `GET /api/sessions/{id}`, `POST /api/chat`.
+- **WebUI Gateway integration**: MSBuild targets in `Gateway.Api.csproj` copy `wwwroot/` files from `BotNexus.WebUI` to output on Build and Publish. Project reference wires the dependency.
+- **WebSocket streaming pattern**: `message_start` → `content_delta` (repeated) → `message_end`. Tool calls arrive as `tool_start`/`tool_end` pairs with `toolCallId` correlation. Abort via `{ "type": "abort" }`.
+- **REST fallback**: `POST /api/chat` with `{ agentId, message, sessionId }` returns `{ sessionId, content, usage }` for non-streaming scenarios.
 
 ## Sprint 4 Summary — 2026-04-01T18:22Z
 
