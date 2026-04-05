@@ -14,7 +14,7 @@ namespace BotNexus.CodingAgent.Tools;
 /// </summary>
 public sealed class GrepTool : IAgentTool
 {
-    private const int DefaultMaxResults = 50;
+    private const int DefaultMaxResults = 100;
     private const int MaxLineLength = 500;
     private const int BinaryProbeBytes = 4096;
     private readonly string _workingDirectory;
@@ -42,7 +42,7 @@ public sealed class GrepTool : IAgentTool
                 "include": { "type": "string", "description": "Glob pattern to include files (e.g., *.cs, *.ts)" },
                 "ignore_case": { "type": "boolean", "description": "Perform case-insensitive matching (default: false)" },
                 "context": { "type": "integer", "description": "Number of lines to show before and after each match (default: 0)" },
-                "max_results": { "type": "integer", "description": "Maximum results to return (default: 50)" }
+                "max_results": { "type": "integer", "description": "Maximum results to return (default: 100)" }
               },
               "required": ["pattern"]
             }

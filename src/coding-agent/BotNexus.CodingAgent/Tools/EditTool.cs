@@ -94,6 +94,7 @@ public sealed class EditTool : IAgentTool
         return await _fileMutationQueue.WithFileLockAsync(fullPath, async () =>
         {
             var original = await File.ReadAllTextAsync(fullPath, cancellationToken).ConfigureAwait(false);
+            original = original.TrimStart('\uFEFF');
             var originalLineEnding = DetectLineEnding(original);
             var normalizedOriginal = NormalizeLineEndings(original);
             var replacements = ResolveReplacements(normalizedOriginal, edits);
