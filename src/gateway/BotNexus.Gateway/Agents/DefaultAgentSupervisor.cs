@@ -32,6 +32,7 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor
     {
         var key = MakeKey(agentId, sessionId);
         Task<(AgentInstance Instance, IAgentHandle Handle)> creationTask;
+        TaskCompletionSource<(AgentInstance Instance, IAgentHandle Handle)>? creationCompletion = null;
 
         lock (_sync)
         {
@@ -40,28 +41,38 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor
 
             if (!_pendingCreates.TryGetValue(key, out creationTask!))
             {
-                creationTask = CreateEntryAsync(agentId, sessionId, key, cancellationToken);
+                creationCompletion = new TaskCompletionSource<(AgentInstance Instance, IAgentHandle Handle)>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                creationTask = creationCompletion.Task;
                 _pendingCreates[key] = creationTask;
             }
         }
 
+        if (creationCompletion is null)
+        {
+            var existingCreate = await creationTask.WaitAsync(cancellationToken);
+            return existingCreate.Handle;
+        }
+
         try
         {
-            var created = await creationTask;
+            var created = await CreateEntryAsync(agentId, sessionId, key, cancellationToken);
             lock (_sync)
             {
                 _pendingCreates.Remove(key);
                 _instances[key] = created;
             }
+            creationCompletion.SetResult(created);
 
             _logger.LogInformation("Created agent instance '{AgentId}' for session '{SessionId}' (isolation: {Strategy})",
                 agentId, sessionId, created.Instance.IsolationStrategy);
 
             return created.Handle;
         }
-        catch
+        catch (Exception ex)
         {
             lock (_sync) _pendingCreates.Remove(key);
+            creationCompletion.SetException(ex);
             throw;
         }
     }
