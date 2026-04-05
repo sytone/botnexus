@@ -102,6 +102,33 @@ public sealed class SessionManager
         await PersistStateAsync(state).ConfigureAwait(false);
     }
 
+    public async Task<SessionInfo> WriteMetadataAsync(SessionInfo session, string key, string? value)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            throw new ArgumentException("Metadata key cannot be empty.", nameof(key));
+        }
+
+        var state = await LoadSessionStateAsync(session.Id, session.WorkingDirectory, session.SessionFilePath).ConfigureAwait(false);
+        var now = DateTimeOffset.UtcNow;
+
+        state.MetadataEntries.Add(new MetadataEntry(
+            Type: "metadata",
+            Timestamp: now,
+            Key: key.Trim(),
+            Value: value));
+
+        state.Header = state.Header with
+        {
+            Name = session.Name,
+            UpdatedAt = now
+        };
+
+        await PersistStateAsync(state).ConfigureAwait(false);
+        return session with { UpdatedAt = now };
+    }
+
     public async Task<(SessionInfo Session, IReadOnlyList<AgentMessage> Messages)> ResumeSessionAsync(string sessionId, string workingDir)
     {
         var state = await LoadSessionStateAsync(sessionId, workingDir).ConfigureAwait(false);

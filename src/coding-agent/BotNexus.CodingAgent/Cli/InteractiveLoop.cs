@@ -104,7 +104,7 @@ public sealed class InteractiveLoop
                     continue;
                 }
 
-                if (await HandleCommandAsync(trimmed, agent, config, modelRegistry, authManager, output, currentSession) is { } updatedSession)
+                if (await HandleCommandAsync(trimmed, agent, config, modelRegistry, authManager, output, sessionManager, currentSession) is { } updatedSession)
                 {
                     currentSession = updatedSession;
                     if (trimmed.Equals("/quit", StringComparison.OrdinalIgnoreCase) ||
@@ -201,6 +201,7 @@ public sealed class InteractiveLoop
         ModelRegistry modelRegistry,
         AuthManager authManager,
         OutputFormatter output,
+        SessionManager sessionManager,
         SessionInfo session)
     {
         if (input.Equals("/quit", StringComparison.OrdinalIgnoreCase) ||
@@ -269,8 +270,18 @@ public sealed class InteractiveLoop
             }
 
             var provider = config.Provider ?? agent.State.Model.Provider;
+            var previousModel = agent.State.Model.Id;
             agent.State.Model = ResolveModel(provider, modelId, config.MaxContextTokens, modelRegistry);
             var updated = UpdateSessionSnapshot(session, agent);
+            if (!string.Equals(previousModel, agent.State.Model.Id, StringComparison.Ordinal))
+            {
+                updated = await sessionManager.WriteMetadataAsync(
+                        updated,
+                        "model_change",
+                        $"{previousModel} → {agent.State.Model.Id}")
+                    .ConfigureAwait(false);
+            }
+
             output.WriteSessionInfo(updated);
             return updated;
         }
@@ -324,4 +335,5 @@ public sealed class InteractiveLoop
                 ["Copilot-Integration-Id"] = "vscode-chat"
             });
     }
+
 }

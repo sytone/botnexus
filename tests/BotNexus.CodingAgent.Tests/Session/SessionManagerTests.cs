@@ -88,6 +88,39 @@ public sealed class SessionManagerTests : IDisposable
     }
 
     [Fact]
+    public async Task WriteMetadataAsync_PersistsThinkingAndModelChangeEntries()
+    {
+        var created = await _manager.CreateSessionAsync(_workingDirectory, "metadata-test");
+        var withThinking = await _manager.WriteMetadataAsync(created, "thinking_level_change", "off → low");
+        await _manager.WriteMetadataAsync(withThinking, "model_change", "gpt-4.1 → claude-sonnet-4.5");
+
+        var sessionPath = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions", $"{created.Id}.jsonl");
+        var fileContent = await File.ReadAllTextAsync(sessionPath);
+
+        fileContent.Should().Contain("\"key\":\"thinking_level_change\"");
+        fileContent.Should().Contain("\"value\":\"off \\u2192 low\"");
+        fileContent.Should().Contain("\"key\":\"model_change\"");
+        fileContent.Should().Contain("\"value\":\"gpt-4.1 \\u2192 claude-sonnet-4.5\"");
+    }
+
+    [Fact]
+    public async Task WriteMetadataAsync_MetadataEntriesSurviveReload()
+    {
+        var created = await _manager.CreateSessionAsync(_workingDirectory, "metadata-reload");
+        var withMetadata = await _manager.WriteMetadataAsync(created, "thinking_level_change", "low → high");
+
+        await _manager.SaveSessionAsync(withMetadata, [new UserMessage("hello")]);
+        var resumed = await _manager.ResumeSessionAsync(created.Id, _workingDirectory);
+
+        var sessionPath = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions", $"{created.Id}.jsonl");
+        var fileContent = await File.ReadAllTextAsync(sessionPath);
+
+        resumed.Messages.Should().ContainSingle();
+        fileContent.Should().Contain("\"key\":\"thinking_level_change\"");
+        fileContent.Should().Contain("\"value\":\"low \\u2192 high\"");
+    }
+
+    [Fact]
     public async Task ResumeSessionAsync_LoadsSessionWithoutMessages()
     {
         var created = await _manager.CreateSessionAsync(_workingDirectory, "resume-only");
