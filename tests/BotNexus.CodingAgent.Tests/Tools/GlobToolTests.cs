@@ -23,7 +23,7 @@ public sealed class GlobToolTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(_tempDirectory, "src", "b.cs"), "class B {}");
         await File.WriteAllTextAsync(Path.Combine(_tempDirectory, "docs", "readme.md"), "# docs");
 
-        var result = await _tool.ExecuteAsync(new Dictionary<string, object?>
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["pattern"] = "**/*.cs"
         });
@@ -39,7 +39,7 @@ public sealed class GlobToolTests : IDisposable
     {
         await File.WriteAllTextAsync(Path.Combine(_tempDirectory, "file.txt"), "text");
 
-        var result = await _tool.ExecuteAsync(new Dictionary<string, object?>
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["pattern"] = "**/*.json"
         });

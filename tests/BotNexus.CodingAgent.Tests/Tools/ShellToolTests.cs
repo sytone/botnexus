@@ -10,7 +10,7 @@ public sealed class ShellToolTests
     [Fact]
     public async Task ExecuteAsync_RunsSimpleCommand()
     {
-        var result = await _tool.ExecuteAsync(new Dictionary<string, object?>
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["command"] = "Write-Output hello-shell"
         });
@@ -22,7 +22,7 @@ public sealed class ShellToolTests
     [Fact]
     public async Task ExecuteAsync_ReportsExitCode()
     {
-        var result = await _tool.ExecuteAsync(new Dictionary<string, object?>
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["command"] = "exit 7"
         });
@@ -33,7 +33,7 @@ public sealed class ShellToolTests
     [Fact]
     public async Task ExecuteAsync_WhenTimeoutReached_ThrowsTimeoutException()
     {
-        var action = () => _tool.ExecuteAsync(new Dictionary<string, object?>
+        var action = () => _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["command"] = "Start-Sleep -Seconds 2",
             ["timeout"] = 1

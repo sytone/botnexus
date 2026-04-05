@@ -83,8 +83,10 @@ public sealed class WriteTool : IAgentTool
 
     /// <inheritdoc />
     public async Task<AgentToolResult> ExecuteAsync(
+        string toolCallId,
         IReadOnlyDictionary<string, object?> arguments,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        AgentToolUpdateCallback? onUpdate = null)
     {
         var rawPath = arguments["path"]?.ToString()
                       ?? throw new ArgumentException("Missing required argument: path.");

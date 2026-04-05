@@ -91,8 +91,10 @@ public sealed class GlobTool : IAgentTool
 
     /// <inheritdoc />
     public Task<AgentToolResult> ExecuteAsync(
+        string toolCallId,
         IReadOnlyDictionary<string, object?> arguments,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        AgentToolUpdateCallback? onUpdate = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
 

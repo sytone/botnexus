@@ -18,7 +18,7 @@ public sealed class WriteToolTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_WritesNewFile()
     {
-        var result = await _tool.ExecuteAsync(new Dictionary<string, object?>
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["path"] = "new.txt",
             ["content"] = "hello world"
@@ -36,7 +36,7 @@ public sealed class WriteToolTests : IDisposable
         var fullPath = Path.Combine(_tempDirectory, "existing.txt");
         await File.WriteAllTextAsync(fullPath, "old");
 
-        await _tool.ExecuteAsync(new Dictionary<string, object?>
+        await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["path"] = "existing.txt",
             ["content"] = "updated"
@@ -48,7 +48,7 @@ public sealed class WriteToolTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_CreatesParentDirectories()
     {
-        await _tool.ExecuteAsync(new Dictionary<string, object?>
+        await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["path"] = Path.Combine("deep", "nested", "file.txt"),
             ["content"] = "data"
@@ -64,7 +64,7 @@ public sealed class WriteToolTests : IDisposable
     {
         var content = "abc";
 
-        var result = await _tool.ExecuteAsync(new Dictionary<string, object?>
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["path"] = "bytes.txt",
             ["content"] = content

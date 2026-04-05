@@ -20,7 +20,7 @@ public sealed class EditToolTests : IDisposable
         var filePath = Path.Combine(_tempDirectory, "edit.txt");
         await File.WriteAllTextAsync(filePath, "before target after");
 
-        await _tool.ExecuteAsync(new Dictionary<string, object?>
+        await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["path"] = "edit.txt",
             ["old_str"] = "target",
@@ -36,7 +36,7 @@ public sealed class EditToolTests : IDisposable
         var filePath = Path.Combine(_tempDirectory, "no-match.txt");
         await File.WriteAllTextAsync(filePath, "content");
 
-        var action = () => _tool.ExecuteAsync(new Dictionary<string, object?>
+        var action = () => _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["path"] = "no-match.txt",
             ["old_str"] = "missing",
@@ -53,7 +53,7 @@ public sealed class EditToolTests : IDisposable
         var filePath = Path.Combine(_tempDirectory, "multi-match.txt");
         await File.WriteAllTextAsync(filePath, "repeat repeat");
 
-        var action = () => _tool.ExecuteAsync(new Dictionary<string, object?>
+        var action = () => _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["path"] = "multi-match.txt",
             ["old_str"] = "repeat",
@@ -70,7 +70,7 @@ public sealed class EditToolTests : IDisposable
         var filePath = Path.Combine(_tempDirectory, "context.txt");
         await File.WriteAllTextAsync(filePath, "hello target world");
 
-        var result = await _tool.ExecuteAsync(new Dictionary<string, object?>
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["path"] = "context.txt",
             ["old_str"] = "target",

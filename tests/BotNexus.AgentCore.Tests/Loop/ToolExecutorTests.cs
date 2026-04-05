@@ -159,8 +159,10 @@ public class ToolExecutorTests
         }
 
         public async Task<AgentToolResult> ExecuteAsync(
+            string toolCallId,
             IReadOnlyDictionary<string, object?> arguments,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            AgentToolUpdateCallback? onUpdate = null)
         {
             Interlocked.Increment(ref _executeCount);
             if (delayMs > 0)
@@ -186,8 +188,10 @@ public class ToolExecutorTests
             CancellationToken cancellationToken = default) => Task.FromResult(arguments);
 
         public Task<AgentToolResult> ExecuteAsync(
+            string toolCallId,
             IReadOnlyDictionary<string, object?> arguments,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            AgentToolUpdateCallback? onUpdate = null)
         {
             throw new InvalidOperationException("boom");
         }

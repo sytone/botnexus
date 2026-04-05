@@ -59,8 +59,10 @@ public class ContextConverterTests
             CancellationToken cancellationToken = default) => Task.FromResult(arguments);
 
         public Task<AgentToolResult> ExecuteAsync(
+            string toolCallId,
             IReadOnlyDictionary<string, object?> arguments,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            AgentToolUpdateCallback? onUpdate = null)
         {
             return Task.FromResult(new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "ok")]));
         }

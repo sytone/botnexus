@@ -58,7 +58,7 @@ internal static class ToolExecutor
             await emit(new ToolExecutionStartEvent(toolCall.Id, toolCall.Name, rawArgs, DateTimeOffset.UtcNow))
                 .ConfigureAwait(false);
 
-            var outcome = await ExecuteToolCallCoreAsync(context, assistantMessage, toolCall, rawArgs, config, cancellationToken)
+            var outcome = await ExecuteToolCallCoreAsync(context, assistantMessage, toolCall, rawArgs, config, emit, cancellationToken)
                 .ConfigureAwait(false);
 
             await emit(new ToolExecutionEndEvent(
@@ -110,6 +110,7 @@ internal static class ToolExecutor
                     item.ToolCall,
                     item.RawArgs,
                     config,
+                    emit,
                     cancellationToken)
                 .ConfigureAwait(false);
             return new ToolExecutionOutcome(item.Index, item.ToolCall, outcome.Result, outcome.IsError);
@@ -145,6 +146,7 @@ internal static class ToolExecutor
         ToolCallContent toolCall,
         IReadOnlyDictionary<string, object?> rawArgs,
         AgentLoopConfig config,
+        Func<AgentEvent, Task> emit,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -184,7 +186,17 @@ internal static class ToolExecutor
         var isError = false;
         try
         {
-            result = await tool.ExecuteAsync(validatedArgs, cancellationToken).ConfigureAwait(false);
+            result = await tool.ExecuteAsync(
+                toolCall.Id,
+                validatedArgs,
+                cancellationToken,
+                partialResult =>
+                    emit(new ToolExecutionUpdateEvent(
+                        toolCall.Id,
+                        toolCall.Name,
+                        validatedArgs,
+                        partialResult,
+                        DateTimeOffset.UtcNow)).GetAwaiter().GetResult()).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

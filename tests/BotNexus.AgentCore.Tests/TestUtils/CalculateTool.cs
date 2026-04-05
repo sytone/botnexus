@@ -33,8 +33,10 @@ internal sealed class CalculateTool : IAgentTool
     }
 
     public Task<AgentToolResult> ExecuteAsync(
+        string toolCallId,
         IReadOnlyDictionary<string, object?> arguments,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        AgentToolUpdateCallback? onUpdate = null)
     {
         var expression = arguments.TryGetValue("expression", out var value)
             ? value?.ToString()

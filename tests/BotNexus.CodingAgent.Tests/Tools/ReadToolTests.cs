@@ -20,7 +20,7 @@ public sealed class ReadToolTests : IDisposable
         var filePath = Path.Combine(_tempDirectory, "sample.txt");
         await File.WriteAllTextAsync(filePath, "alpha\nbeta\ngamma");
 
-        var result = await _tool.ExecuteAsync(new Dictionary<string, object?> { ["path"] = "sample.txt" });
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "sample.txt" });
 
         result.Content.Should().ContainSingle();
         result.Content[0].Value.Should().Be($"1 | alpha{Environment.NewLine}2 | beta{Environment.NewLine}3 | gamma");
@@ -34,7 +34,7 @@ public sealed class ReadToolTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(_tempDirectory, "root.txt"), "x");
         await File.WriteAllTextAsync(Path.Combine(nested, "child.txt"), "y");
 
-        var result = await _tool.ExecuteAsync(new Dictionary<string, object?> { ["path"] = "." });
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "." });
 
         result.Content.Should().ContainSingle();
         result.Content[0].Value.Should().Contain($"nested{Path.DirectorySeparatorChar}");
@@ -48,7 +48,7 @@ public sealed class ReadToolTests : IDisposable
         var filePath = Path.Combine(_tempDirectory, "range.txt");
         await File.WriteAllTextAsync(filePath, "line1\nline2\nline3\nline4");
 
-        var result = await _tool.ExecuteAsync(new Dictionary<string, object?>
+        var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
             ["path"] = "range.txt",
             ["start_line"] = 2,
@@ -61,7 +61,7 @@ public sealed class ReadToolTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_WhenPathDoesNotExist_ThrowsFileNotFoundException()
     {
-        var action = () => _tool.ExecuteAsync(new Dictionary<string, object?> { ["path"] = "missing.txt" });
+        var action = () => _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "missing.txt" });
 
         await action.Should().ThrowAsync<FileNotFoundException>();
     }

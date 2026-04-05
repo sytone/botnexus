@@ -61,8 +61,10 @@ public interface IAgentTool
     /// <summary>
     /// Executes the tool with validated arguments.
     /// </summary>
+    /// <param name="toolCallId">The unique tool call identifier for this execution.</param>
     /// <param name="arguments">The validated tool arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="onUpdate">Optional callback for partial execution updates.</param>
     /// <returns>The normalized tool result.</returns>
     /// <remarks>
     /// <para>
@@ -76,8 +78,10 @@ public interface IAgentTool
     /// <example>
     /// <code>
     /// public async Task&lt;AgentToolResult&gt; ExecuteAsync(
+    ///     string toolCallId,
     ///     IReadOnlyDictionary&lt;string, object?&gt; arguments,
-    ///     CancellationToken cancellationToken)
+    ///     CancellationToken cancellationToken,
+    ///     AgentToolUpdateCallback? onUpdate = null)
     /// {
     ///     var query = arguments["query"]?.ToString();
     ///     var result = await SearchAsync(query, cancellationToken);
@@ -86,6 +90,8 @@ public interface IAgentTool
     /// </code>
     /// </example>
     Task<AgentToolResult> ExecuteAsync(
+        string toolCallId,
         IReadOnlyDictionary<string, object?> arguments,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        AgentToolUpdateCallback? onUpdate = null);
 }

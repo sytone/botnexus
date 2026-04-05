@@ -29,8 +29,10 @@ internal sealed class GetCurrentTimeTool : IAgentTool
     }
 
     public Task<AgentToolResult> ExecuteAsync(
+        string toolCallId,
         IReadOnlyDictionary<string, object?> arguments,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        AgentToolUpdateCallback? onUpdate = null)
     {
         var now = DateTimeOffset.UtcNow.ToString("O");
         return Task.FromResult(new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, now)]));
