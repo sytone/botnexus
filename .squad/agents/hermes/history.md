@@ -548,3 +548,9 @@ All Sprints 1-2 foundation work completed by Farnsworth and Bender. Hermes ready
 - Added `InProcessAgentHandleTests` to validate `SteerAsync` and `FollowUpAsync` queue behavior (including non-running fire-and-forget steering).
 - Expanded platform config coverage for valid JSON deserialization, targeted ListenUrl/LogLevel validation failures, config directory creation, and model default/null behavior (`PlatformConfig` and `ProviderConfig`).
 - Added thread-safety verification for `GatewaySession` (`AddEntry` concurrency, snapshot consistency under mutation, and atomic batch visibility for `AddEntries`).
+### 2026-04-06 — Live Copilot integration coverage expansion
+
+- `tests/BotNexus.Gateway.Tests/Integration/CopilotIntegrationTests.cs` now covers prompt path, streaming delta path, session continuity across sequential dispatches, streaming completeness vs saved assistant history, invalid-auth graceful failure, full gateway pipeline verification, and WebUI-channel adapter compatibility.
+- Live Copilot tests should gate on `BOTNEXUS_RUN_COPILOT_INTEGRATION=1` and gracefully skip when `.botnexus-agent/auth.json` is absent or when Gateway reports auth/connectivity errors through `GatewayActivityType.Error`.
+- Cross-agent recursion behavior is now documented in `DefaultAgentCommunicatorTests` with skipped expected-behavior tests until runtime recursion detection is implemented.
+- Platform config validation coverage now includes provider required-field and invalid-baseUrl checks in `PlatformConfigurationTests`, with validator logic in `src/gateway/BotNexus.Gateway/Configuration/PlatformConfigLoader.cs`.
