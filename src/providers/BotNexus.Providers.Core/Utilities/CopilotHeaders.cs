@@ -58,7 +58,8 @@ public static class CopilotHeaders
     {
         var headers = new Dictionary<string, string>
         {
-            ["X-Initiator"] = InferInitiator(messages)
+            ["X-Initiator"] = InferInitiator(messages),
+            ["Openai-Intent"] = "conversation-edits"
         };
 
         if (hasImages)
