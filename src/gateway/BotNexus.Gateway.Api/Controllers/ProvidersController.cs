@@ -12,6 +12,7 @@ public sealed class ProvidersController : ControllerBase
 {
     private readonly ModelRegistry _modelRegistry;
 
+    /// <inheritdoc cref="ProvidersController"/>
     public ProvidersController(ModelRegistry modelRegistry)
     {
         _modelRegistry = modelRegistry ?? throw new ArgumentNullException(nameof(modelRegistry));
