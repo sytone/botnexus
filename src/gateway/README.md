@@ -10,9 +10,9 @@ The Gateway is composed of **5 core projects**:
 |---------|---------|
 | **BotNexus.Gateway.Abstractions** | Interface contracts (IAgentConfigurationSource, IIsolationStrategy, IChannelAdapter, ISessionStore) |
 | **BotNexus.Gateway** | Main host — message routing, agent supervision, hot reload, channel management |
-| **BotNexus.Gateway.Api** | REST API (agents, sessions, chat) + WebSocket handler + WebUI static files |
+| **BotNexus.Gateway.Api** | REST API (agents, sessions, chat, config) + WebSocket handler + WebUI static files |
 | **BotNexus.Gateway.Sessions** | Session persistence implementations (InMemory, FileSessionStore) |
-| **BotNexus.Gateway.WebUI** | Real-time monitoring dashboard (React/TypeScript) |
+| **BotNexus.Cli** | Command-line interface for Gateway management and interaction |
 
 ### Message Flow
 
@@ -81,18 +81,19 @@ public interface IChannelAdapter
     string ChannelType { get; }      // "slack", "discord", "telegram"
     string DisplayName { get; }
     bool SupportsStreaming { get; }
-    bool IsRunning { get; }
 
     // Capability flags — declare what your channel supports
     bool SupportsSteering { get; }          // Can inject mid-run steering messages
     bool SupportsFollowUp { get; }          // Can queue follow-up messages
     bool SupportsThinkingDisplay { get; }   // Can render thinking/reasoning deltas
     bool SupportsToolDisplay { get; }       // Can render tool call start/end events
+
+    bool IsRunning { get; }
     
-    Task StartAsync(IChannelDispatcher dispatcher, CancellationToken ct = default);
-    Task StopAsync(CancellationToken ct = default);
-    Task SendAsync(OutboundMessage message, CancellationToken ct = default);
-    Task SendStreamDeltaAsync(string conversationId, string delta, CancellationToken ct = default);
+    Task StartAsync(IChannelDispatcher dispatcher, CancellationToken cancellationToken = default);
+    Task StopAsync(CancellationToken cancellationToken = default);
+    Task SendAsync(OutboundMessage message, CancellationToken cancellationToken = default);
+    Task SendStreamDeltaAsync(string conversationId, string delta, CancellationToken cancellationToken = default);
 }
 ```
 
@@ -313,7 +314,6 @@ These paths bypass authentication entirely:
 | `/health` | Health checks for load balancers and monitoring |
 | `/webui` | Browser-based UI (served as static files) |
 | `/swagger` | API documentation browser |
-| Static files (paths with file extensions) | CSS, JS, images for the WebUI |
 
 #### Development Mode
 

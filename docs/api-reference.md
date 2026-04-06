@@ -214,8 +214,7 @@ X-Api-Key: your-api-key
 
 **Response:** 204 No Content
 
-**Error Responses:**
-- `404 Not Found` — Agent does not exist
+**Note:** This operation is idempotent — no error is returned if the agent does not exist.
 
 ---
 
@@ -294,6 +293,8 @@ X-Api-Key: your-api-key
 ## Skills Management
 
 Skills are modular knowledge packages that enhance agent reasoning. Learn more in the [Skills Guide](./skills.md).
+
+> **Note:** Skills endpoints are provided by the main BotNexus application host, not the Gateway API project. They are included here for completeness.
 
 ### List Global Skills
 
@@ -541,12 +542,13 @@ X-Api-Key: your-api-key
 ```json
 [
   {
-    "key": "session-abc123",
-    "agentName": "assistant",
-    "title": "Conversation about AI",
+    "sessionId": "abc123",
+    "agentId": "assistant",
+    "channelType": "websocket",
+    "callerId": "user-1",
+    "status": "Active",
     "createdAt": "2026-01-15T10:30:00Z",
-    "updatedAt": "2026-01-15T11:45:00Z",
-    "messageCount": 12
+    "updatedAt": "2026-01-15T11:45:00Z"
   }
 ]
 ```
@@ -575,6 +577,52 @@ X-Api-Key: your-api-key
 
 ---
 
+### Get Session History (Paginated)
+
+**Endpoint:** `GET /api/sessions/{sessionId}/history`
+
+**Description:** Get paginated session history for long-running conversations.
+
+**Parameters:**
+- `sessionId` (string, path) — Session ID
+
+**Query Parameters:**
+- `offset` (integer, optional, default: 0) — Zero-based offset into history
+- `limit` (integer, optional, default: 50, max: 200) — Number of entries to return
+
+**Request:**
+```http
+GET /api/sessions/session-abc123/history?offset=0&limit=50
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK
+```json
+{
+  "offset": 0,
+  "limit": 50,
+  "totalCount": 120,
+  "entries": [
+    {
+      "role": "user",
+      "content": "Hello",
+      "timestamp": "2026-01-15T10:30:00Z"
+    },
+    {
+      "role": "assistant",
+      "content": "Hi there!",
+      "timestamp": "2026-01-15T10:30:01Z"
+    }
+  ]
+}
+```
+
+**Error Responses:**
+- `400 Bad Request` — Invalid offset or limit
+- `404 Not Found` — Session does not exist
+
+---
+
 ### Delete Session
 
 **Endpoint:** `DELETE /api/sessions/{sessionId}`
@@ -591,6 +639,52 @@ X-Api-Key: your-api-key
 ```
 
 **Response:** 204 No Content
+
+---
+
+### Suspend Session
+
+**Endpoint:** `PATCH /api/sessions/{sessionId}/suspend`
+
+**Description:** Suspend an active session. Only sessions with `Active` status can be suspended.
+
+**Parameters:**
+- `sessionId` (string, path) — Session ID
+
+**Request:**
+```http
+PATCH /api/sessions/session-abc123/suspend
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK — Returns the updated session.
+
+**Error Responses:**
+- `404 Not Found` — Session does not exist
+- `409 Conflict` — Session is not in `Active` state
+
+---
+
+### Resume Session
+
+**Endpoint:** `PATCH /api/sessions/{sessionId}/resume`
+
+**Description:** Resume a suspended session. Only sessions with `Suspended` status can be resumed.
+
+**Parameters:**
+- `sessionId` (string, path) — Session ID
+
+**Request:**
+```http
+PATCH /api/sessions/session-abc123/resume
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK — Returns the updated session.
+
+**Error Responses:**
+- `404 Not Found` — Session does not exist
+- `409 Conflict` — Session is not in `Suspended` state
 
 ---
 
@@ -658,6 +752,8 @@ X-Api-Key: your-api-key
 
 ### Doctor/Diagnostics
 
+> **Note:** The diagnostics endpoint is provided by the main BotNexus application host, not the Gateway API project.
+
 **Endpoint:** `GET /api/doctor`
 
 **Description:** Run comprehensive health diagnostics with auto-fix recommendations.
@@ -705,10 +801,16 @@ All error responses follow a standard format:
 
 ```json
 {
-  "error": "Agent not found",
-  "code": "AGENT_NOT_FOUND",
-  "statusCode": 404,
-  "timestamp": "2026-01-15T11:50:00Z"
+  "error": "unauthenticated",
+  "message": "API key is missing or invalid."
+}
+```
+
+**Note:** Controller-level errors may return a simplified format:
+
+```json
+{
+  "error": "Agent not found"
 }
 ```
 
@@ -718,11 +820,13 @@ All error responses follow a standard format:
 |------|---------|
 | 200 | Success |
 | 201 | Created |
+| 202 | Accepted (async operation queued) |
 | 204 | No Content (success with no body) |
 | 400 | Bad Request (invalid input) |
 | 401 | Unauthorized (missing/invalid API key) |
 | 404 | Not Found |
-| 409 | Conflict (duplicate name, etc.) |
+| 409 | Conflict (duplicate name, state mismatch) |
+| 429 | Too Many Requests (agent concurrency limit exceeded) |
 | 500 | Internal Server Error |
 
 ### Error Codes
@@ -734,6 +838,8 @@ All error responses follow a standard format:
 | DUPLICATE_AGENT | 409 | Agent name already exists |
 | SESSION_NOT_FOUND | 404 | Session does not exist |
 | UNAUTHORIZED | 401 | Invalid or missing API key |
+| CONCURRENCY_LIMIT | 429 | Agent concurrency limit exceeded |
+| STATE_CONFLICT | 409 | Invalid state transition (e.g., suspend non-active session) |
 | INTERNAL_ERROR | 500 | Server error |
 
 ---

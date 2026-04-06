@@ -1,34 +1,38 @@
 {
-  // Default Gateway API listen URL (optional)
-  "listenUrl": "http://localhost:5000",
-
-  // Default routed agent when no explicit agent is provided
-  "defaultAgentId": "assistant",
-
-  // Path to agent descriptor JSON files
-  "agentsDirectory": "C:\\Users\\you\\.botnexus\\agents",
-
-  // Path to session persistence folder (uses FileSessionStore when set)
-  "sessionsDirectory": "C:\\Users\\you\\.botnexus\\sessions",
-
-  // Gateway API key (null/omitted = development mode, no auth)
-  "apiKey": null,
-
-  // Logging level: Trace, Debug, Information, Warning, Error, Critical
-  "logLevel": "Information",
-
-  // Provider-specific overrides keyed by provider name
+  "gateway": {
+    "listenUrl": "http://localhost:5005",
+    "defaultAgentId": "assistant",
+    "agentsDirectory": "C:\\Users\\you\\.botnexus\\agents",
+    "sessionsDirectory": "C:\\Users\\you\\.botnexus\\sessions",
+    "logLevel": "Information"
+  },
+  "agents": {
+    "assistant": {
+      "provider": "copilot",
+      "model": "gpt-4.1",
+      "isolationStrategy": "in-process",
+      "enabled": true
+    }
+  },
   "providers": {
-    "github-copilot": {
-      // Literal key or reference key to ~/.botnexus-agent/auth.json
-      "apiKey": "github-copilot",
+    "copilot": {
+      "apiKey": "auth:github-copilot",
       "baseUrl": "https://api.githubcopilot.com",
       "defaultModel": "gpt-4.1"
     },
     "openai": {
-      "apiKey": "openai",
+      "apiKey": "OPENAI_API_KEY",
       "baseUrl": "https://api.openai.com/v1",
       "defaultModel": "gpt-4o-mini"
+    }
+  },
+  "channels": {
+    "web": {
+      "type": "websocket",
+      "enabled": true,
+      "settings": {
+        "path": "/ws"
+      }
     }
   }
 }

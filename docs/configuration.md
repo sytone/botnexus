@@ -103,7 +103,7 @@ On startup, BotNexus creates this structure if it does not already exist:
 
 ## Project Defaults: appsettings.json
 
-`src/BotNexus.Gateway/appsettings.json` and `src/BotNexus.Api/appsettings.json` remain default/fallback values. ASP.NET Core default config sources load first, then `~/.botnexus/config.json` is loaded and overrides those defaults.
+`src/gateway/BotNexus.Gateway.Api/appsettings.json` remains a default/fallback value. ASP.NET Core default config sources load first, then `~/.botnexus/config.json` is loaded and overrides those defaults.
 
 ### Configuration Binding
 
