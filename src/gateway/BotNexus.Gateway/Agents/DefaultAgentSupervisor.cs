@@ -35,6 +35,7 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
         using var activity = GatewayDiagnostics.Source.StartActivity("gateway.agent_lifecycle", ActivityKind.Internal);
         activity?.SetTag("botnexus.agent.id", agentId);
         activity?.SetTag("botnexus.session.id", sessionId);
+        activity?.SetTag("botnexus.correlation.id", System.Diagnostics.Activity.Current?.TraceId.ToString());
 
         var descriptor = _registry.Get(agentId)
             ?? throw new KeyNotFoundException($"Agent '{agentId}' is not registered.");

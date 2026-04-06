@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Channels.Core.Diagnostics;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Channels.Core;
@@ -53,6 +55,10 @@ public abstract class ChannelAdapterBase : IChannelAdapter
     /// <inheritdoc />
     public async Task StartAsync(IChannelDispatcher dispatcher, CancellationToken cancellationToken = default)
     {
+        using var activity = ChannelDiagnostics.Source.StartActivity("channel.start", ActivityKind.Server);
+        activity?.SetTag("botnexus.channel.type", ChannelType);
+        activity?.SetTag("botnexus.correlation.id", Activity.Current?.TraceId.ToString());
+
         _dispatcher = dispatcher;
         await OnStartAsync(cancellationToken);
         _isRunning = true;
@@ -62,6 +68,10 @@ public abstract class ChannelAdapterBase : IChannelAdapter
     /// <inheritdoc />
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
+        using var activity = ChannelDiagnostics.Source.StartActivity("channel.stop", ActivityKind.Internal);
+        activity?.SetTag("botnexus.channel.type", ChannelType);
+        activity?.SetTag("botnexus.correlation.id", Activity.Current?.TraceId.ToString());
+
         await OnStopAsync(cancellationToken);
         _isRunning = false;
         _dispatcher = null;

@@ -1,5 +1,7 @@
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Sessions;
+using System.Diagnostics;
+using BotNexus.Gateway.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -111,6 +113,9 @@ public sealed class GatewayWebSocketHandler
         try
         {
             socket = await context.WebSockets.AcceptWebSocketAsync();
+            using var sessionActivity = GatewayDiagnostics.Source.StartActivity("session.get_or_create", ActivityKind.Internal);
+            sessionActivity?.SetTag("botnexus.session.id", sessionId);
+            sessionActivity?.SetTag("botnexus.agent.id", agentId);
             var session = await _sessions.GetOrCreateAsync(sessionId, agentId, cancellationToken);
             var replayWindow = Math.Max(_webSocketOptions.Value.ReplayWindowSize, 1);
 

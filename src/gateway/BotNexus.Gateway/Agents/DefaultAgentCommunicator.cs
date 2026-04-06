@@ -66,6 +66,8 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
         activity?.SetTag("botnexus.agent.id", parentAgentId);
         activity?.SetTag("botnexus.agent.target_id", childAgentId);
         activity?.SetTag("botnexus.agent.call_depth", Math.Max((ActiveCallPath.Value?.Count ?? 1) - 1, 0));
+        activity?.SetTag("botnexus.session.id", parentSessionId);
+        activity?.SetTag("botnexus.correlation.id", System.Diagnostics.Activity.Current?.TraceId.ToString());
 
         var childSessionId = $"{parentSessionId}::sub::{childAgentId}";
         _logger.LogInformation(
@@ -103,6 +105,7 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
         activity?.SetTag("botnexus.agent.id", sourceAgentId);
         activity?.SetTag("botnexus.agent.target_id", targetAgentId);
         activity?.SetTag("botnexus.agent.call_depth", Math.Max((ActiveCallPath.Value?.Count ?? 1) - 1, 0));
+        activity?.SetTag("botnexus.correlation.id", System.Diagnostics.Activity.Current?.TraceId.ToString());
 
         if (!string.IsNullOrWhiteSpace(targetEndpoint))
         {

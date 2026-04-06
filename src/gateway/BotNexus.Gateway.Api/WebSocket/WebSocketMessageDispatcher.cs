@@ -1,10 +1,13 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Diagnostics;
+using BotNexus.Channels.Core.Diagnostics;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -104,7 +107,7 @@ public sealed class WebSocketMessageDispatcher
             switch (message.Type)
             {
                 case "message" when message.Content is not null:
-                    await HandleUserMessageAsync(socket, connectionId, agentId, sessionId, message.Content, cancellationToken);
+                    await HandleUserMessageAsync(socket, connectionId, agentId, sessionId, message.Content, message.Type, cancellationToken);
                     break;
 
                 case "abort":
@@ -149,7 +152,12 @@ public sealed class WebSocketMessageDispatcher
         var sequencedPayloadJson = JsonSerializer.Serialize(sequencedPayload, JsonOptions);
         session.ReplayBuffer.AddStreamEvent(sequenceId, sequencedPayloadJson, replayWindow);
         session.UpdatedAt = DateTimeOffset.UtcNow;
+
+        using var saveActivity = GatewayDiagnostics.Source.StartActivity("session.save", ActivityKind.Internal);
+        saveActivity?.SetTag("botnexus.session.id", session.SessionId);
+        saveActivity?.SetTag("botnexus.agent.id", session.AgentId);
         await _sessions.SaveAsync(session, cancellationToken);
+
         return sequencedPayload;
     }
 
@@ -169,6 +177,7 @@ public sealed class WebSocketMessageDispatcher
         string agentId,
         string sessionId,
         string content,
+        string messageType,
         CancellationToken cancellationToken)
     {
         try
@@ -178,6 +187,7 @@ public sealed class WebSocketMessageDispatcher
                 sessionId,
                 connectionId,
                 content,
+                messageType,
                 cancellationToken);
         }
         catch (Exception ex)
@@ -194,6 +204,12 @@ public sealed class WebSocketMessageDispatcher
         string content,
         CancellationToken cancellationToken)
     {
+        using var activity = ChannelDiagnostics.Source.StartActivity("channel.steer", ActivityKind.Internal);
+        activity?.SetTag("botnexus.channel.type", "websocket");
+        activity?.SetTag("botnexus.message.type", "steer");
+        activity?.SetTag("botnexus.session.id", sessionId);
+        activity?.SetTag("botnexus.agent.id", agentId);
+
         var instance = _supervisor.GetInstance(agentId, sessionId);
         if (instance is null)
         {
@@ -231,6 +247,9 @@ public sealed class WebSocketMessageDispatcher
         int replayWindow,
         CancellationToken cancellationToken)
     {
+        using var getActivity = GatewayDiagnostics.Source.StartActivity("session.get", ActivityKind.Internal);
+        getActivity?.SetTag("botnexus.session.id", sessionKey);
+
         var session = await _sessions.GetAsync(sessionKey, cancellationToken);
         if (session is null || !string.Equals(session.AgentId, agentId, StringComparison.OrdinalIgnoreCase))
         {
@@ -271,6 +290,10 @@ public sealed class WebSocketMessageDispatcher
         string code,
         CancellationToken cancellationToken)
     {
+        using var sessionActivity = GatewayDiagnostics.Source.StartActivity("session.get_or_create", ActivityKind.Internal);
+        sessionActivity?.SetTag("botnexus.session.id", sessionId);
+        sessionActivity?.SetTag("botnexus.agent.id", agentId);
+
         var session = await _sessions.GetOrCreateAsync(sessionId, agentId, cancellationToken);
         await SendSequencedJsonAsync(
             session,

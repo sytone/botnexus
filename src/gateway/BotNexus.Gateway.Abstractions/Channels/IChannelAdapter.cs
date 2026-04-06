@@ -128,5 +128,6 @@ public interface IGatewayWebSocketChannelAdapter : IChannelAdapter, IStreamEvent
         string sessionId,
         string senderId,
         string content,
-        CancellationToken cancellationToken);
+        string messageType = "message",
+        CancellationToken cancellationToken = default);
 }

@@ -169,6 +169,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
         using var activity = GatewayDiagnostics.Source.StartActivity("gateway.dispatch", ActivityKind.Server);
         activity?.SetTag("botnexus.channel.type", message.ChannelType);
         activity?.SetTag("botnexus.session.id", message.SessionId);
+        activity?.SetTag("botnexus.correlation.id", System.Diagnostics.Activity.Current?.TraceId.ToString());
 
         await _activity.PublishAsync(new GatewayActivity
         {
@@ -191,7 +192,11 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
             using var agentActivity = GatewayDiagnostics.Source.StartActivity("gateway.agent_process", ActivityKind.Internal);
             agentActivity?.SetTag("botnexus.agent.id", agentId);
             agentActivity?.SetTag("botnexus.session.id", sessionId);
+            agentActivity?.SetTag("botnexus.correlation.id", System.Diagnostics.Activity.Current?.TraceId.ToString());
 
+            using var getOrCreateActivity = GatewayDiagnostics.Source.StartActivity("session.get_or_create", ActivityKind.Internal);
+            getOrCreateActivity?.SetTag("botnexus.session.id", sessionId);
+            getOrCreateActivity?.SetTag("botnexus.agent.id", agentId);
             var session = await _sessions.GetOrCreateAsync(sessionId, agentId, cancellationToken);
             if (session.Status != SessionStatus.Active)
             {
@@ -259,7 +264,12 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
                 }
 
                 if (!sessionSaved)
+                {
+                    using var saveActivity = GatewayDiagnostics.Source.StartActivity("session.save", ActivityKind.Internal);
+                    saveActivity?.SetTag("botnexus.session.id", session.SessionId);
+                    saveActivity?.SetTag("botnexus.agent.id", session.AgentId);
                     await _sessions.SaveAsync(session, cancellationToken);
+                }
 
                 await _activity.PublishAsync(new GatewayActivity
                 {
@@ -384,6 +394,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
     {
         if (string.IsNullOrWhiteSpace(message.SessionId))
             return;
+
+        using var sessionActivity = GatewayDiagnostics.Source.StartActivity("session.get", ActivityKind.Internal);
+        sessionActivity?.SetTag("botnexus.session.id", message.SessionId);
 
         var session = await _sessions.GetAsync(message.SessionId, cancellationToken);
         if (session?.Status is not SessionStatus.Closed)

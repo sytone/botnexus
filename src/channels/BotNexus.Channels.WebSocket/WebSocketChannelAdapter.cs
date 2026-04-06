@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net.WebSockets;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using BotNexus.Channels.Core.Diagnostics;
 using BotNexus.Channels.Core;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
@@ -68,8 +70,21 @@ public sealed class WebSocketChannelAdapter(ILogger<WebSocketChannelAdapter> log
         string sessionId,
         string senderId,
         string content,
-        CancellationToken cancellationToken)
+        string messageType = "message",
+        CancellationToken cancellationToken = default)
     {
+        using var activity = ChannelDiagnostics.Source.StartActivity("channel.receive", ActivityKind.Server);
+        activity?.SetTag("botnexus.channel.type", ChannelType);
+        activity?.SetTag("botnexus.message.type", messageType);
+        activity?.SetTag("botnexus.session.id", sessionId);
+
+        using var steerActivity = string.Equals(messageType, "steer", StringComparison.OrdinalIgnoreCase)
+            ? ChannelDiagnostics.Source.StartActivity("channel.steer", ActivityKind.Internal)
+            : null;
+        steerActivity?.SetTag("botnexus.channel.type", ChannelType);
+        steerActivity?.SetTag("botnexus.message.type", messageType);
+        steerActivity?.SetTag("botnexus.session.id", sessionId);
+
         await DispatchInboundAsync(new InboundMessage
         {
             ChannelType = ChannelType,
@@ -77,7 +92,11 @@ public sealed class WebSocketChannelAdapter(ILogger<WebSocketChannelAdapter> log
             ConversationId = sessionId,
             SessionId = sessionId,
             TargetAgentId = agentId,
-            Content = content
+            Content = content,
+            Metadata = new Dictionary<string, object?>
+            {
+                ["messageType"] = messageType
+            }
         }, cancellationToken);
     }
 
@@ -90,13 +109,26 @@ public sealed class WebSocketChannelAdapter(ILogger<WebSocketChannelAdapter> log
                 delta = message.Content,
                 sessionId = message.SessionId
             },
+            "content_delta",
             cancellationToken);
 
     public override Task SendStreamDeltaAsync(string conversationId, string delta, CancellationToken cancellationToken = default)
-        => SendPayloadAsync(conversationId, new { type = "content_delta", delta }, cancellationToken);
+        => SendPayloadAsync(conversationId, new { type = "content_delta", delta }, "content_delta", cancellationToken);
 
     public Task SendStreamEventAsync(string conversationId, AgentStreamEvent streamEvent, CancellationToken cancellationToken = default)
     {
+        var messageType = streamEvent.Type switch
+        {
+            AgentStreamEventType.MessageStart => "message_start",
+            AgentStreamEventType.ThinkingDelta => "thinking_delta",
+            AgentStreamEventType.ContentDelta => "content_delta",
+            AgentStreamEventType.ToolStart => "tool_start",
+            AgentStreamEventType.ToolEnd => "tool_end",
+            AgentStreamEventType.MessageEnd => "message_end",
+            AgentStreamEventType.Error => "error",
+            _ => "unknown"
+        };
+
         object payload = streamEvent.Type switch
         {
             AgentStreamEventType.MessageStart => new { type = "message_start", messageId = streamEvent.MessageId },
@@ -109,11 +141,16 @@ public sealed class WebSocketChannelAdapter(ILogger<WebSocketChannelAdapter> log
             _ => new { type = "unknown" }
         };
 
-        return SendPayloadAsync(conversationId, payload, cancellationToken);
+        return SendPayloadAsync(conversationId, payload, messageType, cancellationToken);
     }
 
-    private async Task SendPayloadAsync(string conversationId, object payload, CancellationToken cancellationToken)
+    private async Task SendPayloadAsync(string conversationId, object payload, string messageType, CancellationToken cancellationToken)
     {
+        using var activity = ChannelDiagnostics.Source.StartActivity("channel.send", ActivityKind.Client);
+        activity?.SetTag("botnexus.channel.type", ChannelType);
+        activity?.SetTag("botnexus.message.type", messageType);
+        activity?.SetTag("botnexus.session.id", conversationId);
+
         if (!_connections.TryGetValue(conversationId, out var registration))
         {
             Logger.LogDebug("No active WebSocket connection for session '{SessionId}'", conversationId);

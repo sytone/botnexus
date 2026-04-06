@@ -1048,6 +1048,11 @@ Result: Phase 3 blockers cleared, build clean, READY FOR RELEASE.
 - Added AgentDiagnostics (BotNexus.Agents) and instrumented in-process agent execution paths (agent.prompt, agent.stream) plus cross/sub-agent handoff spans in DefaultAgentCommunicator (agent.cross_call) with call-depth tagging.
 - Added OpenTelemetry.Api package references to both BotNexus.Gateway and BotNexus.AgentCore; solution build + gateway tests remained green (438/438).
 
+### 2026-04-06 — OTel Wave 3 channel + session spans
+- Added `ChannelDiagnostics` (`BotNexus.Channels`) in Channels.Core and instrumented channel lifecycle (`channel.start`, `channel.stop`) plus WebSocket inbound/outbound operations (`channel.receive`, `channel.send`) with `botnexus.channel.type` and `botnexus.message.type` tags.
+- Added steering trace coverage (`channel.steer`) in WebSocket message dispatch path and threaded WebSocket message type into channel inbound dispatch for consistent semantic attributes.
+- Added session operation spans (`session.get`, `session.get_or_create`, `session.save`, `session.delete`, `session.list`) across in-memory/file/SQLite session stores and gateway runtime call sites, all using `botnexus.*` tags.
+- Added OpenTelemetry.Api to `BotNexus.Channels.Core`; solution build and gateway tests pass after instrumentation (444/444).
 
 
 

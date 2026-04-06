@@ -38,6 +38,7 @@ public sealed class DefaultMessageRouter : IMessageRouter
     {
         using var activity = GatewayDiagnostics.Source.StartActivity("gateway.route", ActivityKind.Internal);
         activity?.SetTag("botnexus.channel.type", message.ChannelType);
+        activity?.SetTag("botnexus.correlation.id", System.Diagnostics.Activity.Current?.TraceId.ToString());
 
         IReadOnlyList<string> Complete(IReadOnlyList<string> targets)
         {
@@ -58,6 +59,8 @@ public sealed class DefaultMessageRouter : IMessageRouter
         // Priority 2: Session-bound agent
         if (!string.IsNullOrEmpty(message.SessionId))
         {
+            using var sessionActivity = GatewayDiagnostics.Source.StartActivity("session.get", ActivityKind.Internal);
+            sessionActivity?.SetTag("botnexus.session.id", message.SessionId);
             var session = await _sessions.GetAsync(message.SessionId, cancellationToken);
             if (session is not null && _registry.Contains(session.AgentId))
                 return Complete([session.AgentId]);

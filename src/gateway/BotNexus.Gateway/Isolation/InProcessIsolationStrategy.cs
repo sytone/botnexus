@@ -127,6 +127,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable
         using var activity = AgentDiagnostics.Source.StartActivity("agent.prompt", ActivityKind.Internal);
         activity?.SetTag("botnexus.agent.id", AgentId);
         activity?.SetTag("botnexus.session.id", SessionId);
+        activity?.SetTag("botnexus.correlation.id", System.Diagnostics.Activity.Current?.TraceId.ToString());
         try
         {
             var messages = await _agent.PromptAsync(message, cancellationToken);
@@ -157,6 +158,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable
         using var activity = AgentDiagnostics.Source.StartActivity("agent.stream", ActivityKind.Internal);
         activity?.SetTag("botnexus.agent.id", AgentId);
         activity?.SetTag("botnexus.session.id", SessionId);
+        activity?.SetTag("botnexus.correlation.id", System.Diagnostics.Activity.Current?.TraceId.ToString());
 
         var messageId = Guid.NewGuid().ToString("N");
         var events = System.Threading.Channels.Channel.CreateUnbounded<AgentStreamEvent>();

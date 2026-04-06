@@ -27,6 +27,7 @@
   <ItemGroup>
     <ProjectReference Include="..\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway\BotNexus.Gateway.csproj" />
+    <ProjectReference Include="..\..\channels\BotNexus.Channels.Core\BotNexus.Channels.Core.csproj" />
     <ProjectReference Include="..\..\providers\BotNexus.Providers.Anthropic\BotNexus.Providers.Anthropic.csproj" />
     <ProjectReference Include="..\..\providers\BotNexus.Providers.OpenAI\BotNexus.Providers.OpenAI.csproj" />
     <ProjectReference Include="..\..\providers\BotNexus.Providers.OpenAICompat\BotNexus.Providers.OpenAICompat.csproj" />

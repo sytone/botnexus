@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Diagnostics;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.Extensions.Logging;
@@ -25,6 +26,7 @@ namespace BotNexus.Gateway.Sessions;
 /// </remarks>
 public sealed class FileSessionStore : ISessionStore
 {
+    private static readonly ActivitySource ActivitySource = new("BotNexus.Gateway");
     private readonly string _storePath;
     private readonly SemaphoreSlim _lock = new(1, 1);
     private readonly Dictionary<string, GatewaySession> _cache = [];
@@ -45,6 +47,9 @@ public sealed class FileSessionStore : ISessionStore
     /// <inheritdoc />
     public async Task<GatewaySession?> GetAsync(string sessionId, CancellationToken cancellationToken = default)
     {
+        using var activity = ActivitySource.StartActivity("session.get", ActivityKind.Internal);
+        activity?.SetTag("botnexus.session.id", sessionId);
+
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -59,6 +64,10 @@ public sealed class FileSessionStore : ISessionStore
     /// <inheritdoc />
     public async Task<GatewaySession> GetOrCreateAsync(string sessionId, string agentId, CancellationToken cancellationToken = default)
     {
+        using var activity = ActivitySource.StartActivity("session.get_or_create", ActivityKind.Internal);
+        activity?.SetTag("botnexus.session.id", sessionId);
+        activity?.SetTag("botnexus.agent.id", agentId);
+
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -82,6 +91,10 @@ public sealed class FileSessionStore : ISessionStore
     /// <inheritdoc />
     public async Task SaveAsync(GatewaySession session, CancellationToken cancellationToken = default)
     {
+        using var activity = ActivitySource.StartActivity("session.save", ActivityKind.Internal);
+        activity?.SetTag("botnexus.session.id", session.SessionId);
+        activity?.SetTag("botnexus.agent.id", session.AgentId);
+
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -94,6 +107,9 @@ public sealed class FileSessionStore : ISessionStore
     /// <inheritdoc />
     public async Task DeleteAsync(string sessionId, CancellationToken cancellationToken = default)
     {
+        using var activity = ActivitySource.StartActivity("session.delete", ActivityKind.Internal);
+        activity?.SetTag("botnexus.session.id", sessionId);
+
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -109,6 +125,9 @@ public sealed class FileSessionStore : ISessionStore
     /// <inheritdoc />
     public async Task<IReadOnlyList<GatewaySession>> ListAsync(string? agentId = null, CancellationToken cancellationToken = default)
     {
+        using var activity = ActivitySource.StartActivity("session.list", ActivityKind.Internal);
+        activity?.SetTag("botnexus.agent.id", agentId);
+
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {

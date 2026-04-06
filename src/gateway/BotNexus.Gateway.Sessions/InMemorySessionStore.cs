@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 
@@ -9,18 +10,24 @@ namespace BotNexus.Gateway.Sessions;
 /// </summary>
 public sealed class InMemorySessionStore : ISessionStore
 {
+    private static readonly ActivitySource ActivitySource = new("BotNexus.Gateway");
     private readonly Dictionary<string, GatewaySession> _sessions = [];
     private readonly Lock _sync = new();
 
     /// <inheritdoc />
     public Task<GatewaySession?> GetAsync(string sessionId, CancellationToken cancellationToken = default)
     {
+        using var activity = ActivitySource.StartActivity("session.get", ActivityKind.Internal);
+        activity?.SetTag("botnexus.session.id", sessionId);
         lock (_sync) return Task.FromResult(_sessions.GetValueOrDefault(sessionId));
     }
 
     /// <inheritdoc />
     public Task<GatewaySession> GetOrCreateAsync(string sessionId, string agentId, CancellationToken cancellationToken = default)
     {
+        using var activity = ActivitySource.StartActivity("session.get_or_create", ActivityKind.Internal);
+        activity?.SetTag("botnexus.session.id", sessionId);
+        activity?.SetTag("botnexus.agent.id", agentId);
         lock (_sync)
         {
             if (_sessions.TryGetValue(sessionId, out var existing))
@@ -35,6 +42,9 @@ public sealed class InMemorySessionStore : ISessionStore
     /// <inheritdoc />
     public Task SaveAsync(GatewaySession session, CancellationToken cancellationToken = default)
     {
+        using var activity = ActivitySource.StartActivity("session.save", ActivityKind.Internal);
+        activity?.SetTag("botnexus.session.id", session.SessionId);
+        activity?.SetTag("botnexus.agent.id", session.AgentId);
         lock (_sync) _sessions[session.SessionId] = session;
         return Task.CompletedTask;
     }
@@ -42,6 +52,8 @@ public sealed class InMemorySessionStore : ISessionStore
     /// <inheritdoc />
     public Task DeleteAsync(string sessionId, CancellationToken cancellationToken = default)
     {
+        using var activity = ActivitySource.StartActivity("session.delete", ActivityKind.Internal);
+        activity?.SetTag("botnexus.session.id", sessionId);
         lock (_sync) _sessions.Remove(sessionId);
         return Task.CompletedTask;
     }
