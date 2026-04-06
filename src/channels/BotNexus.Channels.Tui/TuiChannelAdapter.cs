@@ -8,15 +8,11 @@ namespace BotNexus.Channels.Tui;
 /// <summary>
 /// Terminal UI channel adapter for local console I/O.
 /// </summary>
-/// <remarks>
-/// Phase 2 stub: this implementation only tracks lifecycle state and writes outbound
-/// content to <see cref="Console.Out"/>. A full implementation would run a background
-/// input loop, translate console input into <see cref="InboundMessage"/> instances,
-/// and dispatch them through the registered <see cref="IChannelDispatcher"/>.
-/// </remarks>
 public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger) : ChannelAdapterBase(logger)
 {
     private readonly ILogger<TuiChannelAdapter> _logger = logger;
+    private CancellationTokenSource? _inputLoopCancellation;
+    private Task? _inputLoopTask;
 
     /// <summary>
     /// Gets the channel type identifier.
@@ -43,16 +39,32 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger) : Chann
     protected override Task OnStartAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        _logger.LogInformation("{DisplayName} channel adapter stub started", DisplayName);
+        _inputLoopCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _inputLoopTask = Task.Run(() => RunInputLoopAsync(_inputLoopCancellation.Token), CancellationToken.None);
+        _logger.LogInformation("{DisplayName} channel adapter started", DisplayName);
         return Task.CompletedTask;
     }
 
     /// <inheritdoc />
-    protected override Task OnStopAsync(CancellationToken cancellationToken)
+    protected override async Task OnStopAsync(CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        _logger.LogInformation("{DisplayName} channel adapter stub stopped", DisplayName);
-        return Task.CompletedTask;
+        _inputLoopCancellation?.Cancel();
+        if (_inputLoopTask is not null)
+        {
+            try
+            {
+                await _inputLoopTask;
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected during shutdown.
+            }
+        }
+
+        _inputLoopCancellation?.Dispose();
+        _inputLoopCancellation = null;
+        _inputLoopTask = null;
+        _logger.LogInformation("{DisplayName} channel adapter stopped", DisplayName);
     }
 
     /// <summary>
@@ -61,10 +73,6 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger) : Chann
     /// <param name="message">Outbound message to render.</param>
     /// <param name="cancellationToken">Cancellation token for send operations.</param>
     /// <returns>A task that completes when the message has been written.</returns>
-    /// <remarks>
-    /// Phase 2 stub: writes directly to stdout. A full implementation would route output
-    /// through structured terminal rendering components.
-    /// </remarks>
     public override Task SendAsync(OutboundMessage message, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -84,9 +92,6 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger) : Chann
     /// <param name="delta">Streaming text delta.</param>
     /// <param name="cancellationToken">Cancellation token for send operations.</param>
     /// <returns>A task that completes when the delta has been written.</returns>
-    /// <remarks>
-    /// Phase 2 stub: writes deltas directly to stdout for quick validation of streaming paths.
-    /// </remarks>
     public override Task SendStreamDeltaAsync(string conversationId, string delta, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -97,5 +102,50 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger) : Chann
         }
 
         return Console.Out.WriteAsync(delta);
+    }
+
+    private async Task RunInputLoopAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            string? line;
+            try
+            {
+                line = await Console.In.ReadLineAsync(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
+            if (line is null)
+                continue;
+
+            var trimmed = line.Trim();
+            if (string.Equals(trimmed, "/quit", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation("{DisplayName} input loop received /quit", DisplayName);
+                _inputLoopCancellation?.Cancel();
+                break;
+            }
+
+            if (string.Equals(trimmed, "/clear", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.Clear();
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(trimmed))
+                continue;
+
+            await DispatchInboundAsync(new InboundMessage
+            {
+                ChannelType = ChannelType,
+                SenderId = Environment.UserName,
+                ConversationId = "console",
+                SessionId = "tui-console",
+                Content = line
+            }, cancellationToken);
+        }
     }
 }

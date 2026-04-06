@@ -833,3 +833,9 @@ Result: Phase 3 blockers cleared, build clean, READY FOR RELEASE.
 - `DefaultAgentSupervisor` now enforces `MaxConcurrentSessions` (0 = unlimited) and throws `AgentConcurrencyLimitExceededException` for capacity breaches; `ChatController` maps that to HTTP 429.
 - Isolation strategy validation now surfaces descriptor-level errors before strategy creation and reports available strategy names for fast operator diagnosis.
 - `GatewayWebSocketHandler` now enforces one active socket per session and rejects duplicate `?session=` connections with close code 4409.
+
+### 2026-04-06 — WebSocket channel pipeline + activity stream
+- Added `BotNexus.Channels.WebSocket` with `WebSocketChannelAdapter : ChannelAdapterBase` and registered it in `AddBotNexusGateway`; inbound `/ws` `message` frames now dispatch through `GatewayHost.DispatchAsync` as `InboundMessage` (`ChannelType=websocket`, `TargetAgentId` pinned from query).
+- Introduced optional `IStreamEventChannelAdapter` contract in gateway abstractions and updated `GatewayHost` to forward full `AgentStreamEvent` payloads when supported, preserving WebSocket protocol events (`message_start`, `thinking_delta`, `tool_*`, `message_end`, `error`) without changing other channels.
+- Added dedicated `/ws/activity` endpoint (`ActivityWebSocketHandler`) for `IActivityBroadcaster` subscriptions with optional `?agent=` filtering; suitable for dashboards and runtime debugging.
+- Upgraded TUI channel lifecycle with cancellable console input loop (`/clear`, `/quit`, background dispatch to gateway pipeline) so local runtime sessions can now ingest user input.
