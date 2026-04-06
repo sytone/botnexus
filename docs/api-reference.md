@@ -46,6 +46,47 @@ GET /api/agents?apiKey=your-api-key-here
 
 **Exemptions:** `/health`, `/webui`, and `/swagger` are exempt from authentication.
 
+### Request & Response Headers
+
+#### Correlation ID (`X-Correlation-Id`)
+
+Every request/response carries a correlation identifier for end-to-end tracing:
+
+- **Request:** Optionally include `X-Correlation-Id` to propagate your own trace ID.
+- **Response:** The header is always returned. If not provided on the request, the server generates a new UUID.
+
+```http
+GET /api/agents
+X-Api-Key: your-api-key
+X-Correlation-Id: my-trace-id-123
+```
+
+Use this header to correlate client requests with server-side logs.
+
+#### Rate Limiting
+
+HTTP REST requests are rate-limited per client (authenticated caller ID or IP address). Default: **60 requests per 60-second window** (configurable via `gateway.rateLimit` in `config.json`).
+
+When the limit is exceeded, the server returns:
+
+| Status | Header | Description |
+|--------|--------|-------------|
+| `429 Too Many Requests` | `Retry-After` | Seconds until the current window resets |
+
+The `/health` endpoint is exempt from rate limiting.
+
+**Configuration:**
+```json
+{
+  "gateway": {
+    "rateLimit": {
+      "requestsPerMinute": 60,
+      "windowSeconds": 60
+    }
+  }
+}
+```
+
 ### CORS
 
 Cross-Origin Resource Sharing is environment-aware:
@@ -798,6 +839,64 @@ X-Api-Key: your-api-key
 
 ---
 
+### Get Session Metadata
+
+**Endpoint:** `GET /api/sessions/{sessionId}/metadata`
+
+**Description:** Retrieve metadata key-value pairs for a session.
+
+**Parameters:**
+- `sessionId` (string, path) — Session ID
+
+**Request:**
+```http
+GET /api/sessions/session-abc123/metadata
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK
+```json
+{
+  "environment": "production",
+  "userId": "user-42",
+  "customTag": "priority"
+}
+```
+
+**Error Responses:**
+- `404 Not Found` — Session does not exist
+
+---
+
+### Patch Session Metadata
+
+**Endpoint:** `PATCH /api/sessions/{sessionId}/metadata`
+
+**Description:** Merge metadata entries into a session. Keys with `null` values are removed.
+
+**Parameters:**
+- `sessionId` (string, path) — Session ID
+
+**Request:**
+```http
+PATCH /api/sessions/session-abc123/metadata
+X-Api-Key: your-api-key
+Content-Type: application/json
+
+{
+  "environment": "staging",
+  "customTag": null
+}
+```
+
+**Response:** 200 OK — Returns the updated metadata dictionary.
+
+**Error Responses:**
+- `400 Bad Request` — Request body is not a JSON object
+- `404 Not Found` — Session does not exist
+
+---
+
 ### Delete Session
 
 **Endpoint:** `DELETE /api/sessions/{sessionId}`
@@ -1001,7 +1100,7 @@ All error responses follow a standard format:
 | 401 | Unauthorized (missing/invalid API key) |
 | 404 | Not Found |
 | 409 | Conflict (duplicate name, state mismatch) |
-| 429 | Too Many Requests (agent concurrency limit exceeded) |
+| 429 | Too Many Requests (rate limit exceeded or agent concurrency limit) |
 | 500 | Internal Server Error |
 
 ### Error Codes
@@ -1014,6 +1113,7 @@ All error responses follow a standard format:
 | SESSION_NOT_FOUND | 404 | Session does not exist |
 | UNAUTHORIZED | 401 | Invalid or missing API key |
 | CONCURRENCY_LIMIT | 429 | Agent concurrency limit exceeded |
+| RATE_LIMITED | 429 | Per-client request rate limit exceeded |
 | STATE_CONFLICT | 409 | Invalid state transition (e.g., suspend non-active session) |
 | INTERNAL_ERROR | 500 | Server error |
 

@@ -52,6 +52,8 @@ All REST endpoints are in the `/api/` path and require authentication (if config
 | `GET` | `/api/sessions` | List sessions (optionally filtered by `?agentId=...`) |
 | `GET` | `/api/sessions/{sessionId}` | Get a specific session |
 | `GET` | `/api/sessions/{sessionId}/history` | Get paginated session history (offset/limit) |
+| `GET` | `/api/sessions/{sessionId}/metadata` | Get session metadata key-value pairs |
+| `PATCH` | `/api/sessions/{sessionId}/metadata` | Merge metadata entries (null removes keys) |
 | `DELETE` | `/api/sessions/{sessionId}` | Delete a session |
 | `PATCH` | `/api/sessions/{sessionId}/suspend` | Suspend a session |
 | `PATCH` | `/api/sessions/{sessionId}/resume` | Resume a suspended session |
@@ -113,6 +115,23 @@ Failures return 401 (unauthenticated) or 403 (unauthorized). The middleware also
 
 Development mode allows any origin. Production mode restricts to origins configured in `config.json` (default: `http://localhost:5005`).
 
+### Rate Limiting (`RateLimitingMiddleware`)
+
+Applies per-client request rate limiting to all HTTP requests (except `/health`). Clients are identified by authenticated caller ID or IP address.
+
+- **Default:** 60 requests per 60-second window (configurable via `gateway.rateLimit` in `config.json`)
+- **Exceeded:** Returns `429 Too Many Requests` with a `Retry-After` header
+- **Skips:** `/health` endpoint
+
+### Correlation ID (`CorrelationIdMiddleware`)
+
+Adds an `X-Correlation-Id` header to every request/response for end-to-end tracing:
+
+- Accepts an existing `X-Correlation-Id` from the request
+- Generates a new UUID if none is provided
+- Returns the correlation ID in the response header
+- Stores it in `HttpContext.Items["CorrelationId"]` for downstream middleware and controllers
+
 ## Key Types
 
 ### Controllers
@@ -142,6 +161,8 @@ Development mode allows any origin. Production mode restricts to origins configu
 | Type | Namespace | Description |
 |------|-----------|-------------|
 | `GatewayAuthMiddleware` | - | ASP.NET Core middleware for authentication and authorization |
+| `RateLimitingMiddleware` | - | Per-client HTTP request rate limiting (429 + Retry-After) |
+| `CorrelationIdMiddleware` | - | Adds X-Correlation-Id header for end-to-end request tracing |
 | `ActivityWebSocketHandler` | WebSocket | Handles WebSocket connections for activity stream and chat |
 
 ## Development

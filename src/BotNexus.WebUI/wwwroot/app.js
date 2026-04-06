@@ -1446,7 +1446,7 @@
         if (ch.supportsStreaming) caps.push('<span class="channel-cap" title="Streaming">⚡</span>');
         if (ch.supportsSteering) caps.push('<span class="channel-cap" title="Steering">🎯</span>');
         if (ch.supportsFollowUp) caps.push('<span class="channel-cap" title="Follow-up">🔄</span>');
-        if (ch.supportsThinking) caps.push('<span class="channel-cap" title="Thinking">💭</span>');
+        if (ch.supportsThinkingDisplay) caps.push('<span class="channel-cap" title="Thinking">💭</span>');
         if (ch.supportsToolDisplay) caps.push('<span class="channel-cap" title="Tools">🔧</span>');
         return caps.join('');
     }

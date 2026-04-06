@@ -182,6 +182,7 @@ The Gateway reads from `~/.botnexus/config.json`. Configure via nested `gateway`
 
 ```json
 {
+  "version": 1,
   "gateway": {
     "listenUrl": "http://localhost:5005",
     "defaultAgentId": "assistant",
@@ -861,6 +862,8 @@ src/gateway/
 ├── BotNexus.Gateway.Api/
 │   ├── Program.cs                     # Swagger/OpenAPI setup
 │   ├── GatewayAuthMiddleware.cs       # Auth pipeline middleware
+│   ├── RateLimitingMiddleware.cs      # Per-client rate limiting (429)
+│   ├── CorrelationIdMiddleware.cs     # X-Correlation-Id tracing
 │   ├── Controllers/
 │   │   ├── ChatController.cs          # 429 handling for concurrency limits
 │   │   ├── AgentsController.cs

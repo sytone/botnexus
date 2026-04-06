@@ -146,6 +146,7 @@ services.AddSingleton(botNexusConfig);
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
+| `Version` | int | `1` | Configuration schema version for forward compatibility |
 | `ExtensionsPath` | string | `~/.botnexus/extensions` | Path to extension discovery folder (dynamic loading) |
 | `Extensions` | ExtensionLoadingConfig | — | Extension loader behavior (signing, max assemblies) |
 | `Agents` | AgentDefaults | — | Agent defaults and named agent configurations |
@@ -650,6 +651,8 @@ WebSocket gateway server settings.
 | `BroadcastWhenAgentUnspecified` | bool | false | If true, route to all agents when agent not specified |
 | `Heartbeat.Enabled` | bool | true | Enable heartbeat/keepalive messages |
 | `Heartbeat.IntervalSeconds` | int | 1800 | Heartbeat interval (30 minutes) |
+| `RateLimit.RequestsPerMinute` | int | 60 | Maximum requests per client per window |
+| `RateLimit.WindowSeconds` | int | 60 | Window size in seconds for request counting |
 
 **API Key Authentication:**
 If `ApiKey` is set, clients must include it in WebSocket headers or REST requests:
