@@ -1,0 +1,23 @@
+{
+  "gateway": {
+    "listenUrl": "http://localhost:5005",
+    "defaultAgentId": "assistant",
+    "sessionsDirectory": "workspace\\sessions"
+  },
+  "agents": {
+    "assistant": {
+      "provider": "copilot",
+      "model": "gpt-4.1",
+      "systemPromptFile": "prompts\\assistant.txt",
+      "isolationStrategy": "in-process",
+      "enabled": true
+    }
+  },
+  "providers": {
+    "copilot": {
+      "apiKey": "copilot",
+      "baseUrl": "https://api.githubcopilot.com",
+      "defaultModel": "gpt-4.1"
+    }
+  }
+}

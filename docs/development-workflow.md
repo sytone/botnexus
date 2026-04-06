@@ -14,58 +14,56 @@ Quick reference for building, testing, and deploying BotNexus during development
 
 ## Dev-Loop Script
 
-The `scripts/dev-loop.ps1` script automates the full build-pack-install cycle for rapid development iteration.
+The `scripts/dev-loop.ps1` script automates build + test + Gateway startup for rapid local development.
 
 ### Usage
 
 ```powershell
-# Use default install path (~/.botnexus/extensions)
+# Build + test + start gateway on default port 5005
 .\scripts\dev-loop.ps1
 
-# Use custom install path
-.\scripts\dev-loop.ps1 -InstallPath "C:\MyPath\botnexus"
+# Use a custom port
+.\scripts\dev-loop.ps1 -Port 5100
+
+# Watch source changes and restart gateway automatically
+.\scripts\dev-loop.ps1 -Watch
 ```
 
 ### What It Does
 
-**5-Step Build-Pack-Install Cycle:**
+**3-Step Development Loop:**
 
-1. **[1/5] Stop Gateway** — Kills the running BotNexus.Gateway process by PID (if running)
-2. **[2/5] Pack Components** — Runs `pack.ps1` to build and pack all components
-3. **[3/5] Install CLI Tool** — Uninstalls and reinstalls the `botnexus` CLI tool globally
-4. **[4/5] Install Packages** — Runs `install.ps1` to copy extensions to the specified install path
-5. **[5/5] Start Gateway** — Starts the BotNexus.Gateway process in the background
+1. **Build solution** — runs `dotnet build BotNexus.slnx`
+2. **Run Gateway tests** — runs `dotnet test tests/BotNexus.Gateway.Tests`
+3. **Start Gateway** — runs `scripts/start-gateway.ps1` (or `dotnet watch ... run` with `-Watch`)
 
 ### Output
 
 ```
-🔄 [1/5] Stopping Gateway...
-✅ Gateway stopped (PID 12345)
-🔄 [2/5] Packing components...
-✅ Packed successfully
-🔄 [3/5] Installing CLI tool...
-✅ CLI tool installed
-🔄 [4/5] Installing packages to C:\Users\user\.botnexus\extensions...
-✅ Packages installed
-🔄 [5/5] Starting Gateway...
-✅ Gateway started (PID 98765)
+🔧 Building full solution...
+✅ Build succeeded
+🧪 Running Gateway tests...
+✅ Tests passed
+🚀 Starting Gateway API
+   URL: http://localhost:5005
+   WebUI: http://localhost:5005/webui
 
-Total time: 2m 34s
-✅ Done! Gateway running at http://localhost:18790
+Press Ctrl+C to stop.
 ```
 
 ### Configuration
 
-- **Dev Version:** Fixed at `0.0.0-dev` (override with `BOTNEXUS_VERSION` env var)
-- **Install Path:** Default `~/.botnexus/extensions` (configurable via `-InstallPath`)
-- **Gateway**: Started as a detached background process
+- **Port:** Defaults to `5005`, configurable via `-Port`
+- **Environment:** Sets `ASPNETCORE_ENVIRONMENT=Development`
+- **Gateway URL:** Sets `ASPNETCORE_URLS=http://localhost:<port>`
 
 ### Environment Variables
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `BOTNEXUS_VERSION` | Override dev version | `0.0.0-dev` |
 | `BOTNEXUS_HOME` | BotNexus home directory | `~/.botnexus` |
+| `ASPNETCORE_ENVIRONMENT` | ASP.NET environment | `Development` (set by script) |
+| `ASPNETCORE_URLS` | Gateway listen URL | `http://localhost:5005` (set by script) |
 
 ---
 
@@ -95,7 +93,7 @@ dotnet test BotNexus.slnx
 
 **5. Start the Gateway:**
 ```powershell
-dotnet run --project src/BotNexus.Gateway
+dotnet run --project src\gateway\BotNexus.Gateway.Api\BotNexus.Gateway.Api.csproj
 ```
 
 ### Using dev-loop.ps1 (Recommended)
