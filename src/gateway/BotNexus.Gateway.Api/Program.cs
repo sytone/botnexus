@@ -45,8 +45,9 @@ builder.Services.AddCors(options =>
             ? configuredOrigins
             : ["http://localhost:5005"];
 
+        // Production CORS is intentionally scoped to explicit verbs for least-privilege API exposure.
         policy.WithOrigins(allowedOrigins)
-            .AllowAnyMethod()
+            .WithMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
             .AllowAnyHeader();
     });
 });
