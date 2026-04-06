@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Diagnostics;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Agents;
@@ -30,6 +32,10 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
     /// <inheritdoc />
     public async Task<IAgentHandle> GetOrCreateAsync(string agentId, string sessionId, CancellationToken cancellationToken = default)
     {
+        using var activity = GatewayDiagnostics.Source.StartActivity("gateway.agent_lifecycle", ActivityKind.Internal);
+        activity?.SetTag("botnexus.agent.id", agentId);
+        activity?.SetTag("botnexus.session.id", sessionId);
+
         var descriptor = _registry.Get(agentId)
             ?? throw new KeyNotFoundException($"Agent '{agentId}' is not registered.");
         var key = MakeKey(agentId, sessionId);

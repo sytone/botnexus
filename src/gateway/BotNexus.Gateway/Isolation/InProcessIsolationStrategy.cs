@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using BotNexus.AgentCore;
 using BotNexus.AgentCore.Configuration;
+using BotNexus.AgentCore.Diagnostics;
 using BotNexus.AgentCore.Types;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Isolation;
@@ -122,22 +124,40 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable
     /// <inheritdoc />
     public async Task<AgentResponse> PromptAsync(string message, CancellationToken cancellationToken = default)
     {
-        var messages = await _agent.PromptAsync(message, cancellationToken);
-        var lastAssistant = messages.OfType<AssistantAgentMessage>().LastOrDefault();
-
-        return new AgentResponse
+        using var activity = AgentDiagnostics.Source.StartActivity("agent.prompt", ActivityKind.Internal);
+        activity?.SetTag("botnexus.agent.id", AgentId);
+        activity?.SetTag("botnexus.session.id", SessionId);
+        try
         {
-            Content = lastAssistant?.Content ?? string.Empty,
-            Usage = lastAssistant?.Usage is { } u ? new AgentResponseUsage(u.InputTokens, u.OutputTokens) : null,
-            ToolCalls = messages.OfType<ToolResultAgentMessage>()
-                .Select(t => new AgentToolCallInfo(t.ToolCallId, t.ToolName, t.IsError))
-                .ToList()
-        };
+            var messages = await _agent.PromptAsync(message, cancellationToken);
+            var lastAssistant = messages.OfType<AssistantAgentMessage>().LastOrDefault();
+
+            var response = new AgentResponse
+            {
+                Content = lastAssistant?.Content ?? string.Empty,
+                Usage = lastAssistant?.Usage is { } u ? new AgentResponseUsage(u.InputTokens, u.OutputTokens) : null,
+                ToolCalls = messages.OfType<ToolResultAgentMessage>()
+                    .Select(t => new AgentToolCallInfo(t.ToolCallId, t.ToolName, t.IsError))
+                    .ToList()
+            };
+
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            return response;
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            throw;
+        }
     }
 
     /// <inheritdoc />
     public async IAsyncEnumerable<AgentStreamEvent> StreamAsync(string message, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        using var activity = AgentDiagnostics.Source.StartActivity("agent.stream", ActivityKind.Internal);
+        activity?.SetTag("botnexus.agent.id", AgentId);
+        activity?.SetTag("botnexus.session.id", SessionId);
+
         var messageId = Guid.NewGuid().ToString("N");
         var events = System.Threading.Channels.Channel.CreateUnbounded<AgentStreamEvent>();
         using var promptCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -218,6 +238,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable
             }
             catch (Exception ex)
             {
+                activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
                 _logger.LogError(ex, "Agent prompt failed for '{AgentId}' session '{SessionId}'", AgentId, SessionId);
                 try
                 {
@@ -236,6 +257,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable
                 events.Writer.TryComplete(ex);
                 return;
             }
+            activity?.SetStatus(ActivityStatusCode.Ok);
             events.Writer.TryComplete();
         }
 

@@ -1042,3 +1042,12 @@ Result: Phase 3 blockers cleared, build clean, READY FOR RELEASE.
 - InProcessIsolationStrategy now injects IToolRegistry to resolve tools per agent
 - Agents get all tools by default if ToolIds is empty, or specific tools if configured
 - AgentDefinitionConfig and PlatformConfig now support ToolIds property for tool configuration
+
+### 2026-04-06 — OTel Wave 2 runtime spans (Gateway + AgentCore)
+- Added GatewayDiagnostics (BotNexus.Gateway) and instrumented GatewayHost.ProcessInboundMessageAsync (gateway.dispatch, gateway.agent_process), DefaultMessageRouter.ResolveAsync (gateway.route with routed agent count), and DefaultAgentSupervisor.GetOrCreateAsync (gateway.agent_lifecycle).
+- Added AgentDiagnostics (BotNexus.Agents) and instrumented in-process agent execution paths (agent.prompt, agent.stream) plus cross/sub-agent handoff spans in DefaultAgentCommunicator (agent.cross_call) with call-depth tagging.
+- Added OpenTelemetry.Api package references to both BotNexus.Gateway and BotNexus.AgentCore; solution build + gateway tests remained green (438/438).
+
+
+
+

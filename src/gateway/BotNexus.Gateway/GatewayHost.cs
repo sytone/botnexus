@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Threading.Channels;
 using BotNexus.Channels.Core;
 using BotNexus.Gateway.Abstractions.Activity;
@@ -7,6 +8,7 @@ using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Streaming;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -164,6 +166,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
 
     private async Task ProcessInboundMessageAsync(InboundMessage message, CancellationToken cancellationToken)
     {
+        using var activity = GatewayDiagnostics.Source.StartActivity("gateway.dispatch", ActivityKind.Server);
+        activity?.SetTag("botnexus.channel.type", message.ChannelType);
+        activity?.SetTag("botnexus.session.id", message.SessionId);
+
         await _activity.PublishAsync(new GatewayActivity
         {
             Type = GatewayActivityType.MessageReceived,
@@ -182,6 +188,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
         foreach (var agentId in targetAgents)
         {
             var sessionId = message.SessionId ?? $"{message.ChannelType}:{message.ConversationId}:{agentId}";
+            using var agentActivity = GatewayDiagnostics.Source.StartActivity("gateway.agent_process", ActivityKind.Internal);
+            agentActivity?.SetTag("botnexus.agent.id", agentId);
+            agentActivity?.SetTag("botnexus.session.id", sessionId);
+
             var session = await _sessions.GetOrCreateAsync(sessionId, agentId, cancellationToken);
             if (session.Status != SessionStatus.Active)
             {

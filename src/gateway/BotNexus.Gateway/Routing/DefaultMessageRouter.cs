@@ -1,8 +1,10 @@
+using System.Diagnostics;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -34,14 +36,23 @@ public sealed class DefaultMessageRouter : IMessageRouter
     /// <inheritdoc />
     public async Task<IReadOnlyList<string>> ResolveAsync(InboundMessage message, CancellationToken cancellationToken = default)
     {
+        using var activity = GatewayDiagnostics.Source.StartActivity("gateway.route", ActivityKind.Internal);
+        activity?.SetTag("botnexus.channel.type", message.ChannelType);
+
+        IReadOnlyList<string> Complete(IReadOnlyList<string> targets)
+        {
+            activity?.SetTag("botnexus.route.agent_count", targets.Count);
+            return targets;
+        }
+
         // Priority 1: Explicit target
         if (!string.IsNullOrEmpty(message.TargetAgentId))
         {
             if (_registry.Contains(message.TargetAgentId))
-                return [message.TargetAgentId];
+                return Complete([message.TargetAgentId]);
 
             _logger.LogWarning("Explicit target agent '{AgentId}' not found", message.TargetAgentId);
-            return [];
+            return Complete([]);
         }
 
         // Priority 2: Session-bound agent
@@ -49,15 +60,15 @@ public sealed class DefaultMessageRouter : IMessageRouter
         {
             var session = await _sessions.GetAsync(message.SessionId, cancellationToken);
             if (session is not null && _registry.Contains(session.AgentId))
-                return [session.AgentId];
+                return Complete([session.AgentId]);
         }
 
         // Priority 3: Default agent
         var defaultAgentId = _options.CurrentValue.DefaultAgentId;
         if (!string.IsNullOrWhiteSpace(defaultAgentId) && _registry.Contains(defaultAgentId))
-            return [defaultAgentId];
+            return Complete([defaultAgentId]);
 
         _logger.LogWarning("No routable agent found for message from {ChannelType}:{SenderId}", message.ChannelType, message.SenderId);
-        return [];
+        return Complete([]);
     }
 }

@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using BotNexus.AgentCore.Diagnostics;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
@@ -60,6 +62,11 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
         CancellationToken cancellationToken = default)
     {
         using var callScope = EnterCallChain(parentAgentId, childAgentId, _options.Value.MaxCallChainDepth);
+        using var activity = AgentDiagnostics.Source.StartActivity("agent.cross_call", ActivityKind.Internal);
+        activity?.SetTag("botnexus.agent.id", parentAgentId);
+        activity?.SetTag("botnexus.agent.target_id", childAgentId);
+        activity?.SetTag("botnexus.agent.call_depth", Math.Max((ActiveCallPath.Value?.Count ?? 1) - 1, 0));
+
         var childSessionId = $"{parentSessionId}::sub::{childAgentId}";
         _logger.LogInformation(
             "Sub-agent call from '{ParentAgentId}' session '{ParentSessionId}' to '{ChildAgentId}' session '{ChildSessionId}'",
@@ -92,6 +99,11 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
         CancellationToken cancellationToken = default)
     {
         using var callScope = EnterCallChain(sourceAgentId, targetAgentId, _options.Value.MaxCallChainDepth);
+        using var activity = AgentDiagnostics.Source.StartActivity("agent.cross_call", ActivityKind.Internal);
+        activity?.SetTag("botnexus.agent.id", sourceAgentId);
+        activity?.SetTag("botnexus.agent.target_id", targetAgentId);
+        activity?.SetTag("botnexus.agent.call_depth", Math.Max((ActiveCallPath.Value?.Count ?? 1) - 1, 0));
+
         if (!string.IsNullOrWhiteSpace(targetEndpoint))
         {
             throw new NotSupportedException(
