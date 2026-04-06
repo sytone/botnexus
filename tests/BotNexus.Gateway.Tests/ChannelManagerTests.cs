@@ -47,6 +47,10 @@ public sealed class ChannelManagerTests
         public string ChannelType { get; }
         public string DisplayName { get; }
         public bool SupportsStreaming => false;
+        public bool SupportsSteering => false;
+        public bool SupportsFollowUp => false;
+        public bool SupportsThinkingDisplay => false;
+        public bool SupportsToolDisplay => false;
         public bool IsRunning => true;
 
         public Task StartAsync(IChannelDispatcher dispatcher, CancellationToken cancellationToken = default) => Task.CompletedTask;

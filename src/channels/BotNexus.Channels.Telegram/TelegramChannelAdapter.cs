@@ -41,6 +41,12 @@ public sealed class TelegramChannelAdapter(
     public override bool SupportsStreaming => false;
 
     /// <inheritdoc />
+    public override bool SupportsThinkingDisplay => false;
+
+    /// <inheritdoc />
+    public override bool SupportsToolDisplay => false;
+
+    /// <inheritdoc />
     protected override Task OnStartAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();

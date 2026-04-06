@@ -30,6 +30,18 @@ public interface IChannelAdapter
     /// <summary>Whether this channel supports streaming (deltas) vs. complete messages only.</summary>
     bool SupportsStreaming { get; }
 
+    /// <summary>Whether this channel supports real-time steering inputs during a running response.</summary>
+    bool SupportsSteering { get; }
+
+    /// <summary>Whether this channel supports follow-up message controls on an existing response.</summary>
+    bool SupportsFollowUp { get; }
+
+    /// <summary>Whether this channel can render model thinking/progress output.</summary>
+    bool SupportsThinkingDisplay { get; }
+
+    /// <summary>Whether this channel can render tool call activity output.</summary>
+    bool SupportsToolDisplay { get; }
+
     /// <summary>Whether the adapter is currently running and accepting messages.</summary>
     bool IsRunning { get; }
 

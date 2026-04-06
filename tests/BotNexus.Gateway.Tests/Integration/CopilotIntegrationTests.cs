@@ -393,6 +393,10 @@ public sealed class CopilotIntegrationTests
         public virtual string ChannelType => "web";
         public virtual string DisplayName => "Integration Channel";
         public bool SupportsStreaming => supportsStreaming;
+        public bool SupportsSteering => false;
+        public bool SupportsFollowUp => false;
+        public bool SupportsThinkingDisplay => false;
+        public bool SupportsToolDisplay => false;
         public bool IsRunning => true;
 
         public List<OutboundMessage> SentMessages { get; } = [];

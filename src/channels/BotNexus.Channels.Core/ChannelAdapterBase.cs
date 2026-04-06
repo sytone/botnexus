@@ -36,6 +36,18 @@ public abstract class ChannelAdapterBase : IChannelAdapter
     public virtual bool SupportsStreaming => false;
 
     /// <inheritdoc />
+    public virtual bool SupportsSteering => false;
+
+    /// <inheritdoc />
+    public virtual bool SupportsFollowUp => false;
+
+    /// <inheritdoc />
+    public virtual bool SupportsThinkingDisplay => false;
+
+    /// <inheritdoc />
+    public virtual bool SupportsToolDisplay => false;
+
+    /// <inheritdoc />
     public bool IsRunning => _isRunning;
 
     /// <inheritdoc />

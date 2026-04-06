@@ -34,6 +34,12 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger) : Chann
     public override bool SupportsStreaming => true;
 
     /// <inheritdoc />
+    public override bool SupportsThinkingDisplay => true;
+
+    /// <inheritdoc />
+    public override bool SupportsToolDisplay => true;
+
+    /// <inheritdoc />
     protected override Task OnStartAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
