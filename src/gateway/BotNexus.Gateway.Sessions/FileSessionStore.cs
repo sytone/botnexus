@@ -146,6 +146,7 @@ public sealed class FileSessionStore : ISessionStore
             Status = meta.Status,
             ExpiresAt = meta.ExpiresAt
         };
+        session.SetStreamReplayState(meta.NextSequenceId, meta.StreamEvents);
 
         var historyPath = GetHistoryPath(sessionId);
         if (File.Exists(historyPath))
@@ -183,7 +184,9 @@ public sealed class FileSessionStore : ISessionStore
             session.CreatedAt,
             session.UpdatedAt,
             session.Status,
-            session.ExpiresAt);
+            session.ExpiresAt,
+            session.NextSequenceId,
+            [.. session.GetStreamEventSnapshot()]);
         var metaJson = JsonSerializer.Serialize(meta, JsonOptions);
         await File.WriteAllTextAsync(metaPath, metaJson, cancellationToken).ConfigureAwait(false);
     }
@@ -200,5 +203,7 @@ public sealed class FileSessionStore : ISessionStore
         DateTimeOffset CreatedAt,
         DateTimeOffset UpdatedAt,
         SessionStatus Status = SessionStatus.Active,
-        DateTimeOffset? ExpiresAt = null);
+        DateTimeOffset? ExpiresAt = null,
+        long NextSequenceId = 1,
+        List<GatewaySessionStreamEvent>? StreamEvents = null);
 }

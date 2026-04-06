@@ -14,7 +14,7 @@ namespace BotNexus.Channels.WebSocket;
 /// WebSocket channel adapter that integrates gateway WebSocket sessions with the channel pipeline.
 /// </summary>
 public sealed class WebSocketChannelAdapter(ILogger<WebSocketChannelAdapter> logger)
-    : ChannelAdapterBase(logger), IStreamEventChannelAdapter
+    : ChannelAdapterBase(logger), IGatewayWebSocketChannelAdapter
 {
     private readonly ConcurrentDictionary<string, ConnectionRegistration> _connections = new(StringComparer.OrdinalIgnoreCase);
 
@@ -47,8 +47,12 @@ public sealed class WebSocketChannelAdapter(ILogger<WebSocketChannelAdapter> log
         return Task.CompletedTask;
     }
 
-    public bool RegisterConnection(string sessionId, string connectionId, NetWebSocket socket)
-        => _connections.TryAdd(sessionId, new ConnectionRegistration(connectionId, socket));
+    public bool RegisterConnection(
+        string sessionId,
+        string connectionId,
+        NetWebSocket socket,
+        Func<object, CancellationToken, ValueTask<object>>? payloadMutator = null)
+        => _connections.TryAdd(sessionId, new ConnectionRegistration(connectionId, socket, payloadMutator));
 
     public void UnregisterConnection(string sessionId, string connectionId)
     {
@@ -120,9 +124,17 @@ public sealed class WebSocketChannelAdapter(ILogger<WebSocketChannelAdapter> log
         if (socket is null || socket.State != WebSocketState.Open)
             return;
 
+        if (registration.PayloadMutator is not null)
+        {
+            payload = await registration.PayloadMutator(payload, cancellationToken);
+        }
+
         var json = JsonSerializer.SerializeToUtf8Bytes(payload, JsonOptions);
         await socket.SendAsync(json, WebSocketMessageType.Text, true, cancellationToken);
     }
 
-    private sealed record ConnectionRegistration(string ConnectionId, NetWebSocket? Socket);
+    private sealed record ConnectionRegistration(
+        string ConnectionId,
+        NetWebSocket? Socket,
+        Func<object, CancellationToken, ValueTask<object>>? PayloadMutator);
 }

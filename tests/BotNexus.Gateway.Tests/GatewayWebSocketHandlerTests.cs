@@ -6,6 +6,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Api.WebSocket;
+using BotNexus.Gateway.Sessions;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
@@ -64,6 +65,42 @@ public sealed class GatewayWebSocketHandlerTests
         payload.RootElement.GetProperty("type").GetString().Should().Be("connected");
         payload.RootElement.GetProperty("sessionId").GetString().Should().Be("session-123");
         payload.RootElement.GetProperty("connectionId").GetString().Should().NotBeNullOrEmpty();
+        payload.RootElement.GetProperty("sequenceId").GetInt64().Should().Be(1);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WithReconnect_ReplaysMissedEventsFromSequence()
+    {
+        var store = new InMemorySessionStore();
+
+        var firstContext = new DefaultHttpContext();
+        firstContext.Request.QueryString = new QueryString("?agent=agent-a&session=session-123");
+        var firstSocket = new TestWebSocket();
+        firstSocket.QueueIncomingText("""{"type":"ping"}""");
+        firstContext.Features.Set<IHttpWebSocketFeature>(new TestWebSocketFeature { IsWebSocketRequest = true, Socket = firstSocket });
+
+        var handler = CreateHandler(sessions: store);
+        await handler.HandleAsync(firstContext, CancellationToken.None);
+
+        var reconnectContext = new DefaultHttpContext();
+        reconnectContext.Request.QueryString = new QueryString("?agent=agent-a&session=session-123");
+        var reconnectSocket = new TestWebSocket();
+        reconnectSocket.QueueIncomingText("""{"type":"reconnect","sessionKey":"session-123","lastSeqId":1}""");
+        reconnectContext.Features.Set<IHttpWebSocketFeature>(new TestWebSocketFeature { IsWebSocketRequest = true, Socket = reconnectSocket });
+
+        await handler.HandleAsync(reconnectContext, CancellationToken.None);
+
+        reconnectSocket.SentMessages.Should().NotBeEmpty();
+        var reconnectPayloads = reconnectSocket.SentMessages
+            .Select(bytes => JsonDocument.Parse(Encoding.UTF8.GetString(bytes)).RootElement.Clone())
+            .ToList();
+
+        var hasReconnectAck = reconnectPayloads.Any(payload =>
+            payload.TryGetProperty("type", out var type) &&
+            type.GetString() == "reconnect_ack" &&
+            payload.TryGetProperty("replayed", out var replayed) &&
+            replayed.GetInt32() >= 1);
+        hasReconnectAck.Should().BeTrue();
     }
 
     [Fact]
@@ -185,10 +222,12 @@ public sealed class GatewayWebSocketHandlerTests
 
     private static GatewayWebSocketHandler CreateHandler(
         IAgentSupervisor? supervisor = null,
-        WebSocketChannelAdapter? channelAdapter = null)
+        WebSocketChannelAdapter? channelAdapter = null,
+        InMemorySessionStore? sessions = null)
         => new(
             supervisor ?? Mock.Of<IAgentSupervisor>(),
             channelAdapter ?? new WebSocketChannelAdapter(NullLogger<WebSocketChannelAdapter>.Instance),
+            sessions ?? new InMemorySessionStore(),
             NullLogger<GatewayWebSocketHandler>.Instance);
 
     private sealed class TestWebSocketFeature : IHttpWebSocketFeature

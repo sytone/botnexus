@@ -24,4 +24,9 @@ public sealed class GatewayWebSocketOptions
     /// Maximum retry delay (seconds) returned after hitting reconnect limits.
     /// </summary>
     public int BackoffMaxSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// Maximum number of sequenced outbound messages to retain for reconnect replay.
+    /// </summary>
+    public int ReplayWindowSize { get; set; } = 1000;
 }

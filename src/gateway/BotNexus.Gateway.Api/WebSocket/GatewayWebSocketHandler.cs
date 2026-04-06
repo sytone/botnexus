@@ -4,8 +4,10 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Collections.Concurrent;
 using System.Globalization;
-using BotNexus.Channels.WebSocket;
 using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -21,6 +23,7 @@ namespace BotNexus.Gateway.Api.WebSocket;
 /// <para><b>Client → Server messages:</b></para>
 /// <list type="bullet">
 ///   <item><c>{ "type": "message", "content": "..." }</c> — Send a message to the agent.</item>
+///   <item><c>{ "type": "reconnect", "sessionKey": "...", "lastSeqId": 42 }</c> — Replay missed outbound events.</item>
 ///   <item><c>{ "type": "abort" }</c> — Abort the current agent execution.</item>
 ///   <item><c>{ "type": "steer", "content": "..." }</c> — Inject steering message into active run.</item>
 ///   <item><c>{ "type": "follow_up", "content": "..." }</c> — Queue follow-up for next run.</item>
@@ -28,7 +31,7 @@ namespace BotNexus.Gateway.Api.WebSocket;
 /// </list>
 /// <para><b>Server → Client messages:</b></para>
 /// <list type="bullet">
-///   <item><c>{ "type": "connected", "connectionId": "...", "sessionId": "..." }</c></item>
+///   <item><c>{ "type": "connected", "connectionId": "...", "sessionId": "...", "sequenceId": 1 }</c></item>
 ///   <item><c>{ "type": "message_start", "messageId": "..." }</c></item>
 ///   <item><c>{ "type": "thinking_delta", "delta": "...", "messageId": "..." }</c></item>
 ///   <item><c>{ "type": "content_delta", "delta": "...", "messageId": "..." }</c></item>
@@ -42,11 +45,13 @@ namespace BotNexus.Gateway.Api.WebSocket;
 public sealed class GatewayWebSocketHandler
 {
     private readonly IAgentSupervisor _supervisor;
-    private readonly WebSocketChannelAdapter _channelAdapter;
+    private readonly IGatewayWebSocketChannelAdapter _channelAdapter;
+    private readonly ISessionStore _sessions;
     private readonly IOptions<GatewayWebSocketOptions> _webSocketOptions;
     private readonly ILogger<GatewayWebSocketHandler> _logger;
     private readonly ConcurrentDictionary<string, ConnectionAttemptWindow> _connectionAttempts = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _activeSessionConnections = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, long> _lastSeenSequenceIds = new(StringComparer.OrdinalIgnoreCase);
     private long _connectionAttemptUpdates;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -57,21 +62,24 @@ public sealed class GatewayWebSocketHandler
 
     public GatewayWebSocketHandler(
         IAgentSupervisor supervisor,
-        WebSocketChannelAdapter channelAdapter,
+        IGatewayWebSocketChannelAdapter channelAdapter,
+        ISessionStore sessions,
         IOptions<GatewayWebSocketOptions> webSocketOptions,
         ILogger<GatewayWebSocketHandler> logger)
     {
         _supervisor = supervisor;
         _channelAdapter = channelAdapter;
+        _sessions = sessions;
         _webSocketOptions = webSocketOptions;
         _logger = logger;
     }
 
     public GatewayWebSocketHandler(
         IAgentSupervisor supervisor,
-        WebSocketChannelAdapter channelAdapter,
+        IGatewayWebSocketChannelAdapter channelAdapter,
+        ISessionStore sessions,
         ILogger<GatewayWebSocketHandler> logger)
-        : this(supervisor, channelAdapter, Options.Create(new GatewayWebSocketOptions()), logger)
+        : this(supervisor, channelAdapter, sessions, Options.Create(new GatewayWebSocketOptions()), logger)
     {
     }
 
@@ -126,8 +134,14 @@ public sealed class GatewayWebSocketHandler
         try
         {
             socket = await context.WebSockets.AcceptWebSocketAsync();
+            var session = await _sessions.GetOrCreateAsync(sessionId, agentId, cancellationToken);
+            var replayWindow = Math.Max(_webSocketOptions.Value.ReplayWindowSize, 1);
             _logger.LogInformation("WebSocket connected: {ConnectionId} agent={AgentId} session={SessionId}", connectionId, agentId, sessionId);
-            if (!_channelAdapter.RegisterConnection(sessionId, connectionId, socket))
+            if (!_channelAdapter.RegisterConnection(
+                sessionId,
+                connectionId,
+                socket,
+                (payload, ct) => SequenceAndPersistPayloadAsync(session, payload, replayWindow, ct)))
             {
                 await socket.CloseAsync(
                     (WebSocketCloseStatus)SessionAlreadyConnectedCloseCode,
@@ -136,8 +150,8 @@ public sealed class GatewayWebSocketHandler
                 return;
             }
 
-            await SendJsonAsync(socket, new { type = "connected", connectionId, sessionId }, cancellationToken);
-            await ProcessMessagesAsync(socket, connectionId, agentId, sessionId, cancellationToken);
+            await SendSequencedJsonAsync(session, sessionId, socket, new { type = "connected", connectionId, sessionId }, replayWindow, cancellationToken);
+            await ProcessMessagesAsync(socket, connectionId, agentId, sessionId, session, replayWindow, cancellationToken);
         }
         catch (WebSocketException ex) when (ex.WebSocketErrorCode == WebSocketError.ConnectionClosedPrematurely)
         {
@@ -150,6 +164,7 @@ public sealed class GatewayWebSocketHandler
         finally
         {
             _channelAdapter.UnregisterConnection(sessionId, connectionId);
+            _lastSeenSequenceIds.TryRemove(connectionId, out _);
             socket?.Dispose();
             _activeSessionConnections.TryRemove(new KeyValuePair<string, string>(sessionId, connectionId));
             _logger.LogInformation("WebSocket disconnected: {ConnectionId}", connectionId);
@@ -161,6 +176,8 @@ public sealed class GatewayWebSocketHandler
         string connectionId,
         string agentId,
         string sessionId,
+        GatewaySession session,
+        int replayWindow,
         CancellationToken cancellationToken)
     {
         var buffer = new byte[4096];
@@ -198,8 +215,19 @@ public sealed class GatewayWebSocketHandler
                     await HandleFollowUpAsync(socket, agentId, sessionId, msg.Content, cancellationToken);
                     break;
 
+                case "reconnect":
+                    await HandleReconnectAsync(
+                        socket,
+                        connectionId,
+                        agentId,
+                        msg.SessionKey ?? sessionId,
+                        msg.LastSeqId ?? 0,
+                        replayWindow,
+                        cancellationToken);
+                    break;
+
                 case "ping":
-                    await SendJsonAsync(socket, new { type = "pong" }, cancellationToken);
+                    await SendSequencedJsonAsync(session, sessionId, socket, new { type = "pong" }, replayWindow, cancellationToken);
                     break;
             }
         }
@@ -225,7 +253,7 @@ public sealed class GatewayWebSocketHandler
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error handling WebSocket message for agent '{AgentId}'", agentId);
-            await SendJsonAsync(socket, new { type = "error", message = ex.Message, code = "AGENT_ERROR" }, cancellationToken);
+            await SendSessionErrorAsync(socket, agentId, sessionId, ex.Message, "AGENT_ERROR", cancellationToken);
         }
     }
 
@@ -234,7 +262,7 @@ public sealed class GatewayWebSocketHandler
         var instance = _supervisor.GetInstance(agentId, sessionId);
         if (instance is null)
         {
-            await SendJsonAsync(socket, new { type = "error", message = "Agent session not found.", code = "SESSION_NOT_FOUND" }, cancellationToken);
+            await SendSessionErrorAsync(socket, agentId, sessionId, "Agent session not found.", "SESSION_NOT_FOUND", cancellationToken);
             return;
         }
 
@@ -247,7 +275,7 @@ public sealed class GatewayWebSocketHandler
         var instance = _supervisor.GetInstance(agentId, sessionId);
         if (instance is null)
         {
-            await SendJsonAsync(socket, new { type = "error", message = "Agent session not found.", code = "SESSION_NOT_FOUND" }, cancellationToken);
+            await SendSessionErrorAsync(socket, agentId, sessionId, "Agent session not found.", "SESSION_NOT_FOUND", cancellationToken);
             return;
         }
 
@@ -255,10 +283,89 @@ public sealed class GatewayWebSocketHandler
         await handle.FollowUpAsync(content, cancellationToken);
     }
 
-    private static async Task SendJsonAsync(System.Net.WebSockets.WebSocket socket, object message, CancellationToken cancellationToken)
+    private async Task HandleReconnectAsync(
+        System.Net.WebSockets.WebSocket socket,
+        string connectionId,
+        string agentId,
+        string sessionKey,
+        long lastSeqId,
+        int replayWindow,
+        CancellationToken cancellationToken)
     {
-        var json = JsonSerializer.SerializeToUtf8Bytes(message, JsonOptions);
+        _lastSeenSequenceIds[connectionId] = Math.Max(lastSeqId, 0);
+
+        var session = await _sessions.GetAsync(sessionKey, cancellationToken);
+        if (session is null || !string.Equals(session.AgentId, agentId, StringComparison.OrdinalIgnoreCase))
+        {
+            await SendSessionErrorAsync(socket, agentId, sessionKey, "Session not found for reconnect.", "SESSION_NOT_FOUND", cancellationToken);
+            return;
+        }
+
+        var replayEvents = session.GetStreamEventsAfter(lastSeqId, replayWindow);
+        foreach (var replayEvent in replayEvents)
+        {
+            if (socket.State != WebSocketState.Open)
+                break;
+
+            var payload = Encoding.UTF8.GetBytes(replayEvent.PayloadJson);
+            await socket.SendAsync(payload, WebSocketMessageType.Text, true, cancellationToken);
+        }
+
+        await SendSequencedJsonAsync(
+            session,
+            sessionKey,
+            socket,
+            new
+            {
+                type = "reconnect_ack",
+                sessionKey,
+                replayed = replayEvents.Count,
+                lastSeqId
+            },
+            replayWindow,
+            cancellationToken);
+    }
+
+    private async Task SendSessionErrorAsync(
+        System.Net.WebSockets.WebSocket socket,
+        string agentId,
+        string sessionId,
+        string message,
+        string code,
+        CancellationToken cancellationToken)
+    {
+        var session = await _sessions.GetOrCreateAsync(sessionId, agentId, cancellationToken);
+        await SendSequencedJsonAsync(session, sessionId, socket, new { type = "error", message, code }, Math.Max(_webSocketOptions.Value.ReplayWindowSize, 1), cancellationToken);
+    }
+
+    private async Task SendSequencedJsonAsync(
+        GatewaySession session,
+        string sessionId,
+        System.Net.WebSockets.WebSocket socket,
+        object message,
+        int replayWindow,
+        CancellationToken cancellationToken)
+    {
+        var sequenced = await SequenceAndPersistPayloadAsync(session, message, replayWindow, cancellationToken);
+        var json = JsonSerializer.SerializeToUtf8Bytes(sequenced, JsonOptions);
         await socket.SendAsync(json, WebSocketMessageType.Text, true, cancellationToken);
+    }
+
+    private async ValueTask<object> SequenceAndPersistPayloadAsync(
+        GatewaySession session,
+        object payload,
+        int replayWindow,
+        CancellationToken cancellationToken)
+    {
+        var sequenceId = session.AllocateSequenceId();
+        var basePayloadJson = JsonSerializer.Serialize(payload, JsonOptions);
+        var payloadMap = JsonSerializer.Deserialize<Dictionary<string, object?>>(basePayloadJson, JsonOptions) ?? [];
+        payloadMap["sequenceId"] = sequenceId;
+        object sequencedPayload = payloadMap;
+        var sequencedPayloadJson = JsonSerializer.Serialize(sequencedPayload, JsonOptions);
+        session.AddStreamEvent(sequenceId, sequencedPayloadJson, replayWindow);
+        await _sessions.SaveAsync(session, cancellationToken);
+        return sequencedPayload;
     }
 
     private bool TryRegisterConnectionAttempt(HttpContext context, string agentId, out TimeSpan retryAfter)
@@ -342,7 +449,9 @@ public sealed class GatewayWebSocketHandler
 
     private sealed record WsClientMessage(
         [property: JsonPropertyName("type")] string Type,
-        [property: JsonPropertyName("content")] string? Content = null);
+        [property: JsonPropertyName("content")] string? Content = null,
+        [property: JsonPropertyName("sessionKey")] string? SessionKey = null,
+        [property: JsonPropertyName("lastSeqId")] long? LastSeqId = null);
 
     private readonly record struct ConnectionAttemptWindow(DateTimeOffset WindowStartedUtc, int AttemptCount);
 }

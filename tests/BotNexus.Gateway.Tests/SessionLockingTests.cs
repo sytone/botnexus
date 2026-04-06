@@ -4,6 +4,7 @@ using System.Text.Json;
 using BotNexus.Channels.WebSocket;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Api.WebSocket;
+using BotNexus.Gateway.Sessions;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
@@ -110,6 +111,7 @@ public sealed class SessionLockingTests
         => new(
             Mock.Of<IAgentSupervisor>(),
             new WebSocketChannelAdapter(NullLogger<WebSocketChannelAdapter>.Instance),
+            new InMemorySessionStore(),
             NullLogger<GatewayWebSocketHandler>.Instance);
 
     private static HttpContext CreateWebSocketContext(string agentId, string sessionId, WebSocket socket)
