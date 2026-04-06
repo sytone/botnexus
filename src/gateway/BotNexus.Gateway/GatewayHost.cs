@@ -146,6 +146,11 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
                             IncludeErrorsInHistory: true,
                             OnEventAsync: (evt, ct) =>
                             {
+                                if (channel is IStreamEventChannelAdapter streamEventChannel)
+                                {
+                                    return new ValueTask(streamEventChannel.SendStreamEventAsync(message.ConversationId, evt, ct));
+                                }
+
                                 if (evt.Type == AgentStreamEventType.ContentDelta && evt.ContentDelta is not null)
                                 {
                                     return new ValueTask(channel.SendStreamDeltaAsync(message.ConversationId, evt.ContentDelta, ct));

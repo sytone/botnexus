@@ -1,10 +1,10 @@
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
-using BotNexus.Gateway.Abstractions.Activity;
+using BotNexus.Channels.WebSocket;
 using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
-using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Api.WebSocket;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
@@ -123,6 +123,31 @@ public sealed class GatewayWebSocketHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_WithMessage_DispatchesInboundViaChannelPipeline()
+    {
+        var dispatcher = new Mock<IChannelDispatcher>();
+        var channelAdapter = new WebSocketChannelAdapter(NullLogger<WebSocketChannelAdapter>.Instance);
+        await channelAdapter.StartAsync(dispatcher.Object, CancellationToken.None);
+
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new QueryString("?agent=agent-a&session=session-123");
+        var socket = new TestWebSocket();
+        socket.QueueIncomingText("""{"type":"message","content":"hello"}""");
+        context.Features.Set<IHttpWebSocketFeature>(new TestWebSocketFeature { IsWebSocketRequest = true, Socket = socket });
+        var handler = CreateHandler(channelAdapter: channelAdapter);
+
+        await handler.HandleAsync(context, CancellationToken.None);
+
+        dispatcher.Verify(d => d.DispatchAsync(
+            It.Is<BotNexus.Gateway.Abstractions.Models.InboundMessage>(m =>
+                m.ChannelType == "websocket" &&
+                m.TargetAgentId == "agent-a" &&
+                m.SessionId == "session-123" &&
+                m.Content == "hello"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task HandleAsync_WithDuplicateSessionConnection_ClosesSecondSocket()
     {
         var handler = CreateHandler();
@@ -158,11 +183,12 @@ public sealed class GatewayWebSocketHandlerTests
         await firstConnectionTask;
     }
 
-    private static GatewayWebSocketHandler CreateHandler(IAgentSupervisor? supervisor = null)
+    private static GatewayWebSocketHandler CreateHandler(
+        IAgentSupervisor? supervisor = null,
+        WebSocketChannelAdapter? channelAdapter = null)
         => new(
             supervisor ?? Mock.Of<IAgentSupervisor>(),
-            Mock.Of<ISessionStore>(),
-            Mock.Of<IActivityBroadcaster>(),
+            channelAdapter ?? new WebSocketChannelAdapter(NullLogger<WebSocketChannelAdapter>.Instance),
             NullLogger<GatewayWebSocketHandler>.Instance);
 
     private sealed class TestWebSocketFeature : IHttpWebSocketFeature

@@ -89,3 +89,14 @@ public interface IChannelDispatcher
     /// <param name="cancellationToken">Cancellation token.</param>
     Task DispatchAsync(InboundMessage message, CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// Optional contract for channels that can render structured streaming events.
+/// </summary>
+public interface IStreamEventChannelAdapter
+{
+    /// <summary>
+    /// Sends a structured stream event to a target conversation.
+    /// </summary>
+    Task SendStreamEventAsync(string conversationId, AgentStreamEvent streamEvent, CancellationToken cancellationToken = default);
+}

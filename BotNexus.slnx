@@ -21,6 +21,7 @@
     <Project Path="src/channels/BotNexus.Channels.Core/BotNexus.Channels.Core.csproj" />
     <Project Path="src/channels/BotNexus.Channels.Telegram/BotNexus.Channels.Telegram.csproj" />
     <Project Path="src/channels/BotNexus.Channels.Tui/BotNexus.Channels.Tui.csproj" />
+    <Project Path="src/channels/BotNexus.Channels.WebSocket/BotNexus.Channels.WebSocket.csproj" />
   </Folder>
   <Folder Name="/src/coding-agent/">
     <Project Path="src/coding-agent/BotNexus.CodingAgent/BotNexus.CodingAgent.csproj" />

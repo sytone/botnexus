@@ -4,11 +4,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Collections.Concurrent;
 using System.Globalization;
-using BotNexus.Gateway.Abstractions.Activity;
+using BotNexus.Channels.WebSocket;
 using BotNexus.Gateway.Abstractions.Agents;
-using BotNexus.Gateway.Abstractions.Models;
-using BotNexus.Gateway.Abstractions.Sessions;
-using BotNexus.Gateway.Streaming;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -45,8 +42,7 @@ namespace BotNexus.Gateway.Api.WebSocket;
 public sealed class GatewayWebSocketHandler
 {
     private readonly IAgentSupervisor _supervisor;
-    private readonly ISessionStore _sessions;
-    private readonly IActivityBroadcaster _activity;
+    private readonly WebSocketChannelAdapter _channelAdapter;
     private readonly IOptions<GatewayWebSocketOptions> _webSocketOptions;
     private readonly ILogger<GatewayWebSocketHandler> _logger;
     private readonly ConcurrentDictionary<string, ConnectionAttemptWindow> _connectionAttempts = new(StringComparer.OrdinalIgnoreCase);
@@ -61,24 +57,21 @@ public sealed class GatewayWebSocketHandler
 
     public GatewayWebSocketHandler(
         IAgentSupervisor supervisor,
-        ISessionStore sessions,
-        IActivityBroadcaster activity,
+        WebSocketChannelAdapter channelAdapter,
         IOptions<GatewayWebSocketOptions> webSocketOptions,
         ILogger<GatewayWebSocketHandler> logger)
     {
         _supervisor = supervisor;
-        _sessions = sessions;
-        _activity = activity;
+        _channelAdapter = channelAdapter;
         _webSocketOptions = webSocketOptions;
         _logger = logger;
     }
 
     public GatewayWebSocketHandler(
         IAgentSupervisor supervisor,
-        ISessionStore sessions,
-        IActivityBroadcaster activity,
+        WebSocketChannelAdapter channelAdapter,
         ILogger<GatewayWebSocketHandler> logger)
-        : this(supervisor, sessions, activity, Options.Create(new GatewayWebSocketOptions()), logger)
+        : this(supervisor, channelAdapter, Options.Create(new GatewayWebSocketOptions()), logger)
     {
     }
 
@@ -134,9 +127,17 @@ public sealed class GatewayWebSocketHandler
         {
             socket = await context.WebSockets.AcceptWebSocketAsync();
             _logger.LogInformation("WebSocket connected: {ConnectionId} agent={AgentId} session={SessionId}", connectionId, agentId, sessionId);
+            if (!_channelAdapter.RegisterConnection(sessionId, connectionId, socket))
+            {
+                await socket.CloseAsync(
+                    (WebSocketCloseStatus)SessionAlreadyConnectedCloseCode,
+                    "Session already has an active connection",
+                    cancellationToken);
+                return;
+            }
 
             await SendJsonAsync(socket, new { type = "connected", connectionId, sessionId }, cancellationToken);
-            await ProcessMessagesAsync(socket, agentId, sessionId, cancellationToken);
+            await ProcessMessagesAsync(socket, connectionId, agentId, sessionId, cancellationToken);
         }
         catch (WebSocketException ex) when (ex.WebSocketErrorCode == WebSocketError.ConnectionClosedPrematurely)
         {
@@ -148,13 +149,19 @@ public sealed class GatewayWebSocketHandler
         }
         finally
         {
+            _channelAdapter.UnregisterConnection(sessionId, connectionId);
             socket?.Dispose();
             _activeSessionConnections.TryRemove(new KeyValuePair<string, string>(sessionId, connectionId));
             _logger.LogInformation("WebSocket disconnected: {ConnectionId}", connectionId);
         }
     }
 
-    private async Task ProcessMessagesAsync(System.Net.WebSockets.WebSocket socket, string agentId, string sessionId, CancellationToken cancellationToken)
+    private async Task ProcessMessagesAsync(
+        System.Net.WebSockets.WebSocket socket,
+        string connectionId,
+        string agentId,
+        string sessionId,
+        CancellationToken cancellationToken)
     {
         var buffer = new byte[4096];
 
@@ -171,7 +178,7 @@ public sealed class GatewayWebSocketHandler
             switch (msg.Type)
             {
                 case "message" when msg.Content is not null:
-                    await HandleUserMessageAsync(socket, agentId, sessionId, msg.Content, cancellationToken);
+                    await HandleUserMessageAsync(socket, connectionId, agentId, sessionId, msg.Content, cancellationToken);
                     break;
 
                 case "abort":
@@ -198,49 +205,27 @@ public sealed class GatewayWebSocketHandler
         }
     }
 
-    private async Task HandleUserMessageAsync(System.Net.WebSockets.WebSocket socket, string agentId, string sessionId, string content, CancellationToken cancellationToken)
+    private async Task HandleUserMessageAsync(
+        System.Net.WebSockets.WebSocket socket,
+        string connectionId,
+        string agentId,
+        string sessionId,
+        string content,
+        CancellationToken cancellationToken)
     {
-        var session = await _sessions.GetOrCreateAsync(sessionId, agentId, cancellationToken);
-        session.AddEntry(new SessionEntry { Role = "user", Content = content });
-        var sessionSaved = false;
-
         try
         {
-            var handle = await _supervisor.GetOrCreateAsync(agentId, sessionId, cancellationToken);
-
-            await StreamingSessionHelper.ProcessAndSaveAsync(
-                handle.StreamAsync(content, cancellationToken),
-                session,
-                _sessions,
-                new StreamingSessionOptions(
-                    OnEventAsync: (evt, ct) =>
-                    {
-                        object wsMessage = evt.Type switch
-                        {
-                            AgentStreamEventType.MessageStart => new { type = "message_start", messageId = evt.MessageId },
-                            AgentStreamEventType.ThinkingDelta => new { type = "thinking_delta", delta = evt.ThinkingContent, messageId = evt.MessageId },
-                            AgentStreamEventType.ContentDelta => new { type = "content_delta", delta = evt.ContentDelta, messageId = evt.MessageId },
-                            AgentStreamEventType.ToolStart => new { type = "tool_start", toolCallId = evt.ToolCallId, toolName = evt.ToolName, messageId = evt.MessageId },
-                            AgentStreamEventType.ToolEnd => new { type = "tool_end", toolCallId = evt.ToolCallId, toolResult = evt.ToolResult, messageId = evt.MessageId },
-                            AgentStreamEventType.MessageEnd => new { type = "message_end", messageId = evt.MessageId, usage = evt.Usage },
-                            AgentStreamEventType.Error => new { type = "error", message = evt.ErrorMessage },
-                            _ => (object)new { type = "unknown" }
-                        };
-
-                        return new ValueTask(SendJsonAsync(socket, wsMessage, ct));
-                    }),
+            await _channelAdapter.DispatchInboundMessageAsync(
+                agentId,
+                sessionId,
+                connectionId,
+                content,
                 cancellationToken);
-            sessionSaved = true;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error handling WebSocket message for agent '{AgentId}'", agentId);
             await SendJsonAsync(socket, new { type = "error", message = ex.Message, code = "AGENT_ERROR" }, cancellationToken);
-        }
-
-        if (!sessionSaved)
-        {
-            await _sessions.SaveAsync(session, cancellationToken);
         }
     }
 

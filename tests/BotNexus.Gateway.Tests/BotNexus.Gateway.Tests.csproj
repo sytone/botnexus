@@ -26,6 +26,7 @@
     <ProjectReference Include="..\..\src\channels\BotNexus.Channels.Core\BotNexus.Channels.Core.csproj" />
     <ProjectReference Include="..\..\src\channels\BotNexus.Channels.Tui\BotNexus.Channels.Tui.csproj" />
     <ProjectReference Include="..\..\src\channels\BotNexus.Channels.Telegram\BotNexus.Channels.Telegram.csproj" />
+    <ProjectReference Include="..\..\src\channels\BotNexus.Channels.WebSocket\BotNexus.Channels.WebSocket.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />
