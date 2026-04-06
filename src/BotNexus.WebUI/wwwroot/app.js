@@ -1639,8 +1639,8 @@
             providers.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
             for (const p of providers) {
                 const opt = document.createElement('option');
-                opt.value = p.name || p.providerId || p.id || 'unknown';
-                opt.textContent = opt.value;
+                opt.value = p.providerId || p.id || p.name || 'unknown';
+                opt.textContent = p.name || opt.value;
                 providerSelect.appendChild(opt);
             }
         }
@@ -1671,8 +1671,8 @@
             });
             for (const m of filtered) {
                 const opt = document.createElement('option');
-                opt.value = m.name || m.modelId || m.id || 'unknown';
-                opt.textContent = opt.value;
+                opt.value = m.modelId || m.id || 'unknown';
+                opt.textContent = m.name || opt.value;
                 modelSelect.appendChild(opt);
             }
         }
@@ -1691,10 +1691,13 @@
             return;
         }
 
-        const body = { name, provider, model };
+        const body = {
+            agentId: name,
+            displayName: name,
+            modelId: model,
+            apiProvider: provider
+        };
         if (systemPrompt) body.systemPrompt = systemPrompt;
-        if ($('#form-agent-temperature-enabled').checked) body.temperature = parseFloat($('#form-agent-temperature').value);
-        if ($('#form-agent-max-tokens-enabled').checked) body.maxTokens = parseInt($('#form-agent-max-tokens').value, 10);
 
         try {
             const res = await fetch(`${API_BASE}/agents`, {
@@ -1746,9 +1749,9 @@
                 });
                 for (const m of models) {
                     const opt = document.createElement('option');
-                    const modelId = m.name || m.modelId || m.id || 'unknown';
+                    const modelId = m.modelId || m.id || 'unknown';
                     opt.value = modelId;
-                    opt.textContent = modelId;
+                    opt.textContent = m.name || modelId;
                     if (modelId === currentModel) opt.selected = true;
                     elModelSelect.appendChild(opt);
                 }
