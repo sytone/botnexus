@@ -1,12 +1,16 @@
-using System.Collections;
 using System.CommandLine;
-using System.Globalization;
-using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 var verboseOption = new Option<bool>("--verbose", "Show additional command output.");
+using var serviceProvider = new ServiceCollection()
+    .AddSingleton<IConfigPathResolver, ConfigPathResolver>()
+    .BuildServiceProvider();
+var configPathResolver = serviceProvider.GetRequiredService<IConfigPathResolver>();
+
 var root = new RootCommand("BotNexus platform CLI");
 root.AddGlobalOption(verboseOption);
 root.AddCommand(BuildValidateCommand(verboseOption));
@@ -94,8 +98,8 @@ Command BuildAgentCommand(Option<bool> verboseOption)
     addCommand.SetHandler(async context =>
     {
         var id = context.ParseResult.GetValueForArgument(idArgument);
-        var provider = context.ParseResult.GetValueForOption(providerOption);
-        var model = context.ParseResult.GetValueForOption(modelOption);
+        var provider = context.ParseResult.GetValueForOption(providerOption) ?? "copilot";
+        var model = context.ParseResult.GetValueForOption(modelOption) ?? "gpt-4.1";
         var enabled = context.ParseResult.GetValueForOption(enabledOption);
         var verbose = context.ParseResult.GetValueForOption(verboseOption);
         context.ExitCode = await AgentAddAsync(id, provider, model, enabled, verbose, CancellationToken.None);
@@ -148,8 +152,21 @@ Command BuildConfigCommand(Option<bool> verboseOption)
         context.ExitCode = await ConfigSetAsync(key, value, verbose, CancellationToken.None);
     });
 
+    var schemaOutputOption = new Option<string>("--output", () => "docs\\botnexus-config.schema.json", "Schema output path.");
+    var schemaCommand = new Command("schema", "Generate JSON schema for platform config.")
+    {
+        schemaOutputOption
+    };
+    schemaCommand.SetHandler(async context =>
+    {
+        var outputPath = context.ParseResult.GetValueForOption(schemaOutputOption) ?? "docs\\botnexus-config.schema.json";
+        var verbose = context.ParseResult.GetValueForOption(verboseOption);
+        context.ExitCode = await ConfigSchemaAsync(outputPath, verbose, CancellationToken.None);
+    });
+
     command.AddCommand(getCommand);
     command.AddCommand(setCommand);
+    command.AddCommand(schemaCommand);
     return command;
 }
 
@@ -296,7 +313,7 @@ async Task<int> ConfigGetAsync(string keyPath, bool verbose, CancellationToken c
     if (config is null)
         return 1;
 
-    if (!TryGetByPath(config, keyPath, out var value, out var error))
+    if (!configPathResolver.TryGetValue(config, keyPath, out var value, out var error))
     {
         Console.WriteLine($"Error: {error}");
         return 1;
@@ -315,7 +332,7 @@ async Task<int> ConfigSetAsync(string keyPath, string rawValue, bool verbose, Ca
     if (config is null)
         return 1;
 
-    if (!TrySetByPath(config, keyPath, rawValue, out var error))
+    if (!configPathResolver.TrySetValue(config, keyPath, rawValue, out var error))
     {
         Console.WriteLine($"Error: {error}");
         return 1;
@@ -326,6 +343,30 @@ async Task<int> ConfigSetAsync(string keyPath, string rawValue, bool verbose, Ca
         return saveCode;
 
     Console.WriteLine($"Set {keyPath}.");
+    return 0;
+}
+
+async Task<int> ConfigSchemaAsync(string outputPath, bool verbose, CancellationToken cancellationToken)
+{
+    if (string.IsNullOrWhiteSpace(outputPath))
+    {
+        Console.WriteLine("Error: output path is required.");
+        return 1;
+    }
+
+    var resolvedPath = Path.GetFullPath(outputPath);
+    PlatformConfigSchema.WriteSchema(resolvedPath);
+
+    if (cancellationToken.IsCancellationRequested)
+        return 1;
+
+    Console.WriteLine($"Generated schema: {resolvedPath}");
+    if (verbose)
+    {
+        var availablePaths = configPathResolver.GetAvailablePaths(new PlatformConfig());
+        Console.WriteLine($"Schema generated from model graph ({availablePaths.Count} discoverable config paths).");
+    }
+
     return 0;
 }
 
@@ -376,252 +417,6 @@ async Task WriteConfigAsync(PlatformConfig config, string configPath, Cancellati
     await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(config, CreateWriteJsonOptions()), cancellationToken);
 }
 
-bool TryGetByPath(object root, string keyPath, out object? value, out string error)
-{
-    value = null;
-    error = string.Empty;
-    var segments = SplitKeyPath(keyPath);
-    if (segments.Length == 0)
-    {
-        error = "Key path is required.";
-        return false;
-    }
-
-    object? current = root;
-    Type currentType = root.GetType();
-    foreach (var segment in segments)
-    {
-        if (current is null)
-        {
-            error = $"Path '{keyPath}' is null before '{segment}'.";
-            return false;
-        }
-
-        if (TryGetDictionaryValueType(currentType, out _))
-        {
-            var dictionary = (IDictionary)current;
-            if (!TryFindDictionaryLookupKey(dictionary, segment, out var matchedKey))
-            {
-                error = $"Key '{segment}' was not found.";
-                return false;
-            }
-
-            current = dictionary[matchedKey];
-            currentType = current?.GetType() ?? typeof(object);
-            continue;
-        }
-
-        var property = FindProperty(currentType, segment);
-        if (property is null)
-        {
-            error = $"Property '{segment}' does not exist on '{currentType.Name}'.";
-            return false;
-        }
-
-        current = property.GetValue(current);
-        currentType = property.PropertyType;
-    }
-
-    value = current;
-    return true;
-}
-
-bool TrySetByPath(object root, string keyPath, string rawValue, out string error)
-{
-    error = string.Empty;
-    var segments = SplitKeyPath(keyPath);
-    if (segments.Length == 0)
-    {
-        error = "Key path is required.";
-        return false;
-    }
-
-    object current = root;
-    Type currentType = root.GetType();
-    for (var i = 0; i < segments.Length; i++)
-    {
-        var segment = segments[i];
-        var isLast = i == segments.Length - 1;
-
-        if (TryGetDictionaryValueType(currentType, out var dictionaryValueType))
-        {
-            var dictionary = (IDictionary)current;
-            if (isLast)
-            {
-                if (!TryConvertValue(rawValue, dictionaryValueType, out var converted, out error))
-                    return false;
-
-                var key = FindOrCreateDictionaryKey(dictionary, segment);
-                dictionary[key] = converted;
-                return true;
-            }
-
-            var nextKey = FindOrCreateDictionaryKey(dictionary, segment);
-            var existing = dictionary[nextKey];
-            if (existing is null)
-            {
-                if (!TryCreateInstance(dictionaryValueType, out existing, out error))
-                    return false;
-                dictionary[nextKey] = existing;
-            }
-
-            current = existing;
-            currentType = existing.GetType();
-            continue;
-        }
-
-        var property = FindProperty(currentType, segment);
-        if (property is null)
-        {
-            error = $"Property '{segment}' does not exist on '{currentType.Name}'.";
-            return false;
-        }
-
-        if (isLast)
-        {
-            if (!property.CanWrite)
-            {
-                error = $"Property '{property.Name}' is read-only.";
-                return false;
-            }
-
-            if (!TryConvertValue(rawValue, property.PropertyType, out var converted, out error))
-                return false;
-
-            property.SetValue(current, converted);
-            return true;
-        }
-
-        var next = property.GetValue(current);
-        if (next is null)
-        {
-            if (!TryCreateInstance(property.PropertyType, out next, out error))
-                return false;
-
-            property.SetValue(current, next);
-        }
-
-        current = next;
-        currentType = next.GetType();
-    }
-
-    error = $"Unable to set path '{keyPath}'.";
-    return false;
-}
-
-bool TryConvertValue(string rawValue, Type targetType, out object? converted, out string error)
-{
-    converted = null;
-    error = string.Empty;
-    var nonNullableType = Nullable.GetUnderlyingType(targetType) ?? targetType;
-
-    if (string.Equals(rawValue, "null", StringComparison.OrdinalIgnoreCase) && Nullable.GetUnderlyingType(targetType) is not null)
-        return true;
-
-    if (nonNullableType == typeof(string))
-    {
-        converted = rawValue;
-        return true;
-    }
-
-    if (nonNullableType == typeof(bool))
-    {
-        if (bool.TryParse(rawValue, out var boolValue))
-        {
-            converted = boolValue;
-            return true;
-        }
-
-        error = $"'{rawValue}' is not a valid boolean.";
-        return false;
-    }
-
-    if (nonNullableType.IsEnum)
-    {
-        if (Enum.TryParse(nonNullableType, rawValue, ignoreCase: true, out var enumValue))
-        {
-            converted = enumValue;
-            return true;
-        }
-
-        error = $"'{rawValue}' is not a valid {nonNullableType.Name} value.";
-        return false;
-    }
-
-    try
-    {
-        if (nonNullableType == typeof(int))
-            converted = int.Parse(rawValue, CultureInfo.InvariantCulture);
-        else if (nonNullableType == typeof(long))
-            converted = long.Parse(rawValue, CultureInfo.InvariantCulture);
-        else if (nonNullableType == typeof(double))
-            converted = double.Parse(rawValue, CultureInfo.InvariantCulture);
-        else if (nonNullableType == typeof(float))
-            converted = float.Parse(rawValue, CultureInfo.InvariantCulture);
-        else if (nonNullableType == typeof(decimal))
-            converted = decimal.Parse(rawValue, CultureInfo.InvariantCulture);
-        else
-            converted = JsonSerializer.Deserialize(rawValue, nonNullableType, CreateReadJsonOptions());
-    }
-    catch (Exception ex)
-    {
-        error = $"Unable to convert '{rawValue}' to {nonNullableType.Name}: {ex.Message}";
-        return false;
-    }
-
-    return true;
-}
-
-bool TryCreateInstance(Type targetType, out object? instance, out string error)
-{
-    instance = null;
-    error = string.Empty;
-    var nonNullableType = Nullable.GetUnderlyingType(targetType) ?? targetType;
-
-    if (TryGetDictionaryValueType(nonNullableType, out var dictionaryValueType))
-    {
-        var dictionaryType = typeof(Dictionary<,>).MakeGenericType(typeof(string), dictionaryValueType);
-        instance = Activator.CreateInstance(dictionaryType, StringComparer.OrdinalIgnoreCase);
-        return instance is not null;
-    }
-
-    try
-    {
-        instance = Activator.CreateInstance(nonNullableType);
-        if (instance is null)
-        {
-            error = $"Unable to instantiate {nonNullableType.Name}.";
-            return false;
-        }
-
-        return true;
-    }
-    catch (Exception ex)
-    {
-        error = $"Unable to instantiate {nonNullableType.Name}: {ex.Message}";
-        return false;
-    }
-}
-
-PropertyInfo? FindProperty(Type type, string segment)
-{
-    return type.GetProperties(BindingFlags.Instance | BindingFlags.Public)
-        .FirstOrDefault(property =>
-            property.Name.Equals(segment, StringComparison.OrdinalIgnoreCase) ||
-            ToCamelCase(property.Name).Equals(segment, StringComparison.OrdinalIgnoreCase));
-}
-
-string ToCamelCase(string value)
-{
-    if (string.IsNullOrEmpty(value))
-        return value;
-
-    if (value.Length == 1)
-        return value.ToLowerInvariant();
-
-    return char.ToLowerInvariant(value[0]) + value[1..];
-}
-
 bool ContainsDictionaryKey<TKey, TValue>(Dictionary<TKey, TValue> dictionary, TKey key)
     where TKey : notnull
 {
@@ -658,72 +453,6 @@ bool TryFindDictionaryKey<TKey, TValue>(Dictionary<TKey, TValue> dictionary, TKe
 
     matchedKey = default!;
     return false;
-}
-
-bool TryFindDictionaryLookupKey(IDictionary dictionary, string key, out object? matchedKey)
-{
-    if (dictionary.Contains(key))
-    {
-        matchedKey = key;
-        return true;
-    }
-
-    foreach (var existingKey in dictionary.Keys)
-    {
-        if (existingKey is string existingString &&
-            string.Equals(existingString, key, StringComparison.OrdinalIgnoreCase))
-        {
-            matchedKey = existingKey;
-            return true;
-        }
-    }
-
-    matchedKey = null;
-    return false;
-}
-
-object FindOrCreateDictionaryKey(IDictionary dictionary, string key)
-{
-    if (TryFindDictionaryLookupKey(dictionary, key, out var matchedKey) && matchedKey is not null)
-        return matchedKey;
-
-    return key;
-}
-
-bool TryGetDictionaryValueType(Type type, out Type valueType)
-{
-    var target = Nullable.GetUnderlyingType(type) ?? type;
-    if (target.IsGenericType &&
-        target.GetGenericTypeDefinition() == typeof(Dictionary<,>) &&
-        target.GetGenericArguments()[0] == typeof(string))
-    {
-        valueType = target.GetGenericArguments()[1];
-        return true;
-    }
-
-    foreach (var implemented in target.GetInterfaces())
-    {
-        if (!implemented.IsGenericType || implemented.GetGenericTypeDefinition() != typeof(IDictionary<,>))
-            continue;
-
-        var args = implemented.GetGenericArguments();
-        if (args[0] != typeof(string))
-            continue;
-
-        valueType = args[1];
-        return true;
-    }
-
-    valueType = typeof(object);
-    return false;
-}
-
-string[] SplitKeyPath(string keyPath)
-{
-    if (string.IsNullOrWhiteSpace(keyPath))
-        return [];
-
-    return keyPath.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 }
 
 void PrintValue(object? value)

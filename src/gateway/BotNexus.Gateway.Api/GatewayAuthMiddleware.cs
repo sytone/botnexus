@@ -5,6 +5,10 @@ using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Api;
 
+/// <summary>
+/// ASP.NET Core middleware that enforces authentication and authorization for Gateway requests.
+/// Validates caller identity and agent access permissions before allowing requests to proceed.
+/// </summary>
 public sealed class GatewayAuthMiddleware
 {
     internal const string CallerIdentityItemKey = "BotNexus.Gateway.CallerIdentity";
@@ -15,6 +19,12 @@ public sealed class GatewayAuthMiddleware
     private readonly IGatewayAuthHandler _authHandler;
     private readonly ILogger<GatewayAuthMiddleware> _logger;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="GatewayAuthMiddleware"/> class.
+    /// </summary>
+    /// <param name="next">The next middleware in the pipeline.</param>
+    /// <param name="authHandler">The authentication handler for verifying caller credentials.</param>
+    /// <param name="logger">The logger instance for diagnostic output.</param>
     public GatewayAuthMiddleware(
         RequestDelegate next,
         IGatewayAuthHandler authHandler,
@@ -25,6 +35,12 @@ public sealed class GatewayAuthMiddleware
         _logger = logger;
     }
 
+    /// <summary>
+    /// Processes an HTTP request to verify authentication and authorization.
+    /// If authentication fails, returns a 401 or 403 response without invoking the next middleware.
+    /// </summary>
+    /// <param name="context">The HTTP context for the current request.</param>
+    /// <returns>A task that represents the asynchronous middleware operation.</returns>
     public async Task InvokeAsync(HttpContext context)
     {
         if (ShouldSkipAuth(context.Request))

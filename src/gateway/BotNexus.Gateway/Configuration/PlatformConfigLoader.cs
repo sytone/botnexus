@@ -37,10 +37,13 @@ public static class PlatformConfigLoader
             return new PlatformConfig();
 
         PlatformConfig config;
+        string rawJson;
         try
         {
             using var stream = File.OpenRead(path);
-            config = JsonSerializer.Deserialize<PlatformConfig>(stream, JsonOptions)
+            using var reader = new StreamReader(stream);
+            rawJson = reader.ReadToEnd();
+            config = JsonSerializer.Deserialize<PlatformConfig>(rawJson, JsonOptions)
                 ?? new PlatformConfig();
         }
         catch (JsonException ex)
@@ -54,7 +57,8 @@ public static class PlatformConfigLoader
         if (!validateOnLoad)
             return config;
 
-        var errors = Validate(config);
+        var errors = new List<string>(PlatformConfigSchema.ValidateJson(rawJson));
+        errors.AddRange(Validate(config));
         if (errors.Count > 0)
             throw new OptionsValidationException(nameof(PlatformConfig), typeof(PlatformConfig), errors);
 
@@ -72,10 +76,13 @@ public static class PlatformConfigLoader
             return new PlatformConfig();
 
         PlatformConfig config;
+        string rawJson;
         try
         {
             await using var stream = File.OpenRead(path);
-            config = await JsonSerializer.DeserializeAsync<PlatformConfig>(stream, JsonOptions, cancellationToken)
+            using var reader = new StreamReader(stream);
+            rawJson = await reader.ReadToEndAsync(cancellationToken);
+            config = JsonSerializer.Deserialize<PlatformConfig>(rawJson, JsonOptions)
                 ?? new PlatformConfig();
         }
         catch (JsonException ex)
@@ -89,7 +96,8 @@ public static class PlatformConfigLoader
         if (!validateOnLoad)
             return config;
 
-        var errors = Validate(config);
+        var errors = new List<string>(PlatformConfigSchema.ValidateJson(rawJson));
+        errors.AddRange(Validate(config));
         if (errors.Count > 0)
             throw new OptionsValidationException(nameof(PlatformConfig), typeof(PlatformConfig), errors);
 

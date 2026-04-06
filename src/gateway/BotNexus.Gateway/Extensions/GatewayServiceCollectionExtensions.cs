@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Activity;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
@@ -52,6 +53,7 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IAgentSupervisor, DefaultAgentSupervisor>();
         services.AddSingleton<IAgentCommunicator, DefaultAgentCommunicator>();
         services.AddSingleton<IMessageRouter, DefaultMessageRouter>();
+        services.AddSingleton<IConfigPathResolver, ConfigPathResolver>();
         services.TryAddSingleton<IChannelManager, ChannelManager>();
         services.TryAddSingleton<ISessionStore, InMemorySessionStore>();
         services.AddSingleton<IActivityBroadcaster, InMemoryActivityBroadcaster>();

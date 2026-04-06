@@ -20,7 +20,14 @@ public sealed class ActivityWebSocketHandler(
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    public async Task HandleAsync(HttpContext context, CancellationToken cancellationToken)
+/// <summary>
+/// Handles WebSocket connections and streams gateway activity events to connected clients.
+/// Supports optional agent filtering via query parameter.
+/// </summary>
+/// <param name="context">The HTTP context containing the WebSocket request.</param>
+/// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+/// <returns>A task that represents the asynchronous WebSocket handling operation.</returns>
+public async Task HandleAsync(HttpContext context, CancellationToken cancellationToken)
     {
         if (!context.WebSockets.IsWebSocketRequest)
         {

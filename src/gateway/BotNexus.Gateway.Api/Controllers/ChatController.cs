@@ -15,6 +15,11 @@ public sealed class ChatController : ControllerBase
     private readonly IAgentSupervisor _supervisor;
     private readonly ISessionStore _sessions;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ChatController"/> class.
+    /// </summary>
+    /// <param name="supervisor">The agent supervisor for managing agent instances.</param>
+    /// <param name="sessions">The session store for persisting conversation history.</param>
     public ChatController(IAgentSupervisor supervisor, ISessionStore sessions)
     {
         _supervisor = supervisor;

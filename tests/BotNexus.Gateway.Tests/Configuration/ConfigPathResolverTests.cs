@@ -191,6 +191,45 @@ public sealed class ConfigPathResolverTests
     }
 
     [Fact]
+    public async Task ConfigGet_WithBracketArrayIndexPath_ReturnsIndexedValue()
+    {
+        await using var fixture = await CliConfigFixture.CreateAsync("""
+            {
+              "gateway": {
+                "cors": {
+                  "allowedOrigins": [ "https://one.test", "https://two.test" ]
+                }
+              }
+            }
+            """);
+
+        var result = await fixture.RunCliAsync("config", "get", "gateway.cors.allowedOrigins[1]");
+
+        result.ExitCode.Should().Be(0);
+        result.StdOut.Trim().Should().Be("https://two.test");
+    }
+
+    [Fact]
+    public async Task ConfigSet_WithBracketArrayIndexPath_UpdatesIndexedValue()
+    {
+        await using var fixture = await CliConfigFixture.CreateAsync("""
+            {
+              "gateway": {
+                "cors": {
+                  "allowedOrigins": [ "https://one.test", "https://two.test" ]
+                }
+              }
+            }
+            """);
+
+        var setResult = await fixture.RunCliAsync("config", "set", "gateway.cors.allowedOrigins[0]", "https://updated.test");
+
+        setResult.ExitCode.Should().Be(0);
+        var config = await fixture.LoadConfigAsync();
+        config.GetCors()!.AllowedOrigins![0].Should().Be("https://updated.test");
+    }
+
+    [Fact]
     public async Task ConfigGet_WithArrayIndexPath_ReturnsError()
     {
         await using var fixture = await CliConfigFixture.CreateAsync("""
@@ -278,12 +317,22 @@ public sealed class ConfigPathResolverTests
         private static string ResolveCliAssemblyPath()
         {
             var localCopy = Path.Combine(AppContext.BaseDirectory, "BotNexus.Cli.dll");
-            if (File.Exists(localCopy))
-                return localCopy;
-
             var root = FindRepositoryRoot();
             var fallback = Path.Combine(root, "src", "gateway", "BotNexus.Cli", "bin", "Debug", "net10.0", "BotNexus.Cli.dll");
-            if (File.Exists(fallback))
+            var hasLocalCopy = File.Exists(localCopy);
+            var hasFallback = File.Exists(fallback);
+
+            if (hasLocalCopy && hasFallback)
+            {
+                var localTimestamp = File.GetLastWriteTimeUtc(localCopy);
+                var fallbackTimestamp = File.GetLastWriteTimeUtc(fallback);
+                return fallbackTimestamp > localTimestamp ? fallback : localCopy;
+            }
+
+            if (hasLocalCopy)
+                return localCopy;
+
+            if (hasFallback)
                 return fallback;
 
             throw new FileNotFoundException("Unable to locate BotNexus.Cli.dll for config path tests.");

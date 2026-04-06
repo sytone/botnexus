@@ -1,0 +1,383 @@
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "title": "BotNexus Platform Configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "gateway": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/definitions/GatewaySettingsConfig"
+        }
+      ]
+    },
+    "agents": {
+      "type": [
+        "null",
+        "object"
+      ],
+      "additionalProperties": {
+        "$ref": "#/definitions/AgentDefinitionConfig"
+      }
+    },
+    "providers": {
+      "type": [
+        "null",
+        "object"
+      ],
+      "additionalProperties": {
+        "$ref": "#/definitions/ProviderConfig"
+      }
+    },
+    "channels": {
+      "type": [
+        "null",
+        "object"
+      ],
+      "additionalProperties": {
+        "$ref": "#/definitions/ChannelConfig"
+      }
+    },
+    "extensions": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/definitions/ExtensionsConfig"
+        }
+      ]
+    },
+    "apiKey": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "apiKeys": {
+      "type": [
+        "null",
+        "object"
+      ],
+      "additionalProperties": {
+        "$ref": "#/definitions/ApiKeyConfig"
+      }
+    },
+    "listenUrl": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "defaultAgentId": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "agentsDirectory": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "sessionsDirectory": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "sessionStore": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/definitions/SessionStoreConfig"
+        }
+      ]
+    },
+    "cors": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/definitions/CorsConfig"
+        }
+      ]
+    },
+    "logLevel": {
+      "type": [
+        "null",
+        "string"
+      ]
+    }
+  },
+  "definitions": {
+    "GatewaySettingsConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "listenUrl": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "defaultAgentId": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "agentsDirectory": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "sessionsDirectory": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "sessionStore": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/SessionStoreConfig"
+            }
+          ]
+        },
+        "cors": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/CorsConfig"
+            }
+          ]
+        },
+        "logLevel": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "apiKeys": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "additionalProperties": {
+            "$ref": "#/definitions/ApiKeyConfig"
+          }
+        },
+        "extensions": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/ExtensionsConfig"
+            }
+          ]
+        }
+      }
+    },
+    "SessionStoreConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "filePath": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
+    },
+    "CorsConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowedOrigins": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "ApiKeyConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "apiKey": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "tenantId": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "callerId": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "displayName": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "allowedAgents": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "permissions": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "isAdmin": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ExtensionsConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "AgentDefinitionConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "model": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "systemPromptFile": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "isolationStrategy": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ProviderConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "apiKey": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "baseUrl": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "defaultModel": {
+          "type": [
+            "null",
+            "string"
+          ]
+        }
+      }
+    },
+    "ChannelConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "settings": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

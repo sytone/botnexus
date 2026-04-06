@@ -691,3 +691,6 @@ Result: Phase 3 blockers cleared, build clean, READY FOR RELEASE.
 
 **Owner Review Required:** Squad should not implement follow-on provider changes without explicit approval.
 
+
+- 2026-04-06: Gateway config mutation logic moved from CLI inline reflection into IConfigPathResolver + ConfigPathResolver, adding bracket array index support (path[0]) and reusable path discovery for DI consumers.
+- 2026-04-06: Platform config load now runs JSON Schema validation via PlatformConfigSchema with key-casing normalization before existing manual validation, and CLI exposes otnexus config schema --output ... to regenerate docs/botnexus-config.schema.json.

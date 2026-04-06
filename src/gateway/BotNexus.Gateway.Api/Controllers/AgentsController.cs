@@ -15,6 +15,11 @@ public sealed class AgentsController : ControllerBase
     private readonly IAgentRegistry _registry;
     private readonly IAgentSupervisor _supervisor;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AgentsController"/> class.
+    /// </summary>
+    /// <param name="registry">The agent registry for accessing registered agents.</param>
+    /// <param name="supervisor">The agent supervisor for managing agent instances and their lifecycle.</param>
     public AgentsController(IAgentRegistry registry, IAgentSupervisor supervisor)
     {
         _registry = registry;

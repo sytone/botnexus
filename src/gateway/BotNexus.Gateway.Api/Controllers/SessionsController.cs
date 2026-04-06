@@ -13,6 +13,10 @@ public sealed class SessionsController : ControllerBase
 {
     private readonly ISessionStore _sessions;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="SessionsController"/> class.
+    /// </summary>
+    /// <param name="sessions">The session store for managing conversation sessions.</param>
     public SessionsController(ISessionStore sessions) => _sessions = sessions;
 
     /// <summary>Lists sessions, optionally filtered by agent ID.</summary>
@@ -98,6 +102,13 @@ public sealed class SessionsController : ControllerBase
     }
 }
 
+/// <summary>
+/// Represents paginated session history response containing conversation entries.
+/// </summary>
+/// <param name="Offset">The zero-based offset for pagination.</param>
+/// <param name="Limit">The maximum number of entries returned.</param>
+/// <param name="TotalCount">The total number of entries in the session history.</param>
+/// <param name="Entries">The list of session history entries.</param>
 public sealed record SessionHistoryResponse(
     int Offset,
     int Limit,
