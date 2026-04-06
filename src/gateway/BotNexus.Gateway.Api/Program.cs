@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Api.Extensions;
+using BotNexus.Gateway.Api;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Extensions;
 using BotNexus.Providers.Anthropic;
@@ -48,6 +49,7 @@ if (!string.IsNullOrWhiteSpace(listenUrl))
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
+app.UseMiddleware<GatewayAuthMiddleware>();
 app.UseWebSockets();
 
 app.MapControllers();
