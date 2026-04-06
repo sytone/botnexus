@@ -1,5 +1,3 @@
-using System.Drawing;
-using System.Drawing.Imaging;
 using System.Text;
 using System.Text.Json;
 using BotNexus.AgentCore.Tools;
@@ -13,7 +11,6 @@ public sealed class ReadTool : IAgentTool
 {
     private const int MaxOutputLines = 2000;
     private const int MaxOutputBytes = 50 * 1024;
-    private const int MaxImageDimension = 2000;
     private readonly string _workingDirectory;
 
     public ReadTool(string workingDirectory)
@@ -101,7 +98,7 @@ public sealed class ReadTool : IAgentTool
             var bytes = await File.ReadAllBytesAsync(resolvedPath, cancellationToken).ConfigureAwait(false);
             if (TryGetImageMimeType(resolvedPath, bytes, out var mimeType))
             {
-                var imagePayload = ResizeAndEncodeImage(bytes, mimeType);
+                var imagePayload = EncodeImage(bytes, mimeType);
                 var imageValue = $"data:{imagePayload.MimeType};base64,{imagePayload.Base64}";
                 return new AgentToolResult(
                 [
@@ -197,45 +194,9 @@ public sealed class ReadTool : IAgentTool
         return outputText;
     }
 
-    private static (string Base64, string MimeType) ResizeAndEncodeImage(byte[] bytes, string mimeType)
+    private static (string Base64, string MimeType) EncodeImage(byte[] bytes, string mimeType)
     {
-        try
-        {
-            using var sourceStream = new MemoryStream(bytes);
-            using var image = Image.FromStream(sourceStream, useEmbeddedColorManagement: true, validateImageData: true);
-            if (image.Width <= MaxImageDimension && image.Height <= MaxImageDimension)
-            {
-                return (Convert.ToBase64String(bytes), mimeType);
-            }
-
-            var scale = Math.Min(MaxImageDimension / (double)image.Width, MaxImageDimension / (double)image.Height);
-            var width = Math.Max(1, (int)Math.Round(image.Width * scale));
-            var height = Math.Max(1, (int)Math.Round(image.Height * scale));
-            using var resized = new Bitmap(width, height);
-            using (var graphics = Graphics.FromImage(resized))
-            {
-                graphics.DrawImage(image, 0, 0, width, height);
-            }
-
-            using var outputStream = new MemoryStream();
-            resized.Save(outputStream, SelectImageFormat(mimeType));
-            return (Convert.ToBase64String(outputStream.ToArray()), mimeType);
-        }
-        catch
-        {
-            return (Convert.ToBase64String(bytes), mimeType);
-        }
-    }
-
-    private static ImageFormat SelectImageFormat(string mimeType)
-    {
-        return mimeType switch
-        {
-            "image/png" => ImageFormat.Png,
-            "image/gif" => ImageFormat.Gif,
-            "image/webp" => ImageFormat.Png,
-            _ => ImageFormat.Jpeg
-        };
+        return (Convert.ToBase64String(bytes), mimeType);
     }
 
     private static bool TryGetImageMimeType(string fullPath, byte[] bytes, out string mimeType)
