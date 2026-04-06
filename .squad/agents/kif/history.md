@@ -7,6 +7,8 @@
 
 ## Learnings
 
+- Sprint 7A: Created OpenAPI spec export pipeline (`scripts/export-openapi.ps1`). Swashbuckle.AspNetCore.Cli 7.2.0 targets net9.0 only — doesn't work on net10.0 even with LatestMajor roll-forward (crashes on `IServerAddressesFeature`). Used live-server approach instead: script starts API on temp port, fetches `/swagger/v1/swagger.json`, saves to `docs/api/openapi.json`. Key: PlatformConfig.GetListenUrl() overrides `--urls` parameter — must set `BotNexus__ConfigPath` to empty JSON file to prevent user config from hijacking port. Generated spec has 15 REST paths with XML doc comment descriptions. Commit: 88666b0.
+
 - Created `docs/dev-guide.md` — comprehensive developer guide (~500 lines, 12 sections) covering prerequisites through troubleshooting. Every config example, port number, and file path verified against actual source code:
   - Gateway default port is 5005 in scripts (`start-gateway.ps1` `-Port` default, `dev-loop.ps1`)
   - `BotNexusHome.Initialize()` creates 5 directories: extensions, tokens, sessions, logs, agents
