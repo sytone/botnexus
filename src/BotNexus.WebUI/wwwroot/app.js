@@ -1741,13 +1741,17 @@
             elModelSelect.innerHTML = '';
             
             if (models && models.length > 0) {
-                // Populate with available models
-                models.sort((a, b) => {
+                // Filter to the agent's provider to avoid cross-provider duplicates
+                const agentProvider = (agent?.apiProvider || '').toLowerCase();
+                const filtered = agentProvider
+                    ? models.filter(m => (m.provider || '').toLowerCase() === agentProvider)
+                    : models;
+                filtered.sort((a, b) => {
                     const nameA = a.name || a.modelId || a.id || '';
                     const nameB = b.name || b.modelId || b.id || '';
                     return nameA.localeCompare(nameB);
                 });
-                for (const m of models) {
+                for (const m of filtered) {
                     const opt = document.createElement('option');
                     const modelId = m.modelId || m.id || 'unknown';
                     opt.value = modelId;
