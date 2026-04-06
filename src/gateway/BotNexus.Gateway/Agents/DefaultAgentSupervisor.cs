@@ -8,7 +8,7 @@ namespace BotNexus.Gateway.Agents;
 /// <summary>
 /// Default agent supervisor — manages agent instance lifecycle using isolation strategies.
 /// </summary>
-public sealed class DefaultAgentSupervisor : IAgentSupervisor
+public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspector
 {
     private readonly IAgentRegistry _registry;
     private readonly IReadOnlyDictionary<string, IIsolationStrategy> _strategies;
@@ -109,6 +109,12 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor
     public AgentInstance? GetInstance(string agentId, string sessionId)
     {
         lock (_sync) return _instances.GetValueOrDefault(MakeKey(agentId, sessionId)).Instance;
+    }
+
+    /// <inheritdoc />
+    public IAgentHandle? GetHandle(string agentId, string sessionId)
+    {
+        lock (_sync) return _instances.GetValueOrDefault(MakeKey(agentId, sessionId)).Handle;
     }
 
     /// <inheritdoc />

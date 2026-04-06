@@ -106,6 +106,36 @@ public sealed class AgentsController : ControllerBase
     [HttpGet("instances")]
     public ActionResult<IReadOnlyList<AgentInstance>> ListInstances() => Ok(_supervisor.GetAllInstances());
 
+    /// <summary>Gets runtime health for active instances of an agent.</summary>
+    [HttpGet("{agentId}/health")]
+    public async Task<ActionResult<AgentHealthResponse>> GetHealth(string agentId, CancellationToken cancellationToken)
+    {
+        var instances = (_supervisor.GetAllInstances() ?? [])
+            .Where(instance => string.Equals(instance.AgentId, agentId, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (instances.Count == 0)
+            return Ok(new AgentHealthResponse("unknown", agentId, 0));
+
+        if (_supervisor is not IAgentHandleInspector inspector)
+            return Ok(new AgentHealthResponse("unknown", agentId, instances.Count));
+
+        var evaluatedCount = 0;
+        foreach (var instance in instances)
+        {
+            var handle = inspector.GetHandle(instance.AgentId, instance.SessionId);
+            if (handle is not IHealthCheckable healthCheckable)
+                continue;
+
+            evaluatedCount++;
+            if (!await healthCheckable.PingAsync(cancellationToken))
+                return Ok(new AgentHealthResponse("unhealthy", agentId, instances.Count));
+        }
+
+        var status = evaluatedCount > 0 ? "healthy" : "unknown";
+        return Ok(new AgentHealthResponse(status, agentId, instances.Count));
+    }
+
     /// <summary>Stops a specific agent instance.</summary>
     [HttpPost("{agentId}/sessions/{sessionId}/stop")]
     public async Task<ActionResult> StopInstance(string agentId, string sessionId, CancellationToken cancellationToken)

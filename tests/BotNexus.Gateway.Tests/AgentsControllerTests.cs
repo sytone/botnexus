@@ -81,6 +81,89 @@ public sealed class AgentsControllerTests
         updated!.AgentId.Should().Be("agent-a");
     }
 
+    [Fact]
+    public async Task GetHealth_WithNoActiveInstances_ReturnsUnknown()
+    {
+        var controller = new AgentsController(new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance), Mock.Of<IAgentSupervisor>());
+
+        var result = await controller.GetHealth("agent-a", CancellationToken.None);
+
+        var response = (result.Result as OkObjectResult)?.Value as AgentHealthResponse;
+        response.Should().NotBeNull();
+        response!.Status.Should().Be("unknown");
+        response.InstanceCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GetHealth_WithHealthCheckableHandle_ReturnsHealthy()
+    {
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetAllInstances()).Returns([
+            new AgentInstance
+            {
+                InstanceId = "agent-a::s1",
+                AgentId = "agent-a",
+                SessionId = "s1",
+                IsolationStrategy = "in-process"
+            }
+        ]);
+
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.AgentId).Returns("agent-a");
+        handle.SetupGet(h => h.SessionId).Returns("s1");
+        handle.As<IHealthCheckable>()
+            .Setup(h => h.PingAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        supervisor.As<IAgentHandleInspector>()
+            .Setup(s => s.GetHandle("agent-a", "s1"))
+            .Returns(handle.Object);
+
+        var controller = new AgentsController(new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance), supervisor.Object);
+
+        var result = await controller.GetHealth("agent-a", CancellationToken.None);
+
+        var response = (result.Result as OkObjectResult)?.Value as AgentHealthResponse;
+        response.Should().NotBeNull();
+        response!.Status.Should().Be("healthy");
+        response.InstanceCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GetHealth_WithFailedHealthCheck_ReturnsUnhealthy()
+    {
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetAllInstances()).Returns([
+            new AgentInstance
+            {
+                InstanceId = "agent-a::s1",
+                AgentId = "agent-a",
+                SessionId = "s1",
+                IsolationStrategy = "in-process"
+            }
+        ]);
+
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.AgentId).Returns("agent-a");
+        handle.SetupGet(h => h.SessionId).Returns("s1");
+        handle.As<IHealthCheckable>()
+            .Setup(h => h.PingAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        supervisor.As<IAgentHandleInspector>()
+            .Setup(s => s.GetHandle("agent-a", "s1"))
+            .Returns(handle.Object);
+
+        var controller = new AgentsController(new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance), supervisor.Object);
+
+        var result = await controller.GetHealth("agent-a", CancellationToken.None);
+
+        var response = (result.Result as OkObjectResult)?.Value as AgentHealthResponse;
+        response.Should().NotBeNull();
+        response!.Status.Should().Be("unhealthy");
+        response.InstanceCount.Should().Be(1);
+    }
+
     private static AgentDescriptor CreateDescriptor(string agentId)
         => new()
         {

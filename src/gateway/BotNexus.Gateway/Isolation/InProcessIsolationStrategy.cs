@@ -87,7 +87,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 /// <summary>
 /// Agent handle that wraps an in-process <see cref="BotNexus.AgentCore.Agent"/> instance.
 /// </summary>
-internal sealed class InProcessAgentHandle : IAgentHandle
+internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable
 {
     private readonly Agent _agent;
     private readonly ILogger _logger;
@@ -282,6 +282,10 @@ internal sealed class InProcessAgentHandle : IAgentHandle
         _agent.FollowUp(new AgentCoreUserMessage(message));
         return Task.CompletedTask;
     }
+
+    /// <inheritdoc />
+    public Task<bool> PingAsync(CancellationToken cancellationToken = default)
+        => Task.FromResult(_agent.Status != AgentStatus.Aborting);
 
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
