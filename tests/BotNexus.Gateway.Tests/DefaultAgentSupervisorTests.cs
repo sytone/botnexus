@@ -94,6 +94,30 @@ public sealed class DefaultAgentSupervisorTests
             .WithMessage("*MaxConcurrentSessions (1)*");
     }
 
+    [Fact]
+    public async Task GetOrCreateAsync_WhenIsolationStrategyIsUnknown_ThrowsDescriptiveError()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(new AgentDescriptor
+        {
+            AgentId = "agent-a",
+            DisplayName = "Agent A",
+            ModelId = "test-model",
+            ApiProvider = "test-provider",
+            IsolationStrategy = "missing"
+        });
+
+        var strategy = new Mock<IIsolationStrategy>();
+        strategy.SetupGet(s => s.Name).Returns("test");
+        var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], NullLogger<DefaultAgentSupervisor>.Instance);
+
+        var act = () => supervisor.GetOrCreateAsync("agent-a", "session-1");
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*IsolationStrategy 'missing' is not registered*")
+            .WithMessage("*Available*");
+    }
+
     private static Mock<IAgentHandle> CreateHandleMock(string agentId, string sessionId)
     {
         var handle = new Mock<IAgentHandle>();

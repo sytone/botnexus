@@ -163,8 +163,18 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor
         string key,
         CancellationToken cancellationToken)
     {
+        var descriptorErrors = AgentDescriptorValidator.Validate(descriptor, _strategies.Keys);
+        if (descriptorErrors.Count > 0)
+            throw new InvalidOperationException(
+                $"Agent '{descriptor.AgentId}' configuration is invalid: {string.Join("; ", descriptorErrors)}");
+
         if (!_strategies.TryGetValue(descriptor.IsolationStrategy, out var strategy))
-            throw new InvalidOperationException($"Isolation strategy '{descriptor.IsolationStrategy}' is not registered.");
+        {
+            var availableStrategies = string.Join(", ", _strategies.Keys.Order(StringComparer.OrdinalIgnoreCase));
+            throw new InvalidOperationException(
+                $"Isolation strategy '{descriptor.IsolationStrategy}' is not registered for agent '{descriptor.AgentId}'. " +
+                $"Available strategies: {availableStrategies}.");
+        }
 
         var context = new AgentExecutionContext { SessionId = sessionId };
         var handle = await strategy.CreateAsync(descriptor, context, cancellationToken);
