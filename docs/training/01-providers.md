@@ -2,7 +2,7 @@
 
 The provider system is the communication layer between BotNexus and LLM APIs. It defines how models are registered, how API keys are resolved, how requests are routed to the correct provider implementation, and how streaming responses flow back to the caller. This document is the single reference for everything in the `BotNexus.Providers.Core` namespace and the built-in provider packages.
 
-> If you have read the [architecture overview](00-overview.md), you already know that
+> If you have read the [architecture overview](../architecture/system-layers.md), you already know that
 > the provider layer sits between the agent loop and the outside world. This document
 > takes you inside that layer.
 
@@ -1109,6 +1109,6 @@ If you provide a custom normalizer, update the signature. If you don't provide o
 
 ## See also
 
-- [Architecture overview](00-overview.md) — where the provider layer sits in the stack
+- [Architecture overview](../architecture/system-layers.md) — where the provider layer sits in the stack
 - [Agent core](02-agent-core.md) — the agent loop that consumes providers
 - [Building your own](04-building-your-own.md) — full provider implementation tutorial

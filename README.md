@@ -9,7 +9,7 @@ A modular, extensible AI agent execution platform built in C#/.NET. BotNexus ena
 | **[Getting Started →](docs/getting-started.md)** | First-time users — clone to running in minutes |
 | **[Developer Guide →](docs/dev-guide.md)** | Developers and agents — build, test, run locally |
 | **[API Reference →](docs/api-reference.md)** | REST and WebSocket endpoint documentation |
-| **[Architecture →](docs/architecture.md)** | System design, components, and extension points |
+| **[Architecture →](docs/architecture/overview.md)** | System design, components, and extension points |
 
 ---
 
@@ -265,11 +265,11 @@ See [Architecture Guide](docs/architecture.md#provider-architecture-pi-style) an
 - **[Getting Started](docs/getting-started.md)** ← Start here
 - [Developer Guide](docs/dev-guide.md) — Build, test, and run locally
 - [API Reference](docs/api-reference.md) — REST and WebSocket endpoints
-- [Architecture Overview](docs/architecture.md) — System design and components
-- [Development Workflow](docs/development-workflow.md) — Build, test, and deploy with dev-loop script
+- [Architecture Overview](docs/architecture/overview.md) — System design and components
+- [Developer Guide](docs/dev-guide.md) — Build, test, and deploy with dev-loop script
 - [Configuration Guide](docs/configuration.md) — Complete configuration reference
 - [Extension Development](docs/extension-development.md) — Build custom providers, channels, and tools
-- [Workspace & Memory](docs/workspace-and-memory.md) — Agent workspace and memory system
+- [Workspace & Memory](docs/architecture/workspace-and-memory.md) — Agent workspace and memory system
 - [Cron & Scheduling](docs/cron-and-scheduling.md) — Scheduled tasks and heartbeats
 - [Skills Guide](docs/skills.md) — Modular knowledge packages for agents
 

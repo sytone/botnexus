@@ -840,7 +840,7 @@ if (result[^1] is AssistantAgentMessage final)
 
 ## Cross-references
 
-- [Architecture overview](00-overview.md) — high-level layer diagram and project map
+- [Architecture overview](../architecture/system-layers.md) — high-level layer diagram and project map
 - [Provider system](01-providers.md) — LLM communication, streaming, and the provider registry
 - [Agent core](02-agent-core.md) — the agent loop, tool execution, events, and message types
 - [Building your own](04-building-your-own.md) — hands-on tutorial for custom agents, tools, and extensions

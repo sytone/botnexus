@@ -115,10 +115,10 @@ See the [CLI Reference](cli-reference.md) for all available commands.
 
 Once you finish your setup guide, check out:
 
-- **[Workspace & Memory](workspace-and-memory.md)** — Customize your agents with personality files
+- **[Workspace & Memory](architecture/workspace-and-memory.md)** — Customize your agents with personality files
 - **[Configuration Guide](configuration.md)** — Reference for every config option
 - **[Extension Development](extension-development.md)** — Build custom channels and tools
-- **[Architecture Overview](architecture.md)** — Understand how the system works
+- **[Architecture Overview](architecture/overview.md)** — Understand how the system works
 
 ---
 

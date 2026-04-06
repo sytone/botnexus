@@ -2,7 +2,7 @@
 
 This guide walks you through building a custom AI agent on BotNexus — from choosing a provider and defining tools, all the way to session persistence and adding a new LLM provider from scratch.
 
-**Prerequisites:** Familiarity with C#/.NET 10 (records, async/await, `IAsyncEnumerable`), LLM API concepts (chat completions, streaming, tool calling), and the [Architecture overview](00-overview.md).
+**Prerequisites:** Familiarity with C#/.NET 10 (records, async/await, `IAsyncEnumerable`), LLM API concepts (chat completions, streaming, tool calling), and the [Architecture overview](../architecture/system-layers.md).
 
 ---
 
@@ -1534,7 +1534,7 @@ Console.WriteLine($"\nDone — {result.Count} messages produced.");
 
 ## See also
 
-- [Architecture overview](00-overview.md) — System-level design and project map
+- [Architecture overview](../architecture/system-layers.md) — System-level design and project map
 - [Provider system](01-providers.md) — Streaming protocol and registry deep dive
 - [Agent core](02-agent-core.md) — Agent loop internals and state management
 - [Coding agent](03-coding-agent.md) — Built-in tools, sessions, and the factory

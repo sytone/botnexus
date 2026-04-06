@@ -1,7 +1,7 @@
 # Tool security model
 
 > **Audience:** Developers building coding agents or custom tools who need to understand how BotNexus enforces security boundaries.
-> **Prerequisites:** C#/.NET, familiarity with [agent events](agent-events.md) and [provider architecture](providers.md).
+> **Prerequisites:** C#/.NET, familiarity with [agent events](agent-events.md) and [provider system](01-providers.md).
 > **Source code:** `src/coding-agent/BotNexus.CodingAgent/Utils/`, `Hooks/`, and `Tools/`
 
 ## What you'll learn
@@ -563,6 +563,6 @@ When implementing a custom `IAgentTool`:
 ## Further reading
 
 - [Agent event system](agent-events.md) — hook system and event lifecycle
-- [Building a coding agent](building-a-coding-agent.md) — how CodingAgent wires safety
-- [Provider architecture](providers.md) — LLM communication layer
+- [Building your own agent](04-building-your-own.md) — how CodingAgent wires safety
+- [Provider system](01-providers.md) — LLM communication layer
 - [Glossary](05-glossary.md) — all key terms

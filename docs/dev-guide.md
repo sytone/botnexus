@@ -819,9 +819,9 @@ Verify extension assemblies are in the correct subdirectories:
 
 ## See Also
 
-- [Architecture Overview](architecture.md) — System design and component responsibilities
+- [Architecture Overview](architecture/overview.md) — System design and component responsibilities
 - [API Reference](api-reference.md) — REST and WebSocket endpoint documentation
-- [Configuration Reference](config-reference.md) — Complete field-by-field config.json reference
+- [Configuration Guide](configuration.md) — Complete field-by-field config.json reference
 - [WebSocket Protocol](websocket-protocol.md) — Low-level WebSocket protocol specification
 - [Extension Development](extension-development.md) — Building custom providers, channels, and tools
 - [Getting Started](getting-started.md) — First-time user guide with end-to-end walkthrough

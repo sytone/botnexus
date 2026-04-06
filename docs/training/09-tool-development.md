@@ -561,6 +561,6 @@ public async Task<AgentToolResult> ExecuteAsync(
 
 - **[Agent Core — Tool Execution](02-agent-core.md#tool-execution)** — How tools fit into the agent loop
 - **[Coding Agent — Built-in Tools](03-coding-agent.md#built-in-tools)** — Examples: ReadTool, ListDirectoryTool, WriteTool, EditTool, ShellTool, GrepTool, GlobTool
-- **[Building Custom Coding Agent](08-building-custom-coding-agent.md)** — Register and use tools in your agent
+- **[Building Your Own Agent](04-building-your-own.md)** — Register and use tools in your agent
 - **[ReadTool.cs source](../src/coding-agent/BotNexus.CodingAgent/Tools/ReadTool.cs)** — Reference implementation
 - **[IAgentTool interface source](../src/agent/BotNexus.AgentCore/Tools/IAgentTool.cs)** — Complete interface definition

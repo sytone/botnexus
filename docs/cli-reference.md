@@ -592,4 +592,4 @@ All commands return:
 
 - [Configuration Guide](configuration.md) — Complete configuration reference
 - [Getting Started](getting-started.md) — Onboarding guide
-- [Development Loop](dev-loop.md) — Dev workflow and scripts
+- [Developer Guide](dev-guide.md) — Dev workflow and scripts

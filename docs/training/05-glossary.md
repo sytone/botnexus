@@ -2,7 +2,7 @@
 
 Quick reference for all key terms used in the BotNexus codebase. Terms are organized alphabetically.
 
-> **See also:** [Architecture Overview](00-overview.md) · [Provider System](01-providers.md) · [Agent Core](02-agent-core.md) · [Coding Agent](03-coding-agent.md) · [Build Your Own Agent](04-building-your-own.md) · [Context File Discovery](06-context-file-discovery.md) · [Thinking Levels](07-thinking-levels.md) · [Building Custom Coding Agent](08-building-custom-coding-agent.md) · [Tool Development](09-tool-development.md)
+> **See also:** [Architecture Overview](../architecture/system-layers.md) · [Provider System](01-providers.md) · [Agent Core](02-agent-core.md) · [Coding Agent](03-coding-agent.md) · [Build Your Own Agent](04-building-your-own.md) · [Context File Discovery](06-context-file-discovery.md) · [Thinking Levels](07-thinking-levels.md) · [Tool Development](09-tool-development.md)
 
 ---
 
@@ -155,7 +155,7 @@ Configuration record for the coding agent. Includes `Model`, `Provider`, `MaxToo
 Polymorphic base record for message content. Subtypes: `TextContent`, `ThinkingContent`, `ImageContent`, and `ToolCallContent`. Used throughout both provider and agent layers.
 
 **Source:** `BotNexus.Providers.Core.Models`
-**Training:** [Provider System — Message Types](01-providers.md) · [Architecture Overview](00-overview.md)
+**Training:** [Provider System — Message Types](01-providers.md) · [Architecture Overview](../architecture/system-layers.md)
 
 ---
 
@@ -263,7 +263,7 @@ Plugin interface for CodingAgent extensions. Methods: `GetTools`, `OnToolCallAsy
 Instance-based entry point that routes LLM requests to the correct provider. Accepts `ApiProviderRegistry` and `ModelRegistry` via constructor. All LLM calls flow through this class.
 
 **Source:** `BotNexus.Providers.Core`
-**Training:** [Provider System](01-providers.md) · [Architecture Overview](00-overview.md)
+**Training:** [Provider System](01-providers.md) · [Architecture Overview](../architecture/system-layers.md)
 
 ---
 
@@ -317,7 +317,7 @@ Record with per-million-token pricing: `Input`, `Output`, `CacheRead`, `CacheWri
 Instance-based registry mapping `(provider, modelId)` pairs to `LlmModel` definitions. Backed by `ConcurrentDictionary` for thread-safe lookups.
 
 **Source:** `BotNexus.Providers.Core`
-**Training:** [Provider System — Model Registry](01-providers.md) · [Architecture Overview](00-overview.md)
+**Training:** [Provider System — Model Registry](01-providers.md) · [Architecture Overview](../architecture/system-layers.md)
 
 ---
 

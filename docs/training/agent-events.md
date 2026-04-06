@@ -1,7 +1,7 @@
 # Agent event system
 
 > **Audience:** Developers building agents on `BotNexus.AgentCore` who need to understand the lifecycle, events, hooks, and message queues.
-> **Prerequisites:** C#/.NET, async/await, familiarity with [provider architecture](providers.md).
+> **Prerequisites:** C#/.NET, async/await, familiarity with [provider system](01-providers.md).
 > **Source code:** `src/agent/BotNexus.AgentCore/`
 
 ## What you'll learn
@@ -542,7 +542,7 @@ You can mutate `Tools`, `Model`, `SystemPrompt`, and `ThinkingLevel` between run
 
 ## Further reading
 
-- [Provider architecture](providers.md) — how LLM communication works
+- [Provider system](01-providers.md) — how LLM communication works
 - [Tool security model](tool-security.md) — safety hooks and path containment
-- [Building a coding agent](building-a-coding-agent.md) — wiring everything together
+- [Building your own agent](04-building-your-own.md) — wiring everything together
 - [Glossary](05-glossary.md) — all key terms

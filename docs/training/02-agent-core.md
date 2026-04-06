@@ -807,7 +807,7 @@ public delegate Task<AfterToolCallResult?> AfterToolCallDelegate(
 
 ## See also
 
-- **[Architecture overview](00-overview.md)** — High-level system architecture and the three-layer model
+- **[Architecture overview](../architecture/system-layers.md)** — High-level system architecture and the three-layer model
 - **[Provider system](01-providers.md)** — LLM communication, streaming protocol, and `LlmStream` details
 - **[Coding agent](03-coding-agent.md)** — How `CodingAgent` builds on top of the agent core with built-in tools and session management
 - **[Building your own](04-building-your-own.md)** — Step-by-step tutorials for creating custom agents and tools

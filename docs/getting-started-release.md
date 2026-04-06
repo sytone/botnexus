@@ -445,9 +445,9 @@ botnexus backup restore <backup-name>
 
 - **[Using Channels](channels.md)** — Connect your agents to Telegram, Discord, Slack, or your own interfaces
 - **[Configuring Cron Jobs](cron-and-scheduling.md)** — Automate recurring tasks
-- **[Workspace & Memory](workspace-and-memory.md)** — Deep dive into agent personality files
+- **[Workspace & Memory](architecture/workspace-and-memory.md)** — Deep dive into agent personality files
 - **[Configuration Guide](configuration.md)** — Full reference for every config option
-- **[Architecture Overview](architecture.md)** — Understand how BotNexus works
+- **[Architecture Overview](architecture/overview.md)** — Understand how BotNexus works
 
 ---
 

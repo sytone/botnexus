@@ -424,9 +424,9 @@ Then reinitialize by running the Gateway again.
 
 ## Next Steps
 
-- **[Development Loop](dev-loop.md)** — Quick reference for build, test, and run commands
+- **[Developer Guide](dev-guide.md)** — Quick reference for build, test, and run commands
 - **[Configuration Guide](configuration.md)** — Full reference for config.json options
-- **[Architecture Overview](architecture.md)** — Understand how BotNexus works
+- **[Architecture Overview](architecture/overview.md)** — Understand how BotNexus works
 - **[Extension Development](extension-development.md)** — Build custom channels and tools
 
 ---

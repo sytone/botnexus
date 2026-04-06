@@ -2,7 +2,7 @@
 
 This document walks through implementing a new `IApiProvider` from scratch. By the end, you'll understand SSE parsing, message conversion, testing patterns, and provider-specific quirks.
 
-> **Prerequisites:** [Provider System](01-providers.md), [Architecture Deep Dive](10-architecture-deep-dive.md), familiarity with HTTP APIs and Server-Sent Events (SSE).
+> **Prerequisites:** [Provider System](01-providers.md), [Architecture Deep Dive](../architecture/deep-dive.md), familiarity with HTTP APIs and Server-Sent Events (SSE).
 
 ---
 
@@ -905,5 +905,5 @@ Before shipping your provider:
 ## What's next
 
 - **[Provider System](01-providers.md)** — Provider registry, model registry
-- **[Architecture Deep Dive](10-architecture-deep-dive.md)** — Provider abstraction layer
+- **[Architecture Deep Dive](../architecture/deep-dive.md)** — Provider abstraction layer
 - **[Building Your Own](04-building-your-own.md)** — Full end-to-end agent example

@@ -720,5 +720,5 @@ Each event is a `GatewayActivity` record:
 
 - [API Reference](api-reference.md) — REST endpoint documentation and WebSocket overview
 - [WebSocket Channel README](../src/channels/BotNexus.Channels.WebSocket/README.md) — Adapter implementation details
-- [Configuration Reference](config-reference.md) — Platform configuration including WebSocket options
+- [Configuration Guide](configuration.md) — Platform configuration including WebSocket options
 - [Developer Guide](dev-guide.md) — Running the Gateway locally
