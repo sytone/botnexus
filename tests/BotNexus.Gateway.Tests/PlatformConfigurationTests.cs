@@ -284,7 +284,7 @@ public sealed class PlatformConfigurationTests
         sessionStore.Should().BeOfType<FileSessionStore>();
         agentSources.Should().Contain(source => source is FileAgentConfigurationSource);
         agentSources.Should().Contain(source => source is PlatformConfigAgentSource);
-        configurationWriter.Should().BeOfType<FileAgentConfigurationWriter>();
+        configurationWriter.Should().BeOfType<PlatformConfigAgentWriter>();
     }
 
     [Fact]

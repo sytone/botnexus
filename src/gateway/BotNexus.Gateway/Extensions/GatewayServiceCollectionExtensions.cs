@@ -6,6 +6,7 @@ using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Configuration;
+using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Activity;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
@@ -59,6 +60,7 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<ISessionStore, InMemorySessionStore>();
         services.AddSingleton<IActivityBroadcaster, InMemoryActivityBroadcaster>();
         services.AddSingleton<IGatewayAuthHandler, ApiKeyGatewayAuthHandler>();
+        services.AddSingleton<IModelFilter, ConfigModelFilter>();
         services.AddBotNexusWebSocketChannel();
 
         // Built-in isolation strategies
@@ -90,7 +92,8 @@ public static class GatewayServiceCollectionExtensions
             services.Replace(ServiceDescriptor.Singleton<IAgentConfigurationWriter>(serviceProvider =>
             {
                 var home = serviceProvider.GetRequiredService<BotNexusHome>();
-                return new FileAgentConfigurationWriter(home.AgentsPath, home);
+                var defaultConfigPath = Path.Combine(home.RootPath, "config.json");
+                return new PlatformConfigAgentWriter(defaultConfigPath, home);
             }));
             services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
         }
@@ -144,6 +147,11 @@ public static class GatewayServiceCollectionExtensions
                 serviceProvider.GetRequiredService<IOptions<PlatformConfig>>(),
                 configDirectory,
                 serviceProvider.GetRequiredService<ILogger<PlatformConfigAgentSource>>()));
+        services.Replace(ServiceDescriptor.Singleton<IAgentConfigurationWriter>(serviceProvider =>
+        {
+            var home = serviceProvider.GetRequiredService<BotNexusHome>();
+            return new PlatformConfigAgentWriter(resolvedConfigPath, home);
+        }));
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
 
         return services;
