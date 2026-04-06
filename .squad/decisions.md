@@ -9602,3 +9602,62 @@ Owner: Farnsworth
 - Response includes pagination metadata and total: `offset`, `limit`, `totalCount`, `entries`.
 - Limit is bounded to 200 for client safety while retaining non-paginated API compatibility.
 
+
+# Hermes Decision: Gateway coverage priorities
+
+## Context
+Gateway already had broad unit/integration coverage, but risk remained in protocol-control paths and runtime lifecycle edges where regressions are costly.
+
+## Decision
+Prioritize new tests for WebSocket control/reconnect protocol handling and Gateway host channel lifecycle fault tolerance before adding lower-risk happy-path assertions.
+
+## Rationale
+These paths gate production stability (session continuity, control message safety, startup resilience) and were underrepresented relative to their blast radius.
+
+## Impact
+Future Gateway QA should treat protocol error handling and adapter lifecycle behavior as first-class regression gates.
+
+---
+
+# Phase 6 Design Review — Gateway Completion Sprint
+
+**Reviewer:** Leela (Lead / Architect)  
+**Date:** 2026-04-04  
+
+## Overall Grade: A
+
+Phase 6 is the most cohesive delivery in the project's history. Five parallel workstreams converge cleanly. Cross-agent calling resolves Phase 3 P1 recursion guard with well-engineered AsyncLocal call chain tracker. WebUI is production-quality. No P0 issues. Three P1 findings prevent A+, none blocking.
+
+**SOLID:** 4.5/5 compliance.
+
+**P1 Issues:**
+1. No max call chain depth — Add MaxCallChainDepth config (default 10).
+2. Dev guide missing SkipBuild/SkipTests — Update script tables.
+3. No cross-agent timeout — Add 120s timeout.
+
+**Recommendations:** Implement P1-1 depth guard, add timeout, fix docs, consider WebUI module splitting.
+
+*Reviewed by Leela*
+
+---
+
+# Phase 6 Consistency Review
+
+**Reviewer:** Nibbler  
+**Date:** 2026-07-18  
+**Verdict:** Good — No blocking issues.
+
+| Severity | Found | Fixed | Remaining |
+|----------|-------|-------|-----------|
+| **P0** | 4 | 4 | 0 |
+| **P1** | 5 | 5 | 0 |
+| **P2** | 5 | 0 | 5 |
+| **P3** | 1 | 0 | 1 |
+
+Issues clustered in documentation (api-reference.md, README). All P0/P1 fixed. P2 items are stale (ConfigureAwait inconsistency, dev-guide params, PascalCase config examples).
+
+**Checks Passed:** Docs ↔ Docs, Docs ↔ Code, Code ↔ Comments, Build (0 errors).
+
+**Key Finding:** api-reference.md was staleness hotspot. New endpoints should trigger api-reference updates going forward.
+
+*Reviewed by Nibbler*

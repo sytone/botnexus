@@ -138,7 +138,6 @@ Add keys to `~/.botnexus/config.json`:
     "apiKeys": {
       "dev-key": {
         "apiKey": "sk-dev-secret",
-        "isAdmin": true,
         "displayName": "Dev API Key"
       }
     }
@@ -152,48 +151,13 @@ Then include the key in requests:
 # Via header
 curl -H "X-Api-Key: sk-dev-secret" http://localhost:5005/api/agents
 
-# Via Bearer token
-curl -H "Authorization: Bearer sk-dev-secret" http://localhost:5005/api/agents
+# Via query parameter
+curl "http://localhost:5005/api/agents?apiKey=sk-dev-secret"
 ```
 
 ### Provider Authentication
 
-Provider credentials (e.g., Copilot OAuth) are configured separately from gateway API keys.
-
-**Option A: OAuth (Copilot)**
-
-Store tokens in `~/.botnexus/auth.json`:
-
-```json
-{
-  "copilot": {
-    "type": "oauth",
-    "access": "ghu_...",
-    "refresh": "ghr_...",
-    "expires": 1234567890000,
-    "endpoint": "https://api.githubcopilot.com"
-  }
-}
-```
-
-Reference from `config.json`:
-
-```json
-{
-  "providers": {
-    "copilot": {
-      "apiKey": "auth:copilot",
-      "baseUrl": "https://api.githubcopilot.com"
-    }
-  }
-}
-```
-
-**Option B: Environment Variable**
-
-```powershell
-$env:BOTNEXUS_COPILOT_APIKEY = "your-key"
-```
+Provider credentials (e.g., Copilot OAuth) are configured separately from gateway API keys and stored in `~/.botnexus/auth.json`.
 
 ---
 
@@ -201,7 +165,7 @@ $env:BOTNEXUS_COPILOT_APIKEY = "your-key"
 
 ### Config File Location
 
-`~/.botnexus/config.json` — created by `botnexus install` or manually.
+`~/.botnexus/config.json` — created on first Gateway run or manually.
 
 Override with: `$env:BOTNEXUS_HOME = "C:\custom\path"`
 
@@ -217,7 +181,6 @@ Override with: `$env:BOTNEXUS_HOME = "C:\custom\path"`
     "assistant": {
       "provider": "copilot",
       "model": "gpt-4.1",
-      "isolationStrategy": "in-process",
       "enabled": true
     }
   },
@@ -236,29 +199,25 @@ The Gateway watches `config.json` and automatically reloads changes after a 500m
 
 - Agent definitions
 - Provider settings
-- Channel configurations
 - API key changes
 
-**Requires restart:** `listenUrl` changes (port rebinding).
+**Requires restart:** `gateway.listenUrl` changes (port rebinding).
 
 ### Home Directory Structure
 
 ```
 ~/.botnexus/
 ├── config.json          # Platform configuration
-├── auth.json            # Provider credentials (OAuth tokens, API keys)
-├── extensions/
-│   ├── providers/       # Provider DLLs
-│   ├── channels/        # Channel DLLs
-│   └── tools/           # Tool DLLs
+├── auth.json            # Provider credentials (OAuth tokens)
 ├── agents/              # Per-agent workspace directories
-│   └── {agent-name}/
+│   └── assistant/
 │       ├── SOUL.md      # Core personality
 │       ├── IDENTITY.md  # Role and constraints
 │       ├── USER.md      # User preferences
 │       └── MEMORY.md    # Long-term knowledge
-├── tokens/              # OAuth tokens (e.g., copilot.json)
 ├── sessions/            # Conversation history (JSONL)
+├── tokens/              # OAuth tokens (if used)
+├── extensions/          # Extension DLLs (if customized)
 └── logs/                # Daily log files
 ```
 
@@ -266,16 +225,15 @@ The Gateway watches `config.json` and automatically reloads changes after a 500m
 
 ## WebUI Access
 
-Navigate to `http://localhost:5005/webui` in your browser.
+Navigate to `http://localhost:5005/` or `http://localhost:5005/webui` in your browser.
 
 The WebUI provides:
 
 - **Real-time chat** with streaming responses
 - **Session management** — browse and continue past conversations
 - **Agent selection** — switch between configured agents
-- **Channel status** — view connected messaging channels
-- **Extension monitoring** — check loaded providers and tools
-- **Activity feed** — real-time message stream
+- **API explorer** — view REST API at `/swagger`
+- **Health status** — check Gateway health at `/health`
 
 Multiple browser tabs are supported for parallel conversations.
 

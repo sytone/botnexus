@@ -25,11 +25,10 @@ You're an **end user** who wants to install a released version of BotNexus.
 👉 **[Install from Release](getting-started-release.md)**
 
 This guide covers:
-- Installing the `botnexus` CLI tool from GitHub Releases
+- Installing the `botnexus` CLI tool from GitHub Releases (if available)
 - Setting up the gateway and extensions
 - Configuring your first provider (Copilot)
 - Creating and running your first agent
-- Managing the system with the CLI
 
 **Requires:** .NET 10 runtime (not the full SDK)
 
@@ -41,10 +40,9 @@ You're a **developer** who cloned the repository and wants to build from source.
 
 This guide covers:
 - Cloning the repository and building from source
-- Installing a local development version of the CLI
 - Running the gateway in development mode
-- Building and testing extensions
-- The dev build workflow
+- Configuring providers and agents
+- The dev workflow
 
 **Requires:** .NET 10 SDK, Git, and basic familiarity with command-line tools
 
