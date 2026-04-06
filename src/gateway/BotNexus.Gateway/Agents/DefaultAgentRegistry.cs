@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Models;
 using Microsoft.Extensions.Logging;
 
@@ -12,8 +13,13 @@ public sealed class DefaultAgentRegistry : IAgentRegistry
     private readonly Dictionary<string, AgentDescriptor> _agents = new(StringComparer.OrdinalIgnoreCase);
     private readonly Lock _sync = new();
     private readonly ILogger<DefaultAgentRegistry> _logger;
+    private readonly IActivityBroadcaster? _activity;
 
-    public DefaultAgentRegistry(ILogger<DefaultAgentRegistry> logger) => _logger = logger;
+    public DefaultAgentRegistry(ILogger<DefaultAgentRegistry> logger, IActivityBroadcaster? activity = null)
+    {
+        _logger = logger;
+        _activity = activity;
+    }
 
     /// <inheritdoc />
     public void Register(AgentDescriptor descriptor)
@@ -24,6 +30,11 @@ public sealed class DefaultAgentRegistry : IAgentRegistry
                 throw new InvalidOperationException($"Agent '{descriptor.AgentId}' is already registered.");
 
             _logger.LogInformation("Registered agent '{AgentId}' ({DisplayName})", descriptor.AgentId, descriptor.DisplayName);
+            PublishActivity(
+                GatewayActivityType.AgentRegistered,
+                descriptor.AgentId,
+                $"Agent '{descriptor.AgentId}' registered.",
+                new Dictionary<string, object?> { ["displayName"] = descriptor.DisplayName });
         }
     }
 
@@ -33,7 +44,14 @@ public sealed class DefaultAgentRegistry : IAgentRegistry
         lock (_sync)
         {
             if (_agents.Remove(agentId))
+            {
                 _logger.LogInformation("Unregistered agent '{AgentId}'", agentId);
+                PublishActivity(
+                    GatewayActivityType.AgentUnregistered,
+                    agentId,
+                    $"Agent '{agentId}' unregistered.",
+                    null);
+            }
         }
     }
 
@@ -50,6 +68,11 @@ public sealed class DefaultAgentRegistry : IAgentRegistry
 
             _agents[agentId] = descriptor;
             _logger.LogInformation("Updated agent '{AgentId}' ({DisplayName})", descriptor.AgentId, descriptor.DisplayName);
+            PublishActivity(
+                GatewayActivityType.AgentConfigChanged,
+                descriptor.AgentId,
+                $"Agent '{descriptor.AgentId}' configuration updated.",
+                new Dictionary<string, object?> { ["displayName"] = descriptor.DisplayName });
             return true;
         }
     }
@@ -70,5 +93,26 @@ public sealed class DefaultAgentRegistry : IAgentRegistry
     public bool Contains(string agentId)
     {
         lock (_sync) return _agents.ContainsKey(agentId);
+    }
+
+    private void PublishActivity(GatewayActivityType type, string agentId, string message, IReadOnlyDictionary<string, object?>? data)
+    {
+        if (_activity is null)
+            return;
+
+        try
+        {
+            _activity.PublishAsync(new GatewayActivity
+            {
+                Type = type,
+                AgentId = agentId,
+                Message = message,
+                Data = data
+            }).GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to publish gateway activity '{ActivityType}' for agent '{AgentId}'", type, agentId);
+        }
     }
 }

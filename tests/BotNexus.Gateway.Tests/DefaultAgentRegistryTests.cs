@@ -1,7 +1,9 @@
+using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Runtime.CompilerServices;
 
 namespace BotNexus.Gateway.Tests;
 
@@ -94,8 +96,55 @@ public sealed class DefaultAgentRegistryTests
         registry.GetAll().Should().HaveCount(agentCount);
     }
 
+    [Fact]
+    public void Register_PublishesAgentRegisteredActivity()
+    {
+        var broadcaster = new RecordingBroadcaster();
+        var registry = CreateRegistry(broadcaster);
+
+        registry.Register(CreateDescriptor("agent-a"));
+
+        broadcaster.Activities.Should().ContainSingle(activity =>
+            activity.Type == GatewayActivityType.AgentRegistered &&
+            activity.AgentId == "agent-a");
+    }
+
+    [Fact]
+    public void Unregister_PublishesAgentUnregisteredActivity()
+    {
+        var broadcaster = new RecordingBroadcaster();
+        var registry = CreateRegistry(broadcaster);
+        registry.Register(CreateDescriptor("agent-a"));
+        broadcaster.Activities.Clear();
+
+        registry.Unregister("agent-a");
+
+        broadcaster.Activities.Should().ContainSingle(activity =>
+            activity.Type == GatewayActivityType.AgentUnregistered &&
+            activity.AgentId == "agent-a");
+    }
+
+    [Fact]
+    public void Update_PublishesAgentConfigChangedActivity()
+    {
+        var broadcaster = new RecordingBroadcaster();
+        var registry = CreateRegistry(broadcaster);
+        registry.Register(CreateDescriptor("agent-a"));
+        broadcaster.Activities.Clear();
+
+        var updated = registry.Update("agent-a", CreateDescriptor("agent-a") with { DisplayName = "updated" });
+
+        updated.Should().BeTrue();
+        broadcaster.Activities.Should().ContainSingle(activity =>
+            activity.Type == GatewayActivityType.AgentConfigChanged &&
+            activity.AgentId == "agent-a");
+    }
+
     private static DefaultAgentRegistry CreateRegistry()
         => new(NullLogger<DefaultAgentRegistry>.Instance);
+
+    private static DefaultAgentRegistry CreateRegistry(IActivityBroadcaster broadcaster)
+        => new(NullLogger<DefaultAgentRegistry>.Instance, broadcaster);
 
     private static AgentDescriptor CreateDescriptor(string agentId)
         => new()
@@ -105,4 +154,21 @@ public sealed class DefaultAgentRegistryTests
             ModelId = "test-model",
             ApiProvider = "test-provider"
         };
+
+    private sealed class RecordingBroadcaster : IActivityBroadcaster
+    {
+        public List<GatewayActivity> Activities { get; } = [];
+
+        public ValueTask PublishAsync(GatewayActivity activity, CancellationToken cancellationToken = default)
+        {
+            Activities.Add(activity);
+            return ValueTask.CompletedTask;
+        }
+
+        public async IAsyncEnumerable<GatewayActivity> SubscribeAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
+    }
 }

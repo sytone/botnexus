@@ -63,6 +63,15 @@ public enum GatewayActivityType
     /// <summary>An agent instance was stopped.</summary>
     AgentStopped,
 
+    /// <summary>An agent was registered in the registry.</summary>
+    AgentRegistered,
+
+    /// <summary>An agent was removed from the registry.</summary>
+    AgentUnregistered,
+
+    /// <summary>An agent descriptor was updated in the registry.</summary>
+    AgentConfigChanged,
+
     /// <summary>A session was created.</summary>
     SessionCreated,
 
