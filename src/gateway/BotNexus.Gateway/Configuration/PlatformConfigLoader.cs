@@ -20,6 +20,9 @@ public static class PlatformConfigLoader
     /// <summary>The default platform configuration directory.</summary>
     public static string DefaultConfigDirectory => new BotNexusHome().RootPath;
 
+    /// <summary>The default BotNexus home path (~/.botnexus).</summary>
+    public static string DefaultHomePath => DefaultConfigDirectory;
+
     /// <summary>The default configuration file path.</summary>
     public static string DefaultConfigPath =>
         Path.Combine(DefaultConfigDirectory, "config.json");

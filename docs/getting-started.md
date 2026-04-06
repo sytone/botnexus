@@ -68,13 +68,36 @@ This guide will get you from zero to your first conversation with an AI agent in
 
 Here's what happens when you start BotNexus:
 
-1. **Initialize** — BotNexus creates a home directory (`~/.botnexus/`) with configuration, agent workspaces, and logs
+1. **Initialize** — BotNexus creates a home directory (`~/.botnexus/`) with configuration, agent workspaces, and logs (use `botnexus init`)
 2. **Configure** — You add a provider (like Copilot) to your config
 3. **Create an agent** — Add a named agent to your config with its own personality and memory
 4. **Chat** — Open the WebUI and start chatting with your agent
 5. **Extend** — Add channels, tools, cron jobs, or custom providers as needed
 
 The whole system is driven by a single `config.json` file and workspace Markdown files for each agent.
+
+### Using the CLI
+
+You can manage configuration from the command line without editing JSON:
+
+```powershell
+# Initialize home directory
+botnexus init
+
+# List agents
+botnexus agent list
+
+# Add an agent
+botnexus agent add coder --provider openai --model gpt-4o
+
+# View a config value
+botnexus config get gateway.listenUrl
+
+# Validate configuration
+botnexus validate
+```
+
+See the [CLI Reference](cli-reference.md) for all available commands.
 
 ---
 

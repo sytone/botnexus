@@ -101,6 +101,49 @@
 
 ---
 
+## 2026-04-06T0546Z — Phase 10: Dev-Loop Documentation Overhaul (Wave 2)
+
+**Duration:** ~6 min  
+**Status:** ✅ Complete  
+**Scope:** Documentation updates, dev-loop fixes, CLI reference creation
+
+**Deliverables:**
+
+1. **Dev Loop Documentation Overhaul**
+   - Pre-commit hook accuracy fixed: targets Gateway tests, not non-existent `BotNexus.Tests.Unit`
+   - Removed phantom script references: `pack.ps1`, `install.ps1` don't exist
+   - Documented only 4 actual scripts: `dev-loop.ps1`, `start-gateway.ps1`, `export-openapi.ps1`, `install-pre-commit-hook.ps1`
+   - Fixed section numbering gaps
+   - **Rationale:** Docs referencing non-existent paths create friction for both human developers and AI agents
+
+2. **CLI Reference Guide Created**
+   - New documentation: `docs/cli-reference.md`
+   - Commands documented: `init`, `agent list/add/remove`, `config get/set`
+   - Configuration management guide
+   - Common usage patterns
+
+3. **Documentation Updates (5 Files)**
+   - `docs/dev-loop.md` — canonical dev loop reference (restructured as single authoritative source)
+   - `docs/configuration.md` — CLI integration section
+   - `docs/getting-started.md` — CLI quickstart
+   - `docs/README.md` — documentation navigation updated
+   - `docs/cli-reference.md` — NEW (comprehensive CLI guide)
+
+**Technical Accuracy:**
+- All file paths verified against actual codebase
+- All script parameters verified against source code
+- Port numbers, config structure, initialization verified
+- Cross-references to existing docs checked
+
+**Quality Notes:**
+- Docs accuracy: 100% verified against source code
+- Completeness: All active scripts documented
+- Accessibility: New CLI reference provides developer on-ramp
+
+**Orchestration Log:** `.squad/orchestration-log/2026-04-06T0546Z-kif.md`
+
+---
+
 ## 2026-04-XX — Gateway Service Documentation Update
 
 **Sprint Status:** ✅ Complete

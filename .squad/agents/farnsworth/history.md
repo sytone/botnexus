@@ -105,6 +105,48 @@
 
 ---
 
+## 2026-04-06T0546Z — Phase 10: Gateway P1 Fixes & WebSocket Decomposition (Wave 1)
+
+**Duration:** ~13 min  
+**Status:** ✅ Complete  
+**Collaborating:** Bender (CLI), Hermes (Tests), Leela (Review), Nibbler (QA), Kif (Docs)
+
+**Scope:** Gateway API hardening and WebSocket handler decomposition (3 classes).
+
+**Deliverables:**
+
+1. **PUT `/api/agents/{agentId}` Contract Hardening**
+   - Route/body `AgentId` mismatch returns `400 Bad Request` with explicit error payload
+   - Empty payload `AgentId` supported by normalizing to route parameter
+   - XML docs + response annotations for API clarity
+   
+2. **Production CORS Verb Allowlist**
+   - Development: permissive CORS (all origins/methods)
+   - Non-development: explicit allowlist (`GET, POST, PUT, DELETE, OPTIONS`)
+   - Least-privilege defaults without breaking existing flows
+
+3. **Gateway WebSocket Decomposition (SRP Split)**
+   - `GatewayWebSocketHandler` → orchestrator (150 lines)
+   - `WebSocketConnectionManager` → reconnect throttling, session locking, ping/pong (166 lines)
+   - `WebSocketMessageDispatcher` → inbound routing, replay sequencing (296 lines)
+   - Endpoint contract `MapBotNexusGatewayWebSocket` unchanged
+
+**Design Decisions:**
+- PUT AgentId validation returns 400 on route/body mismatch (Phase 9 P1 resolved)
+- Production CORS verb restriction (Phase 9 P1 resolved)
+- WebSocket decomposition maintains SRP without changing endpoint contracts
+
+**Test Results:**
+- 279 Gateway tests passing post-decomposition
+- Endpoint contracts verified unchanged
+- SRP separation validated
+
+**Commits:** 3 total
+
+**Orchestration Log:** `.squad/orchestration-log/2026-04-06T0546Z-farnsworth.md`
+
+---
+
 ## Your Work Assignment — Executive Role
 
 **Phase 1 P0 — Item 1: Provider Dynamic Loading** (50 points) [CRITICAL PATH BLOCKER]

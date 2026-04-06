@@ -58,6 +58,54 @@ Sprint 7A delivered 8 features across 11 commits (Bender ×4, Farnsworth ×4, Ki
 
 ---
 
+## 2026-04-06T0546Z — Phase 10 Design Review: Grade A- (Wave 2)
+
+**Duration:** ~22 min  
+**Status:** ✅ Complete  
+**Scope:** Comprehensive design review of Phase 10 implementations
+
+**Context:** Phase 10 delivered CLI parity + Gateway P1 fixes across 3 agents (Bender ×1, Farnsworth ×4, Hermes ×1). 6 commits, build green, tests passing.
+
+**Reviewed Decisions:**
+
+1. **WebSocket handler decomposition approved** — `GatewayWebSocketHandler` (orchestrator, 150 lines) → `WebSocketConnectionManager` (166 lines) + `WebSocketMessageDispatcher` (296 lines). Clean SRP split with preserved endpoint contracts.
+
+2. **PUT AgentId validation approved** — Returns 400 on route/body mismatch, falls back to route value on empty body. Phase 9 P1 resolved.
+
+3. **CORS verb restriction approved** — Production restricts to `GET, POST, PUT, DELETE, OPTIONS`. Development keeps permissive CORS. Phase 9 P1 resolved.
+
+**Grade: A-**
+
+| Area | Grade | Notes |
+|------|-------|-------|
+| SOLID Compliance | A | WebSocket decomposition clean SRP |
+| API Design | A- | PUT validation complete, contracts preserved |
+| Extension Model | A | Config loader unified CLI+gateway |
+| Thread Safety | A | WebSocket handler isolation maintained |
+| Test Quality | A- | 10 new deployment tests added |
+
+**Issues Identified:**
+
+4. **CLI architecture needs Phase 11 work** — `Program.cs` is 850+ lines of top-level statements
+   - P1: Decompose into command handler classes
+   - P1: Add test coverage for config get/set reflection
+
+**Deployment test harness approved** — `WebApplicationFactory<Program>` with isolated `BOTNEXUS_HOME` temp roots. Solid config layering coverage.
+
+**P1 Items for Phase 11:**
+- [ ] Decompose `BotNexus.Cli/Program.cs` into command handler classes
+- [ ] Add unit tests for CLI config get/set reflection logic
+- [ ] Copilot conformance tests duplicate OpenAI (carried from Phase 9)
+
+**Carried Forward:**
+- StreamAsync task leak (deferred — frozen code)
+- SessionHistoryResponse location (Abstractions.Models)
+- SequenceAndPersistPayloadAsync double-serialization
+
+**Orchestration Log:** `.squad/orchestration-log/2026-04-06T0546Z-leela.md`
+
+---
+
 ## 2026-04-05T19:41:00Z — Phase 7 Gateway Gap Analysis (Lead)
 
 **Timestamp:** 2026-04-05T19:41:00Z  

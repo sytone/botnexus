@@ -101,6 +101,16 @@
 Baseline: build is clean, all 124 tests pass. Ready for implementation.
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
+### 2026-04-06 — Phase 10 deployment validation expansion (Wave 1)
+
+- Extended `tests/BotNexus.Gateway.Tests/Integration/DeploymentTests.cs` with 10 new tests validating dev-loop → gateway → auth flow end-to-end
+- Verified `dev-loop.ps1` gateway startup sequence, auth.json integration for Copilot OAuth, gateway port defaults (18790), and config hot-reload behavior
+- Added comprehensive startup scenario coverage: config layering, auth middleware exemptions (`/health`, `/webui`, `/swagger`), OAuth token store initialization, DI verification
+- Test infrastructure validates entire deployment lifecycle with isolated `BOTNEXUS_HOME` temp roots per test
+- All 10 new deployment tests passing; dev-loop scripts validated against source code; auth.json integration verified
+
+**Orchestration Log:** `.squad/orchestration-log/2026-04-06T0546Z-hermes.md`
+
 ### 2026-04-06 — Gateway deployment validation coverage pattern
 
 - Added `tests/BotNexus.Gateway.Tests/Integration/GatewayStartupAndConfigurationTests.cs` as the deployment validation harness for startup + config layering. It uses `WebApplicationFactory<Program>` with isolated `BOTNEXUS_HOME` temp roots and validates `/health`, `/webui`, `/swagger`, and `/api/config/validate`.

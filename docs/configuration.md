@@ -19,7 +19,30 @@ BotNexus uses a hierarchical, dictionary-based configuration model with a unifie
 
 ## Quick Start
 
-### Minimal Configuration (`~/.botnexus/config.json`)
+### Using the CLI (Recommended)
+
+Instead of editing JSON manually, use the `botnexus` CLI to manage configuration:
+
+```powershell
+# Initialize home directory
+botnexus init
+
+# List agents
+botnexus agent list
+
+# Add an agent
+botnexus agent add myagent --provider copilot --model gpt-4.1
+
+# Update a setting
+botnexus config set gateway.listenUrl http://localhost:8080
+
+# Validate
+botnexus validate
+```
+
+See [CLI Reference](cli-reference.md) for all available commands.
+
+### Manual Configuration (`~/.botnexus/config.json`)
 
 On first run, BotNexus creates a minimal default config:
 

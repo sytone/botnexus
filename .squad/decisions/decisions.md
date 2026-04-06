@@ -226,6 +226,109 @@
 
 ---
 
+### Phase 10 Wave 1 & 2 — CLI Parity, Gateway P1 Fixes, Design Review
+
+**2026-04-06 — Merged from inbox (3 decisions)**
+
+#### 1. CLI PlatformConfigLoader Integration (Bender)
+
+**Date:** 2026-04-06  
+**Owner:** Bender (Runtime)  
+**Decision:** Use `PlatformConfigLoader` as single source for CLI home/config path resolution and config validation across new `init`, `agent`, and `config` commands.
+
+**Why:** Keeps command behavior consistent with gateway runtime validation semantics and avoids drift between CLI-managed config and API-managed config.
+
+**Implementation:** Updated `src\gateway\BotNexus.Cli\Program.cs` and `PlatformConfigLoader.cs` to serve both CLI and gateway.
+
+**Status:** Complete
+
+---
+
+#### 2. Farnsworth P1 Gateway Fixes (Phase 10)
+
+**Date:** 2026-04-06  
+**Owner:** Farnsworth (Platform)  
+**Context:** Requested by Jon Bullen after Leela's Phase 10 design review.  
+**Scope:** Limited to Gateway API hardening and WebSocket handler decomposition.
+
+**Decisions:**
+
+1. **PUT `/api/agents/{agentId}` contract hardening**
+   - Route/body `AgentId` mismatch now returns `400 Bad Request` with explicit error payload
+   - Empty payload `AgentId` remains supported by normalizing to the route parameter
+   - Added endpoint XML docs + response annotations to make behavior explicit in API surface
+
+2. **Production CORS verb allowlist**
+   - Development keeps permissive CORS for inner-loop productivity
+   - Non-development now explicitly allows `GET, POST, PUT, DELETE, OPTIONS` (instead of `AllowAnyMethod`)
+   - Rationale: least-privilege defaults without breaking existing API/WebUI flows
+
+3. **Gateway WebSocket decomposition**
+   - `GatewayWebSocketHandler` now orchestrates only request lifecycle and delegation
+   - `WebSocketConnectionManager` owns reconnect throttling, session lock tracking, duplicate close semantics, and ping/pong handling
+   - `WebSocketMessageDispatcher` owns inbound type routing (`message`, `abort`, `steer`, `follow_up`, `reconnect`) and replay-sequenced outbound persistence
+   - `MapBotNexusGatewayWebSocket` endpoint contract remained unchanged
+
+**Validation Notes:** Targeted gateway API build passes. Full solution build/test runs currently affected by unrelated workspace churn.
+
+**Status:** Complete (3 commits)
+
+---
+
+#### 3. Phase 10 Design Review — Grade A- (Leela)
+
+**Date:** 2026-04-06  
+**Reviewer:** Leela (Lead/Architect)  
+**Scope:** 6 commits across 3 agents (Farnsworth ×4, Bender ×1, Hermes ×1)
+
+**Grade: A-**
+
+**Decisions Approved:**
+1. WebSocket handler decomposition approved — `GatewayWebSocketHandler` → orchestrator (150 lines), `WebSocketConnectionManager` (166 lines), `WebSocketMessageDispatcher` (296 lines). Clean SRP split with preserved endpoint contracts.
+2. PUT AgentId validation approved — Returns 400 on route/body mismatch, falls back to route value on empty body. Phase 9 P1 resolved.
+3. CORS verb restriction approved — Production restricts to `GET, POST, PUT, DELETE, OPTIONS`. Development keeps permissive CORS. Phase 9 P1 resolved.
+
+**Issues Identified:**
+4. CLI architecture needs Phase 11 work — `Program.cs` is 850+ lines of top-level statements. P1: decompose into command handler classes. P1: add test coverage for config get/set reflection.
+
+**Deployment test harness approved** — `WebApplicationFactory<Program>` with isolated `BOTNEXUS_HOME` temp roots. Solid config layering coverage.
+
+**P1 Items for Phase 11:**
+- [ ] Decompose `BotNexus.Cli/Program.cs` into command handler classes
+- [ ] Add unit tests for CLI config get/set reflection logic
+- [ ] Copilot conformance tests duplicate OpenAI (carried from Phase 9)
+
+**Carried Forward:**
+- StreamAsync task leak (deferred — frozen code)
+- SessionHistoryResponse location (Abstractions.Models)
+- SequenceAndPersistPayloadAsync double-serialization
+
+---
+
+#### Phase 10 Post-Sprint Consistency Review (Nibbler)
+
+**Date:** 2026-04-06  
+**Status:** ✅ Complete  
+**Grade:** Good
+
+**Findings:** 0 P0, 12 P1 (all fixed), 3 P2 (noted)
+
+**Critical P1 Fix — Provider Naming Inconsistency:**
+CLI used "github-copilot" provider name while all documentation and code examples used "copilot". This was the first time a code default contradicted documentation. Fixed CLI to use "copilot" for consistency.
+
+**Additional P1 Fixes:**
+- api-reference.md documented OLD PUT behavior (overwrite) instead of new behavior (400 on mismatch)
+- Gateway README missing PUT endpoint, session endpoints (history/suspend/resume), WebSocket protocol fields
+- CORS configuration completely undocumented despite being environment-aware
+- sample-config.json placement error: `apiKeys` at root instead of under `gateway`
+- 7 additional documentation alignment issues
+
+**Pattern Observed:** Code quality consistently excellent (0 code-level issues). Documentation lags behind code changes — 12 P1 documentation gaps identified and fixed in post-sprint review.
+
+**Recommendation:** Continue staggered doc review as post-sprint gate. Cross-check CLI defaults against documentation naming conventions to prevent user confusion.
+
+---
+
 ## Retrospective — Port Audit Phase 3
 
 **Facilitator:** Leela (Lead/Architect)  

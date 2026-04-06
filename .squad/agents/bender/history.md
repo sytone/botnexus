@@ -116,6 +116,32 @@ onDelta("I found 42 files...")               → WebSocket delta
 
 **Status:** ✅ Sprint complete. Auth flow secured end-to-end.
 
+## 2026-04-06T0546Z — Phase 10: CLI Parity & Gateway Hardening (Wave 1)
+
+**Duration:** ~17 min  
+**Status:** ✅ Complete  
+**Collaborating:** Farnsworth (Gateway), Hermes (Tests), Leela (Review), Nibbler (QA), Kif (Docs)
+
+**Scope:** CLI parity with gateway runtime. Added `init`, `agent list/add/remove`, `config get/set` commands.
+
+**Deliverables:**
+
+1. **CLI Command Architecture** — Built 6 commands integrating with PlatformConfigLoader for unified config behavior
+2. **PlatformConfigLoader Integration** — Single source of truth for config path resolution (CLI + gateway consistency)
+3. **Code Changes** — `BotNexus.Cli/Program.cs` (850+ lines) with command handlers and argument parsing
+
+**Design Decision:** Use `PlatformConfigLoader` as single source for CLI home/config path resolution — keeps behavior consistent with gateway runtime validation.
+
+**P1 Issues Identified (Phase 11):**
+- `Program.cs` monolith (850+ lines) needs decomposition into command handler classes
+- `config get/set` reflection logic needs unit test coverage
+
+**Team Context:** Phase 10 delivered CLI parity + Farnsworth's WebSocket decomposition + Hermes' deployment tests + Leela's design review (Grade A-) + Nibbler's consistency audit (12 P1 fixes).
+
+**Orchestration Log:** `.squad/orchestration-log/2026-04-06T0546Z-bender.md`
+
+---
+
 ## Team Directives (All Agents Must Follow)
 
 1. **Dynamic Assembly Loading** (2026-04-01T16:29Z)
@@ -877,3 +903,9 @@ Result: Phase 3 blockers cleared, build clean, READY FOR RELEASE.
 - Placed `app.UseCors(...)` before `GatewayAuthMiddleware` so browser preflight and cross-origin requests succeed before auth middleware runs.
 - Added `PUT /api/agents/{agentId}` in `AgentsController` and introduced `IAgentRegistry.Update(...)` + `DefaultAgentRegistry.Update(...)` so agent model/provider/system prompt config can be changed in place without unregister/re-register.
 - Extended platform config model + validation with `CorsConfig` and URL validation for allowed origins.
+
+### 2026-04-06 — Gateway CLI parity for platform config management
+- `src\gateway\BotNexus.Cli\Program.cs` now includes `init`, `agent list/add/remove`, and `config get/set` via `System.CommandLine`, alongside existing `validate`, all honoring global `--verbose` and command-level exit codes.
+- `init` now resolves paths from `PlatformConfigLoader.DefaultHomePath` + `DefaultConfigPath`, ensures `~/.botnexus` scaffold directories (`sessions`, `agents`, `logs`, `tokens`, `extensions`), and writes a minimal valid assistant config.
+- Runtime pattern locked: mutate config through PlatformConfig + PlatformConfigLoader load/validate flow, then persist and revalidate to keep CLI behavior aligned with gateway validation rules.
+- Key paths for follow-up runtime work: `src\gateway\BotNexus.Cli\Program.cs`, `src\gateway\BotNexus.Gateway\Configuration\PlatformConfigLoader.cs`, and `src\gateway\BotNexus.Gateway\Configuration\BotNexusHome.cs`.
