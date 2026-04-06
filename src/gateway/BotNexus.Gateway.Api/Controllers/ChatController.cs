@@ -28,18 +28,25 @@ public sealed class ChatController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<ChatResponse>> Send([FromBody] ChatRequest request, CancellationToken cancellationToken)
     {
-        var sessionId = request.SessionId ?? Guid.NewGuid().ToString("N");
-        var session = await _sessions.GetOrCreateAsync(sessionId, request.AgentId, cancellationToken);
+        try
+        {
+            var sessionId = request.SessionId ?? Guid.NewGuid().ToString("N");
+            var session = await _sessions.GetOrCreateAsync(sessionId, request.AgentId, cancellationToken);
 
-        session.AddEntry(new SessionEntry { Role = "user", Content = request.Message });
+            session.AddEntry(new SessionEntry { Role = "user", Content = request.Message });
 
-        var handle = await _supervisor.GetOrCreateAsync(request.AgentId, sessionId, cancellationToken);
-        var response = await handle.PromptAsync(request.Message, cancellationToken);
+            var handle = await _supervisor.GetOrCreateAsync(request.AgentId, sessionId, cancellationToken);
+            var response = await handle.PromptAsync(request.Message, cancellationToken);
 
-        session.AddEntry(new SessionEntry { Role = "assistant", Content = response.Content });
-        await _sessions.SaveAsync(session, cancellationToken);
+            session.AddEntry(new SessionEntry { Role = "assistant", Content = response.Content });
+            await _sessions.SaveAsync(session, cancellationToken);
 
-        return Ok(new ChatResponse(sessionId, response.Content, response.Usage));
+            return Ok(new ChatResponse(sessionId, response.Content, response.Usage));
+        }
+        catch (AgentConcurrencyLimitExceededException ex)
+        {
+            return StatusCode(StatusCodes.Status429TooManyRequests, new { error = ex.Message });
+        }
     }
 
     /// <summary>
@@ -52,9 +59,16 @@ public sealed class ChatController : ControllerBase
         if (instance is null)
             return NotFound(new { message = "Agent session not found." });
 
-        var handle = await _supervisor.GetOrCreateAsync(request.AgentId, request.SessionId, cancellationToken);
-        await handle.SteerAsync(request.Message, cancellationToken);
-        return Accepted();
+        try
+        {
+            var handle = await _supervisor.GetOrCreateAsync(request.AgentId, request.SessionId, cancellationToken);
+            await handle.SteerAsync(request.Message, cancellationToken);
+            return Accepted();
+        }
+        catch (AgentConcurrencyLimitExceededException ex)
+        {
+            return StatusCode(StatusCodes.Status429TooManyRequests, new { error = ex.Message });
+        }
     }
 
     /// <summary>
@@ -67,9 +81,16 @@ public sealed class ChatController : ControllerBase
         if (instance is null)
             return NotFound(new { message = "Agent session not found." });
 
-        var handle = await _supervisor.GetOrCreateAsync(request.AgentId, request.SessionId, cancellationToken);
-        await handle.FollowUpAsync(request.Message, cancellationToken);
-        return Accepted();
+        try
+        {
+            var handle = await _supervisor.GetOrCreateAsync(request.AgentId, request.SessionId, cancellationToken);
+            await handle.FollowUpAsync(request.Message, cancellationToken);
+            return Accepted();
+        }
+        catch (AgentConcurrencyLimitExceededException ex)
+        {
+            return StatusCode(StatusCodes.Status429TooManyRequests, new { error = ex.Message });
+        }
     }
 }
 

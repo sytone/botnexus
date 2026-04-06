@@ -66,6 +66,34 @@ public sealed class DefaultAgentSupervisorTests
         strategy.Verify(s => s.CreateAsync(It.IsAny<AgentDescriptor>(), It.IsAny<AgentExecutionContext>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
+    [Fact]
+    public async Task GetOrCreateAsync_WhenMaxConcurrentSessionsReached_ThrowsLimitException()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(new AgentDescriptor
+        {
+            AgentId = "agent-a",
+            DisplayName = "Agent A",
+            ModelId = "test-model",
+            ApiProvider = "test-provider",
+            IsolationStrategy = "test",
+            MaxConcurrentSessions = 1
+        });
+
+        var firstHandle = CreateHandleMock("agent-a", "session-1");
+        var strategy = new Mock<IIsolationStrategy>();
+        strategy.SetupGet(s => s.Name).Returns("test");
+        strategy.Setup(s => s.CreateAsync(It.IsAny<AgentDescriptor>(), It.IsAny<AgentExecutionContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(firstHandle.Object);
+        var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], NullLogger<DefaultAgentSupervisor>.Instance);
+
+        await supervisor.GetOrCreateAsync("agent-a", "session-1");
+        var act = () => supervisor.GetOrCreateAsync("agent-a", "session-2");
+
+        await act.Should().ThrowAsync<AgentConcurrencyLimitExceededException>()
+            .WithMessage("*MaxConcurrentSessions (1)*");
+    }
+
     private static Mock<IAgentHandle> CreateHandleMock(string agentId, string sessionId)
     {
         var handle = new Mock<IAgentHandle>();

@@ -3,6 +3,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Api.Controllers;
 using FluentAssertions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
 
@@ -66,5 +67,28 @@ public sealed class ChatControllerTests
 
         result.Should().BeOfType<AcceptedResult>();
         handle.Verify(h => h.FollowUpAsync("after this", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Send_WhenAgentConcurrencyLimitReached_ReturnsTooManyRequests()
+    {
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync("agent-a", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new AgentConcurrencyLimitExceededException("agent-a", 1));
+
+        var sessionStore = new Mock<ISessionStore>();
+        sessionStore.Setup(s => s.GetOrCreateAsync(It.IsAny<string>(), "agent-a", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewaySession
+            {
+                SessionId = "session-1",
+                AgentId = "agent-a"
+            });
+
+        var controller = new ChatController(supervisor.Object, sessionStore.Object);
+
+        var result = await controller.Send(new ChatRequest("agent-a", "hello"), CancellationToken.None);
+
+        result.Result.Should().BeOfType<ObjectResult>()
+            .Which.StatusCode.Should().Be(StatusCodes.Status429TooManyRequests);
     }
 }

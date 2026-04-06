@@ -30,6 +30,8 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor
     /// <inheritdoc />
     public async Task<IAgentHandle> GetOrCreateAsync(string agentId, string sessionId, CancellationToken cancellationToken = default)
     {
+        var descriptor = _registry.Get(agentId)
+            ?? throw new KeyNotFoundException($"Agent '{agentId}' is not registered.");
         var key = MakeKey(agentId, sessionId);
         Task<(AgentInstance Instance, IAgentHandle Handle)> creationTask;
         TaskCompletionSource<(AgentInstance Instance, IAgentHandle Handle)>? creationCompletion = null;
@@ -41,6 +43,13 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor
 
             if (!_pendingCreates.TryGetValue(key, out creationTask!))
             {
+                if (descriptor.MaxConcurrentSessions > 0)
+                {
+                    var activeSessions = CountActiveSessionsForAgent(agentId);
+                    if (activeSessions >= descriptor.MaxConcurrentSessions)
+                        throw new AgentConcurrencyLimitExceededException(agentId, descriptor.MaxConcurrentSessions);
+                }
+
                 creationCompletion = new TaskCompletionSource<(AgentInstance Instance, IAgentHandle Handle)>(
                     TaskCreationOptions.RunContinuationsAsynchronously);
                 creationTask = creationCompletion.Task;
@@ -56,7 +65,7 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor
 
         try
         {
-            var created = await CreateEntryAsync(agentId, sessionId, key, cancellationToken);
+            var created = await CreateEntryAsync(descriptor, sessionId, key, cancellationToken);
             lock (_sync)
             {
                 _pendingCreates.Remove(key);
@@ -130,15 +139,30 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor
 
     private static string MakeKey(string agentId, string sessionId) => $"{agentId}::{sessionId}";
 
+    private int CountActiveSessionsForAgent(string agentId)
+    {
+        var keyPrefix = $"{agentId}::";
+        var activeInstanceKeys = _instances
+            .Where(pair =>
+                pair.Value.Instance.AgentId.Equals(agentId, StringComparison.OrdinalIgnoreCase) &&
+                pair.Value.Instance.Status is not AgentInstanceStatus.Stopped and not AgentInstanceStatus.Faulted)
+            .Select(pair => pair.Key);
+
+        var pendingKeys = _pendingCreates.Keys
+            .Where(key => key.StartsWith(keyPrefix, StringComparison.OrdinalIgnoreCase));
+
+        return activeInstanceKeys
+            .Concat(pendingKeys)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+    }
+
     private async Task<(AgentInstance Instance, IAgentHandle Handle)> CreateEntryAsync(
-        string agentId,
+        AgentDescriptor descriptor,
         string sessionId,
         string key,
         CancellationToken cancellationToken)
     {
-        var descriptor = _registry.Get(agentId)
-            ?? throw new KeyNotFoundException($"Agent '{agentId}' is not registered.");
-
         if (!_strategies.TryGetValue(descriptor.IsolationStrategy, out var strategy))
             throw new InvalidOperationException($"Isolation strategy '{descriptor.IsolationStrategy}' is not registered.");
 
@@ -148,7 +172,7 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor
         var instance = new AgentInstance
         {
             InstanceId = key,
-            AgentId = agentId,
+            AgentId = descriptor.AgentId,
             SessionId = sessionId,
             IsolationStrategy = descriptor.IsolationStrategy,
             Status = AgentInstanceStatus.Idle
