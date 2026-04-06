@@ -318,9 +318,10 @@
     // Confirm dialog
     // =========================================================================
 
-    function showConfirm(message, title, onConfirm) {
+    function showConfirm(message, title, onConfirm, confirmLabel) {
         $('#confirm-title').textContent = title || 'Confirm';
         $('#confirm-message').textContent = message;
+        $('#btn-confirm-ok').textContent = confirmLabel || 'OK';
         confirmCallback = onConfirm;
         elConfirmDialog.classList.remove('hidden');
     }
@@ -1433,7 +1434,8 @@
                 } catch (e) {
                     appendSystemMessage(`Failed to delete session: ${e.message}`, 'error');
                 }
-            }
+            },
+            'Delete'
         );
     }
 
@@ -1998,14 +2000,16 @@
 
         elAgentSelect.addEventListener('change', () => {
             const newAgent = elAgentSelect.value;
-            if (currentSessionId && currentAgentId && newAgent !== currentAgentId) {
+            const hasMessages = elChatMessages.children.length > 0;
+            if (hasMessages && currentSessionId && currentAgentId && newAgent !== currentAgentId) {
                 showConfirm(
                     `Switch to agent "${newAgent}"? This will start a new session.`,
                     'Switch Agent',
                     () => {
                         currentAgentId = newAgent;
                         startNewChat();
-                    }
+                    },
+                    'Switch'
                 );
                 elAgentSelect.value = currentAgentId;
                 return;
