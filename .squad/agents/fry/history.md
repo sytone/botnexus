@@ -29,6 +29,28 @@
 
 ## Learnings
 
+### WebUI End-to-End Protocol Verification
+
+**Timestamp:** 2026-04-07
+**Status:** ✅ Complete
+**Commit:** d01f1b3
+
+Audited app.js against GatewayWebSocketHandler and REST controllers. Results:
+- **WebSocket URL:** ✅ Correct (`/ws?agent={agentId}&session={sessionId}`)
+- **Client→Server messages:** ✅ All 6 types match (message, reconnect, abort, steer, follow_up, ping)
+- **Server→Client messages:** Fixed — added `reconnect_ack` handler, now all 10 types covered
+- **REST endpoints:** ✅ All correct (`/api/agents`, `/api/sessions`, `/api/sessions/{id}`, `/api/chat`, `DELETE /api/sessions/{id}`)
+- **Activity WebSocket:** ✅ Correct (separate connection to `/ws/activity`, no subscribe message)
+- **Session management:** ✅ Correct (sessions created via WS, history loaded via REST)
+
+**Fixes applied:**
+1. Added `reconnect_ack` handler — gateway sends this after reconnect replay but WebUI wasn't processing it
+2. Added `lastSequenceId` + `sessionKey` state tracking — every server message includes `sequenceId`; now tracked for future reconnect support
+3. Removed dead `activity` case from main socket handler (activity events only come from `/ws/activity`)
+4. Removed dead `history` case from main socket handler (gateway never sends this type; WebUI uses REST)
+
+**Key finding:** The `GatewayHostTests.ExecuteAsync_WhenStarted_ManagesChannelLifecycleAndShutdown` test is pre-existing flaky/failing — not related to WebUI.
+
 ### WebUI Production Enhancement Sprint
 
 **Timestamp:** 2026-04-06
