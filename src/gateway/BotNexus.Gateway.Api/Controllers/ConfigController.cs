@@ -28,6 +28,7 @@ public sealed class ConfigController : ControllerBase
             return Ok(new ConfigValidationResponse(
                 IsValid: false,
                 ConfigPath: resolvedPath,
+                Warnings: [],
                 Errors:
                 [
                     $"Config file not found at '{resolvedPath}'.",
@@ -37,8 +38,9 @@ public sealed class ConfigController : ControllerBase
 
         try
         {
-            await PlatformConfigLoader.LoadAsync(resolvedPath, cancellationToken);
-            return Ok(new ConfigValidationResponse(true, resolvedPath, []));
+            var config = await PlatformConfigLoader.LoadAsync(resolvedPath, cancellationToken);
+            var warnings = PlatformConfigLoader.ValidateWarnings(config);
+            return Ok(new ConfigValidationResponse(true, resolvedPath, warnings, []));
         }
         catch (OptionsValidationException ex)
         {
@@ -47,7 +49,7 @@ public sealed class ConfigController : ControllerBase
                 .Distinct(StringComparer.Ordinal)
                 .OrderBy(error => error, StringComparer.Ordinal)
                 .ToArray();
-            return Ok(new ConfigValidationResponse(false, resolvedPath, errors));
+            return Ok(new ConfigValidationResponse(false, resolvedPath, [], errors));
         }
     }
 }
@@ -57,5 +59,10 @@ public sealed class ConfigController : ControllerBase
 /// </summary>
 /// <param name="IsValid">Whether the configuration passed all validation rules.</param>
 /// <param name="ConfigPath">Resolved path to the configuration file that was validated.</param>
+/// <param name="Warnings">Validation warnings that do not block startup.</param>
 /// <param name="Errors">Validation errors, empty when <paramref name="IsValid"/> is <see langword="true"/>.</param>
-public sealed record ConfigValidationResponse(bool IsValid, string ConfigPath, IReadOnlyList<string> Errors);
+public sealed record ConfigValidationResponse(
+    bool IsValid,
+    string ConfigPath,
+    IReadOnlyList<string> Warnings,
+    IReadOnlyList<string> Errors);

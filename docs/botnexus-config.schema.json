@@ -10,6 +10,10 @@
         "string"
       ]
     },
+    "version": {
+      "type": "integer",
+      "format": "int32"
+    },
     "gateway": {
       "oneOf": [
         {

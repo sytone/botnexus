@@ -60,6 +60,7 @@ internal sealed class ValidateCommand
         }
 
         var errors = PlatformConfigLoader.Validate(config);
+        var warnings = PlatformConfigLoader.ValidateWarnings(config);
         if (verbose)
         {
             Console.WriteLine();
@@ -71,7 +72,7 @@ internal sealed class ValidateCommand
             Console.WriteLine(JsonSerializer.Serialize(config, CreateWriteJsonOptions()));
         }
 
-        PrintResult(valid: errors.Count == 0, warnings: [], errors);
+        PrintResult(valid: errors.Count == 0, warnings, errors);
         return errors.Count == 0 ? 0 : 1;
     }
 
@@ -137,7 +138,7 @@ internal sealed class ValidateCommand
             Console.WriteLine(payload);
         }
 
-        PrintResult(validation.IsValid, [], validation.Errors ?? []);
+        PrintResult(validation.IsValid, validation.Warnings ?? [], validation.Errors ?? []);
         return validation.IsValid ? 0 : 1;
     }
 
@@ -198,4 +199,8 @@ internal sealed class ValidateCommand
     };
 }
 
-internal sealed record ConfigValidationResponse(bool IsValid, string ConfigPath, IReadOnlyList<string>? Errors);
+internal sealed record ConfigValidationResponse(
+    bool IsValid,
+    string ConfigPath,
+    IReadOnlyList<string>? Warnings,
+    IReadOnlyList<string>? Errors);

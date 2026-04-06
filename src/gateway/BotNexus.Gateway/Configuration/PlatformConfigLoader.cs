@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -9,6 +10,7 @@ namespace BotNexus.Gateway.Configuration;
 /// </summary>
 public static class PlatformConfigLoader
 {
+    private const int SupportedConfigVersion = 1;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
@@ -55,13 +57,17 @@ public static class PlatformConfigLoader
         }
 
         if (!validateOnLoad)
+        {
+            EmitVersionWarning(config, path);
             return config;
+        }
 
         var errors = new List<string>(PlatformConfigSchema.ValidateJson(rawJson));
         errors.AddRange(Validate(config));
         if (errors.Count > 0)
             throw new OptionsValidationException(nameof(PlatformConfig), typeof(PlatformConfig), errors);
 
+        EmitVersionWarning(config, path);
         return config;
     }
 
@@ -94,14 +100,34 @@ public static class PlatformConfigLoader
         }
 
         if (!validateOnLoad)
+        {
+            EmitVersionWarning(config, path);
             return config;
+        }
 
         var errors = new List<string>(PlatformConfigSchema.ValidateJson(rawJson));
         errors.AddRange(Validate(config));
         if (errors.Count > 0)
             throw new OptionsValidationException(nameof(PlatformConfig), typeof(PlatformConfig), errors);
 
+        EmitVersionWarning(config, path);
         return config;
+    }
+
+    /// <summary>Validates non-fatal configuration concerns and returns warnings.</summary>
+    public static IReadOnlyList<string> ValidateWarnings(PlatformConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+
+        List<string> warnings = [];
+        if (config.Version > SupportedConfigVersion)
+        {
+            warnings.Add(
+                $"version '{config.Version}' is newer than supported version '{SupportedConfigVersion}'. " +
+                "The gateway will continue with best-effort compatibility.");
+        }
+
+        return warnings;
     }
 
     /// <summary>Validates the configuration and returns any errors.</summary>

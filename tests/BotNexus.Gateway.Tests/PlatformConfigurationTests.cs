@@ -18,6 +18,7 @@ public sealed class PlatformConfigurationTests
         var config = await PlatformConfigLoader.LoadAsync(Path.Combine(Guid.NewGuid().ToString("N"), "missing.json"));
 
         config.Should().NotBeNull();
+        config.Version.Should().Be(1);
         config.DefaultAgentId.Should().BeNull();
     }
 
@@ -150,6 +151,7 @@ public sealed class PlatformConfigurationTests
     {
         var config = new PlatformConfig();
 
+        config.Version.Should().Be(1);
         config.ListenUrl.Should().BeNull();
         config.DefaultAgentId.Should().BeNull();
         config.AgentsDirectory.Should().BeNull();
@@ -162,6 +164,26 @@ public sealed class PlatformConfigurationTests
         config.LogLevel.Should().BeNull();
         config.Providers.Should().BeNull();
         config.SessionStore.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task PlatformConfigLoader_LoadAsync_WithMissingVersion_DefaultsToVersionOne()
+    {
+        using var fixture = new PlatformConfigFixture();
+        var configPath = Path.Combine(fixture.RootPath, "missing-version.json");
+        await File.WriteAllTextAsync(configPath, """{"defaultAgentId":"assistant"}""");
+
+        var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
+
+        config.Version.Should().Be(1);
+    }
+
+    [Fact]
+    public void PlatformConfigLoader_ValidateWarnings_WithUnknownVersion_ReturnsWarning()
+    {
+        var warnings = PlatformConfigLoader.ValidateWarnings(new PlatformConfig { Version = 2 });
+
+        warnings.Should().ContainSingle(warning => warning.Contains("version '2'", StringComparison.Ordinal));
     }
 
     [Fact]

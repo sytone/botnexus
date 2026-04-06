@@ -11,6 +11,9 @@ public sealed class PlatformConfig
     [JsonPropertyName("$schema")]
     public string? Schema { get; set; }
 
+    /// <summary>Configuration schema version for forward compatibility.</summary>
+    public int Version { get; set; } = 1;
+
     /// <summary>Gateway-specific settings.</summary>
     public GatewaySettingsConfig? Gateway { get; set; }
 

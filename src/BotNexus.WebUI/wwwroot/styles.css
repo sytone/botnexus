@@ -893,3 +893,18 @@ body {
 }
 .msg-header .msg-role { font-weight: 700; text-transform: uppercase; color: var(--text-secondary); letter-spacing: 0.03em; }
 .msg-header .msg-time { color: var(--text-muted); }
+
+/* === Channel panel === */
+.channel-status-dot {
+    width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0;
+}
+.channel-status-dot.running { background: var(--success); }
+.channel-status-dot.stopped { background: var(--error); }
+.channel-caps {
+    display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px;
+}
+.channel-cap {
+    font-size: 0.68rem; padding: 1px 5px; border-radius: 3px;
+    background: rgba(255,255,255,0.05); color: var(--text-secondary);
+    cursor: default; line-height: 1.4;
+}

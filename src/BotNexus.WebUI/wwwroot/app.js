@@ -103,6 +103,7 @@
     const elSidebarToggle = $('#btn-sidebar-toggle');
     const elSidebarOverlay = $('#sidebar-overlay');
     const elSidebar = $('#sidebar');
+    const elChannelsList = $('#channels-list');
     const elBtnSendMode = $('#btn-send-mode');
     const elFollowUpIndicator = $('#followup-indicator');
     const elProcessingStatus = $('#processing-status');
@@ -347,6 +348,7 @@
             reconnectAttempts = 0;
             startPing();
             if (wasReconnect) {
+                loadChannels();
                 reloadCurrentSessionHistory().then((msgCount) => {
                     const countStr = msgCount > 0 ? ` Loaded ${msgCount} previous messages.` : '';
                     showConnectionBanner(`✅ Reconnected to gateway.${countStr}`, 'success');
@@ -1426,6 +1428,60 @@
     }
 
     // =========================================================================
+    // Channels
+    // =========================================================================
+
+    let channelsRefreshTimer = null;
+    const CHANNELS_REFRESH_MS = 30000;
+
+    function channelEmoji(name) {
+        const map = { websocket: '🌐', telegram: '✈️', discord: '🎮', slack: '💼', tui: '🖥️' };
+        return map[(name || '').toLowerCase()] || '📡';
+    }
+
+    function buildCapabilityIcons(ch) {
+        const caps = [];
+        if (ch.supportsStreaming) caps.push('<span class="channel-cap" title="Streaming">⚡</span>');
+        if (ch.supportsSteering) caps.push('<span class="channel-cap" title="Steering">🎯</span>');
+        if (ch.supportsFollowUp) caps.push('<span class="channel-cap" title="Follow-up">🔄</span>');
+        if (ch.supportsThinking) caps.push('<span class="channel-cap" title="Thinking">💭</span>');
+        if (ch.supportsToolDisplay) caps.push('<span class="channel-cap" title="Tools">🔧</span>');
+        return caps.join('');
+    }
+
+    async function loadChannels() {
+        elChannelsList.innerHTML = '<div class="loading">Loading...</div>';
+        const channels = await fetchJson('/channels');
+        if (!channels || channels.length === 0) {
+            elChannelsList.innerHTML = '<div class="empty-state">No channels</div>';
+            return;
+        }
+        elChannelsList.innerHTML = '';
+        for (const ch of channels) {
+            const el = document.createElement('div');
+            el.className = 'list-item';
+            el.setAttribute('role', 'listitem');
+            const dotClass = ch.isRunning ? 'running' : 'stopped';
+            el.innerHTML = `
+                <div class="list-item-row">
+                    <span class="item-title">
+                        <span class="channel-status-dot ${dotClass}" aria-hidden="true"></span>
+                        ${channelEmoji(ch.name)} ${escapeHtml(ch.displayName || ch.name)}
+                    </span>
+                    <span class="item-meta" style="font-size:0.68rem;">${ch.isRunning ? 'running' : 'stopped'}</span>
+                </div>
+                <div class="channel-caps">${buildCapabilityIcons(ch)}</div>
+            `;
+            elChannelsList.appendChild(el);
+        }
+    }
+
+    function scheduleChannelsRefresh() {
+        if (channelsRefreshTimer) clearInterval(channelsRefreshTimer);
+        channelsRefreshTimer = setInterval(loadChannels, CHANNELS_REFRESH_MS);
+    }
+
+    // =========================================================================
     // Agents
     // =========================================================================
 
@@ -1787,6 +1843,7 @@
         elToggleActivity.addEventListener('change', toggleActivity);
 
         $('#btn-refresh-sessions').addEventListener('click', (e) => { e.stopPropagation(); loadSessions(); });
+        $('#btn-refresh-channels').addEventListener('click', (e) => { e.stopPropagation(); loadChannels(); });
         $('#btn-refresh-agents').addEventListener('click', (e) => { e.stopPropagation(); loadAgents(); });
 
         // Delegated click handlers for dynamic chat content
@@ -1933,7 +1990,9 @@
         initSectionToggles();
         initEventListeners();
         loadSessions();
+        loadChannels();
         loadAgents();
+        scheduleChannelsRefresh();
         setStatus('disconnected');
         updateSendButtonState();
         // Collapse sidebar on mobile by default

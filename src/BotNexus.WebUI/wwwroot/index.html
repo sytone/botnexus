@@ -42,6 +42,16 @@
             </div>
 
             <div class="sidebar-section">
+                <div class="section-header" data-toggle="channels-list">
+                    <span>📡 Channels</span>
+                    <button id="btn-refresh-channels" class="btn-icon" title="Refresh channels" aria-label="Refresh channels">↻</button>
+                </div>
+                <div id="channels-list" class="section-content" role="list">
+                    <div class="loading">Loading channels...</div>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
                 <div class="section-header" data-toggle="agents-list">
                     <span>🧠 Agents</span>
                     <div class="section-header-actions">
