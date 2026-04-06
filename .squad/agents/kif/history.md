@@ -7,6 +7,16 @@
 
 ## Learnings
 
+- Created 5 module READMEs (~550 lines total) for Gateway sub-modules:
+  - `src/gateway/BotNexus.Gateway.Abstractions/README.md` — Complete contract catalog: 13 interfaces, 15 model types, 3 enums, extension point guide for implementers
+  - `src/gateway/BotNexus.Gateway.Sessions/README.md` — FileSessionStore (JSONL + .meta.json sidecar, SemaphoreSlim thread safety, ConfigureAwait(false) pattern) and InMemorySessionStore (Lock-based)
+  - `src/channels/BotNexus.Channels.Core/README.md` — ChannelAdapterBase template method lifecycle, ChannelManager registry, new adapter walkthrough with DI registration
+  - `src/channels/BotNexus.Channels.Tui/README.md` — Terminal UI stub: output works, input loop pending, local testing guide
+  - `src/channels/BotNexus.Channels.Telegram/README.md` — Telegram Bot stub: TelegramOptions (BotToken, WebhookUrl, AllowedChatIds), Bot API reference
+  - Every type documented from source code inspection, not assumption
+  - Consistent template: purpose, key types table, usage examples, configuration, dependencies, extension points
+  - Commit: c7ade0c
+
 - Created focused training deep-dive documentation (4 new files, ~2,100 lines total):
   - `docs/training/providers.md` — IApiProvider contract, LlmClient routing, model registry, streaming event protocol (14 event types), message transformation pipeline, step-by-step new provider guide
   - `docs/training/agent-events.md` — Agent lifecycle, 10 event types with schemas, subscribe/unsubscribe, BeforeToolCall/AfterToolCall hooks, steering/follow-up queues, error handling, abort flow
