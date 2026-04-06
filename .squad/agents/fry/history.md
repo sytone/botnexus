@@ -7,6 +7,28 @@
 
 ## 2026-04-03T17:45:00Z — System Messages Sprint (Team Sync)
 
+### WebUI Enhancements Sprint — P1 Features
+
+**Timestamp:** 2026-04-04  
+**Status:** ✅ Complete  
+**Commit:** 26b32b2  
+**Scope:** 6 feature areas enhanced across index.html, styles.css, app.js
+
+**Deliverables:**
+1. **Thinking Content Toggle** — Auto-collapses when content_delta arrives, animated CSS dots while thinking, finalize collapses with char count
+2. **Tool Call Inspector Panel** — Inline expandable inspector (click to toggle) showing formatted JSON args and result, nesting support via depth classes, replaces modal-only flow
+3. **Session Reconnection UI** — Manual 🔄 Reconnect button on max-retry, session ID display with 📋 copy-to-clipboard, "Reconnected - loaded N messages" banner
+4. **Agent Selector / Configuration** — Mid-conversation agent switch creates new session with confirm dialog, status labels in sidebar agent list
+5. **Activity Feed Dashboard** — Filterable by agent and event type, local event tracking (messages/tools/errors from WebUI channel), data-attribute filtering
+6. **Steering & Queue Controls** — Queue status indicator (📨 N messages queued), steer/abort activity tracking in feed
+
+**Files Changed:** 3 files, +389/-33 lines  
+**No backend changes** — pure frontend, no files touched outside wwwroot/
+
+---
+
+## 2026-04-03T17:45:00Z — System Messages Sprint (Team Sync)
+
 **Delivered by:** Fry (Web)  
 **Collaborating:** Farnsworth (Platform), Bender (Runtime), Leela (Lead)  
 
@@ -165,6 +187,13 @@ See decisions.md "Part 4: Implementation Phases & Work Items" for full roadmap w
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
 - **WebUI is plain HTML/CSS/JS** in `src/BotNexus.WebUI/wwwroot/` — no build tools, no npm, no frameworks. All state is in an IIFE in `app.js`.
+- **Inline tool inspector pattern**: Tool calls now expand/collapse inline (click to toggle `.expanded` class) showing formatted JSON args and result, replacing the old click-to-modal-only approach. Modal still exists for standalone viewing.
+- **Thinking auto-collapse**: When `content_delta` arrives, any active thinking block auto-collapses. On `message_end`, thinking block is finalized and collapsed with character count.
+- **Session ID display**: Shown in chat header as truncated ID with 📋 copy-to-clipboard button. Uses `navigator.clipboard` with fallback to `execCommand`.
+- **Activity feed filtering**: Activity items carry `data-agent` and `data-eventCategory` attributes. Filters applied via `.filtered-out` CSS class. Agent filter populated from agentsCache on loadAgents().
+- **Queue management**: `messageQueueCount` tracks pending messages. Displayed as a banner above the input area. Decremented on `message_start`, reset on `message_end`/abort.
+- **Agent switching mid-conversation**: Changing agent dropdown while in a session triggers a confirm dialog, then creates a new chat session with the selected agent.
+- **Reconnect button**: Appears when max reconnect attempts are exhausted. `manualReconnect()` resets attempts and re-establishes the WebSocket connection.
 - **Sidebar pattern**: Each section uses `.sidebar-section` > `.section-header[data-toggle]` > `.section-content`. Toggle behavior is wired via `data-toggle` attribute pointing to the content div's id.
 - **REST API pattern**: Endpoints in `Program.cs` use minimal API (`app.MapGet`) with inline lambdas. DI services are injected as parameters. All responses use shared `jsonOptions` with camelCase naming.
 - **ProviderRegistry** is a DI singleton — use `GetProviderNames()` + `Get(name)` to enumerate providers and their models.
