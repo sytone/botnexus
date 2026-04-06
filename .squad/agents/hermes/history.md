@@ -563,3 +563,9 @@ Team outcomes synced:
 - Hermes: 7 live integration tests (Copilot provider), graceful skip patterns for CI stability. Full suite 684 tests, 0 failures.
 
 Result: Phase 3 blockers cleared, build clean, READY FOR RELEASE.
+
+### 2026-04-06 — Anticipatory Gateway phase-5 test scaffolding
+
+- Added five new Gateway test suites to pre-stage expected behaviors for auth middleware, session lifecycle, channel capabilities, max concurrent sessions, and per-session WebSocket locking.
+- Where implementation types are not landed yet, tests are intentionally marked with explicit `[Fact(Skip = "...")]` reasons plus TODO notes so they can be unskipped as features merge without rethinking test intent.
+- Kept currently-implementable assertions active (dev-mode auth bypass, capability defaults via reflection fallback, and unlimited-session behavior when no max is configured) and verified `dotnet build --no-restore` plus `dotnet test --no-build` on `BotNexus.Gateway.Tests`.
