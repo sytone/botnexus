@@ -437,3 +437,54 @@ Participated in design review ceremony for Phase 3 architecture. All ADs approve
 5. **`docs/dev-guide.md`** — Added `-SkipBuild` and `-SkipTests` to `dev-loop.ps1` parameter table, added `-SkipBuild` to `start-gateway.ps1` table, added fast restart example.
 
 **Verified:** Build succeeds (0 warnings, 0 errors). All documented file paths confirmed against BotNexus.slnx and actual directory structure.
+
+---
+
+## 2026-04-06 — XML Doc Comments + Dev Loop Documentation
+
+**Status:** ✅ Complete  
+**Scope:** Add XML documentation to Gateway API + verify dev loop docs + create module READMEs
+
+**Deliverables:**
+
+1. **XML Doc Comments (Gateway API)**
+   - Added 14 XML documentation comments across 6 files in `src/gateway/BotNexus.Gateway.Api/`:
+     - `AgentsController.cs` — constructor documentation
+     - `ChatController.cs` — constructor documentation
+     - `SessionsController.cs` — constructor + SessionHistoryResponse record documentation
+     - `GatewayAuthMiddleware.cs` — class, constructor, and InvokeAsync method documentation
+     - `ActivityWebSocketHandler.cs` — HandleAsync method documentation
+     - `Program.cs` — Program partial class documentation
+   - All comments enable Swagger documentation generation and IntelliSense support
+   - Verified with `/p:TreatWarningsAsErrors=true` — build succeeds with 0 CS1591 errors
+
+2. **Dev Loop Documentation Audit**
+   - Verified all references are current: ports (5005), file paths, test projects
+   - Added missing test project: `tests/BotNexus.Providers.Conformance.Tests` to dev-loop.md test table
+   - Confirmed no stale gateway port references (no 18790 found)
+   - All dev scripts (dev-loop.ps1, start-gateway.ps1, export-openapi.ps1, install-pre-commit-hook.ps1) documented and working
+
+3. **Module READMEs (Gateway Sub-Projects)**
+   - Created `src/gateway/BotNexus.Gateway/README.md` (146 lines)
+     - Documents orchestration runtime, key services (AgentSupervisor, MessageRouter, ActivityBroadcaster)
+     - Covers configuration watching, thread safety patterns, extension points
+   - Created `src/gateway/BotNexus.Gateway.Api/README.md` (198 lines)
+     - Documents all REST endpoints (/api/agents, /api/chat, /api/sessions)
+     - Documents WebSocket endpoints and activity stream
+     - Details authentication middleware and CORS configuration
+   - Created `src/gateway/BotNexus.Cli/README.md` (197 lines)
+     - Documents all CLI commands: init, validate, agent list/add/remove, config get/set
+     - Includes common workflows and troubleshooting guide
+     - Covers environment variables and exit codes
+   - All READMEs follow consistent template: overview, key types, usage examples, configuration, dependencies
+
+**Build Verification:**
+- Full solution builds: ✅ 0 errors, 15 pre-existing warnings
+- Gateway API project with TreatWarningsAsErrors=true: ✅ 0 errors
+- Test suite: ✅ 312 Gateway tests pass, 146 Coding Agent tests pass, all provider tests pass
+- Git commits: 2 commits (5a169ba module READMEs, plus prior xml-docs work)
+
+**Cross-References Established:**
+- Each module README cross-references related modules
+- Dev documentation links to new module READMEs
+- API reference up-to-date with conformance test inclusion
