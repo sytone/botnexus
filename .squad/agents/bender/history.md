@@ -1002,3 +1002,11 @@ Result: Phase 3 blockers cleared, build clean, READY FOR RELEASE.
 - Refactored GatewayAuthMiddleware to take IWebHostEnvironment in the constructor and removed per-request service locator calls from static file auth bypass checks.
 - Added RateLimitingMiddleware with per-client fixed-window throttling (caller identity preferred, IP fallback), default 60 requests per 60 seconds, /health bypass, and HTTP 429 + Retry-After on limit hits.
 - Added CorrelationIdMiddleware that propagates or generates X-Correlation-Id, writes it to response headers, and stores it in HttpContext.Items["CorrelationId"] before downstream middleware executes.
+
+### 2026-04-06 — Wave 3 Item 1: Rate limiter stale-entry eviction
+- Added periodic stale-entry cleanup to RateLimitingMiddleware with a 60-second cleanup cadence.
+- Entries are now pruned when LastAccessed is older than 2x the configured rate-limit window, preventing unbounded per-client dictionary growth.
+
+### 2026-04-06 — Wave 3 Item 2: SQLite session store
+- Added SqliteSessionStore implementing ISessionStore with auto-create tables (sessions, session_history) and JSON metadata persistence.
+- Extended platform session-store config to support 	ype: Sqlite with required gateway.sessionStore.connectionString, added DI registration, and added focused gateway tests.

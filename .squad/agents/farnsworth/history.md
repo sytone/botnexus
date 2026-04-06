@@ -243,6 +243,9 @@
 ## Learnings
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
+- 2026-04-06: Session metadata endpoints (`GET/PATCH /api/sessions/{sessionId}/metadata`) now enforce caller/session ownership when auth middleware provides `GatewayCallerIdentity.CallerId`; mismatches return 403 while missing caller identity preserves backward compatibility.
+- 2026-04-06: Agent runtime health is now exposed via `GET /api/agents/{agentId}/health` with status values `healthy|unhealthy|unknown`, powered by optional `IHealthCheckable` handles and optional `IAgentHandleInspector` supervisor lookup.
+- 2026-04-06: Agent registry lifecycle mutations now publish activity stream events (`AgentRegistered`, `AgentUnregistered`, `AgentConfigChanged`) through `IActivityBroadcaster` from `DefaultAgentRegistry`.
 - 2026-04-06: `AgentsController.Update` now rejects route/body `AgentId` mismatches with HTTP 400; if payload `AgentId` is empty, the route `agentId` is injected before registry update.
 - 2026-04-06: Gateway API CORS now keeps `AllowAnyMethod()` only for Development; non-development policy explicitly allows `GET, POST, PUT, DELETE, OPTIONS`.
 - 2026-04-06: Gateway WebSocket responsibilities are now split across `GatewayWebSocketHandler` (orchestration), `WebSocketConnectionManager` (admission/session locks/ping), and `WebSocketMessageDispatcher` (message routing + replay sequencing persistence).

@@ -1,28 +1,14 @@
-docs(scribe): Phase 12 Wave 1 orchestration logs, session log, decision merge
+docs(scribe): Phase 12 Wave 3 orchestration logs, session log, decision merge
 
-- Orchestration logs: 6 agent spawn reports (.squad/orchestration-log/)
-  - leela: Gap analysis & sprint plan (3 waves, ~30 items)
-  - bender: P0 auth bypass fix, extension loader, Telegram runtime
-  - farnsworth: 3 API endpoints (channels, extensions, type move)
-  - fry: Command palette client-side execution
-  - kif: WebSocket channel README
-  - hermes: Config path test approach, Wave 1 coverage expansion
-  
-- Session log: .squad/log/2026-04-06T09-44-00Z-phase12-wave1.md
-  - 6 agents parallel execution summary
-  - Key outcomes: P0 security fix, API surface complete, WebUI features restored
-  - Deliverables: 3 commits (runtime), 1 README, 6 test approaches
+Scribe session log for Wave 3:
+- Bender (Runtime Dev): SQLite session store (2 commits: ec6d83c, cfc0664)
+- Farnsworth (Platform Dev): Health + lifecycle + metadata auth (3 commits: b07b175, c415206, c9f0843)
+- Kif (Documentation Engineer): Protocol spec + config reference + dev guide (3 docs)
 
-- Decision merge: 13 inbox entries consolidated into .squad/decisions.md
-  - Consolidated: Phase 12 planning, security, endpoints, CLI, config, Telegram, tests, docs
-  - Deduplicated decision history
-  - Inbox cleaned (.squad/decisions/inbox/ emptied)
-
-- Agent history updates: Cross-team context propagated
-  - bender: Wave 1 assignments + dependency graph updated
-  - farnsworth: Wave 1 deliverables + CLI decomposition documented
-  - fry: Command palette pattern established, unblocked panels
-  - kif: Documentation sequencing for all 3 waves
-  - hermes: Test coverage areas + config path strategy
+Actions:
+1. Wrote orchestration logs per agent to .squad/orchestration-log/
+2. Wrote session log to .squad/log/2026-04-06T10-45-00Z-phase12-wave3.md
+3. Merged .squad/decisions/inbox/ → decisions.md (bender-wave3-sqlite, farnsworth-wave3-health-lifecycle)
+4. Deleted merged inbox files
 
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>

@@ -2146,6 +2146,36 @@ Phase 11 delivered 6 work items across 4 agents (Farnsworth ×2, Bender ×2, Her
 
 **Decision written to:** `.squad/decisions/inbox/leela-phase11-design-review.md`
 
+---
+
+## 2026-04-06T10:49:00Z — Phase 12 Wave 2 Design Review (Lead)
+
+**Timestamp:** 2026-04-06T10:49:00Z  
+**Status:** ✅ Complete  
+**Requested by:** Jon Bullen (via Copilot)  
+**Scope:** Architectural review of all Phase 12 Wave 2 implementations (10 commits)
+
+**Context:**
+Phase 12 Wave 2 delivered middleware infrastructure (correlation IDs, auth DI fix, per-client rate limiting), session metadata API (GET/PATCH), config version field, two WebUI panels (channels, extensions), and 38 new tests across 5 agents (Farnsworth ×3, Bender ×3, Fry ×2, Hermes ×1, Kif ×1). Build green (0 errors), 697 tests passing.
+
+**Grade: A-**
+
+| Area | Grade |
+|------|-------|
+| SOLID Compliance | A (5/5) |
+| Middleware Design | A |
+| API Design | A- |
+| Security Posture | B+ |
+| Test Quality | A |
+
+**Key Findings:**
+- P0: None.
+- P1 (3 items): Rate limiter `_clientWindows` never evicts stale entries — unbounded memory growth. Session metadata endpoints lack per-session authorization — cross-tenant access possible. API reference still shows `supportsThinking` but DTO is now `supportsThinkingDisplay`.
+- P2 (4 items): No rate limiting on WebSocket upgrades. No metadata key/value size limits. Extensions panel deliberately lacks auto-refresh. Auth test file trailing blank lines.
+- Carried forward: StreamAsync task leak (Phase 5/6), SequenceAndPersistPayloadAsync double-serialization (Sprint 7A), CLI decomposition residual DRY (Phase 11).
+
+**Decision written to:** `.squad/decisions/inbox/leela-wave2-review.md`
+
 ## Learnings — Phase 11 Design Review (2026-04-07)
 
 1. **AssemblyLoadContext with isCollectible:true is the right isolation model for .NET extensions** — Provides dependency isolation, unload capability, and unique naming via GUID. The `AssemblyDependencyResolver` pattern handles transitive dependency resolution correctly. Key constraint: DI registrations from loaded extensions persist after unload since IServiceCollection is immutable after Build().
@@ -2153,3 +2183,11 @@ Phase 11 delivered 6 work items across 4 agents (Farnsworth ×2, Bender ×2, Her
 3. **End-to-end test fixtures that spawn real processes give highest confidence** — The CliConfigFixture approach (spawn dotnet process, isolated BOTNEXUS_HOME, capture stdout/stderr) validates the full CLI pipeline including serialization, file I/O, and System.CommandLine parsing. Worth adopting for other CLI tools.
 4. **Extension security is a layered concern** — Path traversal guards + manifest validation + ALC isolation is the right foundation. Assembly signature validation is the next layer needed before any multi-tenant or remote extension scenario. Design the manifest schema to accommodate this now (optional sha256 field) even if enforcement comes later.
 5. **Telegram MarkdownV2 escaping is a correctness concern, not just cosmetic** — Unescaped special characters cause Telegram API failures, not just bad formatting. The comprehensive escape function covering all 19 MarkdownV2 special characters is essential for production reliability.
+
+## Learnings — Phase 12 Wave 2 Design Review (2026-04-06)
+
+1. **Middleware pipeline ordering matters for identity-aware rate limiting** — Placing CorrelationId → Auth → RateLimit ensures: (a) all responses get trace headers regardless of auth outcome, (b) rate limiting can use authenticated caller identity instead of raw IP. This is the canonical order for any API gateway with per-tenant rate limits.
+2. **In-memory rate limiter dictionaries need eviction** — `ConcurrentDictionary<string, ClientWindow>` is a clean pattern for fixed-window rate limiting, but without periodic eviction of expired windows it becomes an unbounded memory leak under diverse-IP traffic. Always pair with a timer-based cleanup or use `MemoryCache` with sliding expiry.
+3. **Service locator removal from middleware is a high-value DIP fix** — Moving `IWebHostEnvironment` from `RequestServices.GetService<>()` to constructor injection in `GatewayAuthMiddleware` eliminates per-request service resolution overhead and makes the dependency graph explicit. This pattern should be enforced across all middleware.
+4. **Session metadata PATCH with null-removal is an elegant RFC 7386-style merge** — Accepting `JsonElement` body, iterating properties, treating null values as deletes, and using a recursive `ConvertJsonElement` switch expression produces clean merge semantics. But this pattern needs authorization guards when sessions are scoped to tenants.
+5. **DTO renames require synchronized doc updates** — The `SupportsThinking` → `SupportsThinkingDisplay` rename in code was not reflected in api-reference.md. When a DTO field is renamed, the API docs should be updated in the same commit or the doc commit must reference the field change explicitly.
