@@ -2262,3 +2262,37 @@ Wave 3 delivered 5 code commits + docs across 3 agents (Bender ×2, Farnsworth �
 4. **AgentDescriptor has no model restriction concept** — Only `ModelId` (single default) and `ApiProvider` exist. Adding `AllowedModelIds` as an `IReadOnlyList<string>` with empty = unrestricted semantics maintains backward compat and follows the same pattern as `ToolIds` and `SubAgentIds`.
 5. **3-layer filtering composes cleanly** — Layer 1 (platform config: enabled + allowlist) → Layer 2 (API endpoints: return filtered) → Layer 3 (per-agent: intersection with agent's AllowedModelIds). Each layer is independent and testable.
 6. **GatewayAuthManager already has provider config lookup** — The auth resolution chain (auth.json → env vars → PlatformConfig) and `TryGetProviderConfig()` helper mean the `Enabled` flag can integrate naturally into the auth flow. A disabled provider could short-circuit auth resolution.
+## 2026-04-09 — Unified Config + Agent Directory Proposal (Lead)
+
+**Status:** ✅ Proposal written
+**Requested by:** Jon Bullen
+**Scope:** Unified config architecture — eliminate 3-source config fragmentation
+
+**Context:**
+Config was fragmented: (1) config.json inline agents via PlatformConfigAgentSource (no hot-reload), (2) separate .json files via FileAgentConfigurationSource (hot-reload via FSW), (3) workspace files flat in agent root. Jon requires single config source + structured agent directories.
+
+**Analysis Findings:**
+1. PlatformConfigAgentSource.Watch() returns null — inline agents don't hot-reload
+2. AgentDefinitionConfig is a subset of FileAgentConfigurationSource's schema — missing displayName, description, allowedModels, subAgents, maxConcurrentSessions, metadata, isolationOptions
+3. ProviderConfig lacks Enabled flag and Models allowlist
+4. BotNexusHome scaffolds workspace files flat in agent root (no workspace/ subdirectory)
+5. PlatformConfigLoader.ConfigChanged event exists but PlatformConfigAgentSource doesn't subscribe
+6. FileAgentConfigurationWriter creates individual .json files — becomes obsolete with unified config
+
+**Proposal Covers:**
+- Unified config.json v2 schema with enriched ProviderConfig + AgentDefinitionConfig
+- Agent directory restructure: workspace/ + data/sessions/ subdirectories
+- Migration plan: legacy workspace auto-migration, agentsDirectory deprecation path
+- Hot-reload: PlatformConfigAgentSource.Watch() via ConfigChanged subscription
+- 5-phase implementation plan (A-E) with agent assignments
+- Removal list: FileAgentConfigurationWriter, FileAgentConfigurationSource (deferred)
+
+**Decision written to:** `.squad/decisions/inbox/leela-unified-config.md`
+
+## Learnings — Unified Config Architecture (2026-04-09)
+
+1. **PlatformConfigAgentSource.Watch() is the critical gap** — It returns null while FileAgentConfigurationSource has full FSW hot-reload. The fix is simple: subscribe to the existing PlatformConfigLoader.ConfigChanged static event and re-invoke LoadAsync.
+2. **AgentDefinitionConfig is underspecified** — Missing 7 fields that FileAgentConfigurationSource already supports (displayName, description, subAgents, maxConcurrentSessions, metadata, isolationOptions, allowedModels). This asymmetry means agents created via API (which write to file) have richer config than inline agents.
+3. **Workspace file migration needs atomic move** — Moving SOUL.md from agent root to workspace/ subdirectory must check for legacy layout and move, not copy. File.Move is atomic on same volume.
+4. **systemPromptFile resolution base changes** — Currently relative to configDirectory (where config.json lives). Must change to agent home (~/.botnexus/agents/{id}/) so "workspace/SOUL.md" resolves correctly.
+5. **PlatformConfigAgentWriter is the hardest piece** — Atomic read-modify-write of config.json with concurrent edit safety. Needs advisory lock + temp-file-rename pattern.
