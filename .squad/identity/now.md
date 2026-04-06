@@ -1,13 +1,15 @@
 ---
-updated_at: 2026-04-06T01:00:00Z
-focus_area: Gateway Phase 5 — Complete. Design review A-.
-active_issues: [P2 decisions.md archival, P2 provider conformance tests, P2 session cleanup scalability]
-status: phase5_sprint_complete
+updated_at: 2026-04-06T01:55:00Z
+focus_area: Gateway Phase 6 — Complete. Design review A.
+active_issues: [P1 cross-agent call depth limit, P1 cross-agent timeout, P1 dev-guide SkipBuild docs, P2 decisions.md archival, P2 history summarization, P2 provider conformance tests]
+status: phase6_sprint_complete
 ---
 
 # What We're Focused On
 
-**Gateway Phase 5 complete.** All 6 requirements met. 2 P0s resolved (auth middleware, WebSocket channel adapter). 15+ P1s delivered + 6 P1s from reviews fixed. Design review A- (Leela). Consistency review Good (Nibbler). 746 tests, 0 failures. 3 batches + P1 remediation across 13 agent spawns.
+**Gateway Phase 6 complete.** Cross-agent calling implemented, WebUI enhanced (10 features), dev loop validated, 14 new integration tests, comprehensive documentation. Design review A (Leela). Consistency review: 4 P0 + 5 P1 doc issues found and fixed; code had zero inconsistencies. 225 gateway tests, 0 failures. 9 commits across 2 batches, 8 agent spawns.
+
+**Previous:** Gateway Phase 5 complete. Design review A-. 746 tests, 0 failures.
 
 **Previous:** Gateway Phase 4 complete. Design review A-. 696 tests, 0 failures.
 
