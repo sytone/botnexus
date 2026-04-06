@@ -10,6 +10,7 @@ A modular, extensible AI agent execution platform built in C#/.NET. BotNexus ena
 | **[Developer Guide →](docs/dev-guide.md)** | Developers and agents — build, test, run locally |
 | **[API Reference →](docs/api-reference.md)** | REST and WebSocket endpoint documentation |
 | **[Architecture →](docs/architecture/overview.md)** | System design, components, and extension points |
+| **[Observability →](docs/observability.md)** | Distributed tracing, logging, and local Jaeger setup |
 
 ---
 
