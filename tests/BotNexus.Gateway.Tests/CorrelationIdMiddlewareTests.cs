@@ -1,95 +1,51 @@
 using BotNexus.Gateway.Api;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
+using System.Diagnostics;
+using DiagnosticsActivity = System.Diagnostics.Activity;
 
 namespace BotNexus.Gateway.Tests;
 
 public sealed class CorrelationIdMiddlewareTests
 {
     [Fact]
-    public async Task InvokeAsync_ResponseAlwaysIncludesCorrelationHeader()
+    public async Task CorrelationIdMiddleware_WhenActivityExists_UsesTraceIdAsCorrelationId()
     {
+        var expectedTraceId = ActivityTraceId.CreateFromString("0123456789abcdef0123456789abcdef".AsSpan());
+        var expectedSpanId = ActivitySpanId.CreateFromString("0123456789abcdef".AsSpan());
         var middleware = new CorrelationIdMiddleware(_ => Task.CompletedTask);
         var context = new DefaultHttpContext();
+        using var activity = new DiagnosticsActivity("gateway-request");
+        activity.SetIdFormat(ActivityIdFormat.W3C);
+        activity.SetParentId(expectedTraceId, expectedSpanId, ActivityTraceFlags.Recorded);
+        activity.Start();
 
         await middleware.InvokeAsync(context);
 
-        context.Response.Headers.Should().ContainKey("X-Correlation-Id");
+        context.Response.Headers["X-Correlation-Id"].ToString().Should().Be(expectedTraceId.ToString());
     }
 
     [Fact]
-    public async Task InvokeAsync_UsesIncomingCorrelationId()
+    public async Task CorrelationIdMiddleware_WhenNoActivity_GeneratesCorrelationId()
     {
         var middleware = new CorrelationIdMiddleware(_ => Task.CompletedTask);
         var context = new DefaultHttpContext();
-        context.Request.Headers["X-Correlation-Id"] = "incoming-id-123";
-
-        await middleware.InvokeAsync(context);
-
-        context.Response.Headers["X-Correlation-Id"].ToString().Should().Be("incoming-id-123");
-        context.Items["CorrelationId"].Should().Be("incoming-id-123");
-    }
-
-    [Fact]
-    public async Task InvokeAsync_UsesIncomingCorrelationId_InResponseAndContextItems()
-    {
-        var middleware = new CorrelationIdMiddleware(_ => Task.CompletedTask);
-        var context = new DefaultHttpContext();
-        context.Request.Headers["X-Correlation-Id"] = "trace-abc";
-
-        await middleware.InvokeAsync(context);
-
-        context.Response.Headers["X-Correlation-Id"].ToString().Should().Be("trace-abc");
-        context.Items["CorrelationId"].Should().Be("trace-abc");
-    }
-
-    [Fact]
-    public async Task InvokeAsync_GeneratesCorrelationId_WhenMissing()
-    {
-        var middleware = new CorrelationIdMiddleware(_ => Task.CompletedTask);
-        var context = new DefaultHttpContext();
+        DiagnosticsActivity.Current = null;
 
         await middleware.InvokeAsync(context);
 
         context.Response.Headers["X-Correlation-Id"].ToString().Should().NotBeNullOrWhiteSpace();
-        context.Items["CorrelationId"].Should().Be(context.Response.Headers["X-Correlation-Id"].ToString());
     }
 
     [Fact]
-    public async Task InvokeAsync_GeneratedCorrelationId_IsValidGuid()
+    public async Task CorrelationIdMiddleware_WhenClientSendsCorrelationId_PreservesIt()
     {
         var middleware = new CorrelationIdMiddleware(_ => Task.CompletedTask);
         var context = new DefaultHttpContext();
+        context.Request.Headers["X-Correlation-Id"] = "client-correlation-id";
 
         await middleware.InvokeAsync(context);
 
-        Guid.TryParse(context.Response.Headers["X-Correlation-Id"].ToString(), out _).Should().BeTrue();
-    }
-
-    [Fact]
-    public async Task InvokeAsync_WhenIncomingHeaderIsWhitespace_GeneratesNewGuid()
-    {
-        var middleware = new CorrelationIdMiddleware(_ => Task.CompletedTask);
-        var context = new DefaultHttpContext();
-        context.Request.Headers["X-Correlation-Id"] = "   ";
-
-        await middleware.InvokeAsync(context);
-
-        var correlationId = context.Response.Headers["X-Correlation-Id"].ToString();
-        Guid.TryParse(correlationId, out _).Should().BeTrue();
-    }
-
-    [Fact]
-    public async Task InvokeAsync_GeneratedCorrelationIds_AreUniquePerRequest()
-    {
-        var middleware = new CorrelationIdMiddleware(_ => Task.CompletedTask);
-        var firstContext = new DefaultHttpContext();
-        var secondContext = new DefaultHttpContext();
-
-        await middleware.InvokeAsync(firstContext);
-        await middleware.InvokeAsync(secondContext);
-
-        firstContext.Response.Headers["X-Correlation-Id"].ToString()
-            .Should().NotBe(secondContext.Response.Headers["X-Correlation-Id"].ToString());
+        context.Response.Headers["X-Correlation-Id"].ToString().Should().Be("client-correlation-id");
     }
 }
