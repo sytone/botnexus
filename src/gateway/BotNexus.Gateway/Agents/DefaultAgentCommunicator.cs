@@ -69,7 +69,7 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
             childSessionId);
 
         var childHandle = await _supervisor.GetOrCreateAsync(childAgentId, childSessionId, cancellationToken);
-        return await childHandle.PromptAsync(message, cancellationToken);
+        return await PromptWithTimeoutAsync(childHandle, message, parentAgentId, childAgentId, cancellationToken);
     }
 
     /// <summary>
@@ -110,7 +110,7 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
             crossSessionId);
 
         var handle = await _supervisor.GetOrCreateAsync(targetAgentId, crossSessionId, cancellationToken);
-        return await handle.PromptAsync(message, cancellationToken);
+        return await PromptWithTimeoutAsync(handle, message, sourceAgentId, targetAgentId, cancellationToken);
     }
 
     private static IDisposable EnterCallChain(string sourceAgentId, string targetAgentId, int maxCallChainDepth)
@@ -159,6 +159,32 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
 
         if (path.Count == 0)
             ActiveCallPath.Value = null;
+    }
+
+    private async Task<AgentResponse> PromptWithTimeoutAsync(
+        IAgentHandle handle,
+        string message,
+        string sourceAgentId,
+        string targetAgentId,
+        CancellationToken cancellationToken)
+    {
+        var timeoutSeconds = _options.Value.CrossAgentTimeoutSeconds;
+        if (timeoutSeconds <= 0)
+            throw new ArgumentOutOfRangeException(nameof(GatewayOptions.CrossAgentTimeoutSeconds), "Cross-agent timeout must be greater than zero seconds.");
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+
+        try
+        {
+            return await handle.PromptAsync(message, timeoutCts.Token);
+        }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested && timeoutCts.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"Cross-agent call timed out after {timeoutSeconds} seconds from '{sourceAgentId}' to '{targetAgentId}'.",
+                ex);
+        }
     }
 
     private sealed class CallChainScope(List<string> path, int entryCount) : IDisposable

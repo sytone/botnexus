@@ -196,6 +196,36 @@ public sealed class DefaultAgentCommunicatorTests
             .WithMessage("*exceeded maximum configured depth*");
     }
 
+    [Fact]
+    public async Task CallCrossAgentAsync_WhenTargetTimesOut_ThrowsTimeoutException()
+    {
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(r => r.Contains("target-agent")).Returns(true);
+
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns<string, CancellationToken>(async (_, ct) =>
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+                return new AgentResponse { Content = "never" };
+            });
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync("target-agent", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var communicator = new DefaultAgentCommunicator(
+            registry.Object,
+            supervisor.Object,
+            Options.Create(new GatewayOptions { CrossAgentTimeoutSeconds = 1 }),
+            NullLogger<DefaultAgentCommunicator>.Instance);
+
+        var act = () => communicator.CallCrossAgentAsync("source-agent", string.Empty, "target-agent", "hello");
+
+        await act.Should().ThrowAsync<TimeoutException>()
+            .WithMessage("*source-agent*target-agent*");
+    }
+
     private static AgentDescriptor CreateDescriptor(string agentId)
         => new()
         {

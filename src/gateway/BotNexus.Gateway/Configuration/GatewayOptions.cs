@@ -11,4 +11,9 @@ public sealed class GatewayOptions
     /// Maximum allowed depth for cross-agent/sub-agent call chains.
     /// </summary>
     public int MaxCallChainDepth { get; set; } = 10;
+
+    /// <summary>
+    /// Maximum duration for cross-agent prompt calls before timing out.
+    /// </summary>
+    public int CrossAgentTimeoutSeconds { get; set; } = 120;
 }
