@@ -959,3 +959,9 @@ Result: Phase 3 blockers cleared, build clean, READY FOR RELEASE.
 - Smoke: ✅ CLI help, Telegram polling validation
 
 **Session Log:** `.squad/log/2026-04-06T08-10-00Z-phase11-wave2.md`
+## Learnings
+
+### 2026-04-06 — Gateway auth bypass hardening (Path.HasExtension regression)
+- Hardened GatewayAuthMiddleware.ShouldSkipAuth to a route-based allowlist (/health, /swagger*, /webui*) plus explicit static-file detection through IWebHostEnvironment.WebRootFileProvider.
+- Added an API guard (/api/* never bypasses) so extension-like API routes such as /api/agents.json always require auth.
+- Route/file-provider checks are safer than extension-based checks because they only bypass known public surfaces instead of trusting path shape.

@@ -1,6 +1,8 @@
 using System.Text.Json;
 using BotNexus.Gateway.Abstractions.Security;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Api;
@@ -94,9 +96,32 @@ public sealed class GatewayAuthMiddleware
     private static bool ShouldSkipAuth(HttpRequest request)
     {
         var path = request.Path;
-        return path.StartsWithSegments("/health", StringComparison.OrdinalIgnoreCase) ||
+        return path.Equals("/health", StringComparison.OrdinalIgnoreCase) ||
                path.StartsWithSegments("/webui", StringComparison.OrdinalIgnoreCase) ||
-               path.StartsWithSegments("/swagger", StringComparison.OrdinalIgnoreCase);
+               path.StartsWithSegments("/swagger", StringComparison.OrdinalIgnoreCase) ||
+               IsStaticWebRootFile(request);
+    }
+
+    private static bool IsStaticWebRootFile(HttpRequest request)
+    {
+        if (!HttpMethods.IsGet(request.Method) && !HttpMethods.IsHead(request.Method))
+            return false;
+
+        if (request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var webRootFileProvider = request.HttpContext.RequestServices
+            .GetService<IWebHostEnvironment>()?
+            .WebRootFileProvider;
+        if (webRootFileProvider is null)
+            return false;
+
+        var relativePath = request.Path.Value?.TrimStart('/');
+        if (string.IsNullOrWhiteSpace(relativePath))
+            return false;
+
+        var fileInfo = webRootFileProvider.GetFileInfo(relativePath);
+        return fileInfo.Exists && !fileInfo.IsDirectory;
     }
 
     private static bool IsAgentAuthorized(GatewayCallerIdentity identity, string? requestedAgentId)

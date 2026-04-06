@@ -2,8 +2,11 @@ using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Api;
 using BotNexus.Gateway.Security;
 using FluentAssertions;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -94,8 +97,10 @@ public sealed class GatewayAuthMiddlewareTests
         nextCalled.Should().BeTrue();
     }
 
-    [Fact]
-    public async Task SwaggerEndpoint_SkipsAuth()
+    [Theory]
+    [InlineData("/swagger")]
+    [InlineData("/swagger/v1/swagger.json")]
+    public async Task SwaggerEndpoint_SkipsAuth(string path)
     {
         var authHandler = new Mock<IGatewayAuthHandler>(MockBehavior.Strict);
         var nextCalled = false;
@@ -109,7 +114,7 @@ public sealed class GatewayAuthMiddlewareTests
             NullLogger<GatewayAuthMiddleware>.Instance);
 
         var context = new DefaultHttpContext();
-        context.Request.Path = "/swagger/v1/swagger.json";
+        context.Request.Path = path;
 
         await middleware.InvokeAsync(context);
 
@@ -196,6 +201,47 @@ public sealed class GatewayAuthMiddlewareTests
 
         nextCalled.Should().BeFalse();
         context.Response.StatusCode.Should().Be(StatusCodes.Status401Unauthorized);
+    }
+
+    [Fact]
+    public async Task StaticFileInWebRoot_SkipsAuth()
+    {
+        var authHandler = new Mock<IGatewayAuthHandler>(MockBehavior.Strict);
+        var nextCalled = false;
+        var middleware = new GatewayAuthMiddleware(
+            _ =>
+            {
+                nextCalled = true;
+                return Task.CompletedTask;
+            },
+            authHandler.Object,
+            NullLogger<GatewayAuthMiddleware>.Instance);
+
+        var fileProvider = new Mock<IFileProvider>(MockBehavior.Strict);
+        var fileInfo = new Mock<IFileInfo>(MockBehavior.Strict);
+        fileInfo.SetupGet(info => info.Exists).Returns(true);
+        fileInfo.SetupGet(info => info.IsDirectory).Returns(false);
+        fileProvider
+            .Setup(provider => provider.GetFileInfo("app.js"))
+            .Returns(fileInfo.Object);
+
+        var webHostEnvironment = new Mock<IWebHostEnvironment>(MockBehavior.Strict);
+        webHostEnvironment.SetupGet(environment => environment.WebRootFileProvider).Returns(fileProvider.Object);
+
+        var services = new ServiceCollection()
+            .AddSingleton<IWebHostEnvironment>(webHostEnvironment.Object)
+            .BuildServiceProvider();
+
+        var context = new DefaultHttpContext
+        {
+            RequestServices = services
+        };
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/app.js";
+
+        await middleware.InvokeAsync(context);
+
+        nextCalled.Should().BeTrue();
     }
 
     private sealed class StubWebSocketFeature : IHttpWebSocketFeature
