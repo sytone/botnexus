@@ -7,7 +7,7 @@
 
 ## Core Context
 
-**Phases 1-6 Complete.** Build green, 225 tests passing. Hermes owns test framework, integration testing, automation. Implemented comprehensive test matrix (unit/integration/E2E), parallel test isolation, cross-platform compatibility fixes (xplat). Currently on gateway test sprint: validation gates, session threading, live integration coverage. 
+**Phases 1-11 Complete, Phase 12 Wave 1 In Progress.** Build green, 337 tests passing. Hermes owns test framework, integration testing, automation. Phase 12 Wave 1 assignment: Wave 1 test coverage expansion (~30 tests), config path test approach. Implemented comprehensive test matrix (unit/integration/E2E), parallel test isolation, cross-platform compatibility. Currently: config path behavior validation, Wave 1 coverage expansion in progress.
 
 ---
 
@@ -29,6 +29,57 @@
    - Use OAuth device code flow (like Nanobot) — no API key
    - Base URL: https://api.githubcopilot.com
    - Prioritize Copilot work before OpenAI, Anthropic
+
+4. **Phase 12 Testing Requirements** (2026-04-06T02:12:45Z)
+   - Wave 1: ~30 tests (security, endpoints, palette, README validation)
+   - Wave 2: ~25 tests (rate limiting, correlation IDs, Telegram steering, WebUI module split)
+   - Wave 3: ~25 tests (SQLite store, agent health, lifecycle events, isolation options)
+   - Total: ~80 tests across 3 waves
+   - CLI-level behavioral tests are source of truth (not internal helper coupling)
+   - End-to-end integration tests validate user-facing scenarios
+
+---
+
+## 2026-04-06T09:44:00Z — Phase 12 Wave 1 Test Framework Expansion
+
+**Timestamp:** 2026-04-06T09:44:00Z  
+**Status:** 🔄 In Progress  
+**Scope:** Config path testing approach + Wave 1 test harness  
+
+**Config Path Test Approach (Decision Finalized):**
+- Validate config path traversal via CLI command execution (config get / config set)
+- Use isolated BOTNEXUS_HOME roots per test (not internal helper coupling)
+- Verify externally observable outcomes: success/failure, conversion, null handling, path errors
+- Test design resilient to future path resolver extraction/refactoring
+- CLI-level behavior tests are contract — remain valid when internals change
+
+**Wave 1 Test Coverage Areas:**
+1. Security: Auth bypass fix regression tests (Bender's 4 tests) — /api/agents.json, /api/agents, /health, /swagger, static files
+2. Endpoints: Channel/extensions endpoints with DTO validation (Farnsworth's tests)
+3. Command Palette: Client-side execution pattern validation (Fry's tests)
+4. Config Path: CLI command behavior with edge cases (Hermes' tests)
+5. Documentation: WebSocket README examples validation (Kif's reference tests)
+
+**Test Strategy:**
+- CliConfigFixture spawns actual CLI processes with isolated BOTNEXUS_HOME (end-to-end without mocks)
+- GatewayAuthMiddlewareTests verifies route+file allowlist behavior
+- ChannelsController, ExtensionsController test DTO shapes and response format
+- CommandPaletteTests validate autocomplete, keyboard navigation, execution
+- WebSocketTests verify protocol examples from README
+
+**Queued for Wave 2:** Rate limiting behavior tests, correlation ID tracing tests, Telegram steering tests, WebUI module integration tests
+
+**Queued for Wave 3:** SQLite store transaction tests, agent health check tests, lifecycle event ordering tests, isolation policy option schema tests
+
+**Cross-Agent Dependencies:**
+- Bender's regression tests ready for merge
+- Farnsworth's endpoint tests ready for implementation
+- Fry's palette tests ready for implementation
+- Kif's documentation examples ready for reference validation
+
+**Reference:** Orchestration log at `.squad/orchestration-log/2026-04-06T09-44-00Z-hermes.md`, config test approach decision at `.squad/decisions.md`.
+
+---
 
 ## Your Work Assignment
 
@@ -739,5 +790,11 @@ Result: Phase 3 blockers cleared, build clean, READY FOR RELEASE.
 ## 2026-04-06 - Wave 2 test coverage (corrected)
 - Added Telegram adapter tests for allow-list enforcement, 4096+ chunking, markdown escaping, polling offset progression, graceful polling shutdown, polling/webhook startup modes, streaming accumulation with edit calls, and BotToken/timeout validation.
 - Added CLI command tests in tests/BotNexus.Gateway.Tests/Cli for validate, init, agent, and config commands, including success and error exit-code cases.
-- Added extension loader tests in tests/BotNexus.Gateway.Tests/Extensions for discovery, manifest validation/skip behavior, load + DI registration, collectible AssemblyLoadContext lifecycle, unload behavior, and bad assembly handling.
+- Added extension loader tests in tests/BotNexus.Gateway.Tests/Extensions for discovery, manifest validation/skip behavior, load + DI registration, collectible AssemblyLoadContext lifecycle, unload behavior, and bad assembly handling.      
 - Validation: dotnet test tests\\BotNexus.Gateway.Tests\\BotNexus.Gateway.Tests.csproj passed (341/341).
+
+## 2026-04-06 - Wave 1 coverage phase 12 (auth bypass + channels + extensions)
+- Added 23 new Gateway test cases across `GatewayAuthMiddlewareTests`, `ChannelsControllerTests`, and `ExtensionsControllerTests` to close Wave 1 gaps.
+- Auth bypass coverage now explicitly guards API extension-like routes (`/api/agents.json`, `/api/agents.JSON`, `/api/agents/foo.bar`, `/api/sessions.xml`) while preserving allowlist skips (`/health`, `/swagger/index.html`, `/webui/styles.css`) and handling empty/null path edges.
+- Added controller response coverage for empty registries, single/multiple records, capability/metadata mapping, DTO payload shape, and fallback `"unknown"` extension type behavior.
+- Validation: `dotnet build Q:\\repos\\botnexus --verbosity quiet` and `dotnet test Q:\\repos\\botnexus\\tests\\BotNexus.Gateway.Tests\\BotNexus.Gateway.Tests.csproj --verbosity minimal` passed (368/368).

@@ -203,6 +203,158 @@ public sealed class GatewayAuthMiddlewareTests
         context.Response.StatusCode.Should().Be(StatusCodes.Status401Unauthorized);
     }
 
+    [Theory]
+    [InlineData("/api/agents.json")]
+    [InlineData("/api/agents.JSON")]
+    [InlineData("/api/agents/foo.bar")]
+    [InlineData("/api/sessions.xml")]
+    public async Task ApiRoutes_WithExtensionLikePaths_RequireAuth(string path)
+    {
+        var handler = new ApiKeyGatewayAuthHandler(apiKey: "test-key", NullLogger<ApiKeyGatewayAuthHandler>.Instance);
+        var nextCalled = false;
+        var middleware = new GatewayAuthMiddleware(
+            _ =>
+            {
+                nextCalled = true;
+                return Task.CompletedTask;
+            },
+            handler,
+            NullLogger<GatewayAuthMiddleware>.Instance);
+
+        var context = new DefaultHttpContext();
+        context.Request.Path = path;
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context);
+
+        nextCalled.Should().BeFalse();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status401Unauthorized);
+    }
+
+    [Theory]
+    [InlineData("/health")]
+    [InlineData("/swagger/index.html")]
+    [InlineData("/webui/styles.css")]
+    public async Task AllowlistedRoutes_SkipAuth(string path)
+    {
+        var authHandler = new Mock<IGatewayAuthHandler>(MockBehavior.Strict);
+        var nextCalled = false;
+        var middleware = new GatewayAuthMiddleware(
+            _ =>
+            {
+                nextCalled = true;
+                return Task.CompletedTask;
+            },
+            authHandler.Object,
+            NullLogger<GatewayAuthMiddleware>.Instance);
+
+        var context = new DefaultHttpContext();
+        context.Request.Path = path;
+
+        await middleware.InvokeAsync(context);
+
+        nextCalled.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task EmptyPath_RequiresAuth()
+    {
+        var handler = new ApiKeyGatewayAuthHandler(apiKey: "test-key", NullLogger<ApiKeyGatewayAuthHandler>.Instance);
+        var middleware = new GatewayAuthMiddleware(
+            _ => Task.CompletedTask,
+            handler,
+            NullLogger<GatewayAuthMiddleware>.Instance);
+
+        var context = new DefaultHttpContext();
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context);
+
+        context.Response.StatusCode.Should().Be(StatusCodes.Status401Unauthorized);
+    }
+
+    [Fact]
+    public async Task NullPath_RequiresAuth()
+    {
+        var handler = new ApiKeyGatewayAuthHandler(apiKey: "test-key", NullLogger<ApiKeyGatewayAuthHandler>.Instance);
+        var middleware = new GatewayAuthMiddleware(
+            _ => Task.CompletedTask,
+            handler,
+            NullLogger<GatewayAuthMiddleware>.Instance);
+
+        var context = new DefaultHttpContext();
+        var requestFeature = context.Features.Get<IHttpRequestFeature>();
+        requestFeature.Should().NotBeNull();
+        requestFeature!.Path = null!;
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context);
+
+        context.Response.StatusCode.Should().Be(StatusCodes.Status401Unauthorized);
+    }
+
+    [Fact]
+    public async Task StaticFileUnderApiPath_DoesNotSkipAuth()
+    {
+        var handler = new ApiKeyGatewayAuthHandler(apiKey: "test-key", NullLogger<ApiKeyGatewayAuthHandler>.Instance);
+        var middleware = new GatewayAuthMiddleware(
+            _ => Task.CompletedTask,
+            handler,
+            NullLogger<GatewayAuthMiddleware>.Instance);
+
+        var fileProvider = new Mock<IFileProvider>(MockBehavior.Strict);
+        var webHostEnvironment = new Mock<IWebHostEnvironment>(MockBehavior.Strict);
+        webHostEnvironment.SetupGet(environment => environment.WebRootFileProvider).Returns(fileProvider.Object);
+
+        var services = new ServiceCollection()
+            .AddSingleton<IWebHostEnvironment>(webHostEnvironment.Object)
+            .BuildServiceProvider();
+
+        var context = new DefaultHttpContext
+        {
+            RequestServices = services
+        };
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/agents.css";
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context);
+
+        context.Response.StatusCode.Should().Be(StatusCodes.Status401Unauthorized);
+        fileProvider.Verify(provider => provider.GetFileInfo(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task NonGetStaticFileRequest_DoesNotSkipAuth()
+    {
+        var handler = new ApiKeyGatewayAuthHandler(apiKey: "test-key", NullLogger<ApiKeyGatewayAuthHandler>.Instance);
+        var middleware = new GatewayAuthMiddleware(
+            _ => Task.CompletedTask,
+            handler,
+            NullLogger<GatewayAuthMiddleware>.Instance);
+
+        var fileProvider = new Mock<IFileProvider>(MockBehavior.Strict);
+        var webHostEnvironment = new Mock<IWebHostEnvironment>(MockBehavior.Strict);
+        webHostEnvironment.SetupGet(environment => environment.WebRootFileProvider).Returns(fileProvider.Object);
+
+        var services = new ServiceCollection()
+            .AddSingleton<IWebHostEnvironment>(webHostEnvironment.Object)
+            .BuildServiceProvider();
+
+        var context = new DefaultHttpContext
+        {
+            RequestServices = services
+        };
+        context.Request.Method = HttpMethods.Post;
+        context.Request.Path = "/styles.css";
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context);
+
+        context.Response.StatusCode.Should().Be(StatusCodes.Status401Unauthorized);
+        fileProvider.Verify(provider => provider.GetFileInfo(It.IsAny<string>()), Times.Never);
+    }
+
     [Fact]
     public async Task StaticFileInWebRoot_SkipsAuth()
     {
