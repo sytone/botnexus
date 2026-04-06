@@ -7,7 +7,7 @@
 
 ## Core Context
 
-**Phases 1-6 Complete.** Build green, 225 tests passing. Farnsworth owns platform configuration, session store, cross-agent guardrails. Implemented PlatformConfig loader + validator, OAuth provider registration, session store abstraction (InMemory/File). Currently hardening gateway: max call chain depth, cross-agent timeout, history pagination, explicit session store config selection. 234 tests passing.
+**Phases 1-11 Complete, Phase 12 Wave 1 Initiated.** Build green, 337 tests passing. Farnsworth owns platform configuration, session store, cross-agent guardrails. Phase 12 Wave 1 assignments: 3 API endpoints (type move, channels, extensions), CLI command decomposition, config schema + path resolver. Key recent: config versioning, dynamic extension loader foundation, Telegram setup. Active on gateway sprint: session store abstraction, cross-agent timeout, history pagination.
 
 ---
 
@@ -45,7 +45,57 @@
    - Base URL: https://api.githubcopilot.com
    - Prioritize Copilot work before OpenAI, Anthropic
 
+4. **Phase 12 Requirements** (2026-04-06T02:12:45Z)
+   - Do NOT touch src/agent, src/providers, src/coding-agent — fully working
+   - Fully test + validate local dev env and user deployment scenarios with existing auth.json
+   - Recreate + update docs/scripts for local dev loop (edit, build, pack, deploy, restart)
+   - After meaningful milestones: Design Review, Consistency Review, Retrospective
+   - Focus WebUI as primary channel (archive\src\BotNexus.WebUI reference). Stub remaining.
+   - Use conventional commits (e.g., feat(gateway): add IIsolationStrategy interface)
+   - Platform artifacts in .botnexus user profile folder
+
 ## Recent Session Summaries
+
+### 2026-04-06T09:44:00Z — Phase 12 Wave 1 API Endpoints & Config Architecture
+
+**Status:** ✅ Complete  
+**Commits:** 2e66df3 (SessionHistoryResponse move), 7623e20 (GET /api/channels), 4d5dd7d (GET /api/extensions)
+
+**Phase 12 Wave 1 Deliverables:**
+1. ✅ SessionHistoryResponse type move from SessionsController → BotNexus.Gateway.Abstractions.Models
+   - Unblocks shared DTO usage across controllers
+   - Improves type safety + maintainability
+2. ✅ GET /api/channels endpoint with ChannelAdapterResponse DTO
+   - Name, DisplayName, IsRunning, SupportsStreaming, SupportsSteering, SupportsFollowUp, SupportsThinking, SupportsToolDisplay
+   - Unblocks WebUI channels panel
+3. ✅ GET /api/extensions endpoint with ExtensionResponse DTO
+   - Name, Version, Type, AssemblyPath
+   - LoadedExtension extended with EntryAssemblyPath, ExtensionTypes for metadata projection
+   - GET /api/extensions flattens multi-type extensions to one row per declared type
+   - Unblocks WebUI extensions panel
+4. ✅ CLI Program.cs decomposition into command handlers (ValidateCommand, InitCommand, AgentCommands, ConfigCommands)
+   - Program.cs reduced to 23 lines of pure DI wiring
+   - Command behavior testable in isolation
+5. ✅ Config schema + path resolver layering
+   - IConfigPathResolver as gateway abstraction (not CLI reflection utils)
+   - JSON schema validation before semantic validation, with PascalCase → camelCase normalization
+   - CLI command: botnexus config schema --output ... to regenerate schema artifact
+
+**Queued for Wave 2:** Rate limiting, correlation IDs, config versioning enhancements, agent health tracking
+
+**Cross-Agent Dependencies:**
+- Bender: Auth bypass fix (4128b2a) unblocked API endpoints implementation
+- Fry: Command palette established client-side execution pattern; channels/extensions endpoints unblock WebUI panels
+- Hermes: Config path test approach finalized; Wave 1 tests in progress
+
+**Key Decisions:**
+- All 3 API endpoints committed atomically with DTOs defined before implementation
+- Extension metadata exposed without leaking runtime internals (LoadedExtension → ExtensionResponse projection)
+- CLI decomposition follows System.CommandLine patterns; command handlers constructor-inject dependencies
+
+**Reference:** Orchestration log at `.squad/orchestration-log/2026-04-06T09-44-00Z-farnsworth.md`, session log and decisions in `.squad/`.
+
+---
 
 ### 2026-04-03 — Nullable Generation Settings Implementation
 
@@ -747,3 +797,8 @@ Validation: `dotnet build src\gateway\BotNexus.Cli\BotNexus.Cli.csproj --nologo 
 - CLI Smoke: ✅ --help, config schema, init validation
 
 **Session Log:** `.squad/log/2026-04-06T08-10-00Z-phase11-wave2.md`
+
+### 2026-04-06T09:40Z — Gateway API metadata endpoints
+- Added GET /api/channels via ChannelsController, returning ChannelAdapterResponse with { Name, DisplayName, IsRunning, SupportsStreaming, SupportsSteering, SupportsFollowUp, SupportsThinking, SupportsToolDisplay } mapped from IChannelManager.Adapters.
+- Added GET /api/extensions via ExtensionsController, returning ExtensionResponse rows with { Name, Version, Type, AssemblyPath } from IExtensionLoader.GetLoaded() (one row per declared extension type).
+- Moved SessionHistoryResponse into BotNexus.Gateway.Abstractions.Models for reuse across API/test surfaces.

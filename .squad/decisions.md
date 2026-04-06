@@ -9726,3 +9726,379 @@ Issues clustered in documentation (api-reference.md, README). All P0/P1 fixed. P
 **Key Finding:** api-reference.md was staleness hotspot. New endpoints should trigger api-reference updates going forward.
 
 *Reviewed by Nibbler*
+## Phase 12 Wave 1 — Planning & Execution (2026-04-06)
+
+### Leela — Phase 12 Gap Analysis & Sprint Plan
+
+**Date:** 2026-07-18  
+**Author:** Leela (Lead / Architect)  
+**Scope:** Comprehensive gap analysis of Gateway platform against 6 requirement areas  
+
+**Decision:** Phase 12 sprint plan approved with 3 waves, ~30 work items across 5 agents.
+
+**Key Findings:**
+1. Architecture is mature — 16 interfaces, full REST+WS API, 337 tests, build green. Extension model is sound.
+2. Two carried P0-adjacent bugs must be fixed first — Path.HasExtension auth bypass (Phase 5) and StreamAsync task leak (Phase 5). Carried for 3 sprints, no more deferral.
+3. WebUI is not a channel adapter — needs proper IChannelAdapter implementation for steering, queuing, lifecycle participation.
+4. Isolation stubs validated but non-functional — InProcess only. Sandbox next logical step; typing schemas is Phase 12 scope.
+5. Documentation has specific holes — WebSocket README missing, API reference stale, no config reference or protocol spec.
+6. Session management strongest area — Reconnection, replay, suspend/resume, pagination, cleanup working. SQLite store is main enhancement.
+
+**Sprint Structure:**
+- Wave 1 (P0/P1): Security fixes + WebUI adapter + channel/extensions endpoints + archive features + WebSocket README + 30 tests
+- Wave 2 (P1/P2): Rate limiting + correlation IDs + Telegram steering + config versioning + WebUI module split + API reference + 25 tests
+- Wave 3 (P2): SQLite store + agent health + lifecycle events + isolation schemas + protocol spec + dev guide + 25 tests
+
+**Agent Assignments:**
+- Bender: Security fixes, WebUI adapter, rate limiting, correlation IDs, Telegram steering, SQLite store
+- Farnsworth: API gaps, config enhancements, agent health, isolation options
+- Fry: WebUI feature restoration (palette, channels, extensions, model selector, module split)
+- Hermes: Test waves (+80 tests across 3 waves), end-to-end integration
+- Kif: WebSocket README, API reference, config reference, protocol spec, dev guide, architecture diagram
+
+**Constraints Honored:**
+- ✅ src/agent, src/providers, src/coding-agent untouched
+- ✅ .botnexus-agent/auth.json pattern preserved
+- ✅ archive/src/BotNexus.WebUI as reference for feature restoration
+- ✅ WebUI channel focus (non-goal: full Telegram implementation)
+
+**Risk Mitigation:**
+- WebUI adapter complexity: Keep thin, delegate to WebSocket adapter for transport
+- app.js 73KB module split: ES modules, incremental, start with connection extraction
+- Auth bypass 3-sprint carry: Wave 1 P0, no exceptions
+
+---
+
+### Bender — GatewayAuthMiddleware Path.HasExtension Auth Bypass Fix
+
+**Date:** 2026-04-06  
+**Owner:** Bender (Runtime Dev, P0 Security)  
+
+**Context:** GatewayAuthMiddleware had P0/P1 concern: extension-shaped API routes (e.g., /api/agents.json) treated as static by extension-based skip logic.
+
+**Decision:** Use route-based allowlist + explicit web-root file resolution:
+- Skip auth only for: /health, /swagger, /webui, real static files via IWebHostEnvironment.WebRootFileProvider
+- Never bypass /api/* routes
+
+**Why:** Extension checks ambiguous, can classify API routes as static. Route + file-provider checks tie bypass to known endpoints and real assets.
+
+**Validation:**
+- ✅ dotnet build Q:\repos\botnexus
+- ✅ dotnet test BotNexus.Gateway.Tests
+- ✅ GatewayAuthMiddleware regression subset passing
+
+**Regression Coverage Added:**
+- /api/agents.json requires auth
+- /api/agents requires auth
+- /health skips auth
+- /swagger and /swagger/v1/swagger.json skip auth
+- Static web-root files skip auth when existing in wwwroot
+
+**Commit:** 4128b2a
+
+---
+
+### Farnsworth — API Endpoint Decisions
+
+**Date:** 2026-04-06  
+**Owner:** Farnsworth (Platform Dev)  
+
+**Summary:** Implemented three sprint carry items in atomic commits:
+1. Moved SessionHistoryResponse from SessionsController → BotNexus.Gateway.Abstractions.Models
+2. Added GET /api/channels using IChannelManager with ChannelAdapterResponse DTO
+3. Added GET /api/extensions using IExtensionLoader with ExtensionResponse DTO
+
+**Endpoint DTO Shapes:**
+
+ChannelAdapterResponse:
+- Name: string
+- DisplayName: string
+- IsRunning: bool
+- SupportsStreaming: bool
+- SupportsSteering: bool
+- SupportsFollowUp: bool
+- SupportsThinking: bool
+- SupportsToolDisplay: bool
+
+ExtensionResponse:
+- Name: string
+- Version: string
+- Type: string
+- AssemblyPath: string
+
+**Technical Notes:**
+- LoadedExtension now includes EntryAssemblyPath, ExtensionTypes for metadata projection without leaking internals
+- GET /api/extensions flattens multi-type extensions into one row per declared type
+
+**Validation:**
+- ✅ dotnet build Q:\repos\botnexus
+- ✅ dotnet test BotNexus.Gateway.Tests
+
+**Commits:** 2e66df3 (type move), 7623e20 (channels), 4d5dd7d (extensions)
+
+---
+
+### Fry — Command Palette: Client-Side Execution
+
+**Date:** 2026-04-08  
+**Owner:** Fry (Web Dev)  
+
+**Context:** Archive WebUI had command palette with autocomplete, sent as messages. Current WebUI had no palette.
+
+**Decision:** Implement slash commands as client-side handlers calling REST APIs directly, rendering results inline without WebSocket routing.
+
+**Rationale:**
+- /reset needs to delete session + reset UI (client concern)
+- /status, /agents are read-only queries, no agent processing needed
+- Client-side execution provides instant feedback, no agent round-trips
+- Future server-routed commands (/ask, /summarize) can be added when needed
+
+**Impact:**
+- New commands added to COMMANDS array + matching execute* function
+- sendMessage() intercepts slash commands before WebSocket send
+- Team decision point: client-side (REST) vs server-side (WS) for new commands
+
+---
+
+### Hermes — Config Path Testing Approach
+
+**Date:** 2026-04-06  
+**Owner:** Hermes (Tester)  
+
+**Decision:** Validate config path traversal via CLI command execution (config get / config set) using isolated BOTNEXUS_HOME roots per test, not internal helper coupling.
+
+**Rationale:** Path traversal logic in CLI-local methods, expected to migrate to dedicated resolver. CLI-level behavior tests remain valid through refactor, verify externally observable outcomes (success/failure, conversion, null handling, path errors) independent of implementation.
+
+**Consequence:** Tests resilient to extraction/refactoring, enforce user-facing config path behavior as contract.
+
+---
+
+### Kif — WebSocket Channel Documentation
+
+**Scope:** Comprehensive WebSocket README covering protocol, message types, auth, streaming, reconnection, error handling.
+
+**Deliverables:**
+- Protocol overview and connection lifecycle
+- Message type reference (query, streaming, interrupt, result)
+- Authentication and session token handling
+- Streaming behavior and backpressure
+- Reconnection and state recovery
+- Error handling and failure modes
+- Examples for common workflows
+
+**Impact:** Wave 1 documentation P0 complete, unblocks external contributor onboarding, reduces support burden.
+
+**Commit:** 04e8da3
+
+---
+
+### Bender — Gateway Dynamic Extension Loader
+
+**Context:** Gateway extension points were statically wired; needed runtime discovery and manifest-based loading.
+
+**Decision:** Implement IExtensionLoader in Gateway.Abstractions + collectible AssemblyLoadContextExtensionLoader in Gateway:
+- Discovery scans for botnexus-extension.json
+- Manifest validation: id/name/version/entryAssembly/extensionTypes
+- One collectible ALC per extension
+- Type discovery registers known gateway interfaces
+- Startup wiring: load after services, before host startup
+
+**Security Notes:**
+- Entry assembly paths constrained within extension directory
+- Missing deps, invalid manifests fail that extension only
+- Load/unload logged, isolated per extension
+
+**Follow-up:** Future: signature validation, policy-based allow-lists in loader pipeline.
+
+---
+
+### Bender — Telegram Bot API Channel Adapter Runtime
+
+**Context:** BotNexus.Channels.Telegram was lifecycle stub — no Telegram APIs, no inbound updates, no streaming/thinking/tool rendering.
+
+**Decision:** Implement first-party Telegram runtime: HttpClient + System.Text.Json, no third-party SDK.
+
+**Implementation:**
+- TelegramBotApiClient: sendMessage, editMessageText, getUpdates, setWebhook, deleteWebhook
+- Long-poll inbound loop at startup when no webhook configured
+- Webhook-mode startup (setWebhook) and polling-mode (deleteWebhook + loop)
+- Outbound allow-list security via AllowedChatIds
+- Streaming support: buffer deltas, push Telegram message edits
+- Channel capability flags: streaming + thinking/tool display enabled
+- Markdown-safe escaping + chunk splitting for Telegram max message limits
+
+**Consequences:**
+- Telegram adapter participates in full runtime flow (inbound + outbound), not log-only
+- Streaming content interactive, incrementally visible with bounded flush cadence
+- Configuration-driven, secure-by-default for chat IDs
+
+---
+
+### Jon Bullen — Phase 12 Requirements Directives
+
+**Date:** 2026-04-06T02-12-45  
+**By:** Jon Bullen (via Copilot)  
+
+**Standing Constraints for Phase 12:**
+1. Do NOT touch src/agent, src/providers, src/coding-agent — fully working. If changes needed, create inbox file for human review. Squad never implements.
+2. Fully test and validate local dev env and user deployment scenarios using existing auth.json.
+3. Recreate and update docs/scripts for local dev loop (edit, build, pack, deploy, restart gateway).
+4. After meaningful milestones: Design Review, Consistency Review, Retrospective (retro notes with datetime filename).
+5. Focus WebUI as primary channel (archive\src\BotNexus.WebUI good reference). Stub remaining.
+6. Use conventional commits (e.g., feat(gateway): add IIsolationStrategy interface).
+7. Platform artifacts belong in .botnexus user profile folder.
+
+---
+
+### Provider Change Request — StreamAsync Task Leak (P0-adjacent)
+
+**⚠️ NOTE: Squad NEVER implements provider changes. Requires human review + sign-off by Jon Bullen.**
+
+**Date:** 2026-04-06  
+**Identified by:** Leela (Phase 12 gap analysis)  
+**Carried since:** Phase 5  
+
+**Issue:** StreamAsync uses fire-and-forget background tasks without tracking. Background Task spawned to stream responses not tracked, awaited, or cancelled on dispose. Results:
+1. Orphaned streaming tasks after session ends
+2. Memory leaks under heavy concurrent load
+3. Unobserved exceptions in background task
+
+**Affected:** src/providers/ — Anthropic, OpenAI, OpenAICompat, Copilot providers.
+
+**Why Matters:** Resource leak worse with scale. Under concurrent usage (multiple agents streaming), orphaned tasks accumulate.
+
+**Suggested Fix:**
+- Track background streaming Task in provider
+- Cancel/await in provider Dispose/DisposeAsync
+- Use CancellationToken linked to session lifecycle
+- Add regression test per provider
+
+**Files Likely Affected:**
+- src/providers/BotNexus.Providers.Anthropic/AnthropicProvider.cs
+- src/providers/BotNexus.Providers.OpenAI/OpenAIProvider.cs
+- src/providers/BotNexus.Providers.OpenAICompat/OpenAICompatProvider.cs
+- src/providers/BotNexus.Providers.Copilot/CopilotProvider.cs
+
+---
+
+### Farnsworth — CLI Program.cs Decomposition into Command Handlers
+
+**Date:** 2026-04-06  
+**Owner:** Farnsworth (Platform Dev)  
+**Status:** Implemented  
+
+**Context:** Program.cs had all command construction + execution in monolithic file; changes risky, command behavior hard to test.
+
+**Decision:** Adopt command-handler decomposition under src/gateway/BotNexus.Cli/Commands/:
+- ValidateCommand: local/remote config validation flow + result formatting
+- InitCommand: workspace bootstrapping + default config creation
+- AgentCommands: agent list|add|remove
+- ConfigCommands: config get|set|schema
+
+Program.cs reduced to thin DI wiring + command registration.
+
+**Consequences:**
+- Command behavior preserved, Program.cs reduced to composition
+- Dependencies constructor-injected (IConfigPathResolver for config ops)
+- Handler classes expose explicit ExecuteAsync, improving testability + extension safety
+
+---
+
+### Farnsworth — Config Schema + Path Resolver Layering
+
+**Date:** 2026-04-06  
+**Owner:** Farnsworth (Platform Dev)  
+
+**Decision:**
+1. Keep config path traversal as gateway abstraction (IConfigPathResolver) in BotNexus.Gateway, consumed by CLI via DI, not Program.cs reflection utils
+2. Validate platform config JSON against generated schema at load time BEFORE semantic validation; normalize PascalCase → camelCase for backward compatibility with legacy configs
+3. Expose schema generation via CLI (botnexus config schema --output ...) and commit generated schema to docs/botnexus-config.schema.json
+
+**Why:**
+- Removes non-testable reflection plumbing from CLI, centralizes in reusable platform service
+- Preserves backward compatibility for existing configs while enforcing structural schema
+- Users + tooling have deterministic way to regenerate published schema artifact
+
+---
+
+### Leela — Phase 11 Design Review
+
+**Date:** 2026-04-07  
+**By:** Leela (Lead/Architect)  
+**Scope:** 18 commits since 2a50c7b — JSON schema, dynamic extensions, config tests, XML docs, CLI decomposition, Telegram Bot API  
+**Grade:** A-  
+**SOLID Score:** 4/5  
+
+**Summary:** Phase 11 delivered 6 work items across 4 agents, ~4700 lines added, ~950 removed. Improved operational surface: CLI 911 lines → 23 lines clean DI, extension model gained ALC isolation + security, Telegram adapter production-capable with polling/webhook/streaming.
+
+**P0 Findings:** None.
+
+**Key P1 Findings:**
+1. DRY violations in CLI: CreateWriteJsonOptions(), LoadConfigRequiredAsync, SaveAndValidateAsync duplicated across 4 command classes
+2. ValidateCommand.ExecuteRemoteAsync uses new HttpClient() instead of IHttpClientFactory
+3. TelegramServiceCollectionExtensions falls back to raw HttpClient instead of IHttpClientFactory
+4. Extension manifest lacks minHostVersion for host compatibility declaration
+5. No assembly signature validation for extensions (appropriate for dev, must address before remote/multi-tenant)
+6. Extension DI registration startup-only; full discover/load/unload cycle only meaningful at startup (design constraint for hot-reload)
+
+**P2 Findings:** StreamingState SemaphoreSlim not disposed, ConfigPathResolver verbose (786 lines), empty AllowedChatIds permits all chats (dev feature), hardcoded extension type whitelist, topological sort silent fallback to discovery order.
+
+**Standout Work:**
+- CLI Decomposition (Farnsworth): 911 → 23 lines, System.CommandLine clean integration
+- Extension Security (Bender): Path traversal guards, manifest validation, ALC isolation, topological sort, dependency detection
+- Test Harness (Hermes): CliConfigFixture spawns actual CLI processes with isolated BOTNEXUS_HOME, 23 tests, full surface coverage
+- Telegram Streaming (Bender): Per-conversation StreamingState with SemaphoreSlim locking, time+threshold flushing, dual 429-handling, markdown escaping
+
+**Architecture Scorecard:**
+- SOLID: B+ (DRY violations in CLI drag down)
+- Extension Model: A (clean interface, ALC isolation, security)
+- API Design: A (conventions, placement)
+- Thread Safety: A (Telegram streaming, extension loader, polling)
+- Test Quality: A (23 tests, end-to-end, edge cases)
+- Security: A- (good for stage; assembly validation needed for production)
+- Docs: A (0 CS1591, 3 module READMEs, manifest docs)
+
+**Carried Findings from Phase 9:**
+- ✅ Path.HasExtension auth bypass: Resolved (Sprint 9)
+- ⚠️ StreamAsync task leak: Still open
+- ⚠️ SessionHistoryResponse move: Still open
+- ✅ CORS AllowAnyMethod: Resolved — production CORS scoped to explicit verbs
+
+---
+
+### Nibbler — Phase 11 Consistency Review
+
+**Date:** 2026-07-18  
+**By:** Nibbler (Consistency Reviewer)  
+**Grade:** Good  
+
+**Summary:** Reviewed Phase 11 across 7 focus areas: READMEs, CLI docs, extension docs, config schema, Telegram docs, XML docs, dev loop docs. Found 0 P0, 12 P1 (all fixed), 5 P2 (backlog).
+
+**Fixes Applied (12 P1s):**
+1. README: GatewayHostBuilder claim fixed to AddBotNexusGateway on IServiceCollection
+2. README: AgentRegistry ReaderWriterLockSlim claim fixed to Lock (C# 13)
+3. README: Activity endpoint /api/activity fixed to /ws/activity
+4. README: Query param ?apiKey=<key> removed (not supported, only header/bearer)
+5. README: ConfigController missing from table, added
+6. CLI README: agent add options fixed to actual defaults (copilot, gpt-4.1, true)
+7. CLI README: --home global option removed (not implemented, only BOTNEXUS_HOME env)
+8. CLI README: config schema command added, Project Structure documented
+9. Telegram README: Status "Stub" → "Implemented", capability table updated
+10. cli-reference.md: provider default github-copilot → copilot
+11. cli-reference.md: config schema command added, table of contents updated
+12. configuration.md: JSON Schema Validation section added, examples updated
+
+**P2 Notes (backlog):**
+1. extension-development.md references IExtensionRegistrar (doesn't exist); actual code uses IExtensionLoader + manifest + reflection. Requires full rewrite.
+2. architecture.md extension section describes IExtensionRegistrar patterns (don't exist). Needs update to actual IExtensionLoader flow.
+3. extension-development.md missing botnexus-extension.json manifest format docs (fields: id, name, version, entryAssembly, extensionTypes). Developers blocked.
+4. configuration.md references Discord/Slack (not implemented, only Telegram/TUI/WebSocket/Core exist)
+5. architecture.md and extension-development.md reference Discord/Slack as implemented channels
+
+**Patterns Observed:**
+- Recurring: cli-reference.md lags CLI code changes (github-copilot → copilot lag)
+- New: README capability claims outpace implementation, then reverse (Telegram was "Stub", Bender implemented full API)
+- Extension docs biggest gap: IExtensionRegistrar vs IExtensionLoader mismatch requires dedicated rewrite
+- XML docs excellent: 22 public interfaces, 9+ classes, comprehensive coverage, no sync/async mismatches
+
+

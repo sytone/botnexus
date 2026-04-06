@@ -7,11 +7,38 @@
 
 ## Core Context
 
-**Phases 1-6 Complete.** Kif owns developer experience, training materials, documentation. Created lifecycle skill, dev guide, deployment scripts. Built OpenAPI spec export infrastructure: live-server workaround for net10.0 Swashbuckle limitation, PlatformConfig override handling, JSON spec generation. Manages project documentation and knowledge transfer.
+**Phases 1-11 Complete, Phase 12 Wave 1 Initiated.** Kif owns developer experience, training materials, documentation. Phase 12 Wave 1 assignment: WebSocket channel README (P0). Created lifecycle skill, dev guide, deployment scripts. Built OpenAPI spec export infrastructure. Manages project documentation and knowledge transfer. Currently: protocol docs, API reference updates, config reference, architecture diagrams queued for Wave 2-3.
 
 ---
 
-## Learnings
+## 2026-04-06T09:44:00Z — Phase 12 Wave 1 WebSocket Channel Documentation
+
+**Timestamp:** 2026-04-06T09:44:00Z  
+**Status:** ✅ Complete  
+**Scope:** Comprehensive WebSocket channel README  
+**Commit:** 04e8da3  
+
+**Deliverables:**
+- WebSocket Protocol Overview — connection lifecycle, message flow patterns, error handling
+- Message Type Reference — query, streaming, interrupt, result types with field definitions
+- Authentication — session token handling, bearer token format, auth failures
+- Streaming Behavior — delta buffering, backpressure, flow control
+- Reconnection — replay mechanism, sequence ID tracking, gap handling
+- Error Handling — failure modes, timeout behavior, recovery strategies
+- Code Examples — connection setup, streaming messages, error recovery workflows
+
+**Impact:** Unblocks external contributor onboarding. Reduces support burden for protocol questions. Establishes reference for WebSocket channel behaviors across multi-tenant deployments.
+
+**Phase 12 Wave 1 Documentation Sequencing:**
+- ✅ Wave 1: WebSocket README (foundation for extension developers)
+- Queued Wave 2: API reference update, CLI reference regeneration, config schema documentation
+- Queued Wave 3: Protocol spec (low-level message encoding), dev guide update, architecture diagram
+
+**Cross-Team Impact:** All agents can now reference authoritative WebSocket documentation. Telegram channel adapter leverages WebSocket channel patterns for streaming. Config resolver service extraction documented once schema finalized.
+
+---
+
+## Learnings (Archive)
 
 - Sprint 7A: Created OpenAPI spec export pipeline (`scripts/export-openapi.ps1`). Swashbuckle.AspNetCore.Cli 7.2.0 targets net9.0 only — doesn't work on net10.0 even with LatestMajor roll-forward (crashes on `IServerAddressesFeature`). Used live-server approach instead: script starts API on temp port, fetches `/swagger/v1/swagger.json`, saves to `docs/api/openapi.json`. Key: PlatformConfig.GetListenUrl() overrides `--urls` parameter — must set `BotNexus__ConfigPath` to empty JSON file to prevent user config from hijacking port. Generated spec has 15 REST paths with XML doc comment descriptions. Commit: 88666b0.
 
@@ -507,3 +534,5 @@ Participated in design review ceremony for Phase 3 architecture. All ADs approve
 - Bender: Dynamic extension loading with IExtensionLoader interface
 - Hermes: 23 new tests achieving full coverage of new subsystems
 - **Total:** 891 tests passing (868→891, +23), Build clean, 0 warnings
+
+- Created `src/channels/BotNexus.Channels.WebSocket/README.md` — the last channel project without documentation. Covers full WebSocket message protocol (6 inbound types: message, reconnect, abort, steer, follow_up, ping; 10 outbound types: connected, message_start, thinking_delta, content_delta, tool_start, tool_end, message_end, error, pong, reconnect_ack), sequence ID tracking, reconnection replay flow with ASCII diagram, all 5 capability flags (streaming, steering, follow-up, thinking display, tool display), GatewayWebSocketOptions configuration table, JavaScript usage examples, and Gateway integration component map. All content verified against WebSocketChannelAdapter, GatewayWebSocketHandler, WebSocketMessageDispatcher, and WebSocketConnectionManager source code. Commit: 04e8da3.

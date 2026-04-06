@@ -7,7 +7,39 @@
 
 ## Core Context
 
-**Phases 1-6 Complete.** Build green, 225 tests passing. Bender leads runtime architecture: session lifecycle, queueing, channel dispatch. Key contributions: extension assembly loader, OAuth framework, provider ecosystem, API key auth. Active on gateway sprint: session reconnection, suspend/resume, TUI steering, bounded queueing (Sprint 7A). 244 tests passing.
+**Phases 1-11 Complete, Phase 12 Wave 1 Initiated.** Build green, 337 tests passing. Bender leads runtime architecture: session lifecycle, queueing, channel dispatch. Phase 12 Wave 1 assignments: Auth bypass fix (P0), WebUI channel adapter, rate limiting, correlation IDs, Telegram steering, SQLite store. Key recent: dynamic extension loader, Telegram Bot API implementation, streaming/thinking support. Active on gateway sprint: session reconnection, suspend/resume, TUI steering, bounded queueing.
+
+---
+
+## 2026-04-06T09:44:00Z — Phase 12 Wave 1 Planning & Execution
+
+**Timestamp:** 2026-04-06T09:44:00Z  
+**Status:** ✅ Complete  
+**Scope:** P0 security fixes, extension loader, Telegram runtime foundation  
+
+**Phase 12 Wave 1 Deliverables:**
+1. ✅ GatewayAuthMiddleware Path.HasExtension auth bypass fix (P0) — commit 4128b2a
+   - Route-based allowlist: /health, /swagger, /webui, wwwroot static files
+   - /api/* never bypassed — regression tests locked in
+   - Dependency injection of IWebHostEnvironment for explicit file resolution
+2. ✅ Dynamic Extension Loader (IExtensionLoader) — botnexus-extension.json manifest-based discovery, collectible ALC per extension, type registration
+3. ✅ Telegram Bot API Channel Adapter runtime — HttpClient + System.Text.Json, webhook + polling modes, streaming support via message editing, AllowedChatIds security
+4. ⏳ Queued for Wave 2: Rate limiting, correlation IDs, Telegram steering enhancements
+
+**Cross-Agent Dependencies Updated:**
+- Farnsworth: SessionHistoryResponse type move unblocked auth fix
+- Farnsworth: /api/channels, /api/extensions endpoints unblock WebUI panels
+- Fry: Command palette client-side execution pattern established
+- Kif: WebSocket README foundation for extension developers
+- Hermes: Config path test approach validates path resolver service extraction
+
+**Key Decisions:**
+- Extension loader uses manifest-driven discovery (no reflection on DLL load)
+- Auth bypass uses route+file allowlist, not extension-based heuristics
+- Telegram streaming uses per-conversation state machine + message editing for incremental updates
+- StreamAsync task leak in providers identified but marked "never touch" (Jon approval needed)
+
+**Reference:** Orchestration logs at `.squad/orchestration-log/2026-04-06T09-44-00Z-bender.md`, session log at `.squad/log/2026-04-06T09-44-00Z-phase12-wave1.md`, decisions merged to `.squad/decisions.md`.
 
 ---
 

@@ -5,6 +5,36 @@
 - **Stack:** C# (.NET latest), modular class libraries: Core, Agent, Api, Channels (Base/Discord/Slack/Telegram), Command, Cron, Gateway, Heartbeat, Providers (Base/Anthropic/OpenAI), Session, Tools.GitHub, WebUI
 - **Created:** 2026-04-01
 
+## Cross-Agent Dependencies — Phase 12 Wave 1 Planning
+
+### Phase 12 Sprint Structure (Leela, Lead)
+**Approved:** 2026-04-06  
+**3 Waves, ~30 items, 5 agents assigned**
+
+- **Wave 1 (P0/P1):** Security fixes + WebUI adapter + channel/extensions endpoints + archive features + WebSocket README + 30 tests
+- **Wave 2 (P1/P2):** Rate limiting + correlation IDs + Telegram steering + config versioning + WebUI module split + API reference + 25 tests
+- **Wave 3 (P2):** SQLite store + agent health + lifecycle events + isolation schemas + protocol spec + dev guide + 25 tests
+
+**Fry's Phase 12 Wave 1 Assignments:**
+- ✅ Command palette restoration (client-side execution established)
+- Queued for Wave 1 continuation: Channels panel, extensions panel, model selector
+- Queued for Wave 2: Module split (ES modules), rate limit UI
+- Queued for Wave 3: Lifecycle events panel, health monitoring UI
+
+### From Bender (Phase 12 Wave 1 — Auth Fix)
+**Dependency:** Auth bypass fix (4128b2a) unblocks secure gateway for WebUI development  
+- Route+file allowlist replaces extension-based heuristics
+- /api/* never bypassed
+- Regression tests locked in
+
+### From Farnsworth (Phase 12 Wave 1 — API Endpoints)
+**Dependencies:** Unblocks WebUI panel implementation
+- GET /api/channels: Channel adapter status, capabilities
+- GET /api/extensions: Installed extensions with metadata
+- SessionHistoryResponse moved to Abstractions.Models
+
+---
+
 ## Cross-Agent Dependencies — Phase 7A Sprint Alerts
 
 ### From Bender (Sprint 7A — Reconnection + Suspend/Resume)
@@ -28,6 +58,64 @@
 ---
 
 ## Learnings
+
+### Phase 12 Wave 1 — Command Palette Client-Side Execution
+
+**Timestamp:** 2026-04-06T09:44:00Z  
+**Status:** ✅ Complete  
+
+**Context:** Archive WebUI had command palette but server-routed commands. Phase 12 Wave 1 restored palette with client-side execution pattern.
+
+**Pattern Established:**
+- Slash commands handled client-side via REST API calls (not WebSocket)
+- /reset deletes session, resets UI state locally
+- /status, /agents call read-only APIs, render results inline
+- Commands returning data display formatted output blocks
+- Keyboard navigation: ↓↑ to select, Tab/Enter execute, Esc dismiss
+
+**Integration Points:**
+- Command palette triggered by `/` prefix or Ctrl+K / Cmd+K shortcut
+- sendMessage() intercepts slash commands before WebSocket send
+- COMMANDS array defines command name + description + async handler
+- execute*() helper functions implement each command's behavior
+
+**Future Extensions:**
+- Command pattern extensible for new commands
+- Server-routed commands (/ask, /summarize) can be added when agent processing needed
+- CommandResult formatter (title + pre block) standardizes output display
+
+**Unblocks:** Wave 1 WebUI restoration complete; teams can now add channels panel, extensions panel using new /api/channels, /api/extensions endpoints from Farnsworth.
+
+**Reference:** Decision at `.squad/decisions.md` — "Fry Decision: Command Palette — Client-Side Execution".
+
+---
+
+## Learnings (Archive)
+
+**Timestamp:** 2026-04-08
+**Status:** ✅ Complete
+
+Ported the command palette feature from `archive/src/BotNexus.WebUI/` to the current WebUI. The archive had a palette UI with `/help`, `/reset`, `/status`, `/models`, `/model` commands but only autocompleted command names — actual execution was server-side. The restored version adds full client-side command execution.
+
+**What was ported:**
+- Command palette overlay above the chat input, triggered by typing `/` or pressing Ctrl+K / Cmd+K
+- Keyboard navigation: arrow keys to navigate, Tab/Enter to select, Esc to dismiss
+- Four commands with client-side handlers:
+  - `/help` — displays available commands inline in chat
+  - `/reset` — deletes current session via `DELETE /api/sessions/{id}` and resets chat state
+  - `/status` — fetches `GET /health` and shows gateway status
+  - `/agents` — fetches `GET /api/agents` and lists configured agents
+- `appendCommandResult()` helper for formatted command output (title + pre block)
+- Slash commands intercepted in `sendMessage()` before WebSocket send
+
+**Integration points:**
+- HTML: `<div id="command-palette">` added above queue-status in `.chat-input-area`
+- CSS: `.command-palette`, `.command-item`, `.command-palette-hint`, `.command-result` classes
+- JS: `commandPaletteIndex` state, `COMMANDS` array, show/hide/navigate/execute functions
+- Input event listener shows palette when text starts with `/` and has no space
+- Global `keydown` listener handles Ctrl+K/Cmd+K and Escape for palette
+
+**Files changed:** 3 files (index.html, styles.css, app.js) — pure frontend, no backend changes
 
 ### Channel Experience: Processing Status + Tool Error Handling
 
