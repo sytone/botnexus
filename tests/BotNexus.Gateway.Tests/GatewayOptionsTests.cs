@@ -23,4 +23,20 @@ public sealed class GatewayOptionsTests
 
         options.DefaultAgentId.Should().Be("agent-a");
     }
+
+    [Fact]
+    public void MaxCallChainDepth_DefaultsToTen()
+    {
+        var options = new GatewayOptions();
+
+        options.MaxCallChainDepth.Should().Be(10);
+    }
+
+    [Fact]
+    public void CrossAgentTimeoutSeconds_DefaultsToOneHundredTwenty()
+    {
+        var options = new GatewayOptions();
+
+        options.CrossAgentTimeoutSeconds.Should().Be(120);
+    }
 }

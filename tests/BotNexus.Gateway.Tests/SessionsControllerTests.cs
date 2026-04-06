@@ -86,6 +86,40 @@ public sealed class SessionsControllerTests
     }
 
     [Fact]
+    public async Task GetHistory_WithOffsetBeyondTotal_ReturnsEmptyPageWithTotalCount()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        for (var i = 0; i < 3; i++)
+            session.AddEntry(new SessionEntry { Role = "user", Content = $"m-{i}" });
+
+        var controller = new SessionsController(store);
+
+        var result = await controller.GetHistory("s1", offset: 10, limit: 10, cancellationToken: CancellationToken.None);
+
+        var response = (result.Result as OkObjectResult)?.Value as SessionHistoryResponse;
+        response.Should().NotBeNull();
+        response!.Offset.Should().Be(10);
+        response.TotalCount.Should().Be(3);
+        response.Entries.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetHistory_WithEmptySession_ReturnsEmptyEntriesAndZeroTotal()
+    {
+        var store = new InMemorySessionStore();
+        await store.GetOrCreateAsync("s1", "agent-a");
+        var controller = new SessionsController(store);
+
+        var result = await controller.GetHistory("s1", cancellationToken: CancellationToken.None);
+
+        var response = (result.Result as OkObjectResult)?.Value as SessionHistoryResponse;
+        response.Should().NotBeNull();
+        response!.TotalCount.Should().Be(0);
+        response.Entries.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task Suspend_WithActiveSession_TransitionsToSuspended()
     {
         var store = new InMemorySessionStore();
@@ -147,5 +181,15 @@ public sealed class SessionsControllerTests
         var result = await controller.Resume("s1", CancellationToken.None);
 
         result.Result.Should().BeOfType<ConflictObjectResult>();
+    }
+
+    [Fact]
+    public async Task Resume_WithMissingSession_ReturnsNotFound()
+    {
+        var controller = new SessionsController(new InMemorySessionStore());
+
+        var result = await controller.Resume("missing", CancellationToken.None);
+
+        result.Result.Should().BeOfType<NotFoundResult>();
     }
 }

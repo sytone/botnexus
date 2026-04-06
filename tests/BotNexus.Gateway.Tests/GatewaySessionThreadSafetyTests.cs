@@ -121,6 +121,46 @@ public sealed class GatewaySessionThreadSafetyTests
         snapshot[^1].Content.Should().Be("entry-6");
     }
 
+    [Fact]
+    public void AllocateSequenceId_WhenCalledSequentially_IncrementsMonotonically()
+    {
+        var session = CreateSession();
+
+        var first = session.AllocateSequenceId();
+        var second = session.AllocateSequenceId();
+        var third = session.AllocateSequenceId();
+
+        first.Should().Be(1);
+        second.Should().Be(2);
+        third.Should().Be(3);
+    }
+
+    [Fact]
+    public void AddStreamEvent_WithReplayWindow_KeepsLatestBoundedEvents()
+    {
+        var session = CreateSession();
+
+        session.AddStreamEvent(1, """{"type":"connected","sequenceId":1}""", replayWindowSize: 2);
+        session.AddStreamEvent(2, """{"type":"pong","sequenceId":2}""", replayWindowSize: 2);
+        session.AddStreamEvent(3, """{"type":"pong","sequenceId":3}""", replayWindowSize: 2);
+
+        var replay = session.GetStreamEventSnapshot();
+        replay.Should().HaveCount(2);
+        replay.Select(evt => evt.SequenceId).Should().ContainInOrder(2, 3);
+    }
+
+    [Fact]
+    public void GetStreamEventsAfter_WithNoMissedMessages_ReturnsEmpty()
+    {
+        var session = CreateSession();
+        session.AddStreamEvent(1, """{"type":"connected","sequenceId":1}""", replayWindowSize: 10);
+        session.AddStreamEvent(2, """{"type":"pong","sequenceId":2}""", replayWindowSize: 10);
+
+        var replay = session.GetStreamEventsAfter(lastSequenceId: 2, maxReplayCount: 10);
+
+        replay.Should().BeEmpty();
+    }
+
     private static GatewaySession CreateSession()
         => new() { SessionId = $"session-{Guid.NewGuid():N}", AgentId = "agent-a" };
 }

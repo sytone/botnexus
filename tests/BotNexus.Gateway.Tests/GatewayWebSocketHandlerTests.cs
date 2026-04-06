@@ -11,6 +11,7 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 
 namespace BotNexus.Gateway.Tests;
@@ -101,6 +102,80 @@ public sealed class GatewayWebSocketHandlerTests
             payload.TryGetProperty("replayed", out var replayed) &&
             replayed.GetInt32() >= 1);
         hasReconnectAck.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task HandleAsync_WithReconnectOnUnknownSession_SendsSessionNotFoundError()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new QueryString("?agent=agent-a&session=session-123");
+        var socket = new TestWebSocket();
+        socket.QueueIncomingText("""{"type":"reconnect","sessionKey":"missing","lastSeqId":0}""");
+        context.Features.Set<IHttpWebSocketFeature>(new TestWebSocketFeature { IsWebSocketRequest = true, Socket = socket });
+        var handler = CreateHandler();
+
+        await handler.HandleAsync(context, CancellationToken.None);
+
+        var payloads = ParsePayloads(socket.SentMessages);
+        payloads.Any(payload => HasStringProperty(payload, "type", "error") && HasStringProperty(payload, "code", "SESSION_NOT_FOUND"))
+            .Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task HandleAsync_WithReconnectAndNoMissedEvents_AcknowledgesZeroReplay()
+    {
+        var store = new InMemorySessionStore();
+
+        var firstContext = new DefaultHttpContext();
+        firstContext.Request.QueryString = new QueryString("?agent=agent-a&session=session-123");
+        var firstSocket = new TestWebSocket();
+        firstSocket.QueueIncomingText("""{"type":"ping"}""");
+        firstContext.Features.Set<IHttpWebSocketFeature>(new TestWebSocketFeature { IsWebSocketRequest = true, Socket = firstSocket });
+
+        var handler = CreateHandler(sessions: store);
+        await handler.HandleAsync(firstContext, CancellationToken.None);
+
+        var reconnectContext = new DefaultHttpContext();
+        reconnectContext.Request.QueryString = new QueryString("?agent=agent-a&session=session-123");
+        var reconnectSocket = new TestWebSocket();
+        reconnectSocket.QueueIncomingText("""{"type":"reconnect","sessionKey":"session-123","lastSeqId":999}""");
+        reconnectContext.Features.Set<IHttpWebSocketFeature>(new TestWebSocketFeature { IsWebSocketRequest = true, Socket = reconnectSocket });
+
+        await handler.HandleAsync(reconnectContext, CancellationToken.None);
+
+        var reconnectPayloads = ParsePayloads(reconnectSocket.SentMessages);
+        reconnectPayloads.Any(payload => HasStringProperty(payload, "type", "reconnect_ack") && HasIntProperty(payload, "replayed", 0))
+            .Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task HandleAsync_WithSmallReplayWindow_ReplaysOnlyBoundedEvents()
+    {
+        var store = new InMemorySessionStore();
+
+        var firstContext = new DefaultHttpContext();
+        firstContext.Request.QueryString = new QueryString("?agent=agent-a&session=session-123");
+        var firstSocket = new TestWebSocket();
+        firstSocket.QueueIncomingText("""{"type":"ping"}""");
+        firstSocket.QueueIncomingText("""{"type":"ping"}""");
+        firstContext.Features.Set<IHttpWebSocketFeature>(new TestWebSocketFeature { IsWebSocketRequest = true, Socket = firstSocket });
+
+        var handler = CreateHandler(
+            sessions: store,
+            options: Options.Create(new GatewayWebSocketOptions { ReplayWindowSize = 2 }));
+        await handler.HandleAsync(firstContext, CancellationToken.None);
+
+        var reconnectContext = new DefaultHttpContext();
+        reconnectContext.Request.QueryString = new QueryString("?agent=agent-a&session=session-123");
+        var reconnectSocket = new TestWebSocket();
+        reconnectSocket.QueueIncomingText("""{"type":"reconnect","sessionKey":"session-123","lastSeqId":0}""");
+        reconnectContext.Features.Set<IHttpWebSocketFeature>(new TestWebSocketFeature { IsWebSocketRequest = true, Socket = reconnectSocket });
+
+        await handler.HandleAsync(reconnectContext, CancellationToken.None);
+
+        var reconnectPayloads = ParsePayloads(reconnectSocket.SentMessages);
+        reconnectPayloads.Any(payload => HasStringProperty(payload, "type", "reconnect_ack") && HasIntProperty(payload, "replayed", 2))
+            .Should().BeTrue();
     }
 
     [Fact]
@@ -220,14 +295,30 @@ public sealed class GatewayWebSocketHandlerTests
         await firstConnectionTask;
     }
 
+    private static List<JsonElement> ParsePayloads(IEnumerable<byte[]> sentMessages)
+        => sentMessages
+            .Select(bytes => JsonDocument.Parse(Encoding.UTF8.GetString(bytes)).RootElement.Clone())
+            .ToList();
+
+    private static bool HasStringProperty(JsonElement payload, string name, string expectedValue)
+        => payload.TryGetProperty(name, out var value) &&
+           string.Equals(value.GetString(), expectedValue, StringComparison.Ordinal);
+
+    private static bool HasIntProperty(JsonElement payload, string name, int expectedValue)
+        => payload.TryGetProperty(name, out var value) &&
+           value.ValueKind == JsonValueKind.Number &&
+           value.GetInt32() == expectedValue;
+
     private static GatewayWebSocketHandler CreateHandler(
         IAgentSupervisor? supervisor = null,
         WebSocketChannelAdapter? channelAdapter = null,
-        InMemorySessionStore? sessions = null)
+        InMemorySessionStore? sessions = null,
+        IOptions<GatewayWebSocketOptions>? options = null)
         => new(
             supervisor ?? Mock.Of<IAgentSupervisor>(),
             channelAdapter ?? new WebSocketChannelAdapter(NullLogger<WebSocketChannelAdapter>.Instance),
             sessions ?? new InMemorySessionStore(),
+            options ?? Options.Create(new GatewayWebSocketOptions()),
             NullLogger<GatewayWebSocketHandler>.Instance);
 
     private sealed class TestWebSocketFeature : IHttpWebSocketFeature

@@ -197,6 +197,68 @@ public sealed class DefaultAgentCommunicatorTests
     }
 
     [Fact]
+    public async Task CallCrossAgentAsync_WhenDepthIsWithinConfiguredLimit_Succeeds()
+    {
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(r => r.Contains(It.IsAny<string>())).Returns(true);
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        DefaultAgentCommunicator? communicator = null;
+        supervisor
+            .Setup(s => s.GetOrCreateAsync("agent-b", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                await communicator!.CallCrossAgentAsync("agent-b", string.Empty, "agent-c", "nested");
+                return CreateHandle("agent-b").Object;
+            });
+        supervisor
+            .Setup(s => s.GetOrCreateAsync("agent-c", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateHandle("agent-c").Object);
+
+        communicator = new DefaultAgentCommunicator(
+            registry.Object,
+            supervisor.Object,
+            Options.Create(new GatewayOptions { MaxCallChainDepth = 2 }),
+            NullLogger<DefaultAgentCommunicator>.Instance);
+
+        var result = await communicator.CallCrossAgentAsync("agent-a", string.Empty, "agent-b", "hello");
+
+        result.Content.Should().Be("ok");
+    }
+
+    [Fact]
+    public async Task CallCrossAgentAsync_AfterDepthFailure_AllowsNewIndependentCallChain()
+    {
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(r => r.Contains(It.IsAny<string>())).Returns(true);
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        DefaultAgentCommunicator? communicator = null;
+        supervisor
+            .Setup(s => s.GetOrCreateAsync("agent-b", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                await communicator!.CallCrossAgentAsync("agent-b", string.Empty, "agent-c", "loop");
+                return CreateHandle("agent-b").Object;
+            });
+        supervisor
+            .Setup(s => s.GetOrCreateAsync("agent-d", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateHandle("agent-d").Object);
+
+        communicator = new DefaultAgentCommunicator(
+            registry.Object,
+            supervisor.Object,
+            Options.Create(new GatewayOptions { MaxCallChainDepth = 1 }),
+            NullLogger<DefaultAgentCommunicator>.Instance);
+
+        var overDepth = () => communicator.CallCrossAgentAsync("agent-a", string.Empty, "agent-b", "first");
+        await overDepth.Should().ThrowAsync<InvalidOperationException>();
+
+        var successful = await communicator.CallCrossAgentAsync("agent-a", string.Empty, "agent-d", "second");
+        successful.Content.Should().Be("ok");
+    }
+
+    [Fact]
     public async Task CallCrossAgentAsync_WhenTargetTimesOut_ThrowsTimeoutException()
     {
         var registry = new Mock<IAgentRegistry>();
@@ -224,6 +286,74 @@ public sealed class DefaultAgentCommunicatorTests
 
         await act.Should().ThrowAsync<TimeoutException>()
             .WithMessage("*source-agent*target-agent*");
+    }
+
+    [Fact]
+    public async Task CallCrossAgentAsync_WhenTargetCompletesBeforeTimeout_ReturnsResponse()
+    {
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(r => r.Contains("target-agent")).Returns(true);
+
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync("hello", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "done" });
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync("target-agent", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var communicator = new DefaultAgentCommunicator(
+            registry.Object,
+            supervisor.Object,
+            Options.Create(new GatewayOptions { CrossAgentTimeoutSeconds = 5 }),
+            NullLogger<DefaultAgentCommunicator>.Instance);
+
+        var response = await communicator.CallCrossAgentAsync("source-agent", string.Empty, "target-agent", "hello");
+
+        response.Content.Should().Be("done");
+    }
+
+    [Fact]
+    public async Task CallCrossAgentAsync_WhenCallerCancellationRequested_PropagatesOperationCanceledException()
+    {
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(r => r.Contains("target-agent")).Returns(true);
+
+        var tokenWasCanceled = false;
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns<string, CancellationToken>(async (_, ct) =>
+            {
+                try
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    tokenWasCanceled = ct.IsCancellationRequested;
+                    throw;
+                }
+
+                return new AgentResponse { Content = "never" };
+            });
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync("target-agent", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var communicator = new DefaultAgentCommunicator(
+            registry.Object,
+            supervisor.Object,
+            Options.Create(new GatewayOptions { CrossAgentTimeoutSeconds = 30 }),
+            NullLogger<DefaultAgentCommunicator>.Instance);
+
+        using var cts = new CancellationTokenSource();
+        cts.CancelAfter(TimeSpan.FromMilliseconds(100));
+
+        var act = () => communicator.CallCrossAgentAsync("source-agent", string.Empty, "target-agent", "hello", cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        tokenWasCanceled.Should().BeTrue();
     }
 
     private static AgentDescriptor CreateDescriptor(string agentId)

@@ -601,3 +601,9 @@ Result: Phase 3 blockers cleared, build clean, READY FOR RELEASE.
 - Copilot streaming tests (opt-in: `BOTNEXUS_RUN_COPILOT_INTEGRATION=1`)
 - **Observed Issues:** CodingAgent.Tests hangs in test environment; needs owner triage. MSB1003 error when testing directory instead of project file.
 - Total gateway tests now: 225. Build clean, 0 failures. Commit: 9c3bfd3
+
+### 2026-04-06 — Sprint 7A comprehensive gateway test expansion
+
+- Expanded Gateway coverage from 244 to 264 tests by adding reconnect protocol edge tests (invalid session key, bounded replay window, no-missed replay ack) plus `GatewaySession` sequence/replay unit coverage.
+- Added suspend/resume and history pagination edges (`Resume` unknown session 404, offset-beyond-total, empty-history responses) and validated TUI `/steer` isolation so normal input is unaffected.
+- Added queueing, timeout, and configuration depth coverage: sequential per-session queue execution, closed-session rejection behavior, cross-agent depth reset/under-limit success, fast-timeout success, cancellation propagation, and SessionStore registration defaults (InMemory/File/unspecified).

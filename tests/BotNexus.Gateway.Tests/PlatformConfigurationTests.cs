@@ -287,6 +287,55 @@ public sealed class PlatformConfigurationTests
         sessionStore.Should().BeOfType<InMemorySessionStore>();
     }
 
+    [Fact]
+    public void AddPlatformConfiguration_WithFileSessionStore_RegistersFileSessionStore()
+    {
+        using var fixture = new PlatformConfigFixture(new PlatformConfig
+        {
+            SessionStore = new SessionStoreConfig
+            {
+                Type = "File",
+                FilePath = "session-store"
+            }
+        });
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddBotNexusGateway();
+        services.AddPlatformConfiguration(fixture.ConfigPath);
+
+        using var provider = services.BuildServiceProvider();
+        var sessionStore = provider.GetRequiredService<ISessionStore>();
+        sessionStore.Should().BeOfType<FileSessionStore>();
+    }
+
+    [Fact]
+    public void AddPlatformConfiguration_WithNoSessionStoreConfigured_DefaultsToInMemory()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "botnexus-platform-config-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var configPath = Path.Combine(root, "config.json");
+
+        try
+        {
+            File.WriteAllText(configPath, "{}");
+
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddBotNexusGateway();
+            services.AddPlatformConfiguration(configPath);
+
+            using var provider = services.BuildServiceProvider();
+            var sessionStore = provider.GetRequiredService<ISessionStore>();
+            sessionStore.Should().BeOfType<InMemorySessionStore>();
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
     private sealed class PlatformConfigFixture : IDisposable
     {
         public PlatformConfigFixture(PlatformConfig? configOverride = null)
