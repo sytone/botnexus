@@ -10159,3 +10159,267 @@ Program.cs reduced to thin DI wiring + command registration.
 
 **Commits:** b07b175, c415206, c9f0843
 
+
+---
+
+### Bender — Phase 12 Wave 2 Middleware
+
+**Date:** 2026-04-06  
+**Owner:** Bender (Runtime Dev)  
+**Status:** ✅ Implemented
+
+**Scope:** Three atomic middleware commits:
+1. Auth middleware environment access refactor (service locator → constructor injection)
+2. Per-client rate limiting middleware
+3. Correlation ID middleware
+
+**Decision 1: Auth Middleware Environment Access**
+- Use constructor injection for `IWebHostEnvironment` in `GatewayAuthMiddleware`
+- Cache `WebRootFileProvider` for static asset checks
+- **Why:** Avoids service locator per-request; preserves existing auth-bypass behavior
+
+**Decision 2: Rate Limiting Strategy**
+- In-memory per-client fixed-window counter via `RateLimitingMiddleware`
+- Client key preference: authenticated caller ID (`GatewayCallerIdentity.CallerId`) → remote IP fallback
+- Defaults: 60 requests per 60-second window
+- Config path: `gateway.rateLimit.requestsPerMinute`, `gateway.rateLimit.windowSeconds`
+- Skip `/health`; exceeded requests return 429 with `Retry-After` header
+- **Why:** Simple, runtime-safe, aligns with current gateway in-memory architecture
+
+**Decision 3: Correlation ID Propagation**
+- Add `CorrelationIdMiddleware` before auth
+- Accept incoming `X-Correlation-Id` header when present
+- Generate GUID when missing
+- Set response `X-Correlation-Id` header
+- Store ID in `HttpContext.Items["CorrelationId"]`
+- **Why:** Enables request tracing for all requests (including auth-failed) by setting ID before auth/rate-limit
+
+**Validation:**
+- `dotnet build Q:\repos\botnexus --verbosity quiet` ✓
+- `dotnet test Q:\repos\botnexus\tests\BotNexus.Gateway.Tests --verbosity quiet` ✓
+
+---
+
+### Farnsworth — Phase 12 Wave 2 Session Metadata + Config Versioning
+
+**Date:** 2026-04-06  
+**Owner:** Farnsworth (Platform Dev)  
+**Status:** ✅ Implemented
+
+**Scope:** Three Wave 2 tasks:
+1. Channel DTO naming alignment (`SupportsThinkingDisplay`)
+2. Session metadata API endpoints (`GET/PATCH /api/sessions/{id}/metadata`)
+3. Platform config schema versioning
+
+**Decision 1: Channel Capability Naming**
+- Standardized on `SupportsThinkingDisplay` across interface, adapters, and API DTO output
+- **Why:** Clarity + consistency with other capability flags (`SupportsStreaming`, `SupportsSteering`, etc.)
+
+**Decision 2: Metadata Endpoints**
+- Added dedicated `GET/PATCH /api/sessions/{sessionId}/metadata` endpoints
+- PATCH accepts raw JSON object; `null` values remove keys
+- **Why:** Avoids overloading existing session endpoints; clean update semantics
+
+**Decision 3: Config Version Field**
+- Introduced `PlatformConfig.Version` (int, default 1) for schema evolution
+- Missing version treated as v1 for backward compatibility
+- Non-fatal validation warnings for versions newer than supported (`> 1`)
+- Regenerated `docs/botnexus-config.schema.json` after version field addition
+- **Why:** Enables gradual schema evolution without breaking clients
+
+**Validation Notes:**
+- Earlier full build + test run completed (one pre-existing flaky test)
+- Focused gateway tests for channels, sessions, config validation passed
+
+---
+
+### Leela — Phase 12 Wave 1 Design Review
+
+**Date:** 2026-04-06  
+**By:** Leela (Lead/Architect)  
+**Grade:** A-  
+**SOLID Score:** 4/5  
+**Status:** ✅ Complete
+
+**Context:**
+Phase 12 Wave 1: 6 implementation commits across 4 agents (Kif ×1, Farnsworth ×2, Bender ×1, Hermes ×1). Build green, 368 gateway tests passing (↑ from 345). Reviewed: WebUI command palette, SessionHistoryResponse relocation, channels endpoint, extensions endpoint, auth bypass fix, Wave 1 test suite.
+
+**P0 — Must Fix Before Wave 2:**
+1. **ExtensionResponse.AssemblyPath leaks internal filesystem paths** (`ExtensionsController.cs`). Full `EntryAssemblyPath` exposed to API consumers. CWE-200 information disclosure. Fix: use `Path.GetFileName()` or remove.
+
+**P1 — Fix in Wave 2:**
+2. Commit `04e8da3` message mismatch (says README, delivers WebUI command palette)
+3. `IsStaticWebRootFile` uses service locator per-request instead of constructor injection
+4. DTO co-location in controller files acceptable for now; monitor as controller count grows
+
+**P2 — Informational:**
+5. WebUI command palette undocumented
+6. ChannelAdapterResponse 8 fields acceptable; monitor ISP if capabilities grow
+7. ExtensionsController SelectMany flattening behavior should be documented
+8. Missing test: static file that is a directory
+
+**Verdicts:**
+| Commit | Author | Verdict |
+|--------|--------|---------|
+| `04e8da3` | Kif | ⚠️ Needs Fix (commit message) |
+| `2e66df3` | Farnsworth | ✅ Approved |
+| `7623e20` | Farnsworth | ✅ Approved |
+| `4d5dd7d` | Farnsworth | ⛔ Blocked on P0 #1 |
+| `4128b2a` | Bender | ✅ Approved |
+| `62622ca` | Hermes | ✅ Approved |
+
+**Carried Closed:**
+- ✅ Path.HasExtension auth bypass (closed by `4128b2a`)
+- ✅ SessionHistoryResponse relocation (closed by `2e66df3`)
+
+**Carried Forward:**
+- StreamAsync background task leak
+- GatewaySession SRP monitoring
+- **NEW:** ExtensionResponse.AssemblyPath path leak (P0)
+
+---
+
+### Leela — Phase 12 Wave 2 Design Review
+
+**Date:** 2026-04-06  
+**By:** Leela (Lead/Architect)  
+**Grade:** A-  
+**SOLID Score:** 5/5  
+**Status:** ✅ Complete
+
+**Scope:**
+10 commits across 5 agents (Farnsworth ×3, Bender ×3, Fry ×2, Hermes ×1, Kif ×1). Build green (0 errors), 697 tests (404 gateway, 38 new in Wave 2).
+
+**Middleware Pipeline:**
+```
+CORS → CorrelationId → Auth → RateLimit → Swagger → WebSockets → Controllers
+```
+Ordering verified correct — correlation IDs for all responses, auth before rate bucketing, rate limiting uses authenticated caller identity.
+
+**P1 Items for Wave 3:**
+1. **Rate limiter memory growth** — `_clientWindows` never evicts stale entries. Add periodic cleanup or use `MemoryCache` with sliding expiry. (`RateLimitingMiddleware.cs`)
+2. **Session metadata lacks per-session authorization** — Any authenticated caller can access any session's metadata. Add ownership/permission check. (`SessionsController.cs`)
+3. **API reference inconsistency** — `api-reference.md` still shows `supportsThinking` but DTO is now `supportsThinkingDisplay`. Update docs. (`docs/api-reference.md`)
+
+**Key Approvals:**
+- Auth middleware DIP fix (service locator → constructor injection) ✓
+- Per-client rate limiting with config-driven limits ✓
+- Correlation ID middleware with header passthrough ✓
+- Session metadata GET/PATCH with merge semantics ✓
+- WebUI channels + extensions panels with XSS protection ✓
+- Config version field for schema evolution ✓
+
+**Carried Forward:**
+- StreamAsync task leak (Phase 5/6, frozen)
+- CLI Program.cs decomposition (Phase 10)
+- SequenceAndPersistPayloadAsync double-serialization (Sprint 7A)
+
+---
+
+### Leela — Phase 12 Wave 3 Design Review
+
+**Date:** 2026-04-06  
+**By:** Leela (Lead/Architect)  
+**Grade:** A  
+**SOLID Score:** 5/5  
+**Status:** ✅ Complete
+
+**Scope:**
+5 code commits + docs across 3 agents (Bender ×2, Farnsworth ×3, Kif docs). Build green (0 errors), 852 tests passing (419 gateway, 15 new in Wave 3).
+
+**P1 — Must Fix in Wave 4:**
+1. **Sync-over-async inside lock in `DefaultAgentRegistry.PublishActivity`** — `PublishAsync().GetAwaiter().GetResult()` called while `lock(_sync)` held. Blocks registry operations during broadcast I/O. Move publish outside lock or queue to channel. (`DefaultAgentRegistry.cs`)
+
+**Wave 2 P1 Resolutions — All Closed:**
+- ✅ Rate limiter stale-entry eviction — CAS-gated periodic cleanup (`ec6d83c`)
+- ✅ Session metadata caller authorization — 403 on caller mismatch (`b07b175`)
+- ✅ API reference `supportsThinking` → `supportsThinkingDisplay` doc fix (Kif docs)
+
+**Key Approvals:**
+- SQLite session store with parameterized queries, SemaphoreSlim concurrency, transactional history writes ✓
+- `IHealthCheckable` / `IAgentHandleInspector` opt-in interfaces (ISP) ✓
+- Agent lifecycle events (`AgentRegistered`, `AgentUnregistered`, `AgentConfigChanged`) ✓
+- Rate limiter CAS cleanup pattern with 2× window stale threshold ✓
+- Caller authorization on GET/PATCH metadata with 403 response ✓
+
+**P2 Items (6):**
+1. SqliteSessionStore constructor accepts logger but doesn't store it
+2. Rate limiter reads `LastAccessed` outside per-client lock (torn read possible, benign)
+3. `CallerIdentityItemKey` constant duplicated in `SessionsControllerTests`
+4. SqliteSessionStore in-memory cache is unbounded
+5. SqliteSessionStore doesn't implement `IDisposable` (SemaphoreSlim leak)
+6. Health check `PingAsync` only checks `Aborting` state
+
+**Carried Forward:**
+- `Path.HasExtension` auth bypass in `GatewayAuthMiddleware` (Sprint 7B)
+- StreamAsync task leak (Phase 5/6, frozen)
+- SequenceAndPersistPayloadAsync double-serialization (Sprint 7A)
+- **NEW:** Sync-over-async in `DefaultAgentRegistry.PublishActivity` (Wave 3)
+
+---
+
+### Nibbler — Phase 12 Wave 1 Consistency Review
+
+**Date:** 2026-04-06  
+**Reviewer:** Nibbler (Consistency Reviewer)  
+**Grade:** Good  
+**Status:** ✅ Complete
+
+**Summary:**
+Wave 1 code quality excellent — all new controllers, DTOs, auth middleware, tests well-structured with full XML doc coverage. All issues are documentation gaps: new endpoints not reflected in READMEs/api-reference, WebSocket README had phantom field. 4 P1s fixed directly; 3 P1s flagged for team action.
+
+**P1 Fixes Applied (4):**
+1. ✅ WebSocket README `error` event phantom `code` field removed
+2. ✅ Gateway API README missing `/api/channels` and `/api/extensions` endpoints added
+3. ✅ Gateway API README missing `ChannelsController`/`ExtensionsController` + corrected namespace for `SessionHistoryResponse`
+4. ✅ Auth middleware static file bypass documentation expanded with all four bypass categories
+
+**P1 Flagged for Team (3):**
+5. ⚠️ `api-reference.md` missing `/api/channels` and `/api/extensions` endpoints
+6. ⚠️ `ChannelAdapterResponse.SupportsThinking` vs internal `SupportsThinkingDisplay` naming inconsistency (JSON wire: `supportsThinking` vs internal `SupportsThinkingDisplay`)
+7. ⚠️ `api-reference.md` still claims query param auth works (`?apiKey=`) — removed from Gateway.Api README but not api-reference.md
+
+**Cross-Check Results:**
+- WebSocket README vs code message types: ✅ All 6 inbound + 10 outbound match
+- WebSocket README vs code config options: ✅ All 5 `GatewayWebSocketOptions` match exactly
+- Capability flags: ✅ All 5 flags (`SupportsStreaming`, `SupportsSteering`, `SupportsFollowUp`, `SupportsThinkingDisplay`, `SupportsToolDisplay`) verified
+- New controllers vs existing patterns: ✅ Consistent
+- XML doc coverage: ✅ 100% on all new public types
+- Test naming convention: ✅ Consistent (`MethodName_Scenario_Expected`)
+
+---
+
+### Nibbler — Phase 12 Wave 2 Consistency Review
+
+**Date:** 2026-04-06  
+**Reviewer:** Nibbler (Consistency Reviewer)  
+**Scope:** Phase 12 Wave 2 — SupportsThinkingDisplay rename, session metadata endpoints, config version, auth/rate-limiting/correlation-ID middleware, WebUI panels, +24 tests  
+**Grade:** Good  
+**Status:** ✅ Complete
+
+**Summary:**
+7 P1 issues found and fixed. 0 P0s. 1 P2 noted. Code quality continues excellent — all issues were documentation/WebUI alignment gaps. Test naming, XML doc coverage, and SupportsThinkingDisplay rename all clean.
+
+**P1 Fixes Applied (7):**
+1. ✅ WebUI channels panel stale field `supportsThinking` → `supportsThinkingDisplay` (`app.js` line 1449)
+2. ✅ `api-reference.md` missing session metadata endpoints (GET/PATCH) added
+3. ✅ `api-reference.md` missing correlation ID header docs added
+4. ✅ `api-reference.md` HTTP rate limiting undocumented → added documentation with config example
+5. ✅ Gateway.Api README middleware documentation missing (RateLimitingMiddleware, CorrelationIdMiddleware) added
+6. ✅ Gateway README project tree stale (missing RateLimitingMiddleware, CorrelationIdMiddleware) updated
+7. ✅ Config version field undocumented → added to `configuration.md`, both config example files, Gateway README
+
+**P2 Noted (1):**
+- WebSocket vs HTTP rate limit parameters diverge: WS "20 attempts per 300s" vs HTTP "60 requests per 60s". May be intentional; recommend clarifying or unifying.
+
+**Clean Areas:**
+- SupportsThinking → SupportsThinkingDisplay rename: ✅ Complete across code, DTOs, tests, docs
+- Test naming (MethodName_Scenario_ExpectedResult): ✅ All 24+ new tests follow convention
+- XML doc comments: ✅ 100% coverage on new public APIs
+- Auth middleware constructor injection: ✅ Correctly implemented and documented
+- WebUI extensions panel: ✅ Correct endpoint paths and field names
+
+**Patterns Reinforced:**
+1. **WebUI is a new staleness vector** — JS not type-checked against C# DTOs → first JS-level drift caught
+2. **New middleware = new doc sections** — Rate limiting and correlation ID middleware fully implemented but completely absent from READMEs/api-reference
+3. **Config fields drift silently** — `Version` field added to `PlatformConfig` but none of 4 documentation/example files updated

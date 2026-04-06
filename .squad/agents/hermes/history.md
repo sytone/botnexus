@@ -229,6 +229,15 @@ Baseline: build is clean, all 124 tests pass. Ready for implementation.
 - Session metadata authorization coverage now explicitly verifies authorized caller success, mismatched caller `403`, and missing caller-identity bypass behavior for both GET and PATCH metadata endpoints.
 - Agent runtime health now has test-backed contracts for registered-but-idle (`unknown`), active health-checkable (`healthy`), active non-health-checkable (`unknown`), failed ping (`unhealthy`), and unknown agent (`404`), plus activity-stream subscription assertions for register/unregister lifecycle events.
 
+### 2026-04-06 — Gateway startup validation (end-to-end smoke test)
+
+- Validated complete Gateway startup path end-to-end: build succeeds (15 warnings, zero errors), config exists at `~/.botnexus/config.json`, Gateway starts on port 5005 within ~7 seconds, all core endpoints respond correctly.
+- Health endpoint (`/health`) returns `200 OK` with `{"status":"ok"}` JSON payload.
+- WebUI endpoint (`/webui`) returns `200 OK` with valid HTML content (15.5KB), includes form inputs for agent configuration and activity monitor toggles.
+- API endpoint (`/api/agents`) returns `200 OK` with agent registry JSON (default "assistant" agent registered with model `gpt-4.1`, provider `github-copilot`).
+- Gateway logs confirm: WebSocket channel adapter started, 1 channel adapter active, listening on `http://localhost:5005`, hosting environment Production.
+- No runtime errors or startup failures — platform is fully operational for local development/testing with existing config.
+
 ### 2026-04-06 — Phase 10 deployment validation expansion (Wave 1)
 
 - Extended `tests/BotNexus.Gateway.Tests/Integration/DeploymentTests.cs` with 10 new tests validating dev-loop → gateway → auth flow end-to-end

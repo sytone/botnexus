@@ -2191,3 +2191,42 @@ Phase 12 Wave 2 delivered middleware infrastructure (correlation IDs, auth DI fi
 3. **Service locator removal from middleware is a high-value DIP fix** — Moving `IWebHostEnvironment` from `RequestServices.GetService<>()` to constructor injection in `GatewayAuthMiddleware` eliminates per-request service resolution overhead and makes the dependency graph explicit. This pattern should be enforced across all middleware.
 4. **Session metadata PATCH with null-removal is an elegant RFC 7386-style merge** — Accepting `JsonElement` body, iterating properties, treating null values as deletes, and using a recursive `ConvertJsonElement` switch expression produces clean merge semantics. But this pattern needs authorization guards when sessions are scoped to tenants.
 5. **DTO renames require synchronized doc updates** — The `SupportsThinking` → `SupportsThinkingDisplay` rename in code was not reflected in api-reference.md. When a DTO field is renamed, the API docs should be updated in the same commit or the doc commit must reference the field change explicitly.
+
+---
+
+## 2026-04-06T05:00:00Z — Phase 12 Wave 3 Design Review (Lead)
+
+**Timestamp:** 2026-04-06T05:00:00Z  
+**Status:** ✅ Complete  
+**Requested by:** Jon Bullen (via Copilot)  
+**Scope:** Architectural review of Phase 12 Wave 3 implementations
+
+**Context:**
+Wave 3 delivered 5 code commits + docs across 3 agents (Bender ×2, Farnsworth ×3, Kif docs). Build green, 852 tests passing (419 gateway, 15 new in Wave 3). Reviewed: rate limiter stale-entry eviction, SQLite session store, session metadata caller authorization, agent health check endpoint, agent lifecycle events, protocol spec + config reference + dev guide docs.
+
+**Grade: A**
+
+| Area | Grade |
+|------|-------|
+| SOLID Compliance | A+ |
+| Extension Model | A |
+| Security | A |
+| Thread Safety | A- |
+| Test Quality | A |
+
+**Key Findings:**
+- P0: None.
+- P1 (1 item): `DefaultAgentRegistry.PublishActivity` calls `PublishAsync().GetAwaiter().GetResult()` inside `lock(_sync)` — blocks registry operations during broadcast I/O. Move publish outside lock or queue to channel.
+- P2 (6 items): SqliteSessionStore constructor accepts logger but doesn't store it. Rate limiter reads `LastAccessed` outside per-client lock (torn read, benign). `CallerIdentityItemKey` duplicated in test. SqliteSessionStore cache is unbounded. SqliteSessionStore missing `IDisposable`. Health check `PingAsync` only checks `Aborting` state.
+- All three Wave 2 P1s resolved: rate limiter eviction, session metadata auth, API reference doc fix.
+- Carried forward: `Path.HasExtension` auth bypass (Sprint 7B), StreamAsync task leak (Phase 5/6), sync-over-async in registry (Wave 3).
+
+**Decision written to:** `.squad/decisions/inbox/leela-wave3-review.md`
+
+## Learnings — Phase 12 Wave 3 Design Review (2026-04-06)
+
+1. **Sync-over-async inside locks is a latent deadlock** — `.GetAwaiter().GetResult()` on `PublishAsync` inside `lock(_sync)` looks safe when the broadcaster is synchronous, but becomes a deadlock vector the moment a real async broadcaster is introduced. Always capture data inside the lock and publish outside, or use a `Channel<T>` for async dispatch.
+2. **CAS (compare-and-swap) is the right pattern for periodic maintenance in concurrent middleware** — The `Interlocked.CompareExchange` gate in the rate limiter ensures exactly one thread performs cleanup without blocking the hot path. This pattern should be the default for any periodic housekeeping in middleware.
+3. **ISP pays off in extensible agent systems** — Separating `IHealthCheckable` and `IAgentHandleInspector` from `IAgentHandle` / `IAgentSupervisor` means existing agents and supervisors are unchanged. New capabilities are purely additive. This is the right pattern for any opt-in agent contract.
+4. **SQLite parameterized queries in .NET use `$parameter` syntax** — `Microsoft.Data.Sqlite` uses `$paramName` for parameters (not `@paramName`). All queries in `SqliteSessionStore` correctly use this pattern, providing complete SQL injection prevention. The `SemaphoreSlim(1, 1)` pattern correctly serializes SQLite write access.
+5. **Constructor parameters that are never stored are silent bugs** — The `SqliteSessionStore` constructor accepts `ILogger<SqliteSessionStore> logger` but never assigns it to a field. This compiles cleanly but means the class has no logging. DI-injected parameters should always be assigned — if not needed, remove from the constructor.
