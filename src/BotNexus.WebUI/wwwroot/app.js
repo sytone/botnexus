@@ -104,6 +104,9 @@
     const elSidebar = $('#sidebar');
     const elBtnSendMode = $('#btn-send-mode');
     const elFollowUpIndicator = $('#followup-indicator');
+    const elProcessingStatus = $('#processing-status');
+    const elProcessingStage = $('#processing-stage');
+    const elProcessingToolCount = $('#processing-tool-count');
 
     // =========================================================================
     // Markdown rendering
@@ -276,6 +279,31 @@
     }
 
     // =========================================================================
+    // Processing status bar
+    // =========================================================================
+
+    function showProcessingStatus(stage, icon) {
+        elProcessingStage.innerHTML = `<span aria-hidden="true">${icon || '⏳'}</span> ${escapeHtml(stage)}`;
+        updateProcessingToolCount();
+        elProcessingStatus.classList.remove('hidden');
+    }
+
+    function updateProcessingToolCount() {
+        const runningCount = Object.values(activeToolCalls).filter(t => t.status === 'running').length;
+        if (runningCount > 0) {
+            elProcessingToolCount.textContent = `🔧 ${runningCount} tool${runningCount > 1 ? 's' : ''} active`;
+        } else if (activeToolCount > 0) {
+            elProcessingToolCount.textContent = `🔧 ${activeToolCount} tool${activeToolCount > 1 ? 's' : ''} used`;
+        } else {
+            elProcessingToolCount.textContent = '';
+        }
+    }
+
+    function hideProcessingStatus() {
+        elProcessingStatus.classList.add('hidden');
+    }
+
+    // =========================================================================
     // Confirm dialog
     // =========================================================================
 
@@ -435,6 +463,7 @@
                 toolStartTimes = {};
                 elBtnAbort.classList.remove('hidden');
                 showStreamingIndicator();
+                showProcessingStatus('Agent is processing...', '⏳');
                 startResponseTimeout();
                 updateSendButtonState();
                 decrementQueue();
@@ -443,26 +472,38 @@
                 removeStreamingIndicator();
                 markResponseReceived();
                 autoCollapseThinking();
+                showProcessingStatus('Writing response...', '✍️');
                 appendDelta(msg.delta);
                 break;
             case 'thinking_delta':
+                showProcessingStatus('Thinking...', '💭');
                 handleThinkingDelta(msg);
                 break;
             case 'tool_start':
                 handleToolStart(msg);
+                showProcessingStatus(`Using tool: ${msg.toolName || 'tool'}`, '🔧');
                 trackActivity('tool', currentAgentId, `🔧 ${msg.toolName || 'tool'} started`);
                 break;
             case 'tool_end':
                 handleToolEnd(msg);
+                // After tool ends, update stage based on remaining active tools
+                const remainingTools = Object.values(activeToolCalls).filter(t => t.status === 'running');
+                if (remainingTools.length > 0) {
+                    showProcessingStatus(`Using tool: ${remainingTools[0].toolName}`, '🔧');
+                } else {
+                    showProcessingStatus('Processing...', '⏳');
+                }
                 break;
             case 'message_end':
                 markResponseReceived();
                 trackActivity('response', currentAgentId, 'Response complete');
+                hideProcessingStatus();
                 finalizeMessage(msg);
                 break;
             case 'error':
                 markResponseReceived();
                 trackActivity('error', currentAgentId, msg.message || 'Error');
+                hideProcessingStatus();
                 handleError(msg);
                 break;
             case 'reconnect_ack':
@@ -639,13 +680,18 @@
 
     function handleToolEnd(msg) {
         const callId = msg.toolCallId || 'unknown';
+        const isError = msg.toolIsError === true;
+        const status = isError ? 'error' : 'complete';
         if (activeToolCalls[callId]) {
             activeToolCalls[callId].result = msg.toolResult || '';
-            activeToolCalls[callId].status = 'complete';
+            activeToolCalls[callId].status = status;
         }
         const elapsed = toolStartTimes[callId] ? Math.round((Date.now() - toolStartTimes[callId]) / 1000) : 0;
         delete toolStartTimes[callId];
-        updateToolCallStatus(callId, 'complete', elapsed, msg.toolResult);
+        updateToolCallStatus(callId, status, elapsed, msg.toolResult);
+        if (isError) {
+            trackActivity('error', currentAgentId, `🔧 ${msg.toolName || activeToolCalls[callId]?.toolName || 'tool'} failed`);
+        }
         if (Object.keys(toolStartTimes).length === 0) stopToolElapsedTimer();
     }
 
@@ -748,6 +794,7 @@
         clearResponseTimeout();
         elBtnAbort.classList.add('hidden');
         removeStreamingIndicator();
+        hideProcessingStatus();
         finalizeThinkingBlock();
 
         const streaming = elChatMessages.querySelector('.message.assistant.streaming');
@@ -807,6 +854,7 @@
         stopToolElapsedTimer();
         elBtnAbort.classList.add('hidden');
         removeStreamingIndicator();
+        hideProcessingStatus();
         appendErrorMessage(`❌ ${msg.message || 'Unknown error'}${msg.code ? ` (${msg.code})` : ''}`);
         setSendingState(false);
         updateSendButtonState();
@@ -1047,6 +1095,7 @@
         stopToolElapsedTimer();
         elBtnAbort.classList.add('hidden');
         removeStreamingIndicator();
+        hideProcessingStatus();
         setSendingState(false);
         resetQueue();
         updateSendButtonState();

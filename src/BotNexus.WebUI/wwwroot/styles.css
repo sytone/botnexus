@@ -738,6 +738,56 @@ body {
 /* === Chat view position relative for scroll btn === */
 .chat-view { position: relative; }
 
+/* === Processing status bar === */
+.processing-status {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    overflow: hidden;
+    animation: fadeIn 0.2s ease-out;
+}
+.processing-status.hidden { display: none !important; }
+.processing-bar {
+    height: 2px;
+    background: linear-gradient(90deg, transparent 0%, var(--accent) 50%, transparent 100%);
+    background-size: 200% 100%;
+    animation: processingSlide 1.5s ease-in-out infinite;
+}
+@keyframes processingSlide {
+    0% { background-position: 100% 0; }
+    100% { background-position: -100% 0; }
+}
+.processing-details {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 20px;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}
+.processing-stage {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 500;
+}
+.processing-tool-count {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    color: var(--text-muted);
+}
+
+/* === Tool call error state === */
+.message.tool-call.tool-error {
+    background: rgba(62,30,30,0.6);
+    border-left: 3px solid var(--error);
+}
+.message.tool-call.tool-error .tool-name {
+    color: var(--error);
+}
+
 /* === Enhanced responsive === */
 @media (max-width: 768px) {
     :root { --sidebar-width: 280px; }

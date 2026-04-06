@@ -29,6 +29,34 @@
 
 ## Learnings
 
+### Channel Experience: Processing Status + Tool Error Handling
+
+**Timestamp:** 2026-04-08
+**Status:** ✅ Complete
+
+Reviewed the full WebUI↔Gateway streaming pipeline and implemented channel experience improvements:
+
+**Analysis performed:**
+- Compared current WebUI with archive reference — current version already had thinking blocks, tool inspector, reconnect, and activity feed
+- Audited `WebSocketChannelAdapter.SendStreamEventAsync()` → found `tool_end` payload was missing `toolIsError` and `toolName` fields despite `AgentStreamEvent` having them
+- All 7 stream event types (MessageStart, ContentDelta, ThinkingDelta, ToolStart, ToolEnd, MessageEnd, Error) confirmed handled in app.js
+
+**Improvements delivered:**
+1. **Processing Status Bar** — Animated progress bar below chat header showing processing stage (💭 Thinking / 🔧 Using tool: X / ✍️ Writing / ⏳ Processing) with active tool counter. Provides continuous feedback on what the agent is doing.
+2. **Tool Error State Display** — `tool_end` now sends `toolIsError` and `toolName` from the backend; frontend renders errored tool calls with red border, red name, ❌ badge, and tracks error in activity feed.
+3. **Backend Fix** — `WebSocketChannelAdapter.cs` `tool_end` payload now includes `toolName` and `toolIsError` for complete client-side state.
+
+**Files changed:**
+- `src/channels/BotNexus.Channels.WebSocket/WebSocketChannelAdapter.cs` (backend: added toolName + toolIsError to tool_end payload)
+- `src/BotNexus.WebUI/wwwroot/index.html` (processing status bar HTML)
+- `src/BotNexus.WebUI/wwwroot/styles.css` (processing bar animation + tool error styles)
+- `src/BotNexus.WebUI/wwwroot/app.js` (processing stage tracking, toolIsError handling)
+
+**Key design decisions:**
+- Processing bar uses CSS gradient animation for smooth visual effect without JS timer overhead
+- Stage transitions are event-driven (each WS message type sets the right stage label)
+- `hideProcessingStatus()` called from all termination paths: finalizeMessage, handleError, abortRequest
+
 ### WebUI End-to-End Protocol Verification
 
 **Timestamp:** 2026-04-07

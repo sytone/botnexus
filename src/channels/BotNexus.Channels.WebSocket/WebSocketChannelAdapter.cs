@@ -103,7 +103,7 @@ public sealed class WebSocketChannelAdapter(ILogger<WebSocketChannelAdapter> log
             AgentStreamEventType.ThinkingDelta => new { type = "thinking_delta", delta = streamEvent.ThinkingContent, messageId = streamEvent.MessageId },
             AgentStreamEventType.ContentDelta => new { type = "content_delta", delta = streamEvent.ContentDelta, messageId = streamEvent.MessageId },
             AgentStreamEventType.ToolStart => new { type = "tool_start", toolCallId = streamEvent.ToolCallId, toolName = streamEvent.ToolName, messageId = streamEvent.MessageId },
-            AgentStreamEventType.ToolEnd => new { type = "tool_end", toolCallId = streamEvent.ToolCallId, toolResult = streamEvent.ToolResult, messageId = streamEvent.MessageId },
+            AgentStreamEventType.ToolEnd => new { type = "tool_end", toolCallId = streamEvent.ToolCallId, toolName = streamEvent.ToolName, toolResult = streamEvent.ToolResult, toolIsError = streamEvent.ToolIsError, messageId = streamEvent.MessageId },
             AgentStreamEventType.MessageEnd => new { type = "message_end", messageId = streamEvent.MessageId, usage = streamEvent.Usage },
             AgentStreamEventType.Error => new { type = "error", message = streamEvent.ErrorMessage },
             _ => new { type = "unknown" }
