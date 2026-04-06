@@ -28,10 +28,12 @@ public sealed class CorrelationIdMiddleware
     /// <returns>A task representing middleware completion.</returns>
     public async Task InvokeAsync(HttpContext context)
     {
-        var correlationId = context.Request.Headers.TryGetValue(CorrelationIdHeaderName, out var incomingCorrelationId) &&
-                            !string.IsNullOrWhiteSpace(incomingCorrelationId)
-            ? incomingCorrelationId.ToString()
-            : Guid.NewGuid().ToString("D");
+        var correlationId = System.Diagnostics.Activity.Current is { } activity
+            ? activity.TraceId.ToString()
+            : context.Request.Headers.TryGetValue(CorrelationIdHeaderName, out var incomingCorrelationId) &&
+              !string.IsNullOrWhiteSpace(incomingCorrelationId)
+                ? incomingCorrelationId.ToString()
+                : Guid.NewGuid().ToString("D");
 
         context.Items[CorrelationIdItemKey] = correlationId;
         context.Response.Headers[CorrelationIdHeaderName] = correlationId;

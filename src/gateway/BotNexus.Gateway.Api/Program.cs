@@ -8,9 +8,15 @@ using BotNexus.Providers.Core.Registry;
 using BotNexus.Providers.OpenAI;
 using BotNexus.Providers.OpenAICompat;
 using Microsoft.OpenApi.Models;
+using OpenTelemetry.Trace;
+using Serilog;
 using System.Reflection;
 
 const string GatewayCorsPolicy = "GatewayCorsPolicy";
+
+Log.Logger = new LoggerConfiguration()
+    .WriteTo.Console()
+    .CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
@@ -18,8 +24,39 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
     WebRootPath = Path.Combine(AppContext.BaseDirectory, "wwwroot")
 });
 
+builder.Host.UseSerilog((context, services, configuration) => configuration
+    .ReadFrom.Configuration(context.Configuration)
+    .ReadFrom.Services(services)
+    .Enrich.FromLogContext()
+    .Enrich.WithMachineName()
+    .Enrich.WithThreadId()
+    .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}")
+    .WriteTo.File(
+        Path.Combine(AppContext.BaseDirectory, "logs", "botnexus-.log"),
+        rollingInterval: RollingInterval.Day,
+        retainedFileCountLimit: 14),
+    preserveStaticLogger: true);
+
 var platformConfigPath = builder.Configuration["BotNexus:ConfigPath"];
 var startupPlatformConfig = PlatformConfigLoader.Load(platformConfigPath, validateOnLoad: false);
+
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing =>
+    {
+        tracing
+            .AddSource("BotNexus.Gateway")
+            .AddSource("BotNexus.Providers")
+            .AddSource("BotNexus.Channels")
+            .AddSource("BotNexus.Agents")
+            .AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation();
+
+        var otlpEndpoint = builder.Configuration["OpenTelemetry:OtlpEndpoint"];
+        if (!string.IsNullOrWhiteSpace(otlpEndpoint))
+        {
+            tracing.AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint));
+        }
+    });
 
 builder.Services.AddBotNexusGateway();
 builder.Services.AddPlatformConfiguration(platformConfigPath);
@@ -96,7 +133,7 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
     return new LlmClient(apiProviders, models);
 });
 
-using (var bootstrapLoggerFactory = LoggerFactory.Create(logging => logging.AddConsole()))
+using (var bootstrapLoggerFactory = new Serilog.Extensions.Logging.SerilogLoggerFactory(Log.Logger, dispose: false))
 {
     var extensionLoadResults = await builder.Services.LoadConfiguredExtensionsAsync(startupPlatformConfig, bootstrapLoggerFactory);
     if (extensionLoadResults.Any(result => !result.Success))
@@ -120,6 +157,7 @@ if (!string.IsNullOrWhiteSpace(listenUrl))
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.UseCors(GatewayCorsPolicy);
+app.UseSerilogRequestLogging();
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<GatewayAuthMiddleware>();
 app.UseMiddleware<RateLimitingMiddleware>();

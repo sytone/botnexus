@@ -215,6 +215,12 @@ Build is clean, tests pass. ProviderRegistry exists but is unused — evaluate i
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-06 — Gateway OTel + Serilog Wave 1 Foundation
+
+- `BotNexus.Gateway.Api` now boots with Serilog (`CreateBootstrapLogger` + `UseSerilog`) and keeps test-host stability by setting `preserveStaticLogger: true`.
+- OpenTelemetry tracing is wired in host startup with ASP.NET Core + HttpClient instrumentation and opt-in OTLP export via `OpenTelemetry:OtlpEndpoint`.
+- Correlation ID middleware now prefers `Activity.Current.TraceId` and still emits `X-Correlation-Id` on responses for API clients.
+
 ### 2026-04-05 — AD-10/14/17 Thinking Runtime Controls
 
 - Coding-agent CLI now supports `--thinking off|minimal|low|medium|high|xhigh` and maps to `ThinkingLevel?` (`off` => `null`).
