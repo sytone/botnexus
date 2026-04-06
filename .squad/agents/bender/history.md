@@ -1016,3 +1016,9 @@ Result: Phase 3 blockers cleared, build clean, READY FOR RELEASE.
 ### 2026-04-06 — Wave 3 Item 2: SQLite session store
 - Added SqliteSessionStore implementing ISessionStore with auto-create tables (sessions, session_history) and JSON metadata persistence.
 - Extended platform session-store config to support 	ype: Sqlite with required gateway.sessionStore.connectionString, added DI registration, and added focused gateway tests.
+
+### 2026-04-06 — GET /api/models endpoint for WebUI
+- Created ModelsController with GET /api/models endpoint to resolve WebUI 404 when fetching available LLM models.
+- ModelRegistry is registered as a singleton in Program.cs and BuiltInModels.RegisterAll() populates it at startup with all models from Copilot, Anthropic, and OpenAI providers.
+- Endpoint iterates all providers from ModelRegistry.GetProviders(), fetches models per provider via ModelRegistry.GetModels(provider), and returns ModelInfo DTOs with name, modelId, id (alias), and provider fields.
+- Response format matches WebUI expectations (app.js line 1683 checks for name/modelId/id, line 1622 checks provider).
