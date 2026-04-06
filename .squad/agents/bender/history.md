@@ -1022,3 +1022,17 @@ Result: Phase 3 blockers cleared, build clean, READY FOR RELEASE.
 - ModelRegistry is registered as a singleton in Program.cs and BuiltInModels.RegisterAll() populates it at startup with all models from Copilot, Anthropic, and OpenAI providers.
 - Endpoint iterates all providers from ModelRegistry.GetProviders(), fetches models per provider via ModelRegistry.GetModels(provider), and returns ModelInfo DTOs with name, modelId, id (alias), and provider fields.
 - Response format matches WebUI expectations (app.js line 1683 checks for name/modelId/id, line 1622 checks provider).
+
+## Learnings
+
+### Tool Architecture
+- Created BotNexus.Tools as a shared library for reusable tool implementations
+- Tools moved from coding-agent: ReadTool, WriteTool, EditTool, ShellTool, ListDirectoryTool, GrepTool, GlobTool
+- PathUtils moved to BotNexus.Tools.Utils for shared path resolution logic
+- IToolRegistry interface provides abstraction for tool discovery and resolution
+- DefaultToolRegistry implements in-memory tool lookup with case-insensitive name matching
+- Tools are registered as singletons in DI and collected via IEnumerable<IAgentTool>
+- Extensions can contribute tools via IAgentTool discoverable contract
+- InProcessIsolationStrategy now injects IToolRegistry to resolve tools per agent
+- Agents get all tools by default if ToolIds is empty, or specific tools if configured
+- AgentDefinitionConfig and PlatformConfig now support ToolIds property for tool configuration
