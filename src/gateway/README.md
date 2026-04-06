@@ -545,6 +545,7 @@ The script builds the Gateway, starts it on a temporary port, fetches `/swagger/
   ```
 - **GET `/api/agents/{agentId}`** — Get agent details
 - **POST `/api/agents`** — Register a new agent
+- **PUT `/api/agents/{agentId}`** — Update an agent (returns 400 on ID mismatch)
 - **DELETE `/api/agents/{agentId}`** — Unregister an agent
 - **GET `/api/agents/instances`** — List active agent instances
 - **GET `/api/agents/{agentId}/sessions/{sessionId}/status`** — Check instance status
@@ -587,6 +588,9 @@ The script builds the Gateway, starts it on a temporary port, fetches `/swagger/
     ]
   }
   ```
+- **GET `/api/sessions/{sessionId}/history`** — Paginated history (`?offset=0&limit=50`)
+- **PATCH `/api/sessions/{sessionId}/suspend`** — Suspend an active session
+- **PATCH `/api/sessions/{sessionId}/resume`** — Resume a suspended session
 - **DELETE `/api/sessions/{sessionId}`** — Delete a session
 
 ### WebSocket (Real-time Streaming)
@@ -637,7 +641,7 @@ If `session` is omitted, a new session ID is auto-generated.
 
 **Connection established:**
 ```json
-{ "type": "connected", "connectionId": "...", "sessionId": "..." }
+{ "type": "connected", "connectionId": "...", "sessionId": "...", "sequenceId": 1 }
 ```
 
 **Agent started processing:**
@@ -670,7 +674,9 @@ If `session` is omitted, a new session ID is auto-generated.
 {
   "type": "tool_end",
   "toolCallId": "call_...",
+  "toolName": "calculate",
   "toolResult": "4",
+  "toolIsError": false,
   "messageId": "uuid-..."
 }
 ```

@@ -161,6 +161,45 @@ Or for faster iteration when you've already run tests:
 
 ---
 
+## CLI Commands
+
+The `botnexus` CLI tool provides quick management of configuration without editing JSON manually.
+
+### Common Workflow
+
+```powershell
+# Initialize home directory on first setup
+botnexus init
+
+# List configured agents
+botnexus agent list
+
+# Add a new agent for testing
+botnexus agent add test-agent --provider openai --model gpt-4o
+
+# Update configuration
+botnexus config set gateway.listenUrl http://localhost:8080
+
+# Validate configuration
+botnexus validate
+```
+
+### Quick Reference
+
+| Command | Purpose |
+|---|---|
+| `botnexus init` | Create `~/.botnexus/` with defaults |
+| `botnexus agent list` | Show all configured agents |
+| `botnexus agent add <id>` | Add an agent |
+| `botnexus agent remove <id>` | Remove an agent |
+| `botnexus config get <key>` | Read a config value (e.g., `gateway.listenUrl`) |
+| `botnexus config set <key> <value>` | Set a config value |
+| `botnexus validate` | Validate configuration (or `--remote` for running gateway) |
+
+For complete documentation, see [CLI Reference](cli-reference.md).
+
+---
+
 ## Watch Mode
 
 For continuous development with auto-rebuild on file changes:
@@ -170,6 +209,36 @@ For continuous development with auto-rebuild on file changes:
 ```
 
 This uses `dotnet watch` to automatically rebuild and restart the Gateway when source files change. No manual restart needed.
+
+---
+
+## CLI Tool
+
+The `botnexus` CLI provides commands for managing configuration and agents without editing JSON files directly.
+
+### Running the CLI
+
+```powershell
+# Run from source
+dotnet run --project src\gateway\BotNexus.Cli -- <command>
+
+# Or if installed as a .NET tool
+botnexus <command>
+```
+
+### Key Commands
+
+| Command | Description |
+|---|---|
+| `botnexus init` | Initialize `~/.botnexus/` with default config and directories |
+| `botnexus validate` | Validate config.json (local or against running gateway with `--remote`) |
+| `botnexus agent list` | List all configured agents |
+| `botnexus agent add <id>` | Add an agent (`--provider`, `--model`, `--enabled` options) |
+| `botnexus agent remove <id>` | Remove an agent from config |
+| `botnexus config get <key>` | Read a config value by dotted path (e.g., `gateway.listenUrl`) |
+| `botnexus config set <key> <value>` | Set a config value by dotted path |
+
+Use `--verbose` on any command for additional output.
 
 ---
 

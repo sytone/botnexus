@@ -85,7 +85,17 @@ The Gateway will be ready when you see output like:
 
 ## 3. Initialize BotNexus Home
 
-The Gateway automatically creates `~/.botnexus/` on first run with default configuration. The directory structure:
+The Gateway automatically creates `~/.botnexus/` on first run with default configuration. You can also initialize it manually using the CLI:
+
+```powershell
+# If installed as a .NET tool
+botnexus init
+
+# Or run from source
+dotnet run --project src\gateway\BotNexus.Cli -- init
+```
+
+This creates the directory structure:
 
 ```
 ~/.botnexus/
@@ -112,6 +122,8 @@ $env:BOTNEXUS_HOME = "C:\custom\botnexus"
 # macOS/Linux
 export BOTNEXUS_HOME=/custom/botnexus
 ```
+
+For more CLI options, see [CLI Reference](cli-reference.md).
 
 ---
 

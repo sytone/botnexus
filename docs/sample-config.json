@@ -4,7 +4,24 @@
     "defaultAgentId": "assistant",
     "agentsDirectory": "C:\\Users\\you\\.botnexus\\agents",
     "sessionsDirectory": "C:\\Users\\you\\.botnexus\\sessions",
-    "logLevel": "Information"
+    "logLevel": "Information",
+    "apiKeys": {
+      "tenant-demo": {
+        "apiKey": "bnx_demo_key_change_me",
+        "tenantId": "tenant-demo",
+        "callerId": "local-dev",
+        "displayName": "Tenant Demo Key",
+        "allowedAgents": [
+          "assistant",
+          "analyst"
+        ],
+        "permissions": [
+          "chat:send",
+          "sessions:read"
+        ],
+        "isAdmin": false
+      }
+    }
   },
   "agents": {
     "assistant": {
@@ -52,23 +69,6 @@
         "botToken": "TELEGRAM_BOT_TOKEN",
         "webhookPath": "/telegram/webhook"
       }
-    }
-  },
-  "apiKeys": {
-    "tenant-demo": {
-      "apiKey": "bnx_demo_key_change_me",
-      "tenantId": "tenant-demo",
-      "callerId": "local-dev",
-      "displayName": "Tenant Demo Key",
-      "allowedAgents": [
-        "assistant",
-        "analyst"
-      ],
-      "permissions": [
-        "chat:send",
-        "sessions:read"
-      ],
-      "isAdmin": false
     }
   }
 }

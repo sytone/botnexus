@@ -16,7 +16,7 @@
   },
   "providers": {
     "copilot": {
-      "apiKey": "auth:github-copilot",
+      "apiKey": "auth:copilot",
       "baseUrl": "https://api.githubcopilot.com",
       "defaultModel": "gpt-4.1"
     },

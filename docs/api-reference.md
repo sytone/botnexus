@@ -44,6 +44,26 @@ GET /api/agents?apiKey=your-api-key-here
 
 **Exemptions:** `/health`, `/webui`, and `/swagger` are exempt from authentication.
 
+### CORS
+
+Cross-Origin Resource Sharing is environment-aware:
+
+| Environment | Behavior |
+|---|---|
+| **Development** | All origins, methods, and headers allowed (`AllowAny*`) |
+| **Production** | Origins restricted to `gateway.cors.allowedOrigins` config (defaults to `http://localhost:5005`); methods restricted to `GET`, `POST`, `PUT`, `DELETE`, `OPTIONS` |
+
+Configure production origins in `config.json`:
+```json
+{
+  "gateway": {
+    "cors": {
+      "allowedOrigins": ["https://your-domain.com"]
+    }
+  }
+}
+```
+
 ---
 
 ## Agent Management
@@ -201,7 +221,7 @@ Content-Type: application/json
 
 **Endpoint:** `PUT /api/agents/{agentId}`
 
-**Description:** Update an existing agent descriptor in-place. The agent ID in the URL takes precedence — if the body contains a different `agentId`, it is overwritten with the URL value.
+**Description:** Update an existing agent descriptor in-place. If the request body omits `agentId`, the route value is used. If both are provided, they must match — a mismatch returns 400 Bad Request.
 
 **Parameters:**
 - `agentId` (string, path) — The registered agent ID to update
@@ -239,6 +259,7 @@ Content-Type: application/json
 ```
 
 **Error Responses:**
+- `400 Bad Request` — Body `agentId` does not match the route `agentId`
 - `404 Not Found` — Agent with the given ID is not registered
 
 ---

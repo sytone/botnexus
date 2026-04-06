@@ -176,7 +176,7 @@ dotnet tool install --global --add-source ./src/BotNexus.Cli/bin/Release/net10.0
 dotnet run --project src/BotNexus.Cli -- doctor
 ```
 
-Key commands: `botnexus config validate`, `botnexus doctor`, `botnexus status`, `botnexus start`, `botnexus stop`. Run `botnexus --help` for the full list.
+Key commands: `botnexus init`, `botnexus validate`, `botnexus agent list/add/remove`, `botnexus config get/set`, `botnexus doctor`, `botnexus status`, `botnexus start`, `botnexus stop`. Run `botnexus --help` for the full list.
 
 On first run, BotNexus creates `~/.botnexus/` with a default `config.json`. Edit this file to configure providers, channels, and agents:
 
