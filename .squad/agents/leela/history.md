@@ -7,7 +7,7 @@
 
 ## Core Context
 
-**Phases 1-6 Complete. Sprint 7A Complete.** Build green (0 errors), 264 tests passing (up from 225), Sprint 7A grade A-. Core systems operational:
+**Phases 1-7A Complete. Full Design Review Complete.** Build green (0 errors), 276 tests passing (up from 264), Full Review grade A-. Core systems operational:
 - Agent registry, supervisor, cross-agent calling with recursion guard + depth limits + timeout
 - WebSocket (with reconnect replay + sequence IDs), TUI (with steering), Telegram channel adapters
 - File and in-memory session stores (configurable via platform config)
@@ -1883,3 +1883,39 @@ Design review filtered 14 audit findings down to 6 real fixes (5 already impleme
 - Cross-agent tests: tests/BotNexus.Gateway.Tests/CrossAgentCallingTests.cs
 - Live integration tests: tests/BotNexus.Gateway.Tests/Integration/LiveGatewayIntegrationTests.cs
 - WebUI: src/BotNexus.WebUI/wwwroot/app.js
+
+## 2026-04-06T04:00:00Z — Full Gateway Design Review (Lead)
+
+**Timestamp:** 2026-04-06T04:00:00Z  
+**Status:** ✅ Complete  
+**Requested by:** Jon Bullen (via Copilot)  
+**Scope:** Comprehensive design review of entire Gateway service after 7+ phases
+
+**Context:**
+Full architecture review against all 6 refined requirements. Reviewed: Abstractions (23 files), Core (27 files), API (10 files), Sessions (2 stores), Channels (4 adapters). Build green, 276 tests passing.
+
+**Grade: A-**
+
+| Area | Score |
+|------|-------|
+| SOLID Compliance | 24/25 |
+| Requirement Coverage | 5.5/6 complete |
+| Extension Model | Exemplary |
+| Thread Safety | Production-grade |
+
+**Key Findings:**
+- P0: None. Previous Path.HasExtension auth bypass is fixed (ShouldSkipAuth now uses StartsWithSegments).
+- P1 (6 items): GatewaySession SRP (replay buffer), GatewayWebSocketHandler size (458 lines, 5 responsibilities), HttpClient singleton (should use IHttpClientFactory), StreamAsync task leak (carried), WebSocket payload size validation, SessionHistoryResponse location.
+- P2 (6 items): No correlation IDs, session store indexing, imperative config validation, no REST rate limiting, channel allow-list model, Swagger auth ordering.
+- Top 3 recommendations: Extract SessionReplayBuffer, adopt IHttpClientFactory, decompose GatewayWebSocketHandler.
+
+**Review written to:** `.squad/sessions/2026-04-06T04-design-review.md`
+
+## Learnings — Full Gateway Design Review (2026-04-06)
+
+1. **Path.HasExtension bypass is resolved** — ShouldSkipAuth now uses StartsWithSegments for /health, /webui, /swagger. No more file-extension-based auth skipping. This was a P0 from Phase 5 that's been properly fixed.
+2. **GatewaySession dual-lock pattern is correct but signals SRP** — Separate _historyLock and _streamReplayLock prevent contention between history and replay operations, but the need for two locks in one class is a design smell.
+3. **Bounded channel with drop-oldest for activity broadcasting** — InMemoryActivityBroadcaster uses 500-item bounded channels per subscriber. Slow consumers don't block the gateway. This is the correct pub/sub pattern for real-time monitoring.
+4. **WebSocket rate limiting uses exponential backoff with stale entry cleanup** — Connection attempts tracked in ConcurrentDictionary, cleaned every 128 updates. Practical approach that avoids timers.
+5. **FileSessionStore uses JSONL + metadata sidecar pattern** — History as append-only JSONL, metadata as separate JSON. Good separation — history can grow without rewriting metadata on every save.
+6. **276 gateway tests confirms test coverage is comprehensive** — Up from 225 (Phase 6) → 264 (Sprint 7A) → 276 (current). Test growth tracks feature delivery.
