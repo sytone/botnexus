@@ -84,7 +84,9 @@ public sealed class AgentsControllerTests
     [Fact]
     public async Task GetHealth_WithNoActiveInstances_ReturnsUnknown()
     {
-        var controller = new AgentsController(new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance), Mock.Of<IAgentSupervisor>());
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor("agent-a"));
+        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>());
 
         var result = await controller.GetHealth("agent-a", CancellationToken.None);
 
@@ -95,8 +97,56 @@ public sealed class AgentsControllerTests
     }
 
     [Fact]
+    public async Task GetHealth_WithUnknownAgent_ReturnsNotFound()
+    {
+        var controller = new AgentsController(new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance), Mock.Of<IAgentSupervisor>());
+
+        var result = await controller.GetHealth("missing", CancellationToken.None);
+
+        result.Result.Should().BeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public async Task GetHealth_WithNonHealthCheckableHandle_ReturnsUnknown()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor("agent-a"));
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetAllInstances()).Returns([
+            new AgentInstance
+            {
+                InstanceId = "agent-a::s1",
+                AgentId = "agent-a",
+                SessionId = "s1",
+                IsolationStrategy = "in-process"
+            }
+        ]);
+
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.AgentId).Returns("agent-a");
+        handle.SetupGet(h => h.SessionId).Returns("s1");
+
+        supervisor.As<IAgentHandleInspector>()
+            .Setup(s => s.GetHandle("agent-a", "s1"))
+            .Returns(handle.Object);
+
+        var controller = new AgentsController(registry, supervisor.Object);
+
+        var result = await controller.GetHealth("agent-a", CancellationToken.None);
+
+        var response = (result.Result as OkObjectResult)?.Value as AgentHealthResponse;
+        response.Should().NotBeNull();
+        response!.Status.Should().Be("unknown");
+        response.InstanceCount.Should().Be(1);
+    }
+
+    [Fact]
     public async Task GetHealth_WithHealthCheckableHandle_ReturnsHealthy()
     {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor("agent-a"));
+
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.GetAllInstances()).Returns([
             new AgentInstance
@@ -119,7 +169,7 @@ public sealed class AgentsControllerTests
             .Setup(s => s.GetHandle("agent-a", "s1"))
             .Returns(handle.Object);
 
-        var controller = new AgentsController(new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance), supervisor.Object);
+        var controller = new AgentsController(registry, supervisor.Object);
 
         var result = await controller.GetHealth("agent-a", CancellationToken.None);
 
@@ -132,6 +182,9 @@ public sealed class AgentsControllerTests
     [Fact]
     public async Task GetHealth_WithFailedHealthCheck_ReturnsUnhealthy()
     {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor("agent-a"));
+
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.GetAllInstances()).Returns([
             new AgentInstance
@@ -154,7 +207,7 @@ public sealed class AgentsControllerTests
             .Setup(s => s.GetHandle("agent-a", "s1"))
             .Returns(handle.Object);
 
-        var controller = new AgentsController(new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance), supervisor.Object);
+        var controller = new AgentsController(registry, supervisor.Object);
 
         var result = await controller.GetHealth("agent-a", CancellationToken.None);
 

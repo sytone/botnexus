@@ -223,6 +223,12 @@
 Baseline: build is clean, all 124 tests pass. Ready for implementation.
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
+### 2026-04-06 — Phase 12 Wave 3 gateway coverage (sessions, health, lifecycle, eviction)
+
+- Added focused Gateway coverage for Wave 3 behavior: rate-limit stale-entry eviction safety, SQLite session persistence lifecycle (create/get/save/delete/list/history), first-use table auto-creation, and concurrent store access consistency.
+- Session metadata authorization coverage now explicitly verifies authorized caller success, mismatched caller `403`, and missing caller-identity bypass behavior for both GET and PATCH metadata endpoints.
+- Agent runtime health now has test-backed contracts for registered-but-idle (`unknown`), active health-checkable (`healthy`), active non-health-checkable (`unknown`), failed ping (`unhealthy`), and unknown agent (`404`), plus activity-stream subscription assertions for register/unregister lifecycle events.
+
 ### 2026-04-06 — Phase 10 deployment validation expansion (Wave 1)
 
 - Extended `tests/BotNexus.Gateway.Tests/Integration/DeploymentTests.cs` with 10 new tests validating dev-loop → gateway → auth flow end-to-end

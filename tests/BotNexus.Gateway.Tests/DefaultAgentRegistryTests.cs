@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
+using BotNexus.Gateway.Activity;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Runtime.CompilerServices;
@@ -138,6 +139,42 @@ public sealed class DefaultAgentRegistryTests
         broadcaster.Activities.Should().ContainSingle(activity =>
             activity.Type == GatewayActivityType.AgentConfigChanged &&
             activity.AgentId == "agent-a");
+    }
+
+    [Fact]
+    public async Task Register_PublishesAgentRegisteredActivityThroughSubscriptionStream()
+    {
+        var broadcaster = new InMemoryActivityBroadcaster(NullLogger<InMemoryActivityBroadcaster>.Instance);
+        var registry = CreateRegistry(broadcaster);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        await using var subscription = broadcaster.SubscribeAsync(cts.Token).GetAsyncEnumerator(cts.Token);
+        var readTask = subscription.MoveNextAsync().AsTask();
+        await Task.Delay(20, cts.Token);
+
+        registry.Register(CreateDescriptor("agent-a"));
+
+        (await readTask).Should().BeTrue();
+        subscription.Current.Type.Should().Be(GatewayActivityType.AgentRegistered);
+        subscription.Current.AgentId.Should().Be("agent-a");
+    }
+
+    [Fact]
+    public async Task Unregister_PublishesAgentUnregisteredActivityThroughSubscriptionStream()
+    {
+        var broadcaster = new InMemoryActivityBroadcaster(NullLogger<InMemoryActivityBroadcaster>.Instance);
+        var registry = CreateRegistry(broadcaster);
+        registry.Register(CreateDescriptor("agent-a"));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        await using var subscription = broadcaster.SubscribeAsync(cts.Token).GetAsyncEnumerator(cts.Token);
+        var readTask = subscription.MoveNextAsync().AsTask();
+        await Task.Delay(20, cts.Token);
+
+        registry.Unregister("agent-a");
+
+        (await readTask).Should().BeTrue();
+        subscription.Current.Type.Should().Be(GatewayActivityType.AgentUnregistered);
+        subscription.Current.AgentId.Should().Be("agent-a");
     }
 
     private static DefaultAgentRegistry CreateRegistry()

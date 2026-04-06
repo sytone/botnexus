@@ -254,6 +254,41 @@ public sealed class SessionsControllerTests
     }
 
     [Fact]
+    public async Task GetMetadata_WithMatchingCaller_ReturnsMetadata()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        session.CallerId = "caller-a";
+        session.Metadata["locale"] = "en-US";
+
+        var controller = new SessionsController(store)
+        {
+            ControllerContext = CreateControllerContext("caller-a")
+        };
+
+        var result = await controller.GetMetadata("s1", CancellationToken.None);
+
+        var payload = (result.Result as OkObjectResult)?.Value as Dictionary<string, object?>;
+        payload.Should().NotBeNull();
+        payload.Should().Contain("locale", "en-US");
+    }
+
+    [Fact]
+    public async Task GetMetadata_WithMissingCallerIdentity_SkipsAuthorizationCheck()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        session.CallerId = "caller-a";
+        session.Metadata["locale"] = "en-US";
+
+        var controller = new SessionsController(store);
+
+        var result = await controller.GetMetadata("s1", CancellationToken.None);
+
+        result.Result.Should().BeOfType<OkObjectResult>();
+    }
+
+    [Fact]
     public async Task PatchMetadata_WithUnknownSession_ReturnsNotFound()
     {
         var controller = new SessionsController(new InMemorySessionStore());
@@ -278,6 +313,40 @@ public sealed class SessionsControllerTests
 
         result.Result.Should().BeOfType<ObjectResult>()
             .Which.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+    }
+
+    [Fact]
+    public async Task PatchMetadata_WithMatchingCaller_UpdatesMetadata()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        session.CallerId = "caller-a";
+
+        var controller = new SessionsController(store)
+        {
+            ControllerContext = CreateControllerContext("caller-a")
+        };
+        using var patchDocument = JsonDocument.Parse("""{"theme":"dark"}""");
+
+        var result = await controller.PatchMetadata("s1", patchDocument.RootElement.Clone(), CancellationToken.None);
+
+        var payload = (result.Result as OkObjectResult)?.Value as Dictionary<string, object?>;
+        payload.Should().Contain("theme", "dark");
+    }
+
+    [Fact]
+    public async Task PatchMetadata_WithMissingCallerIdentity_SkipsAuthorizationCheck()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        session.CallerId = "caller-a";
+
+        var controller = new SessionsController(store);
+        using var patchDocument = JsonDocument.Parse("""{"theme":"dark"}""");
+
+        var result = await controller.PatchMetadata("s1", patchDocument.RootElement.Clone(), CancellationToken.None);
+
+        result.Result.Should().BeOfType<OkObjectResult>();
     }
 
     [Fact]

@@ -110,6 +110,9 @@ public sealed class AgentsController : ControllerBase
     [HttpGet("{agentId}/health")]
     public async Task<ActionResult<AgentHealthResponse>> GetHealth(string agentId, CancellationToken cancellationToken)
     {
+        if (_registry.Get(agentId) is null)
+            return NotFound();
+
         var instances = (_supervisor.GetAllInstances() ?? [])
             .Where(instance => string.Equals(instance.AgentId, agentId, StringComparison.OrdinalIgnoreCase))
             .ToList();

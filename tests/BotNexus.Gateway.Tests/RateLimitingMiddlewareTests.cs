@@ -4,6 +4,7 @@ using BotNexus.Gateway.Api;
 using BotNexus.Gateway.Configuration;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
+using System.Reflection;
 
 namespace BotNexus.Gateway.Tests;
 
@@ -241,6 +242,48 @@ public sealed class RateLimitingMiddlewareTests
     }
 
     [Fact]
+    public async Task InvokeAsync_CleansUpStaleEntriesAfterWindowExpires()
+    {
+        var middleware = new RateLimitingMiddleware(
+            _ => Task.CompletedTask,
+            CreateConfig(requestsPerMinute: 1, windowSeconds: 1));
+
+        await middleware.InvokeAsync(CreateContext("127.0.0.1"));
+
+        var windows = GetClientWindows(middleware);
+        GetWindowCount(windows).Should().Be(1);
+        var staleWindow = GetWindow(windows, "ip:127.0.0.1");
+        SetClientWindowLastAccessed(staleWindow, DateTimeOffset.UtcNow - TimeSpan.FromSeconds(3));
+        ResetCleanupGate(middleware);
+
+        await middleware.InvokeAsync(CreateContext("127.0.0.2"));
+
+        HasWindow(windows, "ip:127.0.0.2").Should().BeTrue();
+        HasWindow(windows, "ip:127.0.0.1").Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task InvokeAsync_Cleanup_DoesNotRemoveActiveEntries()
+    {
+        var middleware = new RateLimitingMiddleware(
+            _ => Task.CompletedTask,
+            CreateConfig(requestsPerMinute: 2, windowSeconds: 1));
+
+        await middleware.InvokeAsync(CreateContext("127.0.0.1"));
+
+        var windows = GetClientWindows(middleware);
+        var activeWindow = GetWindow(windows, "ip:127.0.0.1");
+        SetClientWindowLastAccessed(activeWindow, DateTimeOffset.UtcNow - TimeSpan.FromMilliseconds(300));
+        ResetCleanupGate(middleware);
+
+        await middleware.InvokeAsync(CreateContext("127.0.0.2"));
+        await middleware.InvokeAsync(CreateContext("127.0.0.1"));
+
+        HasWindow(windows, "ip:127.0.0.1").Should().BeTrue();
+        GetWindowProperty(activeWindow, "RequestCount").Should().Be(2);
+    }
+
+    [Fact]
     public async Task InvokeAsync_WithInvalidConfiguredLimit_UsesDefaultLimit()
     {
         var middleware = new RateLimitingMiddleware(
@@ -310,4 +353,43 @@ public sealed class RateLimitingMiddlewareTests
         context.Connection.RemoteIpAddress = IPAddress.Parse(remoteIpAddress);
         return context;
     }
+
+    private static object GetClientWindows(RateLimitingMiddleware middleware)
+    {
+        var field = typeof(RateLimitingMiddleware)
+            .GetField("_clientWindows", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        return field.GetValue(middleware)!;
+    }
+
+    private static void SetClientWindowLastAccessed(object clientWindow, DateTimeOffset value)
+        => clientWindow.GetType()
+            .GetProperty("LastAccessed", BindingFlags.Instance | BindingFlags.Public)!
+            .SetValue(clientWindow, value);
+
+    private static int GetWindowCount(object windows)
+        => (int)(windows.GetType().GetProperty("Count", BindingFlags.Instance | BindingFlags.Public)!.GetValue(windows) ?? 0);
+
+    private static bool HasWindow(object windows, string key)
+    {
+        var tryGetValue = windows.GetType().GetMethod("TryGetValue", BindingFlags.Instance | BindingFlags.Public)!;
+        var args = new object?[] { key, null };
+        return (bool)(tryGetValue.Invoke(windows, args) ?? false);
+    }
+
+    private static object GetWindow(object windows, string key)
+    {
+        var tryGetValue = windows.GetType().GetMethod("TryGetValue", BindingFlags.Instance | BindingFlags.Public)!;
+        var args = new object?[] { key, null };
+        var found = (bool)(tryGetValue.Invoke(windows, args) ?? false);
+        found.Should().BeTrue($"expected rate-limit window '{key}' to exist");
+        return args[1]!;
+    }
+
+    private static object? GetWindowProperty(object window, string propertyName)
+        => window.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public)!.GetValue(window);
+
+    private static void ResetCleanupGate(RateLimitingMiddleware middleware)
+        => typeof(RateLimitingMiddleware)
+            .GetField("_lastCleanupTicks", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(middleware, 0L);
 }
