@@ -211,11 +211,36 @@ public sealed class SessionsControllerTests
     }
 
     [Fact]
+    public async Task GetMetadata_WithEmptyMetadata_ReturnsEmptyDictionary()
+    {
+        var store = new InMemorySessionStore();
+        await store.GetOrCreateAsync("s1", "agent-a");
+        var controller = new SessionsController(store);
+
+        var result = await controller.GetMetadata("s1", CancellationToken.None);
+
+        var payload = (result.Result as OkObjectResult)?.Value as Dictionary<string, object?>;
+        payload.Should().NotBeNull();
+        payload.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task GetMetadata_WithUnknownSession_ReturnsNotFound()
     {
         var controller = new SessionsController(new InMemorySessionStore());
 
         var result = await controller.GetMetadata("missing", CancellationToken.None);
+
+        result.Result.Should().BeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public async Task PatchMetadata_WithUnknownSession_ReturnsNotFound()
+    {
+        var controller = new SessionsController(new InMemorySessionStore());
+        using var patchDocument = JsonDocument.Parse("""{"theme":"dark"}""");
+
+        var result = await controller.PatchMetadata("missing", patchDocument.RootElement.Clone(), CancellationToken.None);
 
         result.Result.Should().BeOfType<NotFoundResult>();
     }
@@ -251,5 +276,73 @@ public sealed class SessionsControllerTests
         var result = await controller.PatchMetadata("s1", patchDocument.RootElement.Clone(), CancellationToken.None);
 
         result.Result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async Task PatchMetadata_WithObjectBody_MergesWithoutRemovingExistingKeys()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        session.Metadata["existing"] = "value";
+        var controller = new SessionsController(store);
+        using var patchDocument = JsonDocument.Parse("""{"theme":"dark"}""");
+
+        var result = await controller.PatchMetadata("s1", patchDocument.RootElement.Clone(), CancellationToken.None);
+
+        var payload = (result.Result as OkObjectResult)?.Value as Dictionary<string, object?>;
+        payload.Should().NotBeNull();
+        payload.Should().Contain("existing", "value");
+        payload.Should().Contain("theme", "dark");
+    }
+
+    [Fact]
+    public async Task PatchMetadata_WithNullValue_RemovesOnlyTargetedKey()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        session.Metadata["removeMe"] = "value";
+        session.Metadata["keepMe"] = "value";
+        var controller = new SessionsController(store);
+        using var patchDocument = JsonDocument.Parse("""{"removeMe":null}""");
+
+        var result = await controller.PatchMetadata("s1", patchDocument.RootElement.Clone(), CancellationToken.None);
+
+        var payload = (result.Result as OkObjectResult)?.Value as Dictionary<string, object?>;
+        payload.Should().NotBeNull();
+        payload.Should().NotContainKey("removeMe");
+        payload.Should().Contain("keepMe", "value");
+    }
+
+    [Fact]
+    public async Task PatchMetadata_PersistsChangesInSessionStore()
+    {
+        var store = new InMemorySessionStore();
+        await store.GetOrCreateAsync("s1", "agent-a");
+        var controller = new SessionsController(store);
+        using var patchDocument = JsonDocument.Parse("""{"locale":"en-US"}""");
+
+        await controller.PatchMetadata("s1", patchDocument.RootElement.Clone(), CancellationToken.None);
+
+        var savedSession = await store.GetAsync("s1", CancellationToken.None);
+        savedSession.Should().NotBeNull();
+        savedSession!.Metadata.Should().Contain("locale", "en-US");
+    }
+
+    [Fact]
+    public async Task PatchMetadata_ConvertsJsonValuesToExpectedTypes()
+    {
+        var store = new InMemorySessionStore();
+        await store.GetOrCreateAsync("s1", "agent-a");
+        var controller = new SessionsController(store);
+        using var patchDocument = JsonDocument.Parse("""{"count":2,"enabled":true,"threshold":1.5,"tags":["a","b"]}""");
+
+        var result = await controller.PatchMetadata("s1", patchDocument.RootElement.Clone(), CancellationToken.None);
+
+        var payload = (result.Result as OkObjectResult)?.Value as Dictionary<string, object?>;
+        payload.Should().NotBeNull();
+        payload!["count"].Should().BeOfType<long>().Which.Should().Be(2);
+        payload["enabled"].Should().Be(true);
+        payload["threshold"].Should().BeOfType<decimal>().Which.Should().Be(1.5m);
+        payload["tags"].Should().BeAssignableTo<List<object?>>();
     }
 }

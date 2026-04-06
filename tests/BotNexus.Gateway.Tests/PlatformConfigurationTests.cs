@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -179,11 +180,73 @@ public sealed class PlatformConfigurationTests
     }
 
     [Fact]
+    public void PlatformConfigLoader_Load_WithMissingVersion_DefaultsToVersionOne()
+    {
+        using var fixture = new PlatformConfigFixture();
+        var configPath = Path.Combine(fixture.RootPath, "missing-version-sync.json");
+        File.WriteAllText(configPath, """{"defaultAgentId":"assistant"}""");
+
+        var config = PlatformConfigLoader.Load(configPath, validateOnLoad: false);
+
+        config.Version.Should().Be(1);
+    }
+
+    [Fact]
     public void PlatformConfigLoader_ValidateWarnings_WithUnknownVersion_ReturnsWarning()
     {
         var warnings = PlatformConfigLoader.ValidateWarnings(new PlatformConfig { Version = 2 });
 
         warnings.Should().ContainSingle(warning => warning.Contains("version '2'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PlatformConfigLoader_ValidateWarnings_WithKnownVersion_ReturnsNoWarnings()
+    {
+        var warnings = PlatformConfigLoader.ValidateWarnings(new PlatformConfig { Version = 1 });
+
+        warnings.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void PlatformConfigLoader_Load_WithUnknownVersion_EmitsTraceWarning()
+    {
+        using var fixture = new PlatformConfigFixture();
+        var configPath = Path.Combine(fixture.RootPath, "future-version.json");
+        File.WriteAllText(configPath, """{"version":2}""");
+        using var listener = new CollectingTraceListener();
+
+        Trace.Listeners.Add(listener);
+        try
+        {
+            _ = PlatformConfigLoader.Load(configPath, validateOnLoad: false);
+        }
+        finally
+        {
+            Trace.Listeners.Remove(listener);
+        }
+
+        listener.Messages.Should().Contain(message => message.Contains("Platform config warning", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PlatformConfigLoader_Load_WithSupportedVersion_DoesNotEmitTraceWarning()
+    {
+        using var fixture = new PlatformConfigFixture();
+        var configPath = Path.Combine(fixture.RootPath, "supported-version.json");
+        File.WriteAllText(configPath, """{"version":1}""");
+        using var listener = new CollectingTraceListener();
+
+        Trace.Listeners.Add(listener);
+        try
+        {
+            _ = PlatformConfigLoader.Load(configPath, validateOnLoad: false);
+        }
+        finally
+        {
+            Trace.Listeners.Remove(listener);
+        }
+
+        listener.Messages.Should().NotContain(message => message.Contains("Platform config warning", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -506,5 +569,31 @@ public sealed class PlatformConfigurationTests
             if (Directory.Exists(RootPath))
                 Directory.Delete(RootPath, recursive: true);
         }
+    }
+
+    private sealed class CollectingTraceListener : TraceListener
+    {
+        public List<string> Messages { get; } = [];
+
+        public override void Write(string? message)
+        {
+            if (!string.IsNullOrEmpty(message))
+                Messages.Add(message);
+        }
+
+        public override void WriteLine(string? message)
+            => Write(message);
+
+        public override void TraceEvent(TraceEventCache? eventCache, string? source, TraceEventType eventType, int id, string? message)
+            => Write(message);
+
+        public override void TraceEvent(
+            TraceEventCache? eventCache,
+            string? source,
+            TraceEventType eventType,
+            int id,
+            string? format,
+            params object?[]? args)
+            => Write(args is { Length: > 0 } ? string.Format(format ?? string.Empty, args) : format);
     }
 }

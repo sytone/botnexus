@@ -798,3 +798,9 @@ Result: Phase 3 blockers cleared, build clean, READY FOR RELEASE.
 - Auth bypass coverage now explicitly guards API extension-like routes (`/api/agents.json`, `/api/agents.JSON`, `/api/agents/foo.bar`, `/api/sessions.xml`) while preserving allowlist skips (`/health`, `/swagger/index.html`, `/webui/styles.css`) and handling empty/null path edges.
 - Added controller response coverage for empty registries, single/multiple records, capability/metadata mapping, DTO payload shape, and fallback `"unknown"` extension type behavior.
 - Validation: `dotnet build Q:\\repos\\botnexus --verbosity quiet` and `dotnet test Q:\\repos\\botnexus\\tests\\BotNexus.Gateway.Tests\\BotNexus.Gateway.Tests.csproj --verbosity minimal` passed (368/368).
+## 2026-04-06 - Wave 2 coverage phase 12 (rate limit + correlation + metadata + config versioning)
+- Expanded `RateLimitingMiddlewareTests` with limit-boundary, 429 short-circuit, Retry-After numeric validation, `/health` case-insensitive bypass, independent client buckets (IP + caller identity), unknown-IP bucket behavior, fallback defaults, and window reset behavior.
+- Expanded `CorrelationIdMiddlewareTests` to validate response header presence on every request, incoming header preservation, whitespace-header GUID regeneration, GUID validity, and per-request uniqueness.
+- Expanded `SessionsControllerTests` metadata endpoint coverage for empty metadata fetch, non-existent PATCH 404, merge-only PATCH behavior, null-removal precision, persistence after save, and JSON type conversion expectations.
+- Expanded `PlatformConfigurationTests` versioning coverage for sync-load missing version default (`1`), warnings for unsupported versions, no warnings for supported versions, and trace warning emission checks.
+- Validation: `dotnet build Q:\repos\botnexus --verbosity quiet` and `dotnet test Q:\repos\botnexus\tests\BotNexus.Gateway.Tests --verbosity quiet` passed.
