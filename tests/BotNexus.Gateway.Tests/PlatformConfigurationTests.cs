@@ -161,6 +161,7 @@ public sealed class PlatformConfigurationTests
         config.Channels.Should().BeNull();
         config.LogLevel.Should().BeNull();
         config.Providers.Should().BeNull();
+        config.SessionStore.Should().BeNull();
     }
 
     [Fact]
@@ -243,9 +244,52 @@ public sealed class PlatformConfigurationTests
             .WithMessage("*gateway.apiKeys.tenant-a.apiKey*");
     }
 
+    [Fact]
+    public void PlatformConfigLoader_Validate_WithInvalidSessionStoreType_ReturnsActionableError()
+    {
+        var errors = PlatformConfigLoader.Validate(new PlatformConfig
+        {
+            SessionStore = new SessionStoreConfig { Type = "Sql" }
+        });
+
+        errors.Should().ContainSingle(e => e.Contains("gateway.sessionStore.type", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PlatformConfigLoader_Validate_WithFileSessionStoreMissingPath_ReturnsActionableError()
+    {
+        var errors = PlatformConfigLoader.Validate(new PlatformConfig
+        {
+            SessionStore = new SessionStoreConfig { Type = "File" }
+        });
+
+        errors.Should().ContainSingle(e => e.Contains("gateway.sessionStore.filePath", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AddPlatformConfiguration_WithInMemorySessionStore_RegistersInMemorySessionStore()
+    {
+        using var fixture = new PlatformConfigFixture(new PlatformConfig
+        {
+            SessionStore = new SessionStoreConfig
+            {
+                Type = "InMemory"
+            }
+        });
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddBotNexusGateway();
+        services.AddPlatformConfiguration(fixture.ConfigPath);
+
+        using var provider = services.BuildServiceProvider();
+        var sessionStore = provider.GetRequiredService<ISessionStore>();
+        sessionStore.Should().BeOfType<InMemorySessionStore>();
+    }
+
     private sealed class PlatformConfigFixture : IDisposable
     {
-        public PlatformConfigFixture()
+        public PlatformConfigFixture(PlatformConfig? configOverride = null)
         {
             RootPath = Path.Combine(Path.GetTempPath(), "botnexus-platform-config-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(RootPath);
@@ -267,6 +311,22 @@ public sealed class PlatformConfigurationTests
                     }
                 }
             };
+
+            if (configOverride is not null)
+            {
+                config.Gateway = configOverride.Gateway;
+                config.Agents = configOverride.Agents;
+                config.Providers = configOverride.Providers;
+                config.Channels = configOverride.Channels;
+                config.ApiKey = configOverride.ApiKey;
+                config.ApiKeys = configOverride.ApiKeys;
+                config.ListenUrl = configOverride.ListenUrl;
+                config.DefaultAgentId = configOverride.DefaultAgentId ?? config.DefaultAgentId;
+                config.AgentsDirectory = configOverride.AgentsDirectory ?? config.AgentsDirectory;
+                config.SessionsDirectory = configOverride.SessionsDirectory ?? config.SessionsDirectory;
+                config.SessionStore = configOverride.SessionStore ?? config.SessionStore;
+                config.LogLevel = configOverride.LogLevel ?? config.LogLevel;
+            }
 
             File.WriteAllText(ConfigPath, JsonSerializer.Serialize(config));
         }

@@ -114,6 +114,7 @@ public static class PlatformConfigLoader
 
         ValidatePath(config.GetAgentsDirectory(), "gateway.agentsDirectory", errors);
         ValidatePath(config.GetSessionsDirectory(), "gateway.sessionsDirectory", errors);
+        ValidateSessionStore(config.GetSessionStore(), errors);
 
         var logLevel = config.GetLogLevel();
         if (!string.IsNullOrWhiteSpace(logLevel) &&
@@ -268,6 +269,33 @@ public static class PlatformConfigLoader
             if (keyConfig.Permissions is null || keyConfig.Permissions.Count == 0)
                 errors.Add($"{keyPath}.permissions must contain at least one permission (example: ['chat:send']).");
         }
+    }
+
+    private static void ValidateSessionStore(SessionStoreConfig? sessionStore, List<string> errors)
+    {
+        if (sessionStore is null)
+            return;
+
+        var configuredType = sessionStore.Type?.Trim();
+        if (string.IsNullOrWhiteSpace(configuredType))
+            return;
+
+        if (configuredType.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        if (configuredType.Equals("File", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(sessionStore.FilePath))
+            {
+                errors.Add("gateway.sessionStore.filePath is required when gateway.sessionStore.type is 'File'.");
+                return;
+            }
+
+            ValidatePath(sessionStore.FilePath, "gateway.sessionStore.filePath", errors);
+            return;
+        }
+
+        errors.Add("gateway.sessionStore.type must be either 'InMemory' or 'File'.");
     }
 
     private sealed class PlatformConfigWatcher : IDisposable

@@ -35,6 +35,9 @@ public sealed class PlatformConfig
     /// <summary>Path to sessions storage directory (legacy root-level form).</summary>
     public string? SessionsDirectory { get; set; }
 
+    /// <summary>Session store selection and configuration (legacy root-level form).</summary>
+    public SessionStoreConfig? SessionStore { get; set; }
+
     /// <summary>Logging level.</summary>
     public string? LogLevel { get; set; }
 
@@ -61,6 +64,10 @@ public sealed class PlatformConfig
     /// <summary>Returns configured multi-tenant API keys, preferring the nested Gateway section.</summary>
     public Dictionary<string, ApiKeyConfig>? GetApiKeys()
         => Gateway?.ApiKeys ?? ApiKeys;
+
+    /// <summary>Returns configured session store settings, preferring the nested Gateway section.</summary>
+    public SessionStoreConfig? GetSessionStore()
+        => Gateway?.SessionStore ?? SessionStore;
 }
 
 /// <summary>Provider-specific configuration.</summary>
@@ -87,6 +94,8 @@ public sealed class GatewaySettingsConfig
     public string? AgentsDirectory { get; set; }
     /// <summary>Path to sessions storage directory.</summary>
     public string? SessionsDirectory { get; set; }
+    /// <summary>Session store selection and configuration.</summary>
+    public SessionStoreConfig? SessionStore { get; set; }
     /// <summary>Logging level override.</summary>
     public string? LogLevel { get; set; }
     /// <summary>Multi-tenant API keys keyed by key ID.</summary>
@@ -117,6 +126,15 @@ public sealed class ChannelConfig
     public bool Enabled { get; set; } = true;
     /// <summary>Adapter-specific settings.</summary>
     public Dictionary<string, string>? Settings { get; set; }
+}
+
+/// <summary>Session store implementation configuration.</summary>
+public sealed class SessionStoreConfig
+{
+    /// <summary>Store type. Supported values: InMemory or File.</summary>
+    public string? Type { get; set; }
+    /// <summary>Path used by file-based session store implementation.</summary>
+    public string? FilePath { get; set; }
 }
 
 /// <summary>API key entry used for multi-tenant gateway auth.</summary>

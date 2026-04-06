@@ -109,16 +109,7 @@ public static class GatewayServiceCollectionExtensions
             services.PostConfigure<GatewayOptions>(options => options.DefaultAgentId = defaultAgentId);
         }
 
-        var sessionsDirectory = config.GetSessionsDirectory();
-        if (!string.IsNullOrWhiteSpace(sessionsDirectory))
-        {
-            var sessionsPath = ResolveConfiguredPath(configDirectory, sessionsDirectory);
-            Directory.CreateDirectory(sessionsPath);
-            services.Replace(ServiceDescriptor.Singleton<ISessionStore>(serviceProvider =>
-                new FileSessionStore(
-                    sessionsPath,
-                    serviceProvider.GetRequiredService<ILogger<FileSessionStore>>())));
-        }
+        ConfigureSessionStore(services, config, configDirectory);
 
         var agentsDirectory = config.GetAgentsDirectory();
         if (!string.IsNullOrWhiteSpace(agentsDirectory))
@@ -155,7 +146,43 @@ public static class GatewayServiceCollectionExtensions
         target.DefaultAgentId = source.DefaultAgentId;
         target.AgentsDirectory = source.AgentsDirectory;
         target.SessionsDirectory = source.SessionsDirectory;
+        target.SessionStore = source.SessionStore;
         target.LogLevel = source.LogLevel;
+    }
+
+    private static void ConfigureSessionStore(IServiceCollection services, PlatformConfig config, string configDirectory)
+    {
+        var sessionStore = config.GetSessionStore();
+        var explicitType = sessionStore?.Type?.Trim();
+        var sessionsDirectory = config.GetSessionsDirectory();
+        var resolvedType = !string.IsNullOrWhiteSpace(explicitType)
+            ? explicitType
+            : !string.IsNullOrWhiteSpace(sessionsDirectory)
+                ? "File"
+                : "InMemory";
+
+        if (resolvedType.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
+        {
+            services.Replace(ServiceDescriptor.Singleton<ISessionStore, InMemorySessionStore>());
+            return;
+        }
+
+        if (resolvedType.Equals("File", StringComparison.OrdinalIgnoreCase))
+        {
+            var configuredPath = sessionStore?.FilePath ?? sessionsDirectory;
+            if (string.IsNullOrWhiteSpace(configuredPath))
+                throw new OptionsValidationException(nameof(PlatformConfig), typeof(PlatformConfig), ["gateway.sessionStore.filePath is required when gateway.sessionStore.type is 'File'."]);
+
+            var sessionsPath = ResolveConfiguredPath(configDirectory, configuredPath);
+            Directory.CreateDirectory(sessionsPath);
+            services.Replace(ServiceDescriptor.Singleton<ISessionStore>(serviceProvider =>
+                new FileSessionStore(
+                    sessionsPath,
+                    serviceProvider.GetRequiredService<ILogger<FileSessionStore>>())));
+            return;
+        }
+
+        throw new OptionsValidationException(nameof(PlatformConfig), typeof(PlatformConfig), ["gateway.sessionStore.type must be either 'InMemory' or 'File'."]);
     }
 
     /// <summary>
