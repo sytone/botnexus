@@ -163,6 +163,12 @@ Build is clean, tests pass. ProviderRegistry exists but is unused — evaluate i
 - Runtime thinking is driven by `AgentState.ThinkingLevel`; `/thinking` updates state and `/model` + `/thinking` now emit session JSONL metadata entries (`model_change`, `thinking_level_change`).
 - Session metadata writing is now first-class via `SessionManager.WriteMetadataAsync`, preserving metadata across reload/save cycles.
 
+### 2026-04-05 — Gateway IHttpClientFactory Migration
+
+- Replaced raw singleton `new HttpClient(...)` registration in `BotNexus.Gateway.Api/Program.cs` with `AddHttpClient` + named client `BotNexus`.
+- Preserved frozen provider constructor contracts by registering `HttpClient` as a singleton resolved from `IHttpClientFactory.CreateClient("BotNexus")`.
+- Kept timeout behavior unchanged at 10 minutes while removing direct singleton HttpClient anti-pattern risk.
+
 ### 2026-04-03 — Agent Loop Multi-Turn Continuation Fix (Scribe cross-agent update)
 
 **Task:** Fixed agent loop continuation when LLM narrates intent without tool calls  

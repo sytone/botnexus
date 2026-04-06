@@ -37,7 +37,16 @@ builder.Services.AddSwaggerGen(options =>
 builder.Services.AddSingleton<ApiProviderRegistry>();
 builder.Services.AddSingleton<ModelRegistry>();
 builder.Services.AddSingleton<BuiltInModels>();
-builder.Services.AddSingleton(new HttpClient { Timeout = TimeSpan.FromMinutes(10) });
+builder.Services.AddHttpClient();
+builder.Services.AddHttpClient("BotNexus", client =>
+{
+    client.Timeout = TimeSpan.FromMinutes(10);
+});
+builder.Services.AddSingleton<HttpClient>(sp =>
+{
+    var factory = sp.GetRequiredService<IHttpClientFactory>();
+    return factory.CreateClient("BotNexus");
+});
 builder.Services.AddSingleton<LlmClient>(serviceProvider =>
 {
     var apiProviders = serviceProvider.GetRequiredService<ApiProviderRegistry>();
