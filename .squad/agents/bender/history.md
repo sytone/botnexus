@@ -582,6 +582,35 @@ _logger.LogInformation("Agent {AgentName} configured with model={ConfiguredModel
 
 **What:** Created `BotNexus.Providers.OpenAICompat` under `src/providers/`. Standalone provider for OpenAI-compatible inference servers (Ollama, vLLM, LM Studio, SGLang, Cerebras, xAI, DeepSeek, Groq).
 
+---
+
+## 2026-04-05T23:00:00Z — Gateway Sprint
+
+**Status:** ✅ Complete  
+**Timestamp:** 2026-04-05T23:00:00Z  
+**Orchestration Log:** `.squad/orchestration-log/2026-04-05T23-gateway-sprint.md`
+
+**Your Work (Bender — Runtime):**
+- Created PlatformConfigAgentSource for runtime config loading
+- Developed dev convenience scripts for local gateway testing
+- Provided sample configuration (appsettings-dev.json) for rapid onboarding
+- Scripts tested locally; ready for distribution
+
+**Team Coordination:**
+- **Farnsworth (Platform):** Wire provider registration + GatewayAuthManager ✅
+- **Leela (Architecture):** Design review approved with 3 P1 notes ✅
+- **Kif (Documentation):** Gateway module README + root README update ✅
+- **Hermes (QA):** 14 new tests (GatewayAuthManager + integration) ✅
+
+**Sprint Outcomes:**
+- Config source establishes pattern for runtime agent configuration
+- Dev scripts enable local developer workflows
+- 14 tests passing; 0 regressions
+- 1,200+ lines documentation
+- Ready for integration merge
+
+**Next:** Execute 3 P1 items in next sprint
+
 **Files Created:**
 - `BotNexus.Providers.OpenAICompat.csproj` — NET 10.0, references Core only, no external SDK
 - `OpenAICompatProvider.cs` — `IApiProvider` impl (api="openai-compat"), raw HttpClient SSE streaming, compat-aware request/response
@@ -797,3 +826,10 @@ Result: Phase 3 blockers cleared, build clean, READY FOR RELEASE.
 - `src\gateway\BotNexus.Gateway\Extensions\GatewayServiceCollectionExtensions.cs` now registers platform-config and file-based agent sources together in `AddPlatformConfiguration`, so platform-config-defined agents are loaded at startup.
 - Added developer entry points: `scripts\start-gateway.ps1` (build + run gateway API with `ASPNETCORE_ENVIRONMENT=Development`, `-Port`) and `scripts\dev-loop.ps1` (solution build + gateway tests + run/watch gateway).
 - Key docs for onboarding this flow: `docs\sample-config.json`, `docs\sample-config.md`, and updated `docs\development-workflow.md`.
+
+### 2026-04-06 — Gateway auth/runtime guardrails shipped
+- Added `GatewayAuthMiddleware` (`src\gateway\BotNexus.Gateway.Api\GatewayAuthMiddleware.cs`) and wired it in `Program.cs` so REST + WebSocket upgrade requests hit `IGatewayAuthHandler` before routing, with explicit bypasses for `/health`, `/webui`, static assets, and `/swagger`.
+- Gateway API now publishes OpenAPI metadata with XML comments and `Swashbuckle.AspNetCore`; Swagger UI is hosted at `/swagger` and uses assembly versioning for the document version.
+- `DefaultAgentSupervisor` now enforces `MaxConcurrentSessions` (0 = unlimited) and throws `AgentConcurrencyLimitExceededException` for capacity breaches; `ChatController` maps that to HTTP 429.
+- Isolation strategy validation now surfaces descriptor-level errors before strategy creation and reports available strategy names for fast operator diagnosis.
+- `GatewayWebSocketHandler` now enforces one active socket per session and rejects duplicate `?session=` connections with close code 4409.

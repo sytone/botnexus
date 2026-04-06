@@ -11,6 +11,8 @@
 3. Fail fast on load via `OptionsValidationException` for invalid config.
 4. Expose `GET /api/config/validate` returning `{ isValid, configPath, errors[] }`.
 5. Keep startup wiring in `Program.cs` using `AddPlatformConfiguration(...)`.
+6. For runtime updates, watch `config.json` directly with `FileSystemWatcher` + 500ms debounce and reload through `PlatformConfigLoader.Load(...)`.
+7. Emit a config-changed callback/event so long-running services can react without restart.
 
 ## Notes
 - Error messages should name exact field paths (e.g., `gateway.apiKeys.tenant-a.permissions`).

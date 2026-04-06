@@ -178,6 +178,7 @@
 - 2026-04-06: Gateway now supports AD-20 JSON agent configuration via `IAgentConfigurationSource`, `FileAgentConfigurationSource` (with watcher hot-reload), and hosted merge loading where code-registered agents always override config-sourced descriptors.
 - 2026-04-06: `AgentDescriptor` now includes `SubAgentIds`, `SystemPromptFile`, and `IsolationOptions`; file-backed prompts are loaded relative to each agent config file and validated through `AgentDescriptorValidator`.
 - 2026-04-06: Gateway LLM execution now depends on startup provider wiring in `BotNexus.Gateway.Api/Program.cs` (shared `HttpClient`, Anthropic/OpenAI/OpenAICompat registrations) and runtime API-key resolution via `GatewayAuthManager` (`auth.json` → env vars → `providers.{name}.apiKey`).
+- 2026-04-06: Gateway now has channel capability flags (`SupportsSteering`, `SupportsFollowUp`, `SupportsThinkingDisplay`, `SupportsToolDisplay`), session lifecycle status/expiry with `SessionCleanupService`, BotNexus home `agents/` workspace scaffolding, and debounced `config.json` hot-reload via `PlatformConfigLoader.Watch`.
 
 ## Sprint 1 Summary — 2026-04-01T17:33Z
 
@@ -444,6 +445,35 @@ All 7 foundation items completed (Farnsworth: 5, Bender: 2). Decisions merged an
 **Build Status:** ✅ Green (0 errors, 0 warnings), all tests passing
 
 **Decision Inbox:** All 4 inbox files merged to decisions.md and deleted
+
+---
+
+## 2026-04-05T23:00:00Z — Gateway Sprint
+
+**Status:** ✅ Complete  
+**Timestamp:** 2026-04-05T23:00:00Z  
+**Orchestration Log:** `.squad/orchestration-log/2026-04-05T23-gateway-sprint.md`
+
+**Your Work (Farnsworth — Platform):**
+- Wired provider registration through dependency injection
+- Implemented GatewayAuthManager authentication flow
+- Integrated with existing provider architecture
+- All integration tests passing
+
+**Team Coordination:**
+- **Bender (Runtime):** PlatformConfigAgentSource + dev scripts + sample config ✅
+- **Leela (Architecture):** Design review approved with 3 P1 notes ✅
+- **Kif (Documentation):** Gateway module README + root README update ✅
+- **Hermes (QA):** 14 new tests (GatewayAuthManager + integration) ✅
+
+**Sprint Outcomes:**
+- Provider registration pattern established for future custom providers
+- Gateway architecture validated by Leela
+- 14 tests passing; 0 regressions
+- 1,200+ lines documentation
+- Ready for integration merge
+
+**Next:** Execute 3 P1 items (auth token refresh docs, WebSocket retry strategy, health check details) in next sprint
 
 **Next Phase:** Ready for E2E integration testing with full provider + AgentCore + CodingAgent stack.
 

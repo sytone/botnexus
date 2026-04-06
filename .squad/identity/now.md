@@ -1,13 +1,15 @@
 ---
-updated_at: 2026-04-05T23:30:00Z
-focus_area: Gateway Phase 4 — Complete. Design review A-.
-active_issues: [P1 config validation auth gating, P1 enable recursion tests, P0 decisions.md archival]
-status: phase4_sprint_complete
+updated_at: 2026-04-06T00:23:00Z
+focus_area: Gateway Phase 5 — Wiring & Completeness Sprint
+active_issues: [P0 auth middleware, P0 websocket-channel-adapter, P1 session lifecycle, P1 channel capabilities, P1 agent workspace]
+status: phase5_batch1_in_progress
 ---
 
 # What We're Focused On
 
-**Gateway Phase 4 complete.** 5 P1/P2s fixed (Bender), platform config + deployment validated (Farnsworth), 7 live Copilot integration tests passing (Hermes), WebUI enhanced with thinking/tool/steering display (Fry). Design review A- (Leela). Consistency review Good (Nibbler). 684+ tests, 0 failures.
+**Gateway Phase 5 in progress.** Leela's gap analysis identified 2 P0s (auth middleware, websocket-channel-adapter) and 18 P1s. Foundation is strong (10 interfaces, 696 tests). Batch 1 launched: Bender (auth + 4 P1s), Farnsworth (capabilities + session lifecycle + home dirs), Fry (WebUI enhancements), Hermes (anticipatory tests), Kif (module READMEs).
+
+**Previous:** Gateway Phase 4 complete. Design review A-. 684+ tests, 0 failures.
 
 **Gateway Phase 3 complete.** 4 P0s fixed (thread safety, subscription exceptions, WebUI leaks, path traversal). 5 architecture features added (cross-agent calling, steering/queuing, isolation stubs, platform config, WebUI error states). 56 new tests (614→670). Design review B+. Consistency review Good. Next: live integration testing with Copilot provider, P1 fixes from design review.
 
