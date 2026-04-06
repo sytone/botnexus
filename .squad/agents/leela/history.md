@@ -1919,3 +1919,40 @@ Full architecture review against all 6 refined requirements. Reviewed: Abstracti
 4. **WebSocket rate limiting uses exponential backoff with stale entry cleanup** — Connection attempts tracked in ConcurrentDictionary, cleaned every 128 updates. Practical approach that avoids timers.
 5. **FileSessionStore uses JSONL + metadata sidecar pattern** — History as append-only JSONL, metadata as separate JSON. Good separation — history can grow without rewriting metadata on every save.
 6. **276 gateway tests confirms test coverage is comprehensive** — Up from 225 (Phase 6) → 264 (Sprint 7A) → 276 (current). Test growth tracks feature delivery.
+
+---
+
+## 2026-04-06T05:00:00Z — Phase 9 Requirements Gap Analysis (Lead)
+
+**Timestamp:** 2026-04-06T05:00:00Z  
+**Status:** ✅ Complete  
+**Requested by:** Jon Bullen (via Copilot)  
+**Scope:** Full requirements validation against 6 gateway requirements + architecture constraints
+
+**Context:**
+Validated current codebase against comprehensive requirements brief covering Agent Management, Isolation Strategies, Channel Adapters, Session Management, API Surface, and Platform Configuration. Build: 0 errors/31 CS1591 warnings. Tests: 811 total (276 Gateway), 0 failures.
+
+**Scores:** Agent Mgmt 100%, Isolation 35%, Channels 70%, Sessions 95%, API 85%, Config 65%.
+
+**Key Findings:**
+- Agent management fully complete — registration, lifecycle, sub/cross-agent calling, recursion guards, depth limits all implemented and tested
+- Biggest gap: Dynamic extension loading (user directive 2a) — channels and providers are hardcoded DI, not loaded from extensions/ folders
+- CORS missing — blocks WebUI cross-origin requests
+- CLI has only `validate` command — no `init`, no agent management
+- JSON Schema references point to non-existent URLs
+- Telegram is a stub with no Bot API integration
+- 3 frozen code proposals filed: IHttpClientFactory (low risk), provider conformance tests (no risk), StreamAsync leak (defer)
+
+**Sprint Plan:** 9A (dynamic loading + quick wins), 9B (CLI + config), 9C (Telegram + frozen code)
+
+**Decision written to:** `.squad/decisions/inbox/leela-phase9-gap-analysis.md`
+
+## Learnings — Phase 9 Gap Analysis (2026-04-06)
+
+1. **Dynamic extension loading is the #1 architectural gap** — User directive 2a requires config-driven assembly loading. The extension folder structure exists (~/.botnexus/extensions/{channels,providers,tools}/) but no code scans or loads assemblies from it. This blocks the "nothing loads unless configured" design principle.
+2. **Agent management is the strongest subsystem** — IAgentRegistry, IAgentSupervisor, IAgentCommunicator form a complete, well-tested agent lifecycle. Cross-agent calling has recursion guards, depth limits (10), and timeouts (120s). No gaps found.
+3. **Session management is near-complete** — Only gap is multi-tenant isolation (no TenantId scoping). The reconnection protocol with sequence-based replay, suspend/resume, paginated history, and cleanup service all work correctly.
+4. **CORS is a silent blocker for WebUI** — No AddCors/UseCors in Program.cs. If WebUI is served from a different origin (common in dev), all browser requests will fail. Quick fix but needs to be configurable.
+5. **CLI has minimal parity with API** — Only `validate` command exists. No `init`, `agent list/add/remove`, `config set/get`. This creates friction for users who prefer CLI over editing JSON files.
+6. **811 total tests across 8 projects** — 76 test files, strong Gateway coverage (41 files). xUnit + Moq + FluentAssertions + ASP.NET Mvc.Testing. Test infrastructure is mature.
+7. **Active P1 carries are well-scoped** — extract-replay-buffer, IHttpClientFactory, decompose-ws-handler, provider-conformance-tests, CLI-parity. All have clear owners and bounded effort.

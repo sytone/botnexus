@@ -871,3 +871,9 @@ Result: Phase 3 blockers cleared, build clean, READY FOR RELEASE.
 - `SessionsController` now exposes `PATCH /api/sessions/{id}/suspend` and `PATCH /api/sessions/{id}/resume` with 404/409 semantics; `GatewayHost` rejects non-active sessions before prompt execution.
 - `GatewayHost` now runs per-session bounded queues (`System.Threading.Channels`) with busy backpressure responses and tracked worker lifecycle on shutdown; control metadata `control=steer` routes to `IAgentHandle.SteerAsync` instead of normal prompt flow.
 - `TuiChannelAdapter` now advertises `SupportsSteering = true`, parses `/steer <message>`, dispatches steer control metadata, and prints steering acknowledgment in console output.
+
+### 2026-04-06 — Gateway CORS policy + agent update endpoint
+- Added named gateway CORS policy in `src\gateway\BotNexus.Gateway.Api\Program.cs`; development now allows any origin/method/header, while non-development uses configured origins from `gateway.cors.allowedOrigins` (or legacy root `cors.allowedOrigins`) with fallback `http://localhost:5005`.
+- Placed `app.UseCors(...)` before `GatewayAuthMiddleware` so browser preflight and cross-origin requests succeed before auth middleware runs.
+- Added `PUT /api/agents/{agentId}` in `AgentsController` and introduced `IAgentRegistry.Update(...)` + `DefaultAgentRegistry.Update(...)` so agent model/provider/system prompt config can be changed in place without unregister/re-register.
+- Extended platform config model + validation with `CorsConfig` and URL validation for allowed origins.

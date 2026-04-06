@@ -2,6 +2,30 @@
 
 ## Active Decisions
 
+### Extract SessionReplayBuffer from GatewaySession (2026-04-06)
+
+**By:** Farnsworth  
+**Date:** 2026-04-06  
+**Status:** Proposed (implemented)
+
+**Context:** `GatewaySession` mixed two concerns: conversation history management and WebSocket replay buffer management. Replay logic had its own lock and bounded-log behavior, signaling separate abstraction.
+
+**Decision:** Create `SessionReplayBuffer` in `BotNexus.Gateway.Abstractions.Models`. Move:
+- Replay entry collection + replay lock
+- Sequence allocation (`NextSequenceId`, `AllocateSequenceId`)
+- Bounded replay trimming (default capacity 1000)
+- Replay queries (`GetStreamEventsAfter`, snapshot retrieval)
+- Replay-state restore (`SetState`)
+
+`GatewaySession` composes `SessionReplayBuffer` via `ReplayBuffer` property. Compatibility wrappers preserved.
+
+**Consequences:**
+- SRP improved: history and replay isolated.
+- Thread-safety preserved with separated locks.
+- Existing call sites remain compatible; new paths use `session.ReplayBuffer` directly.
+
+---
+
 ### Build Validation Before Commit (2026-04-03)
 
 **By:** Leela (Lead) — Retrospective Finding  

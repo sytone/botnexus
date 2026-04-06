@@ -301,7 +301,7 @@ public sealed class GatewayWebSocketHandler
             return;
         }
 
-        var replayEvents = session.GetStreamEventsAfter(lastSeqId, replayWindow);
+        var replayEvents = session.ReplayBuffer.GetStreamEventsAfter(lastSeqId, replayWindow);
         foreach (var replayEvent in replayEvents)
         {
             if (socket.State != WebSocketState.Open)
@@ -357,13 +357,14 @@ public sealed class GatewayWebSocketHandler
         int replayWindow,
         CancellationToken cancellationToken)
     {
-        var sequenceId = session.AllocateSequenceId();
+        var sequenceId = session.ReplayBuffer.AllocateSequenceId();
         var basePayloadJson = JsonSerializer.Serialize(payload, JsonOptions);
         var payloadMap = JsonSerializer.Deserialize<Dictionary<string, object?>>(basePayloadJson, JsonOptions) ?? [];
         payloadMap["sequenceId"] = sequenceId;
         object sequencedPayload = payloadMap;
         var sequencedPayloadJson = JsonSerializer.Serialize(sequencedPayload, JsonOptions);
-        session.AddStreamEvent(sequenceId, sequencedPayloadJson, replayWindow);
+        session.ReplayBuffer.AddStreamEvent(sequenceId, sequencedPayloadJson, replayWindow);
+        session.UpdatedAt = DateTimeOffset.UtcNow;
         await _sessions.SaveAsync(session, cancellationToken);
         return sequencedPayload;
     }
