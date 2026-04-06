@@ -57,6 +57,8 @@
     let activityWs = null;
     let activityReconnectTimer = null;
     let userScrolledUp = false;
+    let lastSequenceId = 0;
+    let sessionKey = null;
 
     // --- DOM refs ---
     const $ = (sel) => document.querySelector(sel);
@@ -361,6 +363,8 @@
         isWsConnecting = false;
         setStatus('disconnected');
         connectionId = null;
+        lastSequenceId = 0;
+        sessionKey = null;
         hideConnectionBanner();
         setTimeout(() => { shouldReconnect = true; }, 0);
     }
@@ -410,6 +414,8 @@
     // =========================================================================
 
     function handleWsMessage(msg) {
+        if (msg.sequenceId !== undefined) lastSequenceId = msg.sequenceId;
+
         switch (msg.type) {
             case 'connected':
                 connectionId = msg.connectionId;
@@ -417,6 +423,7 @@
                     currentSessionId = msg.sessionId;
                     updateSessionIdDisplay();
                 }
+                if (msg.sessionKey) sessionKey = msg.sessionKey;
                 break;
             case 'message_start':
                 activeMessageId = msg.messageId;
@@ -458,11 +465,9 @@
                 trackActivity('error', currentAgentId, msg.message || 'Error');
                 handleError(msg);
                 break;
-            case 'activity':
-                handleActivityEvent(msg);
-                break;
-            case 'history':
-                handleHistoryMessage(msg);
+            case 'reconnect_ack':
+                if (msg.sessionKey) sessionKey = msg.sessionKey;
+                if (msg.lastSeqId !== undefined) lastSequenceId = msg.lastSeqId;
                 break;
             case 'pong':
                 break;
@@ -530,19 +535,6 @@
                 thinkingEl.querySelector('.thinking-chevron').textContent = '▸';
             }
         }
-    }
-
-    // =========================================================================
-    // History message from WebSocket
-    // =========================================================================
-
-    function handleHistoryMessage(msg) {
-        if (!msg.entries || !Array.isArray(msg.entries)) return;
-        elChatMessages.innerHTML = '';
-        for (const entry of msg.entries) renderHistoryEntry(entry);
-        const msgCount = msg.entries.length;
-        elChatMeta.textContent = `Agent: ${currentAgentId || 'unknown'} · ${msgCount} messages`;
-        scrollToBottom(true);
     }
 
     // =========================================================================
