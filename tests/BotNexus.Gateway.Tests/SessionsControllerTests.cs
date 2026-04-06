@@ -1,7 +1,9 @@
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Api.Controllers;
 using BotNexus.Gateway.Sessions;
 using FluentAssertions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
 
@@ -9,6 +11,8 @@ namespace BotNexus.Gateway.Tests;
 
 public sealed class SessionsControllerTests
 {
+    private const string CallerIdentityItemKey = "BotNexus.Gateway.CallerIdentity";
+
     [Fact]
     public async Task List_WithExistingSessions_ReturnsSessions()
     {
@@ -235,6 +239,21 @@ public sealed class SessionsControllerTests
     }
 
     [Fact]
+    public async Task GetMetadata_WithMismatchedCaller_ReturnsForbidden()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        session.CallerId = "caller-a";
+        var controller = new SessionsController(store);
+        controller.ControllerContext = CreateControllerContext("caller-b");
+
+        var result = await controller.GetMetadata("s1", CancellationToken.None);
+
+        result.Result.Should().BeOfType<ObjectResult>()
+            .Which.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+    }
+
+    [Fact]
     public async Task PatchMetadata_WithUnknownSession_ReturnsNotFound()
     {
         var controller = new SessionsController(new InMemorySessionStore());
@@ -243,6 +262,22 @@ public sealed class SessionsControllerTests
         var result = await controller.PatchMetadata("missing", patchDocument.RootElement.Clone(), CancellationToken.None);
 
         result.Result.Should().BeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public async Task PatchMetadata_WithMismatchedCaller_ReturnsForbidden()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        session.CallerId = "caller-a";
+        var controller = new SessionsController(store);
+        controller.ControllerContext = CreateControllerContext("caller-b");
+        using var patchDocument = JsonDocument.Parse("""{"theme":"dark"}""");
+
+        var result = await controller.PatchMetadata("s1", patchDocument.RootElement.Clone(), CancellationToken.None);
+
+        result.Result.Should().BeOfType<ObjectResult>()
+            .Which.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
     }
 
     [Fact]
@@ -344,5 +379,19 @@ public sealed class SessionsControllerTests
         payload["enabled"].Should().Be(true);
         payload["threshold"].Should().BeOfType<decimal>().Which.Should().Be(1.5m);
         payload["tags"].Should().BeAssignableTo<List<object?>>();
+    }
+
+    private static ControllerContext CreateControllerContext(string callerId)
+    {
+        var httpContext = new DefaultHttpContext();
+        httpContext.Items[CallerIdentityItemKey] = new GatewayCallerIdentity
+        {
+            CallerId = callerId
+        };
+
+        return new ControllerContext
+        {
+            HttpContext = httpContext
+        };
     }
 }

@@ -1,5 +1,7 @@
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Api;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
@@ -73,7 +75,14 @@ public sealed class SessionsController : ControllerBase
     public async Task<ActionResult<Dictionary<string, object?>>> GetMetadata(string sessionId, CancellationToken cancellationToken)
     {
         var session = await _sessions.GetAsync(sessionId, cancellationToken);
-        return session is not null ? Ok(session.Metadata) : NotFound();
+        if (session is null)
+            return NotFound();
+
+        var authorizationFailure = AuthorizeSessionCaller(session);
+        if (authorizationFailure is not null)
+            return authorizationFailure;
+
+        return Ok(session.Metadata);
     }
 
     /// <summary>
@@ -99,6 +108,10 @@ public sealed class SessionsController : ControllerBase
         if (session is null)
             return NotFound();
 
+        var authorizationFailure = AuthorizeSessionCaller(session);
+        if (authorizationFailure is not null)
+            return authorizationFailure;
+
         foreach (var property in metadataPatch.EnumerateObject())
         {
             if (property.Value.ValueKind == JsonValueKind.Null)
@@ -113,6 +126,21 @@ public sealed class SessionsController : ControllerBase
         session.UpdatedAt = DateTimeOffset.UtcNow;
         await _sessions.SaveAsync(session, cancellationToken);
         return Ok(session.Metadata);
+    }
+
+    private ObjectResult? AuthorizeSessionCaller(GatewaySession session)
+    {
+        var items = HttpContext?.Items;
+        if (items is not null &&
+            items.TryGetValue(GatewayAuthMiddleware.CallerIdentityItemKey, out var identityValue) &&
+            identityValue is GatewayCallerIdentity identity &&
+            !string.IsNullOrWhiteSpace(identity.CallerId) &&
+            !string.Equals(identity.CallerId, session.CallerId, StringComparison.Ordinal))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "Caller is not authorized for this session." });
+        }
+
+        return null;
     }
 
     /// <summary>Deletes a session.</summary>
