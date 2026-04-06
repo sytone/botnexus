@@ -45,7 +45,7 @@ public sealed class ExtensionsControllerTests
         payload.Should().NotBeNull();
         payload!.Should().ContainSingle();
         payload[0].Should().BeEquivalentTo(
-            new ExtensionResponse("Extension A", "1.2.3", "channel", "Q:\\extensions\\ext-a\\ExtensionA.dll"));
+            new ExtensionResponse("Extension A", "1.2.3", "channel", "ExtensionA.dll"));
     }
 
     [Fact]
@@ -71,8 +71,8 @@ public sealed class ExtensionsControllerTests
         payload!.Should().HaveCount(2);
         payload.Should().BeEquivalentTo(
         [
-            new ExtensionResponse("Extension A", "1.2.3", "channel", "Q:\\extensions\\ext-a\\ExtensionA.dll"),
-            new ExtensionResponse("Extension A", "1.2.3", "router", "Q:\\extensions\\ext-a\\ExtensionA.dll")
+            new ExtensionResponse("Extension A", "1.2.3", "channel", "ExtensionA.dll"),
+            new ExtensionResponse("Extension A", "1.2.3", "router", "ExtensionA.dll")
         ]);
     }
 

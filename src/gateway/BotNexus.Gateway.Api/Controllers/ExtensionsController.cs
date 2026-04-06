@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Abstractions.Extensions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using System.IO;
 
 namespace BotNexus.Gateway.Api.Controllers;
 
@@ -33,7 +34,7 @@ public sealed class ExtensionsController : ControllerBase
                     extension.Name,
                     extension.Version,
                     type,
-                    extension.EntryAssemblyPath)))
+                    Path.GetFileName(extension.EntryAssemblyPath))))
             .ToArray();
 
         return Ok(responses);
@@ -46,7 +47,7 @@ public sealed class ExtensionsController : ControllerBase
 /// <param name="Name">The extension display name.</param>
 /// <param name="Version">The extension version.</param>
 /// <param name="Type">The extension type from the manifest.</param>
-/// <param name="AssemblyPath">The resolved entry assembly path.</param>
+/// <param name="AssemblyPath">The resolved entry assembly filename.</param>
 public sealed record ExtensionResponse(
     string Name,
     string Version,
