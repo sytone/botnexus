@@ -45,7 +45,7 @@ public sealed class ChannelsControllerTests
             SupportsStreaming: true,
             SupportsSteering: true,
             SupportsFollowUp: false,
-            SupportsThinking: true,
+            SupportsThinkingDisplay: true,
             SupportsToolDisplay: false));
     }
 
@@ -97,7 +97,7 @@ public sealed class ChannelsControllerTests
             SupportsStreaming: supportsStreaming,
             SupportsSteering: supportsSteering,
             SupportsFollowUp: supportsFollowUp,
-            SupportsThinking: supportsThinkingDisplay,
+            SupportsThinkingDisplay: supportsThinkingDisplay,
             SupportsToolDisplay: supportsToolDisplay));
     }
 

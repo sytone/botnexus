@@ -46,7 +46,7 @@ public sealed class ChannelsController : ControllerBase
 /// <param name="SupportsStreaming">Whether the adapter supports streamed deltas.</param>
 /// <param name="SupportsSteering">Whether the adapter supports real-time steering.</param>
 /// <param name="SupportsFollowUp">Whether the adapter supports follow-up controls.</param>
-/// <param name="SupportsThinking">Whether the adapter supports thinking/progress rendering.</param>
+/// <param name="SupportsThinkingDisplay">Whether the adapter supports thinking/progress rendering.</param>
 /// <param name="SupportsToolDisplay">Whether the adapter supports tool activity display.</param>
 public sealed record ChannelAdapterResponse(
     string Name,
@@ -55,5 +55,5 @@ public sealed record ChannelAdapterResponse(
     bool SupportsStreaming,
     bool SupportsSteering,
     bool SupportsFollowUp,
-    bool SupportsThinking,
+    bool SupportsThinkingDisplay,
     bool SupportsToolDisplay);
