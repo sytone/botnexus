@@ -41,6 +41,12 @@ public sealed class TelegramChannelAdapter(
     public override bool SupportsStreaming => false;
 
     /// <inheritdoc />
+    public override bool SupportsSteering => false;
+
+    /// <inheritdoc />
+    public override bool SupportsFollowUp => false;
+
+    /// <inheritdoc />
     public override bool SupportsThinkingDisplay => false;
 
     /// <inheritdoc />

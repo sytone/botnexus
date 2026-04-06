@@ -5,28 +5,40 @@ using Microsoft.Extensions.Logging;
 namespace BotNexus.Gateway.Agents;
 
 /// <summary>
-/// Default implementation of <see cref="IAgentCommunicator"/> for local sub-agent calls.
+/// Default implementation of <see cref="IAgentCommunicator"/> for local sub-agent and cross-agent calls.
 /// </summary>
 public sealed class DefaultAgentCommunicator : IAgentCommunicator
 {
-    private static readonly AsyncLocal<HashSet<string>?> ActiveCallChain = new();
+    private static readonly AsyncLocal<List<string>?> ActiveCallPath = new();
+    private readonly IAgentRegistry _registry;
     private readonly IAgentSupervisor _supervisor;
     private readonly ILogger<DefaultAgentCommunicator> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DefaultAgentCommunicator"/> class.
     /// </summary>
+    /// <param name="registry">Agent registry used to validate cross-agent targets.</param>
     /// <param name="supervisor">Agent supervisor used to get or create child agent handles.</param>
     /// <param name="logger">Logger instance.</param>
     public DefaultAgentCommunicator(
+        IAgentRegistry registry,
         IAgentSupervisor supervisor,
         ILogger<DefaultAgentCommunicator> logger)
     {
+        _registry = registry;
         _supervisor = supervisor;
         _logger = logger;
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Calls a sub-agent in a session scoped to the parent session and returns the sub-agent response.
+    /// </summary>
+    /// <param name="parentAgentId">ID of the calling parent agent.</param>
+    /// <param name="parentSessionId">Session ID of the parent agent run.</param>
+    /// <param name="childAgentId">ID of the target sub-agent.</param>
+    /// <param name="message">Prompt content to send to the sub-agent.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The sub-agent response.</returns>
     public async Task<AgentResponse> CallSubAgentAsync(
         string parentAgentId,
         string parentSessionId,
@@ -47,7 +59,18 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
         return await childHandle.PromptAsync(message, cancellationToken);
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Calls another local agent from a source agent and returns the target agent response.
+    /// </summary>
+    /// <param name="sourceAgentId">ID of the calling source agent.</param>
+    /// <param name="targetEndpoint">Optional remote endpoint. Only empty/local is supported.</param>
+    /// <param name="targetAgentId">ID of the target agent to call.</param>
+    /// <param name="message">Prompt content to send to the target agent.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The target agent response.</returns>
+    /// <exception cref="NotSupportedException">Thrown when a remote endpoint is requested.</exception>
+    /// <exception cref="KeyNotFoundException">Thrown when the target agent is not registered.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when recursive call cycles are detected.</exception>
     public async Task<AgentResponse> CallCrossAgentAsync(
         string sourceAgentId,
         string targetEndpoint,
@@ -63,7 +86,10 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
                 "Use local cross-agent calls by leaving targetEndpoint empty.");
         }
 
-        var crossSessionId = $"cross::{sourceAgentId}::{targetAgentId}::{Guid.NewGuid():N}";
+        if (!_registry.Contains(targetAgentId))
+            throw new KeyNotFoundException($"Agent '{targetAgentId}' is not registered.");
+
+        var crossSessionId = $"{sourceAgentId}::cross::{targetAgentId}::{Guid.NewGuid():N}";
         _logger.LogInformation(
             "Cross-agent call from '{SourceAgentId}' to '{TargetAgentId}' session '{CrossSessionId}'",
             sourceAgentId,
@@ -76,46 +102,44 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
 
     private static IDisposable EnterCallChain(string sourceAgentId, string targetAgentId)
     {
-        var chain = ActiveCallChain.Value;
-        var createdNewChain = false;
-        if (chain is null)
+        var path = ActiveCallPath.Value;
+        if (path is null)
         {
-            chain = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            ActiveCallChain.Value = chain;
-            createdNewChain = true;
+            path = [];
+            ActiveCallPath.Value = path;
         }
 
-        var addedSource = chain.Add(sourceAgentId);
-        if (!chain.Add(targetAgentId))
-        {
-            if (addedSource)
-                chain.Remove(sourceAgentId);
+        var entryCount = path.Count;
+        if (path.Count == 0 || !string.Equals(path[^1], sourceAgentId, StringComparison.OrdinalIgnoreCase))
+            path.Add(sourceAgentId);
 
-            if (createdNewChain && chain.Count == 0)
-                ActiveCallChain.Value = null;
+        if (path.Contains(targetAgentId, StringComparer.OrdinalIgnoreCase))
+        {
+            var chain = string.Join(" -> ", path.Concat([targetAgentId]));
+            ResetPath(path, entryCount);
 
             throw new InvalidOperationException(
-                $"Recursive cross-agent call detected while targeting '{targetAgentId}'. Active chain: {string.Join(" -> ", chain)}");
+                $"Recursive cross-agent call detected while targeting '{targetAgentId}'. Active chain: {chain}");
         }
 
-        return new CallChainScope(chain, sourceAgentId, targetAgentId, addedSource, createdNewChain);
+        path.Add(targetAgentId);
+        return new CallChainScope(path, entryCount);
     }
 
-    private sealed class CallChainScope(
-        HashSet<string> chain,
-        string sourceAgentId,
-        string targetAgentId,
-        bool addedSource,
-        bool createdNewChain) : IDisposable
+    private static void ResetPath(List<string> path, int entryCount)
+    {
+        if (path.Count > entryCount)
+            path.RemoveRange(entryCount, path.Count - entryCount);
+
+        if (path.Count == 0)
+            ActiveCallPath.Value = null;
+    }
+
+    private sealed class CallChainScope(List<string> path, int entryCount) : IDisposable
     {
         public void Dispose()
         {
-            chain.Remove(targetAgentId);
-            if (addedSource)
-                chain.Remove(sourceAgentId);
-
-            if (createdNewChain && chain.Count == 0)
-                ActiveCallChain.Value = null;
+            ResetPath(path, entryCount);
         }
     }
 }

@@ -839,3 +839,9 @@ Result: Phase 3 blockers cleared, build clean, READY FOR RELEASE.
 - Introduced optional `IStreamEventChannelAdapter` contract in gateway abstractions and updated `GatewayHost` to forward full `AgentStreamEvent` payloads when supported, preserving WebSocket protocol events (`message_start`, `thinking_delta`, `tool_*`, `message_end`, `error`) without changing other channels.
 - Added dedicated `/ws/activity` endpoint (`ActivityWebSocketHandler`) for `IActivityBroadcaster` subscriptions with optional `?agent=` filtering; suitable for dashboards and runtime debugging.
 - Upgraded TUI channel lifecycle with cancellable console input loop (`/clear`, `/quit`, background dispatch to gateway pipeline) so local runtime sessions can now ingest user input.
+
+### 2026-04-06 — Cross-agent session scoping + channel capability hardening
+- `src\gateway\BotNexus.Gateway\Agents\DefaultAgentCommunicator.cs` now validates cross-agent targets through `IAgentRegistry`, routes local cross-agent calls through deterministic sessions (`{source}::cross::{target}`), and uses async-local call-path tracking to reject recursive chains like `A -> B -> A`.
+- `src\gateway\BotNexus.Gateway.Abstractions\Agents\IAgentCommunicator.cs` now documents local-first cross-agent behavior (remote endpoint still unsupported), including updated exception contracts.
+- `src\channels\BotNexus.Channels.Tui\TuiChannelAdapter.cs` now implements `IStreamEventChannelAdapter` and renders thinking/tool/error events so `SupportsThinkingDisplay`/`SupportsToolDisplay` behavior matches runtime output.
+- `src\channels\BotNexus.Channels.Telegram\TelegramChannelAdapter.cs` now explicitly declares steering/follow-up unsupported capability flags; `tests\BotNexus.Gateway.Tests\ChannelCapabilityTests.cs` and `DefaultAgentCommunicatorTests.cs` were updated to lock these contracts.

@@ -8,7 +8,8 @@ namespace BotNexus.Channels.Tui;
 /// <summary>
 /// Terminal UI channel adapter for local console I/O.
 /// </summary>
-public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger) : ChannelAdapterBase(logger)
+public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger)
+    : ChannelAdapterBase(logger), IStreamEventChannelAdapter
 {
     private readonly ILogger<TuiChannelAdapter> _logger = logger;
     private CancellationTokenSource? _inputLoopCancellation;
@@ -28,6 +29,12 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger) : Chann
     /// Gets a value indicating whether this channel supports streaming deltas.
     /// </summary>
     public override bool SupportsStreaming => true;
+
+    /// <inheritdoc />
+    public override bool SupportsSteering => false;
+
+    /// <inheritdoc />
+    public override bool SupportsFollowUp => false;
 
     /// <inheritdoc />
     public override bool SupportsThinkingDisplay => true;
@@ -102,6 +109,36 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger) : Chann
         }
 
         return Console.Out.WriteAsync(delta);
+    }
+
+    /// <summary>
+    /// Sends a structured stream event to the terminal.
+    /// </summary>
+    /// <param name="conversationId">Target conversation identifier.</param>
+    /// <param name="streamEvent">Structured stream event payload.</param>
+    /// <param name="cancellationToken">Cancellation token for send operations.</param>
+    /// <returns>A task that completes when the event has been rendered.</returns>
+    public Task SendStreamEventAsync(
+        string conversationId,
+        AgentStreamEvent streamEvent,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        return streamEvent.Type switch
+        {
+            AgentStreamEventType.ContentDelta when streamEvent.ContentDelta is not null
+                => SendStreamDeltaAsync(conversationId, streamEvent.ContentDelta, cancellationToken),
+            AgentStreamEventType.ThinkingDelta when streamEvent.ThinkingContent is not null
+                => Console.Out.WriteAsync($"\n💭 {streamEvent.ThinkingContent}"),
+            AgentStreamEventType.ToolStart when streamEvent.ToolName is not null
+                => Console.Out.WriteLineAsync($"\n🔧 [{DisplayName}:{conversationId}] Tool start: {streamEvent.ToolName}"),
+            AgentStreamEventType.ToolEnd
+                => Console.Out.WriteLineAsync($"\n✅ [{DisplayName}:{conversationId}] Tool complete: {streamEvent.ToolCallId ?? "unknown"}"),
+            AgentStreamEventType.Error when streamEvent.ErrorMessage is not null
+                => Console.Out.WriteLineAsync($"\n❌ [{DisplayName}:{conversationId}] {streamEvent.ErrorMessage}"),
+            _ => Task.CompletedTask
+        };
     }
 
     private async Task RunInputLoopAsync(CancellationToken cancellationToken)

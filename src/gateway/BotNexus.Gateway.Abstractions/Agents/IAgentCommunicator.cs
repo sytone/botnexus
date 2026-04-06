@@ -13,9 +13,9 @@ namespace BotNexus.Gateway.Abstractions.Agents;
 /// receives the response as a tool result.
 /// </para>
 /// <para>
-/// <b>Cross-agent calls</b> are remote: the message is forwarded to another Gateway
-/// endpoint. This is a stub for Phase 2 — the interface is defined now so that tool
-/// implementations can be built against it.
+/// <b>Cross-agent calls</b> are local-first: calls without a target endpoint are routed
+/// through the local supervisor into a cross-agent scoped session. Remote endpoint support
+/// is reserved for a future implementation.
 /// </para>
 /// </remarks>
 public interface IAgentCommunicator
@@ -39,8 +39,9 @@ public interface IAgentCommunicator
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Calls an agent on a remote Gateway and returns its response.
-    /// <b>Phase 2 — not yet implemented.</b>
+    /// Calls another agent and returns its response.
+    /// If <paramref name="targetEndpoint"/> is empty, the call is handled locally.
+    /// Non-empty endpoints are currently unsupported.
     /// </summary>
     /// <param name="sourceAgentId">The calling agent's ID.</param>
     /// <param name="targetEndpoint">The remote Gateway's base URL.</param>
@@ -48,7 +49,8 @@ public interface IAgentCommunicator
     /// <param name="message">The message to send.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The remote agent's response.</returns>
-    /// <exception cref="NotImplementedException">Cross-agent calls are not yet implemented.</exception>
+    /// <exception cref="NotSupportedException">Remote endpoint calls are not supported yet.</exception>
+    /// <exception cref="KeyNotFoundException">The target agent ID is not registered.</exception>
     Task<AgentResponse> CallCrossAgentAsync(
         string sourceAgentId,
         string targetEndpoint,

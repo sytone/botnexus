@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
 using FluentAssertions;
@@ -12,16 +14,17 @@ public sealed class DefaultAgentCommunicatorTests
     [Fact]
     public async Task CallSubAgentAsync_WithParentSession_CreatesScopedSessionId()
     {
+        var registry = new Mock<IAgentRegistry>();
         var supervisor = new Mock<IAgentSupervisor>();
         var handle = new Mock<IAgentHandle>();
-        var response = new AgentResponse { Content = "ok" };
         string? capturedSessionId = null;
         supervisor
             .Setup(s => s.GetOrCreateAsync("child-agent", It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Callback<string, string, CancellationToken>((_, sessionId, _) => capturedSessionId = sessionId)
             .ReturnsAsync(handle.Object);
-        handle.Setup(h => h.PromptAsync("hello", It.IsAny<CancellationToken>())).ReturnsAsync(response);
-        var communicator = new DefaultAgentCommunicator(supervisor.Object, NullLogger<DefaultAgentCommunicator>.Instance);
+        handle.Setup(h => h.PromptAsync("hello", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "ok" });
+        var communicator = new DefaultAgentCommunicator(registry.Object, supervisor.Object, NullLogger<DefaultAgentCommunicator>.Instance);
 
         await communicator.CallSubAgentAsync("parent-agent", "parent-session", "child-agent", "hello");
 
@@ -29,125 +32,158 @@ public sealed class DefaultAgentCommunicatorTests
     }
 
     [Fact]
-    public async Task CallSubAgentAsync_WhenCalled_DelegatesToSupervisorThenHandlePrompt()
+    public async Task CallCrossAgentAsync_WhenLocalCall_RoutesThroughRegistrySupervisorAndIsolation()
     {
-        var supervisor = new Mock<IAgentSupervisor>();
-        var handle = new Mock<IAgentHandle>();
-        var expected = new AgentResponse { Content = "child-response" };
-        supervisor
-            .Setup(s => s.GetOrCreateAsync("child-agent", "parent-session::sub::child-agent", It.IsAny<CancellationToken>()))
+        var descriptor = CreateDescriptor("target-agent");
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(r => r.Contains("target-agent")).Returns(true);
+        registry.Setup(r => r.Get("target-agent")).Returns(descriptor);
+
+        var handle = CreateHandle("target-agent");
+        var strategy = new Mock<IIsolationStrategy>();
+        strategy.SetupGet(s => s.Name).Returns("in-process");
+        strategy.Setup(s => s.CreateAsync(
+                descriptor,
+                It.Is<AgentExecutionContext>(ctx => ctx.SessionId.StartsWith("caller-agent::cross::target-agent::", StringComparison.Ordinal)),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(handle.Object);
-        handle
-            .Setup(h => h.PromptAsync("hello", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(expected);
-        var communicator = new DefaultAgentCommunicator(supervisor.Object, NullLogger<DefaultAgentCommunicator>.Instance);
 
-        var result = await communicator.CallSubAgentAsync("parent-agent", "parent-session", "child-agent", "hello");
+        var supervisor = new DefaultAgentSupervisor(registry.Object, [strategy.Object], NullLogger<DefaultAgentSupervisor>.Instance);
+        var communicator = new DefaultAgentCommunicator(registry.Object, supervisor, NullLogger<DefaultAgentCommunicator>.Instance);
 
-        result.Should().Be(expected);
-        supervisor.Verify(s => s.GetOrCreateAsync("child-agent", "parent-session::sub::child-agent", It.IsAny<CancellationToken>()), Times.Once);
+        var result = await communicator.CallCrossAgentAsync("caller-agent", string.Empty, "target-agent", "hello");
+
+        result.Content.Should().Be("ok");
+        registry.Verify(r => r.Contains("target-agent"), Times.Once);
+        registry.Verify(r => r.Get("target-agent"), Times.Once);
+        strategy.VerifyAll();
         handle.Verify(h => h.PromptAsync("hello", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task CallSubAgentAsync_WithStructuredParentSession_UsesScopedChildSessionFormat()
+    public async Task CallCrossAgentAsync_WhenRecursiveChainDetected_ThrowsInvalidOperationException()
     {
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(r => r.Contains(It.IsAny<string>())).Returns(true);
+
         var supervisor = new Mock<IAgentSupervisor>();
-        var handle = new Mock<IAgentHandle>();
-        string? capturedSessionId = null;
+        DefaultAgentCommunicator? communicator = null;
         supervisor
-            .Setup(s => s.GetOrCreateAsync("child", It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, CancellationToken>((_, sessionId, _) => capturedSessionId = sessionId)
-            .ReturnsAsync(handle.Object);
-        handle.Setup(h => h.PromptAsync("ping", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new AgentResponse { Content = "pong" });
-        var communicator = new DefaultAgentCommunicator(supervisor.Object, NullLogger<DefaultAgentCommunicator>.Instance);
+            .Setup(s => s.GetOrCreateAsync("agent-b", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                await communicator!.CallCrossAgentAsync("agent-b", string.Empty, "agent-a", "loop");
+                return CreateHandle("agent-b").Object;
+            });
 
-        await communicator.CallSubAgentAsync("parent", "session-1::workspace", "child", "ping");
+        communicator = new DefaultAgentCommunicator(registry.Object, supervisor.Object, NullLogger<DefaultAgentCommunicator>.Instance);
 
-        capturedSessionId.Should().Be("session-1::workspace::sub::child");
+        var act = () => communicator.CallCrossAgentAsync("agent-a", string.Empty, "agent-b", "hello");
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*Recursive cross-agent call detected*");
     }
 
     [Fact]
-    public async Task CallCrossAgentAsync_WithRemoteEndpoint_ThrowsNotSupportedException()
+    public async Task CallCrossAgentAsync_WhenTargetAgentNotRegistered_ThrowsKeyNotFoundException()
     {
-        var communicator = new DefaultAgentCommunicator(Mock.Of<IAgentSupervisor>(), NullLogger<DefaultAgentCommunicator>.Instance);
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(r => r.Contains("missing-agent")).Returns(false);
+        var supervisor = new Mock<IAgentSupervisor>(MockBehavior.Strict);
+        var communicator = new DefaultAgentCommunicator(registry.Object, supervisor.Object, NullLogger<DefaultAgentCommunicator>.Instance);
 
-        var act = () => communicator.CallCrossAgentAsync("a", "https://target", "b", "hello");
+        var act = () => communicator.CallCrossAgentAsync("source-agent", string.Empty, "missing-agent", "hello");
 
-        await act.Should().ThrowAsync<NotSupportedException>();
+        await act.Should().ThrowAsync<KeyNotFoundException>()
+            .WithMessage("*missing-agent*");
+        supervisor.VerifyNoOtherCalls();
     }
 
     [Fact]
-    public async Task CallCrossAgentAsync_WithLocalEndpoint_CreatesCrossSessionAndPromptsTargetAgent()
+    public async Task CallCrossAgentAsync_WhenTargetCreateFails_PropagatesSupervisorError()
     {
-        var supervisor = new Mock<IAgentSupervisor>();
-        var handle = new Mock<IAgentHandle>();
-        string? capturedSessionId = null;
-        var expected = new AgentResponse { Content = "ok" };
-        supervisor
-            .Setup(s => s.GetOrCreateAsync("target", It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, CancellationToken>((_, sessionId, _) => capturedSessionId = sessionId)
-            .ReturnsAsync(handle.Object);
-        handle
-            .Setup(h => h.PromptAsync("hello", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(expected);
-        var communicator = new DefaultAgentCommunicator(supervisor.Object, NullLogger<DefaultAgentCommunicator>.Instance);
-
-        var result = await communicator.CallCrossAgentAsync("source", string.Empty, "target", "hello");
-
-        result.Should().Be(expected);
-        capturedSessionId.Should().NotBeNull();
-        capturedSessionId.Should().StartWith("cross::source::target::");
-        supervisor.Verify(s => s.GetOrCreateAsync("target", It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
-        handle.Verify(h => h.PromptAsync("hello", It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task CallSubAgentAsync_WhenSupervisorThrows_PropagatesKeyNotFoundException()
-    {
-        var supervisor = new Mock<IAgentSupervisor>();
-        supervisor
-            .Setup(s => s.GetOrCreateAsync("child-agent", It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new KeyNotFoundException("missing"));
-        var communicator = new DefaultAgentCommunicator(supervisor.Object, NullLogger<DefaultAgentCommunicator>.Instance);
-
-        var act = () => communicator.CallSubAgentAsync("parent-agent", "parent-session", "child-agent", "hello");
-
-        await act.Should().ThrowAsync<KeyNotFoundException>();
-    }
-
-    [Fact]
-    public async Task CallCrossAgentAsync_WhenTargetAgentIsUnregistered_PropagatesKeyNotFoundException()
-    {
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(r => r.Contains("target-agent")).Returns(true);
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor
             .Setup(s => s.GetOrCreateAsync("target-agent", It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new KeyNotFoundException("Agent target-agent is not registered."));
-        var communicator = new DefaultAgentCommunicator(supervisor.Object, NullLogger<DefaultAgentCommunicator>.Instance);
+            .ThrowsAsync(new InvalidOperationException("failed to create handle"));
+        var communicator = new DefaultAgentCommunicator(registry.Object, supervisor.Object, NullLogger<DefaultAgentCommunicator>.Instance);
 
         var act = () => communicator.CallCrossAgentAsync("source-agent", string.Empty, "target-agent", "hello");
 
-        await act.Should().ThrowAsync<KeyNotFoundException>();
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*failed to create handle*");
     }
 
-    [Fact(Skip = "Pending recursion detection implementation for sub-agent self-calls.")]
-    public async Task CallSubAgentAsync_WhenChildMatchesParent_RejectsRecursiveCall()
+    [Fact]
+    public async Task CallCrossAgentAsync_WhenLocalCall_UsesScopedCrossSessionId()
     {
-        var communicator = new DefaultAgentCommunicator(Mock.Of<IAgentSupervisor>(), NullLogger<DefaultAgentCommunicator>.Instance);
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(r => r.Contains("target-agent")).Returns(true);
+        var handle = CreateHandle("target-agent");
+        string? capturedSessionId = null;
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor
+            .Setup(s => s.GetOrCreateAsync("target-agent", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, CancellationToken>((_, sessionId, _) => capturedSessionId = sessionId)
+            .ReturnsAsync(handle.Object);
+        var communicator = new DefaultAgentCommunicator(registry.Object, supervisor.Object, NullLogger<DefaultAgentCommunicator>.Instance);
 
-        var act = () => communicator.CallSubAgentAsync("shared-agent", "session-1", "shared-agent", "hello");
+        await communicator.CallCrossAgentAsync("caller-agent", string.Empty, "target-agent", "hello");
 
-        await act.Should().ThrowAsync<InvalidOperationException>();
+        capturedSessionId.Should().StartWith("caller-agent::cross::target-agent::");
     }
 
-    [Fact(Skip = "Pending recursion detection implementation for nested sub-agent cycles.")]
-    public async Task CallSubAgentAsync_WhenParentSessionAlreadyTargetsChild_RejectsRecursiveCall()
+    [Fact]
+    public async Task CallCrossAgentAsync_WithConcurrentCalls_UsesDistinctSessionsPerCall()
     {
-        var communicator = new DefaultAgentCommunicator(Mock.Of<IAgentSupervisor>(), NullLogger<DefaultAgentCommunicator>.Instance);
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(r => r.Contains("target-agent")).Returns(true);
 
-        var act = () => communicator.CallSubAgentAsync("parent-agent", "session-1::sub::child-agent", "child-agent", "hello");
+        var seenSessionIds = new ConcurrentBag<string>();
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor
+            .Setup(s => s.GetOrCreateAsync("target-agent", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((string _, string sessionId, CancellationToken _) =>
+            {
+                seenSessionIds.Add(sessionId);
+                var handle = new Mock<IAgentHandle>();
+                handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(new AgentResponse { Content = sessionId });
+                return Task.FromResult(handle.Object);
+            });
 
-        await act.Should().ThrowAsync<InvalidOperationException>();
+        var communicator = new DefaultAgentCommunicator(registry.Object, supervisor.Object, NullLogger<DefaultAgentCommunicator>.Instance);
+        var calls = Enumerable.Range(0, 20)
+            .Select(index => communicator.CallCrossAgentAsync("caller-agent", string.Empty, "target-agent", $"message-{index}"));
+
+        var results = await Task.WhenAll(calls);
+
+        seenSessionIds.Should().HaveCount(20);
+        seenSessionIds.Distinct(StringComparer.Ordinal).Should().HaveCount(20);
+        seenSessionIds.Should().OnlyContain(sessionId => sessionId.StartsWith("caller-agent::cross::target-agent::", StringComparison.Ordinal));
+        results.Select(response => response.Content).Distinct(StringComparer.Ordinal).Should().HaveCount(20);
+    }
+
+    private static AgentDescriptor CreateDescriptor(string agentId)
+        => new()
+        {
+            AgentId = agentId,
+            DisplayName = "Target Agent",
+            ModelId = "gpt-4.1",
+            ApiProvider = "copilot",
+            IsolationStrategy = "in-process"
+        };
+
+    private static Mock<IAgentHandle> CreateHandle(string agentId)
+    {
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.AgentId).Returns(agentId);
+        handle.SetupGet(h => h.SessionId).Returns("session");
+        handle.Setup(h => h.IsRunning).Returns(false);
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "ok" });
+        return handle;
     }
 }

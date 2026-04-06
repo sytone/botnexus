@@ -1,6 +1,7 @@
 using BotNexus.Channels.Core;
 using BotNexus.Channels.Telegram;
 using BotNexus.Channels.Tui;
+using BotNexus.Channels.WebSocket;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using FluentAssertions;
@@ -31,6 +32,20 @@ public sealed class ChannelCapabilityTests
         adapter.SupportsFollowUp.Should().BeFalse();
         adapter.SupportsThinkingDisplay.Should().BeTrue();
         adapter.SupportsToolDisplay.Should().BeTrue();
+        adapter.Should().BeAssignableTo<IStreamEventChannelAdapter>();
+    }
+
+    [Fact]
+    public void WebSocketAdapter_SupportsFullInteractiveCapabilities()
+    {
+        var adapter = new WebSocketChannelAdapter(NullLogger<WebSocketChannelAdapter>.Instance);
+
+        adapter.SupportsStreaming.Should().BeTrue();
+        adapter.SupportsSteering.Should().BeTrue();
+        adapter.SupportsFollowUp.Should().BeTrue();
+        adapter.SupportsThinkingDisplay.Should().BeTrue();
+        adapter.SupportsToolDisplay.Should().BeTrue();
+        adapter.Should().BeAssignableTo<IStreamEventChannelAdapter>();
     }
 
     [Fact]
