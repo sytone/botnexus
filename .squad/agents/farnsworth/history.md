@@ -274,6 +274,7 @@
 ## Learnings
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
+- 2026-04-06: Provider tracing now uses `BotNexus.Providers.Core.Diagnostics.ProviderDiagnostics` (`ActivitySource` name `BotNexus.Providers`), with `llm.stream`/`llm.stream_simple` spans in `LlmClient` plus provider stream spans in Anthropic/OpenAI/OpenAICompat tagged by provider name, model id, and API.
 - 2026-04-06: Session metadata endpoints (`GET/PATCH /api/sessions/{sessionId}/metadata`) now enforce caller/session ownership when auth middleware provides `GatewayCallerIdentity.CallerId`; mismatches return 403 while missing caller identity preserves backward compatibility.
 - 2026-04-06: Agent runtime health is now exposed via `GET /api/agents/{agentId}/health` with status values `healthy|unhealthy|unknown`, powered by optional `IHealthCheckable` handles and optional `IAgentHandleInspector` supervisor lookup.
 - 2026-04-06: Agent registry lifecycle mutations now publish activity stream events (`AgentRegistered`, `AgentUnregistered`, `AgentConfigChanged`) through `IActivityBroadcaster` from `DefaultAgentRegistry`.

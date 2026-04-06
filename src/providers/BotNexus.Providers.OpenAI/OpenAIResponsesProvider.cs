@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
@@ -5,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using BotNexus.Providers.Core;
 using BotNexus.Providers.Core.Models;
+using BotNexus.Providers.Core.Diagnostics;
 using BotNexus.Providers.Core.Registry;
 using BotNexus.Providers.Core.Streaming;
 using BotNexus.Providers.Core.Utilities;
@@ -29,18 +31,26 @@ public sealed class OpenAIResponsesProvider(
 
         _ = Task.Run(async () =>
         {
+            using var activity = ProviderDiagnostics.Source.StartActivity("provider.openai-responses.stream", ActivityKind.Client);
+            activity?.SetTag("botnexus.provider.name", model.Provider);
+            activity?.SetTag("botnexus.model", model.Id);
+            activity?.SetTag("botnexus.model.api", model.Api);
+
             try
             {
                 await StreamCoreAsync(stream, model, context, options, ct);
+                activity?.SetStatus(ActivityStatusCode.Ok);
             }
             catch (OperationCanceledException)
             {
                 EmitAborted(stream, model);
+                activity?.SetStatus(ActivityStatusCode.Error, "Operation canceled");
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "OpenAI responses stream failed for model {Model}", model.Id);
                 EmitError(stream, model, ex.Message);
+                activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             }
         }, ct);
 

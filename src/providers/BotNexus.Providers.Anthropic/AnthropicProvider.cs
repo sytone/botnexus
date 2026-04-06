@@ -1,7 +1,9 @@
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json.Nodes;
 using BotNexus.Providers.Core;
+using BotNexus.Providers.Core.Diagnostics;
 using BotNexus.Providers.Core.Models;
 using BotNexus.Providers.Core.Registry;
 using BotNexus.Providers.Core.Streaming;
@@ -35,6 +37,10 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
             string? responseId = null;
             var stopReason = StopReason.Stop;
             var contentBlocks = new List<ContentBlock>();
+            using var activity = ProviderDiagnostics.Source.StartActivity("provider.anthropic.stream", ActivityKind.Client);
+            activity?.SetTag("botnexus.provider.name", model.Provider);
+            activity?.SetTag("botnexus.model", model.Id);
+            activity?.SetTag("botnexus.model.api", model.Api);
 
             try
             {
@@ -47,18 +53,21 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
                 var final = BuildMessage(model, contentBlocks, usage, stopReason, null, responseId);
                 stream.Push(new DoneEvent(stopReason, final));
                 stream.End(final);
+                activity?.SetStatus(ActivityStatusCode.Ok);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 var msg = BuildMessage(model, contentBlocks, usage, StopReason.Aborted, null, responseId);
                 stream.Push(new ErrorEvent(StopReason.Aborted, msg));
                 stream.End(msg);
+                activity?.SetStatus(ActivityStatusCode.Error, "Operation canceled");
             }
             catch (Exception ex)
             {
                 var msg = BuildMessage(model, contentBlocks, usage, StopReason.Error, ex.Message, responseId);
                 stream.Push(new ErrorEvent(StopReason.Error, msg));
                 stream.End(msg);
+                activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             }
         }, ct);
 

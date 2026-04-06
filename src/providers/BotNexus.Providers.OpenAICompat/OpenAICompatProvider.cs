@@ -1,9 +1,11 @@
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using BotNexus.Providers.Core;
 using BotNexus.Providers.Core.Compatibility;
+using BotNexus.Providers.Core.Diagnostics;
 using BotNexus.Providers.Core.Models;
 using BotNexus.Providers.Core.Registry;
 using BotNexus.Providers.Core.Streaming;
@@ -27,15 +29,22 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
 
         _ = Task.Run(async () =>
         {
+            using var activity = ProviderDiagnostics.Source.StartActivity("provider.openai-compat.stream", ActivityKind.Client);
+            activity?.SetTag("botnexus.provider.name", model.Provider);
+            activity?.SetTag("botnexus.model", model.Id);
+            activity?.SetTag("botnexus.model.api", model.Api);
+
             try
             {
                 await StreamCoreAsync(model, context, options, stream);
+                activity?.SetStatus(ActivityStatusCode.Ok);
             }
             catch (Exception ex)
             {
                 var errorMessage = CreateErrorMessage(model, ex.Message);
                 stream.Push(new ErrorEvent(StopReason.Error, errorMessage));
                 stream.End(errorMessage);
+                activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             }
         });
 
