@@ -13,10 +13,12 @@ public static class PlatformConfigLoader
     {
         PropertyNameCaseInsensitive = true
     };
+    private static readonly TimeSpan ReloadDebounce = TimeSpan.FromMilliseconds(500);
+
+    public static event Action<PlatformConfig>? ConfigChanged;
 
     /// <summary>The default platform configuration directory.</summary>
-    public static string DefaultConfigDirectory =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".botnexus");
+    public static string DefaultConfigDirectory => new BotNexusHome().RootPath;
 
     /// <summary>The default configuration file path.</summary>
     public static string DefaultConfigPath =>
@@ -131,8 +133,26 @@ public static class PlatformConfigLoader
     /// <summary>Ensures the .botnexus directory exists.</summary>
     public static void EnsureConfigDirectory(string? configDir = null)
     {
-        var directory = string.IsNullOrWhiteSpace(configDir) ? DefaultConfigDirectory : configDir;
-        Directory.CreateDirectory(directory);
+        if (string.IsNullOrWhiteSpace(configDir) ||
+            string.Equals(Path.GetFullPath(configDir), DefaultConfigDirectory, StringComparison.OrdinalIgnoreCase))
+        {
+            new BotNexusHome(configDir).Initialize();
+            return;
+        }
+
+        Directory.CreateDirectory(configDir);
+    }
+
+    public static IDisposable Watch(string? configPath = null, Action<PlatformConfig>? onChanged = null, Action<Exception>? onError = null)
+    {
+        var path = string.IsNullOrWhiteSpace(configPath)
+            ? DefaultConfigPath
+            : Path.GetFullPath(configPath);
+
+        var directory = Path.GetDirectoryName(path) ?? DefaultConfigDirectory;
+        EnsureConfigDirectory(directory);
+
+        return new PlatformConfigWatcher(path, onChanged, onError);
     }
 
     private static void ValidatePath(string? path, string fieldName, List<string> errors)
@@ -247,6 +267,91 @@ public static class PlatformConfigLoader
                 errors.Add($"{keyPath}.tenantId is required.");
             if (keyConfig.Permissions is null || keyConfig.Permissions.Count == 0)
                 errors.Add($"{keyPath}.permissions must contain at least one permission (example: ['chat:send']).");
+        }
+    }
+
+    private sealed class PlatformConfigWatcher : IDisposable
+    {
+        private readonly FileSystemWatcher _watcher;
+        private readonly Timer _timer;
+        private readonly string _configPath;
+        private readonly Action<PlatformConfig>? _onChanged;
+        private readonly Action<Exception>? _onError;
+        private readonly Lock _sync = new();
+        private bool _disposed;
+
+        public PlatformConfigWatcher(string configPath, Action<PlatformConfig>? onChanged, Action<Exception>? onError)
+        {
+            _configPath = configPath;
+            _onChanged = onChanged;
+            _onError = onError;
+
+            _watcher = new FileSystemWatcher(Path.GetDirectoryName(configPath)!, Path.GetFileName(configPath))
+            {
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.CreationTime | NotifyFilters.Size,
+                IncludeSubdirectories = false
+            };
+            _timer = new Timer(OnTimerElapsed, this, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+
+            _watcher.Changed += OnFileChanged;
+            _watcher.Created += OnFileChanged;
+            _watcher.Deleted += OnFileChanged;
+            _watcher.Renamed += OnFileRenamed;
+            _watcher.EnableRaisingEvents = true;
+        }
+
+        public void Dispose()
+        {
+            lock (_sync)
+            {
+                if (_disposed)
+                    return;
+
+                _disposed = true;
+            }
+
+            _watcher.Dispose();
+            _timer.Dispose();
+        }
+
+        private static void OnTimerElapsed(object? state)
+            => ((PlatformConfigWatcher)state!).ReloadConfig();
+
+        private void OnFileChanged(object sender, FileSystemEventArgs e)
+            => QueueReload();
+
+        private void OnFileRenamed(object sender, RenamedEventArgs e)
+            => QueueReload();
+
+        private void QueueReload()
+        {
+            lock (_sync)
+            {
+                if (_disposed)
+                    return;
+
+                _timer.Change(ReloadDebounce, Timeout.InfiniteTimeSpan);
+            }
+        }
+
+        private void ReloadConfig()
+        {
+            lock (_sync)
+            {
+                if (_disposed)
+                    return;
+            }
+
+            try
+            {
+                var config = Load(_configPath);
+                _onChanged?.Invoke(config);
+                ConfigChanged?.Invoke(config);
+            }
+            catch (Exception ex)
+            {
+                _onError?.Invoke(ex);
+            }
         }
     }
 }
