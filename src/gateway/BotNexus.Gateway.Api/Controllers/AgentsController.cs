@@ -1,5 +1,6 @@
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BotNexus.Gateway.Api.Controllers;
@@ -47,16 +48,34 @@ public sealed class AgentsController : ControllerBase
         }
     }
 
-    /// <summary>Updates an existing agent descriptor by ID.</summary>
-    /// <param name="agentId">The registered agent ID to update.</param>
-    /// <param name="descriptor">The new descriptor payload.</param>
+    /// <summary>
+    /// Updates an existing agent descriptor.
+    /// </summary>
+    /// <param name="agentId">The route agent identifier.</param>
+    /// <param name="descriptor">The descriptor payload to persist.</param>
     /// <returns>The updated descriptor when found; otherwise 404.</returns>
+    /// <remarks>
+    /// If <paramref name="descriptor" /> omits <see cref="AgentDescriptor.AgentId" />, the route value is used.
+    /// If both are provided, they must match.
+    /// </remarks>
     [HttpPut("{agentId}")]
+    [ProducesResponseType(typeof(AgentDescriptor), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public ActionResult<AgentDescriptor> Update(string agentId, [FromBody] AgentDescriptor descriptor)
     {
-        var updatedDescriptor = string.Equals(agentId, descriptor.AgentId, StringComparison.OrdinalIgnoreCase)
-            ? descriptor
-            : descriptor with { AgentId = agentId };
+        if (!string.IsNullOrWhiteSpace(descriptor.AgentId) &&
+            !string.Equals(agentId, descriptor.AgentId, StringComparison.OrdinalIgnoreCase))
+        {
+            return BadRequest(new
+            {
+                error = $"Route agentId '{agentId}' does not match payload agentId '{descriptor.AgentId}'."
+            });
+        }
+
+        var updatedDescriptor = string.IsNullOrWhiteSpace(descriptor.AgentId)
+            ? descriptor with { AgentId = agentId }
+            : descriptor;
 
         var wasUpdated = _registry.Update(agentId, updatedDescriptor);
         return wasUpdated ? Ok(updatedDescriptor) : NotFound();

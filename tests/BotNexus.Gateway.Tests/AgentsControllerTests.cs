@@ -54,6 +54,33 @@ public sealed class AgentsControllerTests
         result.Should().BeOfType<ConflictObjectResult>();
     }
 
+    [Fact]
+    public void Update_WithMismatchedRouteAndPayloadAgentId_ReturnsBadRequest()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor("agent-a"));
+        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>());
+
+        var result = controller.Update("agent-a", CreateDescriptor("agent-b"));
+
+        result.Result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void Update_WithEmptyPayloadAgentId_UsesRouteAgentId()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor("agent-a"));
+        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>());
+        var payload = CreateDescriptor("agent-a") with { AgentId = string.Empty };
+
+        var result = controller.Update("agent-a", payload);
+        var updated = (result.Result as OkObjectResult)?.Value as AgentDescriptor;
+
+        updated.Should().NotBeNull();
+        updated!.AgentId.Should().Be("agent-a");
+    }
+
     private static AgentDescriptor CreateDescriptor(string agentId)
         => new()
         {
