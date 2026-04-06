@@ -74,11 +74,25 @@ public static class GatewayServiceCollectionExtensions
         services.AddHostedService<GatewayHost>();
         services.AddHostedService<SessionCleanupService>();
 
-        var defaultAgentConfigPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "agents"));
-        if (Directory.Exists(defaultAgentConfigPath) &&
-            services.All(descriptor => descriptor.ServiceType != typeof(IAgentConfigurationSource)))
+        // Default agent configuration from BotNexusHome (~/.botnexus/agents/)
+        // This ensures agents created via the API are always persisted to disk.
+        // Platform config can override this with an explicit agentsDirectory.
+        if (services.All(descriptor => descriptor.ServiceType != typeof(IAgentConfigurationSource)))
         {
-            services.AddFileAgentConfiguration(defaultAgentConfigPath);
+            services.AddSingleton<IAgentConfigurationSource>(serviceProvider =>
+            {
+                var home = serviceProvider.GetRequiredService<BotNexusHome>();
+                home.Initialize();
+                return new FileAgentConfigurationSource(
+                    home.AgentsPath,
+                    serviceProvider.GetRequiredService<ILogger<FileAgentConfigurationSource>>());
+            });
+            services.Replace(ServiceDescriptor.Singleton<IAgentConfigurationWriter>(serviceProvider =>
+            {
+                var home = serviceProvider.GetRequiredService<BotNexusHome>();
+                return new FileAgentConfigurationWriter(home.AgentsPath, home);
+            }));
+            services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
         }
 
         return services;
