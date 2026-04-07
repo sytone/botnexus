@@ -376,7 +376,7 @@
         }
         debugLog('hub', `→ ${method}`, ...args);
         try {
-            const result = await hubInvoke(method, ...args);
+            const result = await connection.invoke(method, ...args);
             debugLog('hub', `← ${method} OK`, result);
             return result;
         } catch (err) {
