@@ -9,6 +9,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Diagnostics;
+using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Streaming;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -32,6 +33,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
     private readonly IActivityBroadcaster _activity;
     private readonly IChannelManager _channelManager;
     private readonly ILogger<GatewayHost> _logger;
+    private readonly SessionLifecycleEvents? _sessionLifecycleEvents;
     private readonly ConcurrentDictionary<string, SessionQueueState> _sessionQueues = new(StringComparer.OrdinalIgnoreCase);
 
     public GatewayHost(
@@ -41,7 +43,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
         IActivityBroadcaster activity,
         IChannelManager channelManager,
         ILogger<GatewayHost> logger,
-        int sessionQueueCapacity = DefaultSessionQueueCapacity)
+        int sessionQueueCapacity = DefaultSessionQueueCapacity,
+        SessionLifecycleEvents? sessionLifecycleEvents = null)
     {
         _supervisor = supervisor;
         _router = router;
@@ -49,6 +52,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
         _activity = activity;
         _channelManager = channelManager;
         _logger = logger;
+        _sessionLifecycleEvents = sessionLifecycleEvents;
         SessionQueueCapacity = Math.Max(sessionQueueCapacity, 1);
     }
 
@@ -255,6 +259,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
 
                                 return ValueTask.CompletedTask;
                             }),
+                        _sessionLifecycleEvents,
                         cancellationToken);
                     sessionSaved = true;
                 }

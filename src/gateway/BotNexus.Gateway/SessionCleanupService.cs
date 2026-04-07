@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -10,10 +11,12 @@ namespace BotNexus.Gateway;
 public sealed class SessionCleanupService(
     ISessionStore sessionStore,
     IOptions<SessionCleanupOptions> optionsAccessor,
-    ILogger<SessionCleanupService> logger) : BackgroundService
+    ILogger<SessionCleanupService> logger,
+    SessionLifecycleEvents? lifecycleEvents = null) : BackgroundService
 {
     private readonly ISessionStore _sessionStore = sessionStore;
     private readonly ILogger<SessionCleanupService> _logger = logger;
+    private readonly SessionLifecycleEvents? _lifecycleEvents = lifecycleEvents;
     private SessionCleanupOptions Options => optionsAccessor.Value;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -54,6 +57,16 @@ public sealed class SessionCleanupService(
                 session.Status = SessionStatus.Expired;
                 session.ExpiresAt ??= now;
                 await _sessionStore.SaveAsync(session, cancellationToken);
+                if (_lifecycleEvents is not null)
+                {
+                    await _lifecycleEvents.PublishAsync(
+                        new SessionLifecycleEvent(
+                            session.SessionId,
+                            session.AgentId,
+                            SessionLifecycleEventType.Expired,
+                            session),
+                        cancellationToken);
+                }
                 continue;
             }
 
@@ -63,6 +76,16 @@ public sealed class SessionCleanupService(
                 now - session.UpdatedAt > options.ClosedSessionRetention.Value)
             {
                 await _sessionStore.DeleteAsync(session.SessionId, cancellationToken);
+                if (_lifecycleEvents is not null)
+                {
+                    await _lifecycleEvents.PublishAsync(
+                        new SessionLifecycleEvent(
+                            session.SessionId,
+                            session.AgentId,
+                            SessionLifecycleEventType.Deleted,
+                            session),
+                        cancellationToken);
+                }
             }
         }
     }

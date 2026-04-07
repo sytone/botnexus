@@ -49,11 +49,14 @@ public static class GatewayServiceCollectionExtensions
         // Core services
         services.TryAddSingleton<BotNexusHome>();
         services.AddSingleton<IAgentWorkspaceManager, FileAgentWorkspaceManager>();
-        services.AddSingleton<IContextBuilder, WorkspaceContextBuilder>();
-        services.AddSingleton<IAgentRegistry, DefaultAgentRegistry>();
-        services.TryAddSingleton<IAgentConfigurationWriter, NoOpAgentConfigurationWriter>();
-        services.AddSingleton<IAgentSupervisor, DefaultAgentSupervisor>();
-        services.AddSingleton<IAgentCommunicator, DefaultAgentCommunicator>();
+         services.AddSingleton<IContextBuilder, WorkspaceContextBuilder>();
+         services.AddSingleton<IAgentRegistry, DefaultAgentRegistry>();
+         services.TryAddSingleton<IAgentConfigurationWriter, NoOpAgentConfigurationWriter>();
+         services.AddSingleton<IAgentSupervisor, DefaultAgentSupervisor>();
+         services.AddSingleton<IAgentCommunicator, DefaultAgentCommunicator>();
+        services.TryAddSingleton<SessionLifecycleEvents>();
+        services.TryAddSingleton<ISessionLifecycleEvents>(serviceProvider =>
+            serviceProvider.GetRequiredService<SessionLifecycleEvents>());
         services.AddSingleton<IMessageRouter, DefaultMessageRouter>();
         services.AddSingleton<IConfigPathResolver, ConfigPathResolver>();
         services.TryAddSingleton<IChannelManager, ChannelManager>();

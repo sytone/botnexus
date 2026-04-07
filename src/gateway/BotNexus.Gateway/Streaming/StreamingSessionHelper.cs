@@ -1,6 +1,7 @@
 using System.Text;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Sessions;
 
 namespace BotNexus.Gateway.Streaming;
 
@@ -16,6 +17,7 @@ public static class StreamingSessionHelper
     /// <param name="session">The target session to update.</param>
     /// <param name="sessionStore">The session store used to persist changes.</param>
     /// <param name="options">Optional behavior overrides.</param>
+    /// <param name="lifecycleEvents">Optional lifecycle event publisher.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The accumulated streaming result details.</returns>
     public static async Task<StreamingSessionResult> ProcessAndSaveAsync(
@@ -23,6 +25,7 @@ public static class StreamingSessionHelper
         GatewaySession session,
         ISessionStore sessionStore,
         StreamingSessionOptions? options = null,
+        SessionLifecycleEvents? lifecycleEvents = null,
         CancellationToken cancellationToken = default)
     {
         options ??= new StreamingSessionOptions();
@@ -73,6 +76,16 @@ public static class StreamingSessionHelper
         if (streamedContent.Length > 0)
             session.AddEntry(new SessionEntry { Role = "assistant", Content = streamedContent.ToString() });
         await sessionStore.SaveAsync(session, cancellationToken);
+        if (lifecycleEvents is not null)
+        {
+            await lifecycleEvents.PublishAsync(
+                new SessionLifecycleEvent(
+                    session.SessionId,
+                    session.AgentId,
+                    SessionLifecycleEventType.Closed,
+                    session),
+                cancellationToken);
+        }
 
         return new StreamingSessionResult(streamedContent.ToString(), streamedHistory);
     }
