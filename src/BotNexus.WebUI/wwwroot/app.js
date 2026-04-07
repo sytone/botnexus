@@ -385,14 +385,27 @@
         }
     }
 
+    // Client version from meta tag — sent to server for debugging
+    const CLIENT_VERSION = document.querySelector('meta[name="botnexus-version"]')?.content || 'unknown';
+
+    // Post client logs to server for unified debugging
+    function serverLog(level, message, data) {
+        debugLog(level, message, data);
+        fetch('/api/log', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ level, message, data, version: CLIENT_VERSION, timestamp: new Date().toISOString() })
+        }).catch(() => {}); // fire-and-forget
+    }
+
     function initSignalR() {
         connection = new signalR.HubConnectionBuilder()
-            .withUrl('/hub/gateway')
+            .withUrl(`/hub/gateway?clientVersion=${CLIENT_VERSION}`)
             .withAutomaticReconnect([0, 1000, 2000, 5000, 10000, 30000])
             .configureLogging(signalR.LogLevel.Warning)
             .build();
 
-        debugLog('init', 'SignalR hub builder created');
+        debugLog('init', `SignalR hub builder created (client v${CLIENT_VERSION})`);
 
         // Server → Client methods
         connection.on('Connected', (data) => {
@@ -507,7 +520,7 @@
 
     async function startConnection() {
         try {
-            debugLog('lifecycle', 'Starting connection...');
+            serverLog('info', 'SignalR connecting', CLIENT_VERSION);
             setStatus('connecting');
             showConnectionBanner('Connecting...', 'warning');
             await connection.start();

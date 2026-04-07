@@ -20,24 +20,29 @@ public sealed class GatewayHub : Hub
     private readonly ISessionStore _sessions;
     private readonly IChannelDispatcher _dispatcher;
     private readonly IActivityBroadcaster _activity;
+    private readonly ILogger<GatewayHub> _logger;
 
     public GatewayHub(
         IAgentSupervisor supervisor,
         IAgentRegistry registry,
         ISessionStore sessions,
         IChannelDispatcher dispatcher,
-        IActivityBroadcaster activity)
+        IActivityBroadcaster activity,
+        ILogger<GatewayHub> logger)
     {
         _supervisor = supervisor;
         _registry = registry;
         _sessions = sessions;
         _dispatcher = dispatcher;
         _activity = activity;
+        _logger = logger;
     }
 
     public async Task<object> JoinSession(string agentId, string? sessionId)
     {
         sessionId ??= Guid.NewGuid().ToString("N");
+        _logger.LogInformation("Hub JoinSession: agent={AgentId} session={SessionId} connection={ConnectionId} group={Group}",
+            agentId, sessionId, Context.ConnectionId, GetSessionGroup(sessionId));
         await Groups.AddToGroupAsync(Context.ConnectionId, GetSessionGroup(sessionId));
 
         var session = await _sessions.GetOrCreateAsync(sessionId, agentId, Context.ConnectionAborted);
@@ -54,7 +59,10 @@ public sealed class GatewayHub : Hub
         => Groups.RemoveFromGroupAsync(Context.ConnectionId, GetSessionGroup(sessionId));
 
     public Task SendMessage(string agentId, string sessionId, string content)
-        => _dispatcher.DispatchAsync(
+    {
+        _logger.LogInformation("Hub SendMessage: agent={AgentId} session={SessionId} connection={ConnectionId} content={Content}",
+            agentId, sessionId, Context.ConnectionId, content?.Length > 50 ? content[..50] + "..." : content);
+        return _dispatcher.DispatchAsync(
             new InboundMessage
             {
                 ChannelType = "signalr",
@@ -66,6 +74,7 @@ public sealed class GatewayHub : Hub
                 Metadata = new Dictionary<string, object?> { ["messageType"] = "message" }
             },
             CancellationToken.None);
+    }
 
     public Task Steer(string agentId, string sessionId, string content)
         => _dispatcher.DispatchAsync(
@@ -113,10 +122,15 @@ public sealed class GatewayHub : Hub
 
     public override async Task OnConnectedAsync()
     {
+        var clientVersion = Context.GetHttpContext()?.Request.Query["clientVersion"].FirstOrDefault() ?? "unknown";
+        _logger.LogInformation("Hub OnConnected: connection={ConnectionId} clientVersion={ClientVersion}",
+            Context.ConnectionId, clientVersion);
+
         await Clients.Caller.SendAsync("Connected", new
         {
             connectionId = Context.ConnectionId,
-            agents = _registry.GetAll().Select(a => new { a.AgentId, a.DisplayName })
+            agents = _registry.GetAll().Select(a => new { a.AgentId, a.DisplayName }),
+            serverVersion = typeof(GatewayHub).Assembly.GetName().Version?.ToString() ?? "dev"
         });
 
         await _activity.PublishAsync(

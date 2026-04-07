@@ -248,7 +248,14 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
                 }, cancellationToken);
 
                 var sessionSaved = false;
-                if (ResolveChannelAdapter(message.ChannelType) is { SupportsStreaming: true } channel)
+                var resolvedChannel = ResolveChannelAdapter(message.ChannelType);
+                _logger.LogInformation("Channel resolution: type='{ChannelType}' found={Found} streaming={Streaming} streamEvents={StreamEvents}",
+                    message.ChannelType,
+                    resolvedChannel is not null,
+                    resolvedChannel?.SupportsStreaming,
+                    resolvedChannel is IStreamEventChannelAdapter);
+
+                if (resolvedChannel is { SupportsStreaming: true } channel)
                 {
                     await StreamingSessionHelper.ProcessAndSaveAsync(
                         handle.StreamAsync(message.Content, cancellationToken),

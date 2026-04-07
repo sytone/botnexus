@@ -52,7 +52,7 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
             _ => "Unknown"
         };
 
-        logger.LogDebug("SignalR → group session:{SessionId} method {Method}", conversationId, method);
+        logger.LogInformation("SignalR → group session:{SessionId} method {Method}", conversationId, method);
         return _hubContext.Clients.Group(GetSessionGroup(conversationId))
             .SendAsync(method, streamEvent, cancellationToken);
     }
