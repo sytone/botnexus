@@ -407,11 +407,12 @@
         });
 
         connection.on('SessionJoined', (data) => {
-            currentSessionId = data.sessionId;
-            currentAgentId = data.agentId;
+            // Session state already set by joinSession() return value.
+            // Just refresh the sidebar display.
+            debugLog('session', 'SessionJoined callback:', data.sessionId);
+            if (data.sessionId) currentSessionId = data.sessionId;
+            if (data.agentId) currentAgentId = data.agentId;
             updateSessionIdDisplay();
-            loadChatHeaderModels();
-            loadSessions();
         });
 
         connection.on('SessionReset', (data) => {
@@ -524,23 +525,29 @@
         }
     }
 
+    let joiningSession = false;
+
     async function joinSession(agentId, sessionId) {
+        if (joiningSession) {
+            debugLog('session', 'SKIP join — already joining');
+            return;
+        }
         if (!connection || connection.state !== signalR.HubConnectionState.Connected) {
             debugLog('session', 'Cannot join — not connected');
             return;
         }
 
-        // Leave previous session group
-        if (currentSessionId && currentSessionId !== sessionId) {
-            try { await hubInvoke('LeaveSession', currentSessionId); } catch {}
-        }
-
-        currentAgentId = agentId;
-
-        // Join new session group — server returns session data
+        joiningSession = true;
         try {
+            // Leave previous session group
+            if (currentSessionId && currentSessionId !== sessionId) {
+                try { await hubInvoke('LeaveSession', currentSessionId); } catch {}
+            }
+
+            currentAgentId = agentId;
+
+            // Join new session group — server returns session data
             const result = await hubInvoke('JoinSession', agentId, sessionId || null);
-            // Set session ID immediately from return value if available
             if (result?.sessionId) {
                 currentSessionId = result.sessionId;
                 debugLog('session', 'Joined session:', currentSessionId);
@@ -549,6 +556,8 @@
         } catch (err) {
             debugLog('session', 'Join failed:', err.message);
             appendSystemMessage(`Failed to join session: ${err.message}`, 'error');
+        } finally {
+            joiningSession = false;
         }
     }
 
