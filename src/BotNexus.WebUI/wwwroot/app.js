@@ -1187,8 +1187,7 @@
         isStreaming = false;
         setSendingState(false);
         elChatMessages.innerHTML = '';
-        elChatTitle.textContent = 'New Chat';
-        elChatMeta.textContent = `Agent: ${elAgentSelect.value || 'default'} · Session will be created on first message`;
+        elChatTitle.textContent = `${elAgentSelect.value || 'New Chat'} — WebSocket`;        elChatMeta.textContent = `Agent: ${elAgentSelect.value || 'default'} · Session will be created on first message`;
         elSessionIdDisplay.classList.add('hidden');
         elAgentSelect.disabled = false;
     }
@@ -1367,7 +1366,7 @@
 
         elWelcome.classList.add('hidden');
         elChatView.classList.remove('hidden');
-        elChatTitle.textContent = 'New Chat';
+        elChatTitle.textContent = `${elAgentSelect.value || 'New Chat'} — WebSocket`;
         elChatMeta.textContent = `Agent: ${elAgentSelect.value || 'default'} · Session will be created on first message`;
         elChatMessages.innerHTML = '';
         elSessionIdDisplay.classList.add('hidden');
@@ -1477,7 +1476,7 @@
 
         elWelcome.classList.add('hidden');
         elChatView.classList.remove('hidden');
-        elChatTitle.textContent = agentId || 'Chat';
+        elChatTitle.textContent = agentId ? `${agentId} — ${session?.channelType || 'WebSocket'}` : 'Chat';
         elChatMessages.innerHTML = '<div class="loading">Loading messages...</div>';
         setSendingState(false);
         updateSessionIdDisplay();
