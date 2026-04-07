@@ -79,6 +79,8 @@
     const elAgentFormModal = $('#agent-form-modal');
     const elAgentForm = $('#agent-form');
     const elDebugModal = $('#debug-modal');
+    const elAgentPanel = $('#agent-panel');
+    const elBtnToggleAgentPanel = $('#btn-toggle-agent-panel');
     const elConfirmDialog = $('#confirm-dialog');
     const elBtnReconnect = $('#btn-reconnect');
     const elConnectionBannerText = $('#connection-banner-text');
@@ -1803,7 +1805,7 @@
                 </div>
                 <span class="item-meta">${model ? 'Model: ' + escapeHtml(model) : ''}</span>
             `;
-            el.addEventListener('click', () => { elAgentSelect.value = name; currentAgentId = name; showAgentDebugInfo(name); });
+            el.addEventListener('click', () => { elAgentSelect.value = name; currentAgentId = name; openAgentPage(name); });
             elAgentsList.appendChild(el);
         }
         populateAgentSelect(agents);
@@ -1829,7 +1831,155 @@
     }
 
     // =========================================================================
-    // Agent debug info panel
+    // Agent page (replaces debug modal as primary view)
+    // =========================================================================
+
+    async function openAgentPage(agentId) {
+        const agent = await fetchJson(`/agents/${encodeURIComponent(agentId)}`);
+        const agentData = agent || agentsCache.find(a => (a.name || a.agentId || a.id) === agentId);
+        if (!agentData) { appendSystemMessage('Agent not found', 'error'); return; }
+
+        currentAgentId = agentId;
+
+        // Find the most recent session for this agent, or start a new chat
+        const sessions = await fetchJson('/sessions');
+        const agentSession = sessions
+            ?.filter(s => s.agentId === agentId)
+            .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))[0];
+
+        if (agentSession) {
+            await openSession(agentSession.sessionId, agentId);
+        } else {
+            startNewChat();
+        }
+
+        // Show agent details panel alongside chat
+        await showAgentPanel(agentData, agentId);
+    }
+
+    async function showAgentPanel(agent, agentId) {
+        agentId = agentId || agent.name || agent.agentId || agent.id;
+
+        // Title
+        $('#agent-panel-title').textContent = agent.displayName || agent.name || agentId;
+
+        // Config section — show editable fields
+        const configHtml = `
+            <div class="agent-config-field">
+                <div class="agent-config-label">Agent ID</div>
+                <div class="agent-config-value"><code>${escapeHtml(agentId)}</code></div>
+            </div>
+            <div class="agent-config-field">
+                <div class="agent-config-label">Display Name</div>
+                <input class="agent-config-input" id="agent-edit-displayName" value="${escapeHtml(agent.displayName || agent.name || '')}">
+            </div>
+            <div class="agent-config-field">
+                <div class="agent-config-label">Provider</div>
+                <div class="agent-config-value">${escapeHtml(agent.apiProvider || agent.provider || 'unknown')}</div>
+            </div>
+            <div class="agent-config-field">
+                <div class="agent-config-label">Model</div>
+                <div class="agent-config-value">${escapeHtml(agent.modelId || agent.model || agent.defaultModel || 'unknown')}</div>
+            </div>
+            <div class="agent-config-field">
+                <div class="agent-config-label">Isolation</div>
+                <div class="agent-config-value">${escapeHtml(agent.isolationStrategy || 'in-process')}</div>
+            </div>
+            <div class="agent-config-field">
+                <div class="agent-config-label">Memory</div>
+                <div class="agent-config-value">${agent.memoryEnabled ? '✅ Enabled' : '❌ Disabled'}</div>
+            </div>
+            <div class="agent-config-field">
+                <div class="agent-config-label">Description</div>
+                <textarea class="agent-config-input" id="agent-edit-description" rows="3">${escapeHtml(agent.description || '')}</textarea>
+            </div>
+        `;
+        $('#agent-panel-config').innerHTML = configHtml;
+
+        // Status section
+        let agentInstances = [];
+        try {
+            const instances = await fetchJson('/agents/instances') || [];
+            agentInstances = instances.filter(i => i.agentId === agentId);
+        } catch { /* ignore */ }
+
+        let statusHtml = `<div class="agent-config-field">
+            <div class="agent-config-label">Active Instances</div>
+            <div class="agent-config-value">${agentInstances.length}</div>
+        </div>`;
+        for (const inst of agentInstances) {
+            const emoji = inst.status === 'Running' ? '🟢' : inst.status === 'Idle' ? '🟡' : '🔴';
+            statusHtml += `<div class="agent-config-value" style="margin-top:4px">${emoji} ${escapeHtml(inst.status || 'unknown')} — <code style="font-size:0.75rem">${escapeHtml((inst.sessionId || '?').substring(0, 12))}…</code></div>`;
+        }
+        $('#agent-panel-status').innerHTML = statusHtml;
+
+        // Session section
+        let sessionHtml = '';
+        if (currentSessionId) {
+            sessionHtml = `
+                <div class="agent-config-field">
+                    <div class="agent-config-label">Session ID</div>
+                    <div class="agent-config-value"><code style="font-size:0.75rem">${escapeHtml(currentSessionId)}</code></div>
+                </div>
+                <div class="agent-config-field">
+                    <div class="agent-config-label">Connection</div>
+                    <div class="agent-config-value">${connection?.state === signalR.HubConnectionState.Connected ? '🟢 Connected' : '🔴 Disconnected'}</div>
+                </div>
+            `;
+        } else {
+            sessionHtml = '<div class="agent-config-value" style="color:var(--text-secondary)">No active session</div>';
+        }
+        $('#agent-panel-session').innerHTML = sessionHtml;
+
+        // Actions
+        const escapedAgentId = escapeHtml(agentId).replace(/'/g, "\\'");
+        $('#agent-panel-actions').innerHTML = `
+            <button class="btn btn-secondary" id="agent-panel-btn-reset" style="margin-bottom:8px;width:100%">🔄 Reset Session</button>
+            <button class="btn btn-primary" id="agent-panel-btn-save" style="width:100%">💾 Save Changes</button>
+        `;
+
+        // Bind action buttons
+        const btnReset = $('#agent-panel-btn-reset');
+        if (btnReset) btnReset.addEventListener('click', async () => {
+            if (currentSessionId && currentAgentId) {
+                try { await hubInvoke('ResetSession', currentAgentId, currentSessionId); } catch { /* ignore */ }
+            }
+            startNewChat();
+        });
+        const btnSave = $('#agent-panel-btn-save');
+        if (btnSave) btnSave.addEventListener('click', async () => {
+            const displayName = $('#agent-edit-displayName')?.value;
+            const description = $('#agent-edit-description')?.value;
+            const agentData = await fetchJson(`/agents/${encodeURIComponent(agentId)}`);
+            if (!agentData) { appendSystemMessage('Agent not found', 'error'); return; }
+
+            const updated = { ...agentData, displayName, description };
+            const res = await fetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updated)
+            });
+            if (res.ok) {
+                appendSystemMessage('Agent settings saved.');
+                loadAgents();
+            } else {
+                appendSystemMessage(`Failed to save: ${res.status}`, 'error');
+            }
+        });
+
+        // Show the panel
+        elAgentPanel.classList.remove('hidden');
+        document.body.classList.add('agent-panel-open');
+        elBtnToggleAgentPanel.style.display = '';
+    }
+
+    function closeAgentPanel() {
+        elAgentPanel.classList.add('hidden');
+        document.body.classList.remove('agent-panel-open');
+    }
+
+    // =========================================================================
+    // Agent debug info panel (kept as fallback)
     // =========================================================================
 
     async function showAgentDebugInfo(agentId) {
@@ -2453,6 +2603,20 @@
         // Debug info modal
         elDebugModal.querySelector('.debug-modal-close').addEventListener('click', closeDebugModal);
         elDebugModal.querySelector('.debug-modal-overlay').addEventListener('click', closeDebugModal);
+
+        // Agent panel
+        $('#btn-close-agent-panel').addEventListener('click', closeAgentPanel);
+        elBtnToggleAgentPanel.addEventListener('click', async () => {
+            if (elAgentPanel.classList.contains('hidden')) {
+                if (currentAgentId) {
+                    const agent = await fetchJson(`/agents/${encodeURIComponent(currentAgentId)}`);
+                    const agentData = agent || agentsCache.find(a => (a.name || a.agentId || a.id) === currentAgentId);
+                    if (agentData) await showAgentPanel(agentData, currentAgentId);
+                }
+            } else {
+                closeAgentPanel();
+            }
+        });
         $('#btn-cancel-agent').addEventListener('click', closeAgentForm);
         $('#btn-save-agent').addEventListener('click', saveAgent);
         $('#form-agent-provider').addEventListener('change', () => { loadModelsForProvider($('#form-agent-provider').value); });
@@ -2491,6 +2655,7 @@
             }
             if (e.key === 'Escape') {
                 if (isCommandPaletteVisible()) { hideCommandPalette(); return; }
+                if (!elAgentPanel.classList.contains('hidden')) { closeAgentPanel(); return; }
                 if (!elToolModal.classList.contains('hidden')) { closeToolModal(); return; }
                 if (!elDebugModal.classList.contains('hidden')) { closeDebugModal(); return; }
                 if (!elAgentFormModal.classList.contains('hidden')) { closeAgentForm(); return; }

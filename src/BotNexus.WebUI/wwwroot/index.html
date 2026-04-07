@@ -146,6 +146,7 @@
                             <span class="toggle-slider"></span>
                         </label>
                         <span class="toggle-label">💭 Thinking</span>
+                        <button id="btn-toggle-agent-panel" class="btn-icon" title="Agent details" aria-label="Toggle agent panel" style="display:none;">⚙️</button>
                         <button id="btn-abort" class="btn btn-danger hidden" title="Abort current request" aria-label="Abort">⏹ Abort</button>
                     </div>
                 </div>
@@ -175,6 +176,31 @@
                     </div>
                     <div id="steer-indicator" class="steer-indicator hidden" aria-live="polite">Steering...</div>
                     <div id="followup-indicator" class="followup-indicator hidden" aria-live="polite">Follow-up queued</div>
+                </div>
+            </div>
+            <!-- Agent Details Panel -->
+            <div id="agent-panel" class="agent-panel hidden">
+                <div class="agent-panel-header">
+                    <h3 id="agent-panel-title">Agent</h3>
+                    <button id="btn-close-agent-panel" class="btn-icon" title="Close panel" aria-label="Close agent panel">✕</button>
+                </div>
+                <div class="agent-panel-body">
+                    <div class="agent-panel-section">
+                        <h4>Configuration</h4>
+                        <div id="agent-panel-config"></div>
+                    </div>
+                    <div class="agent-panel-section">
+                        <h4>Status</h4>
+                        <div id="agent-panel-status"></div>
+                    </div>
+                    <div class="agent-panel-section">
+                        <h4>Session</h4>
+                        <div id="agent-panel-session"></div>
+                    </div>
+                    <div class="agent-panel-section">
+                        <h4>Actions</h4>
+                        <div id="agent-panel-actions"></div>
+                    </div>
                 </div>
             </div>
         </main>
