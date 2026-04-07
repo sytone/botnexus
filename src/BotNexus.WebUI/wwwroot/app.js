@@ -453,20 +453,20 @@
             decrementQueue();
         });
 
-        connection.on('ContentDelta', (delta) => {
+        connection.on('ContentDelta', (evt) => {
             removeStreamingIndicator();
             markResponseReceived();
             autoCollapseThinking();
             showProcessingStatus('Writing response...', '✍️');
-            if (typeof delta === 'string') appendDelta(delta);
-            else if (delta?.delta) appendDelta(delta.delta);
+            // evt is AgentStreamEvent — contentDelta property (camelCase from JSON)
+            const text = typeof evt === 'string' ? evt : (evt?.contentDelta || evt?.delta || '');
+            if (text) appendDelta(text);
         });
 
         connection.on('ThinkingDelta', (evt) => {
             showProcessingStatus('Thinking...', '💭');
-            if (evt?.delta || evt?.thinkingContent) {
-                handleThinkingDelta({ delta: evt.delta || evt.thinkingContent });
-            }
+            const text = evt?.thinkingContent || evt?.delta || '';
+            if (text) handleThinkingDelta({ delta: text });
         });
 
         connection.on('ToolStart', (evt) => {
