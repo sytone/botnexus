@@ -3,9 +3,11 @@ using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Gateway.Agents;
 
+/// <summary>
+/// Loads workspace context files and delegates prompt assembly to <see cref="SystemPromptBuilder"/>.
+/// </summary>
 public sealed class WorkspaceContextBuilder : IContextBuilder
 {
-    private const string SectionSeparator = "\n\n";
     private const string BootstrapFileName = "BOOTSTRAP.md";
     private static readonly string[] DefaultPromptFiles =
         ["AGENTS.md", "SOUL.md", "TOOLS.md", "BOOTSTRAP.md", "IDENTITY.md", "USER.md"];
@@ -22,16 +24,24 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
 
         var workspacePath = ResolveWorkspaceDirectory(_workspaceManager.GetWorkspacePath(descriptor.AgentId));
         var promptFiles = ResolvePromptFiles(descriptor);
-        List<string> sections = [];
-
-        if (!string.IsNullOrWhiteSpace(descriptor.SystemPrompt))
-            sections.Add(descriptor.SystemPrompt.Trim());
-
         var contextFiles = await LoadContextFilesAsync(workspacePath, promptFiles, cancellationToken);
-        if (contextFiles.Length > 0)
-            sections.AddRange(contextFiles.Select(static f => f.Content));
 
-        return string.Join(SectionSeparator, sections);
+        return SystemPromptBuilder.Build(new SystemPromptParams
+        {
+            WorkspaceDir = workspacePath,
+            ExtraSystemPrompt = descriptor.SystemPrompt,
+            ContextFiles = contextFiles,
+            Runtime = new RuntimeInfo
+            {
+                AgentId = descriptor.AgentId,
+                Host = Environment.MachineName,
+                Os = Environment.OSVersion.ToString(),
+                Provider = descriptor.ApiProvider,
+                Model = descriptor.ModelId,
+                Channel = "websocket"
+            },
+            PromptMode = PromptMode.Full
+        });
     }
 
     private static async Task<ContextFile[]> LoadContextFilesAsync(
@@ -72,16 +82,9 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
 
     private static void DeleteBootstrapFile(string filePath)
     {
-        try
-        {
-            File.Delete(filePath);
-        }
-        catch (IOException)
-        {
-        }
-        catch (UnauthorizedAccessException)
-        {
-        }
+        try { File.Delete(filePath); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private static IReadOnlyList<string> ResolvePromptFiles(AgentDescriptor descriptor)
@@ -104,6 +107,4 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         return filePath.StartsWith(workspacePrefix, StringComparison.OrdinalIgnoreCase) ||
             filePath.Equals(workspaceFullPath, StringComparison.OrdinalIgnoreCase);
     }
-
-    private sealed record ContextFile(string Path, string Content);
 }

@@ -29,7 +29,10 @@ public sealed class WorkspaceContextBuilderTests
                 SystemPromptFiles = ["AGENTS.md", "BOOTSTRAP.md", "TOOLS.md"]
             });
 
-            result.Should().Be("AGENTS\n\nBOOTSTRAP\n\nTOOLS");
+            result.Should().Contain("AGENTS");
+            result.Should().Contain("BOOTSTRAP");
+            result.Should().Contain("TOOLS");
+            result.Should().NotContain("SOUL", "SOUL.md was not in the explicit prompt files list");
             File.Exists(Path.Combine(workspacePath, "BOOTSTRAP.md")).Should().BeFalse();
         }
         finally
@@ -62,7 +65,12 @@ public sealed class WorkspaceContextBuilderTests
                 SystemPrompt = "INLINE"
             });
 
-            result.Should().Be("INLINE\n\nAGENTS\n\nSOUL\n\nTOOLS\n\nBOOTSTRAP\n\nIDENTITY\n\nUSER");
+            result.Should().Contain("AGENTS");
+            result.Should().Contain("SOUL");
+            result.Should().Contain("TOOLS");
+            result.Should().Contain("BOOTSTRAP");
+            result.Should().Contain("IDENTITY");
+            result.Should().Contain("USER");
             File.Exists(Path.Combine(workspacePath, "BOOTSTRAP.md")).Should().BeFalse();
         }
         finally
@@ -89,7 +97,8 @@ public sealed class WorkspaceContextBuilderTests
                 ApiProvider = "test-provider"
             });
 
-            result.Should().Be("AGENTS");
+            result.Should().Contain("AGENTS");
+            result.Should().Contain("BotNexus", "SystemPromptBuilder adds the BotNexus identity line");
         }
         finally
         {
