@@ -87,7 +87,8 @@ public sealed class SchemaValidationTests
 
         var errors = PlatformConfigLoader.Validate(config);
 
-        errors.Should().Contain(error => error.Contains("providers.copilot must define apiKey or baseUrl", StringComparison.Ordinal));
+        errors.Should().NotContain(error => error.Contains("providers.copilot must define apiKey or baseUrl", StringComparison.Ordinal),
+            "apiKey/baseUrl are optional — auth can come from auth.json or environment");
         errors.Should().Contain(error => error.Contains("agents.assistant.provider", StringComparison.Ordinal));
         errors.Should().Contain(error => error.Contains("agents.assistant.model", StringComparison.Ordinal));
     }

@@ -103,7 +103,7 @@ public sealed class PlatformConfigurationTests
     }
 
     [Fact]
-    public void PlatformConfigLoader_Validate_WithMissingProviderFields_ReturnsProviderErrors()
+    public void PlatformConfigLoader_Validate_WithMissingProviderFields_AllowsOptionalApiKey()
     {
         var errors = PlatformConfigLoader.Validate(new PlatformConfig
         {
@@ -113,7 +113,8 @@ public sealed class PlatformConfigurationTests
             }
         });
 
-        errors.Should().ContainSingle(e => e.Contains("providers.copilot must define apiKey or baseUrl", StringComparison.Ordinal));
+        errors.Should().NotContain(e => e.Contains("providers.copilot must define apiKey or baseUrl", StringComparison.Ordinal),
+            "apiKey/baseUrl are optional — auth can come from auth.json or environment");
     }
 
     [Fact]
