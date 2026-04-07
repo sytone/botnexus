@@ -94,6 +94,7 @@
     const elModalOverlay = elToolModal.querySelector('.modal-overlay');
     const elAgentFormModal = $('#agent-form-modal');
     const elAgentForm = $('#agent-form');
+    const elDebugModal = $('#debug-modal');
     const elConfirmDialog = $('#confirm-dialog');
     const elBtnReconnect = $('#btn-reconnect');
     const elConnectionBannerText = $('#connection-banner-text');
@@ -1847,7 +1848,7 @@
                 </div>
                 <span class="item-meta">${model ? 'Model: ' + escapeHtml(model) : ''}</span>
             `;
-            el.addEventListener('click', () => { elAgentSelect.value = name; currentAgentId = name; });
+            el.addEventListener('click', () => { elAgentSelect.value = name; currentAgentId = name; showAgentDebugInfo(name); });
             elAgentsList.appendChild(el);
         }
         populateAgentSelect(agents);
@@ -1870,6 +1871,175 @@
         if (currentAgentId && !elAgentSelect.value) {
             elAgentSelect.value = currentAgentId;
         }
+    }
+
+    // =========================================================================
+    // Agent debug info panel
+    // =========================================================================
+
+    async function showAgentDebugInfo(agentId) {
+        const agent = await fetchJson(`/agents/${encodeURIComponent(agentId)}`);
+        if (!agent) {
+            // Fall back to cached agent data
+            const cached = agentsCache.find(a => (a.name || a.agentId || a.id) === agentId);
+            if (!cached) { appendSystemMessage('Agent not found', 'error'); return; }
+            return renderAgentDebugPanel(cached, agentId);
+        }
+        return renderAgentDebugPanel(agent, agentId);
+    }
+
+    async function renderAgentDebugPanel(agent, agentId) {
+        const agentName = agent.displayName || agent.name || agentId;
+
+        // Fetch instances in parallel
+        let agentInstances = [];
+        try {
+            const instances = await fetchJson('/agents/instances') || [];
+            agentInstances = instances.filter(i => i.agentId === agentId);
+        } catch { /* ignore */ }
+
+        let html = `<div class="debug-panel">`;
+        html += `<h3>🔍 ${escapeHtml(agentName)}</h3>`;
+
+        // Agent configuration
+        html += `<div class="debug-section"><h4>Configuration</h4>`;
+        html += `<table class="debug-table">`;
+        html += `<tr><td>Agent ID</td><td><code>${escapeHtml(agentId)}</code></td></tr>`;
+        if (agent.displayName) html += `<tr><td>Display Name</td><td>${escapeHtml(agent.displayName)}</td></tr>`;
+        if (agent.apiProvider || agent.provider) html += `<tr><td>Provider</td><td>${escapeHtml(agent.apiProvider || agent.provider || '')}</td></tr>`;
+        if (agent.modelId || agent.model || agent.defaultModel) html += `<tr><td>Model</td><td>${escapeHtml(agent.modelId || agent.model || agent.defaultModel || '')}</td></tr>`;
+        if (agent.isolationStrategy) html += `<tr><td>Isolation</td><td>${escapeHtml(agent.isolationStrategy)}</td></tr>`;
+        html += `<tr><td>Memory</td><td>${agent.memoryEnabled ? '✅ Enabled' : '❌ Disabled'}</td></tr>`;
+        if (agent.systemPromptFiles && agent.systemPromptFiles.length > 0) {
+            html += `<tr><td>Prompt Files</td><td>${agent.systemPromptFiles.map(f => `<code>${escapeHtml(f)}</code>`).join(', ')}</td></tr>`;
+        }
+        if (agent.status) html += `<tr><td>Status</td><td>${escapeHtml(agent.status)}</td></tr>`;
+        html += `</table></div>`;
+
+        // Active instances
+        html += `<div class="debug-section"><h4>Active Instances (${agentInstances.length})</h4>`;
+        if (agentInstances.length === 0) {
+            html += `<p class="debug-muted">No active instances</p>`;
+        } else {
+            for (const inst of agentInstances) {
+                const statusEmoji = inst.status === 'Running' ? '🟢' : inst.status === 'Idle' ? '🟡' : '🔴';
+                const sid = escapeHtml(inst.sessionId || '');
+                const escapedAgentId = escapeHtml(agentId).replace(/'/g, "\\'");
+                const escapedSid = sid.replace(/'/g, "\\'");
+                html += `<div class="debug-instance">`;
+                html += `<span>${statusEmoji} ${escapeHtml(inst.status || 'unknown')}</span>`;
+                html += `<code>${sid}</code>`;
+                if (inst.isolationStrategy) html += `<span style="font-size:0.75rem;color:var(--text-secondary)">${escapeHtml(inst.isolationStrategy)}</span>`;
+                html += `<button class="btn-sm btn-danger-sm" data-stop-agent="${escapedAgentId}" data-stop-session="${escapedSid}">Stop</button>`;
+                html += `</div>`;
+            }
+        }
+        html += `</div>`;
+
+        // Current session info
+        if (currentSessionId && currentAgentId === agentId) {
+            html += `<div class="debug-section"><h4>Current Session</h4>`;
+            html += `<table class="debug-table">`;
+            html += `<tr><td>Session ID</td><td><code>${escapeHtml(currentSessionId)}</code></td></tr>`;
+            html += `<tr><td>Connection ID</td><td><code>${escapeHtml(connectionId || 'none')}</code></td></tr>`;
+            html += `<tr><td>WebSocket</td><td>${ws && ws.readyState === WebSocket.OPEN ? '🟢 Connected' : '🔴 Disconnected'}</td></tr>`;
+            html += `<tr><td>Streaming</td><td>${isStreaming ? '⏳ Yes' : 'No'}</td></tr>`;
+            html += `</table></div>`;
+
+            // Try to fetch session status
+            try {
+                const sessionStatus = await fetchJson(`/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(currentSessionId)}/status`);
+                if (sessionStatus) {
+                    html += `<div class="debug-section"><h4>Session Status</h4>`;
+                    html += `<table class="debug-table">`;
+                    if (sessionStatus.status) html += `<tr><td>Status</td><td>${escapeHtml(sessionStatus.status)}</td></tr>`;
+                    if (sessionStatus.messageCount != null) html += `<tr><td>Messages</td><td>${sessionStatus.messageCount}</td></tr>`;
+                    if (sessionStatus.channelType) html += `<tr><td>Channel</td><td>${escapeHtml(sessionStatus.channelType)}</td></tr>`;
+                    if (sessionStatus.createdAt) html += `<tr><td>Created</td><td>${escapeHtml(new Date(sessionStatus.createdAt).toLocaleString())}</td></tr>`;
+                    if (sessionStatus.updatedAt) html += `<tr><td>Updated</td><td>${escapeHtml(new Date(sessionStatus.updatedAt).toLocaleString())}</td></tr>`;
+                    html += `</table></div>`;
+                }
+            } catch { /* ignore */ }
+        }
+
+        // Quick actions
+        html += `<div class="debug-section"><h4>Quick Actions</h4>`;
+        html += `<div class="debug-actions">`;
+        if (currentSessionId && currentAgentId === agentId) {
+            html += `<button class="btn-sm btn-danger-sm" id="debug-btn-stop">⏹ Stop Agent</button>`;
+            html += `<button class="btn-sm" id="debug-btn-reset">🔄 Reset Session</button>`;
+            html += `<button class="btn-sm" id="debug-btn-copy-sid">📋 Copy Session ID</button>`;
+        }
+        html += `<button class="btn-sm" id="debug-btn-refresh" data-debug-agent="${escapeHtml(agentId)}">↻ Refresh</button>`;
+        html += `</div></div>`;
+
+        html += `</div>`;
+
+        showDebugModal(html, agentId);
+    }
+
+    function showDebugModal(html, agentId) {
+        const body = $('#debug-modal-body');
+        body.innerHTML = html;
+        elDebugModal.classList.remove('hidden');
+
+        // Bind quick-action buttons
+        const btnStop = body.querySelector('#debug-btn-stop');
+        if (btnStop) btnStop.addEventListener('click', async () => {
+            if (currentSessionId && currentAgentId) {
+                await fetch(`${API_BASE}/agents/${encodeURIComponent(currentAgentId)}/sessions/${encodeURIComponent(currentSessionId)}/stop`, { method: 'POST' });
+                showAgentDebugInfo(agentId);
+            }
+        });
+
+        const btnReset = body.querySelector('#debug-btn-reset');
+        if (btnReset) btnReset.addEventListener('click', () => {
+            closeDebugModal();
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                sendWs({ type: 'message', message: '/reset' });
+            }
+        });
+
+        const btnCopy = body.querySelector('#debug-btn-copy-sid');
+        if (btnCopy) btnCopy.addEventListener('click', () => {
+            if (currentSessionId) {
+                navigator.clipboard.writeText(currentSessionId).then(() => {
+                    btnCopy.textContent = '✅ Copied!';
+                    setTimeout(() => { btnCopy.textContent = '📋 Copy Session ID'; }, 1200);
+                }).catch(() => {
+                    const ta = document.createElement('textarea');
+                    ta.value = currentSessionId;
+                    ta.style.cssText = 'position:fixed;opacity:0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    btnCopy.textContent = '✅ Copied!';
+                    setTimeout(() => { btnCopy.textContent = '📋 Copy Session ID'; }, 1200);
+                });
+            }
+        });
+
+        const btnRefresh = body.querySelector('#debug-btn-refresh');
+        if (btnRefresh) btnRefresh.addEventListener('click', () => {
+            showAgentDebugInfo(btnRefresh.dataset.debugAgent);
+        });
+
+        // Bind instance stop buttons
+        body.querySelectorAll('[data-stop-agent]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const aId = btn.dataset.stopAgent;
+                const sId = btn.dataset.stopSession;
+                btn.disabled = true;
+                btn.textContent = '...';
+                await fetch(`${API_BASE}/agents/${encodeURIComponent(aId)}/sessions/${encodeURIComponent(sId)}/stop`, { method: 'POST' });
+                showAgentDebugInfo(agentId);
+            });
+        });
+    }
+
+    function closeDebugModal() {
+        elDebugModal.classList.add('hidden');
     }
 
     // =========================================================================
@@ -2326,6 +2496,10 @@
         $('#btn-add-agent').addEventListener('click', (e) => { e.stopPropagation(); openAddAgentForm(); });
         elAgentFormModal.querySelector('.agent-form-close').addEventListener('click', closeAgentForm);
         elAgentFormModal.querySelector('.agent-form-overlay').addEventListener('click', closeAgentForm);
+
+        // Debug info modal
+        elDebugModal.querySelector('.debug-modal-close').addEventListener('click', closeDebugModal);
+        elDebugModal.querySelector('.debug-modal-overlay').addEventListener('click', closeDebugModal);
         $('#btn-cancel-agent').addEventListener('click', closeAgentForm);
         $('#btn-save-agent').addEventListener('click', saveAgent);
         $('#form-agent-provider').addEventListener('change', () => { loadModelsForProvider($('#form-agent-provider').value); });
@@ -2365,6 +2539,7 @@
             if (e.key === 'Escape') {
                 if (isCommandPaletteVisible()) { hideCommandPalette(); return; }
                 if (!elToolModal.classList.contains('hidden')) { closeToolModal(); return; }
+                if (!elDebugModal.classList.contains('hidden')) { closeDebugModal(); return; }
                 if (!elAgentFormModal.classList.contains('hidden')) { closeAgentForm(); return; }
                 if (!elConfirmDialog.classList.contains('hidden')) { closeConfirm(); return; }
                 if (isStreaming) { abortRequest(); return; }
