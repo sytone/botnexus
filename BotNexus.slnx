@@ -34,6 +34,7 @@
     <Project Path="tests/BotNexus.AgentCore.Tests/BotNexus.AgentCore.Tests.csproj" />
     <Project Path="tests/BotNexus.Providers.Core.Tests/BotNexus.Providers.Core.Tests.csproj" />
     <Project Path="tests/BotNexus.Providers.Conformance.Tests/BotNexus.Providers.Conformance.Tests.csproj" />
+    <Project Path="tests/BotNexus.Memory.Tests/BotNexus.Memory.Tests.csproj" />
     <Project Path="tests/BotNexus.Providers.Anthropic.Tests/BotNexus.Providers.Anthropic.Tests.csproj" />
     <Project Path="tests/BotNexus.Providers.OpenAI.Tests/BotNexus.Providers.OpenAI.Tests.csproj" />
     <Project Path="tests/BotNexus.Providers.OpenAICompat.Tests/BotNexus.Providers.OpenAICompat.Tests.csproj" />

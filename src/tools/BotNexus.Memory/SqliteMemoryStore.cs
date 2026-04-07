@@ -257,7 +257,7 @@ public sealed class SqliteMemoryStore(string dbPath) : IMemoryStore
         }
         catch (SqliteException)
         {
-            return [];
+            return await SearchWithLikeFallbackAsync(sanitized, limit, filter, lambda, ct).ConfigureAwait(false);
         }
     }
 
@@ -346,6 +346,100 @@ public sealed class SqliteMemoryStore(string dbPath) : IMemoryStore
             .Replace("-", " ", StringComparison.Ordinal);
 
         return string.Join(" ", sanitized.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    private async Task<IReadOnlyList<MemoryEntry>> SearchWithLikeFallbackAsync(
+        string sanitizedQuery,
+        int limit,
+        MemorySearchFilter? filter,
+        double lambda,
+        CancellationToken ct)
+    {
+        var terms = sanitizedQuery
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (terms.Length == 0)
+            return [];
+
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        var sql = new StringBuilder(
+            """
+            SELECT m.id, m.agent_id, m.session_id, m.turn_index, m.source_type, m.content, m.metadata_json,
+                   m.embedding, m.created_at, m.updated_at, m.expires_at, m.is_archived,
+                   (julianday('now') - julianday(m.created_at)) AS age_days
+            FROM memories m
+            WHERE m.is_archived = 0
+            """);
+
+        for (var i = 0; i < terms.Length; i++)
+        {
+            var parameterName = $"$term{i}";
+            sql.AppendLine($"  AND m.content LIKE '%' || {parameterName} || '%'");
+            command.Parameters.AddWithValue(parameterName, terms[i]);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filter?.SourceType))
+        {
+            sql.AppendLine("  AND m.source_type = $sourceType");
+            command.Parameters.AddWithValue("$sourceType", filter.SourceType);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filter?.SessionId))
+        {
+            sql.AppendLine("  AND m.session_id = $sessionId");
+            command.Parameters.AddWithValue("$sessionId", filter.SessionId);
+        }
+
+        if (filter?.AfterDate is not null)
+        {
+            sql.AppendLine("  AND m.created_at >= $afterDate");
+            command.Parameters.AddWithValue("$afterDate", filter.AfterDate.Value.ToString("O"));
+        }
+
+        if (filter?.BeforeDate is not null)
+        {
+            sql.AppendLine("  AND m.created_at <= $beforeDate");
+            command.Parameters.AddWithValue("$beforeDate", filter.BeforeDate.Value.ToString("O"));
+        }
+
+        if (filter?.Tags is { Count: > 0 })
+        {
+            for (var i = 0; i < filter.Tags.Count; i++)
+            {
+                var parameterName = $"$tag{i}";
+                sql.AppendLine("  AND EXISTS (");
+                sql.AppendLine("      SELECT 1");
+                sql.AppendLine("      FROM json_each(COALESCE(m.metadata_json, '{}'), '$.tags') t");
+                sql.AppendLine($"      WHERE t.value = {parameterName}");
+                sql.AppendLine("  )");
+                command.Parameters.AddWithValue(parameterName, filter.Tags[i]);
+            }
+        }
+
+        sql.AppendLine("ORDER BY m.created_at DESC LIMIT $limit");
+        command.Parameters.AddWithValue("$limit", limit * 5);
+        command.CommandText = sql.ToString();
+
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        List<(MemoryEntry Entry, double Score)> ranked = [];
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            var entry = ReadMemory(reader);
+            var ageDays = reader.IsDBNull(12) ? 0d : Math.Max(0d, reader.GetDouble(12));
+            var textScore = terms.Count(term => entry.Content.Contains(term, StringComparison.OrdinalIgnoreCase));
+            var finalScore = textScore * Math.Exp(-lambda * ageDays);
+            ranked.Add((entry, finalScore));
+        }
+
+        return ranked
+            .OrderByDescending(item => item.Score)
+            .Take(limit)
+            .Select(item => item.Entry)
+            .ToList();
     }
 
     private static void BindParameters(SqliteCommand command, MemoryEntry entry)
