@@ -160,10 +160,10 @@ app.UseCors(GatewayCorsPolicy);
 app.UseSerilogRequestLogging();
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<GatewayAuthMiddleware>();
+app.UseWebSockets();
 app.UseMiddleware<RateLimitingMiddleware>();
 app.UseSwagger();
 app.UseSwaggerUI();
-app.UseWebSockets();
 
 app.MapControllers();
 app.MapBotNexusGatewayWebSocket();
