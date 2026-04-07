@@ -95,7 +95,8 @@ public sealed class WebSocketChannelAdapter(ILogger<WebSocketChannelAdapter> log
             Content = content,
             Metadata = new Dictionary<string, object?>
             {
-                ["messageType"] = messageType
+                ["messageType"] = messageType,
+                ["control"] = string.Equals(messageType, "steer", StringComparison.OrdinalIgnoreCase) ? "steer" : null
             }
         }, cancellationToken);
     }
