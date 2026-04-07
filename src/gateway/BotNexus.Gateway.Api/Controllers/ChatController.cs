@@ -45,25 +45,26 @@ public sealed class ChatController : ControllerBase
             var sessionId = string.IsNullOrWhiteSpace(request.SessionId)
                 ? Guid.NewGuid().ToString("N")
                 : request.SessionId;
-            var handle = await _supervisor.GetOrCreateAsync(request.AgentId, sessionId, cancellationToken);
+
+            // Use CancellationToken.None for agent work — client disconnect should not kill the agent
+            var handle = await _supervisor.GetOrCreateAsync(request.AgentId, sessionId, CancellationToken.None);
 
             // If agent is already running, queue as follow-up instead of failing
             AgentResponse response;
             try
             {
-                response = await handle.PromptAsync(request.Message, cancellationToken);
+                response = await handle.PromptAsync(request.Message, CancellationToken.None);
             }
             catch (InvalidOperationException ex) when (ex.Message.Contains("already running", StringComparison.OrdinalIgnoreCase))
             {
-                // Agent is busy — queue as follow-up
-                await handle.FollowUpAsync(request.Message, cancellationToken);
+                await handle.FollowUpAsync(request.Message, CancellationToken.None);
                 return Accepted(new ChatResponse(sessionId, "Message queued as follow-up — agent is currently processing a previous request.", null));
             }
 
-            var session = await _sessions.GetOrCreateAsync(sessionId, request.AgentId, cancellationToken);
+            var session = await _sessions.GetOrCreateAsync(sessionId, request.AgentId, CancellationToken.None);
             session.AddEntry(new SessionEntry { Role = "user", Content = request.Message });
             session.AddEntry(new SessionEntry { Role = "assistant", Content = response.Content });
-            await _sessions.SaveAsync(session, cancellationToken);
+            await _sessions.SaveAsync(session, CancellationToken.None);
 
             return Ok(new ChatResponse(sessionId, response.Content, response.Usage));
         }

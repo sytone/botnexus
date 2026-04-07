@@ -34,8 +34,8 @@ builder.Host.UseSerilog((context, services, configuration) => configuration
         restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Warning)
     .WriteTo.File(
         Path.Combine(BotNexusHome.ResolveHomePath(), "logs", "botnexus-.log"),
-        rollingInterval: RollingInterval.Day,
-        retainedFileCountLimit: 14,
+        rollingInterval: RollingInterval.Hour,
+        retainedFileCountLimit: 168,
         restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Warning),
     preserveStaticLogger: true);
 
