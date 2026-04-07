@@ -67,32 +67,22 @@ public sealed class SignalRHubTests
         groups.Setup(value => value.AddToGroupAsync("conn-1", "session:s1", It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var caller = new Mock<ISingleClientProxy>();
-        caller.Setup(proxy => proxy.SendCoreAsync(It.IsAny<string>(), It.IsAny<object?[]>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var clients = new Mock<IHubCallerClients>();
-        clients.SetupGet(value => value.Caller).Returns(caller.Object);
-
         var sessions = new Mock<ISessionStore>();
         sessions.Setup(value => value.GetOrCreateAsync("s1", "agent-a", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new GatewaySession { SessionId = "s1", AgentId = "agent-a" });
 
         var hub = CreateHub(
-            clients: clients.Object,
             groups: groups.Object,
             sessions: sessions.Object,
             connectionId: "conn-1");
 
-        await hub.JoinSession("agent-a", "s1");
+        var result = await hub.JoinSession("agent-a", "s1");
 
         groups.Verify(value => value.AddToGroupAsync("conn-1", "session:s1", It.IsAny<CancellationToken>()), Times.Once);
         sessions.Verify(value => value.GetOrCreateAsync("s1", "agent-a", It.IsAny<CancellationToken>()), Times.Once);
-        caller.Verify(proxy => proxy.SendCoreAsync(
-                "SessionJoined",
-                It.Is<object?[]>(args => HasPropertyValue(args, "sessionId", "s1")),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
+        HasPropertyValue([result], "sessionId", "s1").Should().BeTrue();
+        HasPropertyValue([result], "agentId", "agent-a").Should().BeTrue();
+        HasPropertyValue([result], "connectionId", "conn-1").Should().BeTrue();
     }
 
     [Fact]
