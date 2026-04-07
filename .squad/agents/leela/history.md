@@ -2296,3 +2296,28 @@ Config was fragmented: (1) config.json inline agents via PlatformConfigAgentSour
 3. **Workspace file migration needs atomic move** — Moving SOUL.md from agent root to workspace/ subdirectory must check for legacy layout and move, not copy. File.Move is atomic on same volume.
 4. **systemPromptFile resolution base changes** — Currently relative to configDirectory (where config.json lives). Must change to agent home (~/.botnexus/agents/{id}/) so "workspace/SOUL.md" resolves correctly.
 5. **PlatformConfigAgentWriter is the hardest piece** — Atomic read-modify-write of config.json with concurrent edit safety. Needs advisory lock + temp-file-rename pattern.
+## 2026-04-09 — Memory System Feature Spec Review (Lead)
+
+**Status:** ✅ Review + Plan delivered
+**Requested by:** Jon Bullen
+**Scope:** Architectural review of Nova's memory system feature spec + phased implementation plan
+
+**Context:**
+Nova produced a 310-line feature spec for agent persistent memory (FTS5 search, auto-indexing, embedding pipeline, compaction). Reviewed against BotNexus architecture: tool system, session lifecycle, config schema, DI patterns, agent data directories.
+
+**Key Findings:**
+1. **Strong alignment overall** — SQLite storage, per-agent isolation, config-driven approach all match existing patterns
+2. **Tool registration gap** — Memory tools need agent context (ID, config) but IAgentToolFactory.CreateTools(string) only takes workspace path. Solution: create memory tools directly in InProcessIsolationStrategy.CreateAsync()
+3. **Session lifecycle events missing** — ISessionStore has no event bus. Recommended new ISessionLifecycleEvents interface for memory indexing (and future features)
+4. **Spec schema bug** — FTS5 content_rowid needs INTEGER but spec uses TEXT ULID as PK. Need explicit INTEGER rowid
+5. **Chunking strategy undefined** — Recommended per-exchange (user+assistant pair) as indexing granularity
+6. **Deduplication gap** — Need idempotency key (session_id + turn_index) to prevent duplicate memories from incremental saves
+
+**Deliverables:**
+- Architectural review (alignment, SOLID, over-engineering risks, gaps)
+- Integration analysis (tool system, session lifecycle, config mapping, DB path)
+- 4-wave implementation plan with agent assignments (Farnsworth/Bender/Hermes)
+- 5 key design decisions with rationale
+- Risk assessment (performance, concurrency, growth, injection, migration)
+
+**Decision written to:** `.squad/decisions/inbox/leela-memory-system-review.md`
