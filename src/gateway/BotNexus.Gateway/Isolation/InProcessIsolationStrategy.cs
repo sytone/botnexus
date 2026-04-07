@@ -221,6 +221,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable
                         Type = AgentStreamEventType.ToolStart,
                         ToolCallId = toolStart.ToolCallId,
                         ToolName = toolStart.ToolName,
+                        ToolArgs = toolStart.Args,
                         MessageId = messageId
                     },
                     ToolExecutionEndEvent toolEnd => new AgentStreamEvent

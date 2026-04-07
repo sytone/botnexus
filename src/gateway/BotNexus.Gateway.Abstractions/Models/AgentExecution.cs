@@ -68,6 +68,9 @@ public sealed record AgentStreamEvent
     /// <summary>Tool name (for tool-related events).</summary>
     public string? ToolName { get; init; }
 
+    /// <summary>Tool arguments (for <see cref="AgentStreamEventType.ToolStart"/>).</summary>
+    public IReadOnlyDictionary<string, object?>? ToolArgs { get; init; }
+
     /// <summary>Tool result content (for <see cref="AgentStreamEventType.ToolEnd"/>).</summary>
     public string? ToolResult { get; init; }
 
