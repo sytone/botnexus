@@ -6,6 +6,11 @@ using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Api.Hubs;
 
+#pragma warning disable CS1591 // Channel adapter methods match base class contracts
+
+/// <summary>
+/// SignalR-based channel adapter. Sends agent output to session groups via IHubContext.
+/// </summary>
 public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger, IHubContext<GatewayHub> hubContext)
     : ChannelAdapterBase(logger), IStreamEventChannelAdapter
 {
