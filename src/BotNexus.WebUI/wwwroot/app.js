@@ -536,6 +536,26 @@
         setSendingState(false);
         updateSendButtonState();
         loadChatHeaderModels();
+
+        // Check if agent is currently running for this session
+        if (sessionId && agentId) {
+            checkAgentRunningStatus(agentId, sessionId);
+        }
+    }
+
+    async function checkAgentRunningStatus(agentId, sessionId) {
+        try {
+            const status = await fetchJson(`/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/status`);
+            if (status && (status.status === 'Running' || status.status === 'Idle')) {
+                isStreaming = true;
+                showStreamingIndicator();
+                showProcessingStatus('Agent is processing...', '⏳');
+                setSendingState(false);
+                updateSendButtonState();
+            }
+        } catch (e) {
+            // Status endpoint may 404 if no instance — that's fine
+        }
     }
 
     // =========================================================================
