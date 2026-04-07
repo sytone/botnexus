@@ -1196,7 +1196,7 @@
         elChatMessages.innerHTML = '';
         elChatTitle.textContent = `${elAgentSelect.value || 'New Chat'} — WebSocket`;        elChatMeta.textContent = `Agent: ${elAgentSelect.value || 'default'} · Session will be created on first message`;
         elSessionIdDisplay.classList.add('hidden');
-        elAgentSelect.disabled = false;
+        elAgentSelect.classList.remove('hidden');
     }
 
     async function executeStatus() {
@@ -1382,7 +1382,7 @@
         elChatMessages.innerHTML = '';
         elSessionIdDisplay.classList.add('hidden');
         setSendingState(false);
-        elAgentSelect.disabled = false;
+        elAgentSelect.classList.remove('hidden');
         elSessionsList.querySelectorAll('.list-item').forEach(el => el.classList.remove('active'));
 
         currentAgentId = elAgentSelect.value || null;
@@ -1566,7 +1566,7 @@
         updateSessionIdDisplay();
 
         if (agentId) elAgentSelect.value = agentId;
-        elAgentSelect.disabled = true;
+        elAgentSelect.classList.add('hidden');
 
         const session = await fetchJson(`/sessions/${encodeURIComponent(sessionId)}`);
 
@@ -2311,3 +2311,4 @@
         init();
     }
 })();
+
