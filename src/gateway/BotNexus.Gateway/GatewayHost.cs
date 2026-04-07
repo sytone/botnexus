@@ -281,6 +281,18 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error processing message for agent '{AgentId}' session '{SessionId}'", agentId, sessionId);
+
+                if (_channelManager.Get(message.ChannelType) is { } errorChannel)
+                {
+                    await errorChannel.SendAsync(new OutboundMessage
+                    {
+                        ChannelType = message.ChannelType,
+                        ConversationId = message.ConversationId,
+                        Content = $"Error: {ex.Message}",
+                        SessionId = sessionId
+                    }, cancellationToken);
+                }
+
                 await _activity.PublishAsync(new GatewayActivity
                 {
                     Type = GatewayActivityType.Error,
