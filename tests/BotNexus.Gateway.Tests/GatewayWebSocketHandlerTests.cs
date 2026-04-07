@@ -263,6 +263,60 @@ public sealed class GatewayWebSocketHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_WithResetMessage_StopsAgentAndDeletesSession()
+    {
+        var store = new InMemorySessionStore();
+        await store.GetOrCreateAsync("session-123", "agent-a", CancellationToken.None);
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetInstance("agent-a", "session-123"))
+            .Returns(new AgentInstance
+            {
+                InstanceId = "agent-a::session-123",
+                AgentId = "agent-a",
+                SessionId = "session-123",
+                IsolationStrategy = "in-process"
+            });
+        supervisor.Setup(s => s.StopAsync("agent-a", "session-123", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new QueryString("?agent=agent-a&session=session-123");
+        var socket = new TestWebSocket();
+        socket.QueueIncomingText("""{"type":"reset"}""");
+        context.Features.Set<IHttpWebSocketFeature>(new TestWebSocketFeature { IsWebSocketRequest = true, Socket = socket });
+        var handler = CreateHandler(supervisor.Object, sessions: store);
+
+        await handler.HandleAsync(context, CancellationToken.None);
+
+        supervisor.Verify(s => s.StopAsync("agent-a", "session-123", It.IsAny<CancellationToken>()), Times.Once);
+        (await store.GetAsync("session-123", CancellationToken.None)).Should().BeNull();
+        var payloads = ParsePayloads(socket.SentMessages);
+        payloads.Any(payload => HasStringProperty(payload, "type", "session_reset")).Should().BeTrue();
+        socket.LastCloseDescription.Should().Be("Session reset");
+    }
+
+    [Fact]
+    public async Task HandleAsync_WithNewMessage_ResetsSession()
+    {
+        var store = new InMemorySessionStore();
+        await store.GetOrCreateAsync("session-123", "agent-a", CancellationToken.None);
+
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new QueryString("?agent=agent-a&session=session-123");
+        var socket = new TestWebSocket();
+        socket.QueueIncomingText("""{"type":"new"}""");
+        context.Features.Set<IHttpWebSocketFeature>(new TestWebSocketFeature { IsWebSocketRequest = true, Socket = socket });
+        var handler = CreateHandler(sessions: store);
+
+        await handler.HandleAsync(context, CancellationToken.None);
+
+        (await store.GetAsync("session-123", CancellationToken.None)).Should().BeNull();
+        var payloads = ParsePayloads(socket.SentMessages);
+        payloads.Any(payload => HasStringProperty(payload, "type", "session_reset")).Should().BeTrue();
+    }
+
+    [Fact]
     public async Task HandleAsync_WithPingMessage_SendsPongPayload()
     {
         var context = new DefaultHttpContext();
@@ -338,6 +392,26 @@ public sealed class GatewayWebSocketHandlerTests
                 m.SessionId == "session-123" &&
                 m.Content == "hello"),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WithSlashResetMessage_ResetsSession()
+    {
+        var store = new InMemorySessionStore();
+        await store.GetOrCreateAsync("session-123", "agent-a", CancellationToken.None);
+
+        var context = new DefaultHttpContext();
+        context.Request.QueryString = new QueryString("?agent=agent-a&session=session-123");
+        var socket = new TestWebSocket();
+        socket.QueueIncomingText("""{"type":"message","content":"/reset"}""");
+        context.Features.Set<IHttpWebSocketFeature>(new TestWebSocketFeature { IsWebSocketRequest = true, Socket = socket });
+        var handler = CreateHandler(sessions: store);
+
+        await handler.HandleAsync(context, CancellationToken.None);
+
+        (await store.GetAsync("session-123", CancellationToken.None)).Should().BeNull();
+        var payloads = ParsePayloads(socket.SentMessages);
+        payloads.Any(payload => HasStringProperty(payload, "type", "session_reset")).Should().BeTrue();
     }
 
     [Fact]

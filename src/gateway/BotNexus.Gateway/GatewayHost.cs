@@ -24,6 +24,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
     private const int DefaultSessionQueueCapacity = 64;
     private const string BusyMessage = "Session is busy processing messages. Please retry shortly.";
     private const string ControlSteer = "steer";
+    private const string SystemPromptInitializedMetadataKey = "systemPromptInitialized";
 
     private readonly IAgentSupervisor _supervisor;
     private readonly IMessageRouter _router;
@@ -197,7 +198,18 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
             using var getOrCreateActivity = GatewayDiagnostics.Source.StartActivity("session.get_or_create", ActivityKind.Internal);
             getOrCreateActivity?.SetTag("botnexus.session.id", sessionId);
             getOrCreateActivity?.SetTag("botnexus.agent.id", agentId);
-            var session = await _sessions.GetOrCreateAsync(sessionId, agentId, cancellationToken);
+            var existingSessionTask = _sessions.GetAsync(sessionId, cancellationToken);
+            var existingSession = existingSessionTask is null ? null : await existingSessionTask;
+            var session = existingSession ?? await _sessions.GetOrCreateAsync(sessionId, agentId, cancellationToken);
+            if (ShouldInitializeSystemPrompt(session))
+            {
+                session.Metadata[SystemPromptInitializedMetadataKey] = true;
+                // Force fresh handle creation so isolation strategy rebuilds system prompt from workspace files.
+                var stopTask = _supervisor.StopAsync(agentId, sessionId, cancellationToken);
+                if (stopTask is not null)
+                    await stopTask;
+            }
+
             if (session.Status != SessionStatus.Active)
             {
                 await SendSessionStatusRejectedAsync(message, agentId, sessionId, session.Status, cancellationToken);
@@ -381,6 +393,19 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
 
         command = controlValue?.ToString();
         return !string.IsNullOrWhiteSpace(command);
+    }
+
+    private static bool ShouldInitializeSystemPrompt(GatewaySession session)
+    {
+        if (!session.Metadata.TryGetValue(SystemPromptInitializedMetadataKey, out var value) || value is null)
+            return true;
+
+        return value switch
+        {
+            bool boolValue => !boolValue,
+            string stringValue when bool.TryParse(stringValue, out var parsed) => !parsed,
+            _ => true
+        };
     }
 
     private static string GetQueueKey(InboundMessage message)

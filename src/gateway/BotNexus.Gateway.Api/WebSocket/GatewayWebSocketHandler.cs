@@ -25,6 +25,8 @@ using NetWebSocketException = System.Net.WebSockets.WebSocketException;
 ///   <item><c>{ "type": "abort" }</c> — Abort the current agent execution.</item>
 ///   <item><c>{ "type": "steer", "content": "..." }</c> — Inject steering message into active run.</item>
 ///   <item><c>{ "type": "follow_up", "content": "..." }</c> — Queue follow-up for next run.</item>
+///   <item><c>{ "type": "new" }</c> — Reset current session and start a new chat.</item>
+///   <item><c>{ "type": "reset" }</c> — Reset current session and regenerate system prompt.</item>
 ///   <item><c>{ "type": "ping" }</c> — Keepalive ping.</item>
 /// </list>
 /// <para><b>Server → Client messages:</b></para>
@@ -37,6 +39,7 @@ using NetWebSocketException = System.Net.WebSockets.WebSocketException;
 ///   <item><c>{ "type": "tool_end", "toolCallId": "...", "toolName": "...", "toolResult": "...", "toolIsError": false, "messageId": "..." }</c></item>
 ///   <item><c>{ "type": "message_end", "messageId": "...", "usage": { ... } }</c></item>
 ///   <item><c>{ "type": "error", "message": "...", "code": "..." }</c></item>
+///   <item><c>{ "type": "session_reset", "sessionId": "...", "message": "..." }</c></item>
 ///   <item><c>{ "type": "pong" }</c></item>
 /// </list>
 /// </remarks>

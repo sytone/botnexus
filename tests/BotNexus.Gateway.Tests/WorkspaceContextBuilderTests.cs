@@ -44,6 +44,8 @@ public sealed class WorkspaceContextBuilderTests
         var workspacePath = CreateWorkspace(
             ("AGENTS.md", "AGENTS"),
             ("SOUL.md", "SOUL"),
+            ("TOOLS.md", "TOOLS"),
+            ("BOOTSTRAP.md", "BOOTSTRAP"),
             ("IDENTITY.md", "IDENTITY"),
             ("USER.md", "USER"));
         try
@@ -60,11 +62,38 @@ public sealed class WorkspaceContextBuilderTests
                 SystemPrompt = "INLINE"
             });
 
-            result.Should().Be("INLINE\n\nAGENTS\n\nSOUL\n\nIDENTITY\n\nUSER");
+            result.Should().Be("INLINE\n\nAGENTS\n\nSOUL\n\nTOOLS\n\nBOOTSTRAP\n\nIDENTITY\n\nUSER");
+            File.Exists(Path.Combine(workspacePath, "BOOTSTRAP.md")).Should().BeFalse();
         }
         finally
         {
             Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task BuildSystemPromptAsync_WithAgentRootPath_ResolvesWorkspaceSubdirectory()
+    {
+        var workspacePath = CreateWorkspace(("AGENTS.md", "AGENTS"));
+        var agentRootPath = Path.GetDirectoryName(workspacePath)!;
+        try
+        {
+            var manager = new StubWorkspaceManager(agentRootPath);
+            var builder = new WorkspaceContextBuilder(manager);
+
+            var result = await builder.BuildSystemPromptAsync(new AgentDescriptor
+            {
+                AgentId = "farnsworth",
+                DisplayName = "Farnsworth",
+                ModelId = "test-model",
+                ApiProvider = "test-provider"
+            });
+
+            result.Should().Be("AGENTS");
+        }
+        finally
+        {
+            Directory.Delete(agentRootPath, recursive: true);
         }
     }
 

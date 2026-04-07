@@ -20,13 +20,26 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
     {
         ArgumentNullException.ThrowIfNull(descriptor);
 
-        var workspacePath = _workspaceManager.GetWorkspacePath(descriptor.AgentId);
+        var workspacePath = ResolveWorkspaceDirectory(_workspaceManager.GetWorkspacePath(descriptor.AgentId));
         var promptFiles = ResolvePromptFiles(descriptor);
         List<string> sections = [];
 
         if (!string.IsNullOrWhiteSpace(descriptor.SystemPrompt))
             sections.Add(descriptor.SystemPrompt.Trim());
 
+        var contextFiles = await LoadContextFilesAsync(workspacePath, promptFiles, cancellationToken);
+        if (contextFiles.Length > 0)
+            sections.AddRange(contextFiles.Select(static f => f.Content));
+
+        return string.Join(SectionSeparator, sections);
+    }
+
+    private static async Task<ContextFile[]> LoadContextFilesAsync(
+        string workspacePath,
+        IReadOnlyList<string> promptFiles,
+        CancellationToken cancellationToken)
+    {
+        List<ContextFile> contextFiles = [];
         foreach (var promptFile in promptFiles)
         {
             if (string.IsNullOrWhiteSpace(promptFile))
@@ -38,24 +51,37 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
 
             var content = await File.ReadAllTextAsync(filePath, cancellationToken);
             if (!string.IsNullOrWhiteSpace(content))
-                sections.Add(content.Trim());
+                contextFiles.Add(new ContextFile(promptFile, content.Trim()));
 
             if (Path.GetFileName(promptFile).Equals(BootstrapFileName, StringComparison.OrdinalIgnoreCase))
-            {
-                try
-                {
-                    File.Delete(filePath);
-                }
-                catch (IOException)
-                {
-                }
-                catch (UnauthorizedAccessException)
-                {
-                }
-            }
+                DeleteBootstrapFile(filePath);
         }
 
-        return string.Join(SectionSeparator, sections);
+        return [.. contextFiles];
+    }
+
+    private static string ResolveWorkspaceDirectory(string workspacePath)
+    {
+        var resolvedPath = Path.GetFullPath(workspacePath);
+        if (Path.GetFileName(resolvedPath).Equals("workspace", StringComparison.OrdinalIgnoreCase))
+            return resolvedPath;
+
+        var nestedWorkspacePath = Path.Combine(resolvedPath, "workspace");
+        return Directory.Exists(nestedWorkspacePath) ? nestedWorkspacePath : resolvedPath;
+    }
+
+    private static void DeleteBootstrapFile(string filePath)
+    {
+        try
+        {
+            File.Delete(filePath);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
     }
 
     private static IReadOnlyList<string> ResolvePromptFiles(AgentDescriptor descriptor)
@@ -78,4 +104,6 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         return filePath.StartsWith(workspacePrefix, StringComparison.OrdinalIgnoreCase) ||
             filePath.Equals(workspaceFullPath, StringComparison.OrdinalIgnoreCase);
     }
+
+    private sealed record ContextFile(string Path, string Content);
 }

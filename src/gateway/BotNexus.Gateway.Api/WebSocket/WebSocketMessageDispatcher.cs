@@ -107,6 +107,12 @@ public sealed class WebSocketMessageDispatcher
             switch (message.Type)
             {
                 case "message" when message.Content is not null:
+                    if (TryResolveSessionResetCommand(message.Content, out _))
+                    {
+                        await HandleSessionResetAsync(socket, agentId, sessionId, cancellationToken);
+                        return;
+                    }
+
                     await HandleUserMessageAsync(socket, connectionId, agentId, sessionId, message.Content, message.Type, cancellationToken);
                     break;
 
@@ -131,6 +137,11 @@ public sealed class WebSocketMessageDispatcher
                         replayWindow,
                         cancellationToken);
                     break;
+
+                case "new":
+                case "reset":
+                    await HandleSessionResetAsync(socket, agentId, sessionId, cancellationToken);
+                    return;
             }
         }
     }
@@ -282,6 +293,40 @@ public sealed class WebSocketMessageDispatcher
             cancellationToken);
     }
 
+    private async Task HandleSessionResetAsync(
+        NetWebSocket socket,
+        string agentId,
+        string sessionId,
+        CancellationToken cancellationToken)
+    {
+        var instance = _supervisor.GetInstance(agentId, sessionId);
+        if (instance is not null)
+        {
+            var stopTask = _supervisor.StopAsync(agentId, sessionId, cancellationToken);
+            if (stopTask is not null)
+                await stopTask;
+        }
+
+        var session = await _sessions.GetAsync(sessionId, cancellationToken);
+        if (session is not null)
+        {
+            session.Status = SessionStatus.Closed;
+            session.UpdatedAt = DateTimeOffset.UtcNow;
+            await _sessions.SaveAsync(session, cancellationToken);
+        }
+
+        await _sessions.DeleteAsync(sessionId, cancellationToken);
+
+        var payload = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            type = "session_reset",
+            sessionId,
+            message = "Session reset. System prompt regenerated."
+        }, JsonOptions);
+        await socket.SendAsync(payload, NetWebSocketMessageType.Text, true, cancellationToken);
+        await socket.CloseAsync(System.Net.WebSockets.WebSocketCloseStatus.NormalClosure, "Session reset", cancellationToken);
+    }
+
     private async Task SendSessionErrorAsync(
         NetWebSocket socket,
         string agentId,
@@ -315,5 +360,27 @@ public sealed class WebSocketMessageDispatcher
         var sequenced = await SequenceAndPersistPayloadAsync(session, message, replayWindow, cancellationToken);
         var json = JsonSerializer.SerializeToUtf8Bytes(sequenced, JsonOptions);
         await socket.SendAsync(json, NetWebSocketMessageType.Text, true, cancellationToken);
+    }
+
+    private static bool TryResolveSessionResetCommand(string? content, out string commandType)
+    {
+        commandType = string.Empty;
+        var normalized = content?.Trim();
+        if (string.IsNullOrEmpty(normalized))
+            return false;
+
+        if (string.Equals(normalized, "/new", StringComparison.OrdinalIgnoreCase))
+        {
+            commandType = "new";
+            return true;
+        }
+
+        if (string.Equals(normalized, "/reset", StringComparison.OrdinalIgnoreCase))
+        {
+            commandType = "reset";
+            return true;
+        }
+
+        return false;
     }
 }

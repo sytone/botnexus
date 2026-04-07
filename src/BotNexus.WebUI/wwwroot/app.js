@@ -557,6 +557,14 @@
                 hideProcessingStatus();
                 handleError(msg);
                 break;
+            case 'session_reset':
+                disconnectWebSocket();
+                currentSessionId = null;
+                updateSessionIdDisplay();
+                currentAgentId = elAgentSelect.value || currentAgentId;
+                if (currentAgentId) connectWebSocket();
+                loadSessions();
+                break;
             case 'reconnect_ack':
                 if (msg.sessionKey) sessionKey = msg.sessionKey;
                 if (msg.lastSeqId !== undefined) lastSequenceId = msg.lastSeqId;
@@ -1062,6 +1070,7 @@
 
     const COMMANDS = [
         { name: '/help', description: 'Show available commands' },
+        { name: '/new', description: 'Start a new chat session' },
         { name: '/reset', description: 'Clear chat and reset current session' },
         { name: '/status', description: 'Show gateway health status' },
         { name: '/agents', description: 'List available agents' },
@@ -1121,6 +1130,7 @@
 
         switch (name) {
             case '/help': executeHelp(); break;
+            case '/new': executeReset('new'); break;
             case '/reset': executeReset(); break;
             case '/status': executeStatus(); break;
             case '/agents': executeAgents(); break;
@@ -1134,39 +1144,53 @@
         appendSystemMessage('Tip: Type / in the input box or press Ctrl+K to open the command palette.');
     }
 
-    async function executeReset() {
-        if (!currentSessionId) {
-            elChatMessages.innerHTML = '';
-            appendSystemMessage('🧹 Chat cleared (no active session).');
+    async function executeReset(commandType = 'reset') {
+        const previousSessionId = currentSessionId;
+        const canResetViaWebSocket = !!(previousSessionId && ws && ws.readyState === WebSocket.OPEN);
+
+        clearChatForSessionReset();
+        appendSystemMessage('Session reset. System prompt regenerated.');
+
+        if (canResetViaWebSocket) {
+            currentSessionId = null;
+            updateSessionIdDisplay();
+            sendWs({ type: commandType });
+            loadSessions();
             return;
         }
-        const sessionId = currentSessionId;
-        try {
-            const res = await fetch(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
-            if (res.ok || res.status === 204) {
-                disconnectWebSocket();
-                currentSessionId = null;
-                activeMessageId = null;
-                activeToolCalls = {};
-                activeToolCount = 0;
-                toolCallDepth = 0;
-                thinkingBuffer = '';
-                elChatMessages.innerHTML = '';
-                elChatTitle.textContent = 'New Chat';
-                elChatMeta.textContent = `Agent: ${elAgentSelect.value || 'default'} · Session will be created on first message`;
-                elSessionIdDisplay.classList.add('hidden');
-                setSendingState(false);
-                elAgentSelect.disabled = false;
-                appendSystemMessage(`🧹 Session ${sessionId.substring(0, 8)}… deleted. Ready for a new chat.`);
-                currentAgentId = elAgentSelect.value || null;
-                if (currentAgentId) connectWebSocket();
-                loadSessions();
-            } else {
-                appendSystemMessage(`❌ Failed to reset session: ${res.status}`, 'error');
+
+        if (previousSessionId) {
+            try {
+                await fetch(`${API_BASE}/sessions/${encodeURIComponent(previousSessionId)}`, { method: 'DELETE' });
+            } catch (e) {
+                console.warn('Failed to delete previous session during reset:', e);
             }
-        } catch (e) {
-            appendSystemMessage(`❌ Failed to reset session: ${e.message}`, 'error');
         }
+
+        disconnectWebSocket();
+        currentSessionId = null;
+        currentAgentId = elAgentSelect.value || currentAgentId;
+        if (currentAgentId) connectWebSocket();
+        loadSessions();
+    }
+
+    function clearChatForSessionReset() {
+        activeMessageId = null;
+        activeToolCalls = {};
+        activeToolCount = 0;
+        toolCallDepth = 0;
+        thinkingBuffer = '';
+        clearResponseTimeout();
+        resetQueue();
+        removeStreamingIndicator();
+        hideProcessingStatus();
+        isStreaming = false;
+        setSendingState(false);
+        elChatMessages.innerHTML = '';
+        elChatTitle.textContent = 'New Chat';
+        elChatMeta.textContent = `Agent: ${elAgentSelect.value || 'default'} · Session will be created on first message`;
+        elSessionIdDisplay.classList.add('hidden');
+        elAgentSelect.disabled = false;
     }
 
     async function executeStatus() {

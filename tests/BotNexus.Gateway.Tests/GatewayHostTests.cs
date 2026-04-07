@@ -229,6 +229,71 @@ public sealed class GatewayHostTests
     }
 
     [Fact]
+    public async Task DispatchAsync_WhenSystemPromptNotInitialized_StopsExistingHandleBeforePrompt()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+
+        var handle = CreatePromptHandle("agent-a", "session-1", "ok");
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync("agent-a", "session-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        supervisor.Setup(s => s.StopAsync("agent-a", "session-1", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var session = new GatewaySession { SessionId = "session-1", AgentId = "agent-a" };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetAsync("session-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var host = CreateHost(
+            supervisor.Object,
+            router.Object,
+            sessions.Object,
+            new RecordingActivityBroadcaster(),
+            CreateChannelManager());
+
+        await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1"));
+
+        supervisor.Verify(s => s.StopAsync("agent-a", "session-1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WhenSystemPromptInitialized_DoesNotStopExistingHandle()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+
+        var handle = CreatePromptHandle("agent-a", "session-1", "ok");
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync("agent-a", "session-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var session = new GatewaySession { SessionId = "session-1", AgentId = "agent-a" };
+        session.Metadata["systemPromptInitialized"] = true;
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetAsync("session-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var host = CreateHost(
+            supervisor.Object,
+            router.Object,
+            sessions.Object,
+            new RecordingActivityBroadcaster(),
+            CreateChannelManager());
+
+        await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1"));
+
+        supervisor.Verify(s => s.StopAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task DispatchAsync_WithSteerControl_RoutesToSteerHandler()
     {
         var router = new Mock<IMessageRouter>();
