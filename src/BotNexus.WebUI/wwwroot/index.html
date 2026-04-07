@@ -146,7 +146,7 @@
                             <span class="toggle-slider"></span>
                         </label>
                         <span class="toggle-label">💭 Thinking</span>
-                        <button id="btn-toggle-agent-panel" class="btn-icon" title="Agent details" aria-label="Toggle agent panel" style="display:none;">⚙️</button>
+
                         <button id="btn-abort" class="btn btn-danger hidden" title="Abort current request" aria-label="Abort">⏹ Abort</button>
                     </div>
                 </div>
@@ -178,29 +178,17 @@
                     <div id="followup-indicator" class="followup-indicator hidden" aria-live="polite">Follow-up queued</div>
                 </div>
             </div>
-            <!-- Agent Details Panel -->
-            <div id="agent-panel" class="agent-panel hidden">
-                <div class="agent-panel-header">
-                    <h3 id="agent-panel-title">Agent</h3>
-                    <button id="btn-close-agent-panel" class="btn-icon" title="Close panel" aria-label="Close agent panel">✕</button>
+            <!-- Agent Config View (full canvas) -->
+            <div id="agent-config-view" class="content-view hidden">
+                <div class="agent-config-header">
+                    <h2 id="agent-config-title">Agent Configuration</h2>
+                    <div class="agent-config-header-actions">
+                        <button id="btn-agent-chat" class="btn btn-secondary">💬 Open Chat</button>
+                        <button id="btn-agent-save" class="btn btn-primary">Save Changes</button>
+                    </div>
                 </div>
-                <div class="agent-panel-body">
-                    <div class="agent-panel-section">
-                        <h4>Configuration</h4>
-                        <div id="agent-panel-config"></div>
-                    </div>
-                    <div class="agent-panel-section">
-                        <h4>Status</h4>
-                        <div id="agent-panel-status"></div>
-                    </div>
-                    <div class="agent-panel-section">
-                        <h4>Session</h4>
-                        <div id="agent-panel-session"></div>
-                    </div>
-                    <div class="agent-panel-section">
-                        <h4>Actions</h4>
-                        <div id="agent-panel-actions"></div>
-                    </div>
+                <div class="agent-config-body" id="agent-config-body">
+                    <!-- Populated by JS -->
                 </div>
             </div>
         </main>
