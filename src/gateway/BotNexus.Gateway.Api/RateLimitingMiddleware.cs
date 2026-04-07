@@ -38,7 +38,11 @@ public sealed class RateLimitingMiddleware
     /// <returns>A task representing middleware completion.</returns>
     public async Task InvokeAsync(HttpContext context)
     {
-        if (context.Request.Path.Equals("/health", StringComparison.OrdinalIgnoreCase))
+        // Exempt health checks, WebSocket upgrades, and static files from rate limiting
+        if (context.Request.Path.Equals("/health", StringComparison.OrdinalIgnoreCase) ||
+            context.WebSockets.IsWebSocketRequest ||
+            context.Request.Path.StartsWithSegments("/ws", StringComparison.OrdinalIgnoreCase) ||
+            IsStaticFileRequest(context.Request.Path))
         {
             await _next(context);
             return;
@@ -125,5 +129,18 @@ public sealed class RateLimitingMiddleware
         public DateTimeOffset WindowStart { get; set; } = windowStart;
         public DateTimeOffset LastAccessed { get; set; } = windowStart;
         public int RequestCount { get; set; }
+    }
+
+    private static bool IsStaticFileRequest(PathString path)
+    {
+        var value = path.Value;
+        if (string.IsNullOrEmpty(value)) return false;
+        return value.EndsWith(".html", StringComparison.OrdinalIgnoreCase) ||
+               value.EndsWith(".js", StringComparison.OrdinalIgnoreCase) ||
+               value.EndsWith(".css", StringComparison.OrdinalIgnoreCase) ||
+               value.EndsWith(".ico", StringComparison.OrdinalIgnoreCase) ||
+               value.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
+               value.EndsWith(".svg", StringComparison.OrdinalIgnoreCase) ||
+               value.EndsWith(".map", StringComparison.OrdinalIgnoreCase);
     }
 }
