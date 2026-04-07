@@ -1575,10 +1575,32 @@
         elChatMessages.innerHTML = '';
 
         if (session) {
-            const msgCount = session.history ? session.history.length : (session.messageCount || 0);
-            elChatMeta.textContent = `Agent: ${agentId || 'unknown'} · ${msgCount} messages`;
-            if (session.history) {
-                for (const entry of session.history) renderHistoryEntry(entry);
+            const totalCount = session.messageCount || (session.history ? session.history.length : 0);
+            elChatMeta.textContent = `Agent: ${agentId || 'unknown'} · ${totalCount} messages`;
+
+            // Load only the most recent messages via paginated endpoint
+            const pageSize = 30;
+            const offset = Math.max(0, totalCount - pageSize);
+            const historyPage = await fetchJson(`/sessions/${encodeURIComponent(sessionId)}/history?offset=${offset}&limit=${pageSize}`);
+
+            if (offset > 0) {
+                const loadMoreEl = document.createElement('div');
+                loadMoreEl.className = 'load-more-history';
+                loadMoreEl.dataset.sessionId = sessionId;
+                loadMoreEl.dataset.nextOffset = '0';
+                loadMoreEl.dataset.endOffset = String(offset);
+                loadMoreEl.textContent = `↑ Load earlier messages (${offset} more)`;
+                loadMoreEl.style.cssText = 'text-align:center;padding:8px;cursor:pointer;color:var(--text-secondary);font-size:0.85rem;';
+                loadMoreEl.addEventListener('click', () => loadEarlierMessages(sessionId, loadMoreEl));
+                elChatMessages.appendChild(loadMoreEl);
+            }
+
+            if (historyPage?.entries) {
+                for (const entry of historyPage.entries) renderHistoryEntry(entry);
+            } else if (session.history) {
+                // Fallback: if paginated endpoint not available, show last N from full history
+                const recent = session.history.slice(-pageSize);
+                for (const entry of recent) renderHistoryEntry(entry);
             }
         }
 
@@ -1587,6 +1609,63 @@
         elChatInput.focus();
         updateSendButtonState();
         loadChatHeaderModels();
+    }
+
+    async function loadEarlierMessages(sessionId, loadMoreEl) {
+        const endOffset = parseInt(loadMoreEl.dataset.endOffset, 10);
+        if (endOffset <= 0) return;
+
+        loadMoreEl.textContent = 'Loading...';
+        const pageSize = 30;
+        const offset = Math.max(0, endOffset - pageSize);
+        const limit = endOffset - offset;
+
+        const historyPage = await fetchJson(`/sessions/${encodeURIComponent(sessionId)}/history?offset=${offset}&limit=${limit}`);
+        if (!historyPage?.entries?.length) {
+            loadMoreEl.remove();
+            return;
+        }
+
+        // Insert entries after the load-more button (before existing messages)
+        const fragment = document.createDocumentFragment();
+        for (const entry of historyPage.entries) {
+            const tempContainer = document.createElement('div');
+            // Render into temp, then move nodes
+            const prevCount = elChatMessages.children.length;
+            renderHistoryEntry(entry);
+            // The renderHistoryEntry appends to elChatMessages, so grab the last added node
+        }
+
+        // Simpler approach: remove button, prepend entries, re-add button if needed
+        const nextSibling = loadMoreEl.nextSibling;
+        loadMoreEl.remove();
+
+        // Re-render: create entries before existing content
+        const tempDiv = document.createElement('div');
+        const savedHTML = elChatMessages.innerHTML;
+        elChatMessages.innerHTML = '';
+
+        if (offset > 0) {
+            const newLoadMore = document.createElement('div');
+            newLoadMore.className = 'load-more-history';
+            newLoadMore.dataset.sessionId = sessionId;
+            newLoadMore.dataset.endOffset = String(offset);
+            newLoadMore.textContent = `↑ Load earlier messages (${offset} more)`;
+            newLoadMore.style.cssText = 'text-align:center;padding:8px;cursor:pointer;color:var(--text-secondary);font-size:0.85rem;';
+            newLoadMore.addEventListener('click', () => loadEarlierMessages(sessionId, newLoadMore));
+            elChatMessages.appendChild(newLoadMore);
+        }
+
+        for (const entry of historyPage.entries) renderHistoryEntry(entry);
+        // Re-append existing messages
+        const tempContainer = document.createElement('div');
+        tempContainer.innerHTML = savedHTML;
+        // Skip the old load-more button if it was in savedHTML
+        for (const child of [...tempContainer.children]) {
+            if (!child.classList.contains('load-more-history')) {
+                elChatMessages.appendChild(child);
+            }
+        }
     }
 
     // =========================================================================
