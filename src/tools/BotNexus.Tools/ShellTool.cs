@@ -26,10 +26,15 @@ public sealed class ShellTool : IAgentTool
     private const int MaxOutputBytes = 50 * 1024;
     private const int MaxOutputLines = 2000;
     private static readonly Lazy<string?> WindowsBashPath = new(FindBashExecutable);
+    private readonly string? _workingDirectory;
     private readonly int? _defaultTimeoutSeconds;
 
-    public ShellTool(int? defaultTimeoutSeconds = 600)
+    public ShellTool(string? workingDirectory = null, int? defaultTimeoutSeconds = 600)
     {
+        _workingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
+            ? null
+            : Path.GetFullPath(workingDirectory);
+
         if (defaultTimeoutSeconds is < 1)
         {
             throw new ArgumentOutOfRangeException(nameof(defaultTimeoutSeconds), "defaultTimeoutSeconds must be >= 1 second when set.");
@@ -118,7 +123,8 @@ public sealed class ShellTool : IAgentTool
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
-            CreateNoWindow = true
+            CreateNoWindow = true,
+            WorkingDirectory = _workingDirectory ?? string.Empty
         };
 
         using var process = new Process { StartInfo = startInfo };

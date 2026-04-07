@@ -260,7 +260,7 @@ public static class CodingAgent
             new ListDirectoryTool(workingDirectory),
             new WriteTool(workingDirectory),
             new EditTool(workingDirectory),
-            new ShellTool(config.DefaultShellTimeoutSeconds),
+            new ShellTool(workingDirectory, config.DefaultShellTimeoutSeconds),
             new GlobTool(workingDirectory),
             new GrepTool(workingDirectory)
         };

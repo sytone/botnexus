@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Linq;
+using BotNexus.AgentCore.Tools;
 using BotNexus.AgentCore;
 using BotNexus.AgentCore.Configuration;
 using BotNexus.AgentCore.Diagnostics;
@@ -29,6 +31,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
     private readonly LlmClient _llmClient;
     private readonly GatewayAuthManager _authManager;
     private readonly IContextBuilder _contextBuilder;
+    private readonly IAgentToolFactory _toolFactory;
+    private readonly IAgentWorkspaceManager _workspaceManager;
     private readonly IToolRegistry _toolRegistry;
     private readonly ILogger<InProcessIsolationStrategy> _logger;
 
@@ -36,12 +40,16 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         LlmClient llmClient,
         GatewayAuthManager authManager,
         IContextBuilder contextBuilder,
+        IAgentToolFactory toolFactory,
+        IAgentWorkspaceManager workspaceManager,
         IToolRegistry toolRegistry,
         ILogger<InProcessIsolationStrategy> logger)
     {
         _llmClient = llmClient;
         _authManager = authManager;
         _contextBuilder = contextBuilder;
+        _toolFactory = toolFactory;
+        _workspaceManager = workspaceManager;
         _toolRegistry = toolRegistry;
         _logger = logger;
     }
@@ -62,10 +70,21 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 
         var enrichedSystemPrompt = await _contextBuilder.BuildSystemPromptAsync(descriptor, cancellationToken);
 
-        // Resolve tools for this agent
-        var tools = descriptor.ToolIds.Count > 0
+        var workspacePath = _workspaceManager.GetWorkspacePath(descriptor.AgentId);
+        var workspaceTools = _toolFactory.CreateTools(workspacePath);
+        var workspaceToolNames = new HashSet<string>(workspaceTools.Select(tool => tool.Name), StringComparer.OrdinalIgnoreCase);
+
+        IReadOnlyList<IAgentTool> selectedWorkspaceTools = descriptor.ToolIds.Count > 0
+            ? [.. workspaceTools.Where(tool => descriptor.ToolIds.Contains(tool.Name, StringComparer.OrdinalIgnoreCase))]
+            : workspaceTools;
+
+        var extensionTools = descriptor.ToolIds.Count > 0
             ? _toolRegistry.ResolveTools(descriptor.ToolIds)
             : _toolRegistry.GetAll();
+
+        var tools = selectedWorkspaceTools
+            .Concat(extensionTools.Where(tool => !workspaceToolNames.Contains(tool.Name)))
+            .ToList();
 
         var options = new AgentOptions(
             InitialState: new AgentInitialState(

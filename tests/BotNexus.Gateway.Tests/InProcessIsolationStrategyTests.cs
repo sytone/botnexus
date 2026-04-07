@@ -6,6 +6,7 @@ using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Isolation;
 using BotNexus.Gateway.Tools;
+using BotNexus.Tools;
 using BotNexus.Providers.Core;
 using BotNexus.Providers.Core.Models;
 using BotNexus.Providers.Core.Registry;
@@ -36,6 +37,8 @@ public sealed class InProcessIsolationStrategyTests
             llmClient,
             new GatewayAuthManager(new PlatformConfig(), NullLogger<GatewayAuthManager>.Instance),
             new PassthroughContextBuilder(),
+            new StaticAgentToolFactory(),
+            new TestWorkspaceManager(),
             new DefaultToolRegistry(Array.Empty<IAgentTool>()),
             NullLogger<InProcessIsolationStrategy>.Instance);
 
@@ -87,6 +90,8 @@ public sealed class InProcessIsolationStrategyTests
             llmClient,
             new GatewayAuthManager(new PlatformConfig(), NullLogger<GatewayAuthManager>.Instance),
             new PassthroughContextBuilder(),
+            new StaticAgentToolFactory(),
+            new TestWorkspaceManager(),
             new DefaultToolRegistry(Array.Empty<IAgentTool>()),
             NullLogger<InProcessIsolationStrategy>.Instance);
     }
@@ -105,5 +110,23 @@ public sealed class InProcessIsolationStrategyTests
     {
         public Task<string> BuildSystemPromptAsync(AgentDescriptor descriptor, CancellationToken ct = default)
             => Task.FromResult(descriptor.SystemPrompt ?? string.Empty);
+    }
+
+    private sealed class StaticAgentToolFactory : IAgentToolFactory
+    {
+        public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory)
+            => [new ReadTool(workingDirectory)];
+    }
+
+    private sealed class TestWorkspaceManager : IAgentWorkspaceManager
+    {
+        public Task<AgentWorkspace> LoadWorkspaceAsync(string agentName, CancellationToken cancellationToken = default)
+            => Task.FromResult(new AgentWorkspace(agentName, string.Empty, string.Empty, string.Empty, string.Empty));
+
+        public Task SaveMemoryAsync(string agentName, string content, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public string GetWorkspacePath(string agentName)
+            => AppContext.BaseDirectory;
     }
 }

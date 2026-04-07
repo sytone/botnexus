@@ -8,4 +8,8 @@
     <Description>Core abstractions and extension point interfaces for the BotNexus Gateway Service.</Description>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\agent\BotNexus.AgentCore\BotNexus.AgentCore.csproj" />
+  </ItemGroup>
+
 </Project>

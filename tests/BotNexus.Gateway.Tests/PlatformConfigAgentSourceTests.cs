@@ -1,12 +1,14 @@
 using System.Reflection;
 using System.Text.Json;
-using BotNexus.AgentCore.Tools;using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.AgentCore.Tools;
+using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Isolation;
 using BotNexus.Gateway.Tools;
+using BotNexus.Tools;
 using BotNexus.Providers.Core;
 using BotNexus.Providers.Core.Models;
 using BotNexus.Providers.Core.Registry;
@@ -143,6 +145,8 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
             new LlmClient(new ApiProviderRegistry(), modelRegistry),
             CreateGatewayAuthManagerWithTempAuthPath(),
             new PassthroughContextBuilder(),
+            new StaticAgentToolFactory(),
+            new TestWorkspaceManager(_configDirectory),
             new DefaultToolRegistry(Array.Empty<IAgentTool>()),
             NullLogger<InProcessIsolationStrategy>.Instance);
 
@@ -203,6 +207,31 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
     {
         public Task<string> BuildSystemPromptAsync(AgentDescriptor descriptor, CancellationToken ct = default)
             => Task.FromResult(descriptor.SystemPrompt ?? string.Empty);
+    }
+
+    private sealed class StaticAgentToolFactory : IAgentToolFactory
+    {
+        public IReadOnlyList<IAgentTool> CreateTools(string workingDirectory)
+            => [new ReadTool(workingDirectory)];
+    }
+
+    private sealed class TestWorkspaceManager : IAgentWorkspaceManager
+    {
+        private readonly string _workspacePath;
+
+        public TestWorkspaceManager(string workspacePath)
+        {
+            _workspacePath = workspacePath;
+        }
+
+        public Task<AgentWorkspace> LoadWorkspaceAsync(string agentName, CancellationToken cancellationToken = default)
+            => Task.FromResult(new AgentWorkspace(agentName, string.Empty, string.Empty, string.Empty, string.Empty));
+
+        public Task SaveMemoryAsync(string agentName, string content, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public string GetWorkspacePath(string agentName)
+            => _workspacePath;
     }
 
     private sealed class NullScope : IDisposable
