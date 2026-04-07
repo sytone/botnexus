@@ -1414,8 +1414,13 @@
     // Sessions
     // =========================================================================
 
+    let sessionsFingerprint = '';
+    let sessionsInitialLoad = true;
+
     async function loadSessions() {
-        elSessionsList.innerHTML = '<div class="loading">Loading...</div>';
+        if (sessionsInitialLoad) {
+            elSessionsList.innerHTML = '<div class="loading">Loading...</div>';
+        }
 
         // Fetch agents and sessions in parallel
         const [agents, sessions] = await Promise.all([
@@ -1425,10 +1430,10 @@
 
         if (!agents || agents.length === 0) {
             elSessionsList.innerHTML = '<div class="empty-state">No agents configured</div>';
+            sessionsFingerprint = '';
+            sessionsInitialLoad = false;
             return;
         }
-
-        elSessionsList.innerHTML = '';
 
         // Group sessions by agentId
         const sessionsByAgent = {};
@@ -1440,6 +1445,25 @@
             }
         }
 
+        // Build a fingerprint to detect actual changes
+        const newFingerprint = JSON.stringify({
+            agents: agents.map(a => a.agentId || a.name),
+            sessions: (sessions || []).map(s => s.sessionId + ':' + (s.updatedAt || '')),
+            active: currentSessionId
+        });
+
+        if (newFingerprint === sessionsFingerprint) return; // No changes
+        sessionsFingerprint = newFingerprint;
+
+        // Preserve collapsed state
+        const collapsedAgents = new Set();
+        elSessionsList.querySelectorAll('.agent-group-header.collapsed').forEach(el => {
+            const text = el.textContent.replace('▼', '').trim();
+            collapsedAgents.add(text);
+        });
+
+        elSessionsList.innerHTML = '';
+
         // Build agent groups
         for (const agent of agents) {
             const agentId = agent.agentId || agent.name;
@@ -1450,7 +1474,7 @@
 
             // Group header (collapsible)
             const header = document.createElement('div');
-            header.className = 'agent-group-header';
+            header.className = 'agent-group-header' + (collapsedAgents.has(displayName) ? ' collapsed' : '');
             header.innerHTML = `<span class="collapse-icon">▼</span> ${escapeHtml(displayName)}`;
             header.addEventListener('click', () => header.classList.toggle('collapsed'));
             group.appendChild(header);
@@ -1496,6 +1520,8 @@
             group.appendChild(channelsDiv);
             elSessionsList.appendChild(group);
         }
+
+        sessionsInitialLoad = false;
     }
 
     async function deleteSession(sessionId) {
