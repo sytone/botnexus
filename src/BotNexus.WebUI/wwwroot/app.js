@@ -351,6 +351,8 @@
         }
     }
 
+    let healthCheckInterval = null;
+
     function startHealthCheck() {
         if (healthCheckInterval) return;
         checkGatewayHealth(); // Initial check
