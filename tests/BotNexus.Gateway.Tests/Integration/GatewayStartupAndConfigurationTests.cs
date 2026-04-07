@@ -20,6 +20,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace BotNexus.Gateway.Tests.Integration;
 
 [Trait("Category", "Integration")]
+[Collection("IntegrationTests")]
 public sealed class GatewayStartupAndConfigurationTests
 {
     private const string ConfigPathKey = "BotNexus__ConfigPath";

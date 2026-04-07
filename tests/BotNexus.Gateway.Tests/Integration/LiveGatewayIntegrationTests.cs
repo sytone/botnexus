@@ -20,6 +20,7 @@ using Moq;
 namespace BotNexus.Gateway.Tests.Integration;
 
 [Trait("Category", "Integration")]
+[Collection("IntegrationTests")]
 public sealed class LiveGatewayIntegrationTests
 {
     private static readonly string AuthPath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", ".botnexus-agent", "auth.json");
