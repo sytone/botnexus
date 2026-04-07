@@ -30,11 +30,13 @@ builder.Host.UseSerilog((context, services, configuration) => configuration
     .Enrich.FromLogContext()
     .Enrich.WithMachineName()
     .Enrich.WithThreadId()
-    .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}")
+    .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}",
+        restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Warning)
     .WriteTo.File(
         Path.Combine(BotNexusHome.ResolveHomePath(), "logs", "botnexus-.log"),
         rollingInterval: RollingInterval.Day,
-        retainedFileCountLimit: 14),
+        retainedFileCountLimit: 14,
+        restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Warning),
     preserveStaticLogger: true);
 
 var platformConfigPath = builder.Configuration["BotNexus:ConfigPath"];

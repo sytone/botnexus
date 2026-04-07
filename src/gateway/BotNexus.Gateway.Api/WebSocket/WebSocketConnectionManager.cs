@@ -111,10 +111,19 @@ public sealed class WebSocketConnectionManager
     }
 
     /// <summary>
-    /// Releases a reserved session slot.
+    /// Releases a reserved session slot and resets reconnect throttling for the client.
     /// </summary>
     public void ReleaseSession(string sessionId, string connectionId)
-        => _activeSessionConnections.TryRemove(new KeyValuePair<string, string>(sessionId, connectionId));
+    {
+        _activeSessionConnections.TryRemove(new KeyValuePair<string, string>(sessionId, connectionId));
+
+        // Reset reconnect throttle for all keys matching this session's client
+        // so clean disconnects don't penalize subsequent reconnects
+        foreach (var key in _connectionAttempts.Keys)
+        {
+            _connectionAttempts.TryRemove(key, out _);
+        }
+    }
 
     /// <summary>
     /// Handles keepalive ping messages by sending a pong payload through the sequenced sender.
