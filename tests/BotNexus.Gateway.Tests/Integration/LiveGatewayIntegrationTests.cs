@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using BotNexus.Gateway;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
@@ -13,6 +14,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Moq;
 
 namespace BotNexus.Gateway.Tests.Integration;
@@ -22,10 +24,10 @@ public sealed class LiveGatewayIntegrationTests
 {
     private static readonly string AuthPath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", ".botnexus-agent", "auth.json");
 
-    [Fact(Skip = "Live WebSocket tests hang in CI — TestServer WebSocket lifecycle issue")]
+    [Fact]
     public async Task GatewayStartupTest_HealthEndpoint_ReturnsOk()
     {
-        await using var factory = CreateFactory();
+        await using var factory = CreateTestFactory();
         using var client = factory.CreateClient();
 
         var response = await client.GetAsync("/health");
@@ -33,10 +35,10 @@ public sealed class LiveGatewayIntegrationTests
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
-    [Fact(Skip = "Live WebSocket tests hang in CI — TestServer WebSocket lifecycle issue")]
+    [Fact]
     public async Task GatewayStartupTest_SwaggerEndpoint_ReturnsOk()
     {
-        await using var factory = CreateFactory();
+        await using var factory = CreateTestFactory();
         using var client = factory.CreateClient();
 
         var response = await client.GetAsync("/swagger/v1/swagger.json");
@@ -44,10 +46,10 @@ public sealed class LiveGatewayIntegrationTests
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
-    [Fact(Skip = "Live WebSocket tests hang in CI — TestServer WebSocket lifecycle issue")]
+    [Fact]
     public async Task RestApiTests_AgentsSessionsAndConfigEndpoints_ReturnExpectedResponses()
     {
-        await using var factory = CreateFactory();
+        await using var factory = CreateTestFactory();
         using var client = factory.CreateClient();
 
         var listAgentsResponse = await client.GetAsync("/api/agents");
@@ -71,14 +73,14 @@ public sealed class LiveGatewayIntegrationTests
         validateResponse.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
-    [Fact(Skip = "Live WebSocket tests hang in CI — TestServer WebSocket lifecycle issue")]
+    [Fact]
     public async Task WebSocketConnectionTest_WsEndpoint_SendsConnectedMessage()
     {
-        await using var factory = CreateFactory();
+        await using var factory = CreateTestFactory();
         using var client = factory.CreateClient();
         var descriptor = new AgentDescriptor
         {
-            AgentId = "ws-agent",
+            AgentId = $"ws-agent-{Guid.NewGuid():N}",
             DisplayName = "WebSocket Agent",
             ModelId = "gpt-4.1",
             ApiProvider = "copilot",
@@ -89,30 +91,30 @@ public sealed class LiveGatewayIntegrationTests
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var socket = await factory.Server.CreateWebSocketClient()
-            .ConnectAsync(new Uri("ws://localhost/ws?agent=ws-agent&session=ws-session"), cts.Token);
+            .ConnectAsync(new Uri($"ws://localhost/ws?agent={descriptor.AgentId}&session=ws-session"), cts.Token);
 
-        // Collect all messages within timeout — handler may send connected + session_switched
-        var messages = new List<JsonDocument>();
-        try
+        var receivedConnected = false;
+        for (var i = 0; i < 3 && !cts.IsCancellationRequested; i++)
         {
-            while (!cts.IsCancellationRequested)
+            var payload = await ReceiveTextAsync(socket, cts.Token);
+            using var doc = JsonDocument.Parse(payload);
+            if (doc.RootElement.GetProperty("type").GetString() == "connected")
             {
-                var payload = await ReceiveTextAsync(socket, cts.Token);
-                messages.Add(JsonDocument.Parse(payload));
+                receivedConnected = true;
+                break;
             }
         }
-        catch (OperationCanceledException) { }
 
-        messages.Should().Contain(doc =>
-            doc.RootElement.GetProperty("type").GetString() == "connected");
+        receivedConnected.Should().BeTrue();
     }
 
-    [Fact(Skip = "Live WebSocket tests hang in CI — TestServer WebSocket lifecycle issue")]
+    [Fact(Skip = "Activity stream can be flaky on TestServer websocket transport.")]
     public async Task ActivityWebSocketTest_ActivitySubscription_StreamsPublishedEvents()
     {
-        await using var factory = CreateFactory();
+        await using var factory = CreateTestFactory();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var socket = await factory.Server.CreateWebSocketClient()
-            .ConnectAsync(new Uri("ws://localhost/ws/activity"), CancellationToken.None);
+            .ConnectAsync(new Uri("ws://localhost/ws/activity"), cts.Token);
 
         await using (var scope = factory.Services.CreateAsyncScope())
         {
@@ -125,13 +127,13 @@ public sealed class LiveGatewayIntegrationTests
             });
         }
 
-        var payload = await ReceiveTextAsync(socket, CancellationToken.None);
+        var payload = await ReceiveTextAsync(socket, cts.Token);
         using var doc = JsonDocument.Parse(payload);
         doc.RootElement.GetProperty("agentId").GetString().Should().Be("activity-agent");
         doc.RootElement.GetProperty("message").GetString().Should().Be("activity-event");
     }
 
-    [Fact(Skip = "Live WebSocket tests hang in CI — TestServer WebSocket lifecycle issue")]
+    [Fact(Skip = "Requires real Copilot API credentials.")]
     [Trait("Category", "Live")]
     public async Task LiveChatTest_CopilotBackedAgent_StreamsResponse()
     {
@@ -147,7 +149,7 @@ public sealed class LiveGatewayIntegrationTests
             .Setup(s => s.GetOrCreateAsync("copilot-live", It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LiveCopilotAgentHandle(auth.Value));
 
-        await using var factory = CreateFactory(services =>
+        await using var factory = CreateTestFactory(services =>
         {
             services.RemoveAll<IAgentSupervisor>();
             services.AddSingleton(supervisor.Object);
@@ -175,11 +177,22 @@ public sealed class LiveGatewayIntegrationTests
         payload.Should().Contain("content_delta");
     }
 
-    private static WebApplicationFactory<Program> CreateFactory(Action<IServiceCollection>? configureTestServices = null)
+    private static WebApplicationFactory<Program> CreateTestFactory(Action<IServiceCollection>? configureTestServices = null)
         => new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Development");
+                builder.UseUrls("http://127.0.0.1:0");
+                builder.ConfigureServices(services =>
+                {
+                    var hostedServicesToRemove = services
+                        .Where(descriptor => descriptor.ServiceType == typeof(IHostedService))
+                        .ToList();
+
+                    foreach (var descriptor in hostedServicesToRemove)
+                        services.Remove(descriptor);
+                });
+
                 builder.ConfigureTestServices(services =>
                 {
                     configureTestServices?.Invoke(services);
@@ -316,4 +329,5 @@ public sealed class LiveGatewayIntegrationTests
         }
     }
 }
+
 

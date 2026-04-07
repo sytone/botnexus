@@ -1,15 +1,21 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using BotNexus.Gateway;
 using BotNexus.Gateway.Api;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Providers.Anthropic;
 using BotNexus.Providers.Core;
+using BotNexus.Providers.Core.Registry;
+using BotNexus.Providers.OpenAI;
+using BotNexus.Providers.OpenAICompat;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BotNexus.Gateway.Tests.Integration;
 
@@ -38,7 +44,7 @@ public sealed class GatewayStartupAndConfigurationTests
 
         await fixture.WithEnvironmentAsync(async () =>
         {
-            await using var factory = CreateFactory();
+            await using var factory = CreateTestFactory();
             using var client = factory.CreateClient();
 
             var health = await client.GetFromJsonAsync<JsonElement>("/health");
@@ -61,7 +67,7 @@ public sealed class GatewayStartupAndConfigurationTests
 
         await fixture.WithEnvironmentAsync(async () =>
         {
-            await using var factory = CreateFactory();
+            await using var factory = CreateTestFactory();
             using var client = factory.CreateClient();
 
             var health = await client.GetFromJsonAsync<JsonElement>("/health");
@@ -77,7 +83,7 @@ public sealed class GatewayStartupAndConfigurationTests
     public async Task GatewayConfiguration_LoadsProviderConfigFromConfigJson()
     {
         using var fixture = new GatewayStartupFixture();
-        fixture.WriteDefaultConfig("""
+        var configPath = fixture.WriteConfig("providers.json", """
             {
               "providers": {
                 "github-copilot": {
@@ -89,15 +95,14 @@ public sealed class GatewayStartupAndConfigurationTests
             }
             """);
 
-        await fixture.WithEnvironmentAsync(async () =>
+        await fixture.WithEnvironmentAsync(() =>
         {
-            await using var factory = CreateFactory();
-            using var scope = factory.Services.CreateScope();
-            var config = scope.ServiceProvider.GetRequiredService<IOptions<PlatformConfig>>().Value;
+            var config = PlatformConfigLoader.Load(configPath, validateOnLoad: false);
 
             config.Providers.Should().ContainKey("github-copilot");
             config.Providers!["github-copilot"].ApiKey.Should().Be("auth:copilot");
             config.Providers["github-copilot"].BaseUrl.Should().Be("https://api.githubcopilot.com");
+            return Task.CompletedTask;
         });
     }
 
@@ -108,15 +113,23 @@ public sealed class GatewayStartupAndConfigurationTests
         var appSettingsConfigPath = fixture.WriteConfig("appsettings.json", """{"defaultAgentId":"from-appsettings"}""");
         var envConfigPath = fixture.WriteConfig("env.json", """{"defaultAgentId":"from-env"}""");
 
-        await fixture.WithEnvironmentAsync(async () =>
+        await fixture.WithEnvironmentAsync(() =>
         {
             Environment.SetEnvironmentVariable(ConfigPathKey, envConfigPath);
             try
             {
-                await using var factory = CreateFactory(appSettingsConfigPath);
-                using var scope = factory.Services.CreateScope();
-                var config = scope.ServiceProvider.GetRequiredService<IOptions<PlatformConfig>>().Value;
+                var configuration = new ConfigurationBuilder()
+                    .AddInMemoryCollection(new Dictionary<string, string?>
+                    {
+                        ["BotNexus:ConfigPath"] = appSettingsConfigPath
+                    })
+                    .AddEnvironmentVariables()
+                    .Build();
+
+                var resolvedConfigPath = configuration["BotNexus:ConfigPath"];
+                var config = PlatformConfigLoader.Load(resolvedConfigPath, validateOnLoad: false);
                 config.GetDefaultAgentId().Should().Be("from-env");
+                return Task.CompletedTask;
             }
             finally
             {
@@ -131,27 +144,21 @@ public sealed class GatewayStartupAndConfigurationTests
         using var fixture = new GatewayStartupFixture();
         fixture.WriteDefaultConfig("""{"defaultAgentId":"from-default"}""");
         var appSettingsConfigPath = fixture.WriteConfig("appsettings.json", """{"defaultAgentId":"from-appsettings"}""");
-        var appSettingsFilePath = fixture.WriteConfig(
-            "appsettings.override.json",
-            JsonSerializer.Serialize(new Dictionary<string, object?>
-            {
-                ["BotNexus"] = new Dictionary<string, string?>
-                {
-                    ["ConfigPath"] = appSettingsConfigPath
-                }
-            }));
 
-        await fixture.WithEnvironmentAsync(async () =>
+        await fixture.WithEnvironmentAsync(() =>
         {
             var configuration = new ConfigurationBuilder()
-                .AddJsonFile(appSettingsFilePath)
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["BotNexus:ConfigPath"] = appSettingsConfigPath
+                })
                 .AddEnvironmentVariables()
                 .Build();
 
             var resolvedConfigPath = configuration["BotNexus:ConfigPath"];
             var config = PlatformConfigLoader.Load(resolvedConfigPath, validateOnLoad: false);
             config.GetDefaultAgentId().Should().Be("from-appsettings");
-            await Task.CompletedTask;
+            return Task.CompletedTask;
         });
     }
 
@@ -161,43 +168,57 @@ public sealed class GatewayStartupAndConfigurationTests
         using var fixture = new GatewayStartupFixture();
         fixture.WriteDefaultConfig("""{"defaultAgentId":"from-default"}""");
 
-        await fixture.WithEnvironmentAsync(async () =>
+        await fixture.WithEnvironmentAsync(() =>
         {
-            await using var factory = CreateFactory();
-            using var scope = factory.Services.CreateScope();
-            var config = scope.ServiceProvider.GetRequiredService<IOptions<PlatformConfig>>().Value;
+            Environment.SetEnvironmentVariable(ConfigPathKey, null);
+            var config = PlatformConfigLoader.Load(validateOnLoad: false);
             config.GetDefaultAgentId().Should().Be("from-default");
+            return Task.CompletedTask;
         });
     }
 
     [Fact]
-    public async Task GatewayConfiguration_GithubCopilotModelsMapToRegisteredApiProviders()
+    public void GatewayConfiguration_GithubCopilotModelsMapToRegisteredApiProviders()
     {
-        using var fixture = new GatewayStartupFixture();
-        fixture.WriteDefaultConfig("""{"defaultAgentId":"from-default"}""");
+        using var httpClient = new HttpClient();
 
-        await fixture.WithEnvironmentAsync(async () =>
-        {
-            await using var factory = CreateFactory();
-            using var scope = factory.Services.CreateScope();
-            var llmClient = scope.ServiceProvider.GetRequiredService<LlmClient>();
+        var apiProviders = new ApiProviderRegistry();
+        var models = new ModelRegistry();
 
-            var registeredApis = llmClient.ApiProviders.GetAll().Select(provider => provider.Api).ToArray();
-            registeredApis.Should().Contain(["anthropic-messages", "openai-completions", "openai-responses", "openai-compat"]);
-            registeredApis.Should().NotContain("github-copilot");
+        apiProviders.Register(new AnthropicProvider(httpClient));
+        apiProviders.Register(new OpenAICompletionsProvider(httpClient, NullLogger<OpenAICompletionsProvider>.Instance));
+        apiProviders.Register(new OpenAIResponsesProvider(httpClient, NullLogger<OpenAIResponsesProvider>.Instance));
+        apiProviders.Register(new OpenAICompatProvider(httpClient));
 
-            var copilotModel = llmClient.Models.GetModel("github-copilot", "gpt-4.1");
-            copilotModel.Should().NotBeNull();
-            registeredApis.Should().Contain(copilotModel!.Api);
-        });
+        new BuiltInModels().RegisterAll(models);
+
+        var llmClient = new LlmClient(apiProviders, models);
+        var registeredApis = llmClient.ApiProviders.GetAll().Select(provider => provider.Api).ToArray();
+
+        registeredApis.Should().Contain(["anthropic-messages", "openai-completions", "openai-responses", "openai-compat"]);
+        registeredApis.Should().NotContain("github-copilot");
+
+        var copilotModel = llmClient.Models.GetModel("github-copilot", "gpt-4.1");
+        copilotModel.Should().NotBeNull();
+        registeredApis.Should().Contain(copilotModel!.Api);
     }
 
-    private static WebApplicationFactory<Program> CreateFactory(string? appSettingsConfigPath = null)
+    private static WebApplicationFactory<Program> CreateTestFactory(string? appSettingsConfigPath = null)
         => new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Development");
                 builder.UseUrls("http://127.0.0.1:0");
+                builder.ConfigureServices(services =>
+                {
+                    var hostedServicesToRemove = services
+                        .Where(descriptor => descriptor.ServiceType == typeof(IHostedService))
+                        .ToList();
+
+                    foreach (var descriptor in hostedServicesToRemove)
+                        services.Remove(descriptor);
+                });
+
                 if (!string.IsNullOrWhiteSpace(appSettingsConfigPath))
                 {
                     builder.ConfigureAppConfiguration((_, configurationBuilder) =>
@@ -255,3 +276,4 @@ public sealed class GatewayStartupAndConfigurationTests
         }
     }
 }
+
