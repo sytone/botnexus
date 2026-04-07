@@ -62,6 +62,8 @@
     let lastSequenceId = 0;
     let sessionKey = null;
     let commandPaletteIndex = -1;
+    /** @type {Array<string>} */
+    let wsSendQueue = [];
 
     // --- DOM refs ---
     const $ = (sel) => document.querySelector(sel);
@@ -376,14 +378,12 @@
 
     function connectWebSocket() {
         if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
-        if (!currentAgentId) return;
 
         isWsConnecting = true;
         setStatus(reconnectAttempts > 0 ? 'reconnecting' : 'connecting');
         showConnectionBanner(reconnectAttempts > 0 ? '⚠️ Connection lost. Reconnecting...' : 'Connecting...', 'warning');
         const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        let url = `${proto}//${location.host}${WS_PATH}?agent=${encodeURIComponent(currentAgentId)}`;
-        if (currentSessionId) url += `&session=${encodeURIComponent(currentSessionId)}`;
+        const url = `${proto}//${location.host}${WS_PATH}`;
         currentWsUrl = url;
 
         ws = new WebSocket(url);
@@ -395,7 +395,12 @@
             const wasReconnect = reconnectAttempts > 0;
             reconnectAttempts = 0;
             startPing();
+            flushWsSendQueue();
             if (wasReconnect) {
+                // Re-establish session context after network reconnect
+                if (currentAgentId) {
+                    sendWs({ type: 'switch_session', agentId: currentAgentId, sessionId: currentSessionId || undefined });
+                }
                 loadChannels();
                 loadExtensions();
                 reloadCurrentSessionHistory().then((msgCount) => {
@@ -475,7 +480,17 @@
     }
 
     function sendWs(obj) {
-        if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(obj));
+        } else {
+            wsSendQueue.push(JSON.stringify(obj));
+        }
+    }
+
+    function flushWsSendQueue() {
+        while (wsSendQueue.length > 0 && ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(wsSendQueue.shift());
+        }
     }
 
     async function reloadCurrentSessionHistory() {
@@ -488,6 +503,39 @@
         elChatMeta.textContent = `Agent: ${currentAgentId || 'unknown'} · ${msgCount} messages`;
         scrollToBottom();
         return msgCount;
+    }
+
+    function switchSession(agentId, sessionId) {
+        // Clear streaming/tool state
+        activeMessageId = null;
+        activeToolCalls = {};
+        activeToolCount = 0;
+        toolCallDepth = 0;
+        thinkingBuffer = '';
+        clearResponseTimeout();
+        resetQueue();
+        removeStreamingIndicator();
+        hideProcessingStatus();
+        isStreaming = false;
+        stopToolElapsedTimer();
+
+        // Clear chat display
+        elChatMessages.innerHTML = '';
+
+        // Update state
+        currentAgentId = agentId;
+        currentSessionId = sessionId || null;
+
+        // Tell server to switch
+        sendWs({ type: 'switch_session', agentId: agentId, sessionId: sessionId || undefined });
+
+        // Update UI
+        elChatTitle.textContent = `${agentId || 'New Chat'} — WebSocket`;
+        elChatMeta.textContent = `Agent: ${agentId || 'default'} · ${sessionId ? 'Loading...' : 'Session will be created on first message'}`;
+        updateSessionIdDisplay();
+        setSendingState(false);
+        updateSendButtonState();
+        loadChatHeaderModels();
     }
 
     // =========================================================================
@@ -560,11 +608,18 @@
                 handleError(msg);
                 break;
             case 'session_reset':
-                disconnectWebSocket();
                 currentSessionId = null;
                 updateSessionIdDisplay();
                 currentAgentId = elAgentSelect.value || currentAgentId;
-                if (currentAgentId) connectWebSocket();
+                if (currentAgentId) switchSession(currentAgentId, null);
+                loadSessions();
+                break;
+            case 'session_switched':
+                currentSessionId = msg.sessionId;
+                currentAgentId = msg.agentId;
+                updateSessionIdDisplay();
+                elChatTitle.textContent = `${msg.agentId || 'Chat'} — WebSocket`;
+                elChatMeta.textContent = `Agent: ${msg.agentId || 'unknown'} · Session: ${msg.sessionId?.substring(0, 8) || 'new'}`;
                 loadSessions();
                 break;
             case 'reconnect_ack':
@@ -717,7 +772,7 @@
         reconnectAttempts = 0;
         connectionHadOpen = false;
         hideConnectionBanner();
-        if (currentAgentId) connectWebSocket();
+        connectWebSocket();
     }
 
     // =========================================================================
@@ -1174,10 +1229,8 @@
             }
         }
 
-        disconnectWebSocket();
-        currentSessionId = null;
         currentAgentId = elAgentSelect.value || currentAgentId;
-        if (currentAgentId) connectWebSocket();
+        if (currentAgentId) switchSession(currentAgentId, null);
         loadSessions();
     }
 
@@ -1361,34 +1414,16 @@
     }
 
     function startNewChat() {
-        // Disconnect WebSocket but do NOT stop the agent instance —
-        // it should continue running in the background
-        disconnectWebSocket();
-        currentSessionId = null;
-        activeMessageId = null;
-        activeToolCalls = {};
-        activeToolCount = 0;
-        toolCallDepth = 0;
-        thinkingBuffer = '';
-        clearResponseTimeout();
-        resetQueue();
+        const agentId = elAgentSelect.value || null;
+        if (!agentId) return;
+
+        // Switch session — no disconnect
+        switchSession(agentId, null);
 
         elWelcome.classList.add('hidden');
         elChatView.classList.remove('hidden');
-        elChatTitle.textContent = `${elAgentSelect.value || 'New Chat'} — WebSocket`;
-        elChatMeta.textContent = `Agent: ${elAgentSelect.value || 'default'} · Session will be created on first message`;
-        elChatMessages.innerHTML = '';
-        elSessionIdDisplay.classList.add('hidden');
-        setSendingState(false);
         elAgentSelect.classList.remove('hidden');
         elSessionsList.querySelectorAll('.list-item').forEach(el => el.classList.remove('active'));
-
-        currentAgentId = elAgentSelect.value || null;
-        if (currentAgentId) {
-            connectWebSocket();
-            loadChatHeaderModels();
-        }
-        else updateSendButtonState();
         loadSessions();
         elChatInput.focus();
     }
@@ -1531,8 +1566,9 @@
                     const res = await fetch(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
                     if (res.ok || res.status === 204) {
                         if (currentSessionId === sessionId) {
-                            disconnectWebSocket();
                             currentSessionId = null;
+                            currentAgentId = null;
+                            updateSessionIdDisplay();
                             elChatView.classList.add('hidden');
                             elWelcome.classList.remove('hidden');
                         }
@@ -1549,9 +1585,8 @@
     }
 
     async function openSession(sessionId, agentId) {
-        disconnectWebSocket();
-        currentSessionId = sessionId;
-        currentAgentId = agentId || null;
+        // Switch session on existing connection
+        switchSession(agentId, sessionId);
 
         elSessionsList.querySelectorAll('.list-item').forEach(el => {
             el.classList.toggle('active', el.dataset.sessionId === sessionId);
@@ -1560,8 +1595,6 @@
         elWelcome.classList.add('hidden');
         elChatView.classList.remove('hidden');
         elChatMessages.innerHTML = '<div class="loading">Loading messages...</div>';
-        setSendingState(false);
-        updateSessionIdDisplay();
 
         if (agentId) elAgentSelect.value = agentId;
         elAgentSelect.classList.add('hidden');
@@ -1604,7 +1637,6 @@
             }
         }
 
-        if (currentAgentId) connectWebSocket();
         scrollToBottom();
         elChatInput.focus();
         updateSendButtonState();
@@ -2197,19 +2229,13 @@
                 showConfirm(
                     `Switch to agent "${newAgent}"? This will start a new session.`,
                     'Switch Agent',
-                    () => {
-                        currentAgentId = newAgent;
-                        startNewChat();
-                    },
+                    () => switchSession(newAgent, null),
                     'Switch'
                 );
                 elAgentSelect.value = currentAgentId;
                 return;
             }
-            currentAgentId = newAgent;
-            if (!currentSessionId && ws) { disconnectWebSocket(); connectWebSocket(); }
-            updateSendButtonState();
-            if (currentAgentId) loadChatHeaderModels();
+            switchSession(newAgent, null);
         });
 
         elToggleTools.addEventListener('change', toggleToolVisibility);
@@ -2375,6 +2401,8 @@
         startHealthCheck();
         setStatus('online');
         updateSendButtonState();
+        // Connect WebSocket once on page load
+        connectWebSocket();
         // Collapse sidebar on mobile by default
         if (window.innerWidth <= 768) {
             elSidebar.classList.add('collapsed');
