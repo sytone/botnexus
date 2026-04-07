@@ -197,6 +197,7 @@ public sealed class GatewayStartupAndConfigurationTests
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Development");
+                builder.UseUrls("http://127.0.0.1:0");
                 if (!string.IsNullOrWhiteSpace(appSettingsConfigPath))
                 {
                     builder.ConfigureAppConfiguration((_, configurationBuilder) =>
