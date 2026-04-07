@@ -1411,38 +1411,85 @@
 
     async function loadSessions() {
         elSessionsList.innerHTML = '<div class="loading">Loading...</div>';
-        const sessions = await fetchJson('/sessions');
-        if (!sessions || sessions.length === 0) {
-            elSessionsList.innerHTML = '<div class="empty-state">No sessions yet</div>';
+
+        // Fetch agents and sessions in parallel
+        const [agents, sessions] = await Promise.all([
+            fetchJson('/agents'),
+            fetchJson('/sessions')
+        ]);
+
+        if (!agents || agents.length === 0) {
+            elSessionsList.innerHTML = '<div class="empty-state">No agents configured</div>';
             return;
         }
-        elSessionsList.innerHTML = '';
-        sessions.sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
 
-        for (const s of sessions) {
-            const el = document.createElement('div');
-            el.className = 'list-item' + (s.sessionId === currentSessionId ? ' active' : '');
-            el.dataset.sessionId = s.sessionId;
-            el.setAttribute('role', 'listitem');
-            const timeStr = relativeTime(s.updatedAt || s.createdAt);
-            const agentName = s.agentId || s.agentName || 'Chat';
-            const msgCount = (s.history && s.history.length) || 0;
-            el.innerHTML = `
+        elSessionsList.innerHTML = '';
+
+        // Group sessions by agentId
+        const sessionsByAgent = {};
+        if (sessions) {
+            for (const s of sessions) {
+                const agentId = s.agentId || s.agentName || 'unknown';
+                if (!sessionsByAgent[agentId]) sessionsByAgent[agentId] = [];
+                sessionsByAgent[agentId].push(s);
+            }
+        }
+
+        // Build agent groups
+        for (const agent of agents) {
+            const agentId = agent.agentId || agent.name;
+            const displayName = agent.displayName || agentId;
+
+            const group = document.createElement('div');
+            group.className = 'agent-group';
+
+            // Group header (collapsible)
+            const header = document.createElement('div');
+            header.className = 'agent-group-header';
+            header.innerHTML = `<span class="collapse-icon">▼</span> ${escapeHtml(displayName)}`;
+            header.addEventListener('click', () => header.classList.toggle('collapsed'));
+            group.appendChild(header);
+
+            // Channel entries
+            const channelsDiv = document.createElement('div');
+            channelsDiv.className = 'agent-group-channels';
+
+            // Always show WebSocket channel
+            const agentSessions = (sessionsByAgent[agentId] || []).sort((a, b) =>
+                new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0)
+            );
+            const latestSession = agentSessions[0];
+
+            const channelEl = document.createElement('div');
+            channelEl.className = 'list-item' + (latestSession && latestSession.sessionId === currentSessionId ? ' active' : '');
+            if (latestSession) channelEl.dataset.sessionId = latestSession.sessionId;
+            channelEl.dataset.agentId = agentId;
+
+            const timeStr = latestSession ? relativeTime(latestSession.updatedAt || latestSession.createdAt) : 'No sessions';
+            const channelType = latestSession?.channelType || 'WebSocket';
+            const emoji = channelEmoji(channelType);
+            const isActive = latestSession && latestSession.sessionId === currentSessionId;
+
+            channelEl.innerHTML = `
                 <div class="list-item-row">
-                    <span class="item-title">${escapeHtml(agentName)}</span>
-                    <button class="btn-delete-session" title="Delete session" aria-label="Delete session">✕</button>
+                    <span class="item-title">${emoji} ${escapeHtml(channelType)}${isActive ? ' (active)' : ''}</span>
                 </div>
-                <span class="item-meta">${msgCount} msgs · ${timeStr}</span>
+                <span class="item-meta">${timeStr}</span>
             `;
-            el.querySelector('.btn-delete-session').addEventListener('click', (e) => {
-                e.stopPropagation();
-                deleteSession(s.sessionId);
+
+            channelEl.addEventListener('click', () => {
+                if (latestSession) {
+                    openSession(latestSession.sessionId, agentId);
+                } else {
+                    elAgentSelect.value = agentId;
+                    currentAgentId = agentId;
+                    startNewChat();
+                }
             });
-            el.addEventListener('click', (e) => {
-                if (e.target.closest('.btn-delete-session')) return;
-                openSession(s.sessionId, s.agentId || s.agentName);
-            });
-            elSessionsList.appendChild(el);
+
+            channelsDiv.appendChild(channelEl);
+            group.appendChild(channelsDiv);
+            elSessionsList.appendChild(group);
         }
     }
 
@@ -1483,7 +1530,6 @@
 
         elWelcome.classList.add('hidden');
         elChatView.classList.remove('hidden');
-        elChatTitle.textContent = agentId ? `${agentId} — ${session?.channelType || 'WebSocket'}` : 'Chat';
         elChatMessages.innerHTML = '<div class="loading">Loading messages...</div>';
         setSendingState(false);
         updateSessionIdDisplay();
@@ -1492,6 +1538,11 @@
         elAgentSelect.disabled = true;
 
         const session = await fetchJson(`/sessions/${encodeURIComponent(sessionId)}`);
+
+        // Set title after session data is available
+        const channelType = session?.channelType || 'WebSocket';
+        elChatTitle.textContent = agentId ? `${agentId} — ${channelType}` : 'Chat';
+
         elChatMessages.innerHTML = '';
 
         if (session) {

@@ -154,6 +154,20 @@ body {
 .list-item:hover .btn-delete-session { opacity: 1; }
 .btn-delete-session:hover { color: var(--error); background: rgba(244,67,54,0.1); }
 
+/* === Agent-grouped channels === */
+.agent-group { margin-bottom: 4px; }
+.agent-group-header {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 12px; cursor: pointer; font-weight: 600;
+    font-size: 0.85rem; color: var(--text-secondary);
+    user-select: none;
+}
+.agent-group-header:hover { color: var(--text-primary); }
+.agent-group-header .collapse-icon { transition: transform 0.2s; font-size: 0.7rem; }
+.agent-group-header.collapsed .collapse-icon { transform: rotate(-90deg); }
+.agent-group-channels { padding-left: 8px; }
+.agent-group-header.collapsed + .agent-group-channels { display: none; }
+
 .loading { padding: 12px; color: var(--text-muted); font-size: 0.8rem; text-align: center; }
 .empty-state { padding: 12px; color: var(--text-muted); font-size: 0.8rem; text-align: center; font-style: italic; }
 .text-muted { color: var(--text-muted); }
