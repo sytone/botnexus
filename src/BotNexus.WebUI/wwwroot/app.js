@@ -1244,7 +1244,7 @@
         isStreaming = false;
         setSendingState(false);
         elChatMessages.innerHTML = '';
-        elChatTitle.textContent = `${elAgentSelect.value || 'New Chat'} — SignalR`;        elChatMeta.textContent = `Agent: ${elAgentSelect.value || 'default'} · Session will be created on first message`;
+        elChatTitle.textContent = `${elAgentSelect.value || 'New Chat'} — Web Chat`;        elChatMeta.textContent = `Agent: ${elAgentSelect.value || 'default'} · Session will be created on first message`;
         elSessionIdDisplay.classList.add('hidden');
         elAgentSelect.classList.remove('hidden');
     }
@@ -1395,7 +1395,7 @@
         resetQueue();
 
         showView('chat-view');
-        elChatTitle.textContent = `${agentId} — SignalR`;
+        elChatTitle.textContent = `${agentId} — Web Chat`;
         elChatMeta.textContent = `Agent: ${agentId} · Session will be created on first message`;
         elAgentSelect.classList.remove('hidden');
 
@@ -1501,7 +1501,7 @@
             );
             const latestByChannel = new Map();
             for (const s of agentSessions) {
-                const key = (s.channelType || 'SignalR').toLowerCase();
+                const key = (s.channelType || 'Web Chat').toLowerCase();
                 if (!latestByChannel.has(key)) latestByChannel.set(key, s);
             }
 
@@ -1511,7 +1511,7 @@
                 emptyChannelEl.dataset.agentId = agentId;
                 emptyChannelEl.innerHTML = `
                     <div class="list-item-row">
-                        <span class="item-title">💬 SignalR</span>
+                        <span class="item-title">💬 Web Chat</span>
                     </div>
                     <span class="item-meta">No sessions</span>
                 `;
@@ -1529,7 +1529,7 @@
                     channelEl.dataset.agentId = agentId;
 
                     const timeStr = relativeTime(latestSession.updatedAt || latestSession.createdAt);
-                    const channelType = latestSession.channelType || 'SignalR';
+                    const channelType = latestSession.channelType || 'Web Chat';
                     const emoji = channelEmoji(channelType);
                     const isActive = latestSession.sessionId === currentSessionId;
 
@@ -1597,7 +1597,7 @@
         const session = await fetchJson(`/sessions/${encodeURIComponent(sessionId)}`);
 
         // Set title after session data is available
-        const channelType = session?.channelType || 'SignalR';
+        const channelType = session?.channelType || 'Web Chat';
         elChatTitle.textContent = agentId ? `${agentId} — ${channelType}` : 'Chat';
 
         elChatMessages.innerHTML = '';
@@ -1706,7 +1706,7 @@
     const CHANNELS_REFRESH_MS = 30000;
 
     function channelEmoji(name) {
-        const map = { websocket: '🌐', signalr: '🌐', telegram: '✈️', discord: '🎮', slack: '💼', tui: '🖥️' };
+        const map = { websocket: '🌐', signalr: '🌐', 'web chat': '💬', telegram: '✈️', discord: '🎮', slack: '💼', tui: '🖥️' };
         return map[(name || '').toLowerCase()] || '📡';
     }
 
@@ -2798,7 +2798,6 @@
     // =========================================================================
 
     function initEventListeners() {
-        $('#btn-new-chat').addEventListener('click', startNewChat);
         elBtnSend.addEventListener('click', sendMessage);
         elBtnAbort.addEventListener('click', abortRequest);
 
