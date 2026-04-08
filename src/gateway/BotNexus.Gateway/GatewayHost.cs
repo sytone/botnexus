@@ -386,35 +386,48 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
         CancellationToken cancellationToken)
     {
         var instance = _supervisor.GetInstance(agentId, sessionId);
-        if (instance is null)
-        {
-            if (ResolveChannelAdapter(message.ChannelType) is { } channel)
-            {
-                await channel.SendAsync(new OutboundMessage
-                {
-                    ChannelType = message.ChannelType,
-                    ConversationId = message.ConversationId,
-                    Content = "No active run to steer for this session.",
-                    SessionId = sessionId
-                }, cancellationToken);
-            }
+        IAgentHandle? handle = null;
 
+        if (instance is not null)
+        {
+            try
+            {
+                handle = await _supervisor.GetOrCreateAsync(agentId, sessionId, cancellationToken);
+            }
+            catch { /* instance exists but handle creation failed */ }
+        }
+
+        // If no handle or agent is not actively running, steering can't be
+        // injected mid-turn. Re-dispatch as a normal message to start a new run.
+        if (handle is null || !handle.IsRunning)
+        {
+            _logger.LogInformation(
+                "Steering received but agent is not running (instance={HasInstance}, running={IsRunning}). Re-dispatching as normal message for session {SessionId}",
+                instance is not null, handle?.IsRunning ?? false, sessionId);
+
+            var normalMessage = new InboundMessage
+            {
+                ChannelType = message.ChannelType,
+                SenderId = message.SenderId,
+                ConversationId = message.ConversationId,
+                SessionId = message.SessionId,
+                TargetAgentId = message.TargetAgentId,
+                Content = message.Content,
+                Metadata = new Dictionary<string, object?>()
+            };
+
+            await DispatchAsync(normalMessage, cancellationToken);
             return;
         }
 
-        var handle = await _supervisor.GetOrCreateAsync(agentId, sessionId, cancellationToken);
+        // Record steering message in session history
+        var session = await _sessions.GetOrCreateAsync(sessionId, agentId, cancellationToken);
+        session.AddEntry(new SessionEntry { Role = "user", Content = message.Content });
+        await _sessions.SaveAsync(session, cancellationToken);
+
         await handle.SteerAsync(message.Content, cancellationToken);
 
-        if (ResolveChannelAdapter(message.ChannelType) is { } steerChannel)
-        {
-            await steerChannel.SendAsync(new OutboundMessage
-            {
-                ChannelType = message.ChannelType,
-                ConversationId = message.ConversationId,
-                Content = "Steering message queued.",
-                SessionId = sessionId
-            }, cancellationToken);
-        }
+        _logger.LogInformation("Steering message injected for agent {AgentId} session {SessionId}", agentId, sessionId);
     }
 
     private static bool TryGetControlCommand(InboundMessage message, out string? command)
