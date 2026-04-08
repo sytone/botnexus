@@ -56,7 +56,7 @@ public sealed class SignalRHubTests
         activity.Verify(value => value.PublishAsync(
                 It.Is<GatewayActivity>(a =>
                     a.ChannelType == "signalr" &&
-                    a.Message == "SignalR client connected."),
+                    a.Message == "Web Chat client connected."),
                 It.IsAny<CancellationToken>()),
             Times.Once);
     }
