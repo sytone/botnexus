@@ -225,6 +225,10 @@ body {
     display: flex; flex-direction: column; gap: 8px;
     min-height: 0;
 }
+.chat-messages::before {
+    content: '';
+    flex: 1;
+}
 
 /* === Message bubbles === */
 
