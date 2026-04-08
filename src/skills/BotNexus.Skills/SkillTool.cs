@@ -105,6 +105,9 @@ public sealed class SkillTool(
         if (skill is null)
             return TextResult($"Skill '{skillName}' not found. Use action 'list' to see available skills.");
 
+        if (_sessionLoaded.Contains(skill.Name))
+            return TextResult($"Skill '{skill.Name}' is already loaded.");
+
         // Delegate access checks to the resolver — it handles deny, allow, and limits
         var resolution = SkillResolver.Resolve(allSkills, config, explicitlyLoaded: [skill.Name]);
         if (resolution.Denied.Any(s => string.Equals(s.Name, skillName, StringComparison.OrdinalIgnoreCase)))

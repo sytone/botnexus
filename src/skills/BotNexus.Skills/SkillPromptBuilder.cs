@@ -32,7 +32,7 @@ public static class SkillPromptBuilder
             {
                 sb.AppendLine($"## Skill: {skill.Name}");
                 sb.AppendLine();
-                sb.AppendLine(skill.Content);
+                sb.AppendLine(SanitizeSkillContent(skill.Content));
                 sb.AppendLine();
             }
         }
@@ -51,5 +51,15 @@ public static class SkillPromptBuilder
 
         sb.AppendLine("<!-- END_SKILLS_CONTEXT -->");
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Strips sentinel markers from skill content to prevent prompt injection.
+    /// </summary>
+    private static string SanitizeSkillContent(string content)
+    {
+        return content
+            .Replace("<!-- SKILLS_CONTEXT -->", "", StringComparison.OrdinalIgnoreCase)
+            .Replace("<!-- END_SKILLS_CONTEXT -->", "", StringComparison.OrdinalIgnoreCase);
     }
 }

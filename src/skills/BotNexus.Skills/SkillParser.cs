@@ -15,6 +15,9 @@ public static class SkillParser
         ArgumentException.ThrowIfNullOrWhiteSpace(directoryName);
         ArgumentNullException.ThrowIfNull(markdown);
 
+        // Strip UTF-8 BOM if present — it breaks frontmatter detection
+        markdown = markdown.TrimStart('\uFEFF');
+
         var (frontmatter, content) = SplitFrontmatter(markdown);
 
         string? name = null;

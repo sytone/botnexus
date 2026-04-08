@@ -27,6 +27,11 @@ public static class SkillResolver
         if (!config.Enabled)
             return new SkillResolution { Loaded = [], Available = [], Denied = [] };
 
+        // Clamp negative limits to their defaults to prevent undefined behavior
+        var maxLoadedSkills = config.MaxLoadedSkills < 0 ? 20 : config.MaxLoadedSkills;
+        var maxSkillContentChars = config.MaxSkillContentChars < 0 ? 100_000 : config.MaxSkillContentChars;
+
+
         var denySet = config.Disabled is { Count: > 0 }
             ? new HashSet<string>(config.Disabled, StringComparer.OrdinalIgnoreCase)
             : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -77,13 +82,13 @@ public static class SkillResolver
                 continue;
             }
 
-            if (loaded.Count >= config.MaxLoadedSkills)
+            if (loaded.Count >= maxLoadedSkills)
             {
                 available.Add(skill);
                 continue;
             }
 
-            if (totalChars + skill.Content.Length > config.MaxSkillContentChars)
+            if (totalChars + skill.Content.Length > maxSkillContentChars)
             {
                 available.Add(skill);
                 continue;
