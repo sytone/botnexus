@@ -193,13 +193,33 @@ public sealed class SqliteSessionStore : ISessionStore
                 session_id TEXT,
                 role TEXT,
                 content TEXT,
-                timestamp TEXT
+                timestamp TEXT,
+                tool_name TEXT,
+                tool_call_id TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_session_history_session_id ON session_history(session_id);
             """;
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+        // Migrate: add tool columns to existing databases
+        await MigrateAsync(connection, cancellationToken).ConfigureAwait(false);
+
         _initialized = true;
+    }
+
+    private static async Task MigrateAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        foreach (var column in new[] { "tool_name", "tool_call_id" })
+        {
+            try
+            {
+                await using var cmd = connection.CreateCommand();
+                cmd.CommandText = $"ALTER TABLE session_history ADD COLUMN {column} TEXT";
+                await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (SqliteException) { /* column already exists */ }
+        }
     }
 
     private async Task<GatewaySession?> LoadSessionAsync(string sessionId, CancellationToken cancellationToken)
@@ -243,7 +263,7 @@ public sealed class SqliteSessionStore : ISessionStore
 
         await using var historyCommand = connection.CreateCommand();
         historyCommand.CommandText = """
-            SELECT role, content, timestamp
+            SELECT role, content, timestamp, tool_name, tool_call_id
             FROM session_history
             WHERE session_id = $sessionId
             ORDER BY id ASC
@@ -258,7 +278,9 @@ public sealed class SqliteSessionStore : ISessionStore
             {
                 Role = historyReader.IsDBNull(0) ? "user" : historyReader.GetString(0),
                 Content = historyReader.IsDBNull(1) ? string.Empty : historyReader.GetString(1),
-                Timestamp = ParseTimestamp(historyReader.IsDBNull(2) ? null : historyReader.GetString(2))
+                Timestamp = ParseTimestamp(historyReader.IsDBNull(2) ? null : historyReader.GetString(2)),
+                ToolName = historyReader.IsDBNull(3) ? null : historyReader.GetString(3),
+                ToolCallId = historyReader.IsDBNull(4) ? null : historyReader.GetString(4)
             });
         }
 
@@ -311,13 +333,15 @@ public sealed class SqliteSessionStore : ISessionStore
             await using var insertCommand = connection.CreateCommand();
             insertCommand.Transaction = transaction;
             insertCommand.CommandText = """
-                INSERT INTO session_history (session_id, role, content, timestamp)
-                VALUES ($sessionId, $role, $content, $timestamp)
+                INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id)
+                VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId)
                 """;
             insertCommand.Parameters.AddWithValue("$sessionId", session.SessionId);
             insertCommand.Parameters.AddWithValue("$role", entry.Role);
             insertCommand.Parameters.AddWithValue("$content", entry.Content);
             insertCommand.Parameters.AddWithValue("$timestamp", entry.Timestamp.ToString("O"));
+            insertCommand.Parameters.AddWithValue("$toolName", (object?)entry.ToolName ?? DBNull.Value);
+            insertCommand.Parameters.AddWithValue("$toolCallId", (object?)entry.ToolCallId ?? DBNull.Value);
             await insertCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
