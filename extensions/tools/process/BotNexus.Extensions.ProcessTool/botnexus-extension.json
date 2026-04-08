@@ -1,0 +1,7 @@
+{
+  "id": "botnexus-process",
+  "name": "Process Tool",
+  "version": "1.0.0",
+  "entryAssembly": "BotNexus.Extensions.ProcessTool.dll",
+  "extensionTypes": ["tool"]
+}
