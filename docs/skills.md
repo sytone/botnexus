@@ -1,640 +1,504 @@
-# Skills Guide
+# Skills guide
 
-Skills are modular knowledge packages that enhance agent reasoning without requiring code changes. They contain domain-specific instructions, conventions, best practices, and contextual information that agents can reference while operating.
+Skills are modular knowledge packages that enhance agent capabilities without code changes. They follow the open [Agent Skills specification](https://agentskills.io/specification) and contain domain-specific instructions, conventions, and reference material that agents load on demand.
 
-## Table of Contents
+## Table of contents
 
-1. [What Are Skills?](#what-are-skills)
-2. [How Skills Work](#how-skills-work)
-3. [Creating a Skill](#creating-a-skill)
-4. [SKILL.md Format](#skillmd-format)
-5. [Skill Placement](#skill-placement)
-6. [Skill Resolution Order](#skill-resolution-order)
-7. [Disabling Skills](#disabling-skills)
-8. [Using the Skills API](#using-the-skills-api)
-9. [Best Practices](#best-practices)
-10. [Example: Code Review Skill](#example-code-review-skill)
+1. [What are skills?](#what-are-skills)
+2. [Quick start](#quick-start)
+3. [SKILL.md format](#skillmd-format)
+4. [Skill directory structure](#skill-directory-structure)
+5. [Skill placement](#skill-placement)
+6. [Agent configuration](#agent-configuration)
+7. [How skills load](#how-skills-load)
+8. [Agent skill tool](#agent-skill-tool)
+9. [Best practices](#best-practices)
+10. [Complete example](#complete-example)
 
 ---
 
-## What Are Skills?
+## What are skills?
 
-Skills are **modular knowledge packages** designed to improve agent decision-making. Unlike tools (which execute actions), skills provide instructional content, patterns, conventions, and best practices that agents read and understand.
-
-**Skills vs Tools:**
+Skills are **instructional markdown files** that teach agents domain knowledge. Unlike tools (which execute actions), skills provide context that shapes how an agent thinks and responds.
 
 | Aspect | Skills | Tools |
 |--------|--------|-------|
 | **Purpose** | Provide knowledge and context | Execute actions |
-| **Format** | Markdown with YAML frontmatter | Executable code |
-| **Usage** | Injected into agent system prompt | Called dynamically by agent |
-| **Scope** | Reasoning and planning | Runtime execution |
+| **Format** | Markdown with YAML frontmatter | Executable code or API |
+| **Loading** | On demand or auto-loaded into prompt | Called dynamically by agent |
+| **Scope** | Reasoning, planning, conventions | Runtime execution |
 
-**Examples of good skills:**
+Good candidates for skills:
+
 - Git workflow conventions and commit practices
 - Code review criteria and standards
-- Documentation writing templates
+- Project-specific naming conventions
 - Testing strategies and patterns
 - Security best practices for your domain
-- Project-specific naming conventions
-- Performance optimization guidelines
+- Documentation writing guidelines
 
 ---
 
-## How Skills Work
+## Quick start
 
-1. **Discovery**: BotNexus scans global and per-agent skill directories for `SKILL.md` files
-2. **Parsing**: Each `SKILL.md` is parsed for YAML frontmatter (metadata) and markdown body (content)
-3. **Merging**: Global and per-agent skills are merged (agent skills override global ones with the same name)
-4. **Filtering**: Skills matching `DisabledSkills` patterns are excluded
-5. **Injection**: Remaining skills are injected into the agent's system prompt in a dedicated `## SKILLS.md` section
-
-When an agent operates, all loaded skills become visible in its context window, allowing it to reference and apply the knowledge directly.
-
----
-
-## Creating a Skill
-
-### Directory Structure
-
-Skills live in two locations:
-
-**Global skills** (available to all agents):
-```
-~/.botnexus/skills/{skill-name}/SKILL.md
-```
-
-**Per-agent skills** (available only to specific agent):
-```
-~/.botnexus/agents/{agent-name}/skills/{skill-name}/SKILL.md
-```
-
-### Basic Skill Creation
+Create your first skill in 30 seconds:
 
 ```bash
-# Create a global skill
-mkdir -p ~/.botnexus/skills/my-skill
+# 1. Create the skill directory
+mkdir -p ~/.botnexus/skills/git-workflow
 
-# Create the skill file
-cat > ~/.botnexus/skills/my-skill/SKILL.md << 'EOF'
+# 2. Write the SKILL.md file
+cat > ~/.botnexus/skills/git-workflow/SKILL.md << 'EOF'
 ---
-description: "Brief description of what this skill teaches"
-version: "1.0.0"
+name: git-workflow
+description: "Git conventions: commit format, branch naming, and PR process"
 ---
 
-# Skill Name
+# Git workflow
 
-Your markdown content here. This is what the agent reads.
+Use conventional commits with imperative mood:
 
-## Section 1
+- `feat: add user search endpoint`
+- `fix: prevent null reference in parser`
+- `docs: update skills guide`
 
-Instructions, patterns, conventions...
-
-## Section 2
-
-More context...
+Always run `dotnet test` before committing.
 EOF
 ```
 
-```bash
-# Create an agent-specific skill
-mkdir -p ~/.botnexus/agents/my-agent/skills/my-skill
+The skill is now discoverable. Agents can list it with the `skills` tool and load it when they need git guidance.
 
-cat > ~/.botnexus/agents/my-agent/skills/my-skill/SKILL.md << 'EOF'
----
-description: "Agent-specific knowledge"
 ---
 
-# Agent-Specific Skill
+## SKILL.md format
 
-Content specific to this agent...
-EOF
+Every skill requires a `SKILL.md` file containing YAML frontmatter and a markdown body.
+
+### Frontmatter fields
+
+| Field | Required | Constraints | Description |
+|-------|----------|-------------|-------------|
+| `name` | Yes | Max 64 chars. Lowercase `a-z`, digits, hyphens. No leading/trailing/consecutive hyphens. Must match directory name. | Unique skill identifier. |
+| `description` | Yes | 1–1024 chars, non-empty. | What the skill does and when to use it. Include keywords that help agents find it. |
+| `license` | No | — | License name or reference to a bundled license file. |
+| `compatibility` | No | 1–500 chars if provided. | Environment requirements (intended product, system packages, network access). |
+| `metadata` | No | String key → string value map. | Arbitrary key-value data for client-specific extensions. |
+| `allowed-tools` | No | Space-delimited tool names. | Pre-approved tools the skill may use. Experimental — support varies by agent. |
+| `disable-model-invocation` | No | Boolean. Default `false`. | BotNexus extension. When `true`, the skill is excluded from model context (used for agent-internal skills). |
+
+### Example frontmatter
+
+```yaml
+---
+name: code-review
+description: "Code review checklist and approval criteria for pull requests"
+license: MIT
+compatibility: "Requires access to GitHub API"
+metadata:
+  team: platform
+  priority: high
+allowed-tools: gh git
+---
 ```
 
+### Body content
+
+The markdown body after frontmatter contains the skill instructions. Write whatever helps agents perform the task. Recommended content:
+
+- Step-by-step instructions
+- Concrete examples of inputs and outputs
+- Common edge cases and how to handle them
+
+The agent loads the entire body when it activates a skill. For large skills, move detailed content into [reference files](#skill-directory-structure).
+
 ---
 
-## SKILL.md Format
+## Skill directory structure
 
-Each skill is a single markdown file with optional YAML frontmatter.
+A skill is a directory containing a `SKILL.md` and optional supporting files, per the [Agent Skills spec](https://agentskills.io/specification):
 
-### Complete Example
+```
+my-skill/
+├── SKILL.md          # Required — metadata + instructions
+├── scripts/          # Optional — executable code agents can run
+├── references/       # Optional — detailed docs loaded on demand
+└── assets/           # Optional — templates, schemas, data files
+```
 
-```markdown
+### scripts/
+
+Executable code that agents can run. Scripts should be self-contained, include helpful error messages, and handle edge cases. Supported languages depend on the agent implementation.
+
+### references/
+
+Additional documentation loaded when needed. Keep individual files focused — agents load these on demand, so smaller files mean less context usage.
+
+```
+references/
+├── REFERENCE.md      # Detailed technical reference
+├── api-patterns.md   # API-specific guidance
+└── error-codes.md    # Error handling lookup
+```
+
+### assets/
+
+Static resources like templates, schemas, lookup tables, and example files.
+
 ---
-name: "git-workflow"
-description: "Git workflow and commit conventions for BotNexus"
-version: "1.0.0"
-always: false
+
+## Skill placement
+
+BotNexus discovers skills from three locations, scanned in priority order:
+
+### 1. Global skills
+
+Available to all agents. Stored in `~/.botnexus/skills/`.
+
+```
+~/.botnexus/skills/
+├── git-workflow/SKILL.md
+├── testing-standards/SKILL.md
+└── security-checklist/SKILL.md
+```
+
+Use global skills for team-wide standards, shared conventions, and reusable best practices.
+
+### 2. Per-agent skills
+
+Available only to a specific agent. Stored in `~/.botnexus/agents/{agent-id}/skills/`.
+
+```
+~/.botnexus/agents/code-reviewer/skills/
+├── review-criteria/SKILL.md
+└── approval-process/SKILL.md
+```
+
+Use per-agent skills for role-specific knowledge, custom methodologies, and domain expertise unique to that agent.
+
+### 3. Workspace skills
+
+Scoped to a project workspace. Stored in `{workspace}/skills/`.
+
+```
+my-project/skills/
+├── project-conventions/SKILL.md
+└── deploy-process/SKILL.md
+```
+
+Use workspace skills for project-specific conventions that travel with the codebase.
+
+### Priority and merging
+
+When multiple locations define a skill with the same name, higher-priority sources override lower ones:
+
+**Workspace** (highest) → **Per-agent** → **Global** (lowest)
+
+For example, if both `~/.botnexus/skills/security/SKILL.md` and `my-project/skills/security/SKILL.md` exist, the workspace version is used.
+
 ---
 
-# Git Workflow
+## Agent configuration
 
-This skill documents the git conventions used in the BotNexus project.
+Configure skills per-agent in `~/.botnexus/config.json` under `agents.{agent-id}.skills`:
 
-## Commit Types
-
-Use conventional commits:
-
-- **feat**: New feature
-  - Example: `feat: add skill filtering by wildcard`
-  
-- **fix**: Bug fix
-  - Example: `fix: resolve memory leak in SkillsLoader`
-
-- **docs**: Documentation changes
-  - Example: `docs: update skills guide`
-
-- **test**: Test additions or modifications
-  - Example: `test: add SkillsLoader unit tests`
-
-- **refactor**: Code refactoring
-  - Example: `refactor: simplify skill merging logic`
-
-## Before Committing
-
-1. Run `dotnet build` — ensure clean compilation
-2. Run `dotnet test` — all tests must pass
-3. Run `dotnet format` — apply code style
-4. Verify changes with `git diff`
-
-## Commit Message Format
-
-```
-<type>: <subject>
-
-<body (optional)>
-
-<footer (optional)>
+```json
+{
+  "agents": {
+    "code-reviewer": {
+      "provider": "copilot",
+      "model": "gpt-4.1",
+      "skills": {
+        "enabled": true,
+        "autoLoad": ["git-workflow", "review-criteria"],
+        "disabled": ["experimental-skill"],
+        "allowed": ["git-workflow", "review-criteria", "testing-standards"],
+        "maxLoadedSkills": 20,
+        "maxSkillContentChars": 100000
+      }
+    }
+  }
+}
 ```
 
-**Subject line rules:**
-- Use imperative mood ("add" not "added")
-- Don't capitalize
-- No period at the end
-- Max 50 characters
+### Configuration fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | boolean | `true` | Master switch. When `false`, the skills system is completely disabled for this agent. |
+| `autoLoad` | string[] | `null` | Skill names to load automatically at session start. These are injected into the prompt without the agent requesting them. |
+| `disabled` | string[] | `null` | Skill names explicitly denied. These are never loaded, regardless of other settings. Uses exact name matching — no wildcards. |
+| `allowed` | string[] | `null` | Allowlist of skill names. When set, only these skills can load. When `null`, all discovered skills are allowed. |
+| `maxLoadedSkills` | int | `20` | Maximum number of skills that can be loaded simultaneously into the prompt. |
+| `maxSkillContentChars` | int | `100000` | Maximum total characters of skill content in the prompt. Prevents context window exhaustion. |
+
+### How allow and deny interact
+
+The resolver applies filters in this order:
+
+1. If `disabled` contains the skill name → **denied** (always wins)
+2. If `allowed` is set and does not contain the skill name → **denied**
+3. Otherwise → **eligible** for loading
+
+A skill is only loaded if it is in `autoLoad` or explicitly loaded by the agent at runtime. Eligible skills that aren't auto-loaded appear in the "available" list.
+
+> **Note:** The `disabled` and `allowed` lists use **exact name matching** only. Wildcard patterns are not supported.
+
+---
+
+## How skills load
+
+The full pipeline from disk to agent prompt:
+
+```
+┌─────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────────┐
+│  Discovery   │ →  │  Validation   │ →  │  Resolver     │ →  │ Prompt injection  │
+│ 3-path scan  │    │ name, desc,   │    │ allow/deny,   │    │ active + available │
+│ + merge      │    │ format checks │    │ autoLoad,     │    │ sections           │
+│              │    │              │    │ budget limits  │    │                    │
+└─────────────┘    └──────────────┘    └──────────────┘    └──────────────────┘
 ```
 
-### Frontmatter Fields
+### 1. Discovery
 
-| Field | Type | Required | Default | Purpose |
-|-------|------|----------|---------|---------|
-| `description` | string | No | Auto-generated | Human-readable skill description shown in UIs and API responses |
-| `version` | string | No | (empty) | Semantic version for tracking skill updates |
-| `always` | boolean | No | false | (Reserved) Future flag for unconditional skill injection |
+`SkillDiscovery` scans three directories for subdirectories containing `SKILL.md`:
 
-**Notes:**
-- YAML frontmatter is optional — skills work without it
-- If no frontmatter, skill description defaults to `"Skill: {skill-name}"`
-- Markdown body can be any valid markdown — tables, code blocks, lists, links all supported
+- `~/.botnexus/skills/` (global)
+- `~/.botnexus/agents/{agent-id}/skills/` (per-agent)
+- `{workspace}/skills/` (workspace)
 
-### Markdown Content Guidelines
+Same-named skills from higher-priority sources override lower ones.
 
-Write skill content for **LLM clarity**:
+### 2. Validation
 
-✅ **DO:**
-- Use clear, step-by-step instructions
-- Include concrete examples
+Each skill is validated before inclusion:
+
+- **Name** must match the directory name exactly, be 1–64 lowercase alphanumeric characters with hyphens, and contain no consecutive hyphens (`--`).
+- **Description** must be non-empty and at most 1024 characters.
+- **Compatibility**, if provided, must be at most 500 characters.
+- Skills with `disable-model-invocation: true` are excluded from model context.
+
+Skills that fail validation are silently skipped.
+
+### 3. Resolver
+
+`SkillResolver` applies the agent's `SkillsConfig` to determine which skills to load:
+
+- Skills in `disabled` are denied.
+- If `allowed` is set, skills not in the list are denied.
+- Among eligible skills, those in `autoLoad` or explicitly loaded by the agent are activated.
+- Loading stops when `maxLoadedSkills` or `maxSkillContentChars` is reached.
+
+The resolver produces three lists: **loaded**, **available** (eligible but not loaded), and **denied**.
+
+### 4. Prompt injection
+
+`SkillPromptBuilder` generates a prompt section wrapped in sentinel markers:
+
+```
+<!-- SKILLS_CONTEXT -->
+## Active Skills
+The following skills are loaded and active:
+- **git-workflow**: Git conventions: commit format, branch naming, and PR process
+
+## Skill: git-workflow
+
+[full skill content here]
+
+## Skills Available (not loaded)
+Use the `skills` tool with action `load` to activate a skill when needed.
+- **testing-standards**: Unit and integration testing patterns
+<!-- END_SKILLS_CONTEXT -->
+```
+
+Skill content is sanitized to strip sentinel markers, preventing prompt injection.
+
+---
+
+## Agent skill tool
+
+Agents interact with skills through the `skills` tool, which supports two actions.
+
+### List available skills
+
+The agent calls the `skills` tool with `action: "list"` to see what's available:
+
+```
+Agent: I need to check what skills are available.
+
+→ Tool call: skills { "action": "list" }
+
+← Tool response:
+## Loaded Skills
+- **git-workflow**: Git conventions: commit format, branch naming, and PR process
+
+## Available Skills (not loaded)
+Use `skills` tool with action `load` and the skill name to activate.
+- **testing-standards**: Unit and integration testing patterns
+- **security-checklist**: Security review checklist for PRs
+```
+
+### Load a skill
+
+The agent calls the `skills` tool with `action: "load"` and `skillName` to activate a skill:
+
+```
+Agent: I need testing guidance for this PR.
+
+→ Tool call: skills { "action": "load", "skillName": "testing-standards" }
+
+← Tool response:
+## Skill: testing-standards
+
+# Testing standards
+
+Write unit tests for all public methods...
+[full skill content]
+```
+
+Once loaded, the skill content is available in the agent's context for the rest of the session.
+
+### Error cases
+
+- **Skill not found:** `Skill 'unknown-skill' not found. Use action 'list' to see available skills.`
+- **Already loaded:** `Skill 'git-workflow' is already loaded.`
+- **Denied by config:** `Skill 'experimental' is not available for this agent.`
+- **Budget exceeded:** `Skill 'large-reference' cannot be loaded (budget exceeded).`
+
+---
+
+## Best practices
+
+### Keep skills focused
+
+One skill = one domain. Avoid bloated multi-purpose skills.
+
+✅ Good: `git-workflow`, `testing-strategy`, `security-checklist`
+❌ Bad: `general-knowledge`, `everything-you-need`
+
+### Write for agent clarity
+
+Agents are LLMs that benefit from explicit, structured content:
+
+- Use clear step-by-step instructions
 - Organize with descriptive headings
-- Use lists for alternatives or options
-- Add code snippets and templates
-- Cross-reference related skills or tools
+- Include concrete, copy-pasteable examples
+- Prefer lists over dense paragraphs
 
-❌ **DON'T:**
-- Use overly complex formatting
-- Assume prior knowledge without context
-- Write extremely long paragraphs
-- Embed binary files or images
-- Use unclear jargon without explanation
+### Include trigger keywords in descriptions
 
----
+The `description` field helps agents decide when to load a skill. Include keywords that match likely tasks:
 
-## Skill Placement
-
-### Decision: Global vs Per-Agent Skills
-
-**Use global skills** for:
-- Standards and conventions shared across the team
-- Reusable patterns and best practices
-- General knowledge applicable to multiple agents
-- Foundation knowledge everyone needs
-
-**Use per-agent skills** for:
-- Agent-specific responsibilities or roles
-- Domain expertise unique to that agent
-- Custom methodologies for specialized tasks
-- Temporary overrides of global practices
-
-### Example Placement
-
-```
-~/.botnexus/skills/
-├── git-conventions/SKILL.md        ← Global: all agents follow this
-├── testing-standards/SKILL.md      ← Global: testing patterns
-└── security-checklist/SKILL.md     ← Global: security best practices
-
-~/.botnexus/agents/
-├── code-reviewer/skills/
-│   └── code-review-criteria/SKILL.md     ← Agent-specific: CR methodology
-├── data-analyst/skills/
-│   └── data-pipeline-patterns/SKILL.md   ← Agent-specific: analysis patterns
-└── devops-bot/skills/
-    ├── deployment-procedures/SKILL.md    ← Agent-specific: deployment steps
-    └── incident-response/SKILL.md        ← Agent-specific: incident handling
+```yaml
+description: "Git conventions: commit format, branch naming, PR process, merge strategy"
 ```
 
----
+### Keep SKILL.md under 500 lines
 
-## Skill Resolution Order
-
-When loading skills for an agent, BotNexus follows this order:
-
-1. **Load global skills** from `~/.botnexus/skills/`
-2. **Load per-agent skills** from `~/.botnexus/agents/{agent-name}/skills/`
-3. **Merge**: Per-agent skills with the same name **override** global skills
-4. **Filter**: Apply `DisabledSkills` patterns to remove excluded skills
-5. **Sort**: Alphabetically by skill name for consistent ordering
-6. **Inject**: Into agent system prompt in `## SKILLS.md` section
-
-### Example Resolution
-
-**Config:**
-```json
-{
-  "BotNexus": {
-    "Agents": {
-      "Named": {
-        "my-agent": {
-          "DisabledSkills": ["debug-*", "experimental"]
-        }
-      }
-    }
-  }
-}
-```
-
-**Directories:**
-```
-~/.botnexus/skills/
-├── security/SKILL.md           ← Loaded
-├── testing/SKILL.md            ← Loaded
-├── debug-tools/SKILL.md        ← Disabled (matches "debug-*")
-└── experimental/SKILL.md       ← Disabled (exact match)
-
-~/.botnexus/agents/my-agent/skills/
-├── security/SKILL.md           ← Overrides global security
-└── custom-analysis/SKILL.md    ← Loaded
-```
-
-**Final loaded skills:**
-1. custom-analysis (per-agent)
-2. security (per-agent version, overriding global)
-3. testing (global)
-
----
-
-## Disabling Skills
-
-Use the `DisabledSkills` configuration to prevent specific skills from being loaded.
-
-### Configuration
-
-Add `DisabledSkills` to agent configuration:
-
-```json
-{
-  "BotNexus": {
-    "Agents": {
-      "Named": {
-        "my-agent": {
-          "DisabledSkills": ["debug-*", "experimental-*", "test-skill"]
-        }
-      }
-    }
-  }
-}
-```
-
-Or via environment variable:
-
-```bash
-export BotNexus__Agents__Named__my-agent__DisabledSkills__0=debug-*
-export BotNexus__Agents__Named__my-agent__DisabledSkills__1=experimental-*
-```
-
-### Pattern Matching
-
-Patterns support wildcards:
-
-| Pattern | Matches | Example |
-|---------|---------|---------|
-| `exact-name` | Exact skill name | `code-review` matches skill `code-review` |
-| `prefix-*` | Any skill starting with prefix | `debug-*` matches `debug-tools`, `debug-logging` |
-| `*-suffix` | Any skill ending with suffix | `*-experimental` matches `feature-experimental`, `debug-experimental` |
-| `test-?` | Single character wildcard | `test-?` matches `test-a`, `test-1` but not `test-ab` |
-
-### Common Patterns
-
-```json
-{
-  "DisabledSkills": [
-    "debug-*",           // Disable all debugging skills
-    "experimental-*",    // Disable experimental features
-    "*-internal",        // Disable internal/restricted skills
-    "test-*",           // Disable test-only skills
-    "legacy-*"          // Disable deprecated skills
-  ]
-}
-```
-
-### Permanent Disable
-
-To disable a skill at startup without editing config each time:
-
-```bash
-# Set environment variable before running Gateway
-export BotNexus__Agents__Named__analyzer__DisabledSkills__0=legacy-patterns
-dotnet run --project src/BotNexus.Gateway
-```
-
----
-
-## Using the Skills API
-
-### List Global Skills
-
-**Endpoint:** `GET /api/skills`
-
-**Request:**
-```bash
-curl -H "X-Api-Key: your-api-key" http://localhost:18790/api/skills
-```
-
-**Response (200 OK):**
-```json
-[
-  {
-    "name": "git-workflow",
-    "description": "Git workflow and commit conventions for BotNexus",
-    "version": "1.0.0",
-    "scope": "Global",
-    "alwaysLoad": false,
-    "sourcePath": "/home/user/.botnexus/skills/git-workflow/SKILL.md"
-  },
-  {
-    "name": "testing-standards",
-    "description": "Testing patterns and best practices",
-    "version": "1.0.0",
-    "scope": "Global",
-    "alwaysLoad": false,
-    "sourcePath": "/home/user/.botnexus/skills/testing-standards/SKILL.md"
-  }
-]
-```
-
-### List Agent Skills
-
-**Endpoint:** `GET /api/agents/{name}/skills`
-
-**Request:**
-```bash
-curl -H "X-Api-Key: your-api-key" http://localhost:18790/api/agents/code-reviewer/skills
-```
-
-**Response (200 OK):**
-```json
-[
-  {
-    "name": "code-review-criteria",
-    "description": "Code review standards for this project",
-    "version": "1.0.0",
-    "scope": "Agent",
-    "alwaysLoad": false,
-    "sourcePath": "/home/user/.botnexus/agents/code-reviewer/skills/code-review-criteria/SKILL.md",
-    "contentPreview": "# Code Review Criteria\n\nReviewers should check:\n1. Functionality\n2. Code style\n3. Tests\n..."
-  },
-  {
-    "name": "git-workflow",
-    "description": "Git workflow and commit conventions for BotNexus",
-    "version": "1.0.0",
-    "scope": "Global",
-    "alwaysLoad": false,
-    "sourcePath": "/home/user/.botnexus/skills/git-workflow/SKILL.md"
-  }
-]
-```
-
----
-
-## Best Practices
-
-### 1. Keep Skills Focused
-
-One skill = one domain/responsibility. Avoid bloated multi-purpose skills.
-
-✅ Good:
-- `git-workflow` — Git conventions only
-- `testing-strategy` — Testing patterns only
-- `security-checklist` — Security practices only
-
-❌ Bad:
-- `general-knowledge` — Mix of unrelated topics
-- `everything-you-need` — Overwhelming and unfocused
-
-### 2. Write for Clarity
-
-Agents are LLMs that benefit from explicit, structured content.
-
-✅ Good:
-```markdown
-## Code Style
-
-When writing Python:
-1. Use PEP 8 formatting
-2. Limit lines to 88 characters (via black)
-3. Use f-strings for formatting
-4. Use type hints on public functions
-```
-
-❌ Bad:
-```markdown
-## Code Style
-
-Follow standard conventions.
-```
-
-### 3. Include Examples
-
-Concrete examples help agents understand and apply patterns.
-
-✅ Good:
-```markdown
-## Commit Message Format
-
-Use conventional commits:
-
-feat: add skill filtering
-fix: resolve memory leak
-docs: update README
-
-Always run tests before committing.
-```
-
-❌ Bad:
-```markdown
-## Commit Message Format
-
-Follow conventions.
-```
-
-### 4. Version Your Skills
-
-Use semantic versioning when you update skills significantly.
+Per the Agent Skills spec, keep the main `SKILL.md` concise. Move detailed reference material to `references/` files that agents load on demand:
 
 ```markdown
----
-version: "1.0.0"  // Major.Minor.Patch
----
+See [the API reference](references/api-patterns.md) for detailed endpoint documentation.
 ```
 
-### 5. Use Descriptive Names
+### Use references/ for detailed content
 
-Skill folder names should reflect their purpose.
+Split large skills into a concise SKILL.md (overview + key instructions) and reference files (detailed lookups, tables, examples):
 
-✅ Good: `code-review-criteria`, `git-workflow`, `security-checklist`  
+```
+my-skill/
+├── SKILL.md                    # ~200 lines: overview + core instructions
+└── references/
+    ├── error-codes.md          # Loaded only when agent needs error details
+    └── migration-guide.md      # Loaded only during migration tasks
+```
+
+### Use descriptive directory names
+
+Skill directory names must match the `name` field and should clearly indicate purpose:
+
+✅ Good: `code-review-criteria`, `git-workflow`, `security-checklist`
 ❌ Bad: `skill1`, `my-knowledge`, `temp`
 
-### 6. Document Dependencies
+---
 
-If a skill assumes knowledge from another skill, mention it.
+## Complete example
+
+A production-ready skill with frontmatter, content, and a references directory.
+
+### Directory layout
+
+```
+~/.botnexus/agents/code-reviewer/skills/review-standards/
+├── SKILL.md
+└── references/
+    └── checklist-details.md
+```
+
+### SKILL.md
 
 ```markdown
 ---
-description: "Advanced code review techniques (requires: code-review-criteria)"
----
-```
-
-### 7. Keep Performance in Mind
-
-Large skills consume context window space. Balance comprehensiveness with conciseness.
-
-- Global skills: 1-3 KB typical
-- Per-agent skills: Up to 5 KB if specialized
-- Truncated in prompts if they exceed `MaxContextFileChars` (default: 8000 chars)
-
+name: review-standards
+description: "Code review checklist, approval criteria, and common issues for pull requests"
+license: MIT
+metadata:
+  team: platform
 ---
 
-## Example: Code Review Skill
+# Review standards
 
-Here's a complete, production-ready example of a code review skill:
+Apply this checklist when reviewing pull requests.
 
-### Step 1: Create Directory
+## Quick checklist
 
-```bash
-mkdir -p ~/.botnexus/agents/code-reviewer/skills/code-review-standards
-```
+1. **Correctness** — Does the code do what the PR description says?
+2. **Tests** — Are new paths covered by unit tests?
+3. **Style** — Does it follow project conventions?
+4. **Security** — No hardcoded secrets, proper input validation?
+5. **Performance** — No obvious regressions (N+1 queries, unbounded loops)?
+6. **Docs** — API changes documented? README updated?
 
-### Step 2: Create SKILL.md
+## Approval criteria
 
-```markdown
----
-name: "code-review-standards"
-description: "Code review checklist and standards for BotNexus project"
-version: "1.0.0"
----
+Approve when all checklist items are addressed (or marked N/A), tests pass, and no blocking issues remain.
 
-# Code Review Standards
+## Common issues to flag
 
-This skill provides the review criteria used for all BotNexus pull requests.
-
-## Review Checklist
-
-### 1. Functionality
-- [ ] Code implements the described feature or fix
-- [ ] Logic is correct and handles edge cases
-- [ ] No obvious bugs or runtime errors
-- [ ] Changes don't break existing functionality
-
-### 2. Code Quality
-- [ ] Code follows project conventions (see git-workflow skill)
-- [ ] Variable and function names are clear and descriptive
-- [ ] Complex logic is commented
-- [ ] No unnecessary duplication or dead code
-
-### 3. Testing
-- [ ] New features include unit tests
-- [ ] Tests are comprehensive and focused
-- [ ] Test names describe what they test
-- [ ] All tests pass locally
-
-### 4. Performance
-- [ ] No obvious performance regressions
-- [ ] Loops and algorithms are efficient
-- [ ] No memory leaks or resource leaks
-- [ ] Database queries are optimized
-
-### 5. Security
-- [ ] No hardcoded secrets or credentials
-- [ ] Input validation present where needed
-- [ ] No SQL injection or similar vulnerabilities
-- [ ] Secure defaults used
-
-### 6. Documentation
-- [ ] PR description explains the change
-- [ ] Code comments are clear and helpful
-- [ ] API docs updated if applicable
-- [ ] README updated if user-facing
-
-## Review Approach
-
-1. **Understand**: Read PR description and understand the intent
-2. **Scan**: Quickly scan file structure and changes
-3. **Deep Dive**: Review each file line-by-line using the checklist
-4. **Test**: Suggest running tests locally if unsure
-5. **Feedback**: Provide constructive, actionable feedback
-6. **Approve**: Only approve when confident in quality
-
-## Common Issues to Flag
-
-- Missing error handling
+- Missing error handling for external calls
 - Inconsistent naming or style
-- Insufficient test coverage
-- Performance concerns (N+1 queries, loops over collections)
-- Security vulnerabilities
 - Breaking API changes without migration path
+- Insufficient test coverage for edge cases
 
-## Approval Criteria
-
-Approve when:
-- All checklist items addressed (or N/A)
-- No blocking issues remain
-- Code quality meets standards
-- Tests are passing
-- Documentation is complete
+See [detailed checklist](references/checklist-details.md) for expanded criteria.
 ```
 
-### Step 3: Verify
+### references/checklist-details.md
 
-```bash
-# Check that the file exists and is readable
-ls -lh ~/.botnexus/agents/code-reviewer/skills/code-review-standards/SKILL.md
+```markdown
+# Detailed review checklist
 
-# Query the API to confirm it's loaded
-curl -H "X-Api-Key: your-api-key" http://localhost:18790/api/agents/code-reviewer/skills | jq '.[] | select(.name=="code-review-standards")'
+## Functionality
+- [ ] Code implements the described feature or fix
+- [ ] Logic handles edge cases (nulls, empty collections, boundary values)
+- [ ] Changes don't break existing behavior
+
+## Testing
+- [ ] Unit tests for new public methods
+- [ ] Test names describe what they verify
+- [ ] Edge cases have dedicated tests
+- [ ] All tests pass locally with `dotnet test`
+
+## Security
+- [ ] No hardcoded secrets or credentials
+- [ ] Input validation on all external data
+- [ ] No SQL injection or path traversal vulnerabilities
+- [ ] Secure defaults used throughout
 ```
-
-### Step 4: Use
-
-Once created, the skill is automatically loaded into the `code-reviewer` agent's system prompt. When reviewing code, the agent will reference this skill's checklist and approach.
 
 ---
 
-## Summary
+## Further reading
 
-Skills enable agents to operate with domain-specific knowledge without code changes. They're simple to create (just markdown + YAML), flexible to manage (global or per-agent), and powerful when well-written (explicit, example-rich, and focused).
-
-**Next steps:**
-1. Identify key knowledge areas your team wants to codify
-2. Create skills for those domains
-3. Place them in global or per-agent directories
-4. Test with agents to ensure clarity and usefulness
-5. Iterate and improve based on usage patterns
+- [Agent Skills specification](https://agentskills.io/specification) — the open standard for SKILL.md format
+- [Configuration guide](configuration.md) — full `config.json` reference including agent settings
+- [Architecture overview](architecture.md) — how skills fit into the BotNexus pipeline
