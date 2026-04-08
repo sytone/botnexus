@@ -28,6 +28,9 @@
   <Folder Name="/src/coding-agent/">
     <Project Path="src/coding-agent/BotNexus.CodingAgent/BotNexus.CodingAgent.csproj" />
   </Folder>
+  <Folder Name="/src/skills/">
+    <Project Path="src/skills/BotNexus.Skills/BotNexus.Skills.csproj" />
+  </Folder>
   <Folder Name="/src/tools/">
     <Project Path="src/tools/BotNexus.Memory/BotNexus.Memory.csproj" />
     <Project Path="src/tools/BotNexus.Tools/BotNexus.Tools.csproj" />
@@ -44,5 +47,6 @@
     <Project Path="tests/BotNexus.CodingAgent.Tests/BotNexus.CodingAgent.Tests.csproj" />
     <Project Path="tests/BotNexus.Cron.Tests/BotNexus.Cron.Tests.csproj" />
     <Project Path="tests/BotNexus.Gateway.Tests/BotNexus.Gateway.Tests.csproj" />
+    <Project Path="tests/BotNexus.Skills.Tests/BotNexus.Skills.Tests.csproj" />
   </Folder>
 </Solution>
