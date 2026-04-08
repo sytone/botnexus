@@ -20,7 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\skills\BotNexus.Skills\BotNexus.Skills.csproj" />
+    <ProjectReference Include="..\..\extensions\skills\BotNexus.Extensions.Skills\BotNexus.Extensions.Skills.csproj" />
   </ItemGroup>
 
 </Project>

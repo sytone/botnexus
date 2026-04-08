@@ -1,7 +1,7 @@
-using BotNexus.Skills;
+using BotNexus.Extensions.Skills;
 using FluentAssertions;
 
-namespace BotNexus.Skills.Tests;
+namespace BotNexus.Extensions.Skills.Tests;
 
 /// <summary>
 /// Adversarial tests designed to break the Skills system.

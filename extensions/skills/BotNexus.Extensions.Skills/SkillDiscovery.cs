@@ -1,4 +1,4 @@
-namespace BotNexus.Skills;
+namespace BotNexus.Extensions.Skills;
 
 /// <summary>
 /// Discovers skills from multiple filesystem paths with priority-based merging.

@@ -263,7 +263,7 @@ public sealed class AgentDefinitionConfig
     /// <summary>Session access configuration for this agent's session tool.</summary>
     public SessionAccessConfig? SessionAccess { get; set; }
     /// <summary>Skills configuration for this agent.</summary>
-    public BotNexus.Skills.SkillsConfig? Skills { get; set; }
+    public BotNexus.Extensions.Skills.SkillsConfig? Skills { get; set; }
 }
 
 /// <summary>Controls what sessions an agent can access via the session tool.</summary>

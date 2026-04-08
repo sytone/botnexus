@@ -3,7 +3,7 @@ using BotNexus.AgentCore.Tools;
 using BotNexus.AgentCore.Types;
 using BotNexus.Providers.Core.Models;
 
-namespace BotNexus.Skills;
+namespace BotNexus.Extensions.Skills;
 
 /// <summary>
 /// Agent-facing tool for listing and loading skills at runtime.

@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace BotNexus.Skills;
+namespace BotNexus.Extensions.Skills;
 
 /// <summary>
 /// Parses a SKILL.md file into a <see cref="SkillDefinition"/>.

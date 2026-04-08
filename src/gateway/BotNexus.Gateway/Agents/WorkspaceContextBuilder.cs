@@ -1,6 +1,6 @@
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
-using BotNexus.Skills;
+using BotNexus.Extensions.Skills;
 
 namespace BotNexus.Gateway.Agents;
 

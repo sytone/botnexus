@@ -18,7 +18,7 @@
     <ProjectReference Include="..\..\agent\BotNexus.AgentCore\BotNexus.AgentCore.csproj" />
     <ProjectReference Include="..\..\providers\BotNexus.Providers.Core\BotNexus.Providers.Core.csproj" />
     <ProjectReference Include="..\..\providers\BotNexus.Providers.Copilot\BotNexus.Providers.Copilot.csproj" />
-    <ProjectReference Include="..\..\skills\BotNexus.Skills\BotNexus.Skills.csproj" />
+    <ProjectReference Include="..\..\..\extensions\skills\BotNexus.Extensions.Skills\BotNexus.Extensions.Skills.csproj" />
   </ItemGroup>
 
   <ItemGroup>

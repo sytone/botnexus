@@ -1,4 +1,4 @@
-namespace BotNexus.Skills;
+namespace BotNexus.Extensions.Skills;
 
 /// <summary>
 /// Result of skill resolution.

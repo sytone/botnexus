@@ -1,4 +1,4 @@
-namespace BotNexus.Skills;
+namespace BotNexus.Extensions.Skills;
 
 /// <summary>
 /// Per-agent skills configuration. Controls which skills are loaded and access filtering.

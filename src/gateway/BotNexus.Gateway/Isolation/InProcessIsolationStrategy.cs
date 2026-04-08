@@ -17,7 +17,7 @@ using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Tools;
 using BotNexus.Providers.Core;
 using BotNexus.Providers.Core.Models;
-using BotNexus.Skills;
+using BotNexus.Extensions.Skills;
 using BotNexus.Memory;
 using BotNexus.Memory.Tools;
 using Microsoft.Extensions.DependencyInjection;

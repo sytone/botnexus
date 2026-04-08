@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace BotNexus.Skills;
+namespace BotNexus.Extensions.Skills;
 
 /// <summary>
 /// Builds the system prompt section for loaded and available skills.

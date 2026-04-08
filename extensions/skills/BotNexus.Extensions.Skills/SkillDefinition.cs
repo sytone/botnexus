@@ -1,4 +1,4 @@
-namespace BotNexus.Skills;
+namespace BotNexus.Extensions.Skills;
 
 /// <summary>
 /// A discovered skill definition parsed from a SKILL.md file.
