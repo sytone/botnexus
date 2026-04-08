@@ -1,6 +1,6 @@
 using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Hooks;
 using BotNexus.Gateway.Abstractions.Models;
-using BotNexus.Extensions.Skills;
 
 namespace BotNexus.Gateway.Agents;
 
@@ -13,10 +13,19 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
     private static readonly string[] DefaultPromptFiles =
         ["AGENTS.md", "SOUL.md", "TOOLS.md", "BOOTSTRAP.md", "IDENTITY.md", "USER.md"];
     private readonly IAgentWorkspaceManager _workspaceManager;
+    private readonly IHookDispatcher? _hookDispatcher;
 
     public WorkspaceContextBuilder(IAgentWorkspaceManager workspaceManager)
     {
         _workspaceManager = workspaceManager;
+    }
+
+    public WorkspaceContextBuilder(
+        IAgentWorkspaceManager workspaceManager,
+        IHookDispatcher hookDispatcher)
+    {
+        _workspaceManager = workspaceManager;
+        _hookDispatcher = hookDispatcher;
     }
 
     public async Task<string> BuildSystemPromptAsync(AgentDescriptor descriptor, CancellationToken cancellationToken = default)
@@ -27,15 +36,11 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         var promptFiles = ResolvePromptFiles(descriptor);
         var contextFiles = await LoadContextFilesAsync(workspacePath, promptFiles, cancellationToken);
 
-        // Discover and resolve skills
-        var skillsPrompt = BuildSkillsPrompt(descriptor, workspacePath);
-
-        return SystemPromptBuilder.Build(new SystemPromptParams
+        var prompt = SystemPromptBuilder.Build(new SystemPromptParams
         {
             WorkspaceDir = workspacePath,
             ExtraSystemPrompt = descriptor.SystemPrompt,
             ContextFiles = contextFiles,
-            SkillsPrompt = skillsPrompt,
             Runtime = new RuntimeInfo
             {
                 AgentId = descriptor.AgentId,
@@ -47,26 +52,18 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             },
             PromptMode = PromptMode.Full
         });
-    }
 
-    private static string? BuildSkillsPrompt(AgentDescriptor descriptor, string workspacePath)
-    {
-        var botnexusHome = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".botnexus");
+        // Dispatch BeforePromptBuild hooks (e.g. skills injection)
+        if (_hookDispatcher is not null)
+        {
+            var hookEvent = new BeforePromptBuildEvent(descriptor.AgentId, prompt, []);
+            var results = await _hookDispatcher
+                .DispatchAsync<BeforePromptBuildEvent, BeforePromptBuildResult>(hookEvent, cancellationToken)
+                .ConfigureAwait(false);
+            prompt = MergeHookResults(prompt, results);
+        }
 
-        var globalSkillsDir = Path.Combine(botnexusHome, "skills");
-        var agentSkillsDir = Path.Combine(botnexusHome, "agents", descriptor.AgentId, "skills");
-        var workspaceSkillsDir = Path.Combine(workspacePath, "skills");
-
-        var allSkills = SkillDiscovery.Discover(globalSkillsDir, agentSkillsDir, workspaceSkillsDir);
-        if (allSkills.Count == 0)
-            return null;
-
-        var resolution = SkillResolver.Resolve(allSkills, descriptor.Skills);
-        if (resolution.Loaded.Count == 0 && resolution.Available.Count == 0)
-            return null;
-
-        return SkillPromptBuilder.Build(resolution.Loaded, resolution.Available);
+        return prompt;
     }
 
     private static async Task<ContextFile[]> LoadContextFilesAsync(
@@ -131,5 +128,27 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
 
         return filePath.StartsWith(workspacePrefix, StringComparison.OrdinalIgnoreCase) ||
             filePath.Equals(workspaceFullPath, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string MergeHookResults(string prompt, IReadOnlyList<BeforePromptBuildResult> results)
+    {
+        if (results.Count == 0)
+            return prompt;
+
+        var prepend = string.Join("\n", results
+            .Where(r => !string.IsNullOrWhiteSpace(r.PrependSystemContext))
+            .Select(r => r.PrependSystemContext));
+
+        var append = string.Join("\n", results
+            .Where(r => !string.IsNullOrWhiteSpace(r.AppendSystemContext))
+            .Select(r => r.AppendSystemContext));
+
+        if (!string.IsNullOrWhiteSpace(prepend))
+            prompt = prepend + "\n" + prompt;
+
+        if (!string.IsNullOrWhiteSpace(append))
+            prompt = prompt + "\n" + append;
+
+        return prompt;
     }
 }

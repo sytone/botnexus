@@ -93,5 +93,5 @@ public sealed record AgentDescriptor
     public IReadOnlyList<string> SessionAllowedAgents { get; init; } = [];
 
     /// <summary>Skills configuration for this agent. Null means skills use defaults (enabled, no autoLoad).</summary>
-    public BotNexus.Extensions.Skills.SkillsConfig? Skills { get; init; }
+    public SkillsConfig? Skills { get; init; }
 }

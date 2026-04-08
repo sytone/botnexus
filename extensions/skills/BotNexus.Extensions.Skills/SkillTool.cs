@@ -1,6 +1,7 @@
 using System.Text.Json;
 using BotNexus.AgentCore.Tools;
 using BotNexus.AgentCore.Types;
+using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Providers.Core.Models;
 
 namespace BotNexus.Extensions.Skills;

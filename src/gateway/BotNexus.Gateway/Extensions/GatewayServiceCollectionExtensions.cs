@@ -17,6 +17,7 @@ using BotNexus.Gateway.Routing;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Security;
 using BotNexus.Channels.Core;
+using BotNexus.Extensions.Skills;
 using BotNexus.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -76,8 +77,16 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IGatewayAuthHandler, ApiKeyGatewayAuthHandler>();
         services.AddSingleton<IModelFilter, ConfigModelFilter>();
 
-        // Hook dispatcher
-        services.TryAddSingleton<IHookDispatcher, HookDispatcher>();
+        // Hook dispatcher with built-in handler registration
+        services.TryAddSingleton<IHookDispatcher>(sp =>
+        {
+            var dispatcher = new HookDispatcher();
+            dispatcher.Register<BeforePromptBuildEvent, BeforePromptBuildResult>(
+                new SkillPromptHookHandler(
+                    sp.GetRequiredService<IAgentWorkspaceManager>(),
+                    sp.GetRequiredService<IAgentRegistry>()));
+            return dispatcher;
+        });
 
         // Tool policy
         services.TryAddSingleton<DefaultToolPolicyProvider>();

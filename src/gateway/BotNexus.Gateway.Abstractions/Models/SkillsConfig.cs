@@ -1,4 +1,4 @@
-namespace BotNexus.Extensions.Skills;
+namespace BotNexus.Gateway.Abstractions.Models;
 
 /// <summary>
 /// Per-agent skills configuration. Controls which skills are loaded and access filtering.

@@ -1,3 +1,5 @@
+using BotNexus.Gateway.Abstractions.Models;
+
 namespace BotNexus.Extensions.Skills;
 
 /// <summary>

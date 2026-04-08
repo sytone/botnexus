@@ -263,7 +263,7 @@ public sealed class AgentDefinitionConfig
     /// <summary>Session access configuration for this agent's session tool.</summary>
     public SessionAccessConfig? SessionAccess { get; set; }
     /// <summary>Skills configuration for this agent.</summary>
-    public BotNexus.Extensions.Skills.SkillsConfig? Skills { get; set; }
+    public SkillsConfig? Skills { get; set; }
 
     /// <summary>Tool policy overrides for this agent.</summary>
     public ToolPolicyConfig? ToolPolicy { get; set; }

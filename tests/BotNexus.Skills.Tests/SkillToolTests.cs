@@ -1,4 +1,5 @@
 using BotNexus.Extensions.Skills;
+using BotNexus.Gateway.Abstractions.Models;
 using FluentAssertions;
 
 namespace BotNexus.Extensions.Skills.Tests;
