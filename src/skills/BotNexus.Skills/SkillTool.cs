@@ -98,16 +98,20 @@ public sealed class SkillTool(
         if (string.IsNullOrWhiteSpace(skillName))
             return TextResult("Error: skillName is required for load action.");
 
+        if (config is not null && !config.Enabled)
+            return TextResult("Skills are disabled for this agent.");
+
         var skill = allSkills.FirstOrDefault(s => string.Equals(s.Name, skillName, StringComparison.OrdinalIgnoreCase));
         if (skill is null)
             return TextResult($"Skill '{skillName}' not found. Use action 'list' to see available skills.");
 
-        // Check deny list
-        var denySet = config?.Disabled is { Count: > 0 }
-            ? new HashSet<string>(config.Disabled, StringComparer.OrdinalIgnoreCase)
-            : null;
-        if (denySet is not null && denySet.Contains(skillName))
-            return TextResult($"Skill '{skillName}' is disabled for this agent.");
+        // Delegate access checks to the resolver — it handles deny, allow, and limits
+        var resolution = SkillResolver.Resolve(allSkills, config, explicitlyLoaded: [skill.Name]);
+        if (resolution.Denied.Any(s => string.Equals(s.Name, skillName, StringComparison.OrdinalIgnoreCase)))
+            return TextResult($"Skill '{skillName}' is not available for this agent.");
+
+        if (!resolution.Loaded.Any(s => string.Equals(s.Name, skillName, StringComparison.OrdinalIgnoreCase)))
+            return TextResult($"Skill '{skillName}' cannot be loaded (budget exceeded).");
 
         _sessionLoaded.Add(skill.Name);
 

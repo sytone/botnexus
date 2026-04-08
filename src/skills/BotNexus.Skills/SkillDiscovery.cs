@@ -8,6 +8,7 @@ public static class SkillDiscovery
 {
     private const string SkillFileName = "SKILL.md";
     private const int MaxDescriptionLength = 1024;
+    private const int MaxCompatibilityLength = 500;
 
     public static IReadOnlyList<SkillDefinition> Discover(
         string? globalSkillsDir,
@@ -54,20 +55,24 @@ public static class SkillDiscovery
 
     private static bool Validate(SkillDefinition skill, string directoryName)
     {
-        // Name must be valid per spec
         if (!SkillParser.IsValidName(skill.Name))
             return false;
 
-        // Name must match directory name
         if (!string.Equals(skill.Name, directoryName, StringComparison.Ordinal))
             return false;
 
-        // Description is required
         if (string.IsNullOrWhiteSpace(skill.Description))
             return false;
 
-        // Description length limit
         if (skill.Description.Length > MaxDescriptionLength)
+            return false;
+
+        // Per spec: compatibility must be 1-500 characters if provided
+        if (skill.Compatibility is not null && skill.Compatibility.Length > MaxCompatibilityLength)
+            return false;
+
+        // Skills with disable-model-invocation are excluded from model context
+        if (skill.DisableModelInvocation)
             return false;
 
         return true;

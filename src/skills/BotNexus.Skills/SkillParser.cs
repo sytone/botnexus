@@ -35,6 +35,14 @@ public static class SkillParser
             metadata = ExtractMetadata(frontmatter);
         }
 
+        var disableModelInvocation = false;
+        if (frontmatter is not null)
+        {
+            var rawDisable = ParseFrontmatter(frontmatter).GetValueOrDefault("disable-model-invocation");
+            disableModelInvocation = rawDisable is not null &&
+                bool.TryParse(rawDisable, out var parsed) && parsed;
+        }
+
         return new SkillDefinition
         {
             Name = name ?? directoryName,
@@ -42,6 +50,7 @@ public static class SkillParser
             License = license,
             Compatibility = compatibility,
             AllowedTools = allowedTools,
+            DisableModelInvocation = disableModelInvocation,
             Metadata = metadata,
             Content = content.Trim(),
             SourcePath = sourcePath,

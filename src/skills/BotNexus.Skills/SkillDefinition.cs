@@ -24,6 +24,9 @@ public sealed record SkillDefinition
     /// <summary>Space-delimited list of pre-approved tools. Experimental.</summary>
     public string? AllowedTools { get; init; }
 
+    /// <summary>When true, this skill is excluded from model context. Used for agent-internal skills.</summary>
+    public bool DisableModelInvocation { get; init; }
+
     /// <summary>The markdown body (instructions) after frontmatter.</summary>
     public string Content { get; init; } = string.Empty;
 
