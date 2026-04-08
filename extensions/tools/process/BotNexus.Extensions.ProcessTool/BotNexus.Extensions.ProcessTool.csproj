@@ -15,4 +15,14 @@
     <InternalsVisibleTo Include="BotNexus.Extensions.ProcessTool.Tests" />
   </ItemGroup>
 
+  <!-- Copy extension output + manifest to artifacts/extensions/ for dev-time discovery -->
+  <Target Name="CopyExtensionToArtifacts" AfterTargets="Build">
+    <PropertyGroup>
+      <ExtensionArtifactDir>$(MSBuildThisFileDirectory)..\..\..\..\artifacts\extensions\botnexus-process\</ExtensionArtifactDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(ExtensionArtifactDir)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ExtensionArtifactDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)botnexus-extension.json" DestinationFolder="$(ExtensionArtifactDir)" SkipUnchangedFiles="true" />
+  </Target>
+
 </Project>

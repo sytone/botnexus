@@ -85,6 +85,8 @@ public static class GatewayServiceCollectionExtensions
                 new SkillPromptHookHandler(
                     sp.GetRequiredService<IAgentWorkspaceManager>(),
                     sp.GetRequiredService<IAgentRegistry>()));
+            dispatcher.Register<BeforeToolCallEvent, BeforeToolCallResult>(
+                sp.GetRequiredService<ToolPolicyHookHandler>());
             return dispatcher;
         });
 

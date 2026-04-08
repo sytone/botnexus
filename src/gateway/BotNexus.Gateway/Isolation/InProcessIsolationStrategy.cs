@@ -134,7 +134,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             tools.Add(new SessionTool(sessionStore, descriptor.AgentId, sessionAccessLevel, sessionAllowedAgents));
         }
 
-        // Skills tool — passes discovery paths so skills are found dynamically
+        // TODO: SkillTool is hardcoded here because it needs agent-specific discovery paths.
+        // Move to extension loader discovery once extensions can receive per-agent context.
         var homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var globalSkillsDir = Path.Combine(homeDir, ".botnexus", "skills");
         var agentSkillsDir = Path.Combine(homeDir, ".botnexus", "agents", descriptor.AgentId, "skills");

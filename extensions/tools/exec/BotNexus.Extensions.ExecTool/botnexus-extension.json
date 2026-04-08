@@ -1,7 +1,7 @@
 {
-  "name": "exec-tool",
-  "displayName": "Exec Tool",
-  "description": "Enhanced shell execution tool with timeout, background mode, and Windows command resolution.",
+  "id": "botnexus-exec",
+  "name": "Exec Tool",
   "version": "0.1.0",
+  "entryAssembly": "BotNexus.Extensions.ExecTool.dll",
   "extensionTypes": ["tool"]
 }
