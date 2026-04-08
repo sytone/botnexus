@@ -220,6 +220,22 @@ body {
 }
 
 /* === Message bubbles === */
+
+/* Session dividers for timeline view */
+.session-divider {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 0; margin: 4px 0;
+    width: 100%; align-self: stretch;
+}
+.session-divider-line {
+    flex: 1; height: 1px;
+    background: var(--border);
+}
+.session-divider-label {
+    font-size: 0.75rem; color: var(--text-secondary);
+    white-space: nowrap; user-select: none;
+}
+
 .message {
     padding: 10px 14px; border-radius: 8px; font-size: 0.9rem; line-height: 1.55;
     max-width: 85%; word-wrap: break-word; overflow-wrap: break-word;

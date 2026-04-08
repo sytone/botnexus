@@ -12,6 +12,7 @@
     let connection = null;
     let currentSessionId = null;
     let currentAgentId = null;
+    let currentChannelType = null;
     let connectionId = null;
     let responseTimeoutTimer = null;
     let steerIndicatorTimer = null;
@@ -989,6 +990,10 @@
     }
 
     function appendChatMessage(role, content) {
+        appendChatMessageTo(role, content, elChatMessages);
+    }
+
+    function appendChatMessageTo(role, content, container) {
         content = stripControlTags(content);
         if (!content || !content.trim()) return;
         const div = document.createElement('div');
@@ -1004,8 +1009,8 @@
             <div class="msg-content">${contentHtml}</div>
         `;
         div.dataset.rawContent = content;
-        elChatMessages.appendChild(div);
-        scrollToBottom();
+        container.appendChild(div);
+        if (container === elChatMessages) scrollToBottom();
     }
 
     function appendSystemMessage(text, level) {
@@ -1059,17 +1064,25 @@
     // =========================================================================
 
     function renderHistoryEntry(entry) {
+        renderHistoryEntryTo(entry, elChatMessages);
+    }
+
+    function renderHistoryEntryTo(entry, container) {
         if (!entry) return;
         if ((entry.role === 'user' || entry.role === 'assistant') && entry.content && entry.content.trim()) {
-            appendChatMessage(entry.role, entry.content);
+            appendChatMessageTo(entry.role, entry.content, container);
         }
         if (entry.role === 'assistant' && entry.toolCalls && entry.toolCalls.length > 0) {
-            for (const tc of entry.toolCalls) renderToolCallHistory(tc);
+            for (const tc of entry.toolCalls) renderToolCallHistoryTo(tc, container);
         }
-        if (entry.role === 'tool') renderToolCallHistory(entry);
+        if (entry.role === 'tool') renderToolCallHistoryTo(entry, container);
     }
 
     function renderToolCallHistory(tc) {
+        renderToolCallHistoryTo(tc, elChatMessages);
+    }
+
+    function renderToolCallHistoryTo(tc, container) {
         const callId = `hist-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const div = document.createElement('div');
         div.className = `message tool-call tool-complete${showTools ? '' : ' hidden'}`;
@@ -1101,7 +1114,7 @@
             result: resultStr,
             status: 'complete'
         };
-        elChatMessages.appendChild(div);
+        container.appendChild(div);
     }
 
     function formatToolArgsPreview(entry) {
@@ -1214,15 +1227,37 @@
     }
 
     async function executeReset(commandType = 'reset') {
-        clearChatForSessionReset();
-        appendSystemMessage('Session reset. System prompt regenerated.');
+        // Reset streaming state but preserve the timeline
+        activeMessageId = null;
+        activeToolCalls = {};
+        activeToolCount = 0;
+        toolCallDepth = 0;
+        thinkingBuffer = '';
+        clearResponseTimeout();
+        resetQueue();
+        removeStreamingIndicator();
+        hideProcessingStatus();
+        isStreaming = false;
+        setSendingState(false);
 
-        if (currentAgentId && currentSessionId && connection?.state === signalR.HubConnectionState.Connected) {
+        if (commandType === 'reset' && currentAgentId && currentSessionId && connection?.state === signalR.HubConnectionState.Connected) {
             try {
                 await hubInvoke('ResetSession', currentAgentId, currentSessionId);
             } catch (err) {
                 console.warn('Failed to reset session via SignalR:', err);
             }
+            appendSystemMessage('Session context reset. System prompt regenerated.');
+        } else {
+            // /new — add a divider for the new session
+            const divider = document.createElement('div');
+            divider.className = 'session-divider';
+            const now = new Date();
+            const dateStr = now.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+            const timeStr = now.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+            divider.innerHTML = `<span class="session-divider-line"></span><span class="session-divider-label">New session started ${dateStr} at ${timeStr}</span><span class="session-divider-line"></span>`;
+            elChatMessages.appendChild(divider);
+            scrollToBottom();
+            appendSystemMessage('New session started. Previous messages are still visible above.');
         }
 
         currentSessionId = null;
@@ -1389,22 +1424,14 @@
         const agentId = elAgentSelect.value || null;
         if (!agentId) return;
 
-        elChatMessages.innerHTML = '';
         currentSessionId = null;
         isStreaming = false;
         resetQueue();
-
-        showView('chat-view');
-        elChatTitle.textContent = `${agentId} — Web Chat`;
-        elChatMeta.textContent = `Agent: ${agentId} · Session will be created on first message`;
-        elAgentSelect.classList.remove('hidden');
-
         currentAgentId = agentId;
-        updateSessionIdDisplay();
-        loadChatHeaderModels();
-        loadSessions();
-        elSessionsList.querySelectorAll('.list-item').forEach(el => el.classList.remove('active'));
-        elChatInput.focus();
+        currentChannelType = 'Web Chat';
+
+        // Open the timeline for this agent — shows all past sessions
+        openAgentTimeline(agentId, 'Web Chat');
     }
 
     // =========================================================================
@@ -1579,66 +1606,172 @@
     }
 
     async function openSession(sessionId, agentId) {
-        elChatMessages.innerHTML = '';
+        // Opening a single session — load as timeline for this agent+channel
+        const session = await fetchJson(`/sessions/${encodeURIComponent(sessionId)}`);
+        const channelType = session?.channelType || 'Web Chat';
+        await openAgentTimeline(agentId, channelType);
+    }
 
-        // Join the session group
-        await joinSession(agentId, sessionId);
+    async function openAgentTimeline(agentId, channelType) {
+        elChatMessages.innerHTML = '<div class="loading">Loading timeline...</div>';
+
+        await joinSession(agentId, null);
 
         elSessionsList.querySelectorAll('.list-item').forEach(el => {
-            el.classList.toggle('active', el.dataset.sessionId === sessionId);
+            el.classList.toggle('active', el.dataset.agentId === agentId);
         });
 
         showView('chat-view');
-        elChatMessages.innerHTML = '<div class="loading">Loading messages...</div>';
 
         if (agentId) elAgentSelect.value = agentId;
         elAgentSelect.classList.add('hidden');
+        currentAgentId = agentId;
+        currentChannelType = channelType;
 
-        const session = await fetchJson(`/sessions/${encodeURIComponent(sessionId)}`);
+        elChatTitle.textContent = `${agentId} — ${channelType}`;
 
-        // Set title after session data is available
-        const channelType = session?.channelType || 'Web Chat';
-        elChatTitle.textContent = agentId ? `${agentId} — ${channelType}` : 'Chat';
+        // Fetch all sessions for this agent
+        const allSessions = await fetchJson(`/sessions?agentId=${encodeURIComponent(agentId)}`);
+        if (!allSessions || allSessions.length === 0) {
+            elChatMessages.innerHTML = '';
+            elChatMeta.textContent = `Agent: ${agentId} · No sessions yet`;
+            currentSessionId = null;
+            updateSessionIdDisplay();
+            loadChatHeaderModels();
+            elChatInput.focus();
+            return;
+        }
+
+        // Filter to matching channel type and sort oldest-first
+        const channelSessions = allSessions
+            .filter(s => (s.channelType || 'Web Chat').toLowerCase() === channelType.toLowerCase())
+            .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+
+        if (channelSessions.length === 0) {
+            elChatMessages.innerHTML = '';
+            elChatMeta.textContent = `Agent: ${agentId} · No ${channelType} sessions`;
+            currentSessionId = null;
+            updateSessionIdDisplay();
+            loadChatHeaderModels();
+            elChatInput.focus();
+            return;
+        }
 
         elChatMessages.innerHTML = '';
 
-        if (session) {
-            const totalCount = session.messageCount || (session.history ? session.history.length : 0);
-            elChatMeta.textContent = `Agent: ${agentId || 'unknown'} · ${totalCount} messages`;
+        // Show only the most recent sessions to keep initial load fast
+        const maxInitialSessions = 3;
+        const recentSessions = channelSessions.slice(-maxInitialSessions);
+        const olderCount = channelSessions.length - recentSessions.length;
 
-            // Load only the most recent messages via paginated endpoint
-            const pageSize = 30;
-            const offset = Math.max(0, totalCount - pageSize);
-            const historyPage = await fetchJson(`/sessions/${encodeURIComponent(sessionId)}/history?offset=${offset}&limit=${pageSize}`);
-
-            if (offset > 0) {
-                const loadMoreEl = document.createElement('div');
-                loadMoreEl.className = 'load-more-history';
-                loadMoreEl.dataset.sessionId = sessionId;
-                loadMoreEl.dataset.nextOffset = '0';
-                loadMoreEl.dataset.endOffset = String(offset);
-                loadMoreEl.textContent = `↑ Load earlier messages (${offset} more)`;
-                loadMoreEl.style.cssText = 'text-align:center;padding:8px;cursor:pointer;color:var(--text-secondary);font-size:0.85rem;';
-                loadMoreEl.addEventListener('click', () => loadEarlierMessages(sessionId, loadMoreEl));
-                elChatMessages.appendChild(loadMoreEl);
-            }
-
-            if (historyPage?.entries) {
-                for (const entry of historyPage.entries) renderHistoryEntry(entry);
-            } else if (session.history) {
-                // Fallback: if paginated endpoint not available, show last N from full history
-                const recent = session.history.slice(-pageSize);
-                for (const entry of recent) renderHistoryEntry(entry);
-            }
+        if (olderCount > 0) {
+            const loadOlderEl = document.createElement('div');
+            loadOlderEl.className = 'load-more-history';
+            loadOlderEl.dataset.agentId = agentId;
+            loadOlderEl.dataset.channelType = channelType;
+            loadOlderEl.dataset.olderSessionIds = JSON.stringify(
+                channelSessions.slice(0, olderCount).map(s => s.sessionId)
+            );
+            loadOlderEl.textContent = `↑ Load ${olderCount} older session${olderCount > 1 ? 's' : ''}`;
+            loadOlderEl.style.cssText = 'text-align:center;padding:8px;cursor:pointer;color:var(--text-secondary);font-size:0.85rem;';
+            loadOlderEl.addEventListener('click', () => loadOlderSessions(loadOlderEl));
+            elChatMessages.appendChild(loadOlderEl);
         }
 
-        // Check if agent is running
-        checkAgentRunningStatus(agentId, sessionId);
+        let totalMessages = 0;
+        for (const session of recentSessions) {
+            renderSessionDivider(session);
+            const count = session.messageCount || 0;
+            totalMessages += count;
+            await renderSessionMessages(session.sessionId, count);
+        }
 
+        // Join the most recent session for sending new messages
+        const latestSession = channelSessions[channelSessions.length - 1];
+        await joinSession(agentId, latestSession.sessionId);
+
+        elChatMeta.textContent = `Agent: ${agentId} · ${totalMessages} messages across ${channelSessions.length} session${channelSessions.length > 1 ? 's' : ''}`;
+        updateSessionIdDisplay();
         scrollToBottom();
         elChatInput.focus();
         updateSendButtonState();
         loadChatHeaderModels();
+    }
+
+    function renderSessionDivider(session) {
+        const divider = document.createElement('div');
+        divider.className = 'session-divider';
+        divider.dataset.sessionId = session.sessionId;
+        const date = new Date(session.createdAt || Date.now());
+        const dateStr = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+        const timeStr = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+        divider.innerHTML = `<span class="session-divider-line"></span><span class="session-divider-label">Session started ${dateStr} at ${timeStr}</span><span class="session-divider-line"></span>`;
+        elChatMessages.appendChild(divider);
+    }
+
+    async function renderSessionMessages(sessionId, totalCount) {
+        if (totalCount === 0) return;
+        const pageSize = 50;
+        const offset = Math.max(0, totalCount - pageSize);
+        const historyPage = await fetchJson(`/sessions/${encodeURIComponent(sessionId)}/history?offset=${offset}&limit=${pageSize}`);
+
+        if (offset > 0) {
+            const loadMoreEl = document.createElement('div');
+            loadMoreEl.className = 'load-more-history';
+            loadMoreEl.dataset.sessionId = sessionId;
+            loadMoreEl.dataset.nextOffset = '0';
+            loadMoreEl.dataset.endOffset = String(offset);
+            loadMoreEl.textContent = `↑ Load earlier messages (${offset} more)`;
+            loadMoreEl.style.cssText = 'text-align:center;padding:8px;cursor:pointer;color:var(--text-secondary);font-size:0.85rem;';
+            loadMoreEl.addEventListener('click', () => loadEarlierMessages(sessionId, loadMoreEl));
+            elChatMessages.appendChild(loadMoreEl);
+        }
+
+        if (historyPage?.entries) {
+            for (const entry of historyPage.entries) renderHistoryEntry(entry);
+        }
+    }
+
+    async function loadOlderSessions(loadOlderEl) {
+        const sessionIds = JSON.parse(loadOlderEl.dataset.olderSessionIds || '[]');
+        if (sessionIds.length === 0) { loadOlderEl.remove(); return; }
+
+        loadOlderEl.textContent = 'Loading...';
+
+        const fragment = document.createDocumentFragment();
+        for (const sessionId of sessionIds) {
+            const session = await fetchJson(`/sessions/${encodeURIComponent(sessionId)}`);
+            if (!session) continue;
+
+            const divider = document.createElement('div');
+            divider.className = 'session-divider';
+            divider.dataset.sessionId = sessionId;
+            const date = new Date(session.createdAt || Date.now());
+            const dateStr = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+            const timeStr = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+            divider.innerHTML = `<span class="session-divider-line"></span><span class="session-divider-label">Session started ${dateStr} at ${timeStr}</span><span class="session-divider-line"></span>`;
+            fragment.appendChild(divider);
+
+            const count = session.messageCount || (session.history ? session.history.length : 0);
+            if (count > 0) {
+                const historyPage = await fetchJson(`/sessions/${encodeURIComponent(sessionId)}/history?offset=0&limit=200`);
+                if (historyPage?.entries) {
+                    // Temporarily redirect renderHistoryEntry to fragment
+                    const tempContainer = document.createElement('div');
+                    const savedParent = elChatMessages;
+                    for (const entry of historyPage.entries) {
+                        renderHistoryEntryTo(entry, tempContainer);
+                    }
+                    for (const child of [...tempContainer.children]) {
+                        fragment.appendChild(child);
+                    }
+                }
+            }
+        }
+
+        // Insert before the load-older button, then remove it
+        loadOlderEl.parentNode.insertBefore(fragment, loadOlderEl);
+        loadOlderEl.remove();
     }
 
     async function loadEarlierMessages(sessionId, loadMoreEl) {
