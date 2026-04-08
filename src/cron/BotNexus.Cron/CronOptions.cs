@@ -21,6 +21,7 @@ public sealed record ConfiguredCronJob
     public string? WebhookUrl { get; init; }
     public string? ShellCommand { get; init; }
     public bool Enabled { get; init; } = true;
+    public string? TimeZone { get; init; }
     public string? CreatedBy { get; init; }
     public IReadOnlyDictionary<string, object?>? Metadata { get; init; }
 }
