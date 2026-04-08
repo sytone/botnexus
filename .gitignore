@@ -52,3 +52,11 @@ TestResults/
 /extensions/
 .botnexus-agent
 node_modules/
+
+# BotNexus runtime credentials — never commit auth tokens or API keys
+auth.json
+.botnexus/auth.json
+*.botnexus-auth
+# Local config overrides that may contain secrets
+botnexus.local.json
+config.local.json

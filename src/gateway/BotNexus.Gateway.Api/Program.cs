@@ -121,21 +121,24 @@ builder.Services.AddCors(options =>
             .AllowAnyHeader();
     });
 });
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen(options =>
+if (builder.Environment.IsDevelopment())
 {
-    var assembly = typeof(Program).Assembly;
-    options.SwaggerDoc("v1", new OpenApiInfo
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddSwaggerGen(options =>
     {
-        Title = "BotNexus Gateway",
-        Version = assembly.GetName().Version?.ToString() ?? "1.0.0"
-    });
+        var assembly = typeof(Program).Assembly;
+        options.SwaggerDoc("v1", new OpenApiInfo
+        {
+            Title = "BotNexus Gateway",
+            Version = assembly.GetName().Version?.ToString() ?? "1.0.0"
+        });
 
-    var xmlFile = $"{assembly.GetName().Name}.xml";
-    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
-    if (File.Exists(xmlPath))
-        options.IncludeXmlComments(xmlPath, includeControllerXmlComments: true);
-});
+        var xmlFile = $"{assembly.GetName().Name}.xml";
+        var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+        if (File.Exists(xmlPath))
+            options.IncludeXmlComments(xmlPath, includeControllerXmlComments: true);
+    });
+}
 builder.Services.AddSingleton<ApiProviderRegistry>();
 builder.Services.AddSingleton<ModelRegistry>();
 builder.Services.AddSingleton<BuiltInModels>();
@@ -193,8 +196,11 @@ app.UseSerilogRequestLogging();
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<GatewayAuthMiddleware>();
 app.UseMiddleware<RateLimitingMiddleware>();
-app.UseSwagger();
-app.UseSwaggerUI();
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
 
 app.MapControllers();
 app.MapHub<GatewayHub>("/hub/gateway");
