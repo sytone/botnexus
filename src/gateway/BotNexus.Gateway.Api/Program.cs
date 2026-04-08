@@ -8,6 +8,7 @@ using BotNexus.Providers.Core;
 using BotNexus.Providers.Core.Registry;
 using BotNexus.Providers.OpenAI;
 using BotNexus.Providers.OpenAICompat;
+using BotNexus.Cron.Extensions;
 using Microsoft.OpenApi.Models;
 using OpenTelemetry.Trace;
 using Serilog;
@@ -61,6 +62,7 @@ builder.Services.AddOpenTelemetry()
     });
 
 builder.Services.AddBotNexusGateway();
+builder.Services.AddBotNexusCron();
 builder.Services.AddPlatformConfiguration(platformConfigPath);
 builder.Services.AddExtensionLoading();
 builder.Services.AddSignalR();

@@ -6,6 +6,8 @@ using BotNexus.AgentCore;
 using BotNexus.AgentCore.Configuration;
 using BotNexus.AgentCore.Diagnostics;
 using BotNexus.AgentCore.Types;
+using BotNexus.Cron;
+using BotNexus.Cron.Tools;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
@@ -15,6 +17,7 @@ using BotNexus.Providers.Core;
 using BotNexus.Providers.Core.Models;
 using BotNexus.Memory;
 using BotNexus.Memory.Tools;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using AgentCoreUserMessage = BotNexus.AgentCore.Types.UserMessage;
 
@@ -37,6 +40,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
     private readonly IAgentWorkspaceManager _workspaceManager;
     private readonly IToolRegistry _toolRegistry;
     private readonly IMemoryStoreFactory _memoryStoreFactory;
+    private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<InProcessIsolationStrategy> _logger;
 
     public InProcessIsolationStrategy(
@@ -47,6 +51,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         IAgentWorkspaceManager workspaceManager,
         IToolRegistry toolRegistry,
         IMemoryStoreFactory memoryStoreFactory,
+        IServiceProvider serviceProvider,
         ILogger<InProcessIsolationStrategy> logger)
     {
         _llmClient = llmClient;
@@ -56,6 +61,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         _workspaceManager = workspaceManager;
         _toolRegistry = toolRegistry;
         _memoryStoreFactory = memoryStoreFactory;
+        _serviceProvider = serviceProvider;
         _logger = logger;
     }
 
@@ -99,6 +105,20 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             tools.Add(new MemoryGetTool(memoryStore));
         }
 
+        var cronEnabled = descriptor.ToolIds.Count == 0
+                          || descriptor.ToolIds.Contains("cron", StringComparer.OrdinalIgnoreCase);
+        var hasCronTool = tools.Any(tool => string.Equals(tool.Name, "cron", StringComparison.OrdinalIgnoreCase));
+        if (cronEnabled && !hasCronTool)
+        {
+            var cronStore = _serviceProvider.GetService<ICronStore>();
+            var cronScheduler = _serviceProvider.GetService<CronScheduler>();
+            if (cronStore is not null && cronScheduler is not null)
+            {
+                var allowCrossAgentCron = ResolveAllowCrossAgentCron(descriptor);
+                tools.Add(new CronTool(cronStore, cronScheduler, descriptor.AgentId, allowCrossAgentCron));
+            }
+        }
+
         var options = new AgentOptions(
             InitialState: new AgentInitialState(
                 SystemPrompt: enrichedSystemPrompt,
@@ -125,6 +145,19 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         _logger.LogDebug("Created in-process agent handle for '{AgentId}' session '{SessionId}'", descriptor.AgentId, context.SessionId);
 
         return handle;
+    }
+
+    private static bool ResolveAllowCrossAgentCron(AgentDescriptor descriptor)
+    {
+        if (!descriptor.Metadata.TryGetValue("allowCrossAgentCron", out var raw) || raw is null)
+            return false;
+
+        return raw switch
+        {
+            bool value => value,
+            string value when bool.TryParse(value, out var parsed) => parsed,
+            _ => false
+        };
     }
 }
 

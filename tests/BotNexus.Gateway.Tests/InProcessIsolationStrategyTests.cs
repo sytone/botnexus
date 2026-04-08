@@ -13,6 +13,7 @@ using BotNexus.Providers.Core;
 using BotNexus.Providers.Core.Models;
 using BotNexus.Providers.Core.Registry;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BotNexus.Gateway.Tests;
@@ -43,6 +44,7 @@ public sealed class InProcessIsolationStrategyTests
             new TestWorkspaceManager(),
             new DefaultToolRegistry(Array.Empty<IAgentTool>()),
             new StubMemoryStoreFactory(),
+            new ServiceCollection().BuildServiceProvider(),
             NullLogger<InProcessIsolationStrategy>.Instance);
 
         var act = () => strategy.CreateAsync(
@@ -97,6 +99,7 @@ public sealed class InProcessIsolationStrategyTests
             new TestWorkspaceManager(),
             new DefaultToolRegistry(Array.Empty<IAgentTool>()),
             new StubMemoryStoreFactory(),
+            new ServiceCollection().BuildServiceProvider(),
             NullLogger<InProcessIsolationStrategy>.Instance);
     }
 

@@ -15,6 +15,7 @@ using BotNexus.Providers.Core;
 using BotNexus.Providers.Core.Models;
 using BotNexus.Providers.Core.Registry;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -172,6 +173,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
             new TestWorkspaceManager(_configDirectory),
             new DefaultToolRegistry(Array.Empty<IAgentTool>()),
             new StubMemoryStoreFactory(),
+            new ServiceCollection().BuildServiceProvider(),
             NullLogger<InProcessIsolationStrategy>.Instance);
 
         var handle = await strategy.CreateAsync(
