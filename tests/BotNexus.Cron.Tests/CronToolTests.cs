@@ -95,6 +95,133 @@ public sealed class CronToolTests
         await act.Should().ThrowAsync<UnauthorizedAccessException>();
     }
 
+    [Fact]
+    public async Task ExecuteAsync_Update_RecomputesNextRunAt_WhenScheduleChanges()
+    {
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        var existingJob = CreateJob("job-1", createdBy: "agent-a") with
+        {
+            Schedule = "0 0 1 1 *",
+            NextRunAt = DateTimeOffset.UtcNow.AddDays(365)
+        };
+        store.Setup(value => value.GetAsync("job-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingJob);
+        CronJob? saved = null;
+        store.Setup(value => value.UpdateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
+            .Callback<CronJob, CancellationToken>((job, _) => saved = job)
+            .ReturnsAsync((CronJob job, CancellationToken _) => job);
+        var tool = new CronTool(store.Object, scheduler, "agent-a");
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "update",
+            ["jobId"] = "job-1",
+            ["schedule"] = "* * * * *"
+        });
+
+        saved.Should().NotBeNull();
+        saved!.Schedule.Should().Be("* * * * *");
+        saved.NextRunAt.Should().NotBeNull();
+        saved.NextRunAt!.Value.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromMinutes(2),
+            "NextRunAt should be recomputed for the new schedule");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Update_PreservesNextRunAt_WhenScheduleUnchanged()
+    {
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        var originalNext = DateTimeOffset.UtcNow.AddHours(1);
+        var existingJob = CreateJob("job-1", createdBy: "agent-a") with
+        {
+            Schedule = "*/5 * * * *",
+            NextRunAt = originalNext
+        };
+        store.Setup(value => value.GetAsync("job-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingJob);
+        CronJob? saved = null;
+        store.Setup(value => value.UpdateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
+            .Callback<CronJob, CancellationToken>((job, _) => saved = job)
+            .ReturnsAsync((CronJob job, CancellationToken _) => job);
+        var tool = new CronTool(store.Object, scheduler, "agent-a");
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "update",
+            ["jobId"] = "job-1",
+            ["name"] = "Updated name"
+        });
+
+        saved.Should().NotBeNull();
+        saved!.Name.Should().Be("Updated name");
+        saved.NextRunAt.Should().Be(originalNext, "NextRunAt should not change when schedule is unchanged");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Create_SetsTimeZone()
+    {
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        CronJob? created = null;
+        store.Setup(value => value.CreateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
+            .Callback<CronJob, CancellationToken>((job, _) => created = job)
+            .ReturnsAsync((CronJob job, CancellationToken _) => job);
+        var tool = new CronTool(store.Object, scheduler, "agent-a");
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "create",
+            ["name"] = "Pacific job",
+            ["schedule"] = "0 22 * * *",
+            ["timeZone"] = "America/Los_Angeles",
+            ["message"] = "Evening check"
+        });
+
+        created.Should().NotBeNull();
+        created!.TimeZone.Should().Be("America/Los_Angeles");
+        created.NextRunAt.Should().NotBeNull();
+
+        // NextRunAt should reflect Pacific interpretation: 22:00 Pacific = 05:00 or 06:00 UTC
+        var pacificTz = TimeZoneInfo.FindSystemTimeZoneById("America/Los_Angeles");
+        var localNext = TimeZoneInfo.ConvertTime(created.NextRunAt!.Value, pacificTz);
+        localNext.Hour.Should().Be(22, "schedule should be interpreted in Pacific time");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Update_RecomputesNextRunAt_WhenTimeZoneChanges()
+    {
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        var existingJob = CreateJob("job-1", createdBy: "agent-a") with
+        {
+            Schedule = "0 12 * * *",
+            NextRunAt = DateTimeOffset.UtcNow.AddHours(2)
+        };
+        store.Setup(value => value.GetAsync("job-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingJob);
+        CronJob? saved = null;
+        store.Setup(value => value.UpdateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
+            .Callback<CronJob, CancellationToken>((job, _) => saved = job)
+            .ReturnsAsync((CronJob job, CancellationToken _) => job);
+        var tool = new CronTool(store.Object, scheduler, "agent-a");
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "update",
+            ["jobId"] = "job-1",
+            ["timeZone"] = "America/New_York"
+        });
+
+        saved.Should().NotBeNull();
+        saved!.TimeZone.Should().Be("America/New_York");
+        saved.NextRunAt.Should().NotBeNull();
+        // NextRunAt should be recomputed with the new timezone
+        var etTz = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
+        var localNext = TimeZoneInfo.ConvertTime(saved.NextRunAt!.Value, etTz);
+        localNext.Hour.Should().Be(12, "schedule should be interpreted in Eastern time");
+    }
+
     private static CronScheduler CreateScheduler()
     {
         var store = new Mock<ICronStore>().Object;
