@@ -82,8 +82,7 @@ public static class SystemPromptBuilder
         var hasCronTool = normalizedTools.Contains("cron") || rawToolNames.Count == 0;
         var hasUpdatePlanTool = normalizedTools.Contains("update_plan");
         var readToolName = ResolveToolName("read");
-        var execToolName = ResolveToolName("exec");
-        var processToolName = ResolveToolName("process");
+        var bashToolName = ResolveToolName("bash");
         var runtimeChannel = @params.Runtime?.Channel?.Trim().ToLowerInvariant();
         var runtimeCapabilities = NormalizePromptCapabilityIds(@params.Runtime?.Capabilities ?? []);
         var inlineButtonsEnabled = runtimeCapabilities.Contains("inlinebuttons", StringComparer.Ordinal);
@@ -101,14 +100,14 @@ public static class SystemPromptBuilder
 
         lines.AddRange(hasCronTool
             ? [
-                $"For follow-up at a future time (for example \"check back in 10 minutes\", reminders, run-later work, or recurring tasks), use cron instead of {execToolName} sleep, yieldMs delays, or {processToolName} polling.",
-                $"Use {execToolName}/{processToolName} only for commands that start now and continue running in the background.",
-                $"For long-running work that starts now, start it once and rely on automatic completion wake when it is enabled and the command emits output or fails; otherwise use {processToolName} to confirm completion, and use it for logs, status, input, or intervention.",
+                $"For follow-up at a future time (for example \"check back in 10 minutes\", reminders, run-later work, or recurring tasks), use cron instead of {bashToolName} sleep or delay loops.",
+                $"Use {bashToolName} only for commands that need to run now.",
+                $"For long-running work that starts now, start it once and rely on automatic completion wake when it is enabled and the command emits output or fails; otherwise use {bashToolName} to check status.",
                 "Do not emulate scheduling with sleep loops, timeout loops, or repeated polling."
             ]
             : [
-                $"For long waits, avoid rapid poll loops: use {execToolName} with enough yieldMs or {processToolName}(action=poll, timeout=<ms>).",
-                $"For long-running work that starts now, start it once and rely on automatic completion wake when it is enabled and the command emits output or fails; otherwise use {processToolName} to confirm completion, and use it for logs, status, input, or intervention."
+                $"For long waits, avoid rapid poll loops: use {bashToolName} with appropriate timeouts.",
+                $"For long-running work that starts now, start it once and rely on automatic completion wake when it is enabled and the command emits output or fails; otherwise use {bashToolName} to check status."
             ]);
 
         if (hasUpdatePlanTool)
@@ -141,8 +140,8 @@ public static class SystemPromptBuilder
                 "Keep narration brief and value-dense; avoid repeating obvious steps.",
                 "Use plain human language for narration unless in a technical context.",
                 "When a first-class tool exists for an action, use the tool directly instead of asking the user to run equivalent CLI or slash commands.",
-                buildExecApprovalPromptGuidance(runtimeChannel, inlineButtonsEnabled),
-                "Never execute /approve through exec or any other shell/tool path; /approve is a user-facing approval command, not a shell command.",
+                buildBashApprovalPromptGuidance(runtimeChannel, inlineButtonsEnabled),
+                "Never execute /approve through bash or any other shell/tool path; /approve is a user-facing approval command, not a shell command.",
                 "Treat allow-once as single-command only: if another elevated command needs approval, request a fresh /approve and do not claim prior approval covered it.",
                 "When approvals are required, preserve and show the full command/script exactly as provided (including chained operators like &&, ||, |, ;, or multiline shells) so the user can approve what will actually run.",
                 ""
@@ -409,7 +408,7 @@ public static class SystemPromptBuilder
             "- Cross-session messaging → use sessions_send(sessionKey, message)",
             "- Sub-agent orchestration → use subagents(action=list|steer|kill)",
             $"- Runtime-generated completion events may ask for a user update. Rewrite those in your normal assistant voice and send the update (do not forward raw internal metadata or default to {SilentReplyToken}).",
-            "- Never use exec/curl for provider messaging; BotNexus handles all routing internally."
+            "- Never use bash/curl for provider messaging; BotNexus handles all routing internally."
         };
 
         if (availableTools.Contains("message"))
@@ -514,13 +513,13 @@ public static class SystemPromptBuilder
         return fallback;
     }
 
-    private static string buildExecApprovalPromptGuidance(string? runtimeChannel, bool inlineButtonsEnabled)
+    private static string buildBashApprovalPromptGuidance(string? runtimeChannel, bool inlineButtonsEnabled)
     {
         var usesNativeApprovalUi = string.Equals(runtimeChannel, "webchat", StringComparison.OrdinalIgnoreCase)
             || inlineButtonsEnabled;
         return usesNativeApprovalUi
-            ? "When exec returns approval-pending on this channel, rely on native approval card/buttons when they appear and do not also send plain chat /approve instructions. Only include the concrete /approve command if the tool result says chat approvals are unavailable or only manual approval is possible."
-            : "When exec returns approval-pending, include the concrete /approve command from tool output as plain chat text for the user, and do not ask for a different or rotated code.";
+            ? "When bash returns approval-pending on this channel, rely on native approval card/buttons when they appear and do not also send plain chat /approve instructions. Only include the concrete /approve command if the tool result says chat approvals are unavailable or only manual approval is possible."
+            : "When bash returns approval-pending, include the concrete /approve command from tool output as plain chat text for the user, and do not ask for a different or rotated code.";
     }
 
     private static string BuildReasoningHint()
