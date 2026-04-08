@@ -835,6 +835,17 @@
         if (isError) {
             trackActivity('error', currentAgentId, `🔧 ${msg.toolName || activeToolCalls[callId]?.toolName || 'tool'} failed`);
         }
+
+        // Show a notification when a skill is loaded
+        const toolName = msg.toolName || activeToolCalls[callId]?.toolName || '';
+        if (toolName === 'skills' && !isError) {
+            const result = msg.toolResult || '';
+            const skillMatch = result.match(/^## Skill:\s*(.+)$/m);
+            if (skillMatch) {
+                appendSystemMessage(`📚 Skill loaded: ${skillMatch[1].trim()}`);
+            }
+        }
+
         if (Object.keys(toolStartTimes).length === 0) stopToolElapsedTimer();
     }
 
