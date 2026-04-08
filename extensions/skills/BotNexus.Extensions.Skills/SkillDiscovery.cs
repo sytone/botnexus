@@ -1,3 +1,5 @@
+using BotNexus.Extensions.Skills.Security;
+
 namespace BotNexus.Extensions.Skills;
 
 /// <summary>
@@ -42,6 +44,11 @@ public static class SkillDiscovery
                 var skill = SkillParser.Parse(dirName, content, skillDir, source);
 
                 if (!Validate(skill, dirName))
+                    continue;
+
+                // Security scan: block skills with critical findings
+                var scanSummary = SkillSecurityScanner.ScanDirectory(skillDir);
+                if (scanSummary.Critical > 0)
                     continue;
 
                 skills[skill.Name] = skill;
