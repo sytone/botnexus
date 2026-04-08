@@ -8,6 +8,7 @@ using BotNexus.Providers.Core;
 using BotNexus.Providers.Core.Registry;
 using BotNexus.Providers.OpenAI;
 using BotNexus.Providers.OpenAICompat;
+using BotNexus.Cron;
 using BotNexus.Cron.Extensions;
 using Microsoft.OpenApi.Models;
 using OpenTelemetry.Trace;
@@ -64,6 +65,32 @@ builder.Services.AddOpenTelemetry()
 builder.Services.AddBotNexusGateway();
 builder.Services.AddBotNexusCron();
 builder.Services.AddPlatformConfiguration(platformConfigPath);
+builder.Services.Configure<CronOptions>(options =>
+{
+    var cron = startupPlatformConfig.Cron;
+    if (cron is null)
+        return;
+
+    options.Enabled = cron.Enabled;
+    options.TickIntervalSeconds = cron.TickIntervalSeconds;
+    options.Jobs = cron.Jobs?
+        .ToDictionary(
+            pair => pair.Key,
+            pair => new ConfiguredCronJob
+            {
+                Name = pair.Value.Name,
+                Schedule = pair.Value.Schedule,
+                ActionType = pair.Value.ActionType,
+                AgentId = pair.Value.AgentId,
+                Message = pair.Value.Message,
+                WebhookUrl = pair.Value.WebhookUrl,
+                ShellCommand = pair.Value.ShellCommand,
+                Enabled = pair.Value.Enabled,
+                CreatedBy = pair.Value.CreatedBy,
+                Metadata = pair.Value.Metadata?.ToDictionary(entry => entry.Key, entry => (object?)entry.Value)
+            },
+            StringComparer.OrdinalIgnoreCase);
+});
 builder.Services.AddExtensionLoading();
 builder.Services.AddSignalR();
 builder.Services.AddBotNexusGatewayApi();

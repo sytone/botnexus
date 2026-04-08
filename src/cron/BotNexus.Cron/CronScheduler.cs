@@ -39,6 +39,7 @@ public sealed class CronScheduler(
         while (!stoppingToken.IsCancellationRequested)
         {
             var options = _optionsMonitor.CurrentValue ?? new CronOptions();
+            await SyncConfiguredJobsAsync(options, stoppingToken).ConfigureAwait(false);
             if (options.Enabled)
             {
                 try
@@ -151,6 +152,60 @@ public sealed class CronScheduler(
             _logger.LogError(ex, "Invalid cron expression for job {JobId}: {Schedule}", job.Id, job.Schedule);
             expression = default!;
             return false;
+        }
+    }
+
+    private async Task SyncConfiguredJobsAsync(CronOptions options, CancellationToken ct)
+    {
+        if (options.Jobs is null || options.Jobs.Count == 0)
+            return;
+
+        foreach (var (jobId, configuredJob) in options.Jobs)
+        {
+            if (string.IsNullOrWhiteSpace(jobId) ||
+                string.IsNullOrWhiteSpace(configuredJob.Schedule) ||
+                string.IsNullOrWhiteSpace(configuredJob.ActionType))
+            {
+                continue;
+            }
+
+            var existing = await _cronStore.GetAsync(jobId, ct).ConfigureAwait(false);
+            if (existing is null)
+            {
+                var seeded = new CronJob
+                {
+                    Id = jobId,
+                    Name = configuredJob.Name ?? jobId,
+                    Schedule = configuredJob.Schedule,
+                    ActionType = configuredJob.ActionType,
+                    AgentId = configuredJob.AgentId,
+                    Message = configuredJob.Message,
+                    WebhookUrl = configuredJob.WebhookUrl,
+                    ShellCommand = configuredJob.ShellCommand,
+                    Enabled = configuredJob.Enabled,
+                    CreatedBy = configuredJob.CreatedBy,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    Metadata = configuredJob.Metadata
+                };
+                await _cronStore.CreateAsync(seeded, ct).ConfigureAwait(false);
+                continue;
+            }
+
+            var merged = existing with
+            {
+                Name = configuredJob.Name ?? existing.Name,
+                Schedule = configuredJob.Schedule,
+                ActionType = configuredJob.ActionType,
+                AgentId = configuredJob.AgentId,
+                Message = configuredJob.Message,
+                WebhookUrl = configuredJob.WebhookUrl,
+                ShellCommand = configuredJob.ShellCommand,
+                Enabled = configuredJob.Enabled,
+                CreatedBy = configuredJob.CreatedBy ?? existing.CreatedBy,
+                Metadata = configuredJob.Metadata ?? existing.Metadata
+            };
+
+            await _cronStore.UpdateAsync(merged, ct).ConfigureAwait(false);
         }
     }
 }

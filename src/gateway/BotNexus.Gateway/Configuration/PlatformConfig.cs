@@ -58,6 +58,9 @@ public sealed class PlatformConfig
     /// <summary>Rate limiting settings (legacy root-level form).</summary>
     public RateLimitConfig? RateLimit { get; set; }
 
+    /// <summary>Cron scheduler settings and optional seed jobs.</summary>
+    public CronConfig? Cron { get; set; }
+
     /// <summary>Logging level.</summary>
     public string? LogLevel { get; set; }
 
@@ -161,6 +164,53 @@ public sealed class RateLimitConfig
 
     /// <summary>Window size in seconds used for request counting.</summary>
     public int WindowSeconds { get; set; } = 60;
+}
+
+/// <summary>Cron scheduler configuration.</summary>
+public sealed class CronConfig
+{
+    /// <summary>Whether the cron scheduler is enabled.</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Scheduler polling interval in seconds.</summary>
+    public int TickIntervalSeconds { get; set; } = 60;
+
+    /// <summary>Optional job definitions keyed by stable job ID.</summary>
+    public Dictionary<string, CronJobConfig>? Jobs { get; set; }
+}
+
+/// <summary>Config-defined cron job descriptor.</summary>
+public sealed class CronJobConfig
+{
+    /// <summary>Display name for the cron job.</summary>
+    public string? Name { get; set; }
+
+    /// <summary>Cron expression schedule.</summary>
+    public string? Schedule { get; set; }
+
+    /// <summary>Action type (for example: <c>agent-prompt</c>).</summary>
+    public string? ActionType { get; set; }
+
+    /// <summary>Target agent identifier for agent prompt jobs.</summary>
+    public string? AgentId { get; set; }
+
+    /// <summary>Prompt message for agent prompt jobs.</summary>
+    public string? Message { get; set; }
+
+    /// <summary>Webhook destination URL for webhook jobs.</summary>
+    public string? WebhookUrl { get; set; }
+
+    /// <summary>Shell command payload for shell jobs.</summary>
+    public string? ShellCommand { get; set; }
+
+    /// <summary>Whether this job is enabled.</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Optional creator label for auditing.</summary>
+    public string? CreatedBy { get; set; }
+
+    /// <summary>Optional metadata entries persisted with the job.</summary>
+    public Dictionary<string, string>? Metadata { get; set; }
 }
 
 /// <summary>Configuration for dynamic extension discovery and loading.</summary>

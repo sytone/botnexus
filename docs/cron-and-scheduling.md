@@ -698,48 +698,38 @@ List all registered jobs with current status.
 ]
 ```
 
-### `GET /api/cron/history?limit=50`
-
-Aggregated execution history across all jobs (default limit: 50, max: 500).
-
-**Response:**
-```json
-[
-  {
-    "jobName": "morning-briefing",
-    "correlationId": "a1b2c3d4",
-    "startedAt": "2026-04-02T09:00:05Z",
-    "completedAt": "2026-04-02T09:00:12Z",
-    "success": true,
-    "output": "Morning briefing generated.",
-    "error": null
-  }
-]
-```
-
-### `GET /api/cron/{name}`
+### `GET /api/cron/{jobId}`
 
 Get detailed status and execution history for a specific job. Returns `404` if not found.
 
-### `POST /api/cron/{name}/trigger`
+### `GET /api/cron/{jobId}/runs?limit=20`
+
+Returns execution history for a specific job.
+
+### `POST /api/cron/{jobId}/run`
 
 Manually trigger a job outside its schedule. Returns `404` if not found.
 
 **Response:**
 ```json
-{ "triggered": true, "jobName": "morning-briefing" }
+{
+  "id": "run-id",
+  "jobId": "morning-briefing",
+  "status": "accepted"
+}
 ```
 
-### `PUT /api/cron/{name}/enable`
+### `POST /api/cron`
 
-Enable or disable a job at runtime. Returns `400` for invalid body, `404` if not found.
+Create a cron job.
 
-**Request body:**
-```json
-{ "enabled": false }
-```
+### `PUT /api/cron/{jobId}`
 
-**Response:**
+Update a cron job by identifier.
+
+### `DELETE /api/cron/{jobId}`
+
+Delete a cron job.
 ```json
 { "jobName": "morning-briefing", "enabled": false }
 ```

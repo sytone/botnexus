@@ -1495,40 +1495,56 @@
             const channelsDiv = document.createElement('div');
             channelsDiv.className = 'agent-group-channels';
 
-            // Always show channel entry
+            // Show one entry per channel so cron and interactive sessions are both visible
             const agentSessions = (sessionsByAgent[agentId] || []).sort((a, b) =>
                 new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0)
             );
-            const latestSession = agentSessions[0];
+            const latestByChannel = new Map();
+            for (const s of agentSessions) {
+                const key = (s.channelType || 'SignalR').toLowerCase();
+                if (!latestByChannel.has(key)) latestByChannel.set(key, s);
+            }
 
-            const channelEl = document.createElement('div');
-            channelEl.className = 'list-item' + (latestSession && latestSession.sessionId === currentSessionId ? ' active' : '');
-            if (latestSession) channelEl.dataset.sessionId = latestSession.sessionId;
-            channelEl.dataset.agentId = agentId;
-
-            const timeStr = latestSession ? relativeTime(latestSession.updatedAt || latestSession.createdAt) : 'No sessions';
-            const channelType = latestSession?.channelType || 'SignalR';
-            const emoji = channelEmoji(channelType);
-            const isActive = latestSession && latestSession.sessionId === currentSessionId;
-
-            channelEl.innerHTML = `
-                <div class="list-item-row">
-                    <span class="item-title">${emoji} ${escapeHtml(channelType)}${isActive ? ' (active)' : ''}</span>
-                </div>
-                <span class="item-meta">${timeStr}</span>
-            `;
-
-            channelEl.addEventListener('click', () => {
-                if (latestSession) {
-                    openSession(latestSession.sessionId, agentId);
-                } else {
+            if (latestByChannel.size === 0) {
+                const emptyChannelEl = document.createElement('div');
+                emptyChannelEl.className = 'list-item';
+                emptyChannelEl.dataset.agentId = agentId;
+                emptyChannelEl.innerHTML = `
+                    <div class="list-item-row">
+                        <span class="item-title">💬 SignalR</span>
+                    </div>
+                    <span class="item-meta">No sessions</span>
+                `;
+                emptyChannelEl.addEventListener('click', () => {
                     elAgentSelect.value = agentId;
                     currentAgentId = agentId;
                     startNewChat();
-                }
-            });
+                });
+                channelsDiv.appendChild(emptyChannelEl);
+            } else {
+                for (const latestSession of latestByChannel.values()) {
+                    const channelEl = document.createElement('div');
+                    channelEl.className = 'list-item' + (latestSession.sessionId === currentSessionId ? ' active' : '');
+                    channelEl.dataset.sessionId = latestSession.sessionId;
+                    channelEl.dataset.agentId = agentId;
 
-            channelsDiv.appendChild(channelEl);
+                    const timeStr = relativeTime(latestSession.updatedAt || latestSession.createdAt);
+                    const channelType = latestSession.channelType || 'SignalR';
+                    const emoji = channelEmoji(channelType);
+                    const isActive = latestSession.sessionId === currentSessionId;
+
+                    channelEl.innerHTML = `
+                        <div class="list-item-row">
+                            <span class="item-title">${emoji} ${escapeHtml(channelType)}${isActive ? ' (active)' : ''}</span>
+                        </div>
+                        <span class="item-meta">${timeStr}</span>
+                    `;
+
+                    channelEl.addEventListener('click', () => openSession(latestSession.sessionId, agentId));
+                    channelsDiv.appendChild(channelEl);
+                }
+            }
+
             group.appendChild(channelsDiv);
             elSessionsList.appendChild(group);
         }
@@ -2548,7 +2564,7 @@
     }
 
     // =========================================================================
-    // Cron view (placeholder — no backend yet)
+    // Cron view
     // =========================================================================
 
     function openCronView() {

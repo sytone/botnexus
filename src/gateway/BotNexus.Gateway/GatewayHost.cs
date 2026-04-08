@@ -212,6 +212,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher
             var existingSessionTask = _sessions.GetAsync(sessionId, cancellationToken);
             var existingSession = existingSessionTask is null ? null : await existingSessionTask;
             var session = existingSession ?? await _sessions.GetOrCreateAsync(sessionId, agentId, cancellationToken);
+            session.ChannelType ??= message.ChannelType;
+            session.CallerId ??= message.SenderId;
             if (ShouldInitializeSystemPrompt(session))
             {
                 session.Metadata[SystemPromptInitializedMetadataKey] = true;

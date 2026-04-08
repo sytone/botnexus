@@ -165,6 +165,7 @@ public static class PlatformConfigLoader
         ValidateChannels(config.Channels, errors);
         ValidateAgents(config.Agents, errors);
         ValidateApiKeys(config.GetApiKeys(), errors);
+        ValidateCron(config.Cron, errors);
 
         return errors;
     }
@@ -362,6 +363,32 @@ public static class PlatformConfigLoader
             {
                 errors.Add($"{field} must be a valid http or https absolute URL.");
             }
+        }
+    }
+
+    private static void ValidateCron(CronConfig? cron, List<string> errors)
+    {
+        if (cron is null)
+            return;
+
+        if (cron.TickIntervalSeconds <= 0)
+            errors.Add("cron.tickIntervalSeconds must be greater than zero.");
+
+        if (cron.Jobs is null)
+            return;
+
+        foreach (var (jobId, job) in cron.Jobs)
+        {
+            if (string.IsNullOrWhiteSpace(jobId))
+            {
+                errors.Add("cron.jobs contains an empty job key. Use a stable job ID.");
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(job.Schedule))
+                errors.Add($"cron.jobs.{jobId}.schedule is required.");
+            if (string.IsNullOrWhiteSpace(job.ActionType))
+                errors.Add($"cron.jobs.{jobId}.actionType is required.");
         }
     }
 

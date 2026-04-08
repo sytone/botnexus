@@ -15,6 +15,8 @@ public static class GatewayApiServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddBotNexusGatewayApi(this IServiceCollection services)
     {
+        services.AddSingleton<CronChannelAdapter>();
+        services.AddSingleton<IChannelAdapter>(provider => provider.GetRequiredService<CronChannelAdapter>());
         services.AddSingleton<SignalRChannelAdapter>();
         services.AddSingleton<IChannelAdapter>(provider => provider.GetRequiredService<SignalRChannelAdapter>());
         services.AddControllers()

@@ -189,6 +189,7 @@ public static class GatewayServiceCollectionExtensions
         target.SessionsDirectory = source.SessionsDirectory;
         target.SessionStore = source.SessionStore;
         target.Cors = source.Cors;
+        target.Cron = source.Cron;
         target.LogLevel = source.LogLevel;
     }
 

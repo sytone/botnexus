@@ -205,6 +205,37 @@ public sealed class GatewayHostTests
     }
 
     [Fact]
+    public async Task DispatchAsync_SetsSessionChannelTypeFromInboundMessage()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+
+        var handle = CreatePromptHandle("agent-a", "cron:job-1:run-1", "ok");
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync("agent-a", "cron:job-1:run-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var session = new GatewaySession { SessionId = "cron:job-1:run-1", AgentId = "agent-a" };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetOrCreateAsync("cron:job-1:run-1", "agent-a", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var host = CreateHost(
+            supervisor.Object,
+            router.Object,
+            sessions.Object,
+            new RecordingActivityBroadcaster(),
+            CreateChannelManager());
+
+        await host.DispatchAsync(CreateMessage("run", channelType: "cron", conversationId: "cron:job-1:run-1", sessionId: "cron:job-1:run-1"));
+
+        session.ChannelType.Should().Be("cron");
+    }
+
+    [Fact]
     public async Task DispatchAsync_WithSuspendedSession_RejectsNewMessages()
     {
         var router = new Mock<IMessageRouter>();
@@ -535,10 +566,11 @@ public sealed class GatewayHostTests
         string content,
         string? sessionId = null,
         string conversationId = "conv-1",
+        string channelType = "web",
         IReadOnlyDictionary<string, object?>? metadata = null)
         => new()
         {
-            ChannelType = "web",
+            ChannelType = channelType,
             SenderId = "sender-1",
             ConversationId = conversationId,
             Content = content,

@@ -7,6 +7,7 @@ using BotNexus.Gateway.Api.Hubs;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using System.Security.Claims;
 
@@ -123,7 +124,8 @@ public sealed class SignalRHubTests
             registry ?? Mock.Of<IAgentRegistry>(),
             sessions ?? Mock.Of<ISessionStore>(),
             dispatcher ?? Mock.Of<IChannelDispatcher>(),
-            activity ?? Mock.Of<IActivityBroadcaster>())
+            activity ?? Mock.Of<IActivityBroadcaster>(),
+            NullLogger<GatewayHub>.Instance)
         {
             Clients = clients ?? Mock.Of<IHubCallerClients>(),
             Groups = groups ?? Mock.Of<IGroupManager>(),

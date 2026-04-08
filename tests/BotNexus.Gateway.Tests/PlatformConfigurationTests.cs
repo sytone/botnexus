@@ -163,6 +163,7 @@ public sealed class PlatformConfigurationTests
         config.Gateway.Should().BeNull();
         config.Agents.Should().BeNull();
         config.Channels.Should().BeNull();
+        config.Cron.Should().BeNull();
         config.LogLevel.Should().BeNull();
         config.Providers.Should().BeNull();
         config.SessionStore.Should().BeNull();
@@ -363,6 +364,26 @@ public sealed class PlatformConfigurationTests
         });
 
         errors.Should().ContainSingle(e => e.Contains("gateway.sessionStore.connectionString", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PlatformConfigLoader_Validate_WithInvalidCronSettings_ReturnsActionableErrors()
+    {
+        var errors = PlatformConfigLoader.Validate(new PlatformConfig
+        {
+            Cron = new CronConfig
+            {
+                TickIntervalSeconds = 0,
+                Jobs = new Dictionary<string, CronJobConfig>
+                {
+                    ["job-1"] = new()
+                }
+            }
+        });
+
+        errors.Should().Contain(e => e.Contains("cron.tickIntervalSeconds", StringComparison.Ordinal));
+        errors.Should().Contain(e => e.Contains("cron.jobs.job-1.schedule", StringComparison.Ordinal));
+        errors.Should().Contain(e => e.Contains("cron.jobs.job-1.actionType", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -583,6 +604,7 @@ public sealed class PlatformConfigurationTests
                 config.Agents = configOverride.Agents;
                 config.Providers = configOverride.Providers;
                 config.Channels = configOverride.Channels;
+                config.Cron = configOverride.Cron;
                 config.ApiKey = configOverride.ApiKey;
                 config.ApiKeys = configOverride.ApiKeys;
                 config.ListenUrl = configOverride.ListenUrl;
