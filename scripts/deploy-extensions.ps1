@@ -14,7 +14,8 @@ $dest = Join-Path $env:USERPROFILE ".botnexus" "extensions"
 $extensions = @(
     @{ Id = "botnexus-skills";  Src = "extensions/skills/BotNexus.Extensions.Skills" },
     @{ Id = "botnexus-exec";    Src = "extensions/tools/exec/BotNexus.Extensions.ExecTool" },
-    @{ Id = "botnexus-process"; Src = "extensions/tools/process/BotNexus.Extensions.ProcessTool" }
+    @{ Id = "botnexus-process"; Src = "extensions/tools/process/BotNexus.Extensions.ProcessTool" },
+    @{ Id = "botnexus-mcp";     Src = "extensions/mcp/BotNexus.Extensions.Mcp" }
 )
 
 foreach ($ext in $extensions) {
