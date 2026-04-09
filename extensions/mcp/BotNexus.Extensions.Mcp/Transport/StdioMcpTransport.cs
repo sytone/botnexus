@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using BotNexus.Extensions.Mcp.Protocol;
 
 namespace BotNexus.Extensions.Mcp.Transport;
@@ -11,10 +12,16 @@ namespace BotNexus.Extensions.Mcp.Transport;
 /// </summary>
 public sealed class StdioMcpTransport : IMcpTransport
 {
+    private static readonly HashSet<string> SensitiveKeyPatterns = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "TOKEN", "KEY", "SECRET", "PASSWORD", "CREDENTIAL", "AUTH", "API_KEY", "APIKEY"
+    };
+
     private readonly string _command;
     private readonly IReadOnlyList<string> _args;
     private readonly IReadOnlyDictionary<string, string>? _env;
     private readonly string? _workingDirectory;
+    private readonly bool _inheritEnv;
 
     private Process? _process;
     private StreamWriter? _writer;
@@ -29,12 +36,14 @@ public sealed class StdioMcpTransport : IMcpTransport
         string command,
         IReadOnlyList<string>? args = null,
         IReadOnlyDictionary<string, string>? env = null,
-        string? workingDirectory = null)
+        string? workingDirectory = null,
+        bool inheritEnv = true)
     {
         _command = command;
         _args = args ?? [];
         _env = env;
         _workingDirectory = workingDirectory;
+        _inheritEnv = inheritEnv;
     }
 
     /// <inheritdoc />
@@ -63,6 +72,13 @@ public sealed class StdioMcpTransport : IMcpTransport
         foreach (var arg in processArgs)
         {
             startInfo.ArgumentList.Add(arg);
+        }
+
+        // When inheritEnv is false, clear inherited environment so the subprocess
+        // only sees explicitly configured variables.
+        if (!_inheritEnv)
+        {
+            startInfo.Environment.Clear();
         }
 
         if (_env is not null)
@@ -240,6 +256,33 @@ public sealed class StdioMcpTransport : IMcpTransport
         }
 
         return Environment.GetEnvironmentVariable(inner.ToString()) ?? string.Empty;
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> if the environment variable key looks like it holds
+    /// a sensitive value (token, key, secret, password, etc.).
+    /// </summary>
+    internal static bool IsSensitiveEnvKey(string key)
+    {
+        foreach (var pattern in SensitiveKeyPatterns)
+        {
+            if (key.Contains(pattern, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Returns a log-safe representation of an environment variable value.
+    /// Sensitive values are masked as <c>***</c>.
+    /// </summary>
+    internal static string MaskValue(string key, string value)
+    {
+        if (IsSensitiveEnvKey(key))
+            return "***";
+
+        return value;
     }
 
     /// <summary>

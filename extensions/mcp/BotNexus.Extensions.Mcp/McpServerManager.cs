@@ -105,7 +105,8 @@ public sealed class McpServerManager : IAsyncDisposable
                 serverConfig.Command,
                 serverConfig.Args,
                 serverConfig.Env,
-                serverConfig.WorkingDirectory);
+                serverConfig.WorkingDirectory,
+                serverConfig.InheritEnv);
         }
 
         return null;
