@@ -10528,3 +10528,2765 @@ Wave 1 code quality excellent — all new controllers, DTOs, auth middleware, te
 1. **WebUI is a new staleness vector** — JS not type-checked against C# DTOs → first JS-level drift caught
 2. **New middleware = new doc sections** — Rate limiting and correlation ID middleware fully implemented but completely absent from READMEs/api-reference
 3. **Config fields drift silently** — `Version` field added to `PlatformConfig` but none of 4 documentation/example files updated
+
+### 2026-04-06T15-37-34: User directive
+**By:** Jon Bullen (via Copilot)
+**What:** Platform config must define which providers are active/authenticated. Per-provider model allowlists to limit available models. Per-agent default model + allowed models list for further restriction. Only active providers should appear in UI dropdowns.
+**Why:** User request - captured for team memory
+
+### 2026-04-06T15-43-51: User directive
+**By:** Jon Bullen (via Copilot)
+**What:** Configuration changes must be dynamically reloaded - the gateway should reconfigure itself on the fly. No/minimal config items should require a process restart. Hot-reload is the default expectation.
+**Why:** User request - captured for team memory
+
+### 2026-04-06T15-57-13: User directive
+**By:** Jon Bullen (via Copilot)
+**What:** All config should default to the user profile under ~/.botnexus/ folder. Agent configs, platform config, everything. Only changes if the user explicitly overrides it.
+**Why:** User request - captured for team memory
+
+### 2026-04-06T16-12-30: User directives (agent config architecture)
+**By:** Jon Bullen (via Copilot)
+**What:**
+1. Agent configs should be part of the main config.json, not scattered in separate files. There should be ONE source of truth for config.
+2. Each agent should have a clear directory structure under ~/.botnexus/agents/{agent-id}/:
+   - workspace/ - working context (SOUL.md, IDENTITY.md, USER.md, MEMORY.md, instructions)
+   - sessions/ and other internal data folders
+3. The workspace has working context/instructions. Internal folders have sessions and operational data.
+4. All agent information should be easy to find - workspace for context, internal folders for sessions/data.
+**Why:** User request - architectural clarity and single source of truth
+
+### 2026-04-06T16-30-16: User directive (system prompt loading)
+**By:** Jon Bullen (via Copilot)
+**What:** systemPromptFile should be an ordered array of files (systemPromptFiles). The array order determines load order. If empty/missing, use default load order: AGENTS.md, SOUL.md, TOOLS.md, BOOTSTRAP.md (removed after first run), IDENTITY.md, USER.md. All resolved from agent workspace directory.
+**Why:** User request - flexible prompt composition with sensible defaults
+
+### 2026-04-06T16-33-46: User directive (workspace file templates)
+**By:** Jon Bullen (via Copilot)
+**What:** Workspace scaffold files (AGENTS.md, SOUL.md, TOOLS.md, BOOTSTRAP.md, IDENTITY.md, USER.md) should have default templates, not be created empty. Templates should be stored under the Gateway project as embedded resources that are easy to edit and update. Gateway pulls them at runtime when scaffolding a new agent workspace.
+**Why:** User request - new agents should start with useful default content, templates maintained in the codebase
+
+### 2026-04-06T17-37-41: User directive (WebUI channel/session display)
+**By:** Jon Bullen (via Copilot)
+**What:** When multiple channels are enabled, the WebUI should show them and let users interact with each. The chat display name should indicate both the agent AND the channel/session being viewed (e.g. 'Nova - WebSocket' or 'Assistant - Telegram'). Each agent+channel combination is a distinct session context.
+**Why:** User request - clear multi-channel UX with agent+channel identity in the chat header
+
+### 2026-04-07T16-01-37: User directive (Agent page UX)
+**By:** Jon Bullen (via Copilot)
+**What:** Clicking an agent in the sidebar should open a full agent page (not a modal dialog). The page should show: the chat for that agent, agent details/config, and allow editing settings. This gives a richer experience where you can see and manage everything about an agent in one place.
+**Why:** User request - better agent management UX, single-page per agent instead of dialog popups
+
+# Farnsworth Decision: Agent Config Writer Registration Fallback
+
+**Date:** 2026-04-06  
+**Status:** Implemented
+
+## Context
+
+`AgentsController` now depends on `IAgentConfigurationWriter` to persist API-driven agent changes. Some test harnesses and startup paths can register gateway services without file-backed agent configuration.
+
+## Decision
+
+Register `NoOpAgentConfigurationWriter` as the default writer in `AddBotNexusGateway` via `TryAddSingleton`, then replace it with `FileAgentConfigurationWriter` when `AddFileAgentConfiguration(...)` is used.
+
+## Rationale
+
+- Prevents runtime DI failures when no file configuration source is configured.
+- Preserves backwards compatibility for harnesses that only need in-memory behavior.
+- Enables persistence automatically whenever file agent configuration is active.
+
+# Cron Infrastructure — Architecture Proposal
+
+**Author:** Leela (Lead / Architect)
+**Requested by:** Jon Bullen
+**Date:** 2026-04-10
+**Status:** Proposed
+**Reference:** OpenClaw `src/cron/` (TypeScript implementation)
+
+---
+
+## 1. OpenClaw Reference Summary
+
+### How OpenClaw Implements Cron
+
+OpenClaw's cron system is a mature, production-grade subsystem spread across ~25 files under `src/cron/`. Key architecture:
+
+| Component | File(s) | Purpose |
+|-----------|---------|---------|
+| `CronService` | `service.ts` + `service/*.ts` | Orchestrator — start/stop/list/add/update/remove/run |
+| `CronJob` | `types.ts`, `types-shared.ts` | Job model with schedule, payload, delivery, state |
+| Timer loop | `service/timer.ts` | `setInterval` (10–60s) evaluating due jobs |
+| Store | `service/store.ts` | JSON file persistence (`~/.openclaw/cron/jobs.json`) |
+| Isolated agent | `isolated-agent.ts`, `isolated-agent/run.ts` | Ephemeral agent sessions for cron-triggered turns |
+| Cron tool | `agents/tools/cron-tool.ts` | Agent-facing tool (status/list/add/update/remove/run/runs/wake) |
+| Gateway RPC | `server-methods/cron.ts` | RPC handlers for CLI/WebUI |
+| Delivery | `delivery.ts`, `delivery-plan.ts` | Output routing (announce, webhook) |
+| Run log | `run-log.ts` | JSONL execution history per job |
+| Session reaper | `session-reaper.ts` | Prunes old isolated cron sessions |
+| Schedule engine | `schedule.ts` | Uses [Croner](https://github.com/hexagon/croner) for cron expression evaluation |
+
+**OpenClaw's schedule types:**
+- `"cron"` — Standard cron expressions with timezone support
+- `"every"` — Fixed interval (milliseconds) with optional anchor
+- `"at"` — One-shot ISO-8601 timestamp
+
+**OpenClaw's payload types:**
+- `"agentTurn"` — Dedicated agent execution in an isolated session (model override, tool allowlist, timeout)
+- `"systemEvent"` — Injects text into the main heartbeat session
+
+**OpenClaw's session targets:**
+- `"main"` — Heartbeat session (systemEvent only)
+- `"isolated"` — Ephemeral `cron:<jobId>` session
+- `"current"` — Bound to creating session
+- `"session:<name>"` — Persistent named session
+
+**OpenClaw's delivery modes:**
+- `"none"` — No output delivery
+- `"announce"` — Send result to a channel (Slack, Telegram, etc.)
+- `"webhook"` — POST result to a URL
+
+**Key design choices in OpenClaw:**
+- JSON file storage (not a database) — simple but limited querying
+- Single-process concurrency control via `locked()` wrapper
+- Jobs carry full runtime state inline (nextRunAtMs, consecutiveErrors, etc.)
+- Startup catch-up: runs missed jobs with stagger to avoid thundering herd
+- Failure alerts with cooldown to prevent alert fatigue
+
+### What to Adopt vs. Adapt
+
+| OpenClaw Pattern | BotNexus Approach |
+|------------------|-------------------|
+| CronService orchestrator | **Adopt** — `CronScheduler` as `BackgroundService` |
+| JSON file store | **Adapt** — Use SQLite (matches our memory store pattern) |
+| Cron expressions via Croner | **Adapt** — Use [Cronos](https://github.com/HangfireIO/Cronos) (.NET, MIT licensed) |
+| Payload types (agentTurn, systemEvent) | **Adapt** — Polymorphic `ICronAction` with DI (more extensible) |
+| Session targets (main, isolated, current, named) | **Adopt** — Map to our `ChannelType = "cron"` with session targets |
+| Agent cron tool | **Adopt** — `CronTool : IAgentTool` with same action verbs |
+| Delivery system | **Defer** — Out of scope for v1 (agents can use their own channel tools) |
+| Failure alerts | **Defer** — v1 logs failures; alert system comes later |
+| Run log (JSONL) | **Adapt** — Store run history in SQLite `cron_runs` table |
+| Session reaper | **Adapt** — Extend existing `SessionCleanupService` |
+| Gateway RPC handlers | **Adapt** — REST API controllers (matches our pattern) |
+
+---
+
+## 2. Architecture
+
+### Core Interfaces
+
+```csharp
+// src/cron/BotNexus.Cron/ICronAction.cs
+public interface ICronAction
+{
+    /// <summary>Unique action type key (e.g., "agent-prompt", "webhook", "shell").</summary>
+    string ActionType { get; }
+
+    /// <summary>Execute the cron action.</summary>
+    Task ExecuteAsync(CronExecutionContext context, CancellationToken cancellationToken);
+}
+```
+
+```csharp
+// src/cron/BotNexus.Cron/CronExecutionContext.cs
+public sealed record CronExecutionContext
+{
+    /// <summary>The job being executed.</summary>
+    public required CronJob Job { get; init; }
+
+    /// <summary>When the execution was triggered.</summary>
+    public required DateTimeOffset TriggeredAt { get; init; }
+
+    /// <summary>Whether this is a manual (run-now) vs scheduled trigger.</summary>
+    public required CronTriggerType TriggerType { get; init; }
+
+    /// <summary>Scoped service provider for resolving dependencies.</summary>
+    public required IServiceProvider Services { get; init; }
+
+    /// <summary>Logger scoped to this execution.</summary>
+    public required ILogger Logger { get; init; }
+}
+
+public enum CronTriggerType { Scheduled, Manual }
+```
+
+### Built-in Action Types
+
+**`AgentPromptAction`** — Sends a message to an agent, creating an isolated cron session:
+
+```csharp
+// src/cron/BotNexus.Cron/Actions/AgentPromptAction.cs
+public sealed class AgentPromptAction(
+    ISessionStore sessionStore,
+    IAgentSupervisor agentSupervisor,
+    IAgentCommunicator agentCommunicator) : ICronAction
+{
+    public string ActionType => "agent-prompt";
+
+    public async Task ExecuteAsync(CronExecutionContext context, CancellationToken ct)
+    {
+        var job = context.Job;
+        var sessionId = $"cron:{job.Id}:{context.TriggeredAt:yyyyMMdd-HHmmss}";
+
+        // Create cron session (appears in WebUI)
+        var session = await sessionStore.GetOrCreateAsync(sessionId, job.AgentId, ct);
+        session.ChannelType = "cron";
+        session.Metadata["cronJobId"] = job.Id;
+        session.Metadata["cronJobName"] = job.Name;
+        session.Metadata["triggerType"] = context.TriggerType.ToString();
+
+        // Dispatch prompt to agent
+        await agentCommunicator.SendAsync(job.AgentId, sessionId, job.ActionConfig.Message, ct);
+        await sessionStore.SaveAsync(session, ct);
+    }
+}
+```
+
+**`WebhookAction`** — POSTs to a URL with job context:
+
+```csharp
+// src/cron/BotNexus.Cron/Actions/WebhookAction.cs
+public sealed class WebhookAction(IHttpClientFactory httpClientFactory) : ICronAction
+{
+    public string ActionType => "webhook";
+
+    public async Task ExecuteAsync(CronExecutionContext context, CancellationToken ct)
+    {
+        var client = httpClientFactory.CreateClient("CronWebhook");
+        var payload = new { jobId = context.Job.Id, jobName = context.Job.Name,
+                            triggeredAt = context.TriggeredAt, config = context.Job.ActionConfig };
+        await client.PostAsJsonAsync(context.Job.ActionConfig.WebhookUrl, payload, ct);
+    }
+}
+```
+
+**`ShellAction`** (future) — Executes a shell command. Deferred to v2 due to security surface.
+
+### CronScheduler (Hosted Service)
+
+```csharp
+// src/cron/BotNexus.Cron/CronScheduler.cs
+public sealed class CronScheduler(
+    ICronStore cronStore,
+    IEnumerable<ICronAction> actions,
+    IServiceScopeFactory scopeFactory,
+    IOptions<CronOptions> options,
+    ILogger<CronScheduler> logger) : BackgroundService
+{
+    // Timer-based loop (configurable tick interval, default 30s)
+    // On each tick:
+    //   1. Load enabled jobs from CronStore
+    //   2. Evaluate schedule — is job due? (using Cronos)
+    //   3. Dispatch due jobs to matching ICronAction
+    //   4. Record run result to CronStore
+    //   5. Compute and persist next run time
+    //
+    // Concurrency: maxConcurrentRuns (default 1) via SemaphoreSlim
+    // Startup catch-up: runs missed jobs with configurable stagger
+    // Error handling: catch per-job, log, increment consecutiveErrors
+}
+```
+
+### CronStore (SQLite)
+
+```csharp
+// src/cron/BotNexus.Cron/CronStore.cs
+public sealed class CronStore : ICronStore
+{
+    // Location: ~/.botnexus/data/cron.sqlite
+    // Schema:
+    //
+    // cron_jobs:
+    //   id TEXT PRIMARY KEY,
+    //   name TEXT NOT NULL,
+    //   description TEXT,
+    //   agent_id TEXT NOT NULL,
+    //   schedule_expr TEXT NOT NULL,       -- cron expression
+    //   schedule_timezone TEXT,            -- IANA timezone
+    //   action_type TEXT NOT NULL,         -- "agent-prompt", "webhook"
+    //   action_config_json TEXT NOT NULL,  -- polymorphic config
+    //   enabled INTEGER NOT NULL DEFAULT 1,
+    //   created_by TEXT,                   -- agent or user who created
+    //   created_at TEXT NOT NULL,
+    //   updated_at TEXT NOT NULL,
+    //   next_run_at TEXT,
+    //   last_run_at TEXT,
+    //   last_run_status TEXT,              -- "ok", "error", "timeout"
+    //   last_error TEXT,
+    //   consecutive_errors INTEGER NOT NULL DEFAULT 0,
+    //   max_retries INTEGER NOT NULL DEFAULT 3
+    //
+    // cron_runs:
+    //   id INTEGER PRIMARY KEY AUTOINCREMENT,
+    //   job_id TEXT NOT NULL REFERENCES cron_jobs(id),
+    //   started_at TEXT NOT NULL,
+    //   completed_at TEXT,
+    //   status TEXT NOT NULL,              -- "running", "ok", "error", "timeout"
+    //   trigger_type TEXT NOT NULL,        -- "scheduled", "manual"
+    //   session_id TEXT,                   -- linked session (if created)
+    //   error_message TEXT,
+    //   duration_ms INTEGER
+}
+```
+
+### Session Integration
+
+Cron sessions integrate with the existing session system naturally:
+
+1. **`AgentPromptAction`** creates sessions via `ISessionStore.GetOrCreateAsync()` with `ChannelType = "cron"`
+2. Sessions are stored in the same session store as SignalR/Telegram/TUI sessions
+3. `SessionsController.ListAsync()` already returns all sessions — cron sessions appear alongside others
+4. `SessionCleanupService` already handles expiry — cron sessions respect the same TTL
+
+**No changes needed to existing session infrastructure.** The `ChannelType = "cron"` field is the only distinguishing marker.
+
+---
+
+## 3. Config Schema
+
+Cron jobs are defined in the platform config (`~/.botnexus/config.json`), in addition to being created dynamically via API/tool:
+
+```jsonc
+{
+  "cron": {
+    "enabled": true,
+    "tickIntervalSeconds": 30,
+    "maxConcurrentRuns": 2,
+    "sessionRetentionHours": 24,
+    "jobs": {
+      "daily-summary": {
+        "schedule": "0 9 * * *",
+        "timezone": "America/Los_Angeles",
+        "action": "agent-prompt",
+        "agentId": "nova",
+        "message": "Give me a summary of yesterday's activity across all agents.",
+        "enabled": true
+      },
+      "hourly-health": {
+        "schedule": "0 * * * *",
+        "action": "webhook",
+        "webhookUrl": "https://hooks.example.com/health",
+        "enabled": true
+      },
+      "weekly-cleanup": {
+        "schedule": "0 2 * * 0",
+        "action": "agent-prompt",
+        "agentId": "hermes",
+        "message": "Archive sessions older than 7 days and compact memory stores.",
+        "enabled": false
+      }
+    }
+  }
+}
+```
+
+**Options class:**
+
+```csharp
+public sealed class CronOptions
+{
+    public const string SectionName = "cron";
+
+    public bool Enabled { get; set; } = true;
+    public int TickIntervalSeconds { get; set; } = 30;
+    public int MaxConcurrentRuns { get; set; } = 2;
+    public int SessionRetentionHours { get; set; } = 24;
+    public int MaxRetries { get; set; } = 3;
+    public Dictionary<string, CronJobConfig> Jobs { get; set; } = [];
+}
+
+public sealed class CronJobConfig
+{
+    public required string Schedule { get; set; }
+    public string? Timezone { get; set; }
+    public required string Action { get; set; }
+    public string? AgentId { get; set; }
+    public string? Message { get; set; }
+    public string? WebhookUrl { get; set; }
+    public bool Enabled { get; set; } = true;
+}
+```
+
+Config-defined jobs are seeded into the `CronStore` on startup if not already present (idempotent upsert by name).
+
+---
+
+## 4. Agent Cron Tool
+
+The `CronTool` follows the `IAgentTool` contract and provides agents with full cron CRUD:
+
+```csharp
+// src/cron/BotNexus.Cron/Tools/CronTool.cs
+public sealed class CronTool(ICronStore cronStore, CronScheduler scheduler) : IAgentTool
+{
+    public string Name => "cron";
+    public string Label => "Cron Job Manager";
+}
+```
+
+### Tool Actions
+
+| Action | Description | Parameters |
+|--------|-------------|------------|
+| `list` | List cron jobs | `agentId?` (filter), `includeDisabled?` |
+| `create` | Create a new cron job | `name`, `schedule`, `action`, `agentId`, `message?`, `webhookUrl?`, `enabled?` |
+| `update` | Modify an existing job | `id`, plus any field to patch |
+| `delete` | Remove a cron job | `id` |
+| `run-now` | Trigger immediate execution | `id` |
+| `status` | Get scheduler status | _(none)_ |
+
+### Permission Model
+
+```csharp
+// Permission check in CronTool.ExecuteAsync:
+//
+// 1. Resolve the calling agent's ID from tool execution context
+// 2. For create/update/delete: agent can only manage jobs where
+//    job.agentId == callingAgentId
+//    UNLESS the agent has "allowCrossAgentCron: true" in its config
+// 3. For list: agents see all jobs (read-only visibility)
+// 4. For run-now: same ownership rules as update
+```
+
+The permission flag is set in the agent descriptor's metadata:
+
+```jsonc
+{
+  "agents": {
+    "nova": {
+      "metadata": {
+        "allowCrossAgentCron": true  // Nova can manage other agents' cron jobs
+      }
+    }
+  }
+}
+```
+
+### Tool Schema (JSON Schema for LLM)
+
+```json
+{
+  "name": "cron",
+  "description": "Manage scheduled recurring jobs. Actions: list, create, update, delete, run-now, status.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["list", "create", "update", "delete", "run-now", "status"],
+        "description": "The cron operation to perform."
+      },
+      "id": { "type": "string", "description": "Job ID (required for update/delete/run-now)." },
+      "name": { "type": "string", "description": "Job name (required for create)." },
+      "schedule": { "type": "string", "description": "Cron expression, e.g., '0 9 * * *' (required for create)." },
+      "timezone": { "type": "string", "description": "IANA timezone for the schedule." },
+      "actionType": { "type": "string", "enum": ["agent-prompt", "webhook"], "description": "Action type." },
+      "agentId": { "type": "string", "description": "Target agent for agent-prompt actions." },
+      "message": { "type": "string", "description": "Prompt message for agent-prompt actions." },
+      "webhookUrl": { "type": "string", "description": "URL for webhook actions." },
+      "enabled": { "type": "boolean", "description": "Whether the job is enabled." },
+      "includeDisabled": { "type": "boolean", "description": "Include disabled jobs in list." }
+    },
+    "required": ["action"]
+  }
+}
+```
+
+---
+
+## 5. Session Integration
+
+### Session Creation Flow
+
+```
+CronScheduler tick
+  └─ Job is due
+     └─ Resolve ICronAction by ActionType
+        └─ AgentPromptAction.ExecuteAsync()
+           ├─ Create session: "cron:{jobId}:{timestamp}"
+           │   ChannelType = "cron"
+           │   Metadata = { cronJobId, cronJobName, triggerType }
+           ├─ IAgentCommunicator.SendAsync(agentId, sessionId, message)
+           └─ ISessionStore.SaveAsync(session)
+```
+
+### WebUI Visibility
+
+Cron sessions appear in the sessions list alongside SignalR sessions:
+
+- **List view:** `GET /api/sessions` returns all sessions. WebUI can filter by `channelType`:
+  - All sessions (default)
+  - `signalr` — Interactive WebSocket sessions
+  - `cron` — Scheduled job sessions
+  - `telegram` — Telegram channel sessions
+- **Session detail:** Clicking a cron session shows the full conversation (prompt + agent response + tool calls)
+- **Visual indicator:** WebUI can use the `channelType` field to show a clock icon or "Scheduled" badge
+
+### Session Resumption
+
+Users can resume cron-created sessions to interact with the output:
+
+1. User clicks on a cron session in WebUI
+2. WebUI calls `POST /hub/gateway/JoinSession` with the cron session ID
+3. Gateway's `GatewayHost` creates/resumes the agent instance for that session
+4. User can now send follow-up messages via SignalR (the session effectively becomes a hybrid cron+signalr session)
+5. The session's `ChannelType` remains `"cron"` to preserve origin tracking
+
+**No new infrastructure required.** The existing `JoinSession` → `DispatchAsync` pipeline already supports resuming any session regardless of origin channel. The only WebUI change is surfacing cron sessions in the session list and allowing click-to-resume.
+
+---
+
+## 6. API Endpoints
+
+New controller: `CronController` following existing REST patterns:
+
+```csharp
+[ApiController]
+[Route("api/cron")]
+public sealed class CronController(ICronStore cronStore, CronScheduler scheduler)
+```
+
+| Method | Route | Description | Response |
+|--------|-------|-------------|----------|
+| `GET` | `/api/cron` | List all cron jobs | `CronJobSummary[]` |
+| `GET` | `/api/cron/{id}` | Get job details + recent runs | `CronJobDetail` |
+| `POST` | `/api/cron` | Create a new job | `CronJobSummary` (201) |
+| `PUT` | `/api/cron/{id}` | Update a job | `CronJobSummary` |
+| `DELETE` | `/api/cron/{id}` | Delete a job | 204 No Content |
+| `POST` | `/api/cron/{id}/run` | Trigger immediate execution | `CronRunResult` (202) |
+| `GET` | `/api/cron/{id}/runs` | Get execution history | `CronRunEntry[]` |
+| `GET` | `/api/cron/status` | Scheduler status (enabled, job counts, next run) | `CronSchedulerStatus` |
+
+**Query parameters:**
+- `GET /api/cron?agentId=nova` — Filter jobs by agent
+- `GET /api/cron?enabled=true` — Filter by enabled state
+- `GET /api/cron/{id}/runs?limit=20&offset=0` — Paginated run history
+
+---
+
+## 7. Implementation Plan
+
+### Wave 1 — Core Infrastructure (Farnsworth)
+
+**Scope:** Project scaffold, models, store, scheduler skeleton
+
+- Create `BotNexus.Cron` project with solution reference
+- `CronJob` model, `CronOptions`, `CronJobConfig`
+- `ICronStore` interface + `SqliteCronStore` implementation (schema, CRUD, WAL mode)
+- `ICronAction` interface + `CronExecutionContext`
+- `CronScheduler` as `BackgroundService` (timer loop, schedule evaluation via Cronos, concurrency control)
+- Unit tests: store CRUD, schedule evaluation, timer logic
+- `CronServiceCollectionExtensions.AddBotNexusCron()` for DI registration
+
+**Depends on:** Nothing (greenfield)
+**Tests:** ~20 unit tests
+
+### Wave 2 — Actions + Agent Integration (Bender)
+
+**Scope:** Action types, session creation, agent dispatch
+
+- `AgentPromptAction` — creates cron session, dispatches to agent
+- `WebhookAction` — HTTP POST with job context
+- Cron session creation with `ChannelType = "cron"` and metadata
+- Wire actions into `CronScheduler` dispatch pipeline
+- Integration tests: action execution, session creation, agent response
+- Extend `SessionCleanupService` to respect `sessionRetentionHours` for cron sessions
+
+**Depends on:** Wave 1
+**Tests:** ~15 integration tests
+
+### Wave 3 — API + Agent Tool (Hermes)
+
+**Scope:** REST endpoints, agent-facing tool
+
+- `CronController` — full REST API (list, get, create, update, delete, run, runs, status)
+- `CronTool : IAgentTool` — agent CRUD with permission model
+- Register `CronTool` in tool registry
+- Config seeding — load `cron.jobs` from config into store on startup
+- API tests + tool tests
+
+**Depends on:** Wave 1 (store), partially Wave 2 (actions for run-now)
+**Tests:** ~15 tests (API + tool)
+
+### Wave 4 — WebUI + Polish (Amy / Hermes)
+
+**Scope:** Frontend integration, session resumption, observability
+
+- WebUI: cron session list filtering (channel type badge/icon)
+- WebUI: click-to-resume cron sessions (no backend changes needed)
+- WebUI: cron job management page (list, create, enable/disable) — optional, API exists
+- Structured logging for all cron operations
+- Run history pruning (max rows per job, configurable)
+- End-to-end integration tests
+
+**Depends on:** Waves 1–3
+**Tests:** ~10 E2E tests
+
+### Estimated Total
+
+| | Wave 1 | Wave 2 | Wave 3 | Wave 4 |
+|---|--------|--------|--------|--------|
+| **Owner** | Farnsworth | Bender | Hermes | Amy / Hermes |
+| **Focus** | Core | Actions | API + Tool | UI + Polish |
+| **Tests** | ~20 | ~15 | ~15 | ~10 |
+
+**Total:** 4 waves, ~60 new tests, 1 new project (`BotNexus.Cron`)
+
+---
+
+## 8. Project Structure
+
+```
+src/cron/BotNexus.Cron/
+├── BotNexus.Cron.csproj
+├── ICronAction.cs                          # Action interface
+├── CronExecutionContext.cs                 # Execution context record
+├── CronJob.cs                              # Job model
+├── CronOptions.cs                          # Configuration options
+├── CronScheduler.cs                        # BackgroundService — timer + dispatch
+├── ICronStore.cs                           # Store interface
+├── Actions/
+│   ├── AgentPromptAction.cs                # Creates cron session, prompts agent
+│   └── WebhookAction.cs                    # HTTP POST to webhook URL
+├── Store/
+│   └── SqliteCronStore.cs                  # SQLite persistence (WAL mode)
+├── Tools/
+│   └── CronTool.cs                         # IAgentTool — agent CRUD
+└── Extensions/
+    └── CronServiceCollectionExtensions.cs  # DI registration
+```
+
+**Test project:**
+```
+tests/BotNexus.Cron.Tests/
+├── BotNexus.Cron.Tests.csproj
+├── CronSchedulerTests.cs
+├── SqliteCronStoreTests.cs
+├── AgentPromptActionTests.cs
+├── WebhookActionTests.cs
+├── CronToolTests.cs
+└── CronControllerTests.cs
+```
+
+**API controller** lives in existing `BotNexus.Gateway.Api`:
+```
+src/gateway/BotNexus.Gateway.Api/Controllers/CronController.cs
+```
+
+---
+
+## Design Decisions
+
+### D1: SQLite over JSON file storage
+
+**OpenClaw uses JSON files.** We use SQLite because:
+- Matches our existing storage pattern (`SqliteMemoryStore`)
+- Enables efficient querying (filter by agent, status, date ranges)
+- Run history as a proper table with pagination (vs. JSONL log files)
+- WAL mode for concurrent reads during scheduler ticks
+- Atomic writes without manual file locking
+
+### D2: Polymorphic `ICronAction` with DI over hardcoded payload types
+
+**OpenClaw uses discriminated unions** (`kind: "agentTurn" | "systemEvent"`). We use interface + DI because:
+- C# doesn't have discriminated unions (yet)
+- New action types can be added via DI registration without modifying core
+- Extension assemblies can contribute custom cron actions
+- Follows BotNexus's existing extensibility pattern (tools, providers, channels)
+
+### D3: Cronos library over NCrontab or Quartz
+
+- **Cronos:** Lightweight, MIT license, supports 5-field and 6-field (with seconds), timezone-aware, `CronExpression.Parse()` → `GetNextOccurrence()`. No scheduling runtime — just expression evaluation.
+- **NCrontab:** Simpler but no timezone support.
+- **Quartz.NET:** Full scheduler — massively over-engineered for our needs (we have our own `BackgroundService` loop).
+
+Cronos fits perfectly: we own the timer loop, we just need expression evaluation.
+
+### D4: Cron sessions as first-class sessions (not separate storage)
+
+Rather than a separate "cron result" store, cron executions create real `GatewaySession` entries. This means:
+- Zero changes to session list/detail/history APIs
+- Cron conversations are immediately visible in WebUI
+- Users can resume and interact with cron results
+- Session cleanup applies uniformly
+
+### D5: Config seeding + dynamic creation (dual-path)
+
+Jobs can come from two sources:
+1. **Config file** (`cron.jobs` section) — seeded into SQLite on startup, idempotent by name
+2. **Dynamic** — created via API or agent tool at runtime
+
+Config-seeded jobs are marked with `createdBy = "config"` and are re-applied on restart (config wins for fields it specifies). Dynamically created jobs persist in SQLite across restarts.
+
+---
+
+## Risks and Mitigations
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| Missed jobs after restart | Medium | Startup catch-up: evaluate all enabled jobs on boot, run any past-due |
+| Thundering herd (many jobs at same time) | Medium | `maxConcurrentRuns` semaphore + stagger for same-second schedules |
+| Agent not available when cron fires | Low | Log error, increment `consecutiveErrors`, retry on next tick |
+| Unbounded run history | Low | Prune `cron_runs` table (max rows per job, configurable, default 100) |
+| Permission bypass via tool | Low | Ownership check in `CronTool.ExecuteAsync` before any mutation |
+| Long-running cron action blocks scheduler | Medium | Per-action timeout (configurable, default 5 min) via `CancellationTokenSource` |
+
+---
+
+## NuGet Dependencies
+
+| Package | Purpose | License |
+|---------|---------|---------|
+| `Cronos` | Cron expression parsing + next occurrence | MIT |
+| `Microsoft.Data.Sqlite` | SQLite access (already used by memory store) | MIT |
+
+No new external dependencies beyond `Cronos`. `Microsoft.Data.Sqlite` is already in the dependency graph.
+
+# MCP Extension Design for BotNexus
+
+**Decision Date:** 2026-04-07  
+**Decided By:** Leela (Lead/Architect)  
+**Status:** Proposed
+
+## 1. Architecture Overview
+
+### What is MCP?
+
+Model Context Protocol (MCP) is an open standard that enables AI applications to connect to external tool servers. MCP servers expose:
+- **Tools**: Executable functions (e.g., database queries, API calls)
+- **Resources**: Data sources (e.g., file contents, API responses)
+- **Prompts**: Reusable templates for LLM interactions
+
+### How MCP Fits Into BotNexus
+
+BotNexus uses an extension model where extensions are discovered via `botnexus-extension.json` manifests and loaded into isolated `AssemblyLoadContext` instances. The MCP extension follows this pattern:
+
+```
+extensions/
+└── mcp/
+    └── BotNexus.Extensions.Mcp/
+        ├── botnexus-extension.json
+        ├── BotNexus.Extensions.Mcp.dll
+        └── (dependencies)
+```
+
+**Key integration point:** The MCP extension creates `IAgentTool` implementations dynamically at agent session start, wrapping MCP server tools so they appear as native BotNexus tools.
+
+### High-Level Data Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         BotNexus Agent Session                       │
+├─────────────────────────────────────────────────────────────────────┤
+│  Agent calls tool "github_search_repositories"                      │
+│       ↓                                                             │
+│  ToolRegistry resolves to McpBridgedTool                           │
+│       ↓                                                             │
+│  McpBridgedTool.ExecuteAsync(...)                                  │
+│       ↓                                                             │
+│  McpClient.CallToolAsync("search_repositories", args)              │
+│       ↓                                                             │
+│  JSON-RPC over stdio or HTTP                                       │
+│       ↓                                                             │
+│  MCP Server (e.g., @modelcontextprotocol/server-github)            │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+## 2. Component Breakdown
+
+### Core Interfaces
+
+```csharp
+/// <summary>
+/// Factory for creating MCP clients from configuration.
+/// </summary>
+public interface IMcpClientFactory
+{
+    Task<IMcpClient> CreateAsync(McpServerConfig config, CancellationToken ct);
+}
+
+/// <summary>
+/// Represents a connection to an MCP server.
+/// </summary>
+public interface IMcpClient : IAsyncDisposable
+{
+    string ServerId { get; }
+    McpServerCapabilities Capabilities { get; }
+    
+    Task InitializeAsync(CancellationToken ct);
+    Task<IReadOnlyList<McpToolDefinition>> ListToolsAsync(CancellationToken ct);
+    Task<IReadOnlyList<McpResource>> ListResourcesAsync(CancellationToken ct);
+    Task<McpToolResult> CallToolAsync(string name, JsonElement args, CancellationToken ct);
+    Task<McpResourceContent> ReadResourceAsync(string uri, CancellationToken ct);
+}
+
+/// <summary>
+/// Manages MCP server connections for an agent session.
+/// </summary>
+public interface IMcpSessionManager : IAsyncDisposable
+{
+    Task<IReadOnlyList<IAgentTool>> InitializeServersAsync(
+        McpExtensionConfig config, 
+        CancellationToken ct);
+    Task ShutdownAsync(CancellationToken ct);
+}
+```
+
+### Extension Entry Point
+
+```csharp
+/// <summary>
+/// Hook handler that initializes MCP servers when an agent session starts.
+/// </summary>
+public sealed class McpSessionInitHookHandler 
+    : IHookHandler<BeforePromptBuildEvent, BeforePromptBuildResult>
+{
+    // On first prompt build, initialize MCP servers from agent's ExtensionConfig
+}
+```
+
+### Component Layout
+
+```
+BotNexus.Extensions.Mcp/
+├── McpExtensionConfig.cs        # Configuration model
+├── Transport/
+│   ├── IMcpTransport.cs         # Transport abstraction
+│   ├── StdioMcpTransport.cs     # stdio subprocess transport
+│   └── HttpSseMcpTransport.cs   # HTTP/SSE transport
+├── Client/
+│   ├── McpClient.cs             # JSON-RPC client implementation
+│   ├── McpClientFactory.cs      # Creates clients from config
+│   └── McpProtocol.cs           # JSON-RPC message types
+├── Tools/
+│   ├── McpBridgedTool.cs        # IAgentTool wrapper for MCP tools
+│   └── McpToolFactory.cs        # Creates bridged tools
+├── Session/
+│   ├── McpSessionManager.cs     # Per-session server lifecycle
+│   └── McpSessionInitHookHandler.cs # Hook integration
+└── botnexus-extension.json
+```
+
+## 3. Transport Layer
+
+MCP defines two transport mechanisms. We implement both.
+
+### stdio Transport
+
+The client spawns the MCP server as a subprocess and communicates via stdin/stdout.
+
+```csharp
+public sealed class StdioMcpTransport : IMcpTransport
+{
+    private readonly Process _process;
+    private readonly StreamWriter _writer;
+    private readonly StreamReader _reader;
+    
+    public async Task SendAsync(JsonRpcMessage message, CancellationToken ct)
+    {
+        var json = JsonSerializer.Serialize(message);
+        await _writer.WriteLineAsync(json);
+        await _writer.FlushAsync();
+    }
+    
+    public async Task<JsonRpcMessage> ReceiveAsync(CancellationToken ct)
+    {
+        var line = await _reader.ReadLineAsync(ct);
+        return JsonSerializer.Deserialize<JsonRpcMessage>(line);
+    }
+}
+```
+
+**Process Management:**
+- Use `ProcessStartInfo` with `RedirectStandardInput/Output/Error`
+- Inherit environment variables, merge with config-specified `env`
+- Set working directory if specified
+- Kill process tree on dispose
+
+### HTTP/SSE Transport (Streamable HTTP)
+
+For remote MCP servers that use HTTP endpoints.
+
+```csharp
+public sealed class HttpSseMcpTransport : IMcpTransport
+{
+    private readonly HttpClient _httpClient;
+    private readonly string _endpoint;
+    private string? _sessionId;
+    
+    public async Task SendAsync(JsonRpcMessage message, CancellationToken ct)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, _endpoint)
+        {
+            Content = JsonContent.Create(message),
+            Headers = {
+                { "Accept", "application/json, text/event-stream" }
+            }
+        };
+        
+        if (_sessionId is not null)
+            request.Headers.Add("Mcp-Session-Id", _sessionId);
+            
+        var response = await _httpClient.SendAsync(request, ct);
+        // Handle SSE or JSON response
+    }
+}
+```
+
+**Session Management:**
+- Store `Mcp-Session-Id` from `InitializeResult` response
+- Include in all subsequent requests
+- Handle 404 by re-initializing
+
+## 4. Tool Bridging
+
+MCP tools become `IAgentTool` instances that agents can call natively.
+
+### McpBridgedTool
+
+```csharp
+public sealed class McpBridgedTool : IAgentTool
+{
+    private readonly IMcpClient _client;
+    private readonly McpToolDefinition _definition;
+    
+    // Prefix tool names to avoid collisions: "github_search_repositories"
+    public string Name => $"{_client.ServerId}_{_definition.Name}";
+    
+    public string Label => _definition.Name;
+    
+    public Tool Definition => new(
+        Name,
+        _definition.Description ?? "",
+        _definition.InputSchema);
+    
+    public async Task<AgentToolResult> ExecuteAsync(
+        string toolCallId,
+        IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken ct,
+        AgentToolUpdateCallback? onUpdate = null)
+    {
+        var result = await _client.CallToolAsync(
+            _definition.Name, 
+            JsonSerializer.SerializeToElement(arguments), 
+            ct);
+        
+        return ConvertToAgentToolResult(result);
+    }
+}
+```
+
+### Tool Name Prefixing
+
+MCP servers may expose tools with common names like `search` or `read`. To prevent collisions:
+- Prefix all MCP tool names with their server ID: `github_search_repositories`
+- The original tool name is preserved in the `Label` property
+- Agents reference tools by the prefixed name
+
+### Schema Translation
+
+MCP uses JSON Schema for tool parameters. BotNexus `Tool.Parameters` is a `JsonElement`, so we can pass through directly without translation.
+
+## 5. Resource Bridging
+
+MCP resources are data sources that provide context. Options:
+
+**Option A: Resource Tool**
+Expose a `{serverId}_read_resource` tool that agents can call to read MCP resources.
+
+**Option B: Context Injection (via Hook)**
+During prompt build, inject relevant resource contents into the system prompt.
+
+**Recommendation:** Start with Option A (Resource Tool) — it's simpler and gives agents explicit control. Option B can be added later as an optimization.
+
+```csharp
+public sealed class McpResourceTool : IAgentTool
+{
+    public string Name => $"{_serverId}_read_resource";
+    
+    public Tool Definition => new(Name, "Read a resource from the MCP server", ...);
+    
+    public async Task<AgentToolResult> ExecuteAsync(...)
+    {
+        var uri = arguments["uri"]?.ToString();
+        var content = await _client.ReadResourceAsync(uri, ct);
+        return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, content.Text)]);
+    }
+}
+```
+
+## 6. Configuration Model
+
+### Per-Agent Extension Config
+
+Agents configure MCP servers in their `extensions` block:
+
+```json
+{
+  "agentId": "my-agent",
+  "extensions": {
+    "botnexus-mcp": {
+      "servers": {
+        "github": {
+          "command": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-github"],
+          "env": {
+            "GITHUB_TOKEN": "${env:GITHUB_TOKEN}"
+          }
+        },
+        "filesystem": {
+          "url": "http://localhost:3000/mcp"
+        }
+      },
+      "toolPrefix": true,
+      "resourceTools": true
+    }
+  }
+}
+```
+
+### Config Classes
+
+```csharp
+public sealed class McpExtensionConfig
+{
+    /// <summary>MCP servers to connect to, keyed by server ID.</summary>
+    public Dictionary<string, McpServerConfig> Servers { get; set; } = new();
+    
+    /// <summary>Whether to prefix tool names with server ID. Default: true.</summary>
+    public bool ToolPrefix { get; set; } = true;
+    
+    /// <summary>Whether to expose resource read tools. Default: true.</summary>
+    public bool ResourceTools { get; set; } = true;
+}
+
+public sealed class McpServerConfig
+{
+    // stdio transport
+    public string? Command { get; set; }
+    public List<string>? Args { get; set; }
+    public Dictionary<string, string>? Env { get; set; }
+    public string? WorkingDirectory { get; set; }
+    
+    // HTTP transport
+    public string? Url { get; set; }
+    public Dictionary<string, string>? Headers { get; set; }
+    
+    /// <summary>Timeout for initialization in milliseconds. Default: 30000.</summary>
+    public int InitTimeoutMs { get; set; } = 30_000;
+    
+    /// <summary>Timeout for tool calls in milliseconds. Default: 60000.</summary>
+    public int CallTimeoutMs { get; set; } = 60_000;
+}
+```
+
+### Environment Variable Substitution
+
+Support `${env:VAR_NAME}` syntax for secrets:
+- Resolved at server start time
+- Prevents secrets from being stored in config files
+- Pattern: `${env:NAME}` or `${env:NAME:-default}`
+
+## 7. Lifecycle Management
+
+### Server Start
+
+MCP servers start when an agent session begins:
+
+1. `InProcessIsolationStrategy.CreateAsync` is called
+2. Hook handler reads `ExtensionConfig["botnexus-mcp"]`
+3. `McpSessionManager.InitializeServersAsync` spawns/connects to servers
+4. Each server goes through MCP initialization handshake
+5. Tools are listed and wrapped as `McpBridgedTool` instances
+6. Bridged tools are returned and added to the agent's tool list
+
+### Server Stop
+
+MCP servers stop when the agent session ends:
+
+1. `IAgentHandle.DisposeAsync` is called
+2. `McpSessionManager.ShutdownAsync` is invoked
+3. For stdio: Send graceful shutdown, wait briefly, then kill process tree
+4. For HTTP: Send `DELETE` to endpoint with session ID (optional)
+5. Dispose all transports and clients
+
+### Restart/Reconnect
+
+For resilience:
+- **stdio:** If process exits unexpectedly, optionally restart on next tool call
+- **HTTP:** If connection fails, retry with exponential backoff
+- Configure via `maxRetries` and `retryDelayMs` in server config
+
+## 8. Error Handling
+
+### Transport Errors
+
+```csharp
+public abstract class McpTransportException : Exception
+{
+    public string ServerId { get; }
+}
+
+public class McpConnectionFailedException : McpTransportException { }
+public class McpTimeoutException : McpTransportException { }
+public class McpProcessExitedException : McpTransportException 
+{
+    public int ExitCode { get; }
+}
+```
+
+### Tool Call Errors
+
+MCP tool calls can fail in several ways:
+
+1. **Transport failure:** Connection lost, process died
+   - Return error tool result with connection error message
+   - Optionally trigger reconnect
+
+2. **JSON-RPC error:** Server returns error response
+   - Return error tool result with MCP error message and code
+
+3. **Timeout:** Server doesn't respond in time
+   - Return error tool result indicating timeout
+   - Don't kill the server (it may be doing valid work)
+
+4. **Invalid response:** Server returns malformed data
+   - Return error tool result with parse error
+
+### Error Result Format
+
+```csharp
+var errorResult = new AgentToolResult(
+    [new AgentToolContent(AgentToolContentType.Text, $"MCP error: {message}")],
+    details: new McpToolCallDetails(
+        ServerId: serverId,
+        ToolName: toolName,
+        Error: errorCode,
+        ErrorMessage: message
+    ));
+```
+
+## 9. Security
+
+### Tool Policy Integration
+
+MCP tools must respect the existing tool policy system:
+
+```csharp
+public sealed class McpToolPolicyHookHandler 
+    : IHookHandler<BeforeToolCallEvent, BeforeToolCallResult>
+{
+    private readonly IToolPolicyProvider _policyProvider;
+    
+    public async ValueTask<BeforeToolCallResult?> HandleAsync(
+        BeforeToolCallEvent @event, 
+        CancellationToken ct)
+    {
+        // Check if this is an MCP tool (has server prefix)
+        if (!IsMcpTool(@event.ToolName))
+            return null;
+            
+        var riskLevel = _policyProvider.GetRiskLevel(@event.ToolName);
+        if (riskLevel == ToolRiskLevel.Dangerous)
+        {
+            // Delegate to approval system
+        }
+        
+        return null;
+    }
+}
+```
+
+### Default Policy for MCP Tools
+
+| Tool Pattern | Risk Level | Requires Approval |
+|--------------|------------|-------------------|
+| `*_read_*`, `*_list_*`, `*_search_*` | Safe | No |
+| `*_write_*`, `*_create_*`, `*_update_*`, `*_delete_*` | Moderate | No |
+| `*_exec*`, `*_run*`, `*_shell*` | Dangerous | Yes |
+
+### Server Sandboxing
+
+For stdio servers:
+- **Do not** run as elevated user
+- Consider process isolation (future: container support)
+- Limit environment variables passed through
+
+For HTTP servers:
+- Validate TLS certificates (unless localhost)
+- Respect authentication requirements
+- Don't store secrets in config files
+
+## 10. Testing Strategy
+
+### Unit Tests
+
+| Component | Test Focus |
+|-----------|------------|
+| `McpProtocol` | JSON-RPC serialization/deserialization |
+| `StdioMcpTransport` | Message framing, newline handling |
+| `HttpSseMcpTransport` | Request formatting, session headers |
+| `McpClient` | Initialization handshake, tool listing |
+| `McpBridgedTool` | Argument translation, result mapping |
+| `McpExtensionConfig` | Config parsing, env var substitution |
+
+### Integration Tests
+
+| Scenario | Approach |
+|----------|----------|
+| stdio server lifecycle | Spawn real `echo` or test server, verify tool calls |
+| HTTP server lifecycle | Use in-memory test server with SSE support |
+| Tool policy enforcement | Configure dangerous tool, verify approval flow |
+| Error handling | Kill server mid-call, verify graceful degradation |
+
+### Test Fixtures
+
+Create a minimal test MCP server in C#:
+
+```csharp
+public sealed class TestMcpServer
+{
+    public static async Task Main()
+    {
+        // Read JSON-RPC from stdin, write to stdout
+        // Support: initialize, tools/list, tools/call
+    }
+}
+```
+
+## 11. Implementation Plan
+
+### Phase 1: Core Infrastructure (Farnsworth)
+
+**Dependencies:** None  
+**Estimated effort:** 3-5 days
+
+1. Create extension project structure
+2. Implement `McpExtensionConfig` and parsing
+3. Implement `McpProtocol` (JSON-RPC types)
+4. Implement `StdioMcpTransport`
+5. Implement `McpClient` with initialization and `tools/list`
+6. Unit tests for all components
+
+**Deliverable:** Extension that can connect to stdio MCP servers and list tools.
+
+### Phase 2: Tool Bridging (Farnsworth)
+
+**Dependencies:** Phase 1  
+**Estimated effort:** 2-3 days
+
+1. Implement `McpBridgedTool`
+2. Implement `McpToolFactory`
+3. Implement `tools/call` in `McpClient`
+4. Integration with `InProcessIsolationStrategy`
+5. End-to-end test with real MCP server (e.g., filesystem)
+
+**Deliverable:** Agents can call MCP tools.
+
+### Phase 3: HTTP Transport (Fry)
+
+**Dependencies:** Phase 1  
+**Estimated effort:** 2-3 days
+
+1. Implement `HttpSseMcpTransport`
+2. SSE response parsing
+3. Session management (`Mcp-Session-Id`)
+4. Tests with mock HTTP server
+
+**Deliverable:** Extension supports remote MCP servers.
+
+### Phase 4: Lifecycle & Error Handling (Farnsworth)
+
+**Dependencies:** Phase 2, Phase 3  
+**Estimated effort:** 2-3 days
+
+1. Implement `McpSessionManager`
+2. Server start/stop/restart logic
+3. Error handling and timeout management
+4. Implement `McpSessionInitHookHandler`
+5. Integration tests for lifecycle scenarios
+
+**Deliverable:** Robust server lifecycle management.
+
+### Phase 5: Security Integration (Bender)
+
+**Dependencies:** Phase 4  
+**Estimated effort:** 1-2 days
+
+1. Implement `McpToolPolicyHookHandler`
+2. Default policy configuration
+3. Environment variable substitution
+4. Security documentation
+
+**Deliverable:** MCP tools respect tool policies.
+
+### Phase 6: Resources (Optional, Fry)
+
+**Dependencies:** Phase 2  
+**Estimated effort:** 1-2 days
+
+1. Implement `resources/list` in `McpClient`
+2. Implement `resources/read` in `McpClient`
+3. Implement `McpResourceTool`
+4. Tests
+
+**Deliverable:** Agents can read MCP resources.
+
+## 12. Team Assignment
+
+| Phase | Owner | Reviewer |
+|-------|-------|----------|
+| Phase 1: Core Infrastructure | Farnsworth | Leela |
+| Phase 2: Tool Bridging | Farnsworth | Leela |
+| Phase 3: HTTP Transport | Fry | Farnsworth |
+| Phase 4: Lifecycle | Farnsworth | Leela |
+| Phase 5: Security | Bender | Leela |
+| Phase 6: Resources | Fry | Farnsworth |
+| Documentation | Amy | Leela |
+| Test coverage review | Hermes | Leela |
+
+## Open Questions
+
+1. **Prompt injection via MCP tools?** — Should we sanitize tool results from MCP servers? Current approach: treat MCP servers as trusted (they're explicitly configured by the admin).
+
+2. **Dynamic tool discovery?** — MCP supports `notifications/tools/list_changed`. Should we re-list tools when this fires? Defer to future enhancement.
+
+3. **MCP Prompts primitive?** — MCP servers can expose prompt templates. Should we bridge these? Defer — prompts are less common than tools.
+
+4. **Sampling support?** — MCP servers can request LLM completions via `sampling/create`. This inverts the client-server relationship. Defer to future phase.
+
+## References
+
+- [MCP Specification](https://modelcontextprotocol.io/specification/latest)
+- [MCP Architecture Concepts](https://modelcontextprotocol.io/docs/concepts/architecture)
+- [BotNexus Extension Loader](src/gateway/BotNexus.Gateway/Extensions/AssemblyLoadContextExtensionLoader.cs)
+- [IAgentTool Interface](src/agent/BotNexus.AgentCore/Tools/IAgentTool.cs)
+- [OpenClaw MCP Implementation](reference — TypeScript implementation for patterns)
+
+# Memory System Feature Spec — Architectural Review & Implementation Plan
+
+**Decision Date:** 2026-04-09  
+**Author:** Leela (Lead/Architect)  
+**Requested by:** Jon Bullen  
+**Status:** 📋 Review + Plan (no implementation)  
+**Spec Source:** Nova's `memory-system-feature-spec.md` (310 lines)
+
+---
+
+## 1. Architectural Review
+
+### 1.1 Alignment with Existing Patterns
+
+**Overall: Strong alignment.** The spec clearly reflects familiarity with BotNexus internals. Key observations:
+
+| Area | Alignment | Notes |
+|------|-----------|-------|
+| SQLite storage | ✅ Excellent | Matches `SqliteSessionStore` precedent — same NuGet (`Microsoft.Data.Sqlite`), same patterns |
+| Per-agent isolation | ✅ Excellent | `BotNexusHome.GetAgentDirectory()` already scaffolds `data/` subdirectory — `data/memory.sqlite` is natural |
+| Config-driven | ✅ Good | Config schema fits alongside existing `AgentDefinitionConfig` — but needs a new `MemoryConfig` class, not inline JSON |
+| Tool system | ⚠️ Needs refinement | Memory tools don't fit the existing `IAgentToolFactory` pattern cleanly (see §2.1) |
+| Session lifecycle hooks | ⚠️ Gap identified | `ISessionStore` has no event system; spec assumes hooks that don't exist (see §2.2) |
+| DI registration | ✅ Good | Follows `AddBotNexusTools()` extension method pattern |
+
+### 1.2 SOLID Concerns
+
+**Single Responsibility:**
+- ✅ Separate memory store from session store — correct, different lifecycle and query patterns.
+- ⚠️ The spec bundles search, indexing, compaction, and embedding into one conceptual system. Implementation should split these into distinct services: `IMemoryStore` (CRUD), `IMemorySearchEngine` (query), `IMemoryIndexer` (session→memory pipeline), `IEmbeddingProvider` (vector generation).
+
+**Open/Closed:**
+- ✅ Embedding provider abstraction is well-designed for extensibility.
+- ✅ Search strategy (BM25-only vs hybrid) as a pluggable concern is correct.
+
+**Liskov Substitution:**
+- ✅ No concerns. The `IAgentTool` contract is well-suited for memory tools.
+
+**Interface Segregation:**
+- ⚠️ The spec's `memory_get` tool does double duty: get-by-ID and list-by-session. These are different operations with different parameters. Recommend keeping them combined (the model handles parameter selection well) but ensuring the implementation has clean internal separation.
+
+**Dependency Inversion:**
+- ✅ All integration points go through abstractions (`ISessionStore`, `IAgentToolFactory`, `IToolRegistry`).
+- ⚠️ Memory tools need agent context (agent ID, config) at construction time. Current `IAgentToolFactory.CreateTools(string workingDirectory)` only takes a path. This interface needs extension (see §4).
+
+### 1.3 Over-Engineering Risks
+
+| Risk | Level | Recommendation |
+|------|-------|----------------|
+| Embedding pipeline in P0 | 🔴 High | Spec correctly puts this in P1. Enforce this boundary — FTS5 is surprisingly good for conversational search. |
+| MMR diversity | 🟡 Medium | Nice to have but adds complexity. Defer until search quality data shows duplicate-heavy results. |
+| Dreaming/consolidation | 🟢 Low | P2 is correct placement. Don't even stub this in P0. |
+| `expires_at` TTL | 🟡 Medium | The schema includes it, but no P0 feature uses it. Add the column but don't build the reaper until needed. |
+| Cross-agent sharing | 🟢 Low | P2 is correct. The per-agent DB isolation makes this harder later, but that's the right trade-off — isolation is more important than future sharing convenience. |
+
+### 1.4 Gaps and Ambiguities
+
+1. **Chunking strategy undefined.** The spec says "conversation turns are indexed" but doesn't specify granularity. Options: per-turn (every user/assistant message), per-exchange (user+assistant pair), per-session (full session as one entry). Recommendation: **per-exchange** (user message + assistant response as one memory entry) — balances searchability with context.
+
+2. **Token/content size limits missing.** What happens when an assistant response is 50KB? FTS5 handles large texts but search relevance degrades. Need a `maxContentLength` with truncation or chunking strategy.
+
+3. **Deduplication not addressed.** If a session is saved multiple times (incremental saves via `StreamingSessionHelper`), auto-indexing could create duplicate memories. Need an idempotency key (e.g., `session_id + turn_index`).
+
+4. **Memory tool availability.** The spec says tools register via `toolIds` in config, but doesn't specify the default. Should memory tools be opt-in (`toolIds: ["memory_search", ...]`) or auto-included when `memory.enabled: true`? Recommendation: **auto-included when enabled** — requiring both config flags is error-prone.
+
+5. **FTS5 content sync triggers.** The spec's triggers use `content='memories'` (contentless FTS with external content). This requires matching rowid types. The `memories` table uses TEXT `id` (ULID) as PK, but FTS5 `content_rowid` needs an INTEGER. Need to add a `rowid` alias or use SQLite's implicit rowid.
+
+6. **Session suspend/resume interaction.** BotNexus has session suspend/resume. When should indexing happen — on suspend? on close? on every save? Recommendation: **on session status transition to Closed/Expired**, not on every save.
+
+---
+
+## 2. Integration Analysis
+
+### 2.1 Tool Registration and Resolution
+
+**Current architecture:**
+
+```
+IAgentToolFactory.CreateTools(workingDirectory)    → workspace-scoped tools (Read, Write, Shell, etc.)
+IToolRegistry.ResolveTools(toolIds)                → extension tools (singleton, DI-registered)
+InProcessIsolationStrategy.CreateAsync()           → merges both, filtered by AgentDescriptor.ToolIds
+```
+
+**Problem:** Memory tools are neither workspace-scoped (they need agent ID + config, not just a path) nor pure extension tools (they're per-agent, not singleton).
+
+**Solution:** Extend `IAgentToolFactory` to accept richer context:
+
+```csharp
+// New overload or replacement
+IReadOnlyList<IAgentTool> CreateTools(AgentToolContext context);
+
+public record AgentToolContext(
+    string WorkingDirectory,
+    string AgentId,
+    AgentDescriptor Descriptor,
+    IServiceProvider Services);
+```
+
+This is a breaking change to `IAgentToolFactory`. Alternative: register memory tools as extension tools via `IToolRegistry` but scope them per-agent using a factory pattern internally. The factory approach avoids the breaking change but is less clean.
+
+**Recommendation:** Introduce a new `IAgentContextToolFactory` interface alongside the existing one. `InProcessIsolationStrategy` can call both. This preserves backward compatibility.
+
+### 2.2 Session Lifecycle Events
+
+**Current state:** `ISessionStore` is a pure CRUD interface with no events. Session lifecycle transitions happen in:
+- `StreamingSessionHelper.ProcessAndSaveAsync()` — saves after stream completes
+- `SessionCleanupService` — marks sessions Expired, deletes old Closed sessions
+- `ChatController` / `WebSocketMessageDispatcher` — create sessions, save after responses
+
+**No centralized lifecycle event bus exists.**
+
+**Options:**
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| A) `ISessionLifecycleEvents` interface + pub/sub | Clean, decoupled, testable | New abstraction, need to wire into all save paths |
+| B) Decorator on `ISessionStore` | No new interface, transparent | Hard to distinguish "save" from "session complete" |
+| C) Poll `ISessionStore` for changes | Zero code changes to session layer | Latency, resource waste, misses rapid session closures |
+
+**Recommendation: Option A — `ISessionLifecycleEvents`.**
+
+```csharp
+public interface ISessionLifecycleEvents
+{
+    event Func<SessionLifecycleEvent, CancellationToken, Task>? SessionChanged;
+}
+
+public record SessionLifecycleEvent(
+    string SessionId,
+    string AgentId,
+    SessionLifecycleEventType Type,  // Created, MessageAdded, Closed, Expired, Deleted
+    GatewaySession Session);
+```
+
+Wire it into `StreamingSessionHelper` (on stream complete) and `SessionCleanupService` (on expire/close). The memory indexer subscribes to `SessionChanged` and indexes on `Closed` or `Expired` events.
+
+### 2.3 Where Memory Tools Should Live
+
+**Options:**
+
+| Location | Pros | Cons |
+|----------|------|------|
+| New `BotNexus.Memory` project | Clean separation, own deps, own tests | Another project to maintain |
+| Existing `BotNexus.Tools` | Co-located with other tools | Tools project has no DI, no SQLite deps, no config awareness |
+| `BotNexus.Gateway` | Access to all services | Violates separation, Gateway is already large |
+
+**Recommendation: New `BotNexus.Memory` project** under `src/tools/BotNexus.Memory/`.
+
+Structure:
+```
+src/tools/BotNexus.Memory/
+├── BotNexus.Memory.csproj
+├── MemoryStore.cs              // SQLite CRUD + FTS5
+├── MemorySearchEngine.cs       // BM25 search with temporal decay
+├── MemoryIndexer.cs            // Session → memory pipeline
+├── Tools/
+│   ├── MemorySearchTool.cs
+│   ├── MemoryGetTool.cs
+│   └── MemoryStoreTool.cs
+├── Configuration/
+│   └── MemoryConfig.cs
+├── Embedding/                  // P1
+│   ├── IEmbeddingProvider.cs
+│   └── OllamaEmbeddingProvider.cs
+└── Extensions/
+    └── MemoryServiceCollectionExtensions.cs
+```
+
+Dependencies: `BotNexus.AgentCore` (for `IAgentTool`), `Microsoft.Data.Sqlite`, `BotNexus.Gateway.Abstractions` (for `ISessionStore`, `GatewaySession`).
+
+### 2.4 Config Schema Mapping
+
+**Current `AgentDefinitionConfig`** (in `PlatformConfig.cs`) has no `Memory` property.
+
+**Required addition:**
+
+```csharp
+// In AgentDefinitionConfig
+public MemoryConfig? Memory { get; set; }
+
+// New class
+public sealed class MemoryConfig
+{
+    public bool Enabled { get; set; }
+    public string Indexing { get; set; } = "auto";  // auto | manual | off
+    public MemorySearchConfig? Search { get; set; }
+    public MemoryEmbeddingConfig? Embedding { get; set; }  // P1
+}
+
+public sealed class MemorySearchConfig
+{
+    public int DefaultTopK { get; set; } = 10;
+    public TemporalDecayConfig? TemporalDecay { get; set; }
+}
+
+public sealed class TemporalDecayConfig
+{
+    public bool Enabled { get; set; } = true;
+    public int HalfLifeDays { get; set; } = 30;
+}
+```
+
+This maps to `AgentDescriptor` via a new `MemoryConfig` property. The `PlatformConfigAgentSource` will need to propagate it during descriptor construction.
+
+### 2.5 Memory DB Path
+
+**Current agent data directory:** `~/.botnexus/agents/{id}/data/sessions/` (scaffolded by `BotNexusHome.ScaffoldAgentWorkspace()`).
+
+**Memory DB path:** `~/.botnexus/agents/{id}/data/memory.sqlite`
+
+This requires:
+1. Update `BotNexusHome.ScaffoldAgentWorkspace()` to create `data/` directory (already done — `data/sessions/` implies `data/` exists).
+2. Memory store receives path from `BotNexusHome.GetAgentDirectory(agentId) + "/data/memory.sqlite"`.
+3. Connection string: `Data Source={path};Mode=ReadWriteCreate`
+
+---
+
+## 3. Implementation Plan
+
+### Wave 1 — P0 Core (Memory Store + Search + Indexing)
+
+**Estimated effort:** 3-4 sessions across 2-3 agents
+
+#### Task 1.1: Memory Project Scaffold + SQLite Store
+**Agent:** Farnsworth (core/platform)  
+**Creates:**
+- `src/tools/BotNexus.Memory/BotNexus.Memory.csproj`
+- `src/tools/BotNexus.Memory/MemoryStore.cs` — `IMemoryStore` interface + SQLite implementation
+- `src/tools/BotNexus.Memory/Models/MemoryEntry.cs` — domain model
+- Schema: `memories` table + `memories_fts` FTS5 virtual table + sync triggers
+- CRUD: `InsertAsync`, `GetByIdAsync`, `GetBySessionAsync`, `DeleteAsync`
+- Add project reference to `BotNexus.slnx`
+
+**Key decisions:**
+- Use ULID for `id` (time-sortable, no coordination needed)
+- Add explicit `rowid INTEGER PRIMARY KEY AUTOINCREMENT` alongside TEXT `id` for FTS5 content sync
+- WAL mode for concurrent read/write
+- Connection created on demand, not pooled (same pattern as `SqliteSessionStore`)
+
+**Dependencies:** None
+
+#### Task 1.2: FTS5 Search Engine with Temporal Decay
+**Agent:** Farnsworth (core/platform)  
+**Creates:**
+- `src/tools/BotNexus.Memory/MemorySearchEngine.cs` — `IMemorySearchEngine` interface + BM25 implementation
+
+**Key logic:**
+```
+final_score = bm25_rank * temporal_decay_factor
+temporal_decay_factor = exp(-ln(2) / halfLifeDays * ageDays)
+```
+
+**Parameters:** query, topK, filters (sourceType, sessionId, dateRange, tags)  
+**Dependencies:** Task 1.1
+
+#### Task 1.3: Memory Tools (search + get)
+**Agent:** Bender (runtime/integration)  
+**Creates:**
+- `src/tools/BotNexus.Memory/Tools/MemorySearchTool.cs` — implements `IAgentTool`
+- `src/tools/BotNexus.Memory/Tools/MemoryGetTool.cs` — implements `IAgentTool`
+
+**Integration:** Tools receive `IMemoryStore` + `IMemorySearchEngine` via constructor. Tool definitions follow spec JSON schemas exactly.
+
+**Dependencies:** Tasks 1.1, 1.2
+
+#### Task 1.4: Session Lifecycle Events + Memory Indexer
+**Agent:** Farnsworth (core/platform)  
+**Creates:**
+- `src/gateway/BotNexus.Gateway.Abstractions/Sessions/ISessionLifecycleEvents.cs`
+- `src/gateway/BotNexus.Gateway.Abstractions/Sessions/SessionLifecycleEvent.cs`
+- `src/tools/BotNexus.Memory/MemoryIndexer.cs` — `IMemoryIndexer` subscribes to session events
+
+**Modifies:**
+- `StreamingSessionHelper.cs` — raise `SessionChanged` after final save
+- `SessionCleanupService.cs` — raise `SessionChanged` on expire
+- `GatewayServiceCollectionExtensions.cs` — register lifecycle events
+
+**Indexing strategy:**
+- Trigger on session close/expire
+- Extract user+assistant exchange pairs from `GatewaySession.History`
+- Skip tool-role entries (noisy)
+- Idempotency: composite key `session_id + turn_index` prevents duplicate indexing
+- Index asynchronously (fire-and-forget with error logging, don't block session teardown)
+
+**Dependencies:** Task 1.1
+
+#### Task 1.5: Config Schema + Agent Wiring
+**Agent:** Bender (runtime/integration)  
+**Creates:**
+- `src/tools/BotNexus.Memory/Configuration/MemoryConfig.cs`
+- `src/tools/BotNexus.Memory/Extensions/MemoryServiceCollectionExtensions.cs`
+
+**Modifies:**
+- `PlatformConfig.cs` → add `Memory` property to `AgentDefinitionConfig`
+- `AgentDescriptor.cs` → add `MemoryConfig?` property
+- `PlatformConfigAgentSource.cs` → map memory config to descriptor
+- `InProcessIsolationStrategy.cs` → create memory tools when enabled, inject into agent tool list
+- `ToolServiceCollectionExtensions.cs` → register memory services
+
+**Key design:** Memory tools are created per-agent in `InProcessIsolationStrategy.CreateAsync()`, not via `IAgentToolFactory`. This avoids breaking the existing interface. The strategy already has access to `AgentDescriptor` (which carries the memory config) and can construct memory tools directly using DI-resolved `IMemoryStore` factory.
+
+**Dependencies:** Tasks 1.3, 1.4
+
+#### Task 1.6: Tests
+**Agent:** Hermes (tests)  
+**Creates:**
+- `tests/BotNexus.Memory.Tests/BotNexus.Memory.Tests.csproj`
+- `tests/BotNexus.Memory.Tests/MemoryStoreTests.cs` — CRUD, schema creation, idempotency
+- `tests/BotNexus.Memory.Tests/MemorySearchEngineTests.cs` — BM25 ranking, temporal decay math, filter combinations
+- `tests/BotNexus.Memory.Tests/MemoryIndexerTests.cs` — session-to-memory pipeline, deduplication
+- `tests/BotNexus.Memory.Tests/Tools/MemorySearchToolTests.cs` — argument validation, result formatting
+- `tests/BotNexus.Memory.Tests/Tools/MemoryGetToolTests.cs`
+- `tests/BotNexus.Memory.Tests/MemoryIsolationTests.cs` — verify agent A cannot read agent B's memories
+
+**Dependencies:** Tasks 1.1–1.5 (can start test scaffolding in parallel)
+
+---
+
+### Wave 2 — P0 Complete (Explicit Store + CLI + Registration)
+
+**Estimated effort:** 2 sessions
+
+#### Task 2.1: `memory_store` Tool
+**Agent:** Bender  
+**Creates:**
+- `src/tools/BotNexus.Memory/Tools/MemoryStoreTool.cs`
+
+**Follows same pattern as search/get tools. Source type: `manual`.**
+
+**Dependencies:** Wave 1
+
+#### Task 2.2: CLI Commands
+**Agent:** Bender  
+**Creates:**
+- `src/gateway/BotNexus.Cli/Commands/MemoryCommands.cs`
+
+**Commands:**
+- `botnexus memory status <agentId>` — entry count, DB size, last indexed timestamp
+- `botnexus memory search <agentId> <query>` — CLI search for debugging
+- `botnexus memory clear <agentId> [--confirm]` — wipe with confirmation gate
+
+**Modifies:**
+- CLI root command registration
+
+**Dependencies:** Wave 1
+
+#### Task 2.3: DefaultAgentToolFactory Integration
+**Agent:** Farnsworth  
+**Evaluates:** Whether memory tools should also be available through `IToolRegistry` for extension discoverability. If agents use `toolIds` to select tools, memory tools need to be resolvable by name (`"memory_search"`, `"memory_get"`, `"memory_store"`).
+
+**Likely approach:** Register memory tool *factories* in `IToolRegistry` that produce agent-scoped tool instances. This lets `toolIds` filtering work while maintaining per-agent scoping.
+
+**Dependencies:** Wave 1
+
+#### Task 2.4: Wave 2 Tests
+**Agent:** Hermes  
+**Creates:**
+- `tests/BotNexus.Memory.Tests/Tools/MemoryStoreToolTests.cs`
+- `tests/BotNexus.Memory.Tests/MemoryCommandTests.cs` (CLI integration tests)
+
+**Dependencies:** Tasks 2.1–2.3
+
+---
+
+### Wave 3 — P1 (Embedding + Hybrid Search)
+
+**Estimated effort:** 3-4 sessions
+
+#### Task 3.1: Embedding Provider Abstraction
+**Agent:** Farnsworth  
+**Creates:**
+- `src/tools/BotNexus.Memory/Embedding/IEmbeddingProvider.cs`
+- `src/tools/BotNexus.Memory/Embedding/OllamaEmbeddingProvider.cs`
+- `src/tools/BotNexus.Memory/Embedding/OpenAICompatEmbeddingProvider.cs`
+
+**Integration with `BotNexus.Providers.Core`** for auth reuse where possible.
+
+#### Task 3.2: Hybrid Search (BM25 + Vector)
+**Agent:** Farnsworth  
+**Modifies:**
+- `MemorySearchEngine.cs` — add vector similarity path, weighted combination
+- `MemoryStore.cs` — add embedding column population, vector index
+
+#### Task 3.3: MMR Diversity
+**Agent:** Farnsworth  
+**Modifies:**
+- `MemorySearchEngine.cs` — post-retrieval MMR reranking
+
+#### Task 3.4: Memory Compaction
+**Agent:** Bender  
+**Creates:**
+- `src/tools/BotNexus.Memory/MemoryCompactor.cs`
+- Cron job integration via `BotNexus.Cron`
+
+**Modes:** `off`, `safeguard` (compress + archive originals), `aggressive` (summarize + discard)
+
+#### Task 3.5: Wave 3 Tests
+**Agent:** Hermes
+
+---
+
+### Wave 4 — P2 (Dreaming + Import/Export + Workspace Indexing)
+
+**Estimated effort:** 3-4 sessions (can be deferred indefinitely)
+
+#### Task 4.1: Dreaming/Consolidation
+**Agent:** Farnsworth + Bender  
+**Cron-driven background process.** Requires LLM calls for summarization — expensive, must be opt-in.
+
+#### Task 4.2: Import/Export
+**Agent:** Bender  
+**CLI commands:** `botnexus memory export/import`
+
+#### Task 4.3: Workspace File Indexing
+**Agent:** Bender  
+**Index MEMORY.md, playbooks, daily notes into memory FTS.**
+
+#### Task 4.4: Wave 4 Tests
+**Agent:** Hermes
+
+---
+
+## 4. Key Design Decisions
+
+### 4.1 New Project vs. Existing Project
+
+**Decision: New `BotNexus.Memory` project** under `src/tools/`.
+
+**Rationale:**
+- `BotNexus.Tools` is a leaf project with no DI, no SQLite, no config awareness — memory doesn't fit.
+- `BotNexus.Gateway` is already the largest project — adding memory inflates it further.
+- A new project gets its own test project, clean dependency graph, and can be conditionally loaded.
+- Follows the pattern of `BotNexus.Gateway.Sessions` as a separate project for session storage.
+
+### 4.2 Memory Tool Registration
+
+**Decision: Created per-agent in `InProcessIsolationStrategy`, not via `IAgentToolFactory`.**
+
+**Rationale:**
+- Memory tools need agent ID, memory config, and DI services — `IAgentToolFactory.CreateTools(string)` can't provide these.
+- Introducing `IAgentContextToolFactory` is a future option but premature for one feature.
+- `InProcessIsolationStrategy.CreateAsync()` already has full context (`AgentDescriptor`, DI via constructor). It's the natural point to inject memory tools when `descriptor.MemoryConfig?.Enabled == true`.
+- Memory tools are appended to the tool list alongside workspace tools and extension tools.
+
+### 4.3 Session Indexing: Event-Based
+
+**Decision: `ISessionLifecycleEvents` pub/sub — not polling, not decorator.**
+
+**Rationale:**
+- Polling wastes resources and has latency. The session store processes are already in our control.
+- A decorator on `ISessionStore.SaveAsync()` can't distinguish "save-in-progress" from "session-complete."
+- An event bus is the cleanest way for memory indexing to subscribe without coupling to session store internals.
+- Other future features (analytics, audit log) can also subscribe.
+
+### 4.4 Embedding Pipeline: Async Background
+
+**Decision: Background embedding, not synchronous.**
+
+**Rationale:**
+- Embedding a single entry with `nomic-embed-text` via Ollama takes ~50-200ms. Batching helps but still blocks.
+- Memory entries should be searchable via FTS5 immediately. Embeddings can arrive later.
+- Use a `Channel<MemoryEntry>` as an in-process queue. A `BackgroundService` dequeues and computes embeddings.
+- If the process crashes, un-embedded entries are detected on startup (WHERE `embedding IS NULL`) and re-queued.
+
+### 4.5 Memory DB Connection Management
+
+**Decision: Created on demand, not pooled. One DB file per agent.**
+
+**Rationale:**
+- Matches `SqliteSessionStore` pattern exactly — create connection, use, dispose.
+- SQLite WAL mode handles concurrent readers well. Single-writer is fine for memory workloads.
+- Agent count is small (typically 1-5). No need for pooling overhead.
+- Each agent's DB is at `~/.botnexus/agents/{id}/data/memory.sqlite`.
+- `IMemoryStore` is registered as a factory: `IMemoryStoreFactory.Create(agentId)` returns a store scoped to that agent's DB.
+
+---
+
+## 5. Risk Assessment
+
+### 5.1 Performance Impact of Auto-Indexing
+
+**Risk: Medium.** Session close triggers indexing of all conversation turns.
+
+**Mitigations:**
+- Index asynchronously (fire-and-forget from lifecycle event handler).
+- Batch inserts in a single SQLite transaction.
+- FTS5 trigger overhead is minimal for insert (the expensive part is queries, not writes).
+- Set a maximum entries-per-session cap (e.g., 500 exchanges) with warning log if exceeded.
+
+### 5.2 SQLite Contention with Concurrent Sessions
+
+**Risk: Low-Medium.** Multiple sessions for the same agent could write to the same memory DB concurrently.
+
+**Mitigations:**
+- WAL mode (`PRAGMA journal_mode=WAL`) allows concurrent reads during writes.
+- Use `SemaphoreSlim` for write serialization (same pattern as `SqliteSessionStore`).
+- Indexing is batched and infrequent (session close, not per-message).
+- Memory search (read-only) doesn't contend with writes in WAL mode.
+
+### 5.3 Memory Growth Without Compaction
+
+**Risk: Medium.** A chatty agent could accumulate thousands of memory entries over months.
+
+**Mitigations:**
+- Compaction is P1, not P2 — should follow quickly after P0 ships.
+- `is_archived` flag allows soft-delete without data loss.
+- `expires_at` TTL column is in schema from day one (enforcement can come later).
+- CLI `memory status` shows DB size — operators can monitor and `memory clear` if needed.
+- Rule of thumb: 10,000 conversation exchanges ≈ 50MB SQLite with FTS5. Manageable.
+
+### 5.4 FTS5 Query Injection
+
+**Risk: Low but real.** FTS5 `MATCH` syntax accepts operators (`AND`, `OR`, `NOT`, `NEAR`, `"phrase"`). Malicious or malformed queries could cause unexpected behavior or errors.
+
+**Mitigations:**
+- Sanitize user queries: escape FTS5 special characters before passing to `MATCH`.
+- Wrap query execution in try-catch — return empty results on parse error, not a crash.
+- Use parameterized queries for all non-FTS parts (standard SQL injection prevention).
+- FTS5 doesn't allow destructive operations via MATCH — worst case is a bad query, not data loss.
+
+### 5.5 Additional Risk: Migration Path
+
+**Risk: Low.** Schema changes in future waves (adding embedding column, compaction tables) need migration.
+
+**Mitigations:**
+- Add a `schema_version` table from day one.
+- Apply migrations on startup (same EnsureCreated pattern as `SqliteSessionStore`).
+- Schema changes in P1 (embedding column) are backward-compatible (nullable BLOB).
+
+---
+
+## 6. Summary of Recommendations
+
+1. **Start with Wave 1 only.** Don't stub P1/P2 interfaces — build them when needed.
+2. **Per-exchange indexing** — one memory entry per user+assistant exchange pair.
+3. **Auto-include memory tools** when `memory.enabled: true` — don't require `toolIds` listing.
+4. **`ISessionLifecycleEvents`** — invest in the event bus; it pays dividends beyond memory.
+5. **`IMemoryStoreFactory`** pattern — creates agent-scoped stores from `BotNexusHome` paths.
+6. **WAL mode + SemaphoreSlim** — proven concurrency pattern from existing codebase.
+7. **Schema version table** from day one — saves pain in P1 migration.
+8. **FTS5 rowid alignment** — fix the spec's schema to use INTEGER rowid for FTS5 content sync.
+
+# Provider/Model Configuration — 3-Layer Filtering Pipeline
+
+**Date:** 2026-04-08  
+**Author:** Leela (Lead/Architect)  
+**Requested by:** Jon Bullen  
+**Status:** Proposal — awaiting team decision  
+**Scope:** Platform config schema, provider activation, per-provider model allowlists, per-agent model restrictions
+
+---
+
+## 1. Problem Statement
+
+The platform currently registers **all** built-in models from all three providers (github-copilot, anthropic, openai) unconditionally in `BuiltInModels.RegisterAll()`. There is no concept of:
+
+- **Active vs inactive providers** — All providers appear in `GET /api/providers` regardless of authentication status or user preference.
+- **Model allowlists** — All 30+ models are returned by `GET /api/models` regardless of whether the user has access.
+- **Per-agent model restrictions** — `AgentDescriptor` has a single `ModelId` default but no way to constrain which models the agent can switch to.
+
+This means the WebUI model dropdown shows models the user cannot actually use (no API key for that provider), and agents have unrestricted model switching.
+
+---
+
+## 2. Current Architecture (As-Is)
+
+### Config Schema (`PlatformConfig.cs`)
+
+```csharp
+public Dictionary<string, ProviderConfig>? Providers { get; set; }
+
+public sealed class ProviderConfig
+{
+    public string? ApiKey { get; set; }     // API key or "auth:copilot" reference
+    public string? BaseUrl { get; set; }    // Base URL override
+    public string? DefaultModel { get; set; } // Default model for this provider
+}
+```
+
+**No `Enabled` flag. No `Models` allowlist.**
+
+### Registration Flow (`Program.cs`)
+
+```
+BuiltInModels.RegisterAll(modelRegistry)
+  → RegisterCopilotModels()    // 20 models
+  → RegisterAnthropicModels()  // 4 models
+  → RegisterOpenAIModels()     // 5 models
+```
+
+All 29 models registered unconditionally. No filtering.
+
+### API Endpoints
+
+- `ProvidersController.GetProviders()` — Returns all providers from `ModelRegistry.GetProviders()` (whatever providers have registered models).
+- `ModelsController.GetModels()` — Returns all models from all providers.
+
+### Agent Descriptor
+
+```csharp
+public required string ModelId { get; init; }       // Default model
+public required string ApiProvider { get; init; }    // Required provider
+// No AllowedModelIds or model restriction concept
+```
+
+### Auth Resolution (`GatewayAuthManager`)
+
+Resolves API keys from: `auth.json` → environment variables → `PlatformConfig.Providers[].ApiKey`. Already has per-provider config lookup, but doesn't signal whether a provider is "active" or "authenticated."
+
+---
+
+## 3. Proposed Config Schema
+
+### Provider Configuration (Layer 1)
+
+Extend `ProviderConfig` with `Enabled` and `Models`:
+
+```json
+{
+  "$schema": "https://botnexus.dev/schemas/config.v2.json",
+  "version": 2,
+  "providers": {
+    "github-copilot": {
+      "enabled": true,
+      "models": [
+        "claude-sonnet-4.5",
+        "claude-sonnet-4.6",
+        "gpt-5.2-codex",
+        "gpt-5.4"
+      ]
+    },
+    "anthropic": {
+      "enabled": true,
+      "apiKey": "sk-ant-...",
+      "models": [
+        "claude-sonnet-4-20250514",
+        "claude-opus-4-5-20250929"
+      ]
+    },
+    "openai": {
+      "enabled": false
+    }
+  },
+  "agents": {
+    "coding-agent": {
+      "provider": "github-copilot",
+      "model": "claude-sonnet-4.5",
+      "allowedModels": ["claude-sonnet-4.5", "claude-sonnet-4.6", "gpt-5.2-codex"],
+      "systemPromptFile": "coding-agent.md",
+      "toolIds": ["read", "write", "edit", "shell", "grep", "glob"]
+    }
+  }
+}
+```
+
+### C# Schema Changes
+
+```csharp
+// ProviderConfig — existing class, new properties
+public sealed class ProviderConfig
+{
+    public string? ApiKey { get; set; }
+    public string? BaseUrl { get; set; }
+    public string? DefaultModel { get; set; }
+
+    // NEW: Whether this provider is active. Default true for backward compat.
+    public bool Enabled { get; set; } = true;
+
+    // NEW: Allowed model IDs. null/empty = all models for this provider.
+    public List<string>? Models { get; set; }
+}
+
+// AgentDefinitionConfig — existing class, new property
+public sealed class AgentDefinitionConfig
+{
+    public string? Provider { get; set; }
+    public string? Model { get; set; }
+    public string? SystemPromptFile { get; set; }
+    public List<string>? ToolIds { get; set; }
+    public string? IsolationStrategy { get; set; }
+    public bool Enabled { get; set; } = true;
+
+    // NEW: Model IDs this agent is allowed to use.
+    // null/empty = all of the provider's allowed models.
+    public List<string>? AllowedModels { get; set; }
+}
+```
+
+### AgentDescriptor Changes (`Gateway.Abstractions`)
+
+```csharp
+public sealed record AgentDescriptor
+{
+    // ... existing properties ...
+
+    public required string ModelId { get; init; }       // Default model (unchanged)
+    public required string ApiProvider { get; init; }    // Required provider (unchanged)
+
+    // NEW: Allowed model IDs for this agent. Empty = unrestricted
+    // (will be intersected with provider's allowed models at resolution time).
+    public IReadOnlyList<string> AllowedModelIds { get; init; } = [];
+}
+```
+
+---
+
+## 4. Filtering Pipeline (3 Layers)
+
+### Layer 1: Platform Config → Active Providers + Allowed Models
+
+**Location:** New `ProviderModelFilter` service (in `BotNexus.Providers.Core` or `BotNexus.Gateway`)
+
+**Logic:**
+1. After `BuiltInModels.RegisterAll()` populates the full model registry, a new filtering step applies the platform config.
+2. For each provider in the config:
+   - If `enabled: false` → remove all models for that provider from the active set.
+   - If `models` is non-null and non-empty → only keep the listed models; remove others.
+   - If `models` is null or empty → keep all models (no restriction).
+3. Providers NOT mentioned in the config → **keep active with all models** (backward compatible: no config = everything available).
+
+**Design choice:** We do NOT mutate the `ModelRegistry` directly. Instead, we introduce a **`FilteredModelRegistry`** (or a `IModelFilter` interface) that wraps `ModelRegistry` and applies config-based filtering. This keeps the full registry intact for diagnostics/admin views, while the controllers/agents see only the filtered view.
+
+```csharp
+public interface IModelFilter
+{
+    IReadOnlyList<string> GetActiveProviders();
+    IReadOnlyList<LlmModel> GetAllowedModels(string provider);
+    LlmModel? GetModel(string provider, string modelId);
+    bool IsProviderActive(string provider);
+    bool IsModelAllowed(string provider, string modelId);
+}
+```
+
+### Layer 2: API Endpoints → Return Only Active/Allowed
+
+**ProvidersController** changes:
+```csharp
+// Before: _modelRegistry.GetProviders()
+// After:  _modelFilter.GetActiveProviders()
+```
+
+**ModelsController** changes:
+```csharp
+// Before: iterates all providers, returns all models
+// After:  iterates active providers, returns only allowed models
+
+// NEW optional query param: ?agentId=coding-agent
+// If provided, further filters to only the agent's allowed models (Layer 3)
+```
+
+**New endpoint** (optional but recommended):
+```
+GET /api/models?provider={providerId}         → allowed models for a provider
+GET /api/models?agentId={agentId}             → allowed models for an agent
+GET /api/models?provider={id}&agentId={id}    → intersection
+```
+
+### Layer 3: Per-Agent → Agent's AllowedModelIds
+
+**Resolution logic** (in `AgentDescriptorValidator` or agent creation):
+
+```
+effectiveModels = providerAllowedModels                    // from Layer 1
+if (agent.AllowedModelIds is not empty):
+    effectiveModels = effectiveModels ∩ agent.AllowedModelIds  // intersection
+```
+
+**Validation rules:**
+- `agent.ModelId` MUST be in the effective model set (or validation warning).
+- `agent.AllowedModelIds` entries that don't exist in the provider's allowed models → validation warning (not error — graceful degradation).
+
+**WebUI impact:** When the user opens the model dropdown for an agent, the UI calls `GET /api/models?agentId=X` and gets back only the models that agent is allowed to use.
+
+---
+
+## 5. Key Design Decisions
+
+| Question | Decision | Rationale |
+|----------|----------|-----------|
+| `models: []` or omitting `models` | **All models** (no restriction) | Matches existing behavior. Empty array = "didn't configure" = "allow all." This is the safest backward-compat default. |
+| `models: ["nonexistent"]` | **Validation warning, model ignored** | Don't hard-fail on typos. Log warning, skip unknown model IDs. |
+| Omitting a provider from config entirely | **Provider stays active with all models** | Backward compat. Existing configs have no `providers` section. |
+| Disabled providers' models | **Completely hidden** from API responses | Disabled = not available. Don't show grayed-out models — it confuses users and adds UI complexity. |
+| Filter approach | **Wrapper/decorator**, not mutation | Don't modify `ModelRegistry` contents. Introduce `IModelFilter` that wraps it. Full registry stays available for admin/diagnostics. |
+| `AllowedModelIds` empty on agent | **Unrestricted** (inherits provider's full list) | Consistent with `models` on provider. Empty = "all available." |
+| Config version | **Bump to v2** when provider filtering ships | The `version` field exists for this purpose. v1 configs work unchanged. v2 adds the new fields. |
+| Where `IModelFilter` lives | **`BotNexus.Providers.Core`** | It's a provider-concern abstraction. Controllers and agents depend on it via interface. |
+
+---
+
+## 6. Migration & Backward Compatibility
+
+### Scenario: Existing config with no `providers` section
+
+```json
+{
+  "version": 1,
+  "gateway": { "listenUrl": "http://localhost:5005" }
+}
+```
+
+**Behavior:** All providers active, all models available. Identical to current behavior. No migration required.
+
+### Scenario: Existing config with `providers` but no `enabled`/`models`
+
+```json
+{
+  "providers": {
+    "copilot": { "apiKey": "auth:github-copilot" }
+  }
+}
+```
+
+**Behavior:** `Enabled` defaults to `true`. `Models` defaults to `null` (all models). Existing configs work unchanged.
+
+### Scenario: User adds `enabled: false` to disable a provider
+
+```json
+{
+  "providers": {
+    "openai": { "enabled": false }
+  }
+}
+```
+
+**Behavior:** OpenAI provider and all its models disappear from API responses and WebUI dropdowns.
+
+### Version Validation
+
+- `PlatformConfigLoader.Validate()` already handles version warnings.
+- New fields (`enabled`, `models`, `allowedModels`) are all nullable/defaulted — no breaking changes to the JSON schema.
+- `PlatformConfigSchema` auto-generates from the C# types, so schema updates are automatic.
+
+---
+
+## 7. Validation Rules (New)
+
+Add to `PlatformConfigLoader.ValidateProviders()`:
+
+1. If `provider.Models` is non-null, each entry must be a non-empty string.
+2. If `provider.Models` contains IDs not in `BuiltInModels` for that provider → **warning** (not error).
+3. If `provider.Enabled` is `false` and `provider.Models` is non-null → **warning** (models list is ignored when disabled).
+
+Add to `PlatformConfigLoader.ValidateAgents()`:
+
+4. If `agent.AllowedModels` is non-null, each entry must be a non-empty string.
+5. If `agent.Model` is not in `agent.AllowedModels` (when non-empty) → **warning** (default model not in allowed set).
+
+Add to `AgentDescriptorValidator.Validate()`:
+
+6. If `AllowedModelIds` is non-empty and `ModelId` is not in the list → **validation warning**.
+
+---
+
+## 8. Implementation Plan
+
+### Phase A: Config Schema + Filtering Core (Farnsworth)
+
+**Owner:** Farnsworth (owns `Providers.Core` and `Gateway.Configuration`)  
+**Depends on:** This proposal being accepted.
+
+1. Add `Enabled` and `Models` properties to `ProviderConfig`.
+2. Add `AllowedModels` property to `AgentDefinitionConfig`.
+3. Add `AllowedModelIds` property to `AgentDescriptor`.
+4. Update `FileAgentConfigurationSource.AgentConfigurationFile` with `AllowedModels`.
+5. Update `FileAgentConfigurationSource.BuildDescriptor()` to map `AllowedModels` → `AllowedModelIds`.
+6. Update `PlatformConfigAgentSource` to map `AllowedModels` → `AllowedModelIds`.
+7. Add validation rules (§7 items 1–6) to `PlatformConfigLoader` and `AgentDescriptorValidator`.
+8. Update `PlatformConfigSchema` tests (auto-generated, but verify).
+
+### Phase B: IModelFilter + Filtering Pipeline (Farnsworth)
+
+**Owner:** Farnsworth  
+**Depends on:** Phase A.
+
+1. Create `IModelFilter` interface in `BotNexus.Providers.Core`.
+2. Create `PlatformConfigModelFilter : IModelFilter` that wraps `ModelRegistry` + reads `PlatformConfig`.
+3. Register `IModelFilter` in DI (`Program.cs`).
+4. Update `ProvidersController` to inject `IModelFilter` instead of `ModelRegistry`.
+5. Update `ModelsController` to inject `IModelFilter` instead of `ModelRegistry`.
+6. Add optional `?agentId=` query parameter to `ModelsController` for Layer 3 filtering.
+7. Wire `IModelFilter` into agent creation/validation path (intersection with agent's `AllowedModelIds`).
+
+### Phase C: WebUI Updates (Fry)
+
+**Owner:** Fry  
+**Depends on:** Phase B (API contract changes).
+
+1. Update provider dropdown to reflect only active providers.
+2. Pass `agentId` parameter when fetching models for an existing agent.
+3. Add `allowedModels` field to agent creation/edit form (multi-select or tag input).
+4. Handle gracefully if the models endpoint returns fewer models than before.
+
+### Phase D: Tests (Hermes)
+
+**Owner:** Hermes  
+**Depends on:** Phase A (can start schema tests immediately).
+
+1. **Unit tests for `PlatformConfigModelFilter`:**
+   - Provider enabled/disabled filtering.
+   - Model allowlist filtering.
+   - Omitted provider = active with all models.
+   - Empty `models` array = all models.
+   - Unknown model IDs in allowlist.
+2. **Unit tests for `AgentDescriptor.AllowedModelIds`:**
+   - Intersection with provider's allowed models.
+   - Empty AllowedModelIds = unrestricted.
+   - Default model not in allowed set → warning.
+3. **Controller integration tests:**
+   - `GET /api/providers` returns only active providers.
+   - `GET /api/models` returns only allowed models.
+   - `GET /api/models?agentId=X` returns agent-scoped models.
+4. **Config validation tests:**
+   - Backward compat: v1 config works unchanged.
+   - New validation warnings fire correctly.
+5. **E2E agent creation test:**
+   - Agent with `allowedModels` restricts model switching.
+
+---
+
+## 9. Risk Assessment
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| Breaking existing configs | Low | High | All new fields are nullable/defaulted. v1 configs work unchanged. |
+| Performance (filtering on every request) | Low | Low | `IModelFilter` can cache its filtered view; invalidate on config reload. |
+| Extension providers not filtered | Medium | Medium | Document that extension-registered providers are active by default; config can disable them by name. |
+| WebUI regression | Medium | Medium | Fry tests with both v1 (no filtering) and v2 (filtered) configs. |
+
+---
+
+## 10. Open Questions
+
+1. **Should `IModelFilter` react to hot-reload?** — The `PlatformConfigLoader.Watch()` mechanism already exists. `PlatformConfigModelFilter` should subscribe and rebuild its cached filtered view on config changes. This is the expected behavior.
+
+2. **Should the admin API (`/api/admin/models`) show the full unfiltered list?** — Probably yes, for diagnostics. But this is a future enhancement, not required in Phase A/B.
+
+3. **Should `AllowedModelIds` on the agent be validated against the provider's model set at load time?** — Yes, as warnings. Hard errors would break configs when models are renamed upstream.
+
+---
+
+## Appendix: Example Configurations
+
+### Minimal (backward compatible — no changes needed)
+
+```json
+{
+  "version": 1,
+  "gateway": {
+    "listenUrl": "http://localhost:5005",
+    "defaultAgentId": "assistant"
+  }
+}
+```
+
+### Copilot-Only Setup
+
+```json
+{
+  "version": 2,
+  "providers": {
+    "github-copilot": {
+      "enabled": true,
+      "models": ["claude-sonnet-4.5", "gpt-5.2-codex", "gpt-5.4"]
+    },
+    "anthropic": { "enabled": false },
+    "openai": { "enabled": false }
+  },
+  "agents": {
+    "coding-agent": {
+      "provider": "github-copilot",
+      "model": "claude-sonnet-4.5",
+      "allowedModels": ["claude-sonnet-4.5", "gpt-5.2-codex"],
+      "systemPromptFile": "coding-agent.md",
+      "toolIds": ["read", "write", "edit", "shell", "grep", "glob"]
+    }
+  }
+}
+```
+
+### Multi-Provider with Restrictions
+
+```json
+{
+  "version": 2,
+  "providers": {
+    "github-copilot": {
+      "enabled": true,
+      "models": ["claude-sonnet-4.5", "gpt-5.4"]
+    },
+    "anthropic": {
+      "enabled": true,
+      "apiKey": "auth:anthropic",
+      "models": ["claude-sonnet-4-20250514"]
+    }
+  },
+  "agents": {
+    "coding-agent": {
+      "provider": "github-copilot",
+      "model": "claude-sonnet-4.5",
+      "allowedModels": ["claude-sonnet-4.5"]
+    },
+    "research-agent": {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-20250514"
+    }
+  }
+}
+```
+
+# Unified Config + Agent Directory Architecture
+
+**Author:** Leela (Lead/Architect)  
+**Date:** 2026-04-09  
+**Status:** Proposal  
+**Requested by:** Jon Bullen  
+**Supersedes:** Previous provider/model config proposal (learnings incorporated)
+
+---
+
+## Problem
+
+Agent configuration is fragmented across three sources:
+
+1. **`config.json` → `agents:{}`** — `PlatformConfigAgentSource` reads inline definitions. Missing `displayName`, `description`, `allowedModels`, `subAgents`, `maxConcurrentSessions`, `metadata`, `isolationOptions`. **Watch() returns null** — no hot-reload.
+2. **`agentsDirectory` → `*.json` files** — `FileAgentConfigurationSource` reads individual files. Has full FSW hot-reload. Used by `FileAgentConfigurationWriter` for API-created agents.
+3. **`~/.botnexus/agents/{id}/`** — Workspace files (SOUL.md, IDENTITY.md, USER.md, MEMORY.md) scaffolded flat in agent root by `BotNexusHome.ScaffoldAgentWorkspace()`.
+
+Problems:
+- `PlatformConfigAgentSource` doesn't hot-reload (Watch returns null)
+- `AgentDefinitionConfig` is a subset of what `FileAgentConfigurationSource` supports
+- `FileAgentConfigurationWriter` writes separate JSON files that duplicate config.json
+- Workspace files have no subdirectory separation from potential future data files
+- `ProviderConfig` lacks `Enabled` flag and model allowlists
+- `AgentDescriptor` has no model restriction concept
+
+---
+
+## 1. Unified config.json Schema (Version 2)
+
+```jsonc
+{
+  "$schema": "https://botnexus.dev/schemas/config-v2.json",
+  "version": 2,
+
+  "gateway": {
+    "listenUrl": "http://localhost:5005",
+    "defaultAgentId": "nova",
+    "logLevel": "Information",
+    "sessionStore": { "type": "Sqlite", "connectionString": "Data Source=~/.botnexus/sessions.db" },
+    "cors": { "allowedOrigins": ["http://localhost:3000"] },
+    "rateLimit": { "requestsPerMinute": 60 },
+    "extensions": { "path": "extensions", "enabled": true },
+    "apiKeys": {
+      "tenant-a": {
+        "apiKey": "bnx_...",
+        "tenantId": "acme",
+        "permissions": ["chat:send"]
+      }
+    }
+  },
+
+  "providers": {
+    "github-copilot": {
+      "enabled": true,              // NEW — default true for backward compat
+      "apiKey": "auth:github",
+      "baseUrl": null,
+      "defaultModel": "claude-sonnet-4",
+      "models": [                    // NEW — null = all, [] = none, [...] = allowlist
+        "claude-sonnet-4",
+        "gpt-4.1",
+        "o4-mini"
+      ]
+    },
+    "anthropic": {
+      "enabled": true,
+      "apiKey": "sk-ant-...",
+      "defaultModel": "claude-sonnet-4-20250514",
+      "models": null                 // null = all models from this provider
+    },
+    "openai": {
+      "enabled": false               // Disabled provider — models hidden, auth skipped
+    }
+  },
+
+  "agents": {
+    "nova": {
+      "displayName": "Nova",         // NEW — was missing from AgentDefinitionConfig
+      "description": "General assistant", // NEW
+      "provider": "github-copilot",
+      "model": "claude-sonnet-4",
+      "allowedModels": [             // NEW — empty/null = unrestricted (within provider allowlist)
+        "claude-sonnet-4",
+        "gpt-4.1"
+      ],
+      "systemPromptFile": "workspace/SOUL.md", // Relative to ~/.botnexus/agents/nova/
+      "toolIds": ["read", "write", "shell"],
+      "subAgents": ["researcher"],
+      "isolationStrategy": "in-process",
+      "maxConcurrentSessions": 5,
+      "enabled": true,
+      "metadata": {},
+      "isolationOptions": {}
+    },
+    "researcher": {
+      "displayName": "Researcher",
+      "provider": "github-copilot",
+      "model": "gpt-4.1",
+      "toolIds": ["read", "grep", "glob"],
+      "enabled": true
+    }
+  },
+
+  "channels": {
+    "web": { "type": "websocket", "enabled": true },
+    "slack": { "type": "slack", "enabled": false, "settings": { "token": "xoxb-..." } }
+  }
+}
+```
+
+### Schema Changes Summary
+
+| Class | Field | Change |
+|-------|-------|--------|
+| `ProviderConfig` | `Enabled` | **Add** — `bool`, default `true` |
+| `ProviderConfig` | `Models` | **Add** — `List<string>?`, null = all |
+| `AgentDefinitionConfig` | `DisplayName` | **Add** — `string?` |
+| `AgentDefinitionConfig` | `Description` | **Add** — `string?` |
+| `AgentDefinitionConfig` | `AllowedModels` | **Add** — `List<string>?`, null = unrestricted |
+| `AgentDefinitionConfig` | `SubAgents` | **Add** — `List<string>?` |
+| `AgentDefinitionConfig` | `MaxConcurrentSessions` | **Add** — `int?` |
+| `AgentDefinitionConfig` | `Metadata` | **Add** — `JsonElement?` |
+| `AgentDefinitionConfig` | `IsolationOptions` | **Add** — `JsonElement?` |
+| `PlatformConfig` | `Version` | Bump default to `2`, accept `1` with migration |
+
+All additions are backward-compatible: null/default values preserve existing behavior.
+
+---
+
+## 2. Agent Directory Structure
+
+```
+~/.botnexus/
+├── config.json                    # Single source of truth for all config
+├── agents/
+│   ├── nova/
+│   │   ├── workspace/             # Working context (user-editable)
+│   │   │   ├── SOUL.md            # Agent personality / system prompt
+│   │   │   ├── IDENTITY.md        # Agent identity
+│   │   │   ├── USER.md            # User preferences
+│   │   │   └── MEMORY.md          # Persistent memory
+│   │   └── data/                  # Internal runtime data (managed by gateway)
+│   │       └── sessions/          # Per-agent session history
+│   └── researcher/
+│       ├── workspace/
+│       │   └── SOUL.md
+│       └── data/
+│           └── sessions/
+├── extensions/
+├── tokens/
+├── logs/
+└── sessions/                      # Global sessions (deprecated, migrate to per-agent)
+```
+
+### Changes to `BotNexusHome`
+
+```csharp
+// Current
+private static readonly string[] RequiredDirectories = ["extensions", "tokens", "sessions", "logs", "agents"];
+
+// New  
+private static readonly string[] RequiredDirectories = ["extensions", "tokens", "logs", "agents"];
+// Remove "sessions" from root — sessions move to per-agent data/sessions/
+
+// Current scaffold: files in agent root
+private static void ScaffoldAgentWorkspace(string agentDirectory)
+{
+    foreach (var file in WorkspaceScaffoldFiles)
+        File.WriteAllText(Path.Combine(agentDirectory, file), string.Empty);
+}
+
+// New scaffold: files in workspace/ subdirectory
+private static void ScaffoldAgentWorkspace(string agentDirectory)
+{
+    var workspacePath = Path.Combine(agentDirectory, "workspace");
+    Directory.CreateDirectory(workspacePath);
+    Directory.CreateDirectory(Path.Combine(agentDirectory, "data", "sessions"));
+    foreach (var file in WorkspaceScaffoldFiles)
+    {
+        var path = Path.Combine(workspacePath, file);
+        if (!File.Exists(path))
+            File.WriteAllText(path, string.Empty);
+    }
+}
+```
+
+### Changes to `FileAgentWorkspaceManager`
+
+```csharp
+// Current: reads from agent root
+public string GetWorkspacePath(string agentName)
+    => _botNexusHome.GetAgentDirectory(agentName.Trim());
+
+// New: reads from workspace/ subdirectory
+public string GetWorkspacePath(string agentName)
+    => Path.Combine(_botNexusHome.GetAgentDirectory(agentName.Trim()), "workspace");
+```
+
+### Migration of Existing Workspace Files
+
+On `GetAgentDirectory()`, detect legacy layout (SOUL.md in agent root) and move files:
+
+```csharp
+private static void MigrateLegacyWorkspace(string agentDirectory)
+{
+    var workspacePath = Path.Combine(agentDirectory, "workspace");
+    if (Directory.Exists(workspacePath))
+        return; // Already migrated
+
+    var hasLegacyFiles = WorkspaceScaffoldFiles
+        .Any(f => File.Exists(Path.Combine(agentDirectory, f)));
+    if (!hasLegacyFiles)
+        return;
+
+    Directory.CreateDirectory(workspacePath);
+    foreach (var file in WorkspaceScaffoldFiles)
+    {
+        var src = Path.Combine(agentDirectory, file);
+        var dst = Path.Combine(workspacePath, file);
+        if (File.Exists(src))
+            File.Move(src, dst);
+    }
+}
+```
+
+### `systemPromptFile` Resolution
+
+Currently resolved relative to the config directory. Under the unified model:
+- Absolute paths: used as-is
+- Relative paths: resolved from `~/.botnexus/agents/{agent-id}/`
+
+This means `"systemPromptFile": "workspace/SOUL.md"` resolves to `~/.botnexus/agents/nova/workspace/SOUL.md`. The path traversal guard in `PlatformConfigAgentSource` changes its base from `configDirectory` to the agent's home directory.
+
+---
+
+## 3. Migration Plan
+
+### Phase A: Enrich Config Schema (Non-Breaking)
+
+Add new fields to `ProviderConfig` and `AgentDefinitionConfig`. Update `PlatformConfigAgentSource.LoadAsync()` to map all new fields to `AgentDescriptor`. Existing configs with only `provider` + `model` continue to work.
+
+### Phase B: Agent Directory Restructure
+
+1. Update `BotNexusHome.ScaffoldAgentWorkspace()` to create `workspace/` + `data/sessions/`
+2. Add `MigrateLegacyWorkspace()` call in `GetAgentDirectory()`
+3. Update `FileAgentWorkspaceManager.GetWorkspacePath()` to return `workspace/` subdir
+4. Update `systemPromptFile` resolution base path
+
+### Phase C: Unified Config Source + Hot-Reload
+
+1. Wire `PlatformConfigLoader.ConfigChanged` event to `PlatformConfigAgentSource` so inline agents hot-reload
+2. Implement `PlatformConfigAgentSource.Watch()` (currently returns null)
+3. Add `PlatformConfigAgentWriter` that writes back to `config.json` agents section
+4. Wire API agent creation to write to config.json instead of separate files
+
+### Phase D: Deprecate File-Based Agent Config
+
+1. Add startup warning if `agentsDirectory` is configured: "Deprecated: agent definitions should be in config.json"
+2. Keep `FileAgentConfigurationSource` functional for one release cycle
+3. Add migration command: `botnexus config migrate-agents` — reads agents from directory files, merges into config.json
+4. Remove `agentsDirectory` from `GatewaySettingsConfig` in next major version
+
+### Phase E: Provider Model Filtering (from previous proposal)
+
+1. Add `IModelFilter` decorator wrapping `ModelRegistry`
+2. Implement 3-layer filtering: provider allowlist → API endpoints → per-agent intersection
+3. Controllers switch from `ModelRegistry` to `IModelFilter`
+
+---
+
+## 4. Hot-Reload Architecture
+
+### Current State
+
+```
+config.json change
+  → PlatformConfigWatcher (FSW, 500ms debounce)
+    → PlatformConfigLoader.ConfigChanged event
+      → ??? (nothing subscribes in default wiring)
+```
+
+```
+agentsDirectory/*.json change  
+  → FileConfigurationWatcher (FSW, 250ms debounce)
+    → FileAgentConfigurationSource.LoadAsync()
+      → AgentConfigurationHostedService.OnSourceChanged()
+        → Registry.Unregister/Register
+```
+
+**Gap:** `PlatformConfigAgentSource.Watch()` returns `null`. Inline agents don't hot-reload.
+
+### Target State
+
+```
+config.json change
+  → PlatformConfigWatcher (FSW, 500ms debounce)
+    → PlatformConfigLoader.ConfigChanged event
+      → PlatformConfigAgentSource re-reads IOptions<PlatformConfig>
+        → AgentConfigurationHostedService.OnSourceChanged()
+          → Registry.Unregister/Register
+      → IModelFilter re-evaluates provider allowlists
+```
+
+### Implementation
+
+`PlatformConfigAgentSource.Watch()` implementation:
+
+```csharp
+public IDisposable? Watch(Action<IReadOnlyList<AgentDescriptor>> onChanged)
+{
+    // Subscribe to PlatformConfigLoader.ConfigChanged
+    void handler(PlatformConfig _)
+    {
+        var descriptors = LoadAsync(CancellationToken.None).GetAwaiter().GetResult();
+        onChanged(descriptors);
+    }
+    PlatformConfigLoader.ConfigChanged += handler;
+    return new CallbackDisposable(() => PlatformConfigLoader.ConfigChanged -= handler);
+}
+```
+
+**Note:** The static `ConfigChanged` event on `PlatformConfigLoader` is already wired — `PlatformConfigWatcher.ReloadConfig()` fires it on every reload. We just need to subscribe.
+
+### What Cannot Be Hot-Reloaded
+
+| Setting | Hot-Reload? | Reason |
+|---------|-------------|--------|
+| `gateway.listenUrl` | ❌ | Kestrel binding — requires process restart |
+| `gateway.apiKeys` | ✅ | Read per-request by auth middleware |
+| `providers.*.apiKey` | ✅ | Resolved per-request via `GatewayAuthManager` |
+| `providers.*.enabled` | ✅ | `IModelFilter` re-evaluates on config change |
+| `providers.*.models` | ✅ | `IModelFilter` re-evaluates on config change |
+| `agents.*` | ✅ | Registry update via Watch callback |
+| `gateway.cors` | ⚠️ | Requires CORS policy rebuild (middleware restart) |
+| `gateway.rateLimit` | ✅ | Read per-request |
+| `gateway.sessionStore` | ❌ | Store type is a singleton — requires restart |
+| `gateway.extensions` | ❌ | Extension loader runs once at startup |
+
+---
+
+## 5. Implementation Phases
+
+| Phase | Work | Agent | Est |
+|-------|------|-------|-----|
+| A1 | Add `Enabled`, `Models` to `ProviderConfig` | Bender | S |
+| A2 | Add `DisplayName`, `Description`, `AllowedModels`, `SubAgents`, `MaxConcurrentSessions`, `Metadata`, `IsolationOptions` to `AgentDefinitionConfig` | Bender | S |
+| A3 | Update `PlatformConfigAgentSource.LoadAsync()` to map all new fields | Bender | S |
+| A4 | Update `PlatformConfigLoader.Validate()` for new fields | Bender | S |
+| B1 | Restructure `BotNexusHome` scaffold to `workspace/` + `data/sessions/` | Kif | S |
+| B2 | Add `MigrateLegacyWorkspace()` auto-migration | Kif | S |
+| B3 | Update `FileAgentWorkspaceManager` workspace path | Kif | S |
+| B4 | Update `systemPromptFile` resolution to agent home base | Kif | M |
+| C1 | Implement `PlatformConfigAgentSource.Watch()` via ConfigChanged subscription | Bender | S |
+| C2 | Add `PlatformConfigAgentWriter` (write-back to config.json agents section) | Farnsworth | M |
+| C3 | Wire API agent CRUD to `PlatformConfigAgentWriter` | Farnsworth | S |
+| D1 | Add deprecation warning for `agentsDirectory` | Kif | S |
+| D2 | Add `botnexus config migrate-agents` CLI command | Hermes | M |
+| E1 | Implement `IModelFilter` decorator | Bender | M |
+| E2 | 3-layer filtering: provider → API → per-agent | Bender | M |
+| E3 | Wire controllers to `IModelFilter` | Bender | S |
+
+**Size:** S = small (< 1 hour), M = medium (1-3 hours)
+
+**Recommended execution order:** A1-A4 → B1-B4 → C1-C3 → E1-E3 → D1-D2
+
+Phases A and B can run in parallel (different agents, no conflicts). Phase C depends on A. Phase D is deferred to a future release. Phase E can run after A.
+
+---
+
+## 6. What Gets Removed
+
+### Immediate (Phase C complete)
+
+| File | Reason |
+|------|--------|
+| `FileAgentConfigurationWriter.cs` | Replaced by `PlatformConfigAgentWriter` |
+| `NoOpAgentConfigurationWriter` (if exists) | Replaced by `PlatformConfigAgentWriter` |
+| `AddFileAgentConfiguration()` extension | No longer the default registration path |
+
+### Deferred (Phase D, next major version)
+
+| File / Member | Reason |
+|---------------|--------|
+| `FileAgentConfigurationSource.cs` | Agents come from config.json only |
+| `FileConfigurationWatcher` (inner class) | Replaced by `PlatformConfigLoader.Watch()` pipeline |
+| `PlatformConfig.AgentsDirectory` | Deprecated field |
+| `GatewaySettingsConfig.AgentsDirectory` | Deprecated field |
+| `PlatformConfig.GetAgentsDirectory()` | Deprecated helper |
+| `PlatformConfig.SessionsDirectory` | Sessions move to per-agent `data/sessions/` |
+| `GatewaySettingsConfig.SessionsDirectory` | Same |
+| `BotNexusHome.RequiredDirectories["sessions"]` | Sessions no longer at root level |
+
+### Config Schema Properties Removed (v2)
+
+- `agentsDirectory` — agents defined inline in config.json
+- `sessionsDirectory` — sessions stored per-agent under `data/sessions/`
+
+---
+
+## 7. Backward Compatibility
+
+| Scenario | Behavior |
+|----------|----------|
+| v1 config with `agents:{}` only | Works as-is. New fields default safely. |
+| v1 config with `agentsDirectory` | Deprecated warning logged. `FileAgentConfigurationSource` still loads. |
+| v1 config with both | Both sources active (current behavior). Deprecation warning for directory source. |
+| Existing `~/.botnexus/agents/{id}/SOUL.md` (flat) | Auto-migrated to `workspace/SOUL.md` on first access. |
+| `ProviderConfig` without `enabled`/`models` | Defaults to `enabled: true`, `models: null` (all). Zero-breaking. |
+| `AgentDefinitionConfig` without new fields | All nullable, defaults match current behavior. |
+
+---
+
+## Open Questions
+
+1. **Config write conflict** — `PlatformConfigAgentWriter` needs atomic read-modify-write of config.json. Use temp file + rename (same pattern as `FileAgentConfigurationWriter`). Risk: concurrent external edits. Mitigation: advisory file lock during write, re-read before merge.
+
+2. **Per-agent sessions vs global sessions** — Should we keep the global `sessionStore` config for backward compat, or force per-agent sessions in Phase B? **Recommendation:** Keep global session store as-is; per-agent `data/sessions/` is for workspace-level session artifacts (not the full session store).
+
+3. **JSON Schema generation** — Should we auto-generate the v2 schema from the C# types? **Recommendation:** Yes, use `PlatformConfigSchema` (already exists for v1 validation) and extend for v2 fields.
