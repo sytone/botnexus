@@ -1,0 +1,7 @@
+{
+  "id": "botnexus-mcp",
+  "name": "MCP Extension",
+  "version": "1.0.0",
+  "entryAssembly": "BotNexus.Extensions.Mcp.dll",
+  "extensionTypes": ["tool"]
+}

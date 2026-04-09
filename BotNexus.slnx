@@ -36,6 +36,9 @@
     <Project Path="src/tools/BotNexus.Memory/BotNexus.Memory.csproj" />
     <Project Path="src/tools/BotNexus.Tools/BotNexus.Tools.csproj" />
   </Folder>
+  <Folder Name="/extensions/mcp/">
+    <Project Path="extensions/mcp/BotNexus.Extensions.Mcp/BotNexus.Extensions.Mcp.csproj" />
+  </Folder>
   <Folder Name="/extensions/tools/">
     <Project Path="extensions/tools/process/BotNexus.Extensions.ProcessTool/BotNexus.Extensions.ProcessTool.csproj" />
   </Folder>
@@ -53,6 +56,7 @@
     <Project Path="tests/BotNexus.Cron.Tests/BotNexus.Cron.Tests.csproj" />
     <Project Path="tests/BotNexus.Gateway.Tests/BotNexus.Gateway.Tests.csproj" />
     <Project Path="tests/BotNexus.Skills.Tests/BotNexus.Skills.Tests.csproj" />
+    <Project Path="tests/BotNexus.Extensions.Mcp.Tests/BotNexus.Extensions.Mcp.Tests.csproj" />
   </Folder>
   <Project Path="extensions/tools/exec/BotNexus.Extensions.ExecTool/BotNexus.Extensions.ExecTool.csproj" />
   <Project Path="tests/BotNexus.Extensions.ExecTool.Tests/BotNexus.Extensions.ExecTool.Tests.csproj" />
