@@ -13290,3 +13290,104 @@ Phases A and B can run in parallel (different agents, no conflicts). Phase C dep
 2. **Per-agent sessions vs global sessions** — Should we keep the global `sessionStore` config for backward compat, or force per-agent sessions in Phase B? **Recommendation:** Keep global session store as-is; per-agent `data/sessions/` is for workspace-level session artifacts (not the full session store).
 
 3. **JSON Schema generation** — Should we auto-generate the v2 schema from the C# types? **Recommendation:** Yes, use `PlatformConfigSchema` (already exists for v1 validation) and extend for v2 fields.
+
+
+---
+
+# Decision: Extension loader must filter auto-discovered tools by DI-compatible constructors
+
+- **Date:** 2026-04-09
+- **Decider:** Bender
+- **Scope:** `src\gateway\BotNexus.Gateway\Extensions\AssemblyLoadContextExtensionLoader.cs`
+
+## Context
+Extension loading started failing when assemblies contributed runtime-only `IAgentTool` types (e.g., MCP bridged tools, skill tools) that require manual construction data rather than DI-managed services. Hook handlers with constructor dependencies also failed because they were activated with parameterless `Activator.CreateInstance`.
+
+## Decision
+1. Only auto-register discovered `IAgentTool` implementations when at least one public constructor is DI-compatible (all parameters are interface/abstract, `IServiceProvider`, or optional/defaulted).
+2. Instantiate extension hook handlers via `ActivatorUtilities.CreateInstance` against a service provider built from the current service collection.
+
+## Consequences
+- Runtime-only tools are no longer blindly registered into DI, preventing startup validation crashes.
+- Constructor-injected hook handlers can be loaded without requiring parameterless constructors.
+
+
+---
+
+# MCP Server Graceful Initialization
+
+**Date:** 2026-04-10  
+**Author:** Bender  
+**Status:** Implemented  
+**Priority:** P0 (Production Bug Fix)
+
+## Decision
+
+MCP server initialization failures should be non-fatal to agent session creation. When any MCP server fails to initialize (timeout, authentication error, process crash, etc.), the failure should be logged as a warning and that server should be skipped. Other configured MCP servers and the agent session itself should continue successfully.
+
+## Context
+
+**Bug:** In `McpServerManager.StartServersAsync`, any single server initialization failure would propagate an exception up the call stack, killing the entire agent session creation in `InProcessIsolationStrategy.CreateAsync`.
+
+**Real-world impact:** The 'nova' agent has a GitHub MCP server configured. A cron job ("Sammamish Weather Check") that doesn't need GitHub tools was failing because:
+1. `GITHUB_TOKEN` environment variable isn't set
+2. GitHub MCP server can't authenticate
+3. Connection hangs → 30-second timeout
+4. `TimeoutException` is thrown
+5. Entire session creation dies
+
+This is unacceptable behavior — optional dependencies shouldn't be able to kill core functionality.
+
+## Implementation
+
+### Changes Made
+
+1. **`McpServerManager.cs`:**
+   - Added `ILogger` field and optional constructor parameter (defaults to `NullLogger.Instance`)
+   - Wrapped per-server initialization in nested try/catch blocks:
+     - Inner catch: `OperationCanceledException` when `!ct.IsCancellationRequested` → timeout → log warning, dispose client, continue
+     - Middle catch: General `Exception` from `InitializeAsync` → log warning with exception details, dispose client, continue
+     - Outer catch: Any transport creation or unexpected failures → log warning, continue
+   - Added success logging: `LogInformation` after successful initialization (includes server ID and tool count)
+
+2. **`InProcessIsolationStrategy.cs`:**
+   - Updated MCP manager instantiation to pass logger from `ILoggerFactory.CreateLogger<McpServerManager>()`
+
+### Rationale
+
+- **MCP servers are optional dependencies:** If one server isn't available, the agent should still work with the servers that are available
+- **Fail-safe principle:** Better to have partial functionality than complete failure
+- **Operational visibility:** Logging ensures operators know when servers fail, without breaking the user experience
+- **Respects cancellation:** The outer cancellation token (`ct`) is still honored — only per-server failures are non-fatal
+
+### Edge Cases Handled
+
+- Timeout exceptions (server doesn't respond within `InitTimeoutMs`)
+- General initialization exceptions (JSON parsing errors, protocol errors, etc.)
+- Transport creation failures (process spawn failures, network errors for HTTP/SSE)
+- Process crashes before/during initialization
+
+## Alternatives Considered
+
+1. **Make all MCP servers optional in config:** Would require config changes and doesn't solve the root cause
+2. **Add retry logic:** Adds complexity and delays session creation; operators can restart servers independently
+3. **Kill only the failing server's tools:** This is exactly what we implemented
+
+## Impact
+
+- **Users:** Agents with partially-configured MCP servers now start successfully
+- **Operators:** Warning logs provide visibility into which servers failed and why
+- **Tests:** All existing tests pass (148 MCP tests + Gateway isolation tests)
+
+## Testing
+
+- Verified all 148 MCP extension tests pass
+- Verified Gateway isolation tests pass
+- Manual smoke test: Agent with missing `GITHUB_TOKEN` now starts successfully with warning log instead of failing
+
+## Related Files
+
+- `extensions\mcp\BotNexus.Extensions.Mcp\McpServerManager.cs`
+- `src\gateway\BotNexus.Gateway\Isolation\InProcessIsolationStrategy.cs`
+- `.squad\agents\bender\history.md` (2026-04-10 entry)
+
