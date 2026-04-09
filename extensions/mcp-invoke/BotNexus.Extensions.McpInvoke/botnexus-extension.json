@@ -1,0 +1,7 @@
+{
+  "id": "botnexus-mcp-invoke",
+  "name": "MCP Invoke Tool",
+  "version": "0.1.0",
+  "entryAssembly": "BotNexus.Extensions.McpInvoke.dll",
+  "extensionTypes": ["tool"]
+}

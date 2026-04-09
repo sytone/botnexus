@@ -137,7 +137,7 @@ public sealed class McpServerManager : IAsyncDisposable
     /// Creates the appropriate transport for a server configuration.
     /// Returns null if neither command nor URL is configured.
     /// </summary>
-    internal static IMcpTransport? CreateTransport(McpServerConfig serverConfig)
+    public static IMcpTransport? CreateTransport(McpServerConfig serverConfig)
     {
         if (!string.IsNullOrWhiteSpace(serverConfig.Url))
         {

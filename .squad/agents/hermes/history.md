@@ -54,3 +54,12 @@
 - Expanded `SessionsControllerTests` metadata endpoint coverage for empty metadata fetch, non-existent PATCH 404, merge-only PATCH behavior, null-removal precision, persistence after save, and JSON type conversion expectations.
 - Expanded `PlatformConfigurationTests` versioning coverage for sync-load missing version default (`1`), warnings for unsupported versions, no warnings for supported versions, and trace warning emission checks.
 - Validation: `dotnet build Q:\repos\botnexus --verbosity quiet` and `dotnet test Q:\repos\botnexus\tests\BotNexus.Gateway.Tests --verbosity quiet` passed.
+
+## 2026-04-09T11:39:00Z - McpInvokeTool comprehensive test suite
+- Created 22 tests for McpInvokeTool covering tool metadata (name, label, schema), three actions (list_servers, list_tools, call), parameter validation, error handling (missing params, unconfigured servers, MCP errors), content handling (text, image, multiple blocks, empty content), connection caching/lifecycle, and dispose cleanup.
+- Created McpInvokeToolTests.cs (unit tests) and McpInvokeToolIntegrationTests.cs (integration tests with MockMcpTransport).
+- Added internal test constructor to McpInvokeTool accepting ConcurrentDictionary<string, McpClient> for dependency injection.
+- Copied MockMcpTransport from BotNexus.Extensions.Mcp.Tests for in-memory MCP transport testing.
+- Tests follow existing xUnit + FluentAssertions patterns from BotNexus.Extensions.Mcp.Tests.
+- Validation: `dotnet test tests\BotNexus.Extensions.McpInvoke.Tests --verbosity quiet` passed (22/22).
+- Commit: c3cf681

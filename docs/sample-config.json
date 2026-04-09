@@ -29,7 +29,21 @@
       "provider": "copilot",
       "model": "gpt-4.1",
       "isolationStrategy": "in-process",
-      "enabled": true
+      "enabled": true,
+      "extensions": {
+        "botnexus-mcp-invoke": {
+          "enabled": true,
+          "servers": {
+            "github": {
+              "command": "npx",
+              "args": ["-y", "@modelcontextprotocol/server-github"],
+              "env": {
+                "GITHUB_PERSONAL_ACCESS_TOKEN": "${env:GITHUB_TOKEN}"
+              }
+            }
+          }
+        }
+      }
     },
     "analyst": {
       "provider": "anthropic",

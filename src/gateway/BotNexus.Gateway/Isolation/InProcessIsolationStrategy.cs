@@ -21,6 +21,7 @@ using BotNexus.Providers.Core;
 using BotNexus.Providers.Core.Models;
 using BotNexus.Extensions.Skills;
 using BotNexus.Extensions.Mcp;
+using BotNexus.Extensions.McpInvoke;
 using BotNexus.Memory;
 using BotNexus.Memory.Tools;
 using Microsoft.Extensions.DependencyInjection;
@@ -155,6 +156,16 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             tools.AddRange(mcpTools);
         }
 
+        // MCP Invoke extension — single tool for skill-driven MCP access (lazy server lifecycle)
+        McpInvokeTool? mcpInvokeTool = null;
+        var mcpInvokeConfig = ResolveExtensionConfig<McpInvokeConfig>(descriptor, "botnexus-mcp-invoke");
+        if (mcpInvokeConfig is { Enabled: true, Servers.Count: > 0 })
+        {
+            var invokeLogger = _serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger<McpInvokeTool>();
+            mcpInvokeTool = new McpInvokeTool(mcpInvokeConfig, invokeLogger);
+            tools.Add(mcpInvokeTool);
+        }
+
         var hookDispatcher = _serviceProvider.GetService<IHookDispatcher>();
         BeforeToolCallDelegate? beforeToolCall = null;
         AfterToolCallDelegate? afterToolCall = null;
@@ -225,7 +236,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             SessionId: context.SessionId);
 
         var agent = new Agent(options);
-        IAgentHandle handle = new InProcessAgentHandle(agent, descriptor.AgentId, context.SessionId, _logger, mcpManager);
+        IAgentHandle handle = new InProcessAgentHandle(agent, descriptor.AgentId, context.SessionId, _logger, mcpManager, mcpInvokeTool);
 
         _logger.LogDebug("Created in-process agent handle for '{AgentId}' session '{SessionId}'", descriptor.AgentId, context.SessionId);
 
@@ -299,14 +310,16 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable
     private readonly Agent _agent;
     private readonly ILogger _logger;
     private readonly McpServerManager? _mcpManager;
+    private readonly McpInvokeTool? _mcpInvokeTool;
 
-    public InProcessAgentHandle(Agent agent, string agentId, string sessionId, ILogger logger, McpServerManager? mcpManager = null)
+    public InProcessAgentHandle(Agent agent, string agentId, string sessionId, ILogger logger, McpServerManager? mcpManager = null, McpInvokeTool? mcpInvokeTool = null)
     {
         _agent = agent;
         AgentId = agentId;
         SessionId = sessionId;
         _logger = logger;
         _mcpManager = mcpManager;
+        _mcpInvokeTool = mcpInvokeTool;
     }
 
     /// <inheritdoc />
@@ -529,6 +542,12 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable
         {
             try { await _mcpManager.DisposeAsync(); }
             catch (Exception ex) { _logger.LogWarning(ex, "Error disposing MCP server manager"); }
+        }
+
+        if (_mcpInvokeTool is not null)
+        {
+            try { await _mcpInvokeTool.DisposeAsync(); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Error disposing MCP invoke tool"); }
         }
     }
 }
