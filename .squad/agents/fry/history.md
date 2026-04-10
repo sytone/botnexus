@@ -238,3 +238,17 @@ The `showStreamingIndicator()` function appended an "Agent is thinking..." div t
 **Commit:** 055d836 — `fix(webui): align steer button with input field during streaming`
 
 `.send-group` used `align-items: flex-end` which caused the Steer button and the ▾ send-mode dropdown to have mismatched heights (different font sizes: 0.85rem vs 0.7rem). Changed to `align-items: stretch` so both buttons fill to the same height, forming a cohesive button group. Also removed an unconditional `.send-group .btn-primary` rule that always zeroed right border-radius even in normal send mode — the existing `:has(.btn-send-mode:not(.hidden))` selector correctly handles this conditionally.
+
+### Per-Session State + Backend Payload — Waves 2-3 (2026-07-24)
+**Timestamp:** 2026-07-24
+**Status:** ✅ Complete
+**Commit:** 8fadbbd — feat(webui): add per-session state management for streaming
+
+**Wave 2 — Backend Verification:**
+- `AgentStreamEvent` did NOT include `sessionId`. Added `SessionId` property to the record.
+- `SignalRChannelAdapter.SendStreamEventAsync` now enriches events with `sessionId = conversationId` via `with` expression before sending to the SignalR group. This makes the client-side `isEventForCurrentSession(evt)` guard fully effective.
+
+**Wave 3 — Per-Session State Map:**
+1. **(W3.1)** Introduced `sessionState` Map + `getSessionState(sessionId)` helper. Returns existing state or creates defaults. LRU ordering: accessing existing entries moves them to end.
+2. **(W3.2)** Migrated 7 globals (`isStreaming`, `activeMessageId`, `activeToolCalls`, `activeToolCount`, `thinkingBuffer`, `toolCallDepth`, `toolStartTimes`) from flat variables to per-session state. Added `isCurrentSessionStreaming()` convenience function. Old globals kept as deprecated stubs. Key design: `openAgentTimeline` clears UI elements but does NOT clear outgoing session's per-session state (it may still be streaming server-side).
+3. **(W3.3)** LRU eviction caps `sessionState` at 20 entries. `cleanupSessionState(sessionId)` for explicit removal.

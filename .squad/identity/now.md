@@ -1,15 +1,15 @@
 ---
-updated_at: 2026-04-10T16:30:00Z
-focus_area: Sub-Agent Spawning Feature Delivered
+updated_at: 2026-04-10T17:35:00Z
+focus_area: Session Switching Bug Delivered
 active_issues: []
-status: subagent_delivery_complete
+status: session_switching_delivered
 ---
 
 # What We're Focused On
 
-**Sub-Agent Spawning feature delivered (2026-04-10 16:30Z).** 4-wave concurrent delivery: Wave 1 (abstractions + config), Wave 2 (runtime implementation), Wave 3 (tools), Wave 4 (REST + WebUI + docs). 51 SubAgent tests all passing. Design review approved with 6 modifications. ISubAgentManager, DefaultSubAgentManager, SpawnTool/ListTool/ManageTool, REST endpoints, WebSocket events, WebUI panel, 470-line feature doc. 10 agents across 4 teams. Commits: f57b157, b614205, ff63957, 4d4b6a7, 25c8876, ad72475, c75a033, 91f11c3, 041d65a.
+**Session switching bug delivered (2026-04-10 17:35Z).** 4-wave concurrent pipeline: Wave 1 (Fry: core fix + guards + orphan cleanup), Wave 2 (Fry: backend sessionId), Wave 3 (Fry: per-session state Map), Wave 4 (Hermes: 7 tests). Design review led by Leela: 3 patterns confirmed, 6 decisions. Build green. Commits: 8fadbbd, b549fb5.
 
-**Previous:** Gateway Phase 12 complete. Requirements validation & gap remediation sprint. 3 waves, ~30 work items delivered. 2 P0s fixed, 99 gateway tests added, full documentation suite. 1,015 tests passing.
+**Previous:** Sub-Agent Spawning feature delivered (2026-04-10 16:30Z). 4-wave concurrent delivery: Wave 1 (abstractions + config), Wave 2 (runtime implementation), Wave 3 (tools), Wave 4 (REST + WebUI + docs). 51 SubAgent tests all passing. Commits: f57b157, b614205, ff63957, 4d4b6a7, 25c8876, ad72475, c75a033, 91f11c3, 041d65a.
 
 ## Current Status
 
