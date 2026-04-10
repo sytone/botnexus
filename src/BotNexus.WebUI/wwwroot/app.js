@@ -49,6 +49,8 @@
     let activityReconnectTimer = null;
     let userScrolledUp = false;
     let commandPaletteIndex = -1;
+    /** @type {Map<string, Object>} */
+    let activeSubAgents = new Map();
 
     // --- DOM refs ---
     const $ = (sel) => document.querySelector(sel);
@@ -102,6 +104,9 @@
     const elFollowUpIndicator = $('#followup-indicator');
     const elProcessingStatus = $('#processing-status');
     const elCommandPalette = $('#command-palette');
+    const elSubAgentPanel = $('#subagent-panel');
+    const elSubAgentList = $('#subagent-list');
+    const elSubAgentCountBadge = $('#subagent-count-badge');
 
     // =========================================================================
     // Markdown rendering
@@ -459,6 +464,7 @@
         connection.on('SessionReset', (data) => {
             currentSessionId = null;
             updateSessionIdDisplay();
+            clearSubAgentPanel();
             elChatMessages.innerHTML = '';
             appendSystemMessage('Session reset. System prompt regenerated.');
             loadSessions();
@@ -534,6 +540,61 @@
             handleError({ message: evt?.message || 'Unknown error', code: evt?.code });
         });
 
+        // Sub-agent lifecycle events
+        connection.on('SubAgentSpawned', (evt) => {
+            if (!evt?.subAgentId) return;
+            activeSubAgents.set(evt.subAgentId, {
+                subAgentId: evt.subAgentId,
+                name: evt.name || evt.subAgentId,
+                task: evt.task || '',
+                model: evt.model || '',
+                status: 'Running',
+                startedAt: evt.startedAt || new Date().toISOString(),
+                completedAt: null,
+                turnsUsed: 0,
+                resultSummary: null
+            });
+            renderSubAgentPanel();
+            trackActivity('tool', currentAgentId, `🚀 Sub-agent spawned: ${evt.name || evt.subAgentId}`);
+        });
+
+        connection.on('SubAgentCompleted', (evt) => {
+            if (!evt?.subAgentId) return;
+            const sa = activeSubAgents.get(evt.subAgentId);
+            if (sa) {
+                sa.status = 'Completed';
+                sa.completedAt = evt.completedAt || new Date().toISOString();
+                sa.turnsUsed = evt.turnsUsed || sa.turnsUsed;
+                sa.resultSummary = evt.resultSummary || null;
+            }
+            renderSubAgentPanel();
+            trackActivity('response', currentAgentId, `✅ Sub-agent completed: ${evt.name || evt.subAgentId}`);
+        });
+
+        connection.on('SubAgentFailed', (evt) => {
+            if (!evt?.subAgentId) return;
+            const sa = activeSubAgents.get(evt.subAgentId);
+            if (sa) {
+                sa.status = evt.timedOut ? 'TimedOut' : 'Failed';
+                sa.completedAt = evt.completedAt || new Date().toISOString();
+                sa.resultSummary = evt.error || evt.resultSummary || null;
+            }
+            renderSubAgentPanel();
+            const icon = evt.timedOut ? '⏱' : '❌';
+            trackActivity('error', currentAgentId, `${icon} Sub-agent failed: ${evt.name || evt.subAgentId}`);
+        });
+
+        connection.on('SubAgentKilled', (evt) => {
+            if (!evt?.subAgentId) return;
+            const sa = activeSubAgents.get(evt.subAgentId);
+            if (sa) {
+                sa.status = 'Killed';
+                sa.completedAt = evt.completedAt || new Date().toISOString();
+            }
+            renderSubAgentPanel();
+            trackActivity('tool', currentAgentId, `🛑 Sub-agent killed: ${evt.name || evt.subAgentId}`);
+        });
+
         // Connection lifecycle
         connection.onreconnecting(() => {
             setStatus('reconnecting');
@@ -592,6 +653,7 @@
 
         // Leave previous session group
         if (currentSessionId && currentSessionId !== sessionId) {
+            clearSubAgentPanel();
             try { await hubInvoke('LeaveSession', currentSessionId); } catch {}
         }
 
@@ -618,6 +680,7 @@
                     appendSystemMessage(`Session resumed (${result.messageCount} messages).`);
                 }
                 updateSessionIdDisplay();
+                fetchSubAgents();
             }
         } catch (err) {
             if (myVersion === joinSessionVersion) {
@@ -2069,6 +2132,175 @@
     }
 
     // =========================================================================
+    // Sub-Agent Panel
+    // =========================================================================
+
+    const SUBAGENT_STATUS_MAP = {
+        Running:   { icon: '🟢', label: 'Running',   css: 'running' },
+        Completed: { icon: '✅', label: 'Completed', css: 'completed' },
+        Failed:    { icon: '❌', label: 'Failed',    css: 'failed' },
+        Killed:    { icon: '🛑', label: 'Killed',    css: 'killed' },
+        TimedOut:  { icon: '⏱',  label: 'Timed Out', css: 'timedout' }
+    };
+
+    async function fetchSubAgents() {
+        if (!currentSessionId) return;
+        const data = await fetchJson(`/sessions/${encodeURIComponent(currentSessionId)}/subagents`);
+        if (!data) return;
+        activeSubAgents.clear();
+        const list = Array.isArray(data) ? data : (data.subAgents || data.subagents || []);
+        for (const sa of list) {
+            if (sa.subAgentId) activeSubAgents.set(sa.subAgentId, sa);
+        }
+        renderSubAgentPanel();
+    }
+
+    function renderSubAgentPanel() {
+        const count = activeSubAgents.size;
+
+        // Hide panel when no sub-agents
+        if (count === 0) {
+            elSubAgentPanel.classList.add('hidden');
+            return;
+        }
+
+        elSubAgentPanel.classList.remove('hidden');
+        elSubAgentCountBadge.textContent = count;
+        elSubAgentCountBadge.classList.toggle('empty', count === 0);
+
+        // Sort: running first, then by startedAt desc
+        const sorted = [...activeSubAgents.values()].sort((a, b) => {
+            if (a.status === 'Running' && b.status !== 'Running') return -1;
+            if (b.status === 'Running' && a.status !== 'Running') return 1;
+            return new Date(b.startedAt || 0) - new Date(a.startedAt || 0);
+        });
+
+        elSubAgentList.innerHTML = '';
+        for (const sa of sorted) {
+            const info = SUBAGENT_STATUS_MAP[sa.status] || SUBAGENT_STATUS_MAP.Running;
+            const isRunning = sa.status === 'Running';
+            const taskPreview = (sa.task || '').length > 80
+                ? sa.task.substring(0, 80) + '…'
+                : (sa.task || '');
+            const hasResult = sa.resultSummary && sa.status !== 'Running';
+
+            const item = document.createElement('div');
+            item.className = `subagent-item ${info.css}`;
+            item.setAttribute('role', 'listitem');
+            item.dataset.subAgentId = sa.subAgentId;
+
+            let html = `
+                <div class="subagent-item-row">
+                    <span class="subagent-status-icon" title="${info.label}">${info.icon}</span>
+                    <span class="subagent-name">${escapeHtml(sa.name || sa.subAgentId)}</span>
+                    ${sa.model ? `<span class="subagent-model">${escapeHtml(sa.model)}</span>` : ''}
+                    <div class="subagent-actions">
+                        ${isRunning ? `<button class="btn-kill-subagent" data-id="${escapeHtml(sa.subAgentId)}" title="Kill sub-agent">Kill</button>` : ''}
+                    </div>
+                </div>`;
+
+            if (taskPreview) {
+                html += `<div class="subagent-task" title="${escapeHtml(sa.task || '')}">${escapeHtml(taskPreview)}</div>`;
+            }
+
+            // Meta: elapsed time / turns
+            const meta = [];
+            if (sa.startedAt) {
+                if (isRunning) {
+                    meta.push(relativeTime(sa.startedAt));
+                } else if (sa.completedAt) {
+                    const elapsed = Math.round((new Date(sa.completedAt) - new Date(sa.startedAt)) / 1000);
+                    meta.push(elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`);
+                }
+            }
+            if (sa.turnsUsed > 0) meta.push(`${sa.turnsUsed} turns`);
+            if (meta.length) {
+                html += `<div class="subagent-meta">${meta.join(' · ')}</div>`;
+            }
+
+            if (hasResult) {
+                html += `
+                    <div class="subagent-result" data-id="${escapeHtml(sa.subAgentId)}">
+                        <button class="subagent-result-toggle">Show result</button>
+                        <div class="subagent-result-content">${escapeHtml(sa.resultSummary)}</div>
+                    </div>`;
+            }
+
+            item.innerHTML = html;
+            elSubAgentList.appendChild(item);
+        }
+
+        // Wire kill buttons
+        elSubAgentList.querySelectorAll('.btn-kill-subagent').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                killSubAgent(btn.dataset.id);
+            });
+        });
+
+        // Wire result toggles
+        elSubAgentList.querySelectorAll('.subagent-result-toggle').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const resultDiv = btn.closest('.subagent-result');
+                const isExpanded = resultDiv.classList.toggle('expanded');
+                btn.textContent = isExpanded ? 'Hide result' : 'Show result';
+            });
+        });
+    }
+
+    async function killSubAgent(subAgentId) {
+        if (!currentSessionId || !subAgentId) return;
+        const btn = elSubAgentList.querySelector(`.btn-kill-subagent[data-id="${subAgentId}"]`);
+        if (btn) { btn.disabled = true; btn.textContent = '…'; }
+        try {
+            const res = await fetch(
+                `${API_BASE}/sessions/${encodeURIComponent(currentSessionId)}/subagents/${encodeURIComponent(subAgentId)}`,
+                { method: 'DELETE' }
+            );
+            if (res.ok) {
+                const sa = activeSubAgents.get(subAgentId);
+                if (sa) {
+                    sa.status = 'Killed';
+                    sa.completedAt = new Date().toISOString();
+                }
+                renderSubAgentPanel();
+            } else {
+                console.error('Kill sub-agent failed:', res.status);
+                if (btn) { btn.disabled = false; btn.textContent = 'Kill'; }
+            }
+        } catch (err) {
+            console.error('Kill sub-agent error:', err);
+            if (btn) { btn.disabled = false; btn.textContent = 'Kill'; }
+        }
+    }
+
+    function initSubAgentPanel() {
+        // Panel header click toggles collapse
+        const toggle = $('#subagent-panel-toggle');
+        if (toggle) {
+            toggle.addEventListener('click', (e) => {
+                if (e.target.closest('.btn-icon')) return;
+                elSubAgentPanel.classList.toggle('collapsed');
+            });
+        }
+        // Refresh button
+        const refreshBtn = $('#btn-refresh-subagents');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                fetchSubAgents();
+            });
+        }
+    }
+
+    function clearSubAgentPanel() {
+        activeSubAgents.clear();
+        elSubAgentPanel.classList.add('hidden');
+        elSubAgentList.innerHTML = '';
+    }
+
+    // =========================================================================
     // View switching helper
     // =========================================================================
 
@@ -3259,6 +3491,7 @@
         updateSendButtonState();
         // Initialize SignalR (replaces connectWebSocket)
         initSignalR();
+        initSubAgentPanel();
         // Collapse sidebar on mobile by default
         if (window.innerWidth <= 768) {
             elSidebar.classList.add('collapsed');

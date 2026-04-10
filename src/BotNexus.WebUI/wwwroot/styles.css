@@ -883,6 +883,84 @@ body {
     color: var(--error);
 }
 
+/* === Sub-Agent Panel === */
+.subagent-panel { border-bottom: 1px solid var(--border); background: var(--bg-secondary); }
+.subagent-panel.hidden { display: none; }
+.subagent-panel-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 16px; cursor: pointer; user-select: none;
+}
+.subagent-panel-header:hover { background: rgba(255,255,255,0.03); }
+.subagent-panel-title {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 0.8rem; font-weight: 600; color: var(--text-secondary);
+}
+.subagent-collapse-icon { font-size: 0.6rem; transition: transform 0.2s; }
+.subagent-panel.collapsed .subagent-collapse-icon { transform: rotate(-90deg); }
+.subagent-panel.collapsed .subagent-list { display: none; }
+.subagent-count-badge {
+    font-size: 0.68rem; font-weight: 600; min-width: 18px; text-align: center;
+    padding: 0 5px; border-radius: 9px; line-height: 18px;
+    background: var(--accent); color: white;
+}
+.subagent-count-badge.empty { background: var(--border); color: var(--text-muted); }
+.subagent-list { padding: 0 12px 8px; display: flex; flex-direction: column; gap: 4px; max-height: 200px; overflow-y: auto; }
+.subagent-item {
+    display: flex; flex-direction: column; gap: 3px;
+    padding: 6px 10px; border-radius: 6px;
+    background: rgba(255,255,255,0.03); font-size: 0.8rem;
+    border-left: 3px solid var(--border); transition: background 0.15s;
+}
+.subagent-item:hover { background: rgba(255,255,255,0.06); }
+.subagent-item.running { border-left-color: var(--success); }
+.subagent-item.completed { border-left-color: var(--accent); }
+.subagent-item.failed { border-left-color: var(--error); }
+.subagent-item.killed { border-left-color: var(--text-muted); }
+.subagent-item.timedout { border-left-color: var(--warning); }
+.subagent-item-row {
+    display: flex; align-items: center; gap: 6px; min-width: 0;
+}
+.subagent-status-icon { flex-shrink: 0; font-size: 0.75rem; }
+.subagent-name {
+    font-weight: 500; color: var(--text-primary);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.subagent-model {
+    font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono);
+    margin-left: auto; flex-shrink: 0;
+}
+.subagent-task {
+    font-size: 0.75rem; color: var(--text-secondary);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.subagent-actions { margin-left: auto; flex-shrink: 0; }
+.btn-kill-subagent {
+    background: transparent; border: 1px solid var(--error); color: var(--error);
+    font-size: 0.68rem; padding: 1px 8px; border-radius: 4px; cursor: pointer;
+    transition: background 0.15s;
+}
+.btn-kill-subagent:hover { background: rgba(244,67,54,0.15); }
+.btn-kill-subagent:disabled { opacity: 0.4; cursor: not-allowed; }
+.subagent-result {
+    margin-top: 2px; font-size: 0.75rem; color: var(--text-secondary);
+    max-height: 0; overflow: hidden; transition: max-height 0.25s ease;
+}
+.subagent-result.expanded { max-height: 200px; overflow-y: auto; }
+.subagent-result-content {
+    padding: 4px 8px; border-radius: 4px; margin-top: 2px;
+    background: rgba(0,0,0,0.2); font-family: var(--font-mono);
+    font-size: 0.72rem; white-space: pre-wrap; word-break: break-word;
+}
+.subagent-result-toggle {
+    background: none; border: none; color: var(--accent); cursor: pointer;
+    font-size: 0.7rem; padding: 0; text-decoration: underline;
+}
+.subagent-result-toggle:hover { color: var(--accent-hover); }
+.subagent-meta {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 0.7rem; color: var(--text-muted);
+}
+
 /* === Enhanced responsive === */
 @media (max-width: 768px) {
     :root { --sidebar-width: 280px; }

@@ -152,6 +152,18 @@
                 <div id="processing-status" class="processing-status hidden" role="status" aria-live="polite">
                     <div class="processing-bar"></div>
                 </div>
+                <!-- Sub-Agent Panel -->
+                <div id="subagent-panel" class="subagent-panel hidden" role="region" aria-label="Sub-agents">
+                    <div class="subagent-panel-header" id="subagent-panel-toggle">
+                        <span class="subagent-panel-title">
+                            <span class="subagent-collapse-icon">▼</span>
+                            Sub-Agents
+                            <span id="subagent-count-badge" class="subagent-count-badge">0</span>
+                        </span>
+                        <button id="btn-refresh-subagents" class="btn-icon" title="Refresh sub-agents" aria-label="Refresh sub-agents">↻</button>
+                    </div>
+                    <div id="subagent-list" class="subagent-list" role="list" aria-label="Sub-agent list"></div>
+                </div>
                 <div id="chat-messages" class="chat-messages" role="log" aria-live="polite" aria-label="Chat messages">
                 </div>
                 <button id="btn-scroll-bottom" class="scroll-to-bottom hidden" aria-label="Scroll to bottom" title="Scroll to bottom">↓</button>
