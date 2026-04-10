@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Logging;
@@ -14,6 +15,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 {
     private readonly IAgentSupervisor _supervisor;
     private readonly IAgentRegistry _registry;
+    private readonly IActivityBroadcaster _activity;
     private readonly IOptions<GatewayOptions> _options;
     private readonly ILogger<DefaultSubAgentManager> _logger;
     private readonly ConcurrentDictionary<string, SubAgentInfo> _subAgents = new(StringComparer.OrdinalIgnoreCase);
@@ -25,11 +27,13 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     public DefaultSubAgentManager(
         IAgentSupervisor supervisor,
         IAgentRegistry registry,
+        IActivityBroadcaster activity,
         IOptions<GatewayOptions> options,
         ILogger<DefaultSubAgentManager> logger)
     {
         _supervisor = supervisor;
         _registry = registry;
+        _activity = activity;
         _options = options;
         _logger = logger;
     }
@@ -103,6 +107,13 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             request.ParentSessionId,
             childSessionId);
 
+        await PublishLifecycleActivityAsync(
+            GatewayActivityType.SubAgentSpawned,
+            "subagent_spawned",
+            info,
+            request.ParentAgentId,
+            $"Sub-agent '{subAgentId}' spawned.");
+
         return info;
     }
 
@@ -155,19 +166,31 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         if (_childAgentIds.TryGetValue(subAgentId, out var childAgentId))
             await _supervisor.StopAsync(childAgentId, info.ChildSessionId, ct);
 
-        TryUpdateSubAgent(
+        if (!TryUpdateSubAgent(
             subAgentId,
             current => current with
             {
                 Status = SubAgentStatus.Killed,
                 CompletedAt = DateTimeOffset.UtcNow,
                 ResultSummary = "Sub-agent was killed by parent session."
-            });
+            },
+            out var updatedInfo))
+        {
+            return false;
+        }
 
         _logger.LogInformation(
             "Killed sub-agent '{SubAgentId}' for parent session '{ParentSessionId}'.",
             subAgentId,
             requestingSessionId);
+
+        _parentAgentIds.TryGetValue(subAgentId, out var parentAgentId);
+        await PublishLifecycleActivityAsync(
+            GatewayActivityType.SubAgentKilled,
+            "subagent_killed",
+            updatedInfo,
+            parentAgentId,
+            $"Sub-agent '{subAgentId}' was killed.");
 
         return true;
     }
@@ -204,7 +227,27 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             return;
         }
 
-        if (!_parentAgentIds.TryGetValue(subAgentId, out var parentAgentId))
+        _parentAgentIds.TryGetValue(subAgentId, out var parentAgentId);
+        if (updated.Status == SubAgentStatus.Completed)
+        {
+            await PublishLifecycleActivityAsync(
+                GatewayActivityType.SubAgentCompleted,
+                "subagent_completed",
+                updated,
+                parentAgentId,
+                $"Sub-agent '{subAgentId}' completed.");
+        }
+        else if (updated.Status is SubAgentStatus.Failed or SubAgentStatus.TimedOut)
+        {
+            await PublishLifecycleActivityAsync(
+                GatewayActivityType.SubAgentFailed,
+                "subagent_failed",
+                updated,
+                parentAgentId,
+                $"Sub-agent '{subAgentId}' failed.");
+        }
+
+        if (string.IsNullOrWhiteSpace(parentAgentId))
             return;
 
         var followUp = $"Sub-agent {subAgentId} {DescribeStatus(updated.Status)}. Summary:\n{normalizedSummary}";
@@ -303,5 +346,37 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
         updatedInfo = default!;
         return false;
+    }
+
+    private async Task PublishLifecycleActivityAsync(
+        GatewayActivityType type,
+        string eventName,
+        SubAgentInfo info,
+        string? parentAgentId,
+        string message)
+    {
+        try
+        {
+            await _activity.PublishAsync(new GatewayActivity
+            {
+                Type = type,
+                AgentId = parentAgentId,
+                SessionId = info.ParentSessionId,
+                Message = message,
+                Data = new Dictionary<string, object?>
+                {
+                    ["event"] = eventName,
+                    ["subAgent"] = info
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to publish sub-agent lifecycle event '{EventName}' for sub-agent '{SubAgentId}'.",
+                eventName,
+                info.SubAgentId);
+        }
     }
 }

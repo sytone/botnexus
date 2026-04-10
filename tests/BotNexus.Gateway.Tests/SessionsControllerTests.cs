@@ -1,3 +1,4 @@
+using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Api.Controllers;
@@ -5,6 +6,7 @@ using BotNexus.Gateway.Sessions;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Moq;
 using System.Text.Json;
 
 namespace BotNexus.Gateway.Tests;
@@ -43,6 +45,116 @@ public sealed class SessionsControllerTests
         var controller = new SessionsController(store);
 
         var result = await controller.Delete("s1", CancellationToken.None);
+
+        result.Should().BeOfType<NoContentResult>();
+    }
+
+    [Fact]
+    public async Task ListSubAgents_WithMissingSession_ReturnsNotFound()
+    {
+        var subAgentManager = new Mock<ISubAgentManager>(MockBehavior.Strict);
+        var controller = new SessionsController(new InMemorySessionStore(), subAgentManager.Object);
+
+        var result = await controller.ListSubAgents("missing", CancellationToken.None);
+
+        result.Result.Should().BeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public async Task ListSubAgents_WithKnownSession_ReturnsSessionSubAgents()
+    {
+        var store = new InMemorySessionStore();
+        await store.GetOrCreateAsync("s1", "agent-a");
+        var expected = new[]
+        {
+            new SubAgentInfo
+            {
+                SubAgentId = "sub-1",
+                ParentSessionId = "s1",
+                ChildSessionId = "s1::subagent::sub-1",
+                Task = "task",
+                Status = SubAgentStatus.Running,
+                StartedAt = DateTimeOffset.UtcNow
+            }
+        };
+
+        var subAgentManager = new Mock<ISubAgentManager>();
+        subAgentManager
+            .Setup(manager => manager.ListAsync("s1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expected);
+
+        var controller = new SessionsController(store, subAgentManager.Object);
+        var result = await controller.ListSubAgents("s1", CancellationToken.None);
+
+        var payload = (result.Result as OkObjectResult)?.Value as IReadOnlyList<SubAgentInfo>;
+        payload.Should().NotBeNull();
+        payload.Should().ContainSingle(item => item.SubAgentId == "sub-1");
+    }
+
+    [Fact]
+    public async Task KillSubAgent_WithMismatchedParent_ReturnsForbidden()
+    {
+        var store = new InMemorySessionStore();
+        await store.GetOrCreateAsync("s1", "agent-a");
+        var subAgentManager = new Mock<ISubAgentManager>();
+        subAgentManager
+            .Setup(manager => manager.GetAsync("sub-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SubAgentInfo
+            {
+                SubAgentId = "sub-1",
+                ParentSessionId = "different-session",
+                ChildSessionId = "different-session::subagent::sub-1",
+                Task = "task",
+                Status = SubAgentStatus.Running,
+                StartedAt = DateTimeOffset.UtcNow
+            });
+
+        var controller = new SessionsController(store, subAgentManager.Object);
+        var result = await controller.KillSubAgent("s1", "sub-1", CancellationToken.None);
+
+        result.Should().BeOfType<ObjectResult>()
+            .Which.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+    }
+
+    [Fact]
+    public async Task KillSubAgent_WithUnknownSubAgent_ReturnsNotFound()
+    {
+        var store = new InMemorySessionStore();
+        await store.GetOrCreateAsync("s1", "agent-a");
+        var subAgentManager = new Mock<ISubAgentManager>();
+        subAgentManager
+            .Setup(manager => manager.GetAsync("missing-sub", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SubAgentInfo?)null);
+
+        var controller = new SessionsController(store, subAgentManager.Object);
+        var result = await controller.KillSubAgent("s1", "missing-sub", CancellationToken.None);
+
+        result.Should().BeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public async Task KillSubAgent_WhenOwnedAndKilled_ReturnsNoContent()
+    {
+        var store = new InMemorySessionStore();
+        await store.GetOrCreateAsync("s1", "agent-a");
+        var subAgentManager = new Mock<ISubAgentManager>();
+        subAgentManager
+            .Setup(manager => manager.GetAsync("sub-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SubAgentInfo
+            {
+                SubAgentId = "sub-1",
+                ParentSessionId = "s1",
+                ChildSessionId = "s1::subagent::sub-1",
+                Task = "task",
+                Status = SubAgentStatus.Running,
+                StartedAt = DateTimeOffset.UtcNow
+            });
+        subAgentManager
+            .Setup(manager => manager.KillAsync("sub-1", "s1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var controller = new SessionsController(store, subAgentManager.Object);
+        var result = await controller.KillSubAgent("s1", "sub-1", CancellationToken.None);
 
         result.Should().BeOfType<NoContentResult>();
     }

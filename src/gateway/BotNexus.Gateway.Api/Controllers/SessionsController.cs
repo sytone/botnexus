@@ -1,3 +1,4 @@
+using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -16,12 +17,18 @@ namespace BotNexus.Gateway.Api.Controllers;
 public sealed class SessionsController : ControllerBase
 {
     private readonly ISessionStore _sessions;
+    private readonly ISubAgentManager _subAgentManager;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SessionsController"/> class.
     /// </summary>
     /// <param name="sessions">The session store for managing conversation sessions.</param>
-    public SessionsController(ISessionStore sessions) => _sessions = sessions;
+    /// <param name="subAgentManager">Sub-agent manager for session-scoped sub-agent lifecycle operations.</param>
+    public SessionsController(ISessionStore sessions, ISubAgentManager? subAgentManager = null)
+    {
+        _sessions = sessions;
+        _subAgentManager = subAgentManager ?? NoOpSubAgentManager.Instance;
+    }
 
     /// <summary>Lists sessions, optionally filtered by agent ID.</summary>
     [HttpGet]
@@ -34,6 +41,45 @@ public sealed class SessionsController : ControllerBase
     {
         var session = await _sessions.GetAsync(sessionId, cancellationToken);
         return session is not null ? Ok(session) : NotFound();
+    }
+
+    /// <summary>Lists sub-agents for a specific session.</summary>
+    [HttpGet("{sessionId}/subagents")]
+    [ProducesResponseType(typeof(IReadOnlyList<SubAgentInfo>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<IReadOnlyList<SubAgentInfo>>> ListSubAgents(string sessionId, CancellationToken cancellationToken)
+    {
+        var session = await _sessions.GetAsync(sessionId, cancellationToken);
+        if (session is null)
+            return NotFound();
+
+        var subAgents = await _subAgentManager.ListAsync(sessionId, cancellationToken);
+        return Ok(subAgents);
+    }
+
+    /// <summary>Kills a sub-agent owned by the specified session.</summary>
+    [HttpDelete("{sessionId}/subagents/{subAgentId}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> KillSubAgent(string sessionId, string subAgentId, CancellationToken cancellationToken)
+    {
+        var session = await _sessions.GetAsync(sessionId, cancellationToken);
+        if (session is null)
+            return NotFound();
+
+        var subAgent = await _subAgentManager.GetAsync(subAgentId, cancellationToken);
+        if (subAgent is null)
+            return NotFound();
+
+        if (!string.Equals(subAgent.ParentSessionId, sessionId, StringComparison.OrdinalIgnoreCase))
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "Sub-agent does not belong to the requested session." });
+
+        var killed = await _subAgentManager.KillAsync(subAgentId, sessionId, cancellationToken);
+        if (!killed)
+            return NotFound();
+
+        return NoContent();
     }
 
     /// <summary>
@@ -202,4 +248,24 @@ public sealed class SessionsController : ControllerBase
             JsonValueKind.Null => null,
             _ => null
         };
+
+    private sealed class NoOpSubAgentManager : ISubAgentManager
+    {
+        public static readonly NoOpSubAgentManager Instance = new();
+
+        public Task<SubAgentInfo> SpawnAsync(SubAgentSpawnRequest request, CancellationToken ct = default)
+            => throw new NotSupportedException("Sub-agent spawning is not supported by this controller instance.");
+
+        public Task<IReadOnlyList<SubAgentInfo>> ListAsync(string parentSessionId, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<SubAgentInfo>>([]);
+
+        public Task<SubAgentInfo?> GetAsync(string subAgentId, CancellationToken ct = default)
+            => Task.FromResult<SubAgentInfo?>(null);
+
+        public Task<bool> KillAsync(string subAgentId, string requestingSessionId, CancellationToken ct = default)
+            => Task.FromResult(false);
+
+        public Task OnCompletedAsync(string subAgentId, string resultSummary, CancellationToken ct = default)
+            => Task.CompletedTask;
+    }
 }

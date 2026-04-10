@@ -398,6 +398,7 @@ The following SignalR events are emitted on the parent session's group:
 | `subagent_spawned` | `SubAgentInfo` | A new sub-agent session starts |
 | `subagent_completed` | `SubAgentInfo` (with `resultSummary`) | A sub-agent finishes successfully |
 | `subagent_failed` | `SubAgentInfo` (with error details) | A sub-agent fails or times out |
+| `subagent_killed` | `SubAgentInfo` (status `Killed`) | A sub-agent is explicitly killed by its parent session |
 
 ---
 

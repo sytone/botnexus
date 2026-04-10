@@ -75,6 +75,18 @@ public enum GatewayActivityType
     /// <summary>A session was created.</summary>
     SessionCreated,
 
+    /// <summary>A sub-agent background run was spawned.</summary>
+    SubAgentSpawned,
+
+    /// <summary>A sub-agent run completed successfully.</summary>
+    SubAgentCompleted,
+
+    /// <summary>A sub-agent run failed or timed out.</summary>
+    SubAgentFailed,
+
+    /// <summary>A sub-agent run was explicitly killed.</summary>
+    SubAgentKilled,
+
     /// <summary>An error occurred.</summary>
     Error,
 
