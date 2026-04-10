@@ -236,6 +236,110 @@ public sealed class GatewayHostTests
     }
 
     [Fact]
+    public async Task DispatchAsync_ExpiredSession_ReactivatesAndProcesses()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+        var handle = CreatePromptHandle("agent-a", "session-1", "agent-response");
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync("agent-a", "session-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var sessions = new InMemorySessionStore();
+        var session = await sessions.GetOrCreateAsync("session-1", "agent-a");
+        session.Status = SessionStatus.Expired;
+        session.ExpiresAt = DateTimeOffset.UtcNow.AddHours(-1);
+        await sessions.SaveAsync(session);
+
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        await using var host = CreateHost(supervisor.Object, router.Object, sessions, new RecordingActivityBroadcaster(), CreateChannelManager(channel.Object));
+
+        await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1"));
+
+        var reloaded = await sessions.GetAsync("session-1");
+        reloaded.Should().NotBeNull();
+        reloaded!.Status.Should().Be(SessionStatus.Active);
+        reloaded.ExpiresAt.Should().BeNull();
+        reloaded.History.Select(e => $"{e.Role}:{e.Content}").Should().ContainInOrder("user:hello", "assistant:agent-response");
+        channel.Verify(c => c.SendAsync(
+                It.Is<OutboundMessage>(m => m.Content == "agent-response" && m.SessionId == "session-1"),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_ClosedSession_RejectsMessage()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+        var supervisor = new Mock<IAgentSupervisor>();
+        var sessions = new InMemorySessionStore();
+        var session = await sessions.GetOrCreateAsync("session-1", "agent-a");
+        session.Status = SessionStatus.Closed;
+        await sessions.SaveAsync(session);
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        await using var host = CreateHost(supervisor.Object, router.Object, sessions, new RecordingActivityBroadcaster(), CreateChannelManager(channel.Object));
+
+        await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1"));
+
+        supervisor.Verify(s => s.GetOrCreateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        channel.Verify(c => c.SendAsync(
+                It.Is<OutboundMessage>(m => m.Content.Contains("cannot accept", StringComparison.OrdinalIgnoreCase)),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_SuspendedSession_RejectsMessage()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+        var supervisor = new Mock<IAgentSupervisor>();
+        var sessions = new InMemorySessionStore();
+        var session = await sessions.GetOrCreateAsync("session-1", "agent-a");
+        session.Status = SessionStatus.Suspended;
+        await sessions.SaveAsync(session);
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        await using var host = CreateHost(supervisor.Object, router.Object, sessions, new RecordingActivityBroadcaster(), CreateChannelManager(channel.Object));
+
+        await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1"));
+
+        supervisor.Verify(s => s.GetOrCreateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        channel.Verify(c => c.SendAsync(
+                It.Is<OutboundMessage>(m => m.Content.Contains("suspended", StringComparison.OrdinalIgnoreCase)),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_ExpiredSession_ClearsExpiresAt()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+        var handle = CreatePromptHandle("agent-a", "session-1", "ok");
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync("agent-a", "session-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        var sessions = new InMemorySessionStore();
+        var session = await sessions.GetOrCreateAsync("session-1", "agent-a");
+        session.Status = SessionStatus.Expired;
+        session.ExpiresAt = DateTimeOffset.UtcNow.AddHours(1);
+        await sessions.SaveAsync(session);
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        await using var host = CreateHost(supervisor.Object, router.Object, sessions, new RecordingActivityBroadcaster(), CreateChannelManager(channel.Object));
+
+        await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1"));
+
+        var reloaded = await sessions.GetAsync("session-1");
+        reloaded.Should().NotBeNull();
+        reloaded!.ExpiresAt.Should().BeNull();
+    }
+
+    [Fact]
     public async Task DispatchAsync_WithSuspendedSession_RejectsNewMessages()
     {
         var router = new Mock<IMessageRouter>();

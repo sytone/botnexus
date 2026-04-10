@@ -223,7 +223,13 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     await stopTask;
             }
 
-            if (session.Status != SessionStatus.Active)
+            if (session.Status == SessionStatus.Expired)
+            {
+                _logger.LogInformation("Reactivating expired session {SessionId}", sessionId);
+                session.Status = SessionStatus.Active;
+                session.ExpiresAt = null;
+            }
+            else if (session.Status != SessionStatus.Active)
             {
                 await SendSessionStatusRejectedAsync(message, agentId, sessionId, session.Status, cancellationToken);
                 continue;
