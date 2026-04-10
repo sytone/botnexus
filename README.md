@@ -11,6 +11,7 @@ A modular, extensible AI agent execution platform built in C#/.NET. BotNexus ena
 | **[API Reference →](docs/api-reference.md)** | REST and SignalR endpoint documentation |
 | **[Architecture →](docs/architecture/overview.md)** | System design, components, and extension points |
 | **[Observability →](docs/observability.md)** | Distributed tracing, logging, and local Jaeger setup |
+| **[Sub-Agent Spawning →](docs/features/sub-agent-spawning.md)** | Background sub-agent delegation, tools, and configuration |
 
 ---
 
