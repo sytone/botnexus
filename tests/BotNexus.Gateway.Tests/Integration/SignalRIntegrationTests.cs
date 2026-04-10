@@ -27,12 +27,11 @@ namespace BotNexus.Gateway.Tests.Integration;
 public sealed class SignalRIntegrationTests : IAsyncDisposable
 {
     private const string TestAgentId = "test-agent";
-    private readonly WebApplicationFactory<Program> _sharedFactory = CreateTestFactory();
 
     [Fact]
     public async Task Hub_OnConnect_ReceivesConnectedMessage()
     {
-        var factory = _sharedFactory;
+        await using var factory = CreateTestFactory();
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
 
@@ -52,7 +51,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
     [Fact]
     public async Task Hub_JoinSession_ReturnsSessionData()
     {
-        var factory = _sharedFactory;
+        await using var factory = CreateTestFactory();
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
 
@@ -68,7 +67,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
     [Fact]
     public async Task Hub_JoinSession_WithNullSessionId_CreatesNewSession()
     {
-        var factory = _sharedFactory;
+        await using var factory = CreateTestFactory();
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
 
@@ -82,7 +81,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
     [Fact]
     public async Task Hub_JoinSession_WithExistingSessionId_JoinsExistingSession()
     {
-        var factory = _sharedFactory;
+        await using var factory = CreateTestFactory();
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
 
@@ -192,7 +191,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
     [Fact]
     public async Task Hub_MultipleClients_SameSession_BothReceiveMessages()
     {
-        var factory = _sharedFactory;
+        await using var factory = CreateTestFactory();
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
 
@@ -264,7 +263,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
     [Fact]
     public async Task Hub_ResetSession_DeletesSessionAndNotifiesClient()
     {
-        var factory = _sharedFactory;
+        await using var factory = CreateTestFactory();
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
 
@@ -307,7 +306,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
     [Fact]
     public async Task Hub_ChannelAdapter_SendsContentDeltaToSessionGroup()
     {
-        var factory = _sharedFactory;
+        await using var factory = CreateTestFactory();
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
 
@@ -333,7 +332,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
     [Fact]
     public async Task Hub_ChannelAdapter_SendsToCorrectGroup()
     {
-        var factory = _sharedFactory;
+        await using var factory = CreateTestFactory();
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
 
@@ -364,7 +363,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
     [Fact]
     public async Task Hub_ChannelAdapter_AllEventTypes()
     {
-        var factory = _sharedFactory;
+        await using var factory = CreateTestFactory();
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
 
@@ -435,7 +434,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
     [Fact]
     public async Task Hub_GetAgents_ReturnsRegisteredAgents()
     {
-        var factory = _sharedFactory;
+        await using var factory = CreateTestFactory();
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
 
@@ -451,7 +450,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
     [Fact]
     public async Task Hub_GetAgentStatus_ReturnsNullForUnknownSession()
     {
-        var factory = _sharedFactory;
+        await using var factory = CreateTestFactory();
         using var cts = CreateTimeout();
         await RegisterAgentAsync(factory, cts.Token);
 
@@ -521,11 +520,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
     private static CancellationTokenSource CreateTimeout()
         => new(TimeSpan.FromSeconds(15));
 
-    public ValueTask DisposeAsync()
-    {
-        _sharedFactory.Dispose();
-        return ValueTask.CompletedTask;
-    }
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     private sealed class RecordingDispatcher(bool failOnNullSessionId = false) : IChannelDispatcher
     {
@@ -601,3 +596,4 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }
+
