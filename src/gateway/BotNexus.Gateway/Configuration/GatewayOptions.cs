@@ -16,4 +16,9 @@ public sealed class GatewayOptions
     /// Maximum duration for cross-agent prompt calls before timing out.
     /// </summary>
     public int CrossAgentTimeoutSeconds { get; set; } = 120;
+
+    /// <summary>
+    /// Options controlling background sub-agent spawning behavior.
+    /// </summary>
+    public SubAgentOptions SubAgents { get; set; } = new();
 }
