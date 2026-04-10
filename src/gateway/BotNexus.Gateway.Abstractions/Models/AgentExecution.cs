@@ -86,6 +86,9 @@ public sealed record AgentStreamEvent
     /// <summary>Message identifier for correlation.</summary>
     public string? MessageId { get; init; }
 
+    /// <summary>Session identifier for client-side routing verification.</summary>
+    public string? SessionId { get; init; }
+
     /// <summary>When this event was emitted.</summary>
     public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
 }

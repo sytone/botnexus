@@ -16,16 +16,16 @@
     let connectionId = null;
     let responseTimeoutTimer = null;
     let steerIndicatorTimer = null;
-    let isStreaming = false;
+    let isStreaming = false; // DEPRECATED — use isCurrentSessionStreaming(); kept for back-compat reads
     let hasReceivedResponse = false;
     let isRestRequestInFlight = false;
-    let activeMessageId = null;
+    let activeMessageId = null; // DEPRECATED — use getSessionState(currentSessionId).activeMessageId
     let showTools = false;
     let showThinking = false;
     let isActivitySubscribed = false;
     /** @type {Object<string, {toolName:string, args:string, result:string, status:string}>} */
-    let activeToolCalls = {};
-    let activeToolCount = 0;
+    let activeToolCalls = {}; // DEPRECATED — use getSessionState(currentSessionId).activeToolCalls
+    let activeToolCount = 0; // DEPRECATED — use getSessionState(currentSessionId).activeToolCount
     /** @type {Array} */
     let agentsCache = [];
     /** @type {Array} */
@@ -33,7 +33,7 @@
     /** @type {Array} */
     let modelsCache = [];
     /** @type {string} */
-    let thinkingBuffer = '';
+    let thinkingBuffer = ''; // DEPRECATED — use getSessionState(currentSessionId).thinkingBuffer
     /** @type {function|null} */
     let confirmCallback = null;
     /** @type {number} */
@@ -41,7 +41,7 @@
     /** @type {Array<string>} */
     let pendingQueuedMessages = [];
     /** @type {number} */
-    let toolCallDepth = 0;
+    let toolCallDepth = 0; // DEPRECATED — use getSessionState(currentSessionId).toolCallDepth
     /** @type {boolean} */
     let sendModeFollowUp = false;
     /** @type {WebSocket|null} */
@@ -51,6 +51,37 @@
     let commandPaletteIndex = -1;
     /** @type {Map<string, Object>} */
     let activeSubAgents = new Map();
+
+    // --- Per-session state (W3.1) ---
+    const sessionState = new Map();
+    const SESSION_STATE_MAX = 20;
+
+    function getSessionState(sessionId) {
+        if (!sessionId) {
+            return { isStreaming: false, activeMessageId: null, activeToolCalls: {}, activeToolCount: 0, thinkingBuffer: '', toolCallDepth: 0, toolStartTimes: {} };
+        }
+        if (sessionState.has(sessionId)) {
+            const state = sessionState.get(sessionId);
+            sessionState.delete(sessionId);
+            sessionState.set(sessionId, state);
+            return state;
+        }
+        const state = { isStreaming: false, activeMessageId: null, activeToolCalls: {}, activeToolCount: 0, thinkingBuffer: '', toolCallDepth: 0, toolStartTimes: {} };
+        sessionState.set(sessionId, state);
+        if (sessionState.size > SESSION_STATE_MAX) {
+            const oldest = sessionState.keys().next().value;
+            sessionState.delete(oldest);
+        }
+        return state;
+    }
+
+    function isCurrentSessionStreaming() {
+        return currentSessionId ? getSessionState(currentSessionId).isStreaming : false;
+    }
+
+    function cleanupSessionState(sessionId) {
+        sessionState.delete(sessionId);
+    }
 
     // --- DOM refs ---
     const $ = (sel) => document.querySelector(sel);
@@ -230,7 +261,7 @@
             elBtnSend.disabled = true;
             return;
         }
-        if (isStreaming && connection?.state === signalR.HubConnectionState.Connected) {
+        if (isCurrentSessionStreaming() && connection?.state === signalR.HubConnectionState.Connected) {
             elBtnSend.disabled = !hasText;
             if (sendModeFollowUp) {
                 elBtnSend.textContent = '📨 Follow-up';
@@ -266,7 +297,7 @@
         clearResponseTimeout();
         hasReceivedResponse = false;
         responseTimeoutTimer = setTimeout(() => {
-            if (!hasReceivedResponse && isStreaming) {
+            if (!hasReceivedResponse && isCurrentSessionStreaming()) {
                 appendSystemMessage('⏳ Agent is taking longer than expected...', 'warning');
             }
         }, RESPONSE_TIMEOUT_MS);
@@ -301,7 +332,7 @@
         const label = $('#processing-label');
         if (!label || label.classList.contains('hidden')) return;
 
-        const runningCount = Object.values(activeToolCalls).filter(t => t.status === 'running').length;
+        const runningCount = Object.values(getSessionState(currentSessionId).activeToolCalls).filter(t => t.status === 'running').length;
         if (runningCount > 0) {
             const currentText = label.textContent;
             const baseText = currentText.replace(/\s*·\s*🔧.*$/, '');
@@ -486,13 +517,16 @@
                 if (timeEl) timeEl.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             }
             
-            activeMessageId = evt.messageId;
-            isStreaming = true;
+            {
+                const ss = getSessionState(currentSessionId);
+                ss.activeMessageId = evt.messageId;
+                ss.isStreaming = true;
+                ss.activeToolCount = 0;
+                ss.thinkingBuffer = '';
+                ss.toolCallDepth = 0;
+                ss.toolStartTimes = {};
+            }
             setSendingState(false);
-            activeToolCount = 0;
-            thinkingBuffer = '';
-            toolCallDepth = 0;
-            toolStartTimes = {};
             elBtnAbort.classList.remove('hidden');
             showStreamingIndicator();
             showProcessingStatus('Agent is processing...', '⏳');
@@ -529,7 +563,7 @@
         connection.on('ToolEnd', (evt) => {
             if (!isEventForCurrentSession(evt)) return;
             handleToolEnd(evt);
-            const remainingTools = Object.values(activeToolCalls).filter(t => t.status === 'running');
+            const remainingTools = Object.values(getSessionState(currentSessionId).activeToolCalls).filter(t => t.status === 'running');
             if (remainingTools.length > 0) {
                 showProcessingStatus(`Using tool: ${remainingTools[0].toolName}`, '🔧');
             } else {
@@ -723,7 +757,7 @@
         try {
             const status = await fetchJson(`/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/status`);
             if (status && (status.status === 'Running' || status.status === 'Idle')) {
-                isStreaming = true;
+                getSessionState(sessionId).isStreaming = true;
                 showStreamingIndicator();
                 showProcessingStatus('Agent is processing...', '⏳');
                 setSendingState(false);
@@ -745,7 +779,8 @@
 
     function handleThinkingDelta(msg) {
         if (!msg.delta) return;
-        thinkingBuffer += msg.delta;
+        const ss = getSessionState(currentSessionId);
+        ss.thinkingBuffer += msg.delta;
 
         let thinkingEl = elChatMessages.querySelector('.thinking-block');
         if (!thinkingEl) {
@@ -764,15 +799,15 @@
             elChatMessages.appendChild(thinkingEl);
         }
 
-        thinkingEl.querySelector('.thinking-pre').textContent = thinkingBuffer;
-        thinkingEl.querySelector('.thinking-stats').textContent = formatCharCount(thinkingBuffer.length);
+        thinkingEl.querySelector('.thinking-pre').textContent = ss.thinkingBuffer;
+        thinkingEl.querySelector('.thinking-stats').textContent = formatCharCount(ss.thinkingBuffer.length);
         scrollToBottom();
     }
 
     function finalizeThinkingBlock() {
         const thinkingEl = elChatMessages.querySelector('.thinking-block');
         if (thinkingEl) {
-            const charCount = thinkingBuffer.length > 0 ? ` (${formatCharCount(thinkingBuffer.length)})` : '';
+            const charCount = getSessionState(currentSessionId).thinkingBuffer.length > 0 ? ` (${formatCharCount(getSessionState(currentSessionId).thinkingBuffer.length)})` : '';
             thinkingEl.querySelector('.thinking-label').textContent = `Thought process${charCount}`;
             thinkingEl.querySelector('.thinking-stats').textContent = '';
             thinkingEl.classList.add('complete');
@@ -885,15 +920,16 @@
     // =========================================================================
 
     /** @type {Object<string, number>} */
-    let toolStartTimes = {};
+    // toolStartTimes is now per-session via getSessionState()
     let toolElapsedTimer = null;
 
     function handleToolStart(msg) {
+        const ss = getSessionState(currentSessionId);
         const callId = msg.toolCallId || `tc-${Date.now()}`;
-        activeToolCount++;
-        toolStartTimes[callId] = Date.now();
-        const depth = msg.depth || toolCallDepth;
-        activeToolCalls[callId] = {
+        ss.activeToolCount++;
+        ss.toolStartTimes[callId] = Date.now();
+        const depth = msg.depth || ss.toolCallDepth;
+        ss.activeToolCalls[callId] = {
             toolName: msg.toolName || 'unknown',
             args: msg.toolArgs || '',
             result: '',
@@ -905,22 +941,23 @@
     }
 
     function handleToolEnd(msg) {
+        const ss = getSessionState(currentSessionId);
         const callId = msg.toolCallId || 'unknown';
         const isError = msg.toolIsError === true;
         const status = isError ? 'error' : 'complete';
-        if (activeToolCalls[callId]) {
-            activeToolCalls[callId].result = msg.toolResult || '';
-            activeToolCalls[callId].status = status;
+        if (ss.activeToolCalls[callId]) {
+            ss.activeToolCalls[callId].result = msg.toolResult || '';
+            ss.activeToolCalls[callId].status = status;
         }
-        const elapsed = toolStartTimes[callId] ? Math.round((Date.now() - toolStartTimes[callId]) / 1000) : 0;
-        delete toolStartTimes[callId];
+        const elapsed = ss.toolStartTimes[callId] ? Math.round((Date.now() - ss.toolStartTimes[callId]) / 1000) : 0;
+        delete ss.toolStartTimes[callId];
         updateToolCallStatus(callId, status, elapsed, msg.toolResult);
         if (isError) {
-            trackActivity('error', currentAgentId, `🔧 ${msg.toolName || activeToolCalls[callId]?.toolName || 'tool'} failed`);
+            trackActivity('error', currentAgentId, `🔧 ${msg.toolName || ss.activeToolCalls[callId]?.toolName || 'tool'} failed`);
         }
 
         // Show a notification when a skill is loaded
-        const toolName = msg.toolName || activeToolCalls[callId]?.toolName || '';
+        const toolName = msg.toolName || ss.activeToolCalls[callId]?.toolName || '';
         if (toolName === 'skills' && !isError) {
             const result = msg.toolResult || '';
             const skillMatch = result.match(/^## Skill:\s*(.+)$/m);
@@ -929,7 +966,7 @@
             }
         }
 
-        if (Object.keys(toolStartTimes).length === 0) stopToolElapsedTimer();
+        if (Object.keys(ss.toolStartTimes).length === 0) stopToolElapsedTimer();
     }
 
     function appendToolCall(callId, toolName, status, toolArgs, depth) {
@@ -992,7 +1029,7 @@
     function startToolElapsedTimer() {
         if (toolElapsedTimer) return;
         toolElapsedTimer = setInterval(() => {
-            for (const [callId, startTime] of Object.entries(toolStartTimes)) {
+            for (const [callId, startTime] of Object.entries(getSessionState(currentSessionId).toolStartTimes)) {
                 const el = elChatMessages.querySelector(`.tool-call[data-call-id="${callId}"] .tool-elapsed`);
                 if (el) el.textContent = `${Math.round((Date.now() - startTime) / 1000)}s`;
             }
@@ -1020,8 +1057,9 @@
     // =========================================================================
 
     function finalizeMessage(msg) {
-        isStreaming = false;
-        activeMessageId = null;
+        const ss = getSessionState(currentSessionId);
+        ss.isStreaming = false;
+        ss.activeMessageId = null;
         clearResponseTimeout();
         elBtnAbort.classList.add('hidden');
         removeStreamingIndicator();
@@ -1045,7 +1083,7 @@
             const footer = document.createElement('div');
             footer.className = 'msg-footer';
             const parts = [];
-            if (activeToolCount > 0) parts.push(`🔧 ${activeToolCount} tool call${activeToolCount > 1 ? 's' : ''}`);
+            if (ss.activeToolCount > 0) parts.push(`🔧 ${ss.activeToolCount} tool call${ss.activeToolCount > 1 ? 's' : ''}`);
             if (msg.usage) {
                 const u = formatUsage(msg.usage);
                 if (u) parts.push(u);
@@ -1056,12 +1094,12 @@
             }
         }
 
-        activeToolCalls = {};
-        activeToolCount = 0;
-        toolCallDepth = 0;
-        toolStartTimes = {};
+        ss.activeToolCalls = {};
+        ss.activeToolCount = 0;
+        ss.toolCallDepth = 0;
+        ss.toolStartTimes = {};
         stopToolElapsedTimer();
-        thinkingBuffer = '';
+        ss.thinkingBuffer = '';
         resetQueue();
         setSendingState(false);
         updateSendButtonState();
@@ -1080,7 +1118,7 @@
     }
 
     function handleError(msg) {
-        isStreaming = false;
+        getSessionState(currentSessionId).isStreaming = false;
         clearResponseTimeout();
         stopToolElapsedTimer();
         elBtnAbort.classList.add('hidden');
@@ -1220,7 +1258,7 @@
             </div>
         `;
         div.style.cursor = 'pointer';
-        activeToolCalls[callId] = {
+        getSessionState(currentSessionId).activeToolCalls[callId] = {
             toolName,
             args: argsStr,
             result: resultStr,
@@ -1340,16 +1378,19 @@
 
     async function executeReset(commandType = 'reset') {
         // Reset streaming state but preserve the timeline
-        activeMessageId = null;
-        activeToolCalls = {};
-        activeToolCount = 0;
-        toolCallDepth = 0;
-        thinkingBuffer = '';
+        {
+            const ss = getSessionState(currentSessionId);
+            ss.activeMessageId = null;
+            ss.activeToolCalls = {};
+            ss.activeToolCount = 0;
+            ss.toolCallDepth = 0;
+            ss.thinkingBuffer = '';
+            ss.isStreaming = false;
+        }
         clearResponseTimeout();
         resetQueue();
         removeStreamingIndicator();
         hideProcessingStatus();
-        isStreaming = false;
         setSendingState(false);
 
         if (commandType === 'reset' && currentAgentId && currentSessionId && connection?.state === signalR.HubConnectionState.Connected) {
@@ -1379,16 +1420,19 @@
     }
 
     function clearChatForSessionReset() {
-        activeMessageId = null;
-        activeToolCalls = {};
-        activeToolCount = 0;
-        toolCallDepth = 0;
-        thinkingBuffer = '';
+        {
+            const ss = getSessionState(currentSessionId);
+            ss.activeMessageId = null;
+            ss.activeToolCalls = {};
+            ss.activeToolCount = 0;
+            ss.toolCallDepth = 0;
+            ss.thinkingBuffer = '';
+            ss.isStreaming = false;
+        }
         clearResponseTimeout();
         resetQueue();
         removeStreamingIndicator();
         hideProcessingStatus();
-        isStreaming = false;
         setSendingState(false);
         elChatMessages.innerHTML = '';
         elChatTitle.textContent = `${elAgentSelect.value || 'New Chat'} — Web Chat`;        elChatMeta.textContent = `Agent: ${elAgentSelect.value || 'default'} · Session will be created on first message`;
@@ -1476,7 +1520,7 @@
             await joinSession(currentAgentId, null);
         }
 
-        if (isStreaming && connection?.state === signalR.HubConnectionState.Connected) {
+        if (isCurrentSessionStreaming() && connection?.state === signalR.HubConnectionState.Connected) {
             if (sendModeFollowUp) {
                 pendingQueuedMessages.push(text);
                 incrementQueue();
@@ -1503,7 +1547,7 @@
         appendChatMessage('user', text);
         trackActivity('message', currentAgentId, text.substring(0, 60));
         setSendingState(true);
-        isStreaming = true;
+        getSessionState(currentSessionId).isStreaming = true;
         incrementQueue();
         startResponseTimeout();
 
@@ -1511,7 +1555,7 @@
             await hubInvoke('SendMessage', currentAgentId, currentSessionId, text);
         } catch (err) {
             appendSystemMessage(`Error: ${err.message}`, 'error');
-            isStreaming = false;
+            getSessionState(currentSessionId).isStreaming = false;
             setSendingState(false);
         }
     }
@@ -1520,7 +1564,7 @@
         if (currentAgentId && currentSessionId && connection?.state === signalR.HubConnectionState.Connected) {
             try { await hubInvoke('Abort', currentAgentId, currentSessionId); } catch {}
         }
-        isStreaming = false;
+        getSessionState(currentSessionId).isStreaming = false;
         clearResponseTimeout();
         stopToolElapsedTimer();
         elBtnAbort.classList.add('hidden');
@@ -1537,7 +1581,6 @@
         if (!agentId) return;
 
         currentSessionId = null;
-        isStreaming = false;
         resetQueue();
         currentAgentId = agentId;
         currentChannelType = 'Web Chat';
@@ -1730,13 +1773,8 @@
     }
 
     async function openAgentTimeline(agentId, channelType) {
-        // W1.1: Reset streaming state from previous session before any async work
-        isStreaming = false;
-        activeMessageId = null;
-        activeToolCalls = {};
-        activeToolCount = 0;
-        thinkingBuffer = '';
-        toolCallDepth = 0;
+        // W1.1 + W3.2: Clear UI display state on session switch.
+        // Don't clear outgoing session's per-session state — it may still be streaming.
         clearResponseTimeout();
         stopToolElapsedTimer();
         hideProcessingStatus();
@@ -2693,7 +2731,7 @@
             html += `<tr><td>Session ID</td><td><code>${escapeHtml(currentSessionId)}</code></td></tr>`;
             html += `<tr><td>Connection ID</td><td><code>${escapeHtml(connectionId || 'none')}</code></td></tr>`;
             html += `<tr><td>SignalR</td><td>${connection?.state === signalR.HubConnectionState.Connected ? '🟢 Connected' : '🔴 Disconnected'}</td></tr>`;
-            html += `<tr><td>Streaming</td><td>${isStreaming ? '⏳ Yes' : 'No'}</td></tr>`;
+            html += `<tr><td>Streaming</td><td>${isCurrentSessionStreaming() ? '⏳ Yes' : 'No'}</td></tr>`;
             html += `</table></div>`;
 
             // Try to fetch session status
@@ -3459,7 +3497,7 @@
                 if (!elDebugModal.classList.contains('hidden')) { closeDebugModal(); return; }
                 if (!elAgentFormModal.classList.contains('hidden')) { closeAgentForm(); return; }
                 if (!elConfirmDialog.classList.contains('hidden')) { closeConfirm(); return; }
-                if (isStreaming) { abortRequest(); return; }
+                if (isCurrentSessionStreaming()) { abortRequest(); return; }
             }
         });
     }
