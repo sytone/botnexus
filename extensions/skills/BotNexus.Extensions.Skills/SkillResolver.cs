@@ -29,9 +29,9 @@ public static class SkillResolver
         if (!config.Enabled)
             return new SkillResolution { Loaded = [], Available = [], Denied = [] };
 
-        // Clamp negative limits to their defaults to prevent undefined behavior
-        var maxLoadedSkills = config.MaxLoadedSkills < 0 ? 20 : config.MaxLoadedSkills;
-        var maxSkillContentChars = config.MaxSkillContentChars < 0 ? 100_000 : config.MaxSkillContentChars;
+        // Treat negative limits as "no limit"
+        var maxLoadedSkills = config.MaxLoadedSkills < 0 ? int.MaxValue : config.MaxLoadedSkills;
+        var maxSkillContentChars = config.MaxSkillContentChars < 0 ? int.MaxValue : config.MaxSkillContentChars;
 
 
         var denySet = config.Disabled is { Count: > 0 }

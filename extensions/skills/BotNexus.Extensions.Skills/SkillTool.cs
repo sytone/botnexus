@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using BotNexus.AgentCore.Tools;
 using BotNexus.AgentCore.Types;
@@ -16,7 +17,7 @@ public sealed class SkillTool(
     string? workspaceSkillsDir,
     SkillsConfig? config) : IAgentTool
 {
-    private readonly HashSet<string> _sessionLoaded = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte> _sessionLoaded = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Creates a SkillTool with a static skill list (for testing).</summary>
     internal SkillTool(IReadOnlyList<SkillDefinition> allSkills, SkillsConfig? config)
@@ -55,7 +56,7 @@ public sealed class SkillTool(
             """).RootElement.Clone());
 
     /// <summary>Gets the set of skill names explicitly loaded during this session.</summary>
-    public IReadOnlySet<string> SessionLoadedSkills => _sessionLoaded;
+    public IReadOnlySet<string> SessionLoadedSkills => _sessionLoaded.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(
         IReadOnlyDictionary<string, object?> arguments,
@@ -83,7 +84,7 @@ public sealed class SkillTool(
     private AgentToolResult ListSkills()
     {
         var currentSkills = DiscoverSkills();
-        var resolution = SkillResolver.Resolve(currentSkills, config, explicitlyLoaded: _sessionLoaded.ToList());
+        var resolution = SkillResolver.Resolve(currentSkills, config, explicitlyLoaded: _sessionLoaded.Keys.ToList());
 
         var lines = new List<string>();
         if (resolution.Loaded.Count > 0)
@@ -123,7 +124,7 @@ public sealed class SkillTool(
         if (skill is null)
             return TextResult($"Skill '{skillName}' not found. Use action 'list' to see available skills.");
 
-        if (_sessionLoaded.Contains(skill.Name))
+        if (_sessionLoaded.ContainsKey(skill.Name))
             return TextResult($"Skill '{skill.Name}' is already loaded.");
 
         // Delegate access checks to the resolver — it handles deny, allow, and limits
@@ -134,7 +135,8 @@ public sealed class SkillTool(
         if (!resolution.Loaded.Any(s => string.Equals(s.Name, skillName, StringComparison.OrdinalIgnoreCase)))
             return TextResult($"Skill '{skillName}' cannot be loaded (budget exceeded).");
 
-        _sessionLoaded.Add(skill.Name);
+        if (!_sessionLoaded.TryAdd(skill.Name, 0))
+            return TextResult($"Skill '{skill.Name}' is already loaded.");
 
         return TextResult($"""
             ## Skill: {skill.Name}

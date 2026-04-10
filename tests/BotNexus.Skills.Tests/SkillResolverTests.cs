@@ -140,4 +140,40 @@ public sealed class SkillResolverTests
         result.Loaded.Should().BeEmpty();
         result.Denied.Should().ContainSingle(s => s.Name == "email-triage");
     }
+
+    [Fact]
+    public void Resolve_NegativeMaxLoadedSkills_TreatedAsUnlimited()
+    {
+        var skills = Enumerable.Range(1, 30).Select(i => MakeSkill($"skill-{i}")).ToArray();
+        var config = new SkillsConfig
+        {
+            AutoLoad = skills.Select(s => s.Name).ToList(),
+            MaxLoadedSkills = -1
+        };
+
+        var result = SkillResolver.Resolve(skills, config);
+
+        result.Loaded.Should().HaveCount(30);
+        result.Available.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Resolve_NegativeMaxContentChars_TreatedAsUnlimited()
+    {
+        var skills = new[]
+        {
+            new SkillDefinition { Name = "huge", Description = "Huge", Content = new string('x', 300_000), Source = SkillSource.Global, SourcePath = "/s/huge" },
+            new SkillDefinition { Name = "small", Description = "Small", Content = "tiny", Source = SkillSource.Global, SourcePath = "/s/small" }
+        };
+        var config = new SkillsConfig
+        {
+            AutoLoad = ["huge", "small"],
+            MaxSkillContentChars = -1
+        };
+
+        var result = SkillResolver.Resolve(skills, config);
+
+        result.Loaded.Select(s => s.Name).Should().BeEquivalentTo(["huge", "small"]);
+        result.Available.Should().BeEmpty();
+    }
 }

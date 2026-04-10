@@ -11,6 +11,7 @@ public static class SkillDiscovery
     private const string SkillFileName = "SKILL.md";
     private const int MaxDescriptionLength = 1024;
     private const int MaxCompatibilityLength = 500;
+    private const long MaxSkillFileBytes = 524_288; // 512 KB
 
     public static IReadOnlyList<SkillDefinition> Discover(
         string? globalSkillsDir,
@@ -40,6 +41,10 @@ public static class SkillDiscovery
             var dirName = Path.GetFileName(skillDir);
             try
             {
+                var skillFileInfo = new FileInfo(skillMdPath);
+                if (skillFileInfo.Length > MaxSkillFileBytes)
+                    continue;
+
                 var content = File.ReadAllText(skillMdPath);
                 var skill = SkillParser.Parse(dirName, content, skillDir, source);
 

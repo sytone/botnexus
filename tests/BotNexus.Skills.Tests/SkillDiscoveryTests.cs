@@ -134,6 +134,26 @@ public sealed class SkillDiscoveryTests : IDisposable
         skills.Should().BeEmpty();
     }
 
+    [Fact]
+    public void Discover_OversizedSkillFile_SkipsSkill()
+    {
+        var dir = Path.Combine(_tempDir, "skills", "oversized-skill");
+        Directory.CreateDirectory(dir);
+
+        var oversizedBody = new string('x', 530_000);
+        File.WriteAllText(Path.Combine(dir, "SKILL.md"), $"""
+            ---
+            name: oversized-skill
+            description: Oversized
+            ---
+            {oversizedBody}
+            """);
+
+        var skills = SkillDiscovery.Discover(Path.Combine(_tempDir, "skills"), null, null);
+
+        skills.Should().BeEmpty();
+    }
+
     private static void CreateSkill(string parentDir, string skillName, string description)
     {
         var skillDir = Path.Combine(parentDir, skillName);
