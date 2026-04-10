@@ -167,3 +167,51 @@ Participated in design review ceremony for Phase 3 architecture. All ADs approve
 - GuardedProvider (API mismatch guard) was a significant architectural addition but absent from all docs
 - StreamAccumulator's contextMessages parameter (streaming partials) changes the streaming contract — must be documented prominently
 - Piped stdin detection has no test coverage — Console.IsInputRedirected is hard to test without process spawning
+
+## 2026-04-11 — Post-Sprint Consistency Review: Sub-Agent Spawning Feature
+
+**Requested by:** Jon Bullen (auto-triggered ceremony)
+**Sprint:** Sub-agent spawning feature (4 waves, 10 commits across Farnsworth, Bender, Fry, Kif)
+
+**Review Scope:**
+1. Feature doc (sub-agent-spawning.md) ↔ Code (tools, manager, options, controller, WebUI)
+2. Interface definitions ↔ Implementation
+3. Tool parameter schemas ↔ Documentation
+4. API endpoints ↔ Documentation
+5. WebSocket event names ↔ Code ↔ WebUI listeners
+6. Config defaults ↔ Documented defaults
+7. Stale reference sweep (god-tool, workingDir, subagent_sessions)
+8. Design spec open questions ↔ Implementation
+
+**Results:**
+- **9 discrepancies found** in docs/features/sub-agent-spawning.md
+- **All fixed** in commit ff120a5
+- ✅ Build: 0 errors, 0 warnings
+- ✅ Tests: 1,792/1,792 pass (16 test projects)
+
+**Key Fixes (P0 — incorrect information):**
+- Session ID format: docs said `::sub::{childAgentId}::{uniqueId}` but code uses `::subagent::{uniqueId}`
+- Timeout param: docs said `timeout` but code uses `timeoutSeconds`
+- Phantom class: docs referenced `SubAgentCompletionHook` which doesn't exist; completion is handled inline by `DefaultSubAgentManager.RunSubAgentAsync()` → `OnCompletedAsync()`
+- Missing param: `apiProvider` parameter undocumented
+- Wrong response shapes: `manage_subagent` kill returns `{ killed: bool }`, not `{ status: "Killed" }`; status returns `subAgentId/status/resultSummary/startedAt/completedAt`, not the fields docs listed
+- Response key casing: `list_subagents` returns `"subAgents"` (camelCase), docs had `"subagents"` (lowercase)
+
+**Key Fixes (P1 — stale/incomplete):**
+- Status updated from "Draft / In Progress" to "Complete"
+- Removed 6 `<!-- DRAFT: verify against implementation -->` comments
+- Example IDs changed from `sa_abc123` prefix to realistic GUID hex format
+
+**Code Quality Notes (no fix needed):**
+- Interface ↔ Implementation: `DefaultSubAgentManager` fully implements all 5 `ISubAgentManager` methods ✅
+- Config defaults: `SubAgentOptions` defaults (5, 30, 600, 1, "") match both `SubAgentSpawnRequest` defaults and docs ✅
+- DI wiring: `ISubAgentManager` registered as singleton in `GatewayServiceCollectionExtensions` ✅
+- Tool schemas: JSON schemas in spawn/list/manage tools match implementation params ✅
+- API endpoints: `GET/DELETE /sessions/{id}/subagents` match docs ✅
+- Design spec `workingDir` param and `subagents` god-tool intentionally not implemented (documented in feature doc Security section)
+
+**Learnings:**
+- Multi-agent sprints produce "ghost references" — classes mentioned in docs that were designed but never implemented (SubAgentCompletionHook). Always grep for class names referenced in docs.
+- Response shapes are the #1 drift source. Tool return values should be documented by reading the actual Serialize() call, not by guessing from the model.
+- Parameter naming inconsistency between design spec (`timeout`) and implementation (`timeoutSeconds`) shows why design specs should be treated as historical, not prescriptive.
+- The `apiProvider` parameter was in code but invisible in docs — new parameters added during implementation need a doc sweep.

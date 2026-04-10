@@ -209,3 +209,32 @@
 - Panel follows existing `section-header` + `collapsed` class toggle pattern from sidebar
 - Kill button uses same `fetch(DELETE)` pattern as session delete
 - Activity feed integration: sub-agent events tracked via existing `trackActivity()` calls
+
+## Learnings
+
+### Bottom "Agent is thinking" indicator removal
+
+**Commit:** 1326332 — `fix(webui): remove redundant 'Agent is thinking' bottom indicator`
+
+The `showStreamingIndicator()` function appended an "Agent is thinking..." div to `elChatMessages`, causing layout jumps as it was added/removed from the DOM. The top-of-chat `#processing-status` bar already conveys the same information. Made `showStreamingIndicator()` a no-op and removed the orphaned CSS (`.message.thinking`, `.typing-indicator`, `.thinking-dots`, `@keyframes thinkingPulse`). Left `removeStreamingIndicator()` intact as a harmless cleanup call.
+
+### Session Switching Fix — Wave 1 (2026-07-24)
+**Timestamp:** 2026-07-24
+**Status:** ✅ Complete
+**Commit:** c30d4dc — fix(webui): fix session switching during active agent work
+
+**Bug:** Switching agents while one was actively streaming caused stale events to render in the wrong canvas, processing bar persisted across sessions, and orphan sessions were created on every sidebar click.
+
+**Fixes Delivered:**
+1. **State reset (W1.1)** — Reset all streaming globals (`isStreaming`, `activeMessageId`, `activeToolCalls`, `activeToolCount`, `thinkingBuffer`, `toolCallDepth`) plus clear timers, hide processing bar/abort button at top of `openAgentTimeline()` before any async work.
+2. **Orphan session fix (W1.2)** — Replaced `joinSession(agentId, null)` (which created a throwaway server session) with explicit `LeaveSession` + null out `currentSessionId`.
+3. **Session guard (W1.3)** — Added `isEventForCurrentSession(evt)` guard to all 11 SignalR handlers (MessageStart, ContentDelta, ThinkingDelta, ToolStart, ToolEnd, MessageEnd, Error, SubAgentSpawned/Completed/Failed/Killed). Raw string events pass through gracefully.
+4. **Status restore (W1.4)** — Call `checkAgentRunningStatus()` after joining the latest session so switching back to a working agent restores the processing UI.
+
+**Pattern Established:** All SignalR event handlers must check `isEventForCurrentSession(evt)` as first line to prevent cross-session rendering during the race window between LeaveSession and server processing.
+
+### Steer button misalignment during streaming
+
+**Commit:** 055d836 — `fix(webui): align steer button with input field during streaming`
+
+`.send-group` used `align-items: flex-end` which caused the Steer button and the ▾ send-mode dropdown to have mismatched heights (different font sizes: 0.85rem vs 0.7rem). Changed to `align-items: stretch` so both buttons fill to the same height, forming a cohesive button group. Also removed an unconditional `.send-group .btn-primary` rule that always zeroed right border-radius even in normal send mode — the existing `:has(.btn-send-mode:not(.hidden))` selector correctly handles this conditionally.

@@ -1292,6 +1292,94 @@ Users need clear visual feedback that their mid-stream input goes through the `s
 
 **Registration:** Properly uses `services.AddOptions<PlatformConfig>().Configure(...)` and `services.Replace(...)` for the auth handler, ensuring the Options-resolved config is used consistently.
 
+---
+
+## 2026-04-10 — Session Switching Bug Design Review (Leela)
+
+### Phase 10 Wave 1-2: Session Switching Race Condition Fix
+
+**Date:** 2026-04-10  
+**Reviewer:** Leela (Lead/Architect)  
+**Spec:** `docs/planning/bug-session-switching-ui/design-spec.md`  
+**Status:** Approved for implementation — 6 decisions, 4-wave fix plan
+
+#### Root Causes Confirmed (3 patterns)
+
+1. **Pattern A (Primary):** No client-side session filtering on SignalR handlers
+   - Events from old sessions arrive during LeaveSession/join race window
+   - All handlers (`ContentDelta`, `MessageStart`, etc.) render unconditionally
+   - No sessionId check against currentSessionId
+
+2. **Pattern C (Secondary):** Global streaming state not reset on switch
+   - `isStreaming`, `activeToolCalls`, `activeMessageId`, `thinkingBuffer`, processing bar persist
+   - Switch away from active agent → UI shows false "processing" state
+   - Send button stuck in "Steer" mode
+
+3. **Pattern B (Symptom):** State partially reset but race window allows re-population
+   - `elChatMessages.innerHTML` is cleared, but old-session events arrive during async gap and repopulate it
+   - Root cause is Pattern A (lack of client-side guard)
+
+#### Bonus Findings
+
+- **Orphan session creation:** `openAgentTimeline` calls `joinSession(agentId, null)` creating throwaway session, then joins the real one — leaks orphans on every sidebar click
+- **No state restoration on switch-back:** `checkAgentRunningStatus()` exists but is never called; user can't see if agent is still working
+
+#### Fix Plan (4 waves, dependency-ordered)
+
+| Wave | Owner | Focus | Impact |
+|------|-------|-------|--------|
+| Wave 1 | Fry | State reset + client-side guards + orphan elimination | Fixes visible bug; ships independently |
+| Wave 2 | Fry | Backend verification: ensure `AgentStreamEvent` includes `sessionId` property | Enhances Wave 1 guard effectiveness |
+| Wave 3 | Fry | Per-session state map + LRU eviction | Long-term robustness; not a blocker |
+| Wave 4 | Hermes | Test suite: 6 key test cases covering state isolation, orphan prevention, switch-back restoration | Validation |
+
+#### 6 Key Decisions
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| **D1** | **Client-side guard is primary defense**; server-side groups are belt-and-suspenders | Server already routes by group, but can't prevent stale arrivals. Client must be the final gate. |
+| **D2** | **Wave 1 ships without per-session state map** | State reset + guard fixes the visible bug. Per-session state is robustness, not a blocker. |
+| **D3** | **No cancellation of background agent work on switch** | Switching away does NOT cancel agent work; agent continues server-side per spec #5. |
+| **D4** | **Fix orphan session creation** | Remove `joinSession(agentId, null)` call; replace with explicit `LeaveSession`. |
+| **D5** | **Keep vanilla JS** | WebUI is vanilla JS. All fixes must stay vanilla. No framework introduction. |
+| **D6** | **Verify backend event payload before relying on sessionId** | Guard degrades gracefully (events without sessionId pass through), but most effective when sessionId present. |
+
+#### Wave 1 Tasks (Core Fix)
+
+| Task | Owner | Description |
+|------|-------|-------------|
+| W1.1 | Fry | Add state reset block at top of `openAgentTimeline()`: clear `isStreaming`, `activeMessageId`, `activeToolCalls`, `activeToolCount`, `thinkingBuffer`, hide processing bar/abort button |
+| W1.2 | Fry | Fix orphan session creation: remove `joinSession(agentId, null)` call, replace with explicit `LeaveSession` before creating new session |
+| W1.3 | Fry | Add `isEventForCurrentSession(evt)` guard to all SignalR handlers: `MessageStart`, `ContentDelta`, `ThinkingDelta`, `ToolStart`, `ToolEnd`, `MessageEnd`, `Error`, plus SubAgent handlers |
+| W1.4 | Fry | Add `checkAgentRunningStatus()` call at end of `openAgentTimeline()` to restore UI state on switch-back |
+
+#### Wave 2 Task (Backend)
+
+| Task | Owner | Description |
+|------|-------|-------------|
+| W2.1 | Fry | Verify `AgentStreamEvent` model includes `sessionId` property. If missing, add it and ensure `SignalRChannelAdapter.SendStreamEventAsync` populates it. |
+
+#### Risk Register
+
+| # | Risk | Severity | Mitigation |
+|---|------|----------|------------|
+| R1 | Race condition: events arrive between LeaveSession and server processing | Medium | Client-side sessionId guard on all handlers (W1.3) |
+| R2 | State corruption: resetting isStreaming while agent still working | Low | Per-session state map (Wave 3) preserves state; checkAgentRunningStatus restores on switch-back (W1.4) |
+| R3 | Memory leak: sessionState map grows unbounded | Medium | Cap at 20 entries with LRU eviction (Wave 3) |
+| R4 | Orphan sessions created on every switch | Low | Remove `joinSession(agentId, null)` call (W1.2) |
+| R5 | Backend event payload missing sessionId | Medium | Verify model (W2.1); guard degrades gracefully if missing |
+| R6 | SubAgent events lack session guards | Medium | Apply same guard to all SubAgent handlers (W1.3) |
+
+#### Approval
+
+**Verdict:** Approved for implementation.
+- **Wave 1** is the minimum viable fix; ships independently.
+- **Wave 2** should follow immediately (backend verification).
+- **Wave 3** is recommended follow-up for long-term robustness.
+- **Wave 4** (tests) should track Wave 1; write test specs in parallel.
+
+Fry to start Wave 1 immediately. Hermes to write test specs (W4 descriptions) in parallel and validate once Wave 1 lands.
+
 ### Multi-Tenant Auth (commit `30474d7`)
 
 **Architecture:** `BuildIdentityMap` constructs an immutable `Dictionary<string, GatewayCallerIdentity>` at startup. Auth is a single dictionary lookup — O(1), no lock contention at runtime.

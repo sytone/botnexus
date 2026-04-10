@@ -197,3 +197,44 @@ Nova produced a design spec for background sub-agent spawning — agents delegat
 - D6: No `workingDir` override (security)
 
 **Decision written to:** `.squad/decisions/inbox/leela-subagent-design-review.md`
+
+## 2026-04-11 — Session Switching Bug Design Review (Lead)
+
+**Status:** ✅ Design Review Complete — Approved for Implementation
+**Requested by:** Jon Bullen
+**Spec Author:** Nova
+**Scope:** Root cause diagnosis + fix specification for session switching bug in WebUI
+
+**Context:**
+WebUI canvas fails to switch when clicking a different agent's session while another agent is actively working. Previous agent's conversation and loading state bleeds through.
+
+**Root Cause Diagnosis:**
+All 3 spec patterns confirmed against actual `app.js` source:
+1. **Pattern A (Primary):** SignalR handlers (`MessageStart`, `ContentDelta`, `ToolStart`, etc.) have no client-side sessionId guard. Events render unconditionally. Server uses group routing but race window exists between `LeaveSession` and server processing.
+2. **Pattern C (Secondary):** `isStreaming`, `activeToolCalls`, `activeMessageId`, `thinkingBuffer`, processing status bar are all global state never reset by `openAgentTimeline()`.
+3. **Pattern B (Symptom):** DOM is cleared but re-populated by stale events during async gap.
+4. **Bonus:** `openAgentTimeline` calls `joinSession(agentId, null)` creating orphan sessions on every sidebar click.
+5. **Bonus:** `checkAgentRunningStatus()` exists but is never called on switch-back.
+
+**Fix Design:**
+- Wave 1 (Fry): State reset in `openAgentTimeline`, session guard on all SignalR handlers, fix orphan session creation, call `checkAgentRunningStatus` on switch
+- Wave 2 (Fry): Verify/add `sessionId` to `AgentStreamEvent` backend model
+- Wave 3 (Fry): Per-session state Map with LRU eviction (robustness)
+- Wave 4 (Hermes): 6 test scenarios covering switch, switch-back, rapid switch, stale events
+
+**Key Decisions:**
+- D1: Client-side guard is primary defense (server groups are belt-and-suspenders)
+- D2: Wave 1 ships without per-session state map (reset + guard sufficient for bug fix)
+- D3: No cancellation of background agent work on switch
+- D4: Fix orphan session creation
+- D5: All fixes in vanilla JS (no framework introduction)
+
+**Decision written to:** `.squad/decisions/inbox/leela-session-switch-review.md`
+
+## Learnings — WebUI State Architecture (2026-04-11)
+
+1. **WebUI uses global scalar state for streaming** — `isStreaming`, `activeMessageId`, `activeToolCalls`, `thinkingBuffer` are all module-level variables in app.js IIFE. Any multi-session feature must account for this.
+2. **SignalR handlers are session-unaware** — None of the `connection.on()` handlers check evt.sessionId before rendering. Group-based routing provides server-side isolation but client has no guard.
+3. **`openAgentTimeline` is the session switch entry point** — Called from sidebar click handler (line 1670). It calls `joinSession` twice: once with null (creates orphan), once with latest session ID.
+4. **`joinSessionVersion` protects join results, not incoming events** — The version counter prevents stale join results from updating state, but doesn't filter incoming streaming events.
+5. **`checkAgentRunningStatus()` is the restore mechanism** — Exists at line 705, queries `/agents/{id}/sessions/{id}/status` REST endpoint and sets `isStreaming` + processing indicators if agent is Running/Idle.
