@@ -1,3 +1,4 @@
+using System.IO.Abstractions;
 using System.Reflection;
 using System.Runtime.Loader;
 using BotNexus.AgentCore.Tools;
@@ -9,16 +10,23 @@ namespace BotNexus.CodingAgent.Extensions;
 /// </summary>
 public sealed class ExtensionLoader
 {
+    private readonly IFileSystem _fileSystem;
+
+    public ExtensionLoader(IFileSystem? fileSystem = null)
+    {
+        _fileSystem = fileSystem ?? new FileSystem();
+    }
+
     public ExtensionLoadResult LoadExtensions(string extensionsDirectory)
     {
-        if (string.IsNullOrWhiteSpace(extensionsDirectory) || !Directory.Exists(extensionsDirectory))
+        if (string.IsNullOrWhiteSpace(extensionsDirectory) || !_fileSystem.Directory.Exists(extensionsDirectory))
         {
             return new ExtensionLoadResult([], []);
         }
 
         var extensions = new List<IExtension>();
         var tools = new List<IAgentTool>();
-        foreach (var dllPath in Directory.EnumerateFiles(extensionsDirectory, "*.dll", SearchOption.TopDirectoryOnly))
+        foreach (var dllPath in _fileSystem.Directory.EnumerateFiles(extensionsDirectory, "*.dll", SearchOption.TopDirectoryOnly))
         {
             try
             {

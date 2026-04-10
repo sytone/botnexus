@@ -50,7 +50,7 @@ internal static class Program
         var llmClient = new LlmClient(apiProviderRegistry, modelRegistry);
 
         var authManager = new AuthManager(config.ConfigDirectory, fileSystem);
-        var extensionLoadResult = new ExtensionLoader().LoadExtensions(config.ExtensionsDirectory);
+        var extensionLoadResult = new ExtensionLoader(fileSystem).LoadExtensions(config.ExtensionsDirectory);
         var extensionRunner = new ExtensionRunner(extensionLoadResult.Extensions);
         var skills = new SkillsLoader(fileSystem).LoadSkills(workingDirectory, config);
         var sessionManager = new SessionManager(fileSystem);

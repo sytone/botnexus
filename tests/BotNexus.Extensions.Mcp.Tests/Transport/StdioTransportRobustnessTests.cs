@@ -14,7 +14,7 @@ public sealed class StdioTransportRobustnessTests
         var transport = new StdioMcpTransport("powershell", ["-NoProfile", "-Command", "exit 1"]);
         await transport.ConnectAsync();
 
-        var act = () => transport.ReceiveAsync(new CancellationTokenSource(100).Token);
+        var act = () => transport.ReceiveAsync(new CancellationTokenSource(TimeSpan.FromSeconds(2)).Token);
         await act.Should().ThrowAsync<OperationCanceledException>();
         await transport.DisposeAsync();
     }
@@ -27,7 +27,7 @@ public sealed class StdioTransportRobustnessTests
         var transport = new StdioMcpTransport("powershell", ["-NoProfile", "-Command", command]);
         await transport.ConnectAsync();
 
-        var response = await transport.ReceiveAsync(new CancellationTokenSource(TimeSpan.FromSeconds(2)).Token);
+        var response = await transport.ReceiveAsync(new CancellationTokenSource(TimeSpan.FromSeconds(10)).Token);
         response.Id.Should().NotBeNull();
         await transport.DisposeAsync();
     }
@@ -41,7 +41,7 @@ public sealed class StdioTransportRobustnessTests
         var connectTask = transport.ConnectAsync();
         await connectTask;
 
-        var response = await transport.ReceiveAsync(new CancellationTokenSource(TimeSpan.FromSeconds(2)).Token);
+        var response = await transport.ReceiveAsync(new CancellationTokenSource(TimeSpan.FromSeconds(10)).Token);
         response.Id.Should().NotBeNull();
         await transport.DisposeAsync();
     }

@@ -265,7 +265,7 @@ public static class CodingAgent
             new WriteTool(workingDirectory, fileSystem),
             new EditTool(workingDirectory, fileSystem),
             new ShellTool(workingDirectory, config.DefaultShellTimeoutSeconds),
-            new GlobTool(workingDirectory),
+            new GlobTool(workingDirectory, fileSystem),
             new GrepTool(workingDirectory, fileSystem)
         };
 

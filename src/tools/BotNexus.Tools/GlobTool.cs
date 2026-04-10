@@ -1,3 +1,4 @@
+using System.IO.Abstractions;
 using System.Text;
 using System.Text.Json;
 using BotNexus.AgentCore.Tools;
@@ -25,16 +26,19 @@ public sealed class GlobTool : IAgentTool
 {
     private const int MaxResults = 1000;
     private readonly string _workingDirectory;
+    private readonly IFileSystem _fileSystem;
 
     /// <summary>
     /// Initializes the glob tool.
     /// </summary>
     /// <param name="workingDirectory">Repository root used as the default glob base.</param>
-    public GlobTool(string workingDirectory)
+    /// <param name="fileSystem">File system abstraction for testability.</param>
+    public GlobTool(string workingDirectory, IFileSystem? fileSystem = null)
     {
         _workingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
             ? throw new ArgumentException("Working directory cannot be empty.", nameof(workingDirectory))
             : Path.GetFullPath(workingDirectory);
+        _fileSystem = fileSystem ?? new FileSystem();
     }
 
     /// <inheritdoc />
@@ -105,7 +109,7 @@ public sealed class GlobTool : IAgentTool
             ? PathUtils.ResolvePath(pathObj.ToString()!, _workingDirectory)
             : _workingDirectory;
 
-        if (!Directory.Exists(baseDirectory))
+        if (!_fileSystem.Directory.Exists(baseDirectory))
         {
             throw new DirectoryNotFoundException($"Base directory '{baseDirectory}' does not exist.");
         }
@@ -113,8 +117,10 @@ public sealed class GlobTool : IAgentTool
         var matcher = new Matcher(StringComparison.OrdinalIgnoreCase);
         matcher.AddInclude(pattern);
 
+        // Matcher.GetResultsInFullPath requires real directory paths;
+        // post-filter through IFileSystem for consistency.
         var allMatches = matcher.GetResultsInFullPath(baseDirectory)
-            .Where(path => File.Exists(path))
+            .Where(path => _fileSystem.File.Exists(path))
             .Select(path => Path.GetFullPath(path))
             .ToList();
         var ignoredPaths = PathUtils.GetGitIgnoredPaths(allMatches, _workingDirectory);

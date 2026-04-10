@@ -19,7 +19,7 @@ public sealed class DefaultAgentToolFactory : IAgentToolFactory
             new ShellTool(workingDirectory: resolved),
             new ListDirectoryTool(resolved, fileSystem),
             new GrepTool(resolved, fileSystem),
-            new GlobTool(resolved)
+            new GlobTool(resolved, fileSystem)
         ];
     }
 }

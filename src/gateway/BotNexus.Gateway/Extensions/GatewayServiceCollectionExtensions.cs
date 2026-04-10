@@ -242,12 +242,15 @@ public static class GatewayServiceCollectionExtensions
                 throw new OptionsValidationException(nameof(PlatformConfig), typeof(PlatformConfig), ["gateway.sessionStore.filePath is required when gateway.sessionStore.type is 'File'."]);
 
             var sessionsPath = ResolveConfiguredPath(configDirectory, configuredPath);
-            new FileSystem().Directory.CreateDirectory(sessionsPath);
             services.Replace(ServiceDescriptor.Singleton<ISessionStore>(serviceProvider =>
-                new FileSessionStore(
+            {
+                var fs = serviceProvider.GetRequiredService<IFileSystem>();
+                fs.Directory.CreateDirectory(sessionsPath);
+                return new FileSessionStore(
                     sessionsPath,
                     serviceProvider.GetRequiredService<ILogger<FileSessionStore>>(),
-                    serviceProvider.GetRequiredService<IFileSystem>())));
+                    fs);
+            }));
             return;
         }
 
