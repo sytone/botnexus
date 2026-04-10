@@ -85,6 +85,17 @@ public sealed class GatewaySession
         }
     }
 
+    /// <summary>Replaces the session history with a compacted version.</summary>
+    public void ReplaceHistory(IReadOnlyList<SessionEntry> compactedEntries)
+    {
+        lock (_historyLock)
+        {
+            History.Clear();
+            History.AddRange(compactedEntries);
+            UpdatedAt = DateTimeOffset.UtcNow;
+        }
+    }
+
     /// <summary>Returns a snapshot of the history (safe to iterate).</summary>
     public IReadOnlyList<SessionEntry> GetHistorySnapshot()
     {
@@ -172,6 +183,9 @@ public sealed record SessionEntry
 
     /// <summary>Tool call ID for correlating requests and results.</summary>
     public string? ToolCallId { get; init; }
+
+    /// <summary>True if this entry is a compaction summary (not a real conversation message).</summary>
+    public bool IsCompactionSummary { get; init; }
 }
 
 /// <summary>

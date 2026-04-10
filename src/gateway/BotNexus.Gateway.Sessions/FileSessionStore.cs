@@ -207,6 +207,10 @@ public sealed class FileSessionStore : ISessionStore
                 }
             }
 
+            var lastCompactionIndex = entries.FindLastIndex(entry => entry.IsCompactionSummary);
+            if (lastCompactionIndex >= 0)
+                entries = entries.GetRange(lastCompactionIndex, entries.Count - lastCompactionIndex);
+
             if (entries.Count > 0)
                 session.AddEntries(entries);
 

@@ -219,7 +219,8 @@ public sealed class SqliteSessionStore : ISessionStore
                 content TEXT,
                 timestamp TEXT,
                 tool_name TEXT,
-                tool_call_id TEXT
+                tool_call_id TEXT,
+                is_compaction_summary INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE INDEX IF NOT EXISTS idx_session_history_session_id ON session_history(session_id);
@@ -234,12 +235,17 @@ public sealed class SqliteSessionStore : ISessionStore
 
     private static async Task MigrateAsync(SqliteConnection connection, CancellationToken cancellationToken)
     {
-        foreach (var column in new[] { "tool_name", "tool_call_id" })
+        foreach (var migration in new[]
+                 {
+                     ("tool_name", "TEXT"),
+                     ("tool_call_id", "TEXT"),
+                     ("is_compaction_summary", "INTEGER NOT NULL DEFAULT 0")
+                 })
         {
             try
             {
                 await using var cmd = connection.CreateCommand();
-                cmd.CommandText = $"ALTER TABLE session_history ADD COLUMN {column} TEXT";
+                cmd.CommandText = $"ALTER TABLE session_history ADD COLUMN {migration.Item1} {migration.Item2}";
                 await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
             catch (SqliteException) { /* column already exists */ }
@@ -287,7 +293,7 @@ public sealed class SqliteSessionStore : ISessionStore
 
         await using var historyCommand = connection.CreateCommand();
         historyCommand.CommandText = """
-            SELECT role, content, timestamp, tool_name, tool_call_id
+            SELECT role, content, timestamp, tool_name, tool_call_id, is_compaction_summary
             FROM session_history
             WHERE session_id = $sessionId
             ORDER BY id ASC
@@ -304,9 +310,14 @@ public sealed class SqliteSessionStore : ISessionStore
                 Content = historyReader.IsDBNull(1) ? string.Empty : historyReader.GetString(1),
                 Timestamp = ParseTimestamp(historyReader.IsDBNull(2) ? null : historyReader.GetString(2)),
                 ToolName = historyReader.IsDBNull(3) ? null : historyReader.GetString(3),
-                ToolCallId = historyReader.IsDBNull(4) ? null : historyReader.GetString(4)
+                ToolCallId = historyReader.IsDBNull(4) ? null : historyReader.GetString(4),
+                IsCompactionSummary = !historyReader.IsDBNull(5) && historyReader.GetInt64(5) != 0
             });
         }
+
+        var lastCompactionIndex = entries.FindLastIndex(entry => entry.IsCompactionSummary);
+        if (lastCompactionIndex >= 0)
+            entries = entries.GetRange(lastCompactionIndex, entries.Count - lastCompactionIndex);
 
         if (entries.Count > 0)
             session.AddEntries(entries);
@@ -357,8 +368,8 @@ public sealed class SqliteSessionStore : ISessionStore
             await using var insertCommand = connection.CreateCommand();
             insertCommand.Transaction = transaction;
             insertCommand.CommandText = """
-                INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id)
-                VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId)
+                INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary)
+                VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary)
                 """;
             insertCommand.Parameters.AddWithValue("$sessionId", session.SessionId);
             insertCommand.Parameters.AddWithValue("$role", entry.Role);
@@ -366,6 +377,7 @@ public sealed class SqliteSessionStore : ISessionStore
             insertCommand.Parameters.AddWithValue("$timestamp", entry.Timestamp.ToString("O"));
             insertCommand.Parameters.AddWithValue("$toolName", (object?)entry.ToolName ?? DBNull.Value);
             insertCommand.Parameters.AddWithValue("$toolCallId", (object?)entry.ToolCallId ?? DBNull.Value);
+            insertCommand.Parameters.AddWithValue("$isCompactionSummary", entry.IsCompactionSummary ? 1 : 0);
             await insertCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 

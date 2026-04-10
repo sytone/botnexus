@@ -231,6 +231,65 @@ public sealed class SqliteSessionStoreTests
             tables.Add(reader.GetString(0));
 
         tables.Should().Equal("session_history", "sessions");
+
+        await using var columnCommand = connection.CreateCommand();
+        columnCommand.CommandText = "PRAGMA table_info(session_history)";
+        var columns = new List<string>();
+        await using var columnReader = await columnCommand.ExecuteReaderAsync();
+        while (await columnReader.ReadAsync())
+            columns.Add(columnReader.GetString(1));
+
+        columns.Should().Contain("is_compaction_summary");
+    }
+
+    [Fact]
+    public async Task GetAsync_WithLegacySchema_MigratesCompactionColumn()
+    {
+        using var fixture = new StoreFixture();
+        await using (var connection = new SqliteConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY,
+                    agent_id TEXT,
+                    channel_type TEXT,
+                    caller_id TEXT,
+                    status TEXT,
+                    metadata TEXT,
+                    created_at TEXT,
+                    updated_at TEXT
+                );
+
+                CREATE TABLE session_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT,
+                    role TEXT,
+                    content TEXT,
+                    timestamp TEXT,
+                    tool_name TEXT,
+                    tool_call_id TEXT
+                );
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var store = fixture.CreateStore();
+        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        session.AddEntry(new SessionEntry { Role = "system", Content = "summary", IsCompactionSummary = true });
+        await store.SaveAsync(session);
+
+        await using var verifyConnection = new SqliteConnection(fixture.ConnectionString);
+        await verifyConnection.OpenAsync();
+        await using var columnCommand = verifyConnection.CreateCommand();
+        columnCommand.CommandText = "PRAGMA table_info(session_history)";
+        var columns = new List<string>();
+        await using var columnReader = await columnCommand.ExecuteReaderAsync();
+        while (await columnReader.ReadAsync())
+            columns.Add(columnReader.GetString(1));
+
+        columns.Should().Contain("is_compaction_summary");
     }
 
     private static async Task CreateAndSaveAsync(SqliteSessionStore store, string sessionId, string agentId)
