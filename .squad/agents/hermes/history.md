@@ -142,3 +142,12 @@
   - `dotnet build tests\BotNexus.WebUI.Tests\BotNexus.WebUI.Tests.csproj --verbosity quiet` ✅
   - `pwsh tests\BotNexus.WebUI.Tests\bin\Debug\net10.0\playwright.ps1 install chromium` ✅
   - default `dotnet test` run passes with E2E tests skipped unless env flag is enabled ✅
+
+## 2026-04-10T14:47:53-07:00 - Playwright E2E host Kestrel fix
+- Fixed KestrelWebApplicationFactory in 	ests/BotNexus.WebUI.Tests/WebUiE2ETestHost.cs to start a real Kestrel host via CreateHost while retaining TestServer host.
+- Added explicit Kestrel HTTP client (CreateKestrelClient) and updated test bootstrap to register agents against the real HTTP endpoint.
+- Added factory disposal of real Kestrel host and test service overrides (ISessionStore -> InMemorySessionStore) for deterministic E2E behavior.
+- Validation:
+  - dotnet build tests\\BotNexus.WebUI.Tests\\BotNexus.WebUI.Tests.csproj --verbosity quiet ✅
+  - BOTNEXUS_RUN_PLAYWRIGHT_E2E=1 dotnet test tests\\BotNexus.WebUI.Tests --filter "BasicSwitchAndSend" ✅ (1/1)
+  - BOTNEXUS_RUN_PLAYWRIGHT_E2E=1 dotnet test tests\\BotNexus.WebUI.Tests ❌ (1 passed, 4 failed; failures now in session-switch behavior assertions, not connection refused)

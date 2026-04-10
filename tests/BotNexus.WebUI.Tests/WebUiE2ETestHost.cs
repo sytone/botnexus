@@ -5,8 +5,10 @@ using System.Net.Sockets;
 using BotNexus.Gateway;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Api;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Sessions;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -40,10 +42,7 @@ internal sealed class WebUiE2ETestHost : IAsyncDisposable
     {
         var supervisor = new RecordingAgentSupervisor();
         var factory = CreateFactory(supervisor);
-        var apiClient = factory.CreateClient(new WebApplicationFactoryClientOptions
-        {
-            AllowAutoRedirect = true
-        });
+        var apiClient = factory.CreateKestrelClient();
 
         await RegisterAgentAsync(apiClient, AgentA);
         await RegisterAgentAsync(apiClient, AgentB);
@@ -93,25 +92,33 @@ internal sealed class WebUiE2ETestHost : IAsyncDisposable
     public async Task OpenAgentTimelineAsync(string agentId)
     {
         await WaitForAgentEntryAsync(agentId);
-        await Page.Locator($"#sessions-list .list-item[data-agent-id='{agentId}'][data-channel-type='web chat']").First.ClickAsync();
+        var agentEntry = Page.Locator($"#sessions-list .list-item[data-agent-id='{agentId}'][data-channel-type='web chat']").First;
+        var selectedSessionId = await agentEntry.GetAttributeAsync("data-session-id");
+        await agentEntry.ClickAsync();
         await Assertions.Expect(Page.Locator("#chat-title")).ToContainTextAsync(agentId, new() { Timeout = 15000 });
+        await Assertions.Expect(Page.Locator("#chat-input")).ToBeEditableAsync(new() { Timeout = 15000 });
+        if (!string.IsNullOrWhiteSpace(selectedSessionId))
+            await WaitForCurrentSessionIdAsync(selectedSessionId);
     }
 
     public async Task<string> SendMessageAsync(string text)
     {
+        var expectedDispatchCount = Supervisor.Dispatches.Count + 1;
         await Assertions.Expect(Page.Locator("#chat-input")).ToBeEditableAsync(new() { Timeout = 15000 });
         await Page.FillAsync("#chat-input", text);
         await Page.ClickAsync("#btn-send");
-        return await WaitForCurrentSessionIdAsync();
+        await WaitForInvocationCountAsync(expectedDispatchCount);
+        return Supervisor.Dispatches[expectedDispatchCount - 1].SessionId;
     }
 
-    public async Task<string> WaitForCurrentSessionIdAsync(int timeoutMs = 15000)
+    public async Task<string> WaitForCurrentSessionIdAsync(string? expectedSessionId = null, int timeoutMs = 15000)
     {
         var start = DateTimeOffset.UtcNow;
         while ((DateTimeOffset.UtcNow - start).TotalMilliseconds < timeoutMs)
         {
             var sessionId = await Page.GetAttributeAsync("#session-id-text", "title");
-            if (!string.IsNullOrWhiteSpace(sessionId))
+            if (!string.IsNullOrWhiteSpace(sessionId) &&
+                (string.IsNullOrWhiteSpace(expectedSessionId) || string.Equals(sessionId, expectedSessionId, StringComparison.Ordinal)))
                 return sessionId;
 
             await Task.Delay(50);
@@ -162,6 +169,9 @@ internal sealed class WebUiE2ETestHost : IAsyncDisposable
 
                 services.RemoveAll<IAgentSupervisor>();
                 services.AddSingleton<IAgentSupervisor>(supervisor);
+
+                services.RemoveAll<ISessionStore>();
+                services.AddSingleton<ISessionStore, InMemorySessionStore>();
             });
         });
     }
@@ -194,6 +204,7 @@ internal sealed class WebUiE2ETestHost : IAsyncDisposable
 internal sealed class KestrelWebApplicationFactory<TProgram> : WebApplicationFactory<TProgram> where TProgram : class
 {
     private readonly Action<IWebHostBuilder>? _configure;
+    private IHost? _kestrelHost;
     public string RootUri { get; }
 
     public KestrelWebApplicationFactory(string rootUri, Action<IWebHostBuilder>? configure = null)
@@ -204,9 +215,44 @@ internal sealed class KestrelWebApplicationFactory<TProgram> : WebApplicationFac
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        builder.UseKestrel();
-        builder.UseUrls(RootUri);
         _configure?.Invoke(builder);
+    }
+
+    protected override IHost CreateHost(IHostBuilder builder)
+    {
+        var testHost = builder.Build();
+
+        builder.ConfigureWebHost(webHostBuilder =>
+        {
+            webHostBuilder.UseKestrel();
+            webHostBuilder.UseUrls(RootUri);
+        });
+
+        _kestrelHost = builder.Build();
+        _kestrelHost.Start();
+        testHost.Start();
+
+        return testHost;
+    }
+
+    public HttpClient CreateKestrelClient()
+    {
+        _ = Server;
+        return new HttpClient(new HttpClientHandler { AllowAutoRedirect = true })
+        {
+            BaseAddress = new Uri(RootUri)
+        };
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _kestrelHost?.Dispose();
+            _kestrelHost = null;
+        }
+
+        base.Dispose(disposing);
     }
 }
 
