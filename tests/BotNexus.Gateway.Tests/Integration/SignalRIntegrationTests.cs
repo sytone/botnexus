@@ -189,6 +189,150 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Hub_SessionSwitch_SendDuringActiveJoin_UsesJoinedSession()
+    {
+        var dispatcher = new RecordingDispatcher();
+        await using var factory = CreateTestFactory(services =>
+        {
+            services.RemoveAll<IChannelDispatcher>();
+            services.AddSingleton<IChannelDispatcher>(dispatcher);
+        });
+        using var cts = CreateTimeout();
+        await RegisterAgentAsync(factory, cts.Token);
+
+        await using var connection = await CreateStartedConnection(factory, cts.Token);
+        const string sessionA = "active-join-a";
+        const string sessionB = "active-join-b";
+
+        await connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionA, cts.Token);
+        await connection.InvokeAsync("LeaveSession", sessionA, cts.Token);
+
+        var joinB = connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionB, cts.Token);
+        await connection.InvokeAsync("SendMessage", TestAgentId, sessionB, "send-during-join", cts.Token);
+        await joinB;
+
+        dispatcher.Messages.Should().ContainSingle();
+        dispatcher.Messages[0].SessionId.Should().Be(sessionB);
+        dispatcher.Messages[0].Content.Should().Be("send-during-join");
+    }
+
+    [Fact]
+    public async Task Hub_SessionSwitch_LeaveJoinImmediateSend_RoutesToNewSession()
+    {
+        var dispatcher = new RecordingDispatcher();
+        await using var factory = CreateTestFactory(services =>
+        {
+            services.RemoveAll<IChannelDispatcher>();
+            services.AddSingleton<IChannelDispatcher>(dispatcher);
+        });
+        using var cts = CreateTimeout();
+        await RegisterAgentAsync(factory, cts.Token);
+
+        await using var connection = await CreateStartedConnection(factory, cts.Token);
+        const string sessionA = "leave-join-a";
+        const string sessionB = "leave-join-b";
+
+        await connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionA, cts.Token);
+        await connection.InvokeAsync("LeaveSession", sessionA, cts.Token);
+
+        var joinB = connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionB, cts.Token);
+        await connection.InvokeAsync("SendMessage", TestAgentId, sessionB, "immediate-after-join", cts.Token);
+        await joinB;
+
+        dispatcher.Messages.Should().ContainSingle();
+        dispatcher.Messages[0].SessionId.Should().Be(sessionB);
+        dispatcher.Messages[0].Content.Should().Be("immediate-after-join");
+    }
+
+    [Fact]
+    public async Task Hub_SessionSwitch_MultipleAgentsInterleaved_SendRoutesByAgentAndSession()
+    {
+        const string agentA = "agent-a";
+        const string agentB = "agent-b";
+        var dispatcher = new RecordingDispatcher();
+        await using var factory = CreateTestFactory(services =>
+        {
+            services.RemoveAll<IChannelDispatcher>();
+            services.AddSingleton<IChannelDispatcher>(dispatcher);
+        });
+        using var cts = CreateTimeout();
+        await RegisterAgentAsync(factory, cts.Token, agentA);
+        await RegisterAgentAsync(factory, cts.Token, agentB);
+
+        await using var connection = await CreateStartedConnection(factory, cts.Token);
+        const string sessionA = "interleaved-session-1";
+        const string sessionB = "interleaved-session-2";
+
+        await connection.InvokeAsync<JsonElement>("JoinSession", agentA, sessionA, cts.Token);
+        await connection.InvokeAsync<JsonElement>("JoinSession", agentB, sessionB, cts.Token);
+        await connection.InvokeAsync("SendMessage", agentA, sessionA, "message-for-a", cts.Token);
+        await connection.InvokeAsync("SendMessage", agentB, sessionB, "message-for-b", cts.Token);
+
+        dispatcher.Messages.Should().HaveCount(2);
+        dispatcher.Messages.Should().ContainSingle(m =>
+            m.TargetAgentId == agentA &&
+            m.SessionId == sessionA &&
+            m.Content == "message-for-a");
+        dispatcher.Messages.Should().ContainSingle(m =>
+            m.TargetAgentId == agentB &&
+            m.SessionId == sessionB &&
+            m.Content == "message-for-b");
+    }
+
+    [Fact]
+    public async Task Hub_SessionSwitch_ConcurrentClientsDifferentSessions_ReceiveOnlyOwnEvents()
+    {
+        await using var factory = CreateTestFactory();
+        using var cts = CreateTimeout();
+        await RegisterAgentAsync(factory, cts.Token);
+
+        await using var connectionA = await CreateStartedConnection(factory, cts.Token);
+        await using var connectionB = await CreateStartedConnection(factory, cts.Token);
+        const string sessionA = "concurrent-client-a";
+        const string sessionB = "concurrent-client-b";
+        await connectionA.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionA, cts.Token);
+        await connectionB.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionB, cts.Token);
+
+        var receivedA = new TaskCompletionSource<AgentStreamEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var receivedB = new TaskCompletionSource<AgentStreamEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var crossReceivedA = false;
+        var crossReceivedB = false;
+
+        using var _ = connectionA.On<AgentStreamEvent>("ContentDelta", payload =>
+        {
+            if (payload.ContentDelta == "event-a")
+                receivedA.TrySetResult(payload);
+            if (payload.ContentDelta == "event-b")
+                crossReceivedA = true;
+        });
+        using var __ = connectionB.On<AgentStreamEvent>("ContentDelta", payload =>
+        {
+            if (payload.ContentDelta == "event-b")
+                receivedB.TrySetResult(payload);
+            if (payload.ContentDelta == "event-a")
+                crossReceivedB = true;
+        });
+
+        var adapter = factory.Services.GetRequiredService<SignalRChannelAdapter>();
+        await adapter.SendStreamEventAsync(sessionA, new AgentStreamEvent
+        {
+            Type = AgentStreamEventType.ContentDelta,
+            ContentDelta = "event-a"
+        }, cts.Token);
+        await adapter.SendStreamEventAsync(sessionB, new AgentStreamEvent
+        {
+            Type = AgentStreamEventType.ContentDelta,
+            ContentDelta = "event-b"
+        }, cts.Token);
+
+        (await receivedA.Task.WaitAsync(cts.Token)).ContentDelta.Should().Be("event-a");
+        (await receivedB.Task.WaitAsync(cts.Token)).ContentDelta.Should().Be("event-b");
+        await Task.Delay(250, cts.Token);
+        crossReceivedA.Should().BeFalse();
+        crossReceivedB.Should().BeFalse();
+    }
+
+    [Fact]
     public async Task Hub_MultipleClients_SameSession_BothReceiveMessages()
     {
         await using var factory = CreateTestFactory();
@@ -501,13 +645,13 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         return connection;
     }
 
-    private static async Task RegisterAgentAsync(WebApplicationFactory<Program> factory, CancellationToken cancellationToken)
+    private static async Task RegisterAgentAsync(WebApplicationFactory<Program> factory, CancellationToken cancellationToken, string agentId = TestAgentId)
     {
         using var client = factory.CreateClient();
         var descriptor = new AgentDescriptor
         {
-            AgentId = TestAgentId,
-            DisplayName = "Test Agent",
+            AgentId = agentId,
+            DisplayName = $"Test Agent {agentId}",
             ModelId = "gpt-4.1",
             ApiProvider = "copilot",
             IsolationStrategy = "in-process"

@@ -115,3 +115,15 @@
 - 2026-04-09T17:12:06-07:00: Concurrency/timing assertions should use generous CI-safe thresholds (e.g., 1500ms for two 200ms parallel calls) and explicit sequencing when cancellation races are under test.
 - 2026-04-10: For C# `required` contract tests, validate `RequiredMemberAttribute` presence via reflection string match to avoid framework-version compile coupling.
 - 2026-04-10: Sub-agent tool payloads currently serialize `SubAgentStatus` as numeric enums (not strings), so assertions should validate integer enum values in JSON responses.
+
+## 2026-04-10 - SignalR session switching integration expansion
+- Added 4 new `SignalRIntegrationTests` scenarios from Nova research:
+  - send during active join
+  - leave + join + immediate send
+  - multiple agents with interleaved joins/sends
+  - concurrent clients in different sessions with strict event isolation
+- Updated `RegisterAgentAsync` helper to accept explicit `agentId` for multi-agent integration coverage.
+- Validation:
+  - `dotnet build Q:\repos\botnexus\tests\BotNexus.Gateway.Tests\BotNexus.Gateway.Tests.csproj --verbosity quiet` ✅
+  - `dotnet test Q:\repos\botnexus\tests\BotNexus.Gateway.Tests\BotNexus.Gateway.Tests.csproj --filter "FullyQualifiedName~SessionSwitch" --verbosity minimal` ✅ (11/11)
+  - Targeted new-test execution ✅ (`Hub_SessionSwitch_ConcurrentClientsDifferentSessions_ReceiveOnlyOwnEvents`)
