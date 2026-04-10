@@ -9,6 +9,7 @@ using BotNexus.Providers.Core;
 using BotNexus.Providers.Core.Registry;
 using BotNexus.Providers.OpenAI;
 using BotNexus.Providers.OpenAICompat;
+using System.IO.Abstractions;
 
 namespace BotNexus.CodingAgent;
 
@@ -38,20 +39,21 @@ internal static class Program
 
         var stdinPrompt = await ReadPipedStdinAsync().ConfigureAwait(false);
         var initialPrompt = CombinePrompt(stdinPrompt, command.InitialPrompt);
+        var fileSystem = new FileSystem();
         var workingDirectory = Directory.GetCurrentDirectory();
-        var config = CodingAgentConfig.Load(workingDirectory);
-        CodingAgentConfig.EnsureDirectories(workingDirectory);
+        var config = CodingAgentConfig.Load(fileSystem, workingDirectory);
+        CodingAgentConfig.EnsureDirectories(fileSystem, workingDirectory);
         ApplyOverrides(config, command);
 
         // Register all built-in API providers (matching pi-mono's registerBuiltInApiProviders)
         var (apiProviderRegistry, modelRegistry) = RegisterBuiltInProviders();
         var llmClient = new LlmClient(apiProviderRegistry, modelRegistry);
 
-        var authManager = new AuthManager(config.ConfigDirectory);
+        var authManager = new AuthManager(config.ConfigDirectory, fileSystem);
         var extensionLoadResult = new ExtensionLoader().LoadExtensions(config.ExtensionsDirectory);
         var extensionRunner = new ExtensionRunner(extensionLoadResult.Extensions);
-        var skills = new SkillsLoader().LoadSkills(workingDirectory, config);
-        var sessionManager = new SessionManager();
+        var skills = new SkillsLoader(fileSystem).LoadSkills(workingDirectory, config);
+        var sessionManager = new SessionManager(fileSystem);
         var nonInteractive = command.NonInteractive || !string.IsNullOrWhiteSpace(initialPrompt);
         var output = new OutputFormatter(nonInteractive);
 
@@ -60,7 +62,7 @@ internal static class Program
             var logDir = Path.GetDirectoryName(Path.GetFullPath(command.LogPath));
             if (!string.IsNullOrWhiteSpace(logDir))
             {
-                Directory.CreateDirectory(logDir);
+                fileSystem.Directory.CreateDirectory(logDir);
             }
             var logWriter = new StreamWriter(command.LogPath, append: false, new System.Text.UTF8Encoding(false))
             {
@@ -88,6 +90,7 @@ internal static class Program
             authManager,
             llmClient,
             modelRegistry,
+            fileSystem,
             extensionRunner,
             extensionLoadResult.Tools,
             skills,

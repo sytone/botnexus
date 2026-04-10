@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.IO.Abstractions;
 using BotNexus.AgentCore.Types;
 
 namespace BotNexus.CodingAgent.Session;
@@ -17,6 +18,12 @@ public sealed class SessionManager
     };
 
     private readonly SemaphoreSlim _fileLock = new(1, 1);
+    private readonly IFileSystem _fileSystem;
+
+    public SessionManager(IFileSystem? fileSystem = null)
+    {
+        _fileSystem = fileSystem ?? new FileSystem();
+    }
 
     public async Task<SessionInfo> CreateSessionAsync(string workingDir, string? name, string? parentSessionId = null)
     {
@@ -180,13 +187,13 @@ public sealed class SessionManager
     public async Task<IReadOnlyList<SessionInfo>> ListSessionsAsync(string workingDir)
     {
         var root = GetSessionsRoot(workingDir);
-        if (!Directory.Exists(root))
+        if (!_fileSystem.Directory.Exists(root))
         {
             return [];
         }
 
         var sessions = new List<SessionInfo>();
-        var sessionFiles = Directory.EnumerateFiles(root, "*.jsonl", SearchOption.TopDirectoryOnly).ToList();
+        var sessionFiles = _fileSystem.Directory.EnumerateFiles(root, "*.jsonl", SearchOption.TopDirectoryOnly).ToList();
         foreach (var file in sessionFiles)
         {
             var state = await LoadJsonlStateAsync(file).ConfigureAwait(false);
@@ -214,10 +221,10 @@ public sealed class SessionManager
                 Provider: state.Header.Provider));
         }
 
-        foreach (var directory in Directory.EnumerateDirectories(root))
+        foreach (var directory in _fileSystem.Directory.EnumerateDirectories(root))
         {
             var metadataPath = Path.Combine(directory, "session.json");
-            if (!File.Exists(metadataPath))
+            if (!_fileSystem.File.Exists(metadataPath))
             {
                 continue;
             }
@@ -228,7 +235,7 @@ public sealed class SessionManager
                 continue;
             }
 
-            var json = await File.ReadAllTextAsync(metadataPath).ConfigureAwait(false);
+            var json = await _fileSystem.File.ReadAllTextAsync(metadataPath).ConfigureAwait(false);
             var session = JsonSerializer.Deserialize<SessionInfo>(json, JsonOptions);
             if (session is not null)
             {
@@ -329,26 +336,26 @@ public sealed class SessionManager
     {
         var root = GetSessionsRoot(workingDir);
         var filePath = Path.Combine(root, $"{sessionId}.jsonl");
-        if (File.Exists(filePath))
+        if (_fileSystem.File.Exists(filePath))
         {
-            File.Delete(filePath);
+            _fileSystem.File.Delete(filePath);
         }
 
         var legacyDirectory = Path.Combine(root, sessionId);
-        if (Directory.Exists(legacyDirectory))
+        if (_fileSystem.Directory.Exists(legacyDirectory))
         {
-            Directory.Delete(legacyDirectory, recursive: true);
+            _fileSystem.Directory.Delete(legacyDirectory, recursive: true);
         }
 
         return Task.CompletedTask;
     }
 
-    private static async Task<SessionState> LoadSessionStateAsync(string sessionId, string workingDir, string? preferredPath = null)
+    private async Task<SessionState> LoadSessionStateAsync(string sessionId, string workingDir, string? preferredPath = null)
     {
         var root = GetSessionsRoot(workingDir);
         var sessionFile = !string.IsNullOrWhiteSpace(preferredPath) ? preferredPath : Path.Combine(root, $"{sessionId}.jsonl");
 
-        if (!string.IsNullOrWhiteSpace(sessionFile) && File.Exists(sessionFile))
+        if (!string.IsNullOrWhiteSpace(sessionFile) && _fileSystem.File.Exists(sessionFile))
         {
             var state = await LoadJsonlStateAsync(sessionFile).ConfigureAwait(false);
             if (state is not null)
@@ -360,20 +367,20 @@ public sealed class SessionManager
         var legacyDirectory = Path.Combine(root, sessionId);
         var legacyMetadataPath = Path.Combine(legacyDirectory, "session.json");
         var legacyMessagesPath = Path.Combine(legacyDirectory, "messages.jsonl");
-        if (!File.Exists(legacyMetadataPath))
+        if (!_fileSystem.File.Exists(legacyMetadataPath))
         {
             throw new FileNotFoundException($"Session '{sessionId}' does not exist.", legacyMetadataPath);
         }
 
-        var metadataJson = await File.ReadAllTextAsync(legacyMetadataPath).ConfigureAwait(false);
+        var metadataJson = await _fileSystem.File.ReadAllTextAsync(legacyMetadataPath).ConfigureAwait(false);
         var legacySession = JsonSerializer.Deserialize<SessionInfo>(metadataJson, JsonOptions)
             ?? throw new InvalidOperationException($"Session metadata is invalid for '{sessionId}'.");
 
         var entries = new List<SessionEntryBase>();
         string? parentId = null;
-        if (File.Exists(legacyMessagesPath))
+        if (_fileSystem.File.Exists(legacyMessagesPath))
         {
-            var lines = await File.ReadAllLinesAsync(legacyMessagesPath).ConfigureAwait(false);
+            var lines = await _fileSystem.File.ReadAllLinesAsync(legacyMessagesPath).ConfigureAwait(false);
             foreach (var line in lines)
             {
                 if (string.IsNullOrWhiteSpace(line))
@@ -410,9 +417,9 @@ public sealed class SessionManager
         };
     }
 
-    private static async Task<SessionState?> LoadJsonlStateAsync(string filePath)
+    private async Task<SessionState?> LoadJsonlStateAsync(string filePath)
     {
-        await using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        await using var stream = _fileSystem.FileStream.New(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         using var reader = new StreamReader(stream, Encoding.UTF8);
         var lines = new List<string>();
         string? currentLine;
@@ -526,7 +533,7 @@ public sealed class SessionManager
         };
     }
 
-    private static async Task PersistStateAsync(SessionState state)
+    private async Task PersistStateAsync(SessionState state)
     {
         state.Header = state.Header with
         {
@@ -543,15 +550,15 @@ public sealed class SessionManager
         await WriteEntriesAsync(state.FilePath, allEntries).ConfigureAwait(false);
     }
 
-    private static async Task WriteEntriesAsync(string filePath, IEnumerable<object> entries)
+    private async Task WriteEntriesAsync(string filePath, IEnumerable<object> entries)
     {
         var directory = Path.GetDirectoryName(filePath);
         if (!string.IsNullOrWhiteSpace(directory))
         {
-            Directory.CreateDirectory(directory);
+            _fileSystem.Directory.CreateDirectory(directory);
         }
 
-        await using var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.Read);
+        await using var stream = _fileSystem.FileStream.New(filePath, FileMode.Create, FileAccess.Write, FileShare.Read);
         await using var writer = new StreamWriter(stream, new UTF8Encoding(false));
         foreach (var entry in entries)
         {
@@ -647,10 +654,10 @@ public sealed class SessionManager
         return string.Equals(leftJson, rightJson, StringComparison.Ordinal);
     }
 
-    private static string GetSessionsRoot(string workingDir)
+    private string GetSessionsRoot(string workingDir)
     {
-        var config = CodingAgentConfig.Load(workingDir);
-        Directory.CreateDirectory(config.SessionsDirectory);
+        var config = CodingAgentConfig.Load(_fileSystem, workingDir);
+        _fileSystem.Directory.CreateDirectory(config.SessionsDirectory);
         return config.SessionsDirectory;
     }
 

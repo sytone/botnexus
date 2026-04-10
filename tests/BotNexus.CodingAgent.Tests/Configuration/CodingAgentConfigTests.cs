@@ -1,17 +1,14 @@
 using System.Reflection;
 using BotNexus.CodingAgent;
 using FluentAssertions;
+using System.IO.Abstractions.TestingHelpers;
 
 namespace BotNexus.CodingAgent.Tests.Configuration;
 
-public sealed class CodingAgentConfigTests : IDisposable
+public sealed class CodingAgentConfigTests
 {
-    private readonly string _workingDirectory = Path.Combine(Path.GetTempPath(), $"botnexus-config-{Guid.NewGuid():N}");
-
-    public CodingAgentConfigTests()
-    {
-        Directory.CreateDirectory(_workingDirectory);
-    }
+    private readonly MockFileSystem _fileSystem = new();
+    private readonly string _workingDirectory = @"C:\repo";
 
     [Fact]
     public void CreateDefaults_HasExpectedDefaultValues()
@@ -36,9 +33,9 @@ public sealed class CodingAgentConfigTests : IDisposable
     public void Load_WhenLocalConfigExists_AppliesOverrides()
     {
         var configDirectory = Path.Combine(_workingDirectory, ".botnexus-agent");
-        Directory.CreateDirectory(configDirectory);
+        _fileSystem.Directory.CreateDirectory(configDirectory);
         var localConfigPath = Path.Combine(configDirectory, "config.json");
-        File.WriteAllText(localConfigPath, """
+        _fileSystem.File.WriteAllText(localConfigPath, """
         {
           "model": "gpt-test",
           "provider": "openai",
@@ -51,7 +48,7 @@ public sealed class CodingAgentConfigTests : IDisposable
         }
         """);
 
-        var config = CodingAgentConfig.Load(_workingDirectory);
+        var config = CodingAgentConfig.Load(_fileSystem, _workingDirectory);
 
         config.Model.Should().Be("gpt-test");
         config.Provider.Should().Be("openai");
@@ -67,19 +64,11 @@ public sealed class CodingAgentConfigTests : IDisposable
     [Fact]
     public void EnsureDirectories_CreatesExpectedDirectories()
     {
-        CodingAgentConfig.EnsureDirectories(_workingDirectory);
+        CodingAgentConfig.EnsureDirectories(_fileSystem, _workingDirectory);
 
-        Directory.Exists(Path.Combine(_workingDirectory, ".botnexus-agent")).Should().BeTrue();
-        Directory.Exists(Path.Combine(_workingDirectory, ".botnexus-agent", "sessions")).Should().BeTrue();
-        Directory.Exists(Path.Combine(_workingDirectory, ".botnexus-agent", "extensions")).Should().BeTrue();
-        Directory.Exists(Path.Combine(_workingDirectory, ".botnexus-agent", "skills")).Should().BeTrue();
-    }
-
-    public void Dispose()
-    {
-        if (Directory.Exists(_workingDirectory))
-        {
-            Directory.Delete(_workingDirectory, recursive: true);
-        }
+        _fileSystem.Directory.Exists(Path.Combine(_workingDirectory, ".botnexus-agent")).Should().BeTrue();
+        _fileSystem.Directory.Exists(Path.Combine(_workingDirectory, ".botnexus-agent", "sessions")).Should().BeTrue();
+        _fileSystem.Directory.Exists(Path.Combine(_workingDirectory, ".botnexus-agent", "extensions")).Should().BeTrue();
+        _fileSystem.Directory.Exists(Path.Combine(_workingDirectory, ".botnexus-agent", "skills")).Should().BeTrue();
     }
 }

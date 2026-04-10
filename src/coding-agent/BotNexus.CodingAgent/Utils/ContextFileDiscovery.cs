@@ -1,4 +1,5 @@
 using System.Text;
+using System.IO.Abstractions;
 using BotNexus.CodingAgent;
 using BotNexus.Tools.Utils;
 
@@ -11,17 +12,19 @@ public static class ContextFileDiscovery
     private const string DefaultConfigDirectoryName = ".botnexus-agent";
 
     public static async Task<IReadOnlyList<PromptContextFile>> DiscoverAsync(
+        IFileSystem fileSystem,
         string workingDirectory,
         CancellationToken ct,
         string? configDirectoryName = null)
     {
+        ArgumentNullException.ThrowIfNull(fileSystem);
         if (string.IsNullOrWhiteSpace(workingDirectory))
         {
             throw new ArgumentException("Working directory cannot be empty.", nameof(workingDirectory));
         }
 
         var cwd = Path.GetFullPath(workingDirectory);
-        if (!Directory.Exists(cwd))
+        if (!fileSystem.Directory.Exists(cwd))
         {
             return [];
         }
@@ -33,17 +36,17 @@ public static class ContextFileDiscovery
             ? DefaultConfigDirectoryName
             : configDirectoryName!;
 
-        foreach (var directory in EnumerateDiscoveryDirectories(cwd))
+        foreach (var directory in EnumerateDiscoveryDirectories(fileSystem, cwd))
         {
             foreach (var (kind, filePath) in GetContextCandidates(directory, resolvedConfigDirectoryName))
             {
                 ct.ThrowIfCancellationRequested();
-                if (remainingBudget <= 0 || seenFileKinds.Contains(kind) || !File.Exists(filePath))
+                if (remainingBudget <= 0 || seenFileKinds.Contains(kind) || !fileSystem.File.Exists(filePath))
                 {
                     continue;
                 }
 
-                var content = await File.ReadAllTextAsync(filePath, ct).ConfigureAwait(false);
+                var content = await fileSystem.File.ReadAllTextAsync(filePath, ct).ConfigureAwait(false);
                 if (string.IsNullOrWhiteSpace(content))
                 {
                     continue;
@@ -64,9 +67,9 @@ public static class ContextFileDiscovery
         return discovered;
     }
 
-    private static IEnumerable<string> EnumerateDiscoveryDirectories(string cwd)
+    private static IEnumerable<string> EnumerateDiscoveryDirectories(IFileSystem fileSystem, string cwd)
     {
-        var gitRoot = FindGitRoot(cwd);
+        var gitRoot = FindGitRoot(fileSystem, cwd);
         var current = cwd;
 
         while (true)
@@ -88,12 +91,12 @@ public static class ContextFileDiscovery
         }
     }
 
-    private static string? FindGitRoot(string cwd)
+    private static string? FindGitRoot(IFileSystem fileSystem, string cwd)
     {
         var current = cwd;
         while (true)
         {
-            if (Directory.Exists(Path.Combine(current, ".git")))
+            if (fileSystem.Directory.Exists(Path.Combine(current, ".git")))
             {
                 return current;
             }

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.IO.Abstractions;
 using BotNexus.Providers.Copilot;
 using BotNexus.Providers.Core;
 
@@ -23,11 +24,13 @@ public sealed class AuthManager
     private const string AuthFileName = "auth.json";
     private const string DefaultProvider = "github-copilot";
 
+    private readonly IFileSystem _fileSystem;
     private readonly string _authFilePath;
     private Dictionary<string, AuthEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
 
-    public AuthManager(string configDirectory)
+    public AuthManager(string configDirectory, IFileSystem? fileSystem = null)
     {
+        _fileSystem = fileSystem ?? new FileSystem();
         _authFilePath = Path.Combine(configDirectory, AuthFileName);
         Load();
     }
@@ -164,7 +167,7 @@ public sealed class AuthManager
 
     private void Load()
     {
-        if (!File.Exists(_authFilePath))
+        if (!_fileSystem.File.Exists(_authFilePath))
         {
             _entries = new Dictionary<string, AuthEntry>(StringComparer.OrdinalIgnoreCase);
             return;
@@ -172,7 +175,7 @@ public sealed class AuthManager
 
         try
         {
-            var json = File.ReadAllText(_authFilePath);
+            var json = _fileSystem.File.ReadAllText(_authFilePath);
             _entries = JsonSerializer.Deserialize<Dictionary<string, AuthEntry>>(json, JsonOptions)
                        ?? new Dictionary<string, AuthEntry>(StringComparer.OrdinalIgnoreCase);
         }
@@ -186,10 +189,10 @@ public sealed class AuthManager
     {
         var dir = Path.GetDirectoryName(_authFilePath);
         if (!string.IsNullOrEmpty(dir))
-            Directory.CreateDirectory(dir);
+            _fileSystem.Directory.CreateDirectory(dir);
 
         var json = JsonSerializer.Serialize(_entries, JsonOptions);
-        File.WriteAllText(_authFilePath, json);
+        _fileSystem.File.WriteAllText(_authFilePath, json);
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()

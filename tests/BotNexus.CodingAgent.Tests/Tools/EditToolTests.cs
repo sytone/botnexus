@@ -1,24 +1,26 @@
 using BotNexus.Tools;
 using FluentAssertions;
+using System.IO.Abstractions.TestingHelpers;
 
 namespace BotNexus.CodingAgent.Tests.Tools;
 
-public sealed class EditToolTests : IDisposable
+public sealed class EditToolTests
 {
-    private readonly string _tempDirectory = Path.Combine(Path.GetTempPath(), $"botnexus-edittool-{Guid.NewGuid():N}");
+    private readonly string _tempDirectory = @"C:\tools\edit";
+    private readonly MockFileSystem _fileSystem = new();
     private readonly EditTool _tool;
 
     public EditToolTests()
     {
-        Directory.CreateDirectory(_tempDirectory);
-        _tool = new EditTool(_tempDirectory);
+        _fileSystem.Directory.CreateDirectory(_tempDirectory);
+        _tool = new EditTool(_tempDirectory, _fileSystem);
     }
 
     [Fact]
     public async Task ExecuteAsync_ReplacesSingleMatch()
     {
         var filePath = Path.Combine(_tempDirectory, "edit.txt");
-        await File.WriteAllTextAsync(filePath, "before target after");
+        await _fileSystem.File.WriteAllTextAsync(filePath, "before target after");
 
         await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
@@ -33,14 +35,14 @@ public sealed class EditToolTests : IDisposable
             }
         });
 
-        (await File.ReadAllTextAsync(filePath)).Should().Be("before updated after");
+        (await _fileSystem.File.ReadAllTextAsync(filePath)).Should().Be("before updated after");
     }
 
     [Fact]
     public async Task ExecuteAsync_WhenNoMatches_Throws()
     {
         var filePath = Path.Combine(_tempDirectory, "no-match.txt");
-        await File.WriteAllTextAsync(filePath, "content");
+        await _fileSystem.File.WriteAllTextAsync(filePath, "content");
 
         var action = () => _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
@@ -63,7 +65,7 @@ public sealed class EditToolTests : IDisposable
     public async Task ExecuteAsync_WhenMultipleMatches_Throws()
     {
         var filePath = Path.Combine(_tempDirectory, "multi-match.txt");
-        await File.WriteAllTextAsync(filePath, "repeat repeat");
+        await _fileSystem.File.WriteAllTextAsync(filePath, "repeat repeat");
 
         var action = () => _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
@@ -86,7 +88,7 @@ public sealed class EditToolTests : IDisposable
     public async Task ExecuteAsync_ReturnsReplacementContext()
     {
         var filePath = Path.Combine(_tempDirectory, "context.txt");
-        await File.WriteAllTextAsync(filePath, "hello target world");
+        await _fileSystem.File.WriteAllTextAsync(filePath, "hello target world");
 
         var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
@@ -109,7 +111,7 @@ public sealed class EditToolTests : IDisposable
     public async Task ExecuteAsync_AppliesMultipleEdits()
     {
         var filePath = Path.Combine(_tempDirectory, "multi-edit.txt");
-        await File.WriteAllTextAsync(filePath, "alpha beta gamma delta");
+        await _fileSystem.File.WriteAllTextAsync(filePath, "alpha beta gamma delta");
 
         await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
@@ -129,14 +131,14 @@ public sealed class EditToolTests : IDisposable
             }
         });
 
-        (await File.ReadAllTextAsync(filePath)).Should().Be("alpha BETA gamma DELTA");
+        (await _fileSystem.File.ReadAllTextAsync(filePath)).Should().Be("alpha BETA gamma DELTA");
     }
 
     [Fact]
     public async Task ExecuteAsync_WhenEditProducesNoChange_Throws()
     {
         var filePath = Path.Combine(_tempDirectory, "no-change.txt");
-        await File.WriteAllTextAsync(filePath, "same");
+        await _fileSystem.File.WriteAllTextAsync(filePath, "same");
 
         var action = () => _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
@@ -159,7 +161,7 @@ public sealed class EditToolTests : IDisposable
     public async Task ExecuteAsync_FuzzyMatchNormalizesSmartQuotesAndTrailingWhitespace()
     {
         var filePath = Path.Combine(_tempDirectory, "smart-quotes.txt");
-        await File.WriteAllTextAsync(filePath, "Console.WriteLine(“hello”);   \n");
+        await _fileSystem.File.WriteAllTextAsync(filePath, "Console.WriteLine(“hello”);   \n");
 
         await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
@@ -174,14 +176,14 @@ public sealed class EditToolTests : IDisposable
             }
         });
 
-        (await File.ReadAllTextAsync(filePath)).Should().Contain("Console.WriteLine(\"updated\");");
+        (await _fileSystem.File.ReadAllTextAsync(filePath)).Should().Contain("Console.WriteLine(\"updated\");");
     }
 
     [Fact]
     public async Task ExecuteAsync_MatchesOldTextWhenFileStartsWithBom()
     {
         var filePath = Path.Combine(_tempDirectory, "bom.txt");
-        await File.WriteAllTextAsync(filePath, "\uFEFFbefore target after");
+        await _fileSystem.File.WriteAllTextAsync(filePath, "\uFEFFbefore target after");
 
         await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
@@ -196,7 +198,7 @@ public sealed class EditToolTests : IDisposable
             }
         });
 
-        (await File.ReadAllTextAsync(filePath)).Should().Contain("before updated after");
+        (await _fileSystem.File.ReadAllTextAsync(filePath)).Should().Contain("before updated after");
     }
 
     [Fact]
@@ -204,7 +206,7 @@ public sealed class EditToolTests : IDisposable
     {
         var filePath = Path.Combine(_tempDirectory, "compact-diff.txt");
         var lines = Enumerable.Range(1, 20).Select(index => $"line {index}");
-        await File.WriteAllTextAsync(filePath, string.Join('\n', lines));
+        await _fileSystem.File.WriteAllTextAsync(filePath, string.Join('\n', lines));
 
         var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
@@ -225,11 +227,4 @@ public sealed class EditToolTests : IDisposable
         outputLines.Should().Contain(line => line.StartsWith("@@ -", StringComparison.Ordinal) && line.EndsWith(" @@", StringComparison.Ordinal));
     }
 
-    public void Dispose()
-    {
-        if (Directory.Exists(_tempDirectory))
-        {
-            Directory.Delete(_tempDirectory, recursive: true);
-        }
-    }
 }

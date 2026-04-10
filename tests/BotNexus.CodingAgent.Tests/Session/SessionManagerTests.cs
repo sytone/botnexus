@@ -2,17 +2,20 @@ using System.Text.Json;
 using BotNexus.AgentCore.Types;
 using BotNexus.CodingAgent.Session;
 using FluentAssertions;
+using System.IO.Abstractions.TestingHelpers;
 
 namespace BotNexus.CodingAgent.Tests.Session;
 
-public sealed class SessionManagerTests : IDisposable
+public sealed class SessionManagerTests
 {
-    private readonly string _workingDirectory = Path.Combine(Path.GetTempPath(), $"botnexus-session-{Guid.NewGuid():N}");
-    private readonly SessionManager _manager = new();
+    private readonly string _workingDirectory = @"C:\session-tests";
+    private readonly MockFileSystem _fileSystem = new();
+    private readonly SessionManager _manager;
 
     public SessionManagerTests()
     {
-        Directory.CreateDirectory(_workingDirectory);
+        _fileSystem.Directory.CreateDirectory(_workingDirectory);
+        _manager = new SessionManager(_fileSystem);
     }
 
     [Fact]
@@ -24,9 +27,9 @@ public sealed class SessionManagerTests : IDisposable
         session.WorkingDirectory.Should().Be(Path.GetFullPath(_workingDirectory));
 
         var sessionPath = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions", $"{session.Id}.jsonl");
-        File.Exists(sessionPath).Should().BeTrue();
+        _fileSystem.File.Exists(sessionPath).Should().BeTrue();
 
-        var lines = await File.ReadAllLinesAsync(sessionPath);
+        var lines = await _fileSystem.File.ReadAllLinesAsync(sessionPath);
         lines.Should().HaveCount(1);
         lines[0].Should().Contain("\"type\":\"session_header\"");
         lines[0].Should().Contain($"\"sessionId\":\"{session.Id}\"");
@@ -38,7 +41,7 @@ public sealed class SessionManagerTests : IDisposable
         const string parentSessionId = "parent-session-123";
         var session = await _manager.CreateSessionAsync(_workingDirectory, "child-session", parentSessionId);
         var sessionPath = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions", $"{session.Id}.jsonl");
-        var header = (await File.ReadAllLinesAsync(sessionPath)).Single();
+        var header = (await _fileSystem.File.ReadAllLinesAsync(sessionPath)).Single();
 
         session.ParentSessionId.Should().Be(parentSessionId);
         session.Version.Should().Be(2);
@@ -60,7 +63,7 @@ public sealed class SessionManagerTests : IDisposable
         await _manager.SaveSessionAsync(created, messages);
 
         var sessionPath = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions", $"{created.Id}.jsonl");
-        var fileContent = await File.ReadAllTextAsync(sessionPath);
+        var fileContent = await _fileSystem.File.ReadAllTextAsync(sessionPath);
 
         fileContent.Should().Contain("\"type\":\"message\"");
         fileContent.Should().Contain("\"type\":\"tool_result\"");
@@ -80,7 +83,7 @@ public sealed class SessionManagerTests : IDisposable
         await _manager.SaveSessionAsync(created, messages);
 
         var sessionPath = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions", $"{created.Id}.jsonl");
-        var fileContent = await File.ReadAllTextAsync(sessionPath);
+        var fileContent = await _fileSystem.File.ReadAllTextAsync(sessionPath);
 
         fileContent.Should().Contain("\"type\":\"message\"");
         fileContent.Should().Contain("\"type\":\"compaction_summary\"");
@@ -95,7 +98,7 @@ public sealed class SessionManagerTests : IDisposable
         await _manager.WriteMetadataAsync(withThinking, "model_change", "gpt-4.1 → claude-sonnet-4.5");
 
         var sessionPath = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions", $"{created.Id}.jsonl");
-        var fileContent = await File.ReadAllTextAsync(sessionPath);
+        var fileContent = await _fileSystem.File.ReadAllTextAsync(sessionPath);
 
         fileContent.Should().Contain("\"key\":\"thinking_level_change\"");
         fileContent.Should().Contain("\"value\":\"off \\u2192 low\"");
@@ -113,7 +116,7 @@ public sealed class SessionManagerTests : IDisposable
         var resumed = await _manager.ResumeSessionAsync(created.Id, _workingDirectory);
 
         var sessionPath = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions", $"{created.Id}.jsonl");
-        var fileContent = await File.ReadAllTextAsync(sessionPath);
+        var fileContent = await _fileSystem.File.ReadAllTextAsync(sessionPath);
 
         resumed.Messages.Should().ContainSingle();
         fileContent.Should().Contain("\"key\":\"thinking_level_change\"");
@@ -153,7 +156,7 @@ public sealed class SessionManagerTests : IDisposable
 
         await _manager.DeleteSessionAsync(session.Id, _workingDirectory);
 
-        File.Exists(sessionPath).Should().BeFalse();
+        _fileSystem.File.Exists(sessionPath).Should().BeFalse();
     }
 
     [Fact]
@@ -163,7 +166,7 @@ public sealed class SessionManagerTests : IDisposable
         await _manager.SaveSessionAsync(session, [new UserMessage("root"), new AssistantAgentMessage("main")]);
 
         var sessionPath = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions", $"{session.Id}.jsonl");
-        var lines = await File.ReadAllLinesAsync(sessionPath);
+        var lines = await _fileSystem.File.ReadAllLinesAsync(sessionPath);
         var rootEntryId = lines
             .Select(line => JsonDocument.Parse(line).RootElement)
             .First(entry => entry.GetProperty("type").GetString() == "message")
@@ -188,10 +191,10 @@ public sealed class SessionManagerTests : IDisposable
     public async Task ResumeSessionAsync_LoadsLegacyFlatSession()
     {
         var root = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions");
-        Directory.CreateDirectory(root);
+        _fileSystem.Directory.CreateDirectory(root);
         var sessionId = "legacy-session";
         var legacyDirectory = Path.Combine(root, sessionId);
-        Directory.CreateDirectory(legacyDirectory);
+        _fileSystem.Directory.CreateDirectory(legacyDirectory);
 
         var metadata = new SessionInfo(
             Id: sessionId,
@@ -201,10 +204,10 @@ public sealed class SessionManagerTests : IDisposable
             MessageCount: 1,
             Model: null,
             WorkingDirectory: Path.GetFullPath(_workingDirectory));
-        await File.WriteAllTextAsync(Path.Combine(legacyDirectory, "session.json"), JsonSerializer.Serialize(metadata));
+        await _fileSystem.File.WriteAllTextAsync(Path.Combine(legacyDirectory, "session.json"), JsonSerializer.Serialize(metadata));
 
         var userPayload = JsonSerializer.SerializeToElement(new UserMessage("legacy hello"));
-        await File.WriteAllTextAsync(
+        await _fileSystem.File.WriteAllTextAsync(
             Path.Combine(legacyDirectory, "messages.jsonl"),
             JsonSerializer.Serialize(new { Type = "user", Payload = userPayload }) + Environment.NewLine);
 
@@ -219,28 +222,20 @@ public sealed class SessionManagerTests : IDisposable
     {
         var created = await _manager.CreateSessionAsync(_workingDirectory, "upgrade-version");
         var sessionPath = Path.Combine(_workingDirectory, ".botnexus-agent", "sessions", $"{created.Id}.jsonl");
-        var lines = await File.ReadAllLinesAsync(sessionPath);
+        var lines = await _fileSystem.File.ReadAllLinesAsync(sessionPath);
         lines[0] = lines[0].Replace("\"version\":2", "\"version\":1", StringComparison.Ordinal);
-        await File.WriteAllLinesAsync(sessionPath, lines);
+        await _fileSystem.File.WriteAllLinesAsync(sessionPath, lines);
 
         var resumed = await _manager.ResumeSessionAsync(created.Id, _workingDirectory);
         resumed.Session.Version.Should().Be(1);
 
         await _manager.SaveSessionAsync(resumed.Session, [new UserMessage("after-upgrade")]);
 
-        var headers = (await File.ReadAllLinesAsync(sessionPath))
+        var headers = (await _fileSystem.File.ReadAllLinesAsync(sessionPath))
             .Select(line => JsonDocument.Parse(line).RootElement)
             .Where(entry => entry.GetProperty("type").GetString() == "session_header")
             .ToList();
         headers.Should().NotBeEmpty();
         headers.Last().GetProperty("version").GetInt32().Should().Be(2);
-    }
-
-    public void Dispose()
-    {
-        if (Directory.Exists(_workingDirectory))
-        {
-            Directory.Delete(_workingDirectory, recursive: true);
-        }
     }
 }

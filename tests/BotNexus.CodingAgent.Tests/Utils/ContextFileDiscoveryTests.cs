@@ -1,29 +1,26 @@
 using System.Text;
 using BotNexus.CodingAgent.Utils;
 using FluentAssertions;
+using System.IO.Abstractions.TestingHelpers;
 
 namespace BotNexus.CodingAgent.Tests.Utils;
 
-public sealed class ContextFileDiscoveryTests : IDisposable
+public sealed class ContextFileDiscoveryTests
 {
-    private readonly string _testRoot = Path.Combine(Path.GetTempPath(), $"botnexus-context-discovery-{Guid.NewGuid():N}");
-
-    public ContextFileDiscoveryTests()
-    {
-        Directory.CreateDirectory(_testRoot);
-    }
+    private readonly MockFileSystem _fileSystem = new();
+    private readonly string _testRoot = @"C:\context-discovery";
 
     [Fact]
     public async Task DiscoverAsync_FindsInstructionsInParentDirectory()
     {
         var repoRoot = Path.Combine(_testRoot, "repo");
         var workingDirectory = Path.Combine(repoRoot, "src", "feature");
-        Directory.CreateDirectory(Path.Combine(repoRoot, ".git"));
-        Directory.CreateDirectory(Path.Combine(repoRoot, ".github"));
-        Directory.CreateDirectory(workingDirectory);
-        await File.WriteAllTextAsync(Path.Combine(repoRoot, ".github", "copilot-instructions.md"), "parent instructions");
+        _fileSystem.Directory.CreateDirectory(Path.Combine(repoRoot, ".git"));
+        _fileSystem.Directory.CreateDirectory(Path.Combine(repoRoot, ".github"));
+        _fileSystem.Directory.CreateDirectory(workingDirectory);
+        await _fileSystem.File.WriteAllTextAsync(Path.Combine(repoRoot, ".github", "copilot-instructions.md"), "parent instructions");
 
-        var discovered = await ContextFileDiscovery.DiscoverAsync(workingDirectory, CancellationToken.None);
+        var discovered = await ContextFileDiscovery.DiscoverAsync(_fileSystem, workingDirectory, CancellationToken.None);
 
         discovered.Should().Contain(file => file.Content.Contains("parent instructions", StringComparison.Ordinal));
     }
@@ -33,11 +30,11 @@ public sealed class ContextFileDiscoveryTests : IDisposable
     {
         var repoRoot = Path.Combine(_testRoot, "repo");
         var workingDirectory = Path.Combine(repoRoot, "src", "feature");
-        Directory.CreateDirectory(Path.Combine(repoRoot, ".git"));
-        Directory.CreateDirectory(workingDirectory);
-        await File.WriteAllTextAsync(Path.Combine(repoRoot, "INSTRUCTIONS.md"), "runtime instructions");
+        _fileSystem.Directory.CreateDirectory(Path.Combine(repoRoot, ".git"));
+        _fileSystem.Directory.CreateDirectory(workingDirectory);
+        await _fileSystem.File.WriteAllTextAsync(Path.Combine(repoRoot, "INSTRUCTIONS.md"), "runtime instructions");
 
-        var discovered = await ContextFileDiscovery.DiscoverAsync(workingDirectory, CancellationToken.None);
+        var discovered = await ContextFileDiscovery.DiscoverAsync(_fileSystem, workingDirectory, CancellationToken.None);
 
         discovered.Should().Contain(file => file.Content.Contains("runtime instructions", StringComparison.Ordinal));
     }
@@ -48,14 +45,14 @@ public sealed class ContextFileDiscoveryTests : IDisposable
         var outsideRoot = Path.Combine(_testRoot, "outside");
         var repoRoot = Path.Combine(outsideRoot, "repo");
         var workingDirectory = Path.Combine(repoRoot, "src");
-        Directory.CreateDirectory(Path.Combine(repoRoot, ".git"));
-        Directory.CreateDirectory(Path.Combine(repoRoot, ".github"));
-        Directory.CreateDirectory(Path.Combine(outsideRoot, ".github"));
-        Directory.CreateDirectory(workingDirectory);
-        await File.WriteAllTextAsync(Path.Combine(repoRoot, ".github", "copilot-instructions.md"), "repo instructions");
-        await File.WriteAllTextAsync(Path.Combine(outsideRoot, ".github", "copilot-instructions.md"), "outside instructions");
+        _fileSystem.Directory.CreateDirectory(Path.Combine(repoRoot, ".git"));
+        _fileSystem.Directory.CreateDirectory(Path.Combine(repoRoot, ".github"));
+        _fileSystem.Directory.CreateDirectory(Path.Combine(outsideRoot, ".github"));
+        _fileSystem.Directory.CreateDirectory(workingDirectory);
+        await _fileSystem.File.WriteAllTextAsync(Path.Combine(repoRoot, ".github", "copilot-instructions.md"), "repo instructions");
+        await _fileSystem.File.WriteAllTextAsync(Path.Combine(outsideRoot, ".github", "copilot-instructions.md"), "outside instructions");
 
-        var discovered = await ContextFileDiscovery.DiscoverAsync(workingDirectory, CancellationToken.None);
+        var discovered = await ContextFileDiscovery.DiscoverAsync(_fileSystem, workingDirectory, CancellationToken.None);
 
         discovered.Should().Contain(file => file.Content.Contains("repo instructions", StringComparison.Ordinal));
         discovered.Should().NotContain(file => file.Content.Contains("outside instructions", StringComparison.Ordinal));
@@ -66,12 +63,12 @@ public sealed class ContextFileDiscoveryTests : IDisposable
     {
         var repoRoot = Path.Combine(_testRoot, "repo");
         var child = Path.Combine(repoRoot, "app");
-        Directory.CreateDirectory(Path.Combine(repoRoot, ".git"));
-        Directory.CreateDirectory(child);
-        await File.WriteAllTextAsync(Path.Combine(repoRoot, "AGENTS.md"), "parent");
-        await File.WriteAllTextAsync(Path.Combine(child, "AGENTS.md"), "child");
+        _fileSystem.Directory.CreateDirectory(Path.Combine(repoRoot, ".git"));
+        _fileSystem.Directory.CreateDirectory(child);
+        await _fileSystem.File.WriteAllTextAsync(Path.Combine(repoRoot, "AGENTS.md"), "parent");
+        await _fileSystem.File.WriteAllTextAsync(Path.Combine(child, "AGENTS.md"), "child");
 
-        var discovered = await ContextFileDiscovery.DiscoverAsync(child, CancellationToken.None);
+        var discovered = await ContextFileDiscovery.DiscoverAsync(_fileSystem, child, CancellationToken.None);
         var agentsFiles = discovered.Where(file => file.Path.EndsWith("AGENTS.md", StringComparison.OrdinalIgnoreCase)).ToList();
 
         agentsFiles.Should().ContainSingle();
@@ -83,12 +80,12 @@ public sealed class ContextFileDiscoveryTests : IDisposable
     {
         var repoRoot = Path.Combine(_testRoot, "repo");
         var workingDirectory = Path.Combine(repoRoot, "src");
-        Directory.CreateDirectory(Path.Combine(repoRoot, ".git"));
-        Directory.CreateDirectory(Path.Combine(repoRoot, ".custom-agent"));
-        Directory.CreateDirectory(workingDirectory);
-        await File.WriteAllTextAsync(Path.Combine(repoRoot, ".custom-agent", "AGENTS.md"), "custom agent instructions");
+        _fileSystem.Directory.CreateDirectory(Path.Combine(repoRoot, ".git"));
+        _fileSystem.Directory.CreateDirectory(Path.Combine(repoRoot, ".custom-agent"));
+        _fileSystem.Directory.CreateDirectory(workingDirectory);
+        await _fileSystem.File.WriteAllTextAsync(Path.Combine(repoRoot, ".custom-agent", "AGENTS.md"), "custom agent instructions");
 
-        var discovered = await ContextFileDiscovery.DiscoverAsync(workingDirectory, CancellationToken.None, ".custom-agent");
+        var discovered = await ContextFileDiscovery.DiscoverAsync(_fileSystem, workingDirectory, CancellationToken.None, ".custom-agent");
 
         discovered.Should().Contain(file => file.Content.Contains("custom agent instructions", StringComparison.Ordinal));
     }
@@ -98,23 +95,15 @@ public sealed class ContextFileDiscoveryTests : IDisposable
     {
         var repoRoot = Path.Combine(_testRoot, "repo");
         var workingDirectory = Path.Combine(repoRoot, "src");
-        Directory.CreateDirectory(Path.Combine(repoRoot, ".git"));
-        Directory.CreateDirectory(Path.Combine(repoRoot, ".github"));
-        Directory.CreateDirectory(workingDirectory);
-        await File.WriteAllTextAsync(Path.Combine(repoRoot, ".github", "copilot-instructions.md"), new string('a', 20_000));
-        await File.WriteAllTextAsync(Path.Combine(workingDirectory, "AGENTS.md"), new string('b', 8_000));
+        _fileSystem.Directory.CreateDirectory(Path.Combine(repoRoot, ".git"));
+        _fileSystem.Directory.CreateDirectory(Path.Combine(repoRoot, ".github"));
+        _fileSystem.Directory.CreateDirectory(workingDirectory);
+        await _fileSystem.File.WriteAllTextAsync(Path.Combine(repoRoot, ".github", "copilot-instructions.md"), new string('a', 20_000));
+        await _fileSystem.File.WriteAllTextAsync(Path.Combine(workingDirectory, "AGENTS.md"), new string('b', 8_000));
 
-        var discovered = await ContextFileDiscovery.DiscoverAsync(workingDirectory, CancellationToken.None);
+        var discovered = await ContextFileDiscovery.DiscoverAsync(_fileSystem, workingDirectory, CancellationToken.None);
         var totalBytes = discovered.Sum(file => Encoding.UTF8.GetByteCount(file.Content));
 
         totalBytes.Should().BeLessThanOrEqualTo(16 * 1024);
-    }
-
-    public void Dispose()
-    {
-        if (Directory.Exists(_testRoot))
-        {
-            Directory.Delete(_testRoot, recursive: true);
-        }
     }
 }

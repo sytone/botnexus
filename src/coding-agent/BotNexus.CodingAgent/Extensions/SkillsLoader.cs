@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.IO.Abstractions;
 
 namespace BotNexus.CodingAgent.Extensions;
 
@@ -11,6 +12,12 @@ public sealed class SkillsLoader
     private const int MaxSkillNameLength = 64;
     private const int MaxSkillDescriptionLength = 1024;
     private static readonly string[] DefaultIgnoredDirectories = ["node_modules", "bin", "obj", ".git", "build", "dist"];
+    private readonly IFileSystem _fileSystem;
+
+    public SkillsLoader(IFileSystem? fileSystem = null)
+    {
+        _fileSystem = fileSystem ?? new FileSystem();
+    }
 
     public IReadOnlyList<string> LoadSkills(string workingDirectory, CodingAgentConfig config)
     {
@@ -29,13 +36,13 @@ public sealed class SkillsLoader
 
         foreach (var skillsDirectory in ResolveSkillDirectories(root, config))
         {
-            if (!Directory.Exists(skillsDirectory))
+            if (!_fileSystem.Directory.Exists(skillsDirectory))
             {
                 continue;
             }
 
-            var ignoreFilter = SkillIgnoreFilter.Create(skillsDirectory);
-            foreach (var skillPath in Directory.EnumerateFiles(skillsDirectory, "SKILL.md", SearchOption.AllDirectories)
+            var ignoreFilter = SkillIgnoreFilter.Create(_fileSystem, skillsDirectory);
+            foreach (var skillPath in _fileSystem.Directory.EnumerateFiles(skillsDirectory, "SKILL.md", SearchOption.AllDirectories)
                          .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
             {
                 if (ignoreFilter.IsIgnored(skillPath))
@@ -50,28 +57,28 @@ public sealed class SkillsLoader
         return skillDocuments;
     }
 
-    private static void TryAddFile(string path, ICollection<string> target)
+    private void TryAddFile(string path, ICollection<string> target)
     {
-        if (!File.Exists(path))
+        if (!_fileSystem.File.Exists(path))
         {
             return;
         }
 
-        var content = File.ReadAllText(path);
+        var content = _fileSystem.File.ReadAllText(path);
         if (!string.IsNullOrWhiteSpace(content))
         {
             target.Add(content);
         }
     }
 
-    private static void TryAddSkill(string path, ICollection<string> target, ISet<string> knownSkillNames)
+    private void TryAddSkill(string path, ICollection<string> target, ISet<string> knownSkillNames)
     {
-        if (!File.Exists(path))
+        if (!_fileSystem.File.Exists(path))
         {
             return;
         }
 
-        var content = File.ReadAllText(path);
+        var content = _fileSystem.File.ReadAllText(path);
         if (string.IsNullOrWhiteSpace(content))
         {
             return;
@@ -248,13 +255,13 @@ public sealed class SkillsLoader
             _rules = rules;
         }
 
-        public static SkillIgnoreFilter Create(string basePath)
+        public static SkillIgnoreFilter Create(IFileSystem fileSystem, string basePath)
         {
             var rules = new List<GitIgnoreRule>();
             var gitIgnorePath = Path.Combine(basePath, ".gitignore");
-            if (File.Exists(gitIgnorePath))
+            if (fileSystem.File.Exists(gitIgnorePath))
             {
-                foreach (var line in File.ReadAllLines(gitIgnorePath))
+                foreach (var line in fileSystem.File.ReadAllLines(gitIgnorePath))
                 {
                     var parsed = ParseRule(line);
                     if (parsed is not null)

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.IO.Abstractions;
 
 namespace BotNexus.CodingAgent;
 
@@ -33,8 +34,9 @@ public sealed class CodingAgentConfig
     public List<string> BlockedPaths { get; set; } = [];
     public Dictionary<string, object?> Custom { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
-    public static CodingAgentConfig Load(string workingDirectory)
+    public static CodingAgentConfig Load(IFileSystem fileSystem, string workingDirectory)
     {
+        ArgumentNullException.ThrowIfNull(fileSystem);
         if (string.IsNullOrWhiteSpace(workingDirectory))
         {
             throw new ArgumentException("Working directory cannot be empty.", nameof(workingDirectory));
@@ -49,8 +51,8 @@ public sealed class CodingAgentConfig
             GlobalConfigFileName);
         var localPath = Path.Combine(defaults.ConfigDirectory, LocalConfigFileName);
 
-        var merged = ApplyOverride(defaults, ReadConfig(globalPath));
-        merged = ApplyOverride(merged, ReadConfig(localPath));
+        var merged = ApplyOverride(defaults, ReadConfig(fileSystem, globalPath));
+        merged = ApplyOverride(merged, ReadConfig(fileSystem, localPath));
         return merged;
     }
 
@@ -59,23 +61,25 @@ public sealed class CodingAgentConfig
     /// if one does not already exist. Called on every startup so the user always has
     /// a visible, editable configuration file in their project root.
     /// </summary>
-    public static void EnsureDirectories(string workingDirectory)
+    public static void EnsureDirectories(IFileSystem fileSystem, string workingDirectory)
     {
-        var config = Load(workingDirectory);
-        Directory.CreateDirectory(config.ConfigDirectory);
-        Directory.CreateDirectory(config.SessionsDirectory);
-        Directory.CreateDirectory(config.ExtensionsDirectory);
-        Directory.CreateDirectory(config.SkillsDirectory);
-        Directory.CreateDirectory(config.LogsDirectory);
+        ArgumentNullException.ThrowIfNull(fileSystem);
+
+        var config = Load(fileSystem, workingDirectory);
+        fileSystem.Directory.CreateDirectory(config.ConfigDirectory);
+        fileSystem.Directory.CreateDirectory(config.SessionsDirectory);
+        fileSystem.Directory.CreateDirectory(config.ExtensionsDirectory);
+        fileSystem.Directory.CreateDirectory(config.SkillsDirectory);
+        fileSystem.Directory.CreateDirectory(config.LogsDirectory);
 
         var configPath = Path.Combine(config.ConfigDirectory, LocalConfigFileName);
-        if (!File.Exists(configPath))
+        if (!fileSystem.File.Exists(configPath))
         {
-            WriteDefaultConfig(configPath);
+            WriteDefaultConfig(fileSystem, configPath);
         }
     }
 
-    private static void WriteDefaultConfig(string path)
+    private static void WriteDefaultConfig(IFileSystem fileSystem, string path)
     {
         var defaults = new ConfigDocument
         {
@@ -96,7 +100,7 @@ public sealed class CodingAgentConfig
             DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
         });
 
-        File.WriteAllText(path, json);
+        fileSystem.File.WriteAllText(path, json);
     }
 
     private static CodingAgentConfig CreateDefaults(string workingDirectory)
@@ -121,14 +125,14 @@ public sealed class CodingAgentConfig
         };
     }
 
-    private static ConfigDocument? ReadConfig(string path)
+    private static ConfigDocument? ReadConfig(IFileSystem fileSystem, string path)
     {
-        if (!File.Exists(path))
+        if (!fileSystem.File.Exists(path))
         {
             return null;
         }
 
-        var json = File.ReadAllText(path);
+        var json = fileSystem.File.ReadAllText(path);
         return JsonSerializer.Deserialize<ConfigDocument>(
             json,
             new JsonSerializerOptions

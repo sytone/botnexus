@@ -1,24 +1,26 @@
 using BotNexus.Tools;
 using FluentAssertions;
+using System.IO.Abstractions.TestingHelpers;
 
 namespace BotNexus.CodingAgent.Tests.Tools;
 
-public sealed class ReadToolTests : IClassFixture<ToolTempDirectoryFixture>
+public sealed class ReadToolTests
 {
-    private readonly string _tempDirectory;
+    private readonly string _tempDirectory = @"C:\tools\read";
+    private readonly MockFileSystem _fileSystem = new();
     private readonly ReadTool _tool;
 
-    public ReadToolTests(ToolTempDirectoryFixture fixture)
+    public ReadToolTests()
     {
-        _tempDirectory = fixture.CreateDirectory("readtool");
-        _tool = new ReadTool(_tempDirectory);
+        _fileSystem.Directory.CreateDirectory(_tempDirectory);
+        _tool = new ReadTool(_tempDirectory, _fileSystem);
     }
 
     [Fact]
     public async Task ExecuteAsync_WhenReadingFile_ReturnsLineNumberedContent()
     {
         var filePath = Path.Combine(_tempDirectory, "sample.txt");
-        await File.WriteAllTextAsync(filePath, "alpha\nbeta\ngamma");
+        await _fileSystem.File.WriteAllTextAsync(filePath, "alpha\nbeta\ngamma");
 
         var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "sample.txt" });
 
@@ -30,9 +32,9 @@ public sealed class ReadToolTests : IClassFixture<ToolTempDirectoryFixture>
     public async Task ExecuteAsync_WhenReadingDirectory_ReturnsListing()
     {
         var nested = Path.Combine(_tempDirectory, "nested");
-        Directory.CreateDirectory(nested);
-        await File.WriteAllTextAsync(Path.Combine(_tempDirectory, "root.txt"), "x");
-        await File.WriteAllTextAsync(Path.Combine(nested, "child.txt"), "y");
+        _fileSystem.Directory.CreateDirectory(nested);
+        await _fileSystem.File.WriteAllTextAsync(Path.Combine(_tempDirectory, "root.txt"), "x");
+        await _fileSystem.File.WriteAllTextAsync(Path.Combine(nested, "child.txt"), "y");
 
         var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "." });
 
@@ -46,7 +48,7 @@ public sealed class ReadToolTests : IClassFixture<ToolTempDirectoryFixture>
     public async Task ExecuteAsync_WhenLineRangeProvided_ReturnsOnlyRequestedLines()
     {
         var filePath = Path.Combine(_tempDirectory, "range.txt");
-        await File.WriteAllTextAsync(filePath, "line1\nline2\nline3\nline4");
+        await _fileSystem.File.WriteAllTextAsync(filePath, "line1\nline2\nline3\nline4");
 
         var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
@@ -71,7 +73,7 @@ public sealed class ReadToolTests : IClassFixture<ToolTempDirectoryFixture>
     {
         var filePath = Path.Combine(_tempDirectory, "sample.png");
         var bytes = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=");
-        await File.WriteAllBytesAsync(filePath, bytes);
+        await _fileSystem.File.WriteAllBytesAsync(filePath, bytes);
 
         var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "sample.png" });
 
@@ -88,7 +90,7 @@ public sealed class ReadToolTests : IClassFixture<ToolTempDirectoryFixture>
         var line = new string('a', 200);
         var content = string.Join('\n', Enumerable.Range(1, 500).Select(_ => line));
         var filePath = Path.Combine(_tempDirectory, "large.txt");
-        await File.WriteAllTextAsync(filePath, content);
+        await _fileSystem.File.WriteAllTextAsync(filePath, content);
 
         var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "large.txt" });
 

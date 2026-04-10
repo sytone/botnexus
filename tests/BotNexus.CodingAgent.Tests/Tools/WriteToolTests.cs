@@ -1,18 +1,20 @@
 using System.Text;
 using BotNexus.Tools;
 using FluentAssertions;
+using System.IO.Abstractions.TestingHelpers;
 
 namespace BotNexus.CodingAgent.Tests.Tools;
 
-public sealed class WriteToolTests : IDisposable
+public sealed class WriteToolTests
 {
-    private readonly string _tempDirectory = Path.Combine(Path.GetTempPath(), $"botnexus-writetool-{Guid.NewGuid():N}");
+    private readonly string _tempDirectory = @"C:\tools\write";
+    private readonly MockFileSystem _fileSystem = new();
     private readonly WriteTool _tool;
 
     public WriteToolTests()
     {
-        Directory.CreateDirectory(_tempDirectory);
-        _tool = new WriteTool(_tempDirectory);
+        _fileSystem.Directory.CreateDirectory(_tempDirectory);
+        _tool = new WriteTool(_tempDirectory, _fileSystem);
     }
 
     [Fact]
@@ -25,8 +27,8 @@ public sealed class WriteToolTests : IDisposable
         });
 
         var fullPath = Path.Combine(_tempDirectory, "new.txt");
-        File.Exists(fullPath).Should().BeTrue();
-        (await File.ReadAllTextAsync(fullPath)).Should().Be("hello world");
+        _fileSystem.File.Exists(fullPath).Should().BeTrue();
+        (await _fileSystem.File.ReadAllTextAsync(fullPath)).Should().Be("hello world");
         result.Content[0].Value.Should().Contain("Wrote 'new.txt'");
     }
 
@@ -34,7 +36,7 @@ public sealed class WriteToolTests : IDisposable
     public async Task ExecuteAsync_OverwritesExistingFile()
     {
         var fullPath = Path.Combine(_tempDirectory, "existing.txt");
-        await File.WriteAllTextAsync(fullPath, "old");
+        await _fileSystem.File.WriteAllTextAsync(fullPath, "old");
 
         await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
@@ -42,7 +44,7 @@ public sealed class WriteToolTests : IDisposable
             ["content"] = "updated"
         });
 
-        (await File.ReadAllTextAsync(fullPath)).Should().Be("updated");
+        (await _fileSystem.File.ReadAllTextAsync(fullPath)).Should().Be("updated");
     }
 
     [Fact]
@@ -55,8 +57,8 @@ public sealed class WriteToolTests : IDisposable
         });
 
         var fullPath = Path.Combine(_tempDirectory, "deep", "nested", "file.txt");
-        File.Exists(fullPath).Should().BeTrue();
-        (await File.ReadAllTextAsync(fullPath)).Should().Be("data");
+        _fileSystem.File.Exists(fullPath).Should().BeTrue();
+        (await _fileSystem.File.ReadAllTextAsync(fullPath)).Should().Be("data");
     }
 
     [Fact]
@@ -84,15 +86,7 @@ public sealed class WriteToolTests : IDisposable
             ["content"] = "plain text"
         });
 
-        var bytes = await File.ReadAllBytesAsync(fullPath);
+        var bytes = await _fileSystem.File.ReadAllBytesAsync(fullPath);
         bytes.Take(3).Should().NotEqual(new byte[] { 0xEF, 0xBB, 0xBF });
-    }
-
-    public void Dispose()
-    {
-        if (Directory.Exists(_tempDirectory))
-        {
-            Directory.Delete(_tempDirectory, recursive: true);
-        }
     }
 }
