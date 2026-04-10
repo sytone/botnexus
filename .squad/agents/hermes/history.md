@@ -70,3 +70,4 @@
 - 2026-04-09T17:12:06-07:00: Flaky timing tests are more stable with polling helpers (up to 5s) instead of fixed `Task.Delay(...)` checks, especially for async process output/status transitions.
 - 2026-04-09T17:12:06-07:00: Concurrency/timing assertions should use generous CI-safe thresholds (e.g., 1500ms for two 200ms parallel calls) and explicit sequencing when cancellation races are under test.
 - 2026-04-10: For C# `required` contract tests, validate `RequiredMemberAttribute` presence via reflection string match to avoid framework-version compile coupling.
+- 2026-04-10: Sub-agent tool payloads currently serialize `SubAgentStatus` as numeric enums (not strings), so assertions should validate integer enum values in JSON responses.
