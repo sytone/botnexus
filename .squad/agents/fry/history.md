@@ -20,6 +20,33 @@
    - Active sessions count
    - Memory consolidation state (configured, enabled, last run, success)
 
+## 2026-04-10T16:30Z — Sub-Agent Spawning Feature: Wave 4 WebUI (Web Dev)
+
+**Status:** ✅ Complete  
+**Commit:** 91f11c3
+
+**Your Role:** Web Dev. WebUI interactive panel.
+
+**Deliverables:**
+- Sub-agent panel in session view (collapsible)
+  - Real-time active sub-agent list
+  - Status indicators (Running, Completed, Failed, Killed, TimedOut)
+  - Kill button with ownership validation (disabled if not parent)
+  - Result display on completion (last assistant message summary)
+  - Timestamps: started, completed
+  - Turn counter (current/max)
+- WebSocket integration
+  - Subscribe to `subagent_spawned`, `subagent_completed`, `subagent_failed` events
+  - Real-time list updates without page reload
+  - Error state display on kill failures
+- UX polish
+  - Collapsible panel state preserved in session
+  - Loading indicators during spawn/kill operations
+  - Graceful fallback if events unavailable
+  - Result summary truncation with expand/collapse
+
+---
+
 ## 2026-04-05T23:30:00Z — Phase 4 Wave 1 Delivery
 
 **Status:** ✅ Complete  
@@ -162,3 +189,23 @@
 **Impact:** Observability proposal (Phase 13) establishes framework for future instrumentation. Fry's WebUI work (Phase 12 Wave 1) already uses correct logging patterns (M.E.L abstractions). No changes needed for Wave 1. Will integrate OTel spans in later waves if tracing becomes requirement for WebUI debugging.
 
 **Action:** None for current sprint. Monitor observability roadmap for Wave 3+ impact on WebSocket/channel layers.
+
+### Sub-Agent Status Panel (Wave 4.3) (2026-04-11)
+**Timestamp:** 2026-04-11
+**Status:** ✅ Complete
+**Commit:** 91f11c3 — feat(webui): add sub-agent status panel with real-time updates
+
+**Features Delivered:**
+1. **Collapsible panel** — Between processing-status bar and chat messages; auto-hides when no sub-agents exist
+2. **Status indicators** — 🟢 Running, ✅ Completed, ❌ Failed, ⏱ Timed Out, 🛑 Killed with colored left borders
+3. **Kill button** — DELETE /api/sessions/{sessionId}/subagents/{subAgentId} with disabled state during request
+4. **Result display** — Expandable result summary on completed/failed sub-agents
+5. **Real-time WebSocket** — SubAgentSpawned/Completed/Failed/Killed events update panel without polling
+6. **REST fetch** — GET /api/sessions/{sessionId}/subagents on session join and manual refresh
+
+**Patterns Established:**
+- `activeSubAgents` Map for client-side sub-agent state tracking, cleared on session change/reset
+- `SUBAGENT_STATUS_MAP` lookup for consistent emoji/CSS mapping across render and events
+- Panel follows existing `section-header` + `collapsed` class toggle pattern from sidebar
+- Kill button uses same `fetch(DELETE)` pattern as session delete
+- Activity feed integration: sub-agent events tracked via existing `trackActivity()` calls

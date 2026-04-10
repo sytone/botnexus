@@ -35,6 +35,37 @@ Participated in design review ceremony for Phase 3 architecture. All ADs approve
 
 ---
 
+## 2026-04-10T16:30Z — Sub-Agent Spawning Feature: Wave 4 Documentation (Documentation)
+
+**Status:** ✅ Complete  
+**Commit:** ad72475
+
+**Your Role:** Documentation. Feature documentation.
+
+**Deliverables:**
+- 470-line feature documentation (`docs/features/sub-agent-spawning.md`)
+  - User stories (delegation, cost optimization, visibility, result delivery, safety)
+  - API reference (endpoints, WebSocket events, tool schemas)
+  - Configuration reference (`SubAgentOptions`)
+  - Architecture overview (relationship to existing `CallSubAgentAsync`)
+  - Security considerations (tool scoping, depth limits, resource protection)
+  - Example scenarios
+- 7 DRAFT markers for domain review:
+  - Model override behavior with default fallback
+  - Completion delivery timing with parent idle vs running
+  - Tool scoping inheritance vs explicit allowlist
+  - Session metadata tagging for cleanup queries
+  - Error handling for timeout vs maxTurns simultaneous
+  - Foreground mode Phase 2 planning
+  - Cost tracking integration roadmap
+
+**Integration:**
+- API reference updated with new endpoints
+- Tool documentation aligned with existing patterns
+- Architecture docs updated with sub-agent lifecycle diagram
+
+---
+
 ## 2026-04-05T11:52:58Z — Sprint 4 Documentation Delivery
 
 **Status:** ✅ COMPLETE  
@@ -154,3 +185,28 @@ Participated in design review ceremony for Phase 3 architecture. All ADs approve
 - **Total:** 891 tests passing (868→891, +23), Build clean, 0 warnings
 
 - Created `src/channels/BotNexus.Channels.WebSocket/README.md` — the last channel project without documentation. Covers full WebSocket message protocol (6 inbound types: message, reconnect, abort, steer, follow_up, ping; 10 outbound types: connected, message_start, thinking_delta, content_delta, tool_start, tool_end, message_end, error, pong, reconnect_ack), sequence ID tracking, reconnection replay flow with ASCII diagram, all 5 capability flags (streaming, steering, follow-up, thinking display, tool display), GatewayWebSocketOptions configuration table, JavaScript usage examples, and Gateway integration component map. All content verified against WebSocketChannelAdapter, GatewayWebSocketHandler, WebSocketMessageDispatcher, and WebSocketConnectionManager source code. Commit: 04e8da3.
+
+---
+
+## 2026-04-11 — Sub-Agent Spawning Feature Documentation (Draft)
+
+**Status:** ✅ COMPLETE (Draft — pending implementation finalization)
+
+Created docs/features/sub-agent-spawning.md — comprehensive feature documentation covering:
+- Quick start with minimal spawn example
+- Architecture: parent/child session model, relationship to existing IAgentCommunicator.CallSubAgentAsync()
+- Tools reference: spawn_subagent, list_subagents, manage_subagent with full parameter tables, return values, and examples
+- Configuration reference: SubAgentOptions fields with defaults
+- Completion flow: how results deliver back to parent via FollowUpAsync and PendingMessageQueue
+- Security: tool scoping, no workingDir, recursion prevention, session isolation, ownership enforcement
+- Phase 1 limitations: no steer, no foreground, depth limit = 1
+- API endpoints and WebSocket events
+- 7 DRAFT markers for sections requiring implementation verification
+
+All interface names cross-referenced against Leela's design review (leela-subagent-design-review.md). Updated README.md Getting Started table with link to new feature doc. Created docs/features/ directory (first feature doc in this location). Commit: ad72475.
+
+## Learnings
+
+- BotNexus docs use numbered sections (## 1. Overview) with matching TOC anchors (#1-overview). Anchors must include the section number prefix.
+- Feature docs should live under docs/features/ — this is a new convention established with sub-agent spawning.
+- Design review documents in .squad/decisions/inbox/ are the authoritative source for interface names and architectural decisions.

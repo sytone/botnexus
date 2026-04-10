@@ -38,6 +38,28 @@
 5. **3-layer filtering composes cleanly** — Layer 1 (platform config: enabled + allowlist) → Layer 2 (API endpoints: return filtered) → Layer 3 (per-agent: intersection with agent's AllowedModelIds). Each layer is independent and testable.
 6. **GatewayAuthManager already has provider config lookup** — The auth resolution chain (auth.json → env vars → PlatformConfig) and `TryGetProviderConfig()` helper mean the `Enabled` flag can integrate naturally into the auth flow. A disabled provider could short-circuit auth resolution.
 
+## 2026-04-10T16:30Z — Sub-Agent Spawning Feature Design Review (Lead)
+
+**Status:** ✅ Complete  
+**Session:** Design Review ceremony → Approved with 6 modifications
+
+**Your Role:** Lead/Architect. Design review facilitation, spec assessment, architectural decision finalization.
+
+**Deliverables:**
+- Spec assessment complete: identified 7 gaps (existing infrastructure not acknowledged, god tool pattern, result delivery mechanism, parallel database table, agentId semantics confusion, incomplete spec, workingDir security)
+- 6 architectural decisions finalized: extend existing infrastructure, separate tools, completion via FollowUpAsync, session metadata tracking, no recursive spawning Phase 1, workingDir security
+- Risk register: 10 mitigations (resource exhaustion, recursion, orphaned sessions, context leak, tool scoping, delivery race, cost surprise, store growth, timeout race, test determinism)
+- Work breakdown: 4-wave delivery model with parallelization notes, ~45-55 new tests estimated
+- 3 open items for Jon: tool pattern confirmation, database schema confirmation, scope alignment
+
+**Impact:**
+- Unified design direction across 6 agents (Leela, Farnsworth, Hermes, Bender, Kif, Fry)
+- 4 concurrent waves enabled with clear parallelization boundaries
+- 51 SubAgent tests all passing
+- Feature delivered: ISubAgentManager, DefaultSubAgentManager, 3 tools, REST endpoints, WebSocket events, WebUI panel, 470-line feature doc
+
+---
+
 ## 2026-04-09 — Unified Config + Agent Directory Proposal (Lead)
 
 **Status:** ✅ Proposal written
@@ -132,3 +154,46 @@ Jon requested a cron scheduling subsystem for BotNexus. Analyzed OpenClaw's matu
 - ~60 new tests across all waves
 
 **Decision written to:** `.squad/decisions/inbox/leela-cron-infrastructure.md`
+
+## 2026-04-11 — Sub-Agent Spawning Design Review (Lead)
+
+**Status:** ✅ Design Review Complete — Approved with modifications
+**Requested by:** Jon Bullen
+**Spec Author:** Nova (via Jon)
+**Scope:** Architecture review of sub-agent spawning feature spec + interface definitions + work breakdown
+
+**Context:**
+Nova produced a design spec for background sub-agent spawning — agents delegating tasks to isolated LLM sessions with model/tool overrides. Reviewed against existing codebase: `IAgentCommunicator.CallSubAgentAsync()` already provides synchronous sub-agent calls with recursion guards, `AgentDescriptor.SubAgentIds` exists, `IAgentHandle.FollowUpAsync()` provides message injection.
+
+**Key Findings:**
+1. **Existing infrastructure not acknowledged** — Spec proposes new system but `DefaultAgentCommunicator` already has sync sub-agent calls, scoped session IDs, recursion guards, and depth limits. New feature extends this to async/background execution.
+2. **God tool antipattern** — Spec proposes single `subagents` tool with 5 actions. Recommended splitting into `spawn_subagent`, `list_subagents`, `manage_subagent` per codebase convention.
+3. **No new DB table needed** — `GatewaySession.Metadata` + in-memory `ConcurrentDictionary` avoids two-source-of-truth vs proposed `subagent_sessions` table.
+4. **Completion delivery via `FollowUpAsync`** — Reuses existing `PendingMessageQueue` infrastructure.
+5. **Security gap** — `workingDir` parameter removed from spawn; sub-agents use parent workspace.
+6. **Spec truncated** — Open questions section incomplete.
+
+**Deliverables:**
+- Spec assessment with 7 gaps identified
+- 7 interface/class definitions with project placement
+- 10-item risk register with mitigations
+- 4-wave work breakdown (16 tasks) assigned to Farnsworth/Bender/Fry/Hermes/Kif
+- 6 architectural decisions with rationale
+- ~45-55 new tests estimated
+
+**Key Interfaces Defined:**
+- `ISubAgentManager` → `BotNexus.Gateway.Abstractions`
+- `SubAgentSpawnRequest`, `SubAgentInfo`, `SubAgentStatus` → `BotNexus.Gateway.Abstractions`
+- `DefaultSubAgentManager` → `BotNexus.Gateway`
+- `SubAgentSpawnTool`, `SubAgentListTool`, `SubAgentManageTool` → `BotNexus.Gateway`
+- `SubAgentOptions` → `BotNexus.Gateway`
+
+**Key Architecture Decisions:**
+- D1: Extend existing `IAgentCommunicator` sub-agent infra, don't replace
+- D2: Separate tools, not god tool
+- D3: Completion via `FollowUpAsync`
+- D4: Session metadata, not new table
+- D5: Sub-agents can't spawn sub-agents (Phase 1)
+- D6: No `workingDir` override (security)
+
+**Decision written to:** `.squad/decisions/inbox/leela-subagent-design-review.md`

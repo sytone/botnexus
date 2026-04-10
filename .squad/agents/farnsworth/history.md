@@ -36,6 +36,38 @@
 - 2026-04-06: Gateway config mutation logic moved from CLI inline reflection into IConfigPathResolver + ConfigPathResolver, adding bracket array index support (path[0]) and reusable path discovery for DI consumers.
 - 2026-04-06: Platform config load now runs JSON Schema validation via PlatformConfigSchema with key-casing normalization before existing manual validation, and CLI exposes otnexus config schema --output ... to regenerate docs/botnexus-config.schema.json.
 
+## 2026-04-10T16:30Z — Sub-Agent Spawning Feature: Waves 1 + 2 + 4 (Platform Dev)
+
+**Status:** ✅ Complete  
+**Commits:** f57b157 (W1), 25c8876 (W2+3 DI), c75a033 (W4 REST)
+
+**Your Role:** Platform Dev. Wave 1 abstractions, DI wiring, REST endpoints.
+
+**Wave 1 Deliverables:**
+- `ISubAgentManager` abstraction in `BotNexus.Gateway.Abstractions`
+- `SubAgentSpawnRequest`, `SubAgentInfo`, `SubAgentStatus` models
+- `SubAgentOptions` configuration class (maxConcurrentPerSession, defaultMaxTurns, etc.)
+- Integrated with existing session infrastructure (reuses `IAgentSupervisor`, session ID format preserved)
+
+**Wave 2+3 DI Work:**
+- `DefaultSubAgentManager` registered as singleton in DI
+- Sub-agent tool registration in `InProcessIsolationStrategy`
+- Recursion prevention wired: `spawn_subagent`, `list_subagents`, `manage_subagent` excluded from sub-agent sessions
+- Tool stack depth tracking for safety
+
+**Wave 4 REST Endpoints:**
+- `GET /api/agents/sub` — list active sub-agents
+- `POST /api/agents/sub` — spawn sub-agent
+- `DELETE /api/agents/sub/{id}` — kill sub-agent
+- WebSocket event emission: `subagent_spawned`, `subagent_completed`, `subagent_failed`
+
+**Integration:**
+- Tool security scoping: explicit allowlist validation against registry
+- Completion delivery: reuses existing `FollowUpAsync` message queue
+- Resource protection: `maxConcurrentPerSession` enforced per agent descriptor
+
+---
+
 ## 2026-04-06T07:50:00Z — Phase 11 Wave 1: Config Schema & Path Resolution
 
 **Status:** ✅ Complete  

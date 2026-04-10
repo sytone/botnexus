@@ -23,7 +23,40 @@
 - Files modified: `extensions\mcp\BotNexus.Extensions.Mcp\McpServerManager.cs`, `src\gateway\BotNexus.Gateway\Isolation\InProcessIsolationStrategy.cs`
 - Tests: All 148 MCP tests pass, Gateway isolation tests pass, build clean.
 
-### 2026-04-06 — Platform-config agent auto-registration + local gateway scripts
+### 2026-04-10T16:30Z — Sub-Agent Spawning Feature: Wave 2 + Wave 3 (Runtime Dev)
+
+**Status:** ✅ Complete  
+**Commits:** ff63957 (W2), 4d4b6a7 (W3 tools)
+
+**Your Role:** Runtime Dev. Wave 2 manager implementation, Wave 3 tooling.
+
+**Wave 2 Deliverables:**
+- `DefaultSubAgentManager` orchestrator
+  - `SpawnAsync()` — create child session via `IAgentSupervisor`, manage timeout/maxTurns via `CancellationTokenSource`
+  - `ListAsync()` — query active sub-agents by parent session ID
+  - `KillAsync()` — terminate sub-agent with ownership validation
+  - `OnCompletedAsync()` — completion delivery pipeline
+  - Parent→child map tracking with `ConcurrentDictionary`
+- `SubAgentCompletionHook` — detects session completion, extracts summary, calls `OnCompletedAsync()`
+- Concurrent session limits enforced per agent config
+- Recursion prevention via `MaxDepth` + depth tracking
+
+**Wave 3 Tool Deliverables:**
+- `SubAgentSpawnTool` (IAgentTool) — spawn with model/tool/prompt overrides
+- `SubAgentListTool` (IAgentTool) — list sub-agents for calling session
+- `SubAgentManageTool` (IAgentTool) — kill + status actions with ownership checks
+- Tool registration in `InProcessIsolationStrategy` with recursion-prevention gating
+
+**Safety:**
+- Timeout enforcement via `CancellationToken`
+- MaxTurns enforced at agent loop start
+- Tool allowlist validation against registry
+- Ownership checks: only parent can kill/manage children
+- Orphaned session cleanup on parent deletion
+
+---
+
+## 2026-04-06 — Platform-config agent auto-registration + local gateway scripts
 - `src\gateway\BotNexus.Gateway\Configuration\PlatformConfigAgentSource.cs` now maps `PlatformConfig.Agents` entries into `AgentDescriptor` records, loads `SystemPromptFile` from the platform config directory, skips disabled agents, and exposes no watcher (`Watch()` returns `null`).
 - `src\gateway\BotNexus.Gateway\Extensions\GatewayServiceCollectionExtensions.cs` now registers platform-config and file-based agent sources together in `AddPlatformConfiguration`, so platform-config-defined agents are loaded at startup.
 - Added developer entry points: `scripts\start-gateway.ps1` (build + run gateway API with `ASPNETCORE_ENVIRONMENT=Development`, `-Port`) and `scripts\dev-loop.ps1` (solution build + gateway tests + run/watch gateway).

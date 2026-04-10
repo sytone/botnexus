@@ -13424,3 +13424,145 @@ This is unacceptable behavior — optional dependencies shouldn't be able to kil
 
 **Status:** Complete. Build passes. Ready for gateway integration and end-to-end testing.
 
+
+---
+
+## Sub-Agent Spawning Feature — Design Review (2026-04-11)
+
+**Decision Date:** 2026-04-11  
+**Decided By:** Leela (Lead/Architect)  
+**Status:** Approved with 6 modifications  
+**Specification:** Nova (via Jon)  
+
+### Design Review Outcome
+
+Spec assessment: APPROVED with modifications. The 4-wave phased approach is correct. Phase 1 MVP (spawn/list/kill + completion notification) is well-scoped.
+
+### Modifications Applied
+
+1. **D1. Extend existing infrastructure** — Build on top of existing IAgentCommunicator.CallSubAgentAsync(), not replace it. Child session ID format preserved.
+2. **D2. Separate tools** — Three focused tools (spawn_subagent, list_subagents, manage_subagent) instead of a single god tool.
+3. **D3. Completion via FollowUpAsync** — Inject sub-agent results into parent using existing IAgentHandle.FollowUpAsync() message queue.
+4. **D4. Session metadata, no new table** — Track relationships via GatewaySession.Metadata + in-memory ConcurrentDictionary, not a separate subagent_sessions table.
+5. **D5. No recursive spawning Phase 1** — Sub-agents cannot spawn sub-agents. Tools excluded from sub-agent tool sets at resolution time.
+6. **D6. Security: workingDir removed** — No arbitrary directory override. Sub-agents use parent workspace or fail secure.
+
+### Interface Definitions (per Wave 1)
+
+- **ISubAgentManager** — Core orchestration in BotNexus.Gateway.Abstractions
+  - SpawnAsync(SubAgentSpawnRequest) — Create background sub-agent
+  - ListAsync(parentSessionId) — Query active sub-agents
+  - GetAsync(subAgentId) — Detailed status
+  - KillAsync(subAgentId, requestingSessionId) — Terminate sub-agent
+  - OnCompletedAsync(subAgentId, resultSummary) — Completion notification
+
+- **SubAgentSpawnRequest** — Spawn parameters: task, name, modelOverride, apiProviderOverride, toolIds[], systemPromptOverride, maxTurns, timeoutSeconds
+
+- **SubAgentInfo** — Status snapshot: subAgentId, parentSessionId, childSessionId, name, task, model, status, startedAt, completedAt, turnsUsed, resultSummary
+
+- **SubAgentStatus enum** — Running, Completed, Failed, Killed, TimedOut
+
+- **SubAgentOptions config** — maxConcurrentPerSession (default 5), defaultMaxTurns (30), defaultTimeoutSeconds (600), maxDepth (1), defaultModel ("")
+
+### Risk Register (10 mitigations)
+
+| Risk | Severity | Mitigation |
+|------|----------|-----------|
+| Resource exhaustion | High | MaxConcurrentPerSession enforced per agent, configurable |
+| Recursive spawning | High | MaxDepth + tool exclusion from sub-agents |
+| Orphaned sessions | High | Parent→child cascade kill on session deletion |
+| Context leak | Medium | Clean sub-agent sessions, only 	ask + system prompt |
+| Tool scoping escape | Medium | Explicit allowlist, validate against registry |
+| Completion delivery race | Medium | FollowUpAsync queues result for next turn |
+| Model cost surprise | Low | Log token counts in SubAgentInfo |
+| Session store growth | Low | Tag with metadata for cleanup queries |
+| Timeout + maxTurns race | Low | First limit wins, checked at loop start |
+| Test determinism | Medium | TaskCompletionSource pattern in tests |
+
+### Work Breakdown (4 Waves, ~45-55 new tests estimated)
+
+**Wave 1 (Days 1-2):** Abstractions — ISubAgentManager, request/info models, SubAgentOptions, 5 unit tests  
+**Wave 2 (Days 2-4):** Implementation — DefaultSubAgentManager orchestrator, SubAgentCompletionHook, DI wiring, 15 unit tests  
+**Wave 3 (Days 4-6):** Tools — SubAgentSpawnTool, SubAgentListTool, SubAgentManageTool, tool registration, 15 integration tests  
+**Wave 4 (Days 6-8):** API + WebUI — REST endpoints, WebSocket events, WebUI panel, documentation, 10-20 E2E tests
+
+### Open Items for Jon
+
+1. Confirm D2 (separate tools vs single god tool)
+2. Confirm D4 (session metadata vs new table)
+3. Confirm Phase 1 excludes steer and foreground mode
+4. Complete spec's open questions section
+
+---
+
+## Hermes Flaky Test Fixes (2026-04-02)
+
+**Decision Date:** 2026-04-02  
+**Decided By:** Hermes (Tester)  
+**Status:** Implemented  
+
+### Context
+
+Four critical flaky test areas intermittently failing due to tight timing assumptions, race-prone cancellation timing, fixed sleeps around async process lifecycle.
+
+### Decision
+
+- Replace fixed Task.Delay(...) with polling-based waits (up to 5 seconds, short intervals) for process status/output/termination assertions
+- Use CI-safe timing thresholds (< 1500ms for parallel tool execution tests)
+- Make cancellation sequencing explicit for "completed before cancellation" tests
+- Make process-spawning helpers cross-platform: cmd.exe /c on Windows, /bin/bash -lc on non-Windows
+- Relax tail-output line count checks to behavioral assertions (preserve intent, reduce brittleness)
+
+### Impact
+
+Behavioral test intent preserved while removing brittle timing assumptions. Removes intermittent failures under load or on slower CI hosts.
+
+---
+
+## Hermes Reliability Fixes — Phase 2 (2026-04-02)
+
+**Decision Date:** 2026-04-02  
+**Decided By:** Hermes (Tester)  
+**Status:** Implemented  
+
+### Changes
+
+- Standardized flaky test waits in AgentTests to 10 seconds for CI tolerance
+- Standardized temp-directory cleanup across Gateway/Skills tests with retry on transient IOException locks
+- Aligned Gateway integration test classes to [Collection("IntegrationTests")] to prevent parallel resource conflicts
+- Introduced [Collection("EnvironmentTests")] in StdioTransportTests to serialize environment-variable mutation tests
+- Added SqliteConnection.ClearAllPools() consistency in MemoryStoreTests cleanup path
+
+---
+
+## Web Search Copilot Integration Uses MCP (2026-04-09)
+
+**Decision Date:** 2026-04-09  
+**Decided By:** Farnsworth (Platform Dev)  
+**Status:** Implemented  
+**Commit:** d546f7f
+
+### Context
+
+Web search needs Copilot provider integration. Previous approach used chat-completions API directly.
+
+### Decision
+
+Replace Copilot chat-completions search with MCP-native provider (CopilotMcpSearchProvider) that calls Copilot MCP endpoint and invokes web_search tool.
+
+### Rationale
+
+1. **MCP Alignment** — Aligns web search with MCP tool contract used by Copilot clients
+2. **Auth Reuse** — Uses existing GatewayAuthManager token refresh without separate search API key
+3. **Session Longevity** — Long-lived session reuse via cached MCP client with proper disposal
+
+### Implementation
+
+- Provider: xtensions\web\BotNexus.Extensions.WebTools\Search\CopilotMcpSearchProvider.cs
+- Tool wiring: xtensions\web\BotNexus.Extensions.WebTools\WebSearchTool.cs
+- Gateway wiring: src\gateway\BotNexus.Gateway\Isolation\InProcessIsolationStrategy.cs
+- Uses HttpSseMcpTransport + McpClient for MCP communication
+- Endpoint: {base}/mcp (fallback: https://api.githubcopilot.com/mcp)
+
+**Status:** Complete, build passes, ready for integration.
+

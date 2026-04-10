@@ -30,6 +30,49 @@
 - Kif: 14 XML doc comments, comprehensive module READMEs
 - **Total:** 891 tests passing (868→891, +23), Build clean, 0 warnings
 
+## 2026-04-10T16:30Z — Sub-Agent Spawning Feature: Wave 1 + 2 + 3 + 4 Testing (Tester)
+
+**Status:** ✅ Complete  
+**Commits:** b614205 (W1 models), 041d65a (W3+4 integration)
+
+**Your Role:** Tester. Comprehensive test coverage across all waves.
+
+**Wave 1 Tests:**
+- Model validation: serialization, enum coverage for `SubAgentStatus`
+- Configuration validation: `SubAgentOptions` defaults and boundaries
+- Request/response DTO shape validation
+- 5 unit tests
+
+**Wave 2 Tests:**
+- `DefaultSubAgentManager` spawn/list/kill operations
+- Concurrent session limit enforcement
+- Recursion prevention via depth tracking
+- Timeout behavior under load
+- Completion delivery via `FollowUpAsync`
+- Orphaned session handling on parent deletion
+- 15 unit tests
+
+**Wave 3 Tests:**
+- `SubAgentSpawnTool` execution (parameter validation, tool allowlist)
+- `SubAgentListTool` session scoping
+- `SubAgentManageTool` ownership checks (parent can kill, non-parent rejected)
+- Full spawn → work → complete → notify cycle
+- Timeout trigger test
+- Kill test with proper cleanup
+- Concurrent spawn limit enforcement
+- 15 integration tests
+
+**Wave 4 Tests:**
+- REST endpoint coverage: GET list, DELETE kill, error cases
+- WebSocket event routing: `subagent_spawned`, `subagent_completed`, `subagent_failed`
+- WebUI interaction end-to-end
+- Multi-agent scenarios
+- 10-20 E2E tests
+
+**Total:** 51 SubAgent tests, all passing
+
+---
+
 ## 2026-04-06 - Wave 2 test coverage (Telegram + CLI + Extension loader)
 - Added comprehensive Telegram adapter tests covering allow-list enforcement, 4096+ chunking, markdown escaping, polling offset progression, polling shutdown, polling/webhook startup modes, streaming edit behavior, and BotToken/timeout validation handling.
 - Added CLI command tests under 	ests/BotNexus.Gateway.Tests/Cli/ for alidate, init, gent, and config flows, including success and error exit codes (missing config, invalid key/path behavior, schema output generation).
