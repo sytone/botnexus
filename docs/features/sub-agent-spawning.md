@@ -1,8 +1,8 @@
 # Sub-Agent Spawning
 
-**Version:** 1.0 (Draft)
+**Version:** 1.0
 **Last Updated:** 2026-04-11
-**Status:** Phase 1 — Implementation in progress
+**Status:** Phase 1 — Complete
 
 ---
 
@@ -27,8 +27,6 @@
 ## 1. Quick Start
 
 Spawn a background sub-agent to perform research while you continue working:
-
-<!-- DRAFT: verify against implementation -->
 
 ```json
 {
@@ -99,19 +97,16 @@ Parent Session (agent: nova, model: claude-opus-4.6)
 
 ### Key Interfaces
 
-<!-- DRAFT: verify against implementation -->
-
 | Interface/Class | Project | Purpose |
 |---|---|---|
 | `ISubAgentManager` | `BotNexus.Gateway.Abstractions` | Core orchestration contract — `SpawnAsync`, `ListAsync`, `GetAsync`, `KillAsync`, `OnCompletedAsync` |
 | `SubAgentSpawnRequest` | `BotNexus.Gateway.Abstractions` | Parameters for spawning a sub-agent |
 | `SubAgentInfo` | `BotNexus.Gateway.Abstractions` | Status and metadata for a running or completed sub-agent |
 | `SubAgentStatus` | `BotNexus.Gateway.Abstractions` | Enum: `Running`, `Completed`, `Failed`, `Killed`, `TimedOut` |
-| `DefaultSubAgentManager` | `BotNexus.Gateway` | Implementation with session supervisor, store, and handle dependencies |
+| `DefaultSubAgentManager` | `BotNexus.Gateway` | In-memory orchestrator with session supervisor, activity broadcasting, and timeout management |
 | `SubAgentSpawnTool` | `BotNexus.Gateway` | `IAgentTool` implementation for `spawn_subagent` |
 | `SubAgentListTool` | `BotNexus.Gateway` | `IAgentTool` implementation for `list_subagents` |
 | `SubAgentManageTool` | `BotNexus.Gateway` | `IAgentTool` implementation for `manage_subagent` |
-| `SubAgentCompletionHook` | `BotNexus.Gateway` | Hook that fires when a sub-agent session ends, delivering results to parent |
 
 ### Relationship to Existing Sub-Agent Calls
 
@@ -121,7 +116,7 @@ BotNexus already has **synchronous** sub-agent calls via `IAgentCommunicator.Cal
 |--------|-------------------------------|------------------------|
 | Execution | Synchronous — parent waits | Asynchronous — parent continues |
 | Session creation | Same (`IAgentSupervisor.GetOrCreateAsync`) | Same |
-| Session ID format | `{parentSessionId}::sub::{childAgentId}` | `{parentSessionId}::sub::{childAgentId}::{uniqueId}` |
+| Session ID format | `{parentSessionId}::sub::{childAgentId}` | `{parentSessionId}::subagent::{uniqueId}` |
 | Result delivery | Return value | `FollowUpAsync` into parent session |
 | Use case | Simple delegation | Long-running research, parallel work |
 
@@ -135,8 +130,6 @@ Sub-agent functionality is exposed through three focused tools, following the Bo
 
 Spawns a new background sub-agent session.
 
-<!-- DRAFT: verify against implementation -->
-
 **Parameters:**
 
 | Parameter | Type | Required | Default | Description |
@@ -144,17 +137,18 @@ Spawns a new background sub-agent session.
 | `task` | string | Yes | — | Task description and initial prompt for the sub-agent |
 | `name` | string | No | auto-generated | Human-readable label for identification |
 | `model` | string | No | parent's model | LLM model override (e.g., `gpt-4.1`, `claude-sonnet-4.5`) |
+| `apiProvider` | string | No | parent's provider | API provider override for the sub-agent run |
 | `tools` | string[] | No | parent's tools minus `spawn_subagent` | Explicit tool allowlist |
 | `systemPrompt` | string | No | parent's system prompt | Override system prompt instructions |
 | `maxTurns` | integer | No | `30` | Maximum conversation turns before auto-stop |
-| `timeout` | integer | No | `600` | Timeout in seconds |
+| `timeoutSeconds` | integer | No | `600` | Timeout in seconds |
 
 **Returns:**
 
 ```json
 {
-  "subAgentId": "sa_abc123",
-  "sessionId": "session_xyz::sub::nova::sa_abc123",
+  "subAgentId": "a1b2c3d4e5f6...",
+  "sessionId": "parent-session-id::subagent::a1b2c3d4e5f6...",
   "status": "Running",
   "name": "research-compaction"
 }
@@ -172,16 +166,14 @@ Spawns a new background sub-agent session.
     "tools": ["read", "web_search", "web_fetch", "grep", "glob"],
     "systemPrompt": "You are a thorough research assistant. Be comprehensive and cite all sources.",
     "maxTurns": 20,
-    "timeout": 300
+    "timeoutSeconds": 300
   }
 }
 ```
 
 ### `list_subagents`
 
-Lists all active sub-agents for the current session.
-
-<!-- DRAFT: verify against implementation -->
+Lists active and completed sub-agents for the current session.
 
 **Parameters:** None.
 
@@ -189,9 +181,9 @@ Lists all active sub-agents for the current session.
 
 ```json
 {
-  "subagents": [
+  "subAgents": [
     {
-      "subAgentId": "sa_abc123",
+      "subAgentId": "a1b2c3d4e5f6...",
       "name": "research-compaction",
       "status": "Running",
       "model": "gpt-4.1",
@@ -200,7 +192,7 @@ Lists all active sub-agents for the current session.
       "task": "Research how context window compaction works..."
     },
     {
-      "subAgentId": "sa_def456",
+      "subAgentId": "d4e5f6a1b2c3...",
       "name": "ado-analysis",
       "status": "Completed",
       "model": "gpt-4.1",
@@ -217,8 +209,6 @@ Lists all active sub-agents for the current session.
 ### `manage_subagent`
 
 Performs management actions on a specific sub-agent.
-
-<!-- DRAFT: verify against implementation -->
 
 **Parameters:**
 
@@ -238,9 +228,8 @@ Performs management actions on a specific sub-agent.
 
 ```json
 {
-  "subAgentId": "sa_abc123",
-  "status": "Killed",
-  "resultSummary": null
+  "subAgentId": "a1b2c3d4e5f6...",
+  "killed": true
 }
 ```
 
@@ -248,14 +237,11 @@ Performs management actions on a specific sub-agent.
 
 ```json
 {
-  "subAgentId": "sa_abc123",
-  "name": "research-compaction",
-  "childSessionId": "session_xyz::sub::nova::sa_abc123",
+  "subAgentId": "a1b2c3d4e5f6...",
   "status": "Running",
-  "model": "gpt-4.1",
+  "resultSummary": null,
   "startedAt": "2026-04-10T16:00:00Z",
-  "turnsUsed": 8,
-  "task": "Research how context window compaction works..."
+  "completedAt": null
 }
 ```
 
@@ -264,8 +250,6 @@ Performs management actions on a specific sub-agent.
 ## 5. Configuration Reference
 
 Sub-agent behavior is configured via `SubAgentOptions`, nested under the `gateway` configuration section.
-
-<!-- DRAFT: verify against implementation -->
 
 ### `SubAgentOptions` Fields
 
@@ -295,7 +279,7 @@ Sub-agent behavior is configured via `SubAgentOptions`, nested under the `gatewa
 
 ### Overriding Defaults at Spawn Time
 
-The `maxTurns` and `timeout` parameters on `spawn_subagent` override `defaultMaxTurns` and `defaultTimeoutSeconds` respectively. If not specified at spawn time, the configured defaults apply.
+The `maxTurns` and `timeoutSeconds` parameters on `spawn_subagent` override `defaultMaxTurns` and `defaultTimeoutSeconds` respectively. If not specified at spawn time, the configured defaults apply.
 
 The `model` parameter at spawn time overrides `defaultModel`. If neither is set, the sub-agent inherits the parent agent's model.
 
@@ -308,8 +292,8 @@ When a sub-agent finishes its work, results are automatically delivered to the p
 ### How It Works
 
 1. **Sub-agent completes** — it reaches a natural conclusion (final response with no tool calls), hits `maxTurns`, times out, or is killed.
-2. **Completion hook fires** — `SubAgentCompletionHook` detects the session end and extracts the last assistant message as a result summary.
-3. **Result delivered** — `ISubAgentManager.OnCompletedAsync()` is called, which uses `IAgentHandle.FollowUpAsync()` to inject the result into the parent session.
+2. **Manager detects completion** — `DefaultSubAgentManager.RunSubAgentAsync()` catches the completion, timeout, or failure, and calls `OnCompletedAsync()`.
+3. **Result delivered** — `OnCompletedAsync()` uses `IAgentHandle.FollowUpAsync()` to inject the result into the parent session.
 4. **Parent wakes** — If the parent is idle (waiting for user input), the follow-up triggers a new agent run. If the parent is mid-run, it processes the result between turns via the existing `PendingMessageQueue`.
 5. **Parent processes** — The parent agent sees a message like:
 
@@ -380,8 +364,6 @@ The following capabilities are **not included** in Phase 1 and are planned for f
 
 ## 9. API Endpoints
 
-<!-- DRAFT: verify against implementation -->
-
 Sub-agents are also accessible via the REST API:
 
 | Method | Endpoint | Description |
@@ -415,7 +397,7 @@ The following SignalR events are emitted on the parent session's group:
     "model": "gpt-4.1",
     "tools": ["web_search", "web_fetch"],
     "maxTurns": 25,
-    "timeout": 300
+    "timeoutSeconds": 300
   }
 }
 ```
@@ -452,7 +434,7 @@ Kill a sub-agent that's taking too long:
 {
   "tool": "manage_subagent",
   "parameters": {
-    "subAgentId": "sa_abc123",
+    "subAgentId": "a1b2c3d4e5f6...",
     "action": "kill"
   }
 }
@@ -464,7 +446,7 @@ Check a specific sub-agent's status:
 {
   "tool": "manage_subagent",
   "parameters": {
-    "subAgentId": "sa_abc123",
+    "subAgentId": "a1b2c3d4e5f6...",
     "action": "status"
   }
 }
