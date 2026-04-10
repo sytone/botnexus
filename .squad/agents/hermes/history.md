@@ -108,6 +108,7 @@
 - Commit: c3cf681
 
 ## Learnings
+- 2026-04-10: Session switching backend coverage is best validated with SignalR integration tests that assert `LeaveSession` group removal, `JoinSession` group membership, and `SignalRChannelAdapter` event isolation across two live hub connections.
 - 2026-04-10: Reliability hardening for flaky tests should prefer bounded retries (`IOException` + short sleep) over single-attempt temp directory deletion in test `Dispose` paths.
 - 2026-04-10: Gateway integration classes need a shared `[Collection("IntegrationTests")]` to avoid parallel port/resource contention, and env-var mutation tests should be grouped under a dedicated xUnit collection.
 - 2026-04-09T17:12:06-07:00: Flaky timing tests are more stable with polling helpers (up to 5s) instead of fixed `Task.Delay(...)` checks, especially for async process output/status transitions.
