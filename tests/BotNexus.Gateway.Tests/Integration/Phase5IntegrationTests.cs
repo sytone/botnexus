@@ -30,6 +30,7 @@ using Moq;
 namespace BotNexus.Gateway.Tests.Integration;
 
 [Trait("Category", "Integration")]
+[Collection("IntegrationTests")]
 public sealed class Phase5IntegrationTests
 {
     private static readonly string CopilotAuthPath = Path.Combine(

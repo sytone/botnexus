@@ -14,6 +14,7 @@ using Moq;
 namespace BotNexus.Gateway.Tests.Integration;
 
 [Trait("Category", "Integration")]
+[Collection("IntegrationTests")]
 public sealed class CopilotIntegrationTests
 {
     private static readonly string AuthPath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", ".botnexus-agent", "auth.json");

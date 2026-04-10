@@ -5,7 +5,7 @@ using Microsoft.Data.Sqlite;
 
 namespace BotNexus.Memory.Tests;
 
-public sealed class MemoryStoreTests
+public sealed class MemoryStoreTests : IDisposable
 {
     [Fact]
     public async Task InitializeAsync_CreatesSchemaAndTables()
@@ -188,5 +188,10 @@ public sealed class MemoryStoreTests
         await act.Should().ThrowAsync<SqliteException>();
         var loaded = await context.Store.GetByIdAsync("entry-1");
         loaded!.Content.Should().Be("first");
+    }
+
+    public void Dispose()
+    {
+        SqliteConnection.ClearAllPools();
     }
 }

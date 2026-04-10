@@ -310,8 +310,25 @@ public sealed class FileAgentConfigurationSourceTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_directoryPath))
-            Directory.Delete(_directoryPath, recursive: true);
+        if (!Directory.Exists(_directoryPath))
+            return;
+
+        for (var i = 0; i < 3; i++)
+        {
+            try
+            {
+                Directory.Delete(_directoryPath, recursive: true);
+                return;
+            }
+            catch (IOException) when (i < 2)
+            {
+                Thread.Sleep(100);
+            }
+            catch
+            {
+                break;
+            }
+        }
     }
 
     private sealed class ListLogger<T> : ILogger<T>

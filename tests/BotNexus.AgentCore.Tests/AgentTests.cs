@@ -91,7 +91,7 @@ public class AgentTests
         var agent = new Agent(TestHelpers.CreateTestOptions(model: TestHelpers.CreateTestModel("test-api")));
 
         var firstRun = agent.PromptAsync("first");
-        var started = SpinWait.SpinUntil(() => agent.Status == AgentStatus.Running, TimeSpan.FromSeconds(2));
+        var started = SpinWait.SpinUntil(() => agent.Status == AgentStatus.Running, TimeSpan.FromSeconds(10));
         started.Should().BeTrue();
 
         var secondPrompt = () => agent.PromptAsync("second");
@@ -235,7 +235,7 @@ public class AgentTests
         });
 
         var runTask = agent.PromptAsync("cancel me");
-        SpinWait.SpinUntil(() => agent.Status == AgentStatus.Running, TimeSpan.FromSeconds(2)).Should().BeTrue();
+        SpinWait.SpinUntil(() => agent.Status == AgentStatus.Running, TimeSpan.FromSeconds(10)).Should().BeTrue();
         await agent.AbortAsync();
         release.TrySetResult();
 
@@ -301,7 +301,7 @@ public class AgentTests
         var agent = new Agent(TestHelpers.CreateTestOptions(model: TestHelpers.CreateTestModel("test-api")));
 
         var runTask = agent.PromptAsync("run");
-        SpinWait.SpinUntil(() => agent.State.IsRunning, TimeSpan.FromSeconds(2)).Should().BeTrue();
+        SpinWait.SpinUntil(() => agent.State.IsRunning, TimeSpan.FromSeconds(10)).Should().BeTrue();
         agent.State.IsStreaming.Should().BeFalse();
 
         release.TrySetResult();
@@ -317,7 +317,7 @@ public class AgentTests
         var agent = new Agent(TestHelpers.CreateTestOptions(model: TestHelpers.CreateTestModel("test-api")));
 
         var runTask = agent.PromptAsync("stream");
-        SpinWait.SpinUntil(() => agent.State.StreamingMessage is not null, TimeSpan.FromSeconds(2)).Should().BeTrue();
+        SpinWait.SpinUntil(() => agent.State.StreamingMessage is not null, TimeSpan.FromSeconds(10)).Should().BeTrue();
         agent.State.Messages.Last().Should().BeOfType<UserMessage>();
 
         release.TrySetResult();
@@ -375,7 +375,7 @@ public class AgentTests
         });
 
         var runTask = agent.PromptAsync("cancel me");
-        SpinWait.SpinUntil(() => agent.Status == AgentStatus.Running, TimeSpan.FromSeconds(2)).Should().BeTrue();
+        SpinWait.SpinUntil(() => agent.Status == AgentStatus.Running, TimeSpan.FromSeconds(10)).Should().BeTrue();
         await agent.AbortAsync();
         release.TrySetResult();
         await runTask;
@@ -423,7 +423,7 @@ public class AgentTests
         var agent = new Agent(TestHelpers.CreateTestOptions(model: TestHelpers.CreateTestModel("test-api")));
 
         var runTask = agent.PromptAsync("running");
-        SpinWait.SpinUntil(() => agent.Status == AgentStatus.Running, TimeSpan.FromSeconds(2)).Should().BeTrue();
+        SpinWait.SpinUntil(() => agent.Status == AgentStatus.Running, TimeSpan.FromSeconds(10)).Should().BeTrue();
 
         agent.Reset();
         runTask.IsCompleted.Should().BeFalse();

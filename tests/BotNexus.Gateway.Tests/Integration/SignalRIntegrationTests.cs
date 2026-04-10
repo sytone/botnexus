@@ -22,11 +22,8 @@ using Microsoft.Extensions.Hosting;
 
 namespace BotNexus.Gateway.Tests.Integration;
 
-[CollectionDefinition("SignalRTests", DisableParallelization = true)]
-public sealed class SignalRTestsCollection;
-
 [Trait("Category", "Integration")]
-[Collection("SignalRTests")]
+[Collection("IntegrationTests")]
 public sealed class SignalRIntegrationTests : IAsyncDisposable
 {
     private const string TestAgentId = "test-agent";

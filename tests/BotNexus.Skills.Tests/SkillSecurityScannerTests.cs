@@ -292,6 +292,21 @@ public sealed class SkillSecurityScannerTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(_tempDir, true); } catch { }
+        for (var i = 0; i < 3; i++)
+        {
+            try
+            {
+                Directory.Delete(_tempDir, true);
+                return;
+            }
+            catch (IOException) when (i < 2)
+            {
+                Thread.Sleep(100);
+            }
+            catch
+            {
+                break;
+            }
+        }
     }
 }

@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
 using FluentAssertions;
+using Microsoft.Data.Sqlite;
 
 namespace BotNexus.Gateway.Tests;
 
@@ -51,7 +52,26 @@ public sealed class FileAgentWorkspaceManagerTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_homePath))
-            Directory.Delete(_homePath, recursive: true);
+        SqliteConnection.ClearAllPools();
+
+        if (!Directory.Exists(_homePath))
+            return;
+
+        for (var i = 0; i < 5; i++)
+        {
+            try
+            {
+                Directory.Delete(_homePath, recursive: true);
+                return;
+            }
+            catch (IOException) when (i < 4)
+            {
+                Thread.Sleep(50);
+            }
+            catch
+            {
+                break;
+            }
+        }
     }
 }

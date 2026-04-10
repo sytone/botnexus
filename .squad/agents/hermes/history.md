@@ -63,3 +63,7 @@
 - Tests follow existing xUnit + FluentAssertions patterns from BotNexus.Extensions.Mcp.Tests.
 - Validation: `dotnet test tests\BotNexus.Extensions.McpInvoke.Tests --verbosity quiet` passed (22/22).
 - Commit: c3cf681
+
+## Learnings
+- 2026-04-10: Reliability hardening for flaky tests should prefer bounded retries (`IOException` + short sleep) over single-attempt temp directory deletion in test `Dispose` paths.
+- 2026-04-10: Gateway integration classes need a shared `[Collection("IntegrationTests")]` to avoid parallel port/resource contention, and env-var mutation tests should be grouped under a dedicated xUnit collection.

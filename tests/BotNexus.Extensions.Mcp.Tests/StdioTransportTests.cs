@@ -4,6 +4,10 @@ using FluentAssertions;
 
 namespace BotNexus.Extensions.Mcp.Tests;
 
+[CollectionDefinition("EnvironmentTests")]
+public class EnvironmentTestsCollection { }
+
+[Collection("EnvironmentTests")]
 public class StdioTransportTests
 {
     [Fact]

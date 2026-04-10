@@ -92,8 +92,25 @@ public sealed class FileAgentConfigurationWriterTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_rootPath))
-            Directory.Delete(_rootPath, recursive: true);
+        if (!Directory.Exists(_rootPath))
+            return;
+
+        for (var i = 0; i < 3; i++)
+        {
+            try
+            {
+                Directory.Delete(_rootPath, recursive: true);
+                return;
+            }
+            catch (IOException) when (i < 2)
+            {
+                Thread.Sleep(100);
+            }
+            catch
+            {
+                break;
+            }
+        }
     }
 
     private static AgentDescriptor CreateDescriptor(string agentId)
