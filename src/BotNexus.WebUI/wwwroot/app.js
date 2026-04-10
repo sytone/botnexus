@@ -445,6 +445,12 @@
 
         debugLog('init', `SignalR hub builder created (client v${CLIENT_VERSION})`);
 
+        // Session guard — drop stale events from a session we've already left
+        function isEventForCurrentSession(evt) {
+            if (evt?.sessionId && evt.sessionId !== currentSessionId) return false;
+            return true;
+        }
+
         // Server → Client methods
         connection.on('Connected', (data) => {
             connectionId = data.connectionId;
@@ -471,6 +477,7 @@
         });
 
         connection.on('MessageStart', (evt) => {
+            if (!isEventForCurrentSession(evt)) return;
             // Finalize any previous streaming message before starting new one
             const prevStreaming = elChatMessages.querySelector('.message.assistant.streaming');
             if (prevStreaming) {
@@ -495,6 +502,7 @@
         });
 
         connection.on('ContentDelta', (evt) => {
+            if (!isEventForCurrentSession(evt)) return;
             removeStreamingIndicator();
             markResponseReceived();
             autoCollapseThinking();
@@ -505,18 +513,21 @@
         });
 
         connection.on('ThinkingDelta', (evt) => {
+            if (!isEventForCurrentSession(evt)) return;
             showProcessingStatus('Thinking...', '💭');
             const text = evt?.thinkingContent || evt?.delta || '';
             if (text) handleThinkingDelta({ delta: text });
         });
 
         connection.on('ToolStart', (evt) => {
+            if (!isEventForCurrentSession(evt)) return;
             showProcessingStatus(`Using tool: ${evt.toolName || 'tool'}`, '🔧');
             handleToolStart(evt);
             trackActivity('tool', currentAgentId, `🔧 ${evt.toolName || 'tool'} started`);
         });
 
         connection.on('ToolEnd', (evt) => {
+            if (!isEventForCurrentSession(evt)) return;
             handleToolEnd(evt);
             const remainingTools = Object.values(activeToolCalls).filter(t => t.status === 'running');
             if (remainingTools.length > 0) {
@@ -527,6 +538,7 @@
         });
 
         connection.on('MessageEnd', (evt) => {
+            if (!isEventForCurrentSession(evt)) return;
             markResponseReceived();
             trackActivity('response', currentAgentId, 'Response complete');
             hideProcessingStatus();
@@ -534,6 +546,7 @@
         });
 
         connection.on('Error', (evt) => {
+            if (!isEventForCurrentSession(evt)) return;
             markResponseReceived();
             trackActivity('error', currentAgentId, evt?.message || 'Error');
             hideProcessingStatus();
@@ -542,6 +555,7 @@
 
         // Sub-agent lifecycle events
         connection.on('SubAgentSpawned', (evt) => {
+            if (!isEventForCurrentSession(evt)) return;
             if (!evt?.subAgentId) return;
             activeSubAgents.set(evt.subAgentId, {
                 subAgentId: evt.subAgentId,
@@ -559,6 +573,7 @@
         });
 
         connection.on('SubAgentCompleted', (evt) => {
+            if (!isEventForCurrentSession(evt)) return;
             if (!evt?.subAgentId) return;
             const sa = activeSubAgents.get(evt.subAgentId);
             if (sa) {
@@ -572,6 +587,7 @@
         });
 
         connection.on('SubAgentFailed', (evt) => {
+            if (!isEventForCurrentSession(evt)) return;
             if (!evt?.subAgentId) return;
             const sa = activeSubAgents.get(evt.subAgentId);
             if (sa) {
@@ -585,6 +601,7 @@
         });
 
         connection.on('SubAgentKilled', (evt) => {
+            if (!isEventForCurrentSession(evt)) return;
             if (!evt?.subAgentId) return;
             const sa = activeSubAgents.get(evt.subAgentId);
             if (sa) {
@@ -1713,9 +1730,26 @@
     }
 
     async function openAgentTimeline(agentId, channelType) {
+        // W1.1: Reset streaming state from previous session before any async work
+        isStreaming = false;
+        activeMessageId = null;
+        activeToolCalls = {};
+        activeToolCount = 0;
+        thinkingBuffer = '';
+        toolCallDepth = 0;
+        clearResponseTimeout();
+        stopToolElapsedTimer();
+        hideProcessingStatus();
+        elBtnAbort.classList.add('hidden');
+        removeStreamingIndicator();
+
         elChatMessages.innerHTML = '<div class="loading">Loading timeline...</div>';
 
-        await joinSession(agentId, null);
+        // W1.2: Leave old session without creating a throwaway one
+        if (currentSessionId) {
+            try { await hubInvoke('LeaveSession', currentSessionId); } catch(e) {}
+            currentSessionId = null;
+        }
 
         elSessionsList.querySelectorAll('.list-item').forEach(el => {
             el.classList.toggle('active',
@@ -1791,6 +1825,9 @@
         // Join the most recent session for sending new messages
         const latestSession = channelSessions[channelSessions.length - 1];
         await joinSession(agentId, latestSession.sessionId);
+
+        // W1.4: Restore agent status if it's still working
+        await checkAgentRunningStatus(agentId, latestSession.sessionId);
 
         elChatMeta.textContent = `Agent: ${agentId} · ${totalMessages} messages across ${channelSessions.length} session${channelSessions.length > 1 ? 's' : ''}`;
         updateSessionIdDisplay();
