@@ -6,6 +6,7 @@ using BotNexus.Tools.Utils;
 using BotNexus.Providers.Core.Models;
 using DiffPlex.DiffBuilder;
 using DiffPlex.DiffBuilder.Model;
+using System.IO.Abstractions;
 
 namespace BotNexus.Tools;
 
@@ -13,13 +14,15 @@ public sealed class EditTool : IAgentTool
 {
     private readonly string _workingDirectory;
     private readonly FileMutationQueue _fileMutationQueue;
+    private readonly IFileSystem _fileSystem;
 
-    public EditTool(string workingDirectory)
+    public EditTool(string workingDirectory, IFileSystem? fileSystem = null)
     {
         _workingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
             ? throw new ArgumentException("Working directory cannot be empty.", nameof(workingDirectory))
             : Path.GetFullPath(workingDirectory);
         _fileMutationQueue = FileMutationQueue.Shared;
+        _fileSystem = fileSystem ?? new FileSystem();
     }
 
     public string Name => "edit";
@@ -87,15 +90,15 @@ public sealed class EditTool : IAgentTool
                       ?? throw new ArgumentException("Missing required argument: path.");
         var edits = ReadEdits(arguments);
 
-        var fullPath = PathUtils.ResolvePath(rawPath, _workingDirectory);
-        if (!File.Exists(fullPath))
+        var fullPath = PathUtils.ResolvePath(rawPath, _workingDirectory, _fileSystem);
+        if (!_fileSystem.File.Exists(fullPath))
         {
             throw new FileNotFoundException($"File '{rawPath}' does not exist.", fullPath);
         }
 
         return await _fileMutationQueue.WithFileLockAsync(fullPath, async () =>
         {
-            var originalBytes = await File.ReadAllBytesAsync(fullPath, cancellationToken).ConfigureAwait(false);
+            var originalBytes = _fileSystem.File.ReadAllBytes(fullPath);
             var hasUtf8Bom = HasUtf8Bom(originalBytes);
             var original = Encoding.UTF8.GetString(originalBytes);
             if (hasUtf8Bom && original.StartsWith('\uFEFF'))
@@ -112,9 +115,9 @@ public sealed class EditTool : IAgentTool
                 throw new InvalidOperationException("Edit produced no change — the replacement text is identical to the original.");
             }
 
-            await File.WriteAllTextAsync(fullPath, updatedText, new UTF8Encoding(hasUtf8Bom), cancellationToken).ConfigureAwait(false);
+            _fileSystem.File.WriteAllText(fullPath, updatedText, new UTF8Encoding(hasUtf8Bom));
 
-            var relativePath = PathUtils.GetRelativePath(fullPath, _workingDirectory);
+            var relativePath = PathUtils.GetRelativePath(fullPath, _workingDirectory, _fileSystem);
             var diff = BuildUnifiedDiff(relativePath, normalizedOriginal, updatedNormalized);
             var message = $"Successfully replaced {replacements.Count} block(s) in '{relativePath}'.\n{diff}";
 

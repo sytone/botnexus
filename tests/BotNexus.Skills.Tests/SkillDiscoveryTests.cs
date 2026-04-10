@@ -1,21 +1,21 @@
 using BotNexus.Extensions.Skills;
 using FluentAssertions;
+using System.IO.Abstractions.TestingHelpers;
 
 namespace BotNexus.Extensions.Skills.Tests;
 
-public sealed class SkillDiscoveryTests : IDisposable
+public sealed class SkillDiscoveryTests
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), "botnexus-skill-tests", Guid.NewGuid().ToString("N"));
-
-    public SkillDiscoveryTests() => Directory.CreateDirectory(_tempDir);
+    private readonly MockFileSystem _fileSystem = new();
+    private const string TempDir = @"C:\botnexus-skill-tests";
 
     [Fact]
     public void Discover_GlobalSkills_FindsValidSkills()
     {
-        var globalDir = Path.Combine(_tempDir, "skills");
+        var globalDir = Path.Combine(TempDir, "skills");
         CreateSkill(globalDir, "email-triage", "Classify emails");
 
-        var skills = SkillDiscovery.Discover(globalDir, agentSkillsDir: null, workspaceSkillsDir: null);
+        var skills = SkillDiscovery.Discover(globalDir, agentSkillsDir: null, workspaceSkillsDir: null, _fileSystem);
 
         skills.Should().ContainSingle(s => s.Name == "email-triage");
         skills[0].Source.Should().Be(SkillSource.Global);
@@ -24,12 +24,12 @@ public sealed class SkillDiscoveryTests : IDisposable
     [Fact]
     public void Discover_AgentSkills_OverrideGlobal()
     {
-        var globalDir = Path.Combine(_tempDir, "global");
-        var agentDir = Path.Combine(_tempDir, "agent");
+        var globalDir = Path.Combine(TempDir, "global");
+        var agentDir = Path.Combine(TempDir, "agent");
         CreateSkill(globalDir, "email-triage", "Global version");
         CreateSkill(agentDir, "email-triage", "Agent version");
 
-        var skills = SkillDiscovery.Discover(globalDir, agentDir, workspaceSkillsDir: null);
+        var skills = SkillDiscovery.Discover(globalDir, agentDir, workspaceSkillsDir: null, _fileSystem);
 
         skills.Should().ContainSingle(s => s.Name == "email-triage");
         skills[0].Source.Should().Be(SkillSource.Agent);
@@ -39,14 +39,14 @@ public sealed class SkillDiscoveryTests : IDisposable
     [Fact]
     public void Discover_WorkspaceSkills_OverrideBoth()
     {
-        var globalDir = Path.Combine(_tempDir, "global");
-        var agentDir = Path.Combine(_tempDir, "agent");
-        var wsDir = Path.Combine(_tempDir, "workspace");
+        var globalDir = Path.Combine(TempDir, "global");
+        var agentDir = Path.Combine(TempDir, "agent");
+        var wsDir = Path.Combine(TempDir, "workspace");
         CreateSkill(globalDir, "email-triage", "Global");
         CreateSkill(agentDir, "email-triage", "Agent");
         CreateSkill(wsDir, "email-triage", "Workspace");
 
-        var skills = SkillDiscovery.Discover(globalDir, agentDir, wsDir);
+        var skills = SkillDiscovery.Discover(globalDir, agentDir, wsDir, _fileSystem);
 
         skills.Should().ContainSingle(s => s.Name == "email-triage");
         skills[0].Source.Should().Be(SkillSource.Workspace);
@@ -56,12 +56,12 @@ public sealed class SkillDiscoveryTests : IDisposable
     [Fact]
     public void Discover_MultipleSkills_FromDifferentPaths()
     {
-        var globalDir = Path.Combine(_tempDir, "global");
-        var agentDir = Path.Combine(_tempDir, "agent");
+        var globalDir = Path.Combine(TempDir, "global");
+        var agentDir = Path.Combine(TempDir, "agent");
         CreateSkill(globalDir, "email-triage", "Email");
         CreateSkill(agentDir, "calendar", "Calendar");
 
-        var skills = SkillDiscovery.Discover(globalDir, agentDir, null);
+        var skills = SkillDiscovery.Discover(globalDir, agentDir, null, _fileSystem);
 
         skills.Should().HaveCount(2);
         skills.Should().Contain(s => s.Name == "email-triage");
@@ -71,29 +71,29 @@ public sealed class SkillDiscoveryTests : IDisposable
     [Fact]
     public void Discover_NullPaths_ReturnsEmpty()
     {
-        SkillDiscovery.Discover(null, null, null).Should().BeEmpty();
+        SkillDiscovery.Discover(null, null, null, _fileSystem).Should().BeEmpty();
     }
 
     [Fact]
     public void Discover_NonexistentPaths_ReturnsEmpty()
     {
-        SkillDiscovery.Discover("/nonexistent", null, null).Should().BeEmpty();
+        SkillDiscovery.Discover(@"C:\nonexistent", null, null, _fileSystem).Should().BeEmpty();
     }
 
     [Fact]
     public void Discover_MissingSkillMd_SkipsDirectory()
     {
-        Directory.CreateDirectory(Path.Combine(_tempDir, "skills", "empty-skill"));
-        SkillDiscovery.Discover(Path.Combine(_tempDir, "skills"), null, null).Should().BeEmpty();
+        _fileSystem.Directory.CreateDirectory(Path.Combine(TempDir, "skills", "empty-skill"));
+        SkillDiscovery.Discover(Path.Combine(TempDir, "skills"), null, null, _fileSystem).Should().BeEmpty();
     }
 
     [Fact]
     public void Discover_InvalidSkillName_SkipsSkill()
     {
-        var dir = Path.Combine(_tempDir, "skills");
+        var dir = Path.Combine(TempDir, "skills");
         CreateSkill(dir, "Bad-Name", "Invalid name");
 
-        var skills = SkillDiscovery.Discover(dir, null, null);
+        var skills = SkillDiscovery.Discover(dir, null, null, _fileSystem);
 
         // Name validation should skip this skill (uppercase in directory name)
         skills.Should().BeEmpty();
@@ -102,9 +102,9 @@ public sealed class SkillDiscoveryTests : IDisposable
     [Fact]
     public void Discover_NameMismatch_SkipsSkill()
     {
-        var dir = Path.Combine(_tempDir, "skills", "actual-dir");
-        Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "SKILL.md"), """
+        var dir = Path.Combine(TempDir, "skills", "actual-dir");
+        _fileSystem.Directory.CreateDirectory(dir);
+        _fileSystem.File.WriteAllText(Path.Combine(dir, "SKILL.md"), """
             ---
             name: different-name
             description: Mismatch
@@ -112,7 +112,7 @@ public sealed class SkillDiscoveryTests : IDisposable
             Content
             """);
 
-        var skills = SkillDiscovery.Discover(Path.Combine(_tempDir, "skills"), null, null);
+        var skills = SkillDiscovery.Discover(Path.Combine(TempDir, "skills"), null, null, _fileSystem);
 
         skills.Should().BeEmpty();
     }
@@ -120,16 +120,16 @@ public sealed class SkillDiscoveryTests : IDisposable
     [Fact]
     public void Discover_MissingDescription_SkipsSkill()
     {
-        var dir = Path.Combine(_tempDir, "skills", "no-desc");
-        Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "SKILL.md"), """
+        var dir = Path.Combine(TempDir, "skills", "no-desc");
+        _fileSystem.Directory.CreateDirectory(dir);
+        _fileSystem.File.WriteAllText(Path.Combine(dir, "SKILL.md"), """
             ---
             name: no-desc
             ---
             Content
             """);
 
-        var skills = SkillDiscovery.Discover(Path.Combine(_tempDir, "skills"), null, null);
+        var skills = SkillDiscovery.Discover(Path.Combine(TempDir, "skills"), null, null, _fileSystem);
 
         skills.Should().BeEmpty();
     }
@@ -137,11 +137,11 @@ public sealed class SkillDiscoveryTests : IDisposable
     [Fact]
     public void Discover_OversizedSkillFile_SkipsSkill()
     {
-        var dir = Path.Combine(_tempDir, "skills", "oversized-skill");
-        Directory.CreateDirectory(dir);
+        var dir = Path.Combine(TempDir, "skills", "oversized-skill");
+        _fileSystem.Directory.CreateDirectory(dir);
 
         var oversizedBody = new string('x', 530_000);
-        File.WriteAllText(Path.Combine(dir, "SKILL.md"), $"""
+        _fileSystem.File.WriteAllText(Path.Combine(dir, "SKILL.md"), $"""
             ---
             name: oversized-skill
             description: Oversized
@@ -149,16 +149,16 @@ public sealed class SkillDiscoveryTests : IDisposable
             {oversizedBody}
             """);
 
-        var skills = SkillDiscovery.Discover(Path.Combine(_tempDir, "skills"), null, null);
+        var skills = SkillDiscovery.Discover(Path.Combine(TempDir, "skills"), null, null, _fileSystem);
 
         skills.Should().BeEmpty();
     }
 
-    private static void CreateSkill(string parentDir, string skillName, string description)
+    private void CreateSkill(string parentDir, string skillName, string description)
     {
         var skillDir = Path.Combine(parentDir, skillName);
-        Directory.CreateDirectory(skillDir);
-        File.WriteAllText(Path.Combine(skillDir, "SKILL.md"), $"""
+        _fileSystem.Directory.CreateDirectory(skillDir);
+        _fileSystem.File.WriteAllText(Path.Combine(skillDir, "SKILL.md"), $"""
             ---
             name: {skillName}
             description: {description}
@@ -169,23 +169,4 @@ public sealed class SkillDiscoveryTests : IDisposable
             """);
     }
 
-    public void Dispose()
-    {
-        for (var i = 0; i < 3; i++)
-        {
-            try
-            {
-                Directory.Delete(_tempDir, true);
-                return;
-            }
-            catch (IOException) when (i < 2)
-            {
-                Thread.Sleep(100);
-            }
-            catch
-            {
-                break;
-            }
-        }
-    }
 }

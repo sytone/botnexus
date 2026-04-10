@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using System.IO.Abstractions;
 
 namespace BotNexus.Cron.Tests.TestInfrastructure;
 
@@ -19,7 +20,7 @@ internal sealed class CronStoreTestContext : IAsyncDisposable
     {
         var tempDirectory = Path.Combine(Path.GetTempPath(), "botnexus-cron-tests", Guid.NewGuid().ToString("N"));
         var dbPath = Path.Combine(tempDirectory, "cron.db");
-        var store = new SqliteCronStore(dbPath);
+        var store = new SqliteCronStore(dbPath, new FileSystem());
         await store.InitializeAsync();
         return new CronStoreTestContext(tempDirectory, dbPath, store);
     }

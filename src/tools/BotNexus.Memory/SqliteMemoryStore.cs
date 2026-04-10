@@ -2,14 +2,16 @@ using System.Globalization;
 using System.Text;
 using BotNexus.Memory.Models;
 using Microsoft.Data.Sqlite;
+using System.IO.Abstractions;
 
 namespace BotNexus.Memory;
 
-public sealed class SqliteMemoryStore(string dbPath) : IMemoryStore
+public sealed class SqliteMemoryStore(string dbPath, IFileSystem? fileSystem = null) : IMemoryStore
 {
     private const double DefaultHalfLifeDays = 30d;
     private readonly string _dbPath = dbPath;
     private readonly string _connectionString = $"Data Source={dbPath};Mode=ReadWriteCreate";
+    private readonly IFileSystem _fileSystem = fileSystem ?? new FileSystem();
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private bool _initialized;
 
@@ -24,7 +26,7 @@ public sealed class SqliteMemoryStore(string dbPath) : IMemoryStore
             if (_initialized)
                 return;
 
-            Directory.CreateDirectory(Path.GetDirectoryName(_dbPath) ?? ".");
+            _fileSystem.Directory.CreateDirectory(Path.GetDirectoryName(_dbPath) ?? ".");
             await using var connection = CreateConnection();
             await connection.OpenAsync(ct).ConfigureAwait(false);
 
@@ -318,7 +320,7 @@ public sealed class SqliteMemoryStore(string dbPath) : IMemoryStore
         DateTimeOffset? lastIndexedAt = reader.IsDBNull(1)
             ? null
             : DateTimeOffset.Parse(reader.GetString(1), CultureInfo.InvariantCulture);
-        var sizeBytes = File.Exists(_dbPath) ? new FileInfo(_dbPath).Length : 0L;
+        var sizeBytes = _fileSystem.File.Exists(_dbPath) ? _fileSystem.FileInfo.New(_dbPath).Length : 0L;
         return new MemoryStoreStats(count, sizeBytes, lastIndexedAt);
     }
 

@@ -1,4 +1,5 @@
 using BotNexus.Extensions.Skills.Security;
+using System.IO.Abstractions;
 
 namespace BotNexus.Extensions.Skills;
 
@@ -16,43 +17,45 @@ public static class SkillDiscovery
     public static IReadOnlyList<SkillDefinition> Discover(
         string? globalSkillsDir,
         string? agentSkillsDir,
-        string? workspaceSkillsDir)
+        string? workspaceSkillsDir,
+        IFileSystem? fileSystem = null)
     {
+        var fs = fileSystem ?? new FileSystem();
         var skills = new Dictionary<string, SkillDefinition>(StringComparer.OrdinalIgnoreCase);
 
-        ScanDirectory(skills, globalSkillsDir, SkillSource.Global);
-        ScanDirectory(skills, agentSkillsDir, SkillSource.Agent);
-        ScanDirectory(skills, workspaceSkillsDir, SkillSource.Workspace);
+        ScanDirectory(skills, globalSkillsDir, SkillSource.Global, fs);
+        ScanDirectory(skills, agentSkillsDir, SkillSource.Agent, fs);
+        ScanDirectory(skills, workspaceSkillsDir, SkillSource.Workspace, fs);
 
         return skills.Values.ToList();
     }
 
-    private static void ScanDirectory(Dictionary<string, SkillDefinition> skills, string? directory, SkillSource source)
+    private static void ScanDirectory(Dictionary<string, SkillDefinition> skills, string? directory, SkillSource source, IFileSystem fileSystem)
     {
-        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+        if (string.IsNullOrWhiteSpace(directory) || !fileSystem.Directory.Exists(directory))
             return;
 
-        foreach (var skillDir in Directory.GetDirectories(directory))
+        foreach (var skillDir in fileSystem.Directory.GetDirectories(directory))
         {
             var skillMdPath = Path.Combine(skillDir, SkillFileName);
-            if (!File.Exists(skillMdPath))
+            if (!fileSystem.File.Exists(skillMdPath))
                 continue;
 
             var dirName = Path.GetFileName(skillDir);
             try
             {
-                var skillFileInfo = new FileInfo(skillMdPath);
+                var skillFileInfo = fileSystem.FileInfo.New(skillMdPath);
                 if (skillFileInfo.Length > MaxSkillFileBytes)
                     continue;
 
-                var content = File.ReadAllText(skillMdPath);
+                var content = fileSystem.File.ReadAllText(skillMdPath);
                 var skill = SkillParser.Parse(dirName, content, skillDir, source);
 
                 if (!Validate(skill, dirName))
                     continue;
 
                 // Security scan: block skills with critical findings
-                var scanSummary = SkillSecurityScanner.ScanDirectory(skillDir);
+                var scanSummary = SkillSecurityScanner.ScanDirectory(skillDir, fileSystem: fileSystem);
                 if (scanSummary.Critical > 0)
                     continue;
 

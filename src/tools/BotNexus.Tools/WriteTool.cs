@@ -4,6 +4,7 @@ using BotNexus.AgentCore.Tools;
 using BotNexus.AgentCore.Types;
 using BotNexus.Tools.Utils;
 using BotNexus.Providers.Core.Models;
+using System.IO.Abstractions;
 
 namespace BotNexus.Tools;
 
@@ -24,17 +25,19 @@ public sealed class WriteTool : IAgentTool
 {
     private readonly string _workingDirectory;
     private readonly FileMutationQueue _fileMutationQueue;
+    private readonly IFileSystem _fileSystem;
 
     /// <summary>
     /// Initializes the write tool.
     /// </summary>
     /// <param name="workingDirectory">Repository root used for secure path resolution.</param>
-    public WriteTool(string workingDirectory)
+    public WriteTool(string workingDirectory, IFileSystem? fileSystem = null)
     {
         _workingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
             ? throw new ArgumentException("Working directory cannot be empty.", nameof(workingDirectory))
             : Path.GetFullPath(workingDirectory);
         _fileMutationQueue = FileMutationQueue.Shared;
+        _fileSystem = fileSystem ?? new FileSystem();
     }
 
     /// <inheritdoc />
@@ -95,19 +98,19 @@ public sealed class WriteTool : IAgentTool
         var content = arguments["content"]?.ToString()
                       ?? throw new ArgumentException("Missing required argument: content.");
 
-        var fullPath = PathUtils.ResolvePath(rawPath, _workingDirectory);
+        var fullPath = PathUtils.ResolvePath(rawPath, _workingDirectory, _fileSystem);
         var parent = Path.GetDirectoryName(fullPath);
         if (!string.IsNullOrWhiteSpace(parent))
         {
-            Directory.CreateDirectory(parent);
+            _fileSystem.Directory.CreateDirectory(parent);
         }
 
         return await _fileMutationQueue.WithFileLockAsync(fullPath, async () =>
         {
-            await File.WriteAllTextAsync(fullPath, content, new UTF8Encoding(false), cancellationToken).ConfigureAwait(false);
+            await _fileSystem.File.WriteAllTextAsync(fullPath, content, new UTF8Encoding(false), cancellationToken).ConfigureAwait(false);
 
             var byteCount = Encoding.UTF8.GetByteCount(content);
-            var relativePath = PathUtils.GetRelativePath(fullPath, _workingDirectory);
+            var relativePath = PathUtils.GetRelativePath(fullPath, _workingDirectory, _fileSystem);
             var message = $"Wrote '{relativePath}' ({byteCount} bytes).";
 
             return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, message)]);

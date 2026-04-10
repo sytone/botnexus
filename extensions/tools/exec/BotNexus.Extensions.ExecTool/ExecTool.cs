@@ -6,6 +6,7 @@ using System.Text.Json;
 using BotNexus.AgentCore.Tools;
 using BotNexus.AgentCore.Types;
 using BotNexus.Providers.Core.Models;
+using System.IO.Abstractions;
 
 namespace BotNexus.Extensions.ExecTool;
 
@@ -21,12 +22,14 @@ public sealed class ExecTool : IAgentTool
     private static readonly ConcurrentDictionary<int, ProcessInfo> BackgroundProcesses = new();
 
     private readonly string? _workingDirectory;
+    private readonly IFileSystem _fileSystem;
 
-    public ExecTool(string? workingDirectory = null)
+    public ExecTool(string? workingDirectory = null, IFileSystem? fileSystem = null)
     {
         _workingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
             ? null
             : Path.GetFullPath(workingDirectory);
+        _fileSystem = fileSystem ?? new FileSystem();
     }
 
     /// <inheritdoc />
@@ -141,7 +144,7 @@ public sealed class ExecTool : IAgentTool
         var env = arguments["env"] as IReadOnlyDictionary<string, string>;
         var workingDir = arguments["workingDir"] as string;
 
-        var (fileName, processArgs) = ResolveCommand(command);
+        var (fileName, processArgs) = ResolveCommand(command, _fileSystem);
 
         var startInfo = new ProcessStartInfo
         {
@@ -313,6 +316,11 @@ public sealed class ExecTool : IAgentTool
     /// Resolves command array into fileName and arguments, handling Windows .cmd/.bat shims.
     /// </summary>
     internal static (string FileName, IReadOnlyList<string> Args) ResolveCommand(IReadOnlyList<string> command)
+        => ResolveCommand(command, new FileSystem());
+
+    internal static (string FileName, IReadOnlyList<string> Args) ResolveCommand(
+        IReadOnlyList<string> command,
+        IFileSystem fileSystem)
     {
         var exe = command[0];
         var args = command.Count > 1 ? command.Skip(1).ToList() : new List<string>();
@@ -323,7 +331,7 @@ public sealed class ExecTool : IAgentTool
         }
 
         // On Windows, resolve .cmd/.bat files through cmd.exe
-        var resolved = ResolveWindowsExecutable(exe);
+        var resolved = ResolveWindowsExecutable(exe, fileSystem);
         if (resolved is not null && IsWindowsBatchFile(resolved))
         {
             // Route through cmd.exe /c to handle .cmd/.bat
@@ -335,7 +343,7 @@ public sealed class ExecTool : IAgentTool
         return (resolved ?? exe, args);
     }
 
-    private static string? ResolveWindowsExecutable(string command)
+    private static string? ResolveWindowsExecutable(string command, IFileSystem fileSystem)
     {
         if (Path.HasExtension(command))
         {
@@ -356,7 +364,7 @@ public sealed class ExecTool : IAgentTool
             foreach (var dir in pathDirs)
             {
                 var fullPath = Path.Combine(dir, candidate);
-                if (File.Exists(fullPath))
+                if (fileSystem.File.Exists(fullPath))
                 {
                     return fullPath;
                 }

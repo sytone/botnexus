@@ -4,6 +4,7 @@ using BotNexus.AgentCore.Tools;
 using BotNexus.AgentCore.Types;
 using BotNexus.Tools.Utils;
 using BotNexus.Providers.Core.Models;
+using System.IO.Abstractions;
 
 namespace BotNexus.Tools;
 
@@ -12,12 +13,14 @@ public sealed class ReadTool : IAgentTool
     private const int MaxOutputLines = 2000;
     private const int MaxOutputBytes = 50 * 1024;
     private readonly string _workingDirectory;
+    private readonly IFileSystem _fileSystem;
 
-    public ReadTool(string workingDirectory)
+    public ReadTool(string workingDirectory, IFileSystem? fileSystem = null)
     {
         _workingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
             ? throw new ArgumentException("Working directory cannot be empty.", nameof(workingDirectory))
             : Path.GetFullPath(workingDirectory);
+        _fileSystem = fileSystem ?? new FileSystem();
     }
 
     public string Name => "read";
@@ -91,11 +94,11 @@ public sealed class ReadTool : IAgentTool
 
         var relativePath = arguments["path"]?.ToString()
                            ?? throw new ArgumentException("Missing required argument: path.");
-        var resolvedPath = PathUtils.ResolvePath(relativePath, _workingDirectory);
+        var resolvedPath = PathUtils.ResolvePath(relativePath, _workingDirectory, _fileSystem);
 
-        if (File.Exists(resolvedPath))
+        if (_fileSystem.File.Exists(resolvedPath))
         {
-            var bytes = await File.ReadAllBytesAsync(resolvedPath, cancellationToken).ConfigureAwait(false);
+            var bytes = _fileSystem.File.ReadAllBytes(resolvedPath);
             if (TryGetImageMimeType(resolvedPath, bytes, out var mimeType))
             {
                 var imagePayload = EncodeImage(bytes, mimeType);
@@ -114,9 +117,9 @@ public sealed class ReadTool : IAgentTool
             return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, content)]);
         }
 
-        if (Directory.Exists(resolvedPath))
+        if (_fileSystem.Directory.Exists(resolvedPath))
         {
-            var listing = ListDirectory(resolvedPath);
+            var listing = ListDirectory(resolvedPath, _fileSystem);
             return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, listing)]);
         }
 
@@ -243,17 +246,17 @@ public sealed class ReadTool : IAgentTool
         return false;
     }
 
-    private static string ListDirectory(string fullPath)
+    private static string ListDirectory(string fullPath, IFileSystem fileSystem)
     {
         var root = Path.GetFullPath(fullPath);
-        var entries = Directory
+        var entries = fileSystem.Directory
             .EnumerateFileSystemEntries(root, "*", SearchOption.AllDirectories)
             .Where(path => GetDepth(root, path) <= 2)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .Select(path =>
             {
                 var relative = Path.GetRelativePath(root, path);
-                return Directory.Exists(path) ? $"{relative}{Path.DirectorySeparatorChar}" : relative;
+                return fileSystem.Directory.Exists(path) ? $"{relative}{Path.DirectorySeparatorChar}" : relative;
             })
             .ToList();
 

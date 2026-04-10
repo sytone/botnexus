@@ -1,6 +1,7 @@
 using BotNexus.Memory;
 using BotNexus.Memory.Models;
 using Microsoft.Data.Sqlite;
+using System.IO.Abstractions;
 
 namespace BotNexus.Memory.Tests.TestInfrastructure;
 
@@ -21,7 +22,7 @@ internal sealed class MemoryStoreTestContext : IAsyncDisposable
     {
         var tempDirectory = Path.Combine(Path.GetTempPath(), "botnexus-memory-tests", Guid.NewGuid().ToString("N"));
         var dbPath = Path.Combine(tempDirectory, "memory.db");
-        var store = new SqliteMemoryStore(dbPath);
+        var store = new SqliteMemoryStore(dbPath, new FileSystem());
         await store.InitializeAsync();
         return new MemoryStoreTestContext(tempDirectory, dbPath, store);
     }

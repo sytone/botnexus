@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.IO.Abstractions;
 
 namespace BotNexus.Extensions.Skills.Security;
 
@@ -140,26 +141,31 @@ public static class SkillSecurityScanner
     /// Scans all scannable files in <paramref name="dirPath"/> and returns an
     /// aggregate summary with severity counts.
     /// </summary>
-    public static ScanSummary ScanDirectory(string dirPath, int maxFiles = DefaultMaxFiles, int maxFileBytes = DefaultMaxFileBytes)
+    public static ScanSummary ScanDirectory(
+        string dirPath,
+        int maxFiles = DefaultMaxFiles,
+        int maxFileBytes = DefaultMaxFileBytes,
+        IFileSystem? fileSystem = null)
     {
+        var fs = fileSystem ?? new FileSystem();
         maxFiles = Math.Max(1, maxFiles);
         maxFileBytes = Math.Max(1, maxFileBytes);
 
-        var files = CollectScannableFiles(dirPath, maxFiles);
+        var files = CollectScannableFiles(dirPath, maxFiles, fs);
         var allFindings = new List<ScanFinding>();
         int scannedFiles = 0;
         int critical = 0, warn = 0, info = 0;
 
         foreach (var file in files)
         {
-            var fileInfo = new FileInfo(file);
+            var fileInfo = fs.FileInfo.New(file);
             if (!fileInfo.Exists || fileInfo.Length > maxFileBytes)
                 continue;
 
             string source;
             try
             {
-                source = File.ReadAllText(file);
+                source = fs.File.ReadAllText(file);
             }
             catch
             {
@@ -288,10 +294,10 @@ public static class SkillSecurityScanner
             ? evidence
             : evidence[..EvidenceMaxLength] + "…";
 
-    private static List<string> CollectScannableFiles(string dirPath, int maxFiles)
+    private static List<string> CollectScannableFiles(string dirPath, int maxFiles, IFileSystem fileSystem)
     {
         var files = new List<string>();
-        if (!Directory.Exists(dirPath))
+        if (!fileSystem.Directory.Exists(dirPath))
             return files;
 
         var stack = new Stack<string>();
@@ -302,7 +308,7 @@ public static class SkillSecurityScanner
             var currentDir = stack.Pop();
             try
             {
-                foreach (var entry in Directory.EnumerateFileSystemEntries(currentDir))
+                foreach (var entry in fileSystem.Directory.EnumerateFileSystemEntries(currentDir))
                 {
                     if (files.Count >= maxFiles)
                         break;
@@ -315,11 +321,11 @@ public static class SkillSecurityScanner
                         continue;
                     }
 
-                    if (Directory.Exists(entry))
+                    if (fileSystem.Directory.Exists(entry))
                     {
                         stack.Push(entry);
                     }
-                    else if (File.Exists(entry) && IsScannable(entry))
+                    else if (fileSystem.File.Exists(entry) && IsScannable(entry))
                     {
                         files.Add(entry);
                     }

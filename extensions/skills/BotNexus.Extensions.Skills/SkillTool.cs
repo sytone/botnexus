@@ -4,6 +4,7 @@ using BotNexus.AgentCore.Tools;
 using BotNexus.AgentCore.Types;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Providers.Core.Models;
+using System.IO.Abstractions;
 
 namespace BotNexus.Extensions.Skills;
 
@@ -17,6 +18,7 @@ public sealed class SkillTool(
     string? workspaceSkillsDir,
     SkillsConfig? config) : IAgentTool
 {
+    private readonly IFileSystem _fileSystem = new FileSystem();
     private readonly ConcurrentDictionary<string, byte> _sessionLoaded = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Creates a SkillTool with a static skill list (for testing).</summary>
@@ -29,7 +31,7 @@ public sealed class SkillTool(
     private readonly IReadOnlyList<SkillDefinition>? _staticSkills;
 
     private IReadOnlyList<SkillDefinition> DiscoverSkills()
-        => _staticSkills ?? SkillDiscovery.Discover(globalSkillsDir, agentSkillsDir, workspaceSkillsDir);
+        => _staticSkills ?? SkillDiscovery.Discover(globalSkillsDir, agentSkillsDir, workspaceSkillsDir, _fileSystem);
 
     public string Name => "skills";
     public string Label => "Skill Manager";

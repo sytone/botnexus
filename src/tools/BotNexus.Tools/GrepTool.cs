@@ -6,6 +6,7 @@ using BotNexus.AgentCore.Types;
 using BotNexus.Tools.Utils;
 using BotNexus.Providers.Core.Models;
 using Microsoft.Extensions.FileSystemGlobbing;
+using System.IO.Abstractions;
 
 namespace BotNexus.Tools;
 
@@ -19,12 +20,14 @@ public sealed class GrepTool : IAgentTool
     private const int MaxLineLength = 500;
     private const int BinaryProbeBytes = 4096;
     private readonly string _workingDirectory;
+    private readonly IFileSystem _fileSystem;
 
-    public GrepTool(string workingDirectory)
+    public GrepTool(string workingDirectory, IFileSystem? fileSystem = null)
     {
         _workingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
             ? throw new ArgumentException("Working directory cannot be empty.", nameof(workingDirectory))
             : Path.GetFullPath(workingDirectory);
+        _fileSystem = fileSystem ?? new FileSystem();
     }
 
     public string Name => "grep";
@@ -166,10 +169,10 @@ public sealed class GrepTool : IAgentTool
         var include = arguments.TryGetValue("glob", out var includeObj) ? includeObj?.ToString() : null;
 
         var targetPath = arguments.TryGetValue("path", out var pathObj) && pathObj is not null
-            ? PathUtils.ResolvePath(pathObj.ToString()!, _workingDirectory)
+            ? PathUtils.ResolvePath(pathObj.ToString()!, _workingDirectory, _fileSystem)
             : _workingDirectory;
 
-        if (!Directory.Exists(targetPath) && !File.Exists(targetPath))
+        if (!_fileSystem.Directory.Exists(targetPath) && !_fileSystem.File.Exists(targetPath))
         {
             return new AgentToolResult(
                 [new AgentToolContent(AgentToolContentType.Text, $"Path '{targetPath}' does not exist.")]);
@@ -182,7 +185,7 @@ public sealed class GrepTool : IAgentTool
         var candidateFiles = EnumerateCandidateFiles(targetPath, include)
             .Where(file => !IsInsideGitDirectory(file, _workingDirectory))
             .ToList();
-        var ignoredFiles = PathUtils.GetGitIgnoredPaths(candidateFiles, _workingDirectory);
+        var ignoredFiles = PathUtils.GetGitIgnoredPaths(candidateFiles, _workingDirectory, _fileSystem);
 
         foreach (var file in candidateFiles)
         {
@@ -218,7 +221,7 @@ public sealed class GrepTool : IAgentTool
                         continue;
                     }
 
-                    var relativePath = PathUtils.GetRelativePath(file, _workingDirectory);
+                    var relativePath = PathUtils.GetRelativePath(file, _workingDirectory, _fileSystem);
                     if (contextLines == 0)
                     {
                         matches.Add($"{relativePath}:{lineNumber}: {TruncateLine(allLines[lineNumber - 1])}");
@@ -297,7 +300,7 @@ public sealed class GrepTool : IAgentTool
 
     private IEnumerable<string> EnumerateCandidateFiles(string targetPath, string? include)
     {
-        if (File.Exists(targetPath))
+        if (_fileSystem.File.Exists(targetPath))
         {
             if (MatchesIncludePattern(Path.GetFileName(targetPath), include))
             {
@@ -307,7 +310,7 @@ public sealed class GrepTool : IAgentTool
             yield break;
         }
 
-        foreach (var file in Directory.EnumerateFiles(targetPath, "*", SearchOption.AllDirectories))
+        foreach (var file in _fileSystem.Directory.EnumerateFiles(targetPath, "*", SearchOption.AllDirectories))
         {
             var relativeFromTarget = Path.GetRelativePath(targetPath, file);
             if (MatchesIncludePattern(relativeFromTarget, include))

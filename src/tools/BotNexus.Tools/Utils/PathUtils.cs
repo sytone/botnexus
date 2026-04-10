@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.Abstractions;
 
 namespace BotNexus.Tools.Utils;
 
@@ -29,7 +30,7 @@ public static class PathUtils
     /// <returns>A normalized absolute path guaranteed to remain under <paramref name="workingDirectory"/>.</returns>
     /// <exception cref="ArgumentException">Thrown when inputs are empty.</exception>
     /// <exception cref="InvalidOperationException">Thrown when path traversal escapes the root boundary.</exception>
-    public static string ResolvePath(string relative, string workingDirectory)
+    public static string ResolvePath(string relative, string workingDirectory, IFileSystem? fileSystem = null)
     {
         if (string.IsNullOrWhiteSpace(relative))
         {
@@ -54,7 +55,7 @@ public static class PathUtils
                 $"Path '{relative}' resolves outside working directory '{root}'.");
         }
 
-        var resolvedFinal = ResolveFinalTargetPath(resolved);
+        var resolvedFinal = ResolveFinalTargetPath(resolved, fileSystem);
         if (!IsUnderRoot(resolvedFinal, root))
         {
             throw new UnauthorizedAccessException(
@@ -101,7 +102,7 @@ public static class PathUtils
     /// <param name="fullPath">The full path to convert.</param>
     /// <param name="basePath">The base path to compute relativity from.</param>
     /// <returns>A relative path suitable for user-facing output.</returns>
-    public static string GetRelativePath(string fullPath, string basePath)
+    public static string GetRelativePath(string fullPath, string basePath, IFileSystem? fileSystem = null)
     {
         if (string.IsNullOrWhiteSpace(fullPath))
         {
@@ -131,18 +132,19 @@ public static class PathUtils
     /// 0 = ignored, 1 = not ignored, anything else = git/runtime error.
     /// Errors are treated as non-ignored to keep tool behavior deterministic.
     /// </remarks>
-    public static bool IsGitIgnored(string path, string workingDirectory)
+    public static bool IsGitIgnored(string path, string workingDirectory, IFileSystem? fileSystem = null)
     {
-        var ignored = GetGitIgnoredPaths([path], workingDirectory);
-        var resolvedPath = ResolvePath(path, workingDirectory);
+        var ignored = GetGitIgnoredPaths([path], workingDirectory, fileSystem);
+        var resolvedPath = ResolvePath(path, workingDirectory, fileSystem);
         return ignored.Contains(resolvedPath);
     }
 
-    public static HashSet<string> GetGitIgnoredPaths(IEnumerable<string> paths, string workingDirectory)
+    public static HashSet<string> GetGitIgnoredPaths(IEnumerable<string> paths, string workingDirectory, IFileSystem? fileSystem = null)
     {
+        var fs = fileSystem ?? new FileSystem();
         var resolved = paths
             .Where(static path => !string.IsNullOrWhiteSpace(path))
-            .Select(path => ResolvePath(path, workingDirectory))
+            .Select(path => ResolvePath(path, workingDirectory, fs))
             .Distinct(PathComparer)
             .ToList();
 
@@ -155,7 +157,7 @@ public static class PathUtils
         var relativeToAbsolute = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var path in resolved)
         {
-            var relative = GetRelativePath(path, workingDirectory)
+            var relative = GetRelativePath(path, workingDirectory, fs)
                 .Replace(Path.DirectorySeparatorChar, '/');
             if (!relativeToAbsolute.ContainsKey(relative))
             {
@@ -226,7 +228,7 @@ public static class PathUtils
             }
             else
             {
-                var resolvedIgnored = ResolvePath(relative, workingDirectory);
+                var resolvedIgnored = ResolvePath(relative, workingDirectory, fs);
                 ignored.Add(resolvedIgnored);
             }
         }
@@ -281,8 +283,9 @@ public static class PathUtils
             : path + Path.DirectorySeparatorChar;
     }
 
-    private static string ResolveFinalTargetPath(string fullPath)
+    private static string ResolveFinalTargetPath(string fullPath, IFileSystem? fileSystem)
     {
+        var fs = fileSystem ?? new FileSystem();
         var current = Path.GetFullPath(fullPath);
         var root = Path.GetPathRoot(current);
         if (string.IsNullOrWhiteSpace(root))
@@ -299,9 +302,9 @@ public static class PathUtils
         {
             currentPath = Path.Combine(currentPath, segments[i]);
 
-            if (Directory.Exists(currentPath))
+            if (fs.Directory.Exists(currentPath))
             {
-                var directoryInfo = new DirectoryInfo(currentPath);
+                var directoryInfo = fs.DirectoryInfo.New(currentPath);
                 if (directoryInfo.LinkTarget is not null)
                 {
                     var resolvedTarget = directoryInfo.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? currentPath;
@@ -309,9 +312,9 @@ public static class PathUtils
                     return Path.GetFullPath(currentPath);
                 }
             }
-            else if (File.Exists(currentPath))
+            else if (fs.File.Exists(currentPath))
             {
-                var fileInfo = new FileInfo(currentPath);
+                var fileInfo = fs.FileInfo.New(currentPath);
                 if (fileInfo.LinkTarget is not null)
                 {
                     var resolvedTarget = fileInfo.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? currentPath;

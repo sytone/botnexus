@@ -4,12 +4,13 @@ using System.Text.Json;
 using BotNexus.AgentCore.Types;
 using BotNexus.Extensions.ExecTool;
 using FluentAssertions;
+using System.IO.Abstractions.TestingHelpers;
 
 namespace BotNexus.Extensions.ExecTool.Tests;
 
 public class ExecToolTests : IDisposable
 {
-    private readonly ExecTool _tool = new();
+    private readonly ExecTool _tool = new(fileSystem: new MockFileSystem());
 
     public void Dispose()
     {

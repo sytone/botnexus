@@ -2,6 +2,7 @@ using BotNexus.Cron.Actions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using System.IO.Abstractions;
 
 namespace BotNexus.Cron.Extensions;
 
@@ -13,7 +14,7 @@ public static class CronServiceCollectionExtensions
         services.TryAddSingleton<ICronStore>(sp =>
         {
             var rootPath = ResolveRootPath(sp);
-            return new SqliteCronStore(Path.Combine(rootPath, "cron.sqlite"));
+            return new SqliteCronStore(Path.Combine(rootPath, "cron.sqlite"), new FileSystem());
         });
         services.TryAddSingleton<CronScheduler>();
         services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<CronScheduler>());

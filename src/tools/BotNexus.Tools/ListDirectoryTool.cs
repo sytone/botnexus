@@ -3,6 +3,7 @@ using BotNexus.AgentCore.Tools;
 using BotNexus.AgentCore.Types;
 using BotNexus.Tools.Utils;
 using BotNexus.Providers.Core.Models;
+using System.IO.Abstractions;
 
 namespace BotNexus.Tools;
 
@@ -12,12 +13,14 @@ public sealed class ListDirectoryTool : IAgentTool
     private const int DefaultLimit = MaxEntries;
     private const int MaxOutputBytes = 50 * 1024;
     private readonly string _workingDirectory;
+    private readonly IFileSystem _fileSystem;
 
-    public ListDirectoryTool(string workingDirectory)
+    public ListDirectoryTool(string workingDirectory, IFileSystem? fileSystem = null)
     {
         _workingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
             ? throw new ArgumentException("Working directory cannot be empty.", nameof(workingDirectory))
             : Path.GetFullPath(workingDirectory);
+        _fileSystem = fileSystem ?? new FileSystem();
     }
 
     public string Name => "ls";
@@ -71,13 +74,13 @@ public sealed class ListDirectoryTool : IAgentTool
             : DefaultLimit;
         var limit = Math.Min(requestedLimit, MaxEntries);
 
-        var resolvedPath = PathUtils.ResolvePath(rawPath, _workingDirectory);
-        if (!Directory.Exists(resolvedPath))
+        var resolvedPath = PathUtils.ResolvePath(rawPath, _workingDirectory, _fileSystem);
+        if (!_fileSystem.Directory.Exists(resolvedPath))
         {
             return Task.FromResult(new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, $"Path '{rawPath}' does not exist or is not a directory.")]));
         }
 
-        var entries = EnumerateEntries(resolvedPath, limit, cancellationToken, out var entryLimitReached);
+        var entries = EnumerateEntries(resolvedPath, limit, _fileSystem, cancellationToken, out var entryLimitReached);
 
         if (entries.Count == 0)
         {
@@ -150,7 +153,7 @@ public sealed class ListDirectoryTool : IAgentTool
         };
     }
 
-    private static List<string> EnumerateEntries(string resolvedPath, int limit, CancellationToken cancellationToken, out bool entryLimitReached)
+    private static List<string> EnumerateEntries(string resolvedPath, int limit, IFileSystem fileSystem, CancellationToken cancellationToken, out bool entryLimitReached)
     {
         var entries = new List<string>(Math.Min(limit, MaxEntries));
         entryLimitReached = false;
@@ -158,7 +161,7 @@ public sealed class ListDirectoryTool : IAgentTool
         var topDirectories = new List<string>();
         var topFiles = new List<string>();
 
-        foreach (var entryPath in Directory.EnumerateFileSystemEntries(resolvedPath, "*", SearchOption.TopDirectoryOnly))
+        foreach (var entryPath in fileSystem.Directory.EnumerateFileSystemEntries(resolvedPath, "*", SearchOption.TopDirectoryOnly))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var entryName = Path.GetFileName(entryPath);
@@ -167,7 +170,7 @@ public sealed class ListDirectoryTool : IAgentTool
                 continue;
             }
 
-            if (Directory.Exists(entryPath))
+            if (fileSystem.Directory.Exists(entryPath))
             {
                 topDirectories.Add(entryName);
             }
@@ -191,7 +194,7 @@ public sealed class ListDirectoryTool : IAgentTool
             var childFiles = new List<string>();
             var directoryPath = Path.Combine(resolvedPath, directory);
 
-            foreach (var childPath in Directory.EnumerateFileSystemEntries(directoryPath, "*", SearchOption.TopDirectoryOnly))
+            foreach (var childPath in fileSystem.Directory.EnumerateFileSystemEntries(directoryPath, "*", SearchOption.TopDirectoryOnly))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var childName = Path.GetFileName(childPath);
@@ -200,7 +203,7 @@ public sealed class ListDirectoryTool : IAgentTool
                     continue;
                 }
 
-                if (Directory.Exists(childPath))
+                if (fileSystem.Directory.Exists(childPath))
                 {
                     childDirectories.Add(childName);
                 }
@@ -221,7 +224,7 @@ public sealed class ListDirectoryTool : IAgentTool
                 }
 
                 var grandchildDirectoryPath = Path.Combine(directoryPath, childDirectory);
-                var grandchildFiles = Directory.EnumerateFiles(grandchildDirectoryPath, "*", SearchOption.TopDirectoryOnly)
+                var grandchildFiles = fileSystem.Directory.EnumerateFiles(grandchildDirectoryPath, "*", SearchOption.TopDirectoryOnly)
                     .Select(Path.GetFileName)
                     .Where(name => !string.IsNullOrEmpty(name))
                     .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)

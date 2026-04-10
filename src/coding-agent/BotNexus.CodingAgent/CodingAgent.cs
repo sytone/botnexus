@@ -14,6 +14,7 @@ using BotNexus.Tools.Utils;
 using BotNexus.Providers.Core;
 using BotNexus.Providers.Core.Models;
 using BotNexus.Providers.Core.Registry;
+using System.IO.Abstractions;
 
 namespace BotNexus.CodingAgent;
 
@@ -25,6 +26,7 @@ public static class CodingAgent
         AuthManager authManager,
         LlmClient llmClient,
         ModelRegistry modelRegistry,
+        IFileSystem? fileSystem = null,
         ExtensionRunner? extensionRunner = null,
         IReadOnlyList<IAgentTool>? extensionTools = null,
         IReadOnlyList<string>? skills = null,
@@ -38,14 +40,15 @@ public static class CodingAgent
         }
 
         var root = Path.GetFullPath(workingDirectory);
-        CodingAgentConfig.EnsureDirectories(root);
+        var fs = fileSystem ?? new FileSystem();
+        CodingAgentConfig.EnsureDirectories(fs, root);
 
         var tools = CreateTools(root, config, extensionTools);
         var gitBranch = await GitUtils.GetBranchAsync(root).ConfigureAwait(false);
         var gitStatus = await GitUtils.GetStatusAsync(root).ConfigureAwait(false);
-        var packageManager = PackageManagerDetector.Detect(root);
+        var packageManager = PackageManagerDetector.Detect(fs, root);
         var configDirectoryName = Path.GetFileName(config.ConfigDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        var contextFiles = await ContextFileDiscovery.DiscoverAsync(root, CancellationToken.None, configDirectoryName).ConfigureAwait(false);
+        var contextFiles = await ContextFileDiscovery.DiscoverAsync(fs, root, CancellationToken.None, configDirectoryName).ConfigureAwait(false);
 
         var promptBuilder = new SystemPromptBuilder();
         var systemPrompt = promptBuilder.Build(new SystemPromptContext(
@@ -254,15 +257,16 @@ public static class CodingAgent
 
     private static IReadOnlyList<IAgentTool> CreateTools(string workingDirectory, CodingAgentConfig config, IReadOnlyList<IAgentTool>? extensionTools)
     {
+        var fileSystem = new FileSystem();
         var tools = new List<IAgentTool>
         {
-            new ReadTool(workingDirectory),
-            new ListDirectoryTool(workingDirectory),
-            new WriteTool(workingDirectory),
-            new EditTool(workingDirectory),
+            new ReadTool(workingDirectory, fileSystem),
+            new ListDirectoryTool(workingDirectory, fileSystem),
+            new WriteTool(workingDirectory, fileSystem),
+            new EditTool(workingDirectory, fileSystem),
             new ShellTool(workingDirectory, config.DefaultShellTimeoutSeconds),
             new GlobTool(workingDirectory),
-            new GrepTool(workingDirectory)
+            new GrepTool(workingDirectory, fileSystem)
         };
 
         if (extensionTools is { Count: > 0 })

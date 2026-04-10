@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Hooks;
 using BotNexus.Gateway.Abstractions.Models;
+using System.IO.Abstractions;
 
 namespace BotNexus.Extensions.Skills;
 
@@ -14,6 +15,7 @@ public sealed class SkillPromptHookHandler
 {
     private readonly IAgentWorkspaceManager _workspaceManager;
     private readonly IAgentRegistry _agentRegistry;
+    private readonly IFileSystem _fileSystem;
 
     /// <summary>Skills load after other hooks.</summary>
     public int Priority => 100;
@@ -24,6 +26,7 @@ public sealed class SkillPromptHookHandler
     {
         _workspaceManager = workspaceManager;
         _agentRegistry = agentRegistry;
+        _fileSystem = new FileSystem();
     }
 
     public Task<BeforePromptBuildResult?> HandleAsync(
@@ -43,7 +46,7 @@ public sealed class SkillPromptHookHandler
         var agentSkillsDir = Path.Combine(botnexusHome, "agents", hookEvent.AgentId, "skills");
         var workspaceSkillsDir = Path.Combine(workspacePath, "skills");
 
-        var allSkills = SkillDiscovery.Discover(globalSkillsDir, agentSkillsDir, workspaceSkillsDir);
+        var allSkills = SkillDiscovery.Discover(globalSkillsDir, agentSkillsDir, workspaceSkillsDir, _fileSystem);
         if (allSkills.Count == 0)
             return Task.FromResult<BeforePromptBuildResult?>(null);
 

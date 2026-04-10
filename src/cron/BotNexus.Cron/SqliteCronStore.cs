@@ -1,12 +1,14 @@
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
+using System.IO.Abstractions;
 
 namespace BotNexus.Cron;
 
-public sealed class SqliteCronStore(string dbPath) : ICronStore
+public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = null) : ICronStore
 {
     private readonly string _dbPath = dbPath;
     private readonly string _connectionString = $"Data Source={dbPath};Mode=ReadWriteCreate";
+    private readonly IFileSystem _fileSystem = fileSystem ?? new FileSystem();
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private bool _initialized;
 
@@ -26,7 +28,7 @@ public sealed class SqliteCronStore(string dbPath) : ICronStore
             if (_initialized)
                 return;
 
-            Directory.CreateDirectory(Path.GetDirectoryName(_dbPath) ?? ".");
+            _fileSystem.Directory.CreateDirectory(Path.GetDirectoryName(_dbPath) ?? ".");
             await using var connection = CreateConnection();
             await connection.OpenAsync(ct).ConfigureAwait(false);
 

@@ -2,6 +2,7 @@ using System.Text;
 using BotNexus.Memory.Tests.TestInfrastructure;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
+using System.IO.Abstractions;
 
 namespace BotNexus.Memory.Tests;
 
@@ -181,13 +182,13 @@ public sealed class SqliteMemoryStoreExtendedTests : IDisposable
     {
         var tempDirectory = Path.Combine(Path.GetTempPath(), "botnexus-memory-tests", Guid.NewGuid().ToString("N"));
         var dbPath = Path.Combine(tempDirectory, "memory.db");
-        await using (var store = new SqliteMemoryStore(dbPath))
+        await using (var store = new SqliteMemoryStore(dbPath, new FileSystem()))
         {
             await store.InitializeAsync();
             await store.InsertAsync(MemoryStoreTestContext.CreateEntry("persisted-1", "agent-a", "persist me"));
         }
 
-        await using (var reopened = new SqliteMemoryStore(dbPath))
+        await using (var reopened = new SqliteMemoryStore(dbPath, new FileSystem()))
         {
             await reopened.InitializeAsync();
             var loaded = await reopened.GetByIdAsync("persisted-1");

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.IO.Abstractions;
 
 namespace BotNexus.Memory;
 
@@ -14,7 +15,7 @@ public sealed class MemoryStoreFactory(Func<string, string> dbPathResolver) : IM
         return _stores.GetOrAdd(agentId, id =>
         {
             var dbPath = _dbPathResolver(id);
-            return new SqliteMemoryStore(dbPath);
+            return new SqliteMemoryStore(dbPath, new FileSystem());
         });
     }
 
