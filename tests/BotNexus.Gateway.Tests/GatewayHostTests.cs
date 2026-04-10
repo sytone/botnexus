@@ -7,6 +7,7 @@ using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Sessions;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 
 namespace BotNexus.Gateway.Tests;
@@ -501,6 +502,110 @@ public sealed class GatewayHostTests
     }
 
     [Fact]
+    public async Task GatewayHost_AutoCompaction_TriggersWhenAboveThreshold()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+        var handle = CreatePromptHandle("agent-a", "session-1", "ok");
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync("agent-a", "session-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        var session = new GatewaySession { SessionId = "session-1", AgentId = "agent-a" };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetOrCreateAsync("session-1", "agent-a", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var compactor = new Mock<ISessionCompactor>();
+        compactor.Setup(c => c.ShouldCompact(session, It.IsAny<CompactionOptions>())).Returns(true);
+        compactor.Setup(c => c.CompactAsync(session, It.IsAny<CompactionOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CompactionResult { Summary = string.Empty });
+
+        await using var host = CreateHost(
+            supervisor.Object,
+            router.Object,
+            sessions.Object,
+            new RecordingActivityBroadcaster(),
+            CreateChannelManager(),
+            compactor: compactor.Object);
+
+        await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1"));
+
+        compactor.Verify(c => c.CompactAsync(session, It.IsAny<CompactionOptions>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GatewayHost_AutoCompaction_DoesNotTriggerBelowThreshold()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+        var handle = CreatePromptHandle("agent-a", "session-1", "ok");
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync("agent-a", "session-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        var session = new GatewaySession { SessionId = "session-1", AgentId = "agent-a" };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetOrCreateAsync("session-1", "agent-a", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var compactor = new Mock<ISessionCompactor>();
+        compactor.Setup(c => c.ShouldCompact(session, It.IsAny<CompactionOptions>())).Returns(false);
+
+        await using var host = CreateHost(
+            supervisor.Object,
+            router.Object,
+            sessions.Object,
+            new RecordingActivityBroadcaster(),
+            CreateChannelManager(),
+            compactor: compactor.Object);
+
+        await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1"));
+
+        compactor.Verify(c => c.CompactAsync(session, It.IsAny<CompactionOptions>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GatewayHost_AutoCompaction_FailureDoesNotBlockProcessing()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+        var handle = CreatePromptHandle("agent-a", "session-1", "agent-response");
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync("agent-a", "session-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        var session = new GatewaySession { SessionId = "session-1", AgentId = "agent-a" };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetOrCreateAsync("session-1", "agent-a", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var compactor = new Mock<ISessionCompactor>();
+        compactor.Setup(c => c.ShouldCompact(session, It.IsAny<CompactionOptions>())).Returns(true);
+        compactor.Setup(c => c.CompactAsync(session, It.IsAny<CompactionOptions>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("compaction failed"));
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+
+        await using var host = CreateHost(
+            supervisor.Object,
+            router.Object,
+            sessions.Object,
+            new RecordingActivityBroadcaster(),
+            CreateChannelManager(channel.Object),
+            compactor: compactor.Object);
+
+        await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1"));
+
+        channel.Verify(c => c.SendAsync(
+                It.Is<OutboundMessage>(m => m.Content == "agent-response"),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
     public async Task DispatchAsync_WhenSessionQueueIsFull_ReturnsBusyResponse()
     {
         var router = new Mock<IMessageRouter>();
@@ -647,6 +752,8 @@ public sealed class GatewayHostTests
             new InMemorySessionStore(),
             new RecordingActivityBroadcaster(),
             manager.Object,
+            Mock.Of<ISessionCompactor>(),
+            Options.Create(new CompactionOptions()),
             NullLogger<GatewayHost>.Instance);
 
         await host.StartAsync(CancellationToken.None);
@@ -699,8 +806,19 @@ public sealed class GatewayHostTests
         ISessionStore sessions,
         IActivityBroadcaster activity,
         IChannelManager channelManager,
-        int sessionQueueCapacity = 64)
-        => new(supervisor, router, sessions, activity, channelManager, NullLogger<GatewayHost>.Instance, sessionQueueCapacity);
+        int sessionQueueCapacity = 64,
+        ISessionCompactor? compactor = null,
+        IOptions<CompactionOptions>? compactionOptions = null)
+        => new(
+            supervisor,
+            router,
+            sessions,
+            activity,
+            channelManager,
+            compactor ?? Mock.Of<ISessionCompactor>(),
+            compactionOptions ?? Options.Create(new CompactionOptions()),
+            NullLogger<GatewayHost>.Instance,
+            sessionQueueCapacity);
 
     private static InboundMessage CreateMessage(
         string content,

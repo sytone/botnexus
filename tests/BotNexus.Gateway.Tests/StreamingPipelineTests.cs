@@ -7,6 +7,7 @@ using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Sessions;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 
 namespace BotNexus.Gateway.Tests;
@@ -167,6 +168,8 @@ public sealed class StreamingPipelineTests
             sessionStore,
             activity,
             channelManager.Object,
+            Mock.Of<ISessionCompactor>(),
+            Options.Create(new CompactionOptions()),
             NullLogger<GatewayHost>.Instance);
     }
 

@@ -4,6 +4,8 @@ using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Api.Hubs;
 
@@ -20,6 +22,8 @@ public sealed class GatewayHub : Hub
     private readonly ISessionStore _sessions;
     private readonly IChannelDispatcher _dispatcher;
     private readonly IActivityBroadcaster _activity;
+    private readonly ISessionCompactor _compactor;
+    private readonly IOptions<CompactionOptions> _compactionOptions;
     private readonly ILogger<GatewayHub> _logger;
 
     public GatewayHub(
@@ -28,6 +32,8 @@ public sealed class GatewayHub : Hub
         ISessionStore sessions,
         IChannelDispatcher dispatcher,
         IActivityBroadcaster activity,
+        ISessionCompactor compactor,
+        IOptions<CompactionOptions> compactionOptions,
         ILogger<GatewayHub> logger)
     {
         _supervisor = supervisor;
@@ -35,6 +41,8 @@ public sealed class GatewayHub : Hub
         _sessions = sessions;
         _dispatcher = dispatcher;
         _activity = activity;
+        _compactor = compactor;
+        _compactionOptions = compactionOptions;
         _logger = logger;
     }
 
@@ -124,6 +132,28 @@ public sealed class GatewayHub : Hub
         await _supervisor.StopAsync(agentId, sessionId, CancellationToken.None);
         await _sessions.ArchiveAsync(sessionId, CancellationToken.None);
         await Clients.Caller.SendAsync("SessionReset", new { agentId, sessionId });
+    }
+
+    public async Task<object> CompactSession(string agentId, string sessionId)
+    {
+        var session = await _sessions.GetAsync(sessionId, CancellationToken.None);
+        if (session is null)
+            throw new HubException($"Session '{sessionId}' not found.");
+
+        var requestServices = Context.GetHttpContext()?.RequestServices;
+        var compactor = requestServices?.GetService<ISessionCompactor>() ?? _compactor;
+        var options = requestServices?.GetService<IOptions<CompactionOptions>>()?.Value ?? _compactionOptions.Value;
+
+        var result = await compactor.CompactAsync(session, options, CancellationToken.None);
+        await _sessions.SaveAsync(session, CancellationToken.None);
+
+        return new
+        {
+            summarized = result.EntriesSummarized,
+            preserved = result.EntriesPreserved,
+            tokensBefore = result.TokensBefore,
+            tokensAfter = result.TokensAfter
+        };
     }
 
     public Task<IReadOnlyList<AgentDescriptor>> GetAgents()

@@ -62,7 +62,7 @@ builder.Services.AddOpenTelemetry()
         }
     });
 
-builder.Services.AddBotNexusGateway();
+builder.Services.AddBotNexusGateway(builder.Configuration);
 builder.Services.AddBotNexusCron();
 builder.Services.AddPlatformConfiguration(platformConfigPath);
 builder.Services.Configure<CronOptions>(options =>

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Sessions;
 
 namespace BotNexus.Gateway.Configuration;
 
@@ -52,6 +53,9 @@ public sealed class PlatformConfig
     /// <summary>Session store selection and configuration (legacy root-level form).</summary>
     public SessionStoreConfig? SessionStore { get; set; }
 
+    /// <summary>Session compaction settings (legacy root-level form).</summary>
+    public CompactionOptions? Compaction { get; set; }
+
     /// <summary>CORS settings (legacy root-level form).</summary>
     public CorsConfig? Cors { get; set; }
 
@@ -91,6 +95,10 @@ public sealed class PlatformConfig
     /// <summary>Returns configured session store settings, preferring the nested Gateway section.</summary>
     public SessionStoreConfig? GetSessionStore()
         => Gateway?.SessionStore ?? SessionStore;
+
+    /// <summary>Returns configured compaction settings, preferring the nested Gateway section.</summary>
+    public CompactionOptions? GetCompaction()
+        => Gateway?.Compaction ?? Compaction;
 
     /// <summary>Returns configured CORS settings, preferring the nested Gateway section.</summary>
     public CorsConfig? GetCors()
@@ -137,6 +145,8 @@ public sealed class GatewaySettingsConfig
     public string? SessionsDirectory { get; set; }
     /// <summary>Session store selection and configuration.</summary>
     public SessionStoreConfig? SessionStore { get; set; }
+    /// <summary>Session compaction settings.</summary>
+    public CompactionOptions? Compaction { get; set; }
     /// <summary>CORS settings for browser-based clients.</summary>
     public CorsConfig? Cors { get; set; }
     /// <summary>Per-client request rate limiting settings.</summary>

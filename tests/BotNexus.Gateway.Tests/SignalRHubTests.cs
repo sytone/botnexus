@@ -8,6 +8,7 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 using System.Security.Claims;
 
@@ -238,6 +239,51 @@ public sealed class SignalRHubTests
         sessions.Verify(value => value.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task CompactSession_Hub_ReturnsCompactionStats()
+    {
+        var session = new GatewaySession { SessionId = "session-1", AgentId = "agent-a" };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(value => value.GetAsync("session-1", CancellationToken.None)).ReturnsAsync(session);
+        sessions.Setup(value => value.SaveAsync(session, CancellationToken.None)).Returns(Task.CompletedTask);
+
+        var compactor = new Mock<ISessionCompactor>();
+        compactor.Setup(value => value.CompactAsync(session, It.IsAny<CompactionOptions>(), CancellationToken.None))
+            .ReturnsAsync(new CompactionResult
+            {
+                Summary = "summary",
+                EntriesSummarized = 5,
+                EntriesPreserved = 3,
+                TokensBefore = 2000,
+                TokensAfter = 800
+            });
+
+        var hub = CreateHub(
+            sessions: sessions.Object,
+            compactor: compactor.Object,
+            compactionOptions: Options.Create(new CompactionOptions()));
+
+        var result = await hub.CompactSession("agent-a", "session-1");
+
+        GetPropertyValue<int>(result, "summarized").Should().Be(5);
+        GetPropertyValue<int>(result, "preserved").Should().Be(3);
+        GetPropertyValue<int>(result, "tokensBefore").Should().Be(2000);
+        GetPropertyValue<int>(result, "tokensAfter").Should().Be(800);
+    }
+
+    [Fact]
+    public async Task CompactSession_Hub_SessionNotFound_ThrowsHubException()
+    {
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(value => value.GetAsync("missing", CancellationToken.None)).ReturnsAsync((GatewaySession?)null);
+        var hub = CreateHub(sessions: sessions.Object);
+
+        Func<Task> act = () => hub.CompactSession("agent-a", "missing");
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("Session 'missing' not found.");
+    }
+
     private static GatewayHub CreateHub(
         IHubCallerClients? clients = null,
         IGroupManager? groups = null,
@@ -246,6 +292,8 @@ public sealed class SignalRHubTests
         IActivityBroadcaster? activity = null,
         IAgentRegistry? registry = null,
         IAgentSupervisor? supervisor = null,
+        ISessionCompactor? compactor = null,
+        IOptions<CompactionOptions>? compactionOptions = null,
         string connectionId = "conn-test")
     {
         var hub = new GatewayHub(
@@ -254,6 +302,8 @@ public sealed class SignalRHubTests
             sessions ?? Mock.Of<ISessionStore>(),
             dispatcher ?? Mock.Of<IChannelDispatcher>(),
             activity ?? Mock.Of<IActivityBroadcaster>(),
+            compactor ?? Mock.Of<ISessionCompactor>(),
+            compactionOptions ?? Options.Create(new CompactionOptions()),
             NullLogger<GatewayHub>.Instance)
         {
             Clients = clients ?? Mock.Of<IHubCallerClients>(),

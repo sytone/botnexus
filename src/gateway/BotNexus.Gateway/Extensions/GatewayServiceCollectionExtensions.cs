@@ -19,11 +19,13 @@ using BotNexus.Gateway.Security;
 using BotNexus.Channels.Core;
 using BotNexus.Extensions.Skills;
 using BotNexus.Memory;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using System.Globalization;
 using System.IO.Abstractions;
 
 namespace BotNexus.Gateway.Extensions;
@@ -43,12 +45,31 @@ public static class GatewayServiceCollectionExtensions
     /// Consumers can replace it by registering their own <see cref="ISessionStore"/> implementation
     /// before or after calling this method.
     /// </remarks>
-    public static IServiceCollection AddBotNexusGateway(this IServiceCollection services, Action<GatewayOptions>? configure = null)
+    public static IServiceCollection AddBotNexusGateway(
+        this IServiceCollection services,
+        IConfiguration? config = null,
+        Action<GatewayOptions>? configure = null)
     {
         services.AddOptions<GatewayOptions>();
         services.AddOptions<SessionCleanupOptions>();
+        services.AddOptions<CompactionOptions>();
         if (configure is not null)
             services.Configure(configure);
+        if (config is not null)
+        {
+            var compactionSection = config.GetSection("gateway:compaction");
+            if (compactionSection.Exists())
+            {
+                services.AddSingleton<IOptions<CompactionOptions>>(_ => Options.Create(new CompactionOptions
+                {
+                    PreservedTurns = ParseInt(compactionSection["preservedTurns"], new CompactionOptions().PreservedTurns),
+                    MaxSummaryChars = ParseInt(compactionSection["maxSummaryChars"], new CompactionOptions().MaxSummaryChars),
+                    TokenThresholdRatio = ParseDouble(compactionSection["tokenThresholdRatio"], new CompactionOptions().TokenThresholdRatio),
+                    ContextWindowTokens = ParseInt(compactionSection["contextWindowTokens"], new CompactionOptions().ContextWindowTokens),
+                    SummarizationModel = ParseString(compactionSection["summarizationModel"], new CompactionOptions().SummarizationModel)
+                }));
+            }
+        }
 
         // Core services
         services.TryAddSingleton<IFileSystem, FileSystem>();
@@ -75,6 +96,7 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IConfigPathResolver, ConfigPathResolver>();
         services.TryAddSingleton<IChannelManager, ChannelManager>();
         services.TryAddSingleton<ISessionStore, InMemorySessionStore>();
+        services.AddSingleton<ISessionCompactor, LlmSessionCompactor>();
         services.AddSingleton<IActivityBroadcaster, InMemoryActivityBroadcaster>();
         services.AddSingleton<IGatewayAuthHandler, ApiKeyGatewayAuthHandler>();
         services.AddSingleton<IModelFilter, ConfigModelFilter>();
@@ -169,6 +191,10 @@ public static class GatewayServiceCollectionExtensions
         {
             services.PostConfigure<GatewayOptions>(options => options.DefaultAgentId = defaultAgentId);
         }
+        if (config.GetCompaction() is { } compaction)
+        {
+            services.AddSingleton<IOptions<CompactionOptions>>(_ => Options.Create(compaction));
+        }
 
         ConfigureSessionStore(services, config, configDirectory);
 
@@ -213,10 +239,22 @@ public static class GatewayServiceCollectionExtensions
         target.AgentsDirectory = source.AgentsDirectory;
         target.SessionsDirectory = source.SessionsDirectory;
         target.SessionStore = source.SessionStore;
+        target.Compaction = source.Compaction;
         target.Cors = source.Cors;
         target.Cron = source.Cron;
         target.LogLevel = source.LogLevel;
     }
+
+    private static int ParseInt(string? value, int defaultValue)
+        => int.TryParse(value, out var parsed) ? parsed : defaultValue;
+
+    private static double ParseDouble(string? value, double defaultValue)
+        => double.TryParse(value, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : defaultValue;
+
+    private static string? ParseString(string? value, string? defaultValue)
+        => string.IsNullOrWhiteSpace(value) ? defaultValue : value;
 
     private static void ConfigureSessionStore(IServiceCollection services, PlatformConfig config, string configDirectory)
     {

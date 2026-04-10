@@ -13,6 +13,7 @@ using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Streaming;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway;
 
@@ -25,6 +26,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
     private const int DefaultSessionQueueCapacity = 64;
     private const string BusyMessage = "Session is busy processing messages. Please retry shortly.";
     private const string ControlSteer = "steer";
+    private const string ControlCompact = "compact";
     private const string SystemPromptInitializedMetadataKey = "systemPromptInitialized";
 
     private readonly IAgentSupervisor _supervisor;
@@ -32,6 +34,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
     private readonly ISessionStore _sessions;
     private readonly IActivityBroadcaster _activity;
     private readonly IChannelManager _channelManager;
+    private readonly ISessionCompactor _compactor;
+    private readonly IOptions<CompactionOptions> _compactionOptions;
     private readonly ILogger<GatewayHost> _logger;
     private readonly SessionLifecycleEvents? _sessionLifecycleEvents;
     private readonly ConcurrentDictionary<string, SessionQueueState> _sessionQueues = new(StringComparer.OrdinalIgnoreCase);
@@ -42,6 +46,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         ISessionStore sessions,
         IActivityBroadcaster activity,
         IChannelManager channelManager,
+        ISessionCompactor compactor,
+        IOptions<CompactionOptions> compactionOptions,
         ILogger<GatewayHost> logger,
         int sessionQueueCapacity = DefaultSessionQueueCapacity,
         SessionLifecycleEvents? sessionLifecycleEvents = null)
@@ -51,6 +57,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         _sessions = sessions;
         _activity = activity;
         _channelManager = channelManager;
+        _compactor = compactor;
+        _compactionOptions = compactionOptions;
         _logger = logger;
         _sessionLifecycleEvents = sessionLifecycleEvents;
         SessionQueueCapacity = Math.Max(sessionQueueCapacity, 1);
@@ -235,15 +243,38 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 continue;
             }
 
-            if (TryGetControlCommand(message, out var controlCommand) &&
-                string.Equals(controlCommand, ControlSteer, StringComparison.OrdinalIgnoreCase))
+            if (TryGetControlCommand(message, out var controlCommand))
             {
-                if (await HandleSteeringAsync(message, agentId, sessionId, cancellationToken))
+                if (string.Equals(controlCommand, ControlSteer, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (await HandleSteeringAsync(message, agentId, sessionId, cancellationToken))
+                        continue;
+                    // Agent not running — fall through to normal message processing.
+                }
+                else if (string.Equals(controlCommand, ControlCompact, StringComparison.OrdinalIgnoreCase))
+                {
+                    await HandleCompactionAsync(message, session, sessionId, cancellationToken);
                     continue;
-                // Agent not running — fall through to normal message processing.
+                }
             }
 
             session.AddEntry(new SessionEntry { Role = "user", Content = message.Content });
+            if (_compactor.ShouldCompact(session, _compactionOptions.Value))
+            {
+                _logger.LogInformation("Auto-compacting session {SessionId}", sessionId);
+                try
+                {
+                    var result = await _compactor.CompactAsync(session, _compactionOptions.Value, cancellationToken);
+                    await _sessions.SaveAsync(session, cancellationToken);
+                    _logger.LogInformation(
+                        "Session {SessionId} compacted: {Summarized} entries summarized, {Preserved} preserved",
+                        sessionId, result.EntriesSummarized, result.EntriesPreserved);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Auto-compaction failed for session {SessionId}, continuing without compaction", sessionId);
+                }
+            }
 
             try
             {
@@ -426,6 +457,28 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
 
         _logger.LogInformation("Steering message injected for agent {AgentId} session {SessionId}", agentId, sessionId);
         return true;
+    }
+
+    private async Task HandleCompactionAsync(
+        InboundMessage message,
+        GatewaySession session,
+        string sessionId,
+        CancellationToken cancellationToken)
+    {
+        var result = await _compactor.CompactAsync(session, _compactionOptions.Value, cancellationToken);
+        await _sessions.SaveAsync(session, cancellationToken);
+
+        var feedback = $"Session compacted: {result.EntriesSummarized} entries summarized, {result.EntriesPreserved} preserved.";
+        if (ResolveChannelAdapter(message.ChannelType) is { } channel)
+        {
+            await channel.SendAsync(new OutboundMessage
+            {
+                ChannelType = message.ChannelType,
+                ConversationId = message.ConversationId,
+                Content = feedback,
+                SessionId = sessionId
+            }, cancellationToken);
+        }
     }
 
     private static bool TryGetControlCommand(InboundMessage message, out string? command)

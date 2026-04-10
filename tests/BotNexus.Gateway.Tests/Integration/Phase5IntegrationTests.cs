@@ -11,6 +11,7 @@ using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Api;
 using BotNexus.Gateway.Api.Controllers;
 using BotNexus.Gateway.Agents;
@@ -165,6 +166,8 @@ public sealed class Phase5IntegrationTests
             sessions,
             activity,
             manager.Object,
+            Mock.Of<ISessionCompactor>(),
+            Options.Create(new CompactionOptions()),
             NullLogger<GatewayHost>.Instance);
 
         await host.DispatchAsync(new InboundMessage

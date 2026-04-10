@@ -479,6 +479,39 @@ public sealed class PlatformConfigurationTests
     }
 
     [Fact]
+    public void AddPlatformConfiguration_WithCompactionConfigured_BindsCompactionOptions()
+    {
+        using var fixture = new PlatformConfigFixture(new PlatformConfig
+        {
+            Gateway = new GatewaySettingsConfig
+            {
+                Compaction = new CompactionOptions
+                {
+                    PreservedTurns = 5,
+                    MaxSummaryChars = 2000,
+                    TokenThresholdRatio = 0.4,
+                    ContextWindowTokens = 64000,
+                    SummarizationModel = "gpt-4.1-mini"
+                }
+            }
+        });
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddBotNexusGateway();
+        services.AddPlatformConfiguration(fixture.ConfigPath);
+
+        using var provider = services.BuildServiceProvider();
+        var compaction = provider.GetRequiredService<IOptions<CompactionOptions>>().Value;
+
+        compaction.PreservedTurns.Should().Be(5);
+        compaction.MaxSummaryChars.Should().Be(2000);
+        compaction.TokenThresholdRatio.Should().Be(0.4);
+        compaction.ContextWindowTokens.Should().Be(64000);
+        compaction.SummarizationModel.Should().Be("gpt-4.1-mini");
+    }
+
+    [Fact]
     public async Task PlatformConfigLoader_LoadAsync_WithMissingOptionalSections_UsesDefaultsAndValidates()
     {
         using var fixture = new PlatformConfigFixture();
@@ -612,6 +645,7 @@ public sealed class PlatformConfigurationTests
                 config.AgentsDirectory = configOverride.AgentsDirectory ?? config.AgentsDirectory;
                 config.SessionsDirectory = configOverride.SessionsDirectory ?? config.SessionsDirectory;
                 config.SessionStore = configOverride.SessionStore ?? config.SessionStore;
+                config.Compaction = configOverride.Compaction ?? config.Compaction;
                 config.LogLevel = configOverride.LogLevel ?? config.LogLevel;
             }
 

@@ -6,9 +6,11 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Routing;
+using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Sessions;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 
 namespace BotNexus.Gateway.Tests.Integration;
@@ -191,6 +193,8 @@ public sealed class CopilotIntegrationTests
                 sessions,
                 activity,
                 channels.Object,
+                Mock.Of<ISessionCompactor>(),
+                Options.Create(new CompactionOptions()),
                 NullLogger<GatewayHost>.Instance),
             channel,
             sessions,
