@@ -138,6 +138,9 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             tools.Add(new SessionTool(sessionStore, descriptor.AgentId, sessionAccessLevel, sessionAllowedAgents));
         }
 
+        var delayToolOptions = _serviceProvider.GetService<IOptions<DelayToolOptions>>() ?? Options.Create(new DelayToolOptions());
+        tools.Add(new DelayTool(delayToolOptions));
+
         var subAgentOptions = _serviceProvider.GetService<IOptions<GatewayOptions>>()?.Value.SubAgents;
         var subAgentManager = _serviceProvider.GetService<ISubAgentManager>();
         var isSubAgentSession = context.SessionId.Contains("::subagent::", StringComparison.OrdinalIgnoreCase);

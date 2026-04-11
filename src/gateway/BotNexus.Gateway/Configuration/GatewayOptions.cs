@@ -26,4 +26,9 @@ public sealed class GatewayOptions
     /// Options controlling session pre-warming and multi-session subscription behavior.
     /// </summary>
     public SessionWarmupOptions SessionWarmup { get; set; } = new();
+
+    /// <summary>
+    /// Options controlling the built-in delay/wait tool.
+    /// </summary>
+    public DelayToolOptions DelayTool { get; set; } = new();
 }

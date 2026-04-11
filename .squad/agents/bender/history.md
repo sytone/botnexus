@@ -253,3 +253,8 @@
 - Deprecated globals: `isStreaming`, `activeMessageId`, `activeToolCalls`, `activeToolCount`, `thinkingBuffer`, `toolCallDepth`
 
 **Validation:** `node --check` ✅, `dotnet build --verbosity quiet` ✅ (0 errors)
+### 2026-04-11 — Gateway DelayTool implementation
+- Added DelayToolOptions and wired GatewayOptions.DelayTool default config (MaxDelaySeconds=1800, DefaultDelaySeconds=60).
+- Implemented DelayTool (delay) with required seconds, optional eason, argument validation, clamped wait bounds, Task.Delay execution, progress update callback, and graceful cancellation result text.
+- Registered delay config binding in gateway DI and added DelayTool to in-process agent tool assembly so it is available to all agents by default.
+- Validation: dotnet build Q:\repos\botnexus --verbosity quiet ✅
