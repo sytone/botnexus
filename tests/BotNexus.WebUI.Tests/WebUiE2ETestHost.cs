@@ -22,71 +22,31 @@ namespace BotNexus.WebUI.Tests;
 
 internal sealed class WebUiE2ETestHost : IAsyncDisposable
 {
-    private const string AgentA = "agent-a";
-    private const string AgentB = "agent-b";
     private readonly RecordingAgentSupervisor _supervisor;
     private readonly TestSubAgentManager _subAgentManager;
-    private KestrelWebApplicationFactory<Program>? _factory;
-    private IPlaywright? _playwright;
-    private IBrowser? _browser;
+    private readonly IBrowserContext _browserContext;
 
-    private WebUiE2ETestHost(RecordingAgentSupervisor supervisor, TestSubAgentManager subAgentManager)
+    internal WebUiE2ETestHost(
+        RecordingAgentSupervisor supervisor,
+        TestSubAgentManager subAgentManager,
+        HttpClient apiClient,
+        string baseUrl,
+        IBrowserContext browserContext,
+        IPage page)
     {
         _supervisor = supervisor;
         _subAgentManager = subAgentManager;
+        ApiClient = apiClient;
+        BaseUrl = baseUrl;
+        _browserContext = browserContext;
+        Page = page;
     }
 
-    public required HttpClient ApiClient { get; init; }
-    public required IPage Page { get; init; }
-    public required string BaseUrl { get; init; }
+    public HttpClient ApiClient { get; }
+    public IPage Page { get; }
+    public string BaseUrl { get; }
     public RecordingAgentSupervisor Supervisor => _supervisor;
     public TestSubAgentManager SubAgentManager => _subAgentManager;
-
-    public static async Task<WebUiE2ETestHost> StartAsync()
-    {
-        var supervisor = new RecordingAgentSupervisor();
-        var subAgentManager = new TestSubAgentManager();
-        var factory = CreateFactory(supervisor, subAgentManager);
-        var apiClient = factory.CreateKestrelClient();
-
-        await RegisterAgentAsync(apiClient, AgentA);
-        await RegisterAgentAsync(apiClient, AgentB);
-
-        var baseUrl = factory.RootUri.TrimEnd('/');
-
-        IPlaywright playwright;
-        IBrowser browser;
-        try
-        {
-            playwright = await Playwright.CreateAsync();
-            browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
-            {
-                Headless = true
-            });
-        }
-        catch (PlaywrightException ex)
-        {
-            throw new InvalidOperationException($"Playwright browsers not installed. Run: pwsh bin/Debug/net10.0/playwright.ps1 install chromium. {ex.Message}", ex);
-        }
-
-        var page = await browser.NewPageAsync();
-        await page.GotoAsync(baseUrl, new PageGotoOptions { WaitUntil = WaitUntilState.DOMContentLoaded });
-        await page.Locator("#connection-status.connected").WaitForAsync(new LocatorWaitForOptions { Timeout = 15000 });
-
-        var host = new WebUiE2ETestHost(supervisor, subAgentManager)
-        {
-            ApiClient = apiClient,
-            Page = page,
-            BaseUrl = baseUrl,
-            _factory = factory,
-            _playwright = playwright,
-            _browser = browser
-        };
-
-        await host.WaitForAgentEntryAsync(AgentA);
-        await host.WaitForAgentEntryAsync(AgentB);
-        return host;
-    }
 
     public async Task WaitForAgentEntryAsync(string agentId)
     {
@@ -207,65 +167,7 @@ internal sealed class WebUiE2ETestHost : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (_browser is not null)
-            await _browser.DisposeAsync();
-
-        _playwright?.Dispose();
-        ApiClient.Dispose();
-
-        if (_factory is not null)
-            await _factory.DisposeAsync();
-    }
-
-    private static KestrelWebApplicationFactory<Program> CreateFactory(RecordingAgentSupervisor supervisor, TestSubAgentManager subAgentManager)
-    {
-        var rootUri = GetEphemeralLoopbackUrl();
-        return new KestrelWebApplicationFactory<Program>(rootUri, builder =>
-        {
-            builder.UseEnvironment("Development");
-            builder.ConfigureServices(services =>
-            {
-                var hostedServices = services.Where(d => d.ServiceType == typeof(IHostedService)).ToList();
-                foreach (var descriptor in hostedServices)
-                    services.Remove(descriptor);
-
-                services.RemoveAll<IAgentConfigurationWriter>();
-                services.AddSingleton<IAgentConfigurationWriter, NoOpAgentConfigurationWriter>();
-
-                services.RemoveAll<IAgentSupervisor>();
-                services.AddSingleton<IAgentSupervisor>(supervisor);
-
-                services.RemoveAll<ISessionStore>();
-                services.AddSingleton<ISessionStore, InMemorySessionStore>();
-
-                services.RemoveAll<ISubAgentManager>();
-                services.AddSingleton<ISubAgentManager>(subAgentManager);
-            });
-        });
-    }
-
-    private static string GetEphemeralLoopbackUrl()
-    {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return $"http://127.0.0.1:{port}";
-    }
-
-    private static async Task RegisterAgentAsync(HttpClient client, string agentId)
-    {
-        var descriptor = new AgentDescriptor
-        {
-            AgentId = agentId,
-            DisplayName = $"Test Agent {agentId}",
-            ModelId = "gpt-4.1",
-            ApiProvider = "copilot",
-            IsolationStrategy = "in-process"
-        };
-
-        var response = await client.PostAsJsonAsync("/api/agents", descriptor);
-        response.StatusCode.Should().BeOneOf(HttpStatusCode.Created, HttpStatusCode.Conflict);
+        await _browserContext.DisposeAsync();
     }
 }
 
@@ -451,6 +353,15 @@ internal sealed class RecordingAgentSupervisor : IAgentSupervisor
 
     public void SetStatus(string agentId, string sessionId, AgentInstanceStatus status)
         => _statuses[(agentId, sessionId)] = status;
+
+    public void Reset()
+    {
+        _dispatches.Clear();
+        _agentPlans.Clear();
+        _sessionPlans.Clear();
+        _handles.Clear();
+        _statuses.Clear();
+    }
 }
 
 internal sealed class RecordingAgentHandle(string agentId, string sessionId, RecordingAgentSupervisor supervisor) : IAgentHandle
@@ -772,5 +683,15 @@ internal sealed class TestSubAgentManager : ISubAgentManager
         }
 
         return Task.CompletedTask;
+    }
+
+    public void Reset()
+    {
+        lock (_gate)
+        {
+            _byParentSession.Clear();
+            _bySubAgentId.Clear();
+            _killRequests.Clear();
+        }
     }
 }

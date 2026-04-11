@@ -4,22 +4,19 @@ using Microsoft.Playwright;
 namespace BotNexus.WebUI.Tests;
 
 [Trait("Category", "E2E")]
-public sealed class AddAgentFormE2ETests : IAsyncLifetime
+[Collection("Playwright")]
+public sealed class AddAgentFormE2ETests
 {
-    private WebUiE2ETestHost? _host;
+    private readonly PlaywrightFixture _fixture;
 
-    public async Task InitializeAsync() => _host = await WebUiE2ETestHost.StartAsync();
-
-    public async Task DisposeAsync()
+    public AddAgentFormE2ETests(PlaywrightFixture fixture)
     {
-        if (_host is not null)
-            await _host.DisposeAsync();
+        _fixture = fixture;
     }
-
-    [PlaywrightFact(Timeout = 90000)]
+[PlaywrightFact(Timeout = 90000)]
     public async Task AddButton_OpensModal()
     {
-        var host = GetHost();
+        await using var host = await _fixture.CreatePageAsync();
         await host.Page.ClickAsync("#btn-add-agent");
         await Assertions.Expect(host.Page.Locator("#agent-form-modal")).ToBeVisibleAsync();
     }
@@ -27,7 +24,7 @@ public sealed class AddAgentFormE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task SaveAgent_ValidationError()
     {
-        var host = GetHost();
+        await using var host = await _fixture.CreatePageAsync();
         await host.Page.ClickAsync("#btn-add-agent");
         await host.Page.ClickAsync("#btn-save-agent");
         await Assertions.Expect(host.Page.Locator("#form-feedback")).ToContainTextAsync("required");
@@ -36,7 +33,7 @@ public sealed class AddAgentFormE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task SaveAgent_Success_ClosesModal()
     {
-        var host = GetHost();
+        await using var host = await _fixture.CreatePageAsync();
         await host.Page.ClickAsync("#btn-add-agent");
 
         var agentName = $"agent-p1-{Guid.NewGuid():N}".Substring(0, 18);
@@ -51,7 +48,7 @@ public sealed class AddAgentFormE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task ProviderChange_LoadsModels()
     {
-        var host = GetHost();
+        await using var host = await _fixture.CreatePageAsync();
         await host.Page.ClickAsync("#btn-add-agent");
 
         await SelectFirstProviderAsync(host.Page);
@@ -92,7 +89,7 @@ public sealed class AddAgentFormE2ETests : IAsyncLifetime
 
         throw new TimeoutException(timeoutMessage);
     }
-
-    private WebUiE2ETestHost GetHost()
-        => _host ?? throw new InvalidOperationException("Playwright host was not initialized.");
 }
+
+
+

@@ -4,20 +4,17 @@ using Microsoft.Playwright;
 namespace BotNexus.WebUI.Tests;
 
 [Trait("Category", "E2E")]
-public sealed class ToolCallDisplayE2ETests : IAsyncLifetime
+[Collection("Playwright")]
+public sealed class ToolCallDisplayE2ETests
 {
     private const string AgentA = "agent-a";
-    private WebUiE2ETestHost? _host;
+    private readonly PlaywrightFixture _fixture;
 
-    public async Task InitializeAsync() => _host = await WebUiE2ETestHost.StartAsync();
-
-    public async Task DisposeAsync()
+    public ToolCallDisplayE2ETests(PlaywrightFixture fixture)
     {
-        if (_host is not null)
-            await _host.DisposeAsync();
+        _fixture = fixture;
     }
-
-    [PlaywrightFact(Timeout = 90000)]
+[PlaywrightFact(Timeout = 90000)]
     public async Task ToolStart_ShowsRunningBadge()
     {
         var host = await OpenChatAsync();
@@ -126,15 +123,11 @@ public sealed class ToolCallDisplayE2ETests : IAsyncLifetime
 
     private async Task<WebUiE2ETestHost> OpenChatAsync()
     {
-        var host = GetHost();
+        var host = await _fixture.CreatePageAsync();
         await host.OpenAgentTimelineAsync(AgentA);
         return host;
     }
-
-    private WebUiE2ETestHost GetHost()
-        => _host ?? throw new InvalidOperationException("Playwright host was not initialized.");
-
-    private static Task SetToolsVisibilityAsync(WebUiE2ETestHost host, bool visible)
+private static Task SetToolsVisibilityAsync(WebUiE2ETestHost host, bool visible)
         => host.Page.EvaluateAsync(
             @"(isVisible) => {
                 const toggle = document.querySelector('#toggle-tools');
@@ -144,3 +137,6 @@ public sealed class ToolCallDisplayE2ETests : IAsyncLifetime
             }",
             visible);
 }
+
+
+

@@ -159,3 +159,8 @@
 - Validation:
   - `dotnet build tests\BotNexus.WebUI.Tests\BotNexus.WebUI.Tests.csproj --verbosity quiet` ✅
   - `BOTNEXUS_RUN_PLAYWRIGHT_E2E=1 dotnet test tests\BotNexus.WebUI.Tests\BotNexus.WebUI.Tests.csproj --verbosity normal` ✅ (39/39 passed)
+## 2026-04-11 - Playwright P1 WebUI interaction coverage (Hermes)
+- Added 11 new P1 E2E classes in 	ests/BotNexus.WebUI.Tests: ThinkingDisplay (5), ToolCallDisplay (6), CommandPalette (7), CopyInteractions (2), SubAgentPanel (5), AgentConfig (3), AddAgentForm (4), ModelSelector (3), ModalDialog (2), ErrorHandling (3), HistoryPagination (2).
+- Extended WebUiE2ETestHost with TestSubAgentManager injection so sub-agent list/kill behaviors are deterministic in tests.
+- Updated src/BotNexus.WebUI/wwwroot/app.js sub-agent status rendering to handle numeric enum payloads from API responses (Running/Completed/Failed/Killed/TimedOut mapping).
+- Validation: dotnet build tests\BotNexus.WebUI.Tests\BotNexus.WebUI.Tests.csproj --verbosity quiet ✅ and BOTNEXUS_RUN_PLAYWRIGHT_E2E=1 dotnet test tests\BotNexus.WebUI.Tests\BotNexus.WebUI.Tests.csproj --verbosity minimal --tl:off ✅ (81/81 passed).

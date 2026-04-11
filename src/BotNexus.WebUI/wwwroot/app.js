@@ -2259,21 +2259,32 @@
         elSubAgentCountBadge.textContent = count;
         elSubAgentCountBadge.classList.toggle('empty', count === 0);
 
+        const normalizeSubAgentStatus = (status) => {
+            if (typeof status === 'number') {
+                const map = ['Running', 'Completed', 'Failed', 'Killed', 'TimedOut'];
+                return map[status] || 'Running';
+            }
+            return status || 'Running';
+        };
+
         // Sort: running first, then by startedAt desc
         const sorted = [...activeSubAgents.values()].sort((a, b) => {
-            if (a.status === 'Running' && b.status !== 'Running') return -1;
-            if (b.status === 'Running' && a.status !== 'Running') return 1;
+            const aStatus = normalizeSubAgentStatus(a.status);
+            const bStatus = normalizeSubAgentStatus(b.status);
+            if (aStatus === 'Running' && bStatus !== 'Running') return -1;
+            if (bStatus === 'Running' && aStatus !== 'Running') return 1;
             return new Date(b.startedAt || 0) - new Date(a.startedAt || 0);
         });
 
         elSubAgentList.innerHTML = '';
         for (const sa of sorted) {
-            const info = SUBAGENT_STATUS_MAP[sa.status] || SUBAGENT_STATUS_MAP.Running;
-            const isRunning = sa.status === 'Running';
+            const normalizedStatus = normalizeSubAgentStatus(sa.status);
+            const info = SUBAGENT_STATUS_MAP[normalizedStatus] || SUBAGENT_STATUS_MAP.Running;
+            const isRunning = normalizedStatus === 'Running';
             const taskPreview = (sa.task || '').length > 80
                 ? sa.task.substring(0, 80) + '…'
                 : (sa.task || '');
-            const hasResult = sa.resultSummary && sa.status !== 'Running';
+            const hasResult = sa.resultSummary && normalizedStatus !== 'Running';
 
             const item = document.createElement('div');
             item.className = `subagent-item ${info.css}`;

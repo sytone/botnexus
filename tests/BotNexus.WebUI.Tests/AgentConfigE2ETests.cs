@@ -6,23 +6,20 @@ using Microsoft.Playwright;
 namespace BotNexus.WebUI.Tests;
 
 [Trait("Category", "E2E")]
-public sealed class AgentConfigE2ETests : IAsyncLifetime
+[Collection("Playwright")]
+public sealed class AgentConfigE2ETests
 {
     private const string AgentA = "agent-a";
-    private WebUiE2ETestHost? _host;
+    private readonly PlaywrightFixture _fixture;
 
-    public async Task InitializeAsync() => _host = await WebUiE2ETestHost.StartAsync();
-
-    public async Task DisposeAsync()
+    public AgentConfigE2ETests(PlaywrightFixture fixture)
     {
-        if (_host is not null)
-            await _host.DisposeAsync();
+        _fixture = fixture;
     }
-
-    [PlaywrightFact(Timeout = 90000)]
+[PlaywrightFact(Timeout = 90000)]
     public async Task ClickAgent_OpensConfigView()
     {
-        var host = GetHost();
+        await using var host = await _fixture.CreatePageAsync();
         await host.Page.ClickAsync($"#agents-list .list-item:has-text('{AgentA}')");
         await Assertions.Expect(host.Page.Locator("#agent-config-view")).ToBeVisibleAsync();
     }
@@ -30,7 +27,7 @@ public sealed class AgentConfigE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task SaveConfig_PutsUpdatedAgent()
     {
-        var host = GetHost();
+        await using var host = await _fixture.CreatePageAsync();
         await host.Page.ClickAsync($"#agents-list .list-item:has-text('{AgentA}')");
 
         const string displayName = "Agent A Updated";
@@ -45,13 +42,13 @@ public sealed class AgentConfigE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task OpenChat_SwitchesToChatView()
     {
-        var host = GetHost();
+        await using var host = await _fixture.CreatePageAsync();
         await host.Page.ClickAsync($"#agents-list .list-item:has-text('{AgentA}')");
         await host.Page.ClickAsync("#btn-agent-chat");
         await Assertions.Expect(host.Page.Locator("#chat-view")).ToBeVisibleAsync();
         await Assertions.Expect(host.Page.Locator("#chat-title")).ToContainTextAsync(AgentA);
     }
-
-    private WebUiE2ETestHost GetHost()
-        => _host ?? throw new InvalidOperationException("Playwright host was not initialized.");
 }
+
+
+
