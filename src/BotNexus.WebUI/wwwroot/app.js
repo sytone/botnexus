@@ -1784,6 +1784,19 @@
         const myVersion = ++timelineSwitchVersion;
         sessionSwitchInProgress = true;
         updateSendButtonState();
+
+        // Safety net: if openAgentTimeline hangs for any reason (slow REST,
+        // SignalR timeout, etc.), force-clear the switch flag after 8 seconds
+        // so the user can always type.  The finally block also clears it, but
+        // this catches truly stuck awaits.
+        const safetyTimer = setTimeout(() => {
+            if (sessionSwitchInProgress && myVersion === timelineSwitchVersion) {
+                sessionSwitchInProgress = false;
+                updateSendButtonState();
+                debugLog('session', `openAgentTimeline safety-net fired for v${myVersion}`);
+            }
+        }, 8000);
+
         try {
         // Reset global sending/queue state from the outgoing session so the UI
         // never stays stuck in "Sending" or "N messages queued" after a switch.
@@ -1899,6 +1912,7 @@
         updateSendButtonState();
         loadChatHeaderModels();
         } finally {
+            clearTimeout(safetyTimer);
             // Only the most recent switch should clear the in-progress flag;
             // superseded calls must not reset it while the newer one is still running.
             if (myVersion === timelineSwitchVersion) {
