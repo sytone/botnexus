@@ -192,3 +192,8 @@
   - `dotnet build tests\BotNexus.Gateway.Tests --verbosity quiet` ✅
   - `dotnet test tests\BotNexus.Gateway.Tests --filter "FullyQualifiedName~DelayTool" --verbosity minimal` ❌ (9 total, 8 passed, 1 failed)
 - Current failing test: `DelayTool_IncludesReasonInResult` (tool currently returns `"Waited 1 seconds. Ready to continue."` without reason text).
+## 2026-04-11 - FileWatcherTool unit test suite (Hermes)
+- Added 	ests/BotNexus.Gateway.Tests/Tools/FileWatcherToolTests.cs with 10 tests covering metadata, modified/created/deleted detection, timeout, cancellation info path, required path validation, timeout clamping, elapsed-time reporting, and rapid-change debounce behavior.
+- Validation:
+  - dotnet build tests\BotNexus.Gateway.Tests --verbosity quiet ✅
+  - dotnet test tests\BotNexus.Gateway.Tests --filter "FullyQualifiedName~FileWatcher" --verbosity minimal ✅ (10/10)
