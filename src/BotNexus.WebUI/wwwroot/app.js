@@ -14,6 +14,7 @@
     let currentAgentId = null;
     let currentChannelType = null;
     let sessionSwitchInProgress = false;
+    let timelineSwitchVersion = 0;
     let connectionId = null;
     let responseTimeoutTimer = null;
     let steerIndicatorTimer = null;
@@ -1780,9 +1781,15 @@
     }
 
     async function openAgentTimeline(agentId, channelType) {
+        const myVersion = ++timelineSwitchVersion;
         sessionSwitchInProgress = true;
         updateSendButtonState();
         try {
+        // Reset global sending/queue state from the outgoing session so the UI
+        // never stays stuck in "Sending" or "N messages queued" after a switch.
+        if (isRestRequestInFlight) setSendingState(false);
+        resetQueue();
+
         // W1.1 + W3.2: Clear UI display state on session switch.
         // Don't clear outgoing session's per-session state — it may still be streaming.
         clearResponseTimeout();
@@ -1798,6 +1805,9 @@
             try { await hubInvoke('LeaveSession', currentSessionId); } catch(e) {}
             currentSessionId = null;
         }
+
+        // Bail if a newer switch was requested while we were leaving
+        if (myVersion !== timelineSwitchVersion) return;
 
         elSessionsList.querySelectorAll('.list-item').forEach(el => {
             el.classList.toggle('active',
@@ -1816,6 +1826,7 @@
 
         // Fetch all sessions for this agent
         const allSessions = await fetchJson(`/sessions?agentId=${encodeURIComponent(agentId)}`);
+        if (myVersion !== timelineSwitchVersion) return;
         if (!allSessions || allSessions.length === 0) {
             elChatMessages.innerHTML = '';
             elChatMeta.textContent = `Agent: ${agentId} · No sessions yet`;
@@ -1869,24 +1880,31 @@
             const count = session.messageCount || 0;
             totalMessages += count;
             await renderSessionMessages(session.sessionId, count);
+            if (myVersion !== timelineSwitchVersion) return;
         }
 
         // Join the most recent session for sending new messages
         const latestSession = channelSessions[channelSessions.length - 1];
         await joinSession(agentId, latestSession.sessionId);
+        if (myVersion !== timelineSwitchVersion) return;
 
         // W1.4: Restore agent status if it's still working
         await checkAgentRunningStatus(agentId, latestSession.sessionId);
+        if (myVersion !== timelineSwitchVersion) return;
 
-        elChatMeta.textContent = `Agent: ${agentId} · ${totalMessages} messages across ${channelSessions.length} session${channelSessions.length > 1 ? 's' : ''}`;
+        elChatMeta.textContent =`Agent: ${agentId} · ${totalMessages} messages across ${channelSessions.length} session${channelSessions.length > 1 ? 's' : ''}`;
         updateSessionIdDisplay();
         scrollToBottom();
         elChatInput.focus();
         updateSendButtonState();
         loadChatHeaderModels();
         } finally {
-            sessionSwitchInProgress = false;
-            updateSendButtonState();
+            // Only the most recent switch should clear the in-progress flag;
+            // superseded calls must not reset it while the newer one is still running.
+            if (myVersion === timelineSwitchVersion) {
+                sessionSwitchInProgress = false;
+                updateSendButtonState();
+            }
         }
     }
 
