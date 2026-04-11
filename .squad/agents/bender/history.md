@@ -231,3 +231,25 @@
 - `spawn_subagent` now builds `SubAgentSpawnRequest` with parent agent/session context and returns `{ subAgentId, sessionId, status, name }` from manager results.
 - `list_subagents` returns scoped sub-agent summaries for the current parent session including status/model/turn counts and task previews; `manage_subagent` supports `status` and `kill` actions with validation.
 - Validation: `dotnet build Q:\repos\botnexus\src\gateway\BotNexus.Gateway\BotNexus.Gateway.csproj --verbosity quiet` ✅
+
+### 2026-04-11 — Phase 2: Multi-Session Client Model (zero-server-call switching)
+
+**Status:** ✅ Complete  
+**Commit:** b70d369  
+**File:** `src/BotNexus.WebUI/wwwroot/app.js` — 306 insertions, 135 deletions
+
+**What changed:**
+- Added `SessionStore` and `SessionStoreManager` classes with LRU eviction (cap 20). All SignalR events route through `storeManager.routeEvent()` to per-session stores. Background session events are stored (never dropped) and badge the sidebar.
+- `switchView()` is synchronous DOM re-render from cached DOM fragments. Revisiting a previously viewed agent is instant — zero server calls.
+- `Connected` handler calls `SubscribeAll()` on connect and reconnect. Fallback to legacy `joinSession()` if server lacks `multiSession` capability.
+- All 13 SignalR event handlers rewritten: extract `sessionId`, update store stream state, render only if active.
+- `openAgentTimeline()` rewritten from 130+ lines with try/finally/safety-timer to ~100 lines. No `LeaveSession`, no `JoinSession` on switch.
+- `sendMessage()` no longer blocked by `sessionSwitchInProgress`. First-message flow uses `joinSession()` → `Subscribe()`.
+- `getSessionState()` routes through `SessionStore.streamState` when store exists.
+
+**Removed:**
+- `sessionSwitchInProgress` flag, `timelineSwitchVersion` counter, `joinSessionVersion` counter
+- 8-second safety timer, `isEventForCurrentSession()` guard, all `LeaveSession` calls on switch
+- Deprecated globals: `isStreaming`, `activeMessageId`, `activeToolCalls`, `activeToolCount`, `thinkingBuffer`, `toolCallDepth`
+
+**Validation:** `node --check` ✅, `dotnet build --verbosity quiet` ✅ (0 errors)

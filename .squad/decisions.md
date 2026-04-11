@@ -10141,6 +10141,79 @@ Program.cs reduced to thin DI wiring + command registration.
 **Key P1 Findings:**
 1. DRY violations in CLI: CreateWriteJsonOptions(), LoadConfigRequiredAsync, SaveAndValidateAsync duplicated across 4 command classes
 2. ValidateCommand.ExecuteRemoteAsync uses new HttpClient() instead of IHttpClientFactory
+
+---
+
+### User Directive — Session Connection Architecture (2026-04-11T11:26:51Z)
+
+**Decided By:** Jon Bullen (via Copilot)  
+**Status:** Implemented (Commits: 89be2cf, e0c4d10, 090f2cb, 90d1522, b70d369, 5efa1f5)
+
+**Context:** The current join/leave-on-switch SignalR model is fundamentally flawed. Symptom-patching (safety timers, flags, guards) cannot fix an architecture that creates race conditions by design.
+
+**Decision:** Pivot to persistent session warmer model:
+1. Gateway pre-warms all sessions on startup via ISessionWarmupService
+2. WebUI holds all sessions simultaneously (separate connection per channel/session)
+3. Session switching is purely a UI concern with zero server calls
+4. Eliminate the entire class of race conditions
+
+**Why:** User identified that the architecture itself prevents correct behavior. Pre-warming + simultaneous connections eliminate the need for dynamic join/leave logic entirely.
+
+**Implementation Wave 1 (Server):**
+- ISessionWarmupService interface
+- SubscribeAll and Subscribe hub methods
+- Capabilities flag implementation
+- 9 tests (6 warmup + 3 integration)
+
+**Implementation Wave 2 (Client):**
+- SessionStoreManager for holding all sessions simultaneously
+- Zero-server-call session switching via pure UI state change
+- Removed 6 deprecated globals/flags (old join/leave pattern)
+
+**Validation:**
+- 83/83 E2E tests passing
+- 4 new multi-session scenarios
+- Build green
+
+**Impact:** Eliminated entire class of race conditions. Foundation for scalable, reliable multi-agent support.
+
+---
+
+### Comprehensive Playwright E2E Test Coverage Plan for WebUI (2026-06-24)
+
+**Proposed By:** Leela (Lead/Architect)  
+**Requested By:** Jon Bullen  
+**Status:** In Progress
+
+**Context:** Current E2E tests only cover session switching (5 tests in SessionSwitchingE2ETests). The WebUI has ~3,600 lines of JavaScript with dozens of user interactions that are completely untested.
+
+**Decision:** Expand E2E coverage to comprehensive test suite covering:
+1. SignalR connection lifecycle (connection, reconnection, version check, health polling)
+2. Sidebar interactions (sessions/channels list, agent groups, refresh, empty states)
+3. Channel management (channel status, capability icons, stream state)
+4. Message sending (input validation, send during loading, input disable on switch, rapid sends)
+5. Timeline display (message rendering, timestamp formatting, truncation, hover previews)
+6. Agent selection (switching, highlighting, state persistence)
+7. Error handling (network errors, reconnect failures, server errors)
+8. Accessibility (keyboard navigation, ARIA labels, screen reader support)
+9. Performance (load time < 1s, switch time < 100ms, render time < 50ms)
+10. Extensibility (channel-specific UI behavior, custom controls, theming)
+
+**Test Infrastructure:** Leverage existing WebUiE2ETestHost with Playwright (Chromium headless). Expand test matrix from 5 → ~80+ scenarios.
+
+**Why:**
+- Current coverage is blind spot (session switching works but most interactions untested)
+- ~3,600 lines of JS logic with zero automated regression protection
+- User interactions are complex (timing-dependent events, state transitions, error paths)
+- Playwright provides fast, reliable cross-browser testing
+
+**Acceptance Criteria:**
+- All 80+ test scenarios written and passing
+- Coverage matrix published (interaction → test case mapping)
+- CI integration with timeout 90s per test
+- Documentation of test infrastructure for future contributors
+
+**Dependencies:** Requires Phase 1+2 multi-session model to be complete (for meaningful multi-session test scenarios).
 3. TelegramServiceCollectionExtensions falls back to raw HttpClient instead of IHttpClientFactory
 4. Extension manifest lacks minHostVersion for host compatibility declaration
 5. No assembly signature validation for extensions (appropriate for dev, must address before remote/multi-tenant)

@@ -267,3 +267,39 @@ The `showStreamingIndicator()` function appended an "Agent is thinking..." div t
 4. **Input disabled during switch** — `updateSendButtonState()` checks the flag: disables both `elBtnSend` and `elChatInput` while switching. Re-enables in `finally` via `updateSendButtonState()`. User sees "Loading timeline..." so disabled input is natural UX.
 
 **Pattern Established:** Any new function that sends messages to the server should check `sessionSwitchInProgress` before dispatching.
+
+---
+
+### Fix Session Switching Bugs — Channel Type Normalization
+**Date:** 2025-07-18
+**Requested by:** Jon Bullen
+**Commit:** `fix(webui): fix session switching bugs caught by Playwright E2E tests`
+
+**Problem:** 4 of 5 Playwright E2E session-switching tests were failing. Switching A→B→A created a **new** session for A instead of reusing the original. Root cause: channel type mismatch — sessions created via SignalR had `channelType=null` (defaulting to `'signalr'`), but sidebar entries and `openAgentTimeline()` used `'Web Chat'`/`'web chat'`. The filter `(s.channelType || 'signalr') === channelType` never matched, so existing sessions were invisible during switch-back.
+
+**Fix (2 files):**
+1. **`app.js` — Added `normalizeChannelKey()` function** that maps `null`, `'signalr'`, `'web-chat'` → `'web chat'`. Applied in:
+   - `loadSessions()` — sidebar entries now consistently use `'web chat'` for `data-channel-type` and the `latestByChannel` grouping key
+   - `openAgentTimeline()` — session filter and active-class toggle both normalize before comparison
+2. **`GatewayHub.cs` — Set `ChannelType` on session creation** — `JoinSession` now sets `session.ChannelType = "signalr"` when null and persists via `SaveAsync`, ensuring data consistency.
+
+**Result:** All 5 Playwright E2E tests pass (BasicSwitchAndSend, SwitchBackAndSend, RapidSwitchAndSend, SendDuringLoading, InboundEventIsolation). All 1,550+ unit tests pass. Build clean.
+
+### Fix Stuck UI After Session Switch — Flag and Input Recovery
+**Date:** 2025-07-18
+**Requested by:** Jon Bullen
+**Commit:** `fix(webui): fix stuck UI after session switch — flag and input recovery`
+
+**Problem:** Sending a message to an agent and then switching agents left the UI stuck — send button disabled, "1 message queued" badge persisted, and no interaction was possible. Full page refresh didn't reliably fix it.
+
+**Root causes (3 bugs):**
+1. **`isRestRequestInFlight` stuck:** `sendMessage()` sets this flag via `setSendingState(true)`. When the user switches agents, the `MessageStart` event from the old session is dropped by `isEventForCurrentSession()`, so `setSendingState(false)` is never called. `updateSendButtonState()` sees the stuck flag and keeps the send button disabled.
+2. **`messageQueueCount` not cleared:** `openAgentTimeline()` never called `resetQueue()`, so the "1 message queued" display persisted across agent switches.
+3. **No concurrency guard:** Rapid sidebar clicks fired overlapping async `openAgentTimeline()` calls. A stale call's `finally` block could reset `sessionSwitchInProgress = false` while the newer call was still loading, creating a window where the UI appeared ready but state was inconsistent.
+
+**Fix (1 file — `app.js`):**
+1. **Reset flight/queue state at switch start:** Added `if (isRestRequestInFlight) setSendingState(false)` and `resetQueue()` at the top of `openAgentTimeline()`'s try block.
+2. **Version counter for concurrency:** Added `timelineSwitchVersion` counter (same pattern as existing `joinSessionVersion`). Each call captures its version; after every `await`, checks if a newer switch superseded it and bails early.
+3. **Version-conditional finally:** Only the latest switch clears `sessionSwitchInProgress`. Stale calls' finally blocks are no-ops.
+
+**Pattern Established:** Async functions with global flag side effects must use version counters when re-entrant calls are possible. Reset all outgoing-session global state (flight flags, queue counts) at the START of a switch, not at the end — because end-of-stream events for the old session may never arrive.

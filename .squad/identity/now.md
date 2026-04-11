@@ -1,15 +1,15 @@
 ---
-updated_at: 2026-04-10T21:10:00Z
-focus_area: Session Switching Bug Fully Delivered with Playwright E2E
+updated_at: 2026-04-11T19:30:00Z
+focus_area: Multi-session Connection Model Delivered (Phase 1+2)
 active_issues: []
-status: session_switching_complete_with_e2e
+status: multi_session_model_complete
 ---
 
 # What We're Focused On
 
-**Session switching bug fully delivered including Playwright E2E (2026-04-10 21:10Z).** Follow-up sprint: Fry fixed send-during-switch race condition (sessionSwitchInProgress flag, input disable, sendMessage guard — commit 84b0350). Hermes expanded SignalR tests (4 new scenarios, commit f18e476) + built Playwright E2E suite (BotNexus.WebUI.Tests, 5 scenarios, commit bc855e1). Build green.
+**Multi-session connection model fully delivered (2026-04-11 19:30Z).** Fundamental architectural pivot: sessions now pre-warmed at gateway startup, WebUI holds all sessions simultaneously (separate connection per channel/session), switching is pure UI with zero server calls. Eliminated entire class of race conditions. 6 commits, 9 tests, 83/83 E2E passing.
 
-**Previous:** Sub-Agent Spawning feature delivered (2026-04-10 16:30Z). 4-wave concurrent delivery: Wave 1 (abstractions + config), Wave 2 (runtime implementation), Wave 3 (tools), Wave 4 (REST + WebUI + docs). 51 SubAgent tests all passing. Commits: f57b157, b614205, ff63957, 4d4b6a7, 25c8876, ad72475, c75a033, 91f11c3, 041d65a.
+**Previous:** Session switching bug fully delivered including Playwright E2E (2026-04-10 21:10Z). Fry fixed send-during-switch race condition (sessionSwitchInProgress flag, input disable, sendMessage guard — commit 84b0350). Hermes expanded SignalR tests (4 new scenarios, commit f18e476) + built Playwright E2E suite (BotNexus.WebUI.Tests, 5 scenarios, commit bc855e1). Build green.
 
 ## Current Status
 

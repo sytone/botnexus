@@ -238,3 +238,69 @@ All 3 spec patterns confirmed against actual `app.js` source:
 3. **`openAgentTimeline` is the session switch entry point** — Called from sidebar click handler (line 1670). It calls `joinSession` twice: once with null (creates orphan), once with latest session ID.
 4. **`joinSessionVersion` protects join results, not incoming events** — The version counter prevents stale join results from updating state, but doesn't filter incoming streaming events.
 5. **`checkAgentRunningStatus()` is the restore mechanism** — Exists at line 705, queries `/agents/{id}/sessions/{id}/status` REST endpoint and sets `isStreaming` + processing indicators if agent is Running/Idle.
+
+## 2026-06-24 — Playwright E2E Test Coverage Audit (Lead)
+
+**Status:** ✅ Test plan delivered
+**Requested by:** Jon Bullen
+**Scope:** Audit all WebUI user interactions and produce comprehensive Playwright E2E test plan
+
+**Context:**
+WebUI has ~3,600 lines of JavaScript (app.js) with 30+ distinct interaction areas. Only 5 tests existed (session switching). Jon requested full interaction coverage.
+
+**Audit Approach:**
+Read all 3 WebUI source files end-to-end (index.html, app.js, styles.css), existing test files (SessionSwitchingE2ETests.cs, WebUiE2ETestHost.cs, PlaywrightFactAttribute.cs), cataloged every user interaction in the UI.
+
+**Findings:**
+- 32 interaction areas identified across: connection lifecycle, sidebar navigation, chat sending, streaming display, thinking display, tool call display, steer/follow-up, abort, command palette, copy interactions, sub-agent panel, agent config, agent form modal, model selector, modal dialogs, scroll behavior, error handling, history pagination, mobile sidebar, cron view, activity feed
+- Current coverage: 5/97 scenarios (5.2%)
+
+**Deliverables:**
+- 97 test scenarios across 19 test classes
+- Priority breakdown: P0 (29), P1 (50), P2 (18)
+- Implementation order recommendation (P0 classes first)
+- Infrastructure enhancement notes for RecordingAgentSupervisor and WebUiE2ETestHost
+- Written to `.squad/decisions/inbox/leela-playwright-coverage-plan.md`
+
+## 2026-04-11 — Multi-Session Connection Model Architecture Proposal (Lead)
+
+**Status:** ✅ Proposal written — awaiting Jon's review
+**Requested by:** Jon Bullen
+**Scope:** Redesign WebUI SignalR connection model to eliminate join/leave race conditions by design
+
+**Context:**
+Jon identified a fundamental design flaw: session switching requires 2 server round-trips (LeaveSession → JoinSession), creating a race-condition-rich gap where events are lost and state is undefined. The codebase has accumulated compensating mechanisms: `joinSessionVersion` counter, `timelineSwitchVersion` counter, `isEventForCurrentSession()` drop guard, `sessionSwitchInProgress` flag, 8-second safety timer, and 8+ bail-out points in `openAgentTimeline`.
+
+**Analysis (read code to confirm):**
+1. 5 bug classes documented: stale event delivery, rapid-switch races, safety-net timer, state pollution, reconnection gaps
+2. Evidence from `SessionSwitchingE2ETests.cs` — tests validate compensating behavior, not correct architecture
+3. Root cause: session switching is a server-side operation when it should be a client-side concern
+
+**Proposed Architecture:**
+- Gateway pre-warms sessions on startup via `ISessionWarmupService` (IHostedService)
+- Client subscribes to ALL sessions on connect via new `SubscribeAll()` hub method
+- Events routed to per-session `SessionStore` instances (replaces global mutable state)
+- Switching is purely DOM re-render — 0 server calls, 0 race conditions
+- Single SignalR connection subscribed to multiple groups (not multiple connections)
+
+**5 Key Design Decisions:**
+- D1: Single connection multi-group (native SignalR pattern, simpler reconnection)
+- D2: Pull history + push new events (hybrid — avoids bandwidth spike on connect)
+- D3: Active + recent sessions pre-warmed (configurable 24h window, max 10/agent)
+- D4: LRU memory management with MAX_MEMORY_SESSIONS = 20
+- D5: Backward compatible — `JoinSession`/`LeaveSession` stay deprecated, removed in v2
+
+**Interface Changes Specified:**
+- New: `ISessionWarmupService`, `SessionWarmupOptions`, `SessionSummary`, `SessionInfo` DTOs
+- New hub methods: `SubscribeAll()`, `Subscribe(sessionId)`
+- New client-side: `SessionStoreManager`, `SessionStore` classes
+- Modified: `GatewayHub.OnConnectedAsync` (capabilities field), `GatewayOptions` (SessionWarmup section)
+
+**Migration Path:** 3 phases
+- Phase 1 (server foundation, ~7.5d): Warmup service, SubscribeAll, DTOs — zero client impact
+- Phase 2 (client rewrite, ~12.5d): SessionStoreManager, remove join/leave, rewrite E2E tests
+- Phase 3 (polish, ~7.5d): Tabbed UI, badges, smart pre-loading, remove deprecated methods
+
+**Risk Register:** 8 risks tracked (memory pressure, bandwidth, group explosion, event ordering, new session creation race, store size, E2E rewrite scope, replay buffer interaction)
+
+**Deliverable:** `docs/planning/feature-multi-session-connection/architecture-proposal.md` (748 lines)

@@ -178,3 +178,11 @@
   - dotnet build tests\BotNexus.Gateway.Tests --verbosity quiet ✅
   - dotnet test tests\BotNexus.Gateway.Tests --filter "FullyQualifiedName~Warmup|FullyQualifiedName~SubscribeAll" --verbosity minimal ❌ (9 total, 6 passed, 3 failed)
 - Failure detail: SubscribeAll integration tests fail during host startup due DI registration error in GatewayServiceCollectionExtensions (Implementation type cannot be 'IHostedService').
+## 2026-04-11 - WebUI E2E multi-session model updates (Hermes)
+- Updated Playwright E2E infrastructure for SessionStoreManager flow: added ISessionWarmupService test stub and console hub-invocation capture helpers.
+- Reworked SessionSwitchingE2ETests for SubscribeAll + instant DOM switching model; added scenarios for background-session events, unread badges, SubscribeAll manifest, and no server calls on switch.
+- Updated dependent E2E tests for removed switch-disable behavior and multi-session timing semantics (ChatSending, ErrorHandling, HistoryPagination, SubAgentPanel, ThinkingDisplay).
+- Validation:
+  - dotnet build tests\BotNexus.WebUI.Tests --verbosity quiet ✅
+  - BOTNEXUS_RUN_PLAYWRIGHT_E2E=1 dotnet test tests\BotNexus.WebUI.Tests --no-build --filter "FullyQualifiedName~SessionSwitching" --verbosity normal ✅ (7/7)
+  - BOTNEXUS_RUN_PLAYWRIGHT_E2E=1 dotnet test tests\BotNexus.WebUI.Tests --no-build --verbosity minimal ✅ (83/83)
