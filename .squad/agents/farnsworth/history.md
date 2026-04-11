@@ -187,3 +187,10 @@ Validation: `dotnet build src\gateway\BotNexus.Cli\BotNexus.Cli.csproj --nologo 
 - 2026-04-10: Validation for this contract/config wave uses targeted project builds: `dotnet build src\gateway\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj --verbosity quiet` and `dotnet build src\gateway\BotNexus.Gateway\BotNexus.Gateway.csproj --verbosity quiet`.
 - 2026-04-10: `AddBotNexusGateway` now binds `gateway` + `gateway:subAgents` configuration and registers `ISubAgentManager`/`DefaultSubAgentManager`; `InProcessIsolationStrategy` injects `spawn_subagent`, `list_subagents`, and `manage_subagent` tools per-session while skipping any session ID containing `::subagent::` to prevent recursive spawning.
 - 2026-04-10: Added session-scoped sub-agent REST endpoints (`GET /api/sessions/{sessionId}/subagents`, `DELETE /api/sessions/{sessionId}/subagents/{subAgentId}`) and lifecycle activity emissions from `DefaultSubAgentManager` using event keys `subagent_spawned`, `subagent_completed`, `subagent_failed`, and `subagent_killed`.
+## 2026-04-11T00:00Z — Phase 1 Multi-Session Server Foundation
+- Added SessionSummary DTO and ISessionWarmupService abstraction in Gateway.Abstractions.
+- Added SessionWarmupOptions + GatewayOptions.SessionWarmup, with config binding in AddBotNexusGateway.
+- Implemented SessionWarmupService (IHostedService + cache + agent/session refresh + lifecycle event hook).
+- Added GatewayHub.SubscribeAll() and Subscribe(sessionId), and Connected capabilities.multiSession=true.
+- Updated SignalRHubTests hub factory for new warmup dependency.
+- Validation: dotnet build Q:\repos\botnexus --verbosity quiet (passed).

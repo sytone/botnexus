@@ -293,6 +293,7 @@ public sealed class SignalRHubTests
         IAgentRegistry? registry = null,
         IAgentSupervisor? supervisor = null,
         ISessionCompactor? compactor = null,
+        ISessionWarmupService? warmup = null,
         IOptions<CompactionOptions>? compactionOptions = null,
         string connectionId = "conn-test")
     {
@@ -303,6 +304,7 @@ public sealed class SignalRHubTests
             dispatcher ?? Mock.Of<IChannelDispatcher>(),
             activity ?? Mock.Of<IActivityBroadcaster>(),
             compactor ?? Mock.Of<ISessionCompactor>(),
+            warmup ?? Mock.Of<ISessionWarmupService>(),
             compactionOptions ?? Options.Create(new CompactionOptions()),
             NullLogger<GatewayHub>.Instance)
         {

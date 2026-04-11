@@ -52,12 +52,14 @@ public static class GatewayServiceCollectionExtensions
     {
         services.AddOptions<GatewayOptions>();
         services.AddOptions<SessionCleanupOptions>();
+        services.AddOptions<SessionWarmupOptions>();
         services.AddOptions<CompactionOptions>();
         if (configure is not null)
             services.Configure(configure);
         if (config is not null)
         {
             services.Configure<GatewayOptions>(config.GetSection("gateway"));
+            services.Configure<SessionWarmupOptions>(config.GetSection("gateway:sessionWarmup"));
             services.Configure<SubAgentOptions>(config.GetSection("gateway:subAgents"));
 
             var compactionSection = config.GetSection("gateway:compaction");
@@ -97,6 +99,9 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<SessionLifecycleEvents>();
         services.TryAddSingleton<ISessionLifecycleEvents>(serviceProvider =>
             serviceProvider.GetRequiredService<SessionLifecycleEvents>());
+        services.TryAddSingleton<SessionWarmupService>();
+        services.TryAddSingleton<ISessionWarmupService>(serviceProvider =>
+            serviceProvider.GetRequiredService<SessionWarmupService>());
         services.AddSingleton<IMessageRouter, DefaultMessageRouter>();
         services.AddSingleton<IConfigPathResolver, ConfigPathResolver>();
         services.TryAddSingleton<IChannelManager, ChannelManager>();
@@ -137,6 +142,8 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<GatewayHost>();
         services.TryAddSingleton<IChannelDispatcher>(serviceProvider => serviceProvider.GetRequiredService<GatewayHost>());
         services.AddSingleton<IHostedService>(serviceProvider => serviceProvider.GetRequiredService<GatewayHost>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService>(serviceProvider =>
+            serviceProvider.GetRequiredService<SessionWarmupService>()));
         services.AddHostedService<SessionCleanupService>();
 
         // Default agent configuration from BotNexusHome (~/.botnexus/agents/)

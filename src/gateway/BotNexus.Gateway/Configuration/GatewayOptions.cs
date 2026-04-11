@@ -21,4 +21,9 @@ public sealed class GatewayOptions
     /// Options controlling background sub-agent spawning behavior.
     /// </summary>
     public SubAgentOptions SubAgents { get; set; } = new();
+
+    /// <summary>
+    /// Options controlling session pre-warming and multi-session subscription behavior.
+    /// </summary>
+    public SessionWarmupOptions SessionWarmup { get; set; } = new();
 }

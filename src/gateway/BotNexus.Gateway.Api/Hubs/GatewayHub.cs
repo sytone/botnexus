@@ -23,6 +23,7 @@ public sealed class GatewayHub : Hub
     private readonly IChannelDispatcher _dispatcher;
     private readonly IActivityBroadcaster _activity;
     private readonly ISessionCompactor _compactor;
+    private readonly ISessionWarmupService _warmup;
     private readonly IOptions<CompactionOptions> _compactionOptions;
     private readonly ILogger<GatewayHub> _logger;
 
@@ -33,6 +34,7 @@ public sealed class GatewayHub : Hub
         IChannelDispatcher dispatcher,
         IActivityBroadcaster activity,
         ISessionCompactor compactor,
+        ISessionWarmupService warmup,
         IOptions<CompactionOptions> compactionOptions,
         ILogger<GatewayHub> logger)
     {
@@ -42,8 +44,45 @@ public sealed class GatewayHub : Hub
         _dispatcher = dispatcher;
         _activity = activity;
         _compactor = compactor;
+        _warmup = warmup;
         _compactionOptions = compactionOptions;
         _logger = logger;
+    }
+
+    public async Task<object> SubscribeAll()
+    {
+        var sessions = await _warmup.GetAvailableSessionsAsync(Context.ConnectionAborted);
+
+        foreach (var session in sessions)
+        {
+            await Groups.AddToGroupAsync(
+                Context.ConnectionId,
+                GetSessionGroup(session.SessionId),
+                Context.ConnectionAborted);
+        }
+
+        _logger.LogInformation(
+            "Hub SubscribeAll: connection={ConnectionId} sessions={Count}",
+            Context.ConnectionId,
+            sessions.Count);
+
+        return new { sessions };
+    }
+
+    public async Task<object> Subscribe(string sessionId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+
+        await Groups.AddToGroupAsync(
+            Context.ConnectionId,
+            GetSessionGroup(sessionId),
+            Context.ConnectionAborted);
+
+        return new
+        {
+            sessionId,
+            status = "subscribed"
+        };
     }
 
     public async Task<object> JoinSession(string agentId, string? sessionId)
@@ -186,7 +225,8 @@ public sealed class GatewayHub : Hub
         {
             connectionId = Context.ConnectionId,
             agents = _registry.GetAll().Select(a => new { a.AgentId, a.DisplayName }),
-            serverVersion = typeof(GatewayHub).Assembly.GetName().Version?.ToString() ?? "dev"
+            serverVersion = typeof(GatewayHub).Assembly.GetName().Version?.ToString() ?? "dev",
+            capabilities = new { multiSession = true }
         });
 
         await _activity.PublishAsync(
