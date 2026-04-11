@@ -65,7 +65,8 @@ public sealed class DelayTool(IOptions<DelayToolOptions> options) : IAgentTool
         try
         {
             await Task.Delay(TimeSpan.FromSeconds(seconds), cancellationToken).ConfigureAwait(false);
-            return TextResult($"Waited {seconds} seconds. Ready to continue.");
+            var reasonSuffix = string.IsNullOrWhiteSpace(reason) ? "" : $" Reason: {reason}";
+            return TextResult($"Waited {seconds} seconds.{reasonSuffix} Ready to continue.");
         }
         catch (OperationCanceledException)
         {
