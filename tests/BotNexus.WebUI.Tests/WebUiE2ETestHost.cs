@@ -25,6 +25,7 @@ internal sealed class WebUiE2ETestHost : IAsyncDisposable
     private readonly RecordingAgentSupervisor _supervisor;
     private readonly TestSubAgentManager _subAgentManager;
     private readonly IBrowserContext _browserContext;
+    private readonly IPage _page;
 
     internal WebUiE2ETestHost(
         RecordingAgentSupervisor supervisor,
@@ -39,11 +40,11 @@ internal sealed class WebUiE2ETestHost : IAsyncDisposable
         ApiClient = apiClient;
         BaseUrl = baseUrl;
         _browserContext = browserContext;
-        Page = page;
+        _page = page;
     }
 
     public HttpClient ApiClient { get; }
-    public IPage Page { get; }
+    public IPage Page => _page;
     public string BaseUrl { get; }
     public RecordingAgentSupervisor Supervisor => _supervisor;
     public TestSubAgentManager SubAgentManager => _subAgentManager;
@@ -359,8 +360,6 @@ internal sealed class RecordingAgentSupervisor : IAgentSupervisor
         _dispatches.Clear();
         _agentPlans.Clear();
         _sessionPlans.Clear();
-        _handles.Clear();
-        _statuses.Clear();
     }
 }
 

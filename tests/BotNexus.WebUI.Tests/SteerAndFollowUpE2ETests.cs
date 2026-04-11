@@ -4,26 +4,20 @@ using Microsoft.Playwright;
 namespace BotNexus.WebUI.Tests;
 
 [Trait("Category", "E2E")]
-public sealed class SteerAndFollowUpE2ETests : IAsyncLifetime
+[Collection("Playwright")]
+public sealed class SteerAndFollowUpE2ETests
 {
     private const string AgentA = "agent-a";
-    private WebUiE2ETestHost? _host;
+    private readonly PlaywrightFixture _fixture;
 
-    public async Task InitializeAsync()
+    public SteerAndFollowUpE2ETests(PlaywrightFixture fixture)
     {
-        _host = await WebUiE2ETestHost.StartAsync();
+        _fixture = fixture;
     }
-
-    public async Task DisposeAsync()
-    {
-        if (_host is not null)
-            await _host.DisposeAsync();
-    }
-
-    [PlaywrightFact(Timeout = 90000)]
+[PlaywrightFact(Timeout = 90000)]
     public async Task DuringStreaming_SendButtonBecomesSteer()
     {
-        var host = await StartStreamingAsync();
+        await using var host = await StartStreamingAsync();
         await Assertions.Expect(host.Page.Locator("#btn-send")).ToContainTextAsync("🧭 Steer");
         await Assertions.Expect(host.Page.Locator("#btn-send-mode")).ToBeVisibleAsync();
     }
@@ -31,7 +25,7 @@ public sealed class SteerAndFollowUpE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task SteerMessage_SentViaHub()
     {
-        var host = await StartStreamingAsync();
+        await using var host = await StartStreamingAsync();
         await host.Page.FillAsync("#chat-input", "steer now");
         await host.Page.ClickAsync("#btn-send");
         await WaitForDispatchContentAsync(host, "steer now");
@@ -41,7 +35,7 @@ public sealed class SteerAndFollowUpE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task SteerIndicator_ShownBriefly()
     {
-        var host = await StartStreamingAsync();
+        await using var host = await StartStreamingAsync();
         await host.Page.FillAsync("#chat-input", "steer indicator");
         await host.Page.ClickAsync("#btn-send");
         await Assertions.Expect(host.Page.Locator("#steer-indicator")).ToBeVisibleAsync();
@@ -51,7 +45,7 @@ public sealed class SteerAndFollowUpE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task SendModeToggle_SwitchesToFollowUp()
     {
-        var host = await StartStreamingAsync();
+        await using var host = await StartStreamingAsync();
         await host.Page.ClickAsync("#btn-send-mode");
         await Assertions.Expect(host.Page.Locator("#btn-send")).ToContainTextAsync("📨 Follow-up");
     }
@@ -59,7 +53,7 @@ public sealed class SteerAndFollowUpE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task FollowUpMessage_QueuesAndShowsCount()
     {
-        var host = await StartStreamingAsync();
+        await using var host = await StartStreamingAsync();
         await host.Page.ClickAsync("#btn-send-mode");
         await host.Page.FillAsync("#chat-input", "queued follow up");
         await host.Page.ClickAsync("#btn-send");
@@ -71,7 +65,7 @@ public sealed class SteerAndFollowUpE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task QueueCount_DecrementsOnMessageStart()
     {
-        var host = await StartStreamingAsync();
+        await using var host = await StartStreamingAsync();
         await host.Page.ClickAsync("#btn-send-mode");
         await host.Page.FillAsync("#chat-input", "queue decrement");
         await host.Page.ClickAsync("#btn-send");
@@ -82,7 +76,7 @@ public sealed class SteerAndFollowUpE2ETests : IAsyncLifetime
 
     private async Task<WebUiE2ETestHost> StartStreamingAsync()
     {
-        var host = GetHost();
+        var host = await _fixture.CreatePageAsync();
         await host.OpenAgentTimelineAsync(AgentA);
         host.Supervisor.EnqueueAgentStreamPlan(AgentA, new RecordingStreamPlan
         {
@@ -127,7 +121,9 @@ public sealed class SteerAndFollowUpE2ETests : IAsyncLifetime
 
         throw new TimeoutException($"Timed out waiting for dispatch content '{content}'.");
     }
-
-    private WebUiE2ETestHost GetHost()
-        => _host ?? throw new InvalidOperationException("Playwright host was not initialized.");
 }
+
+
+
+
+

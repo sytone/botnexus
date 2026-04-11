@@ -4,23 +4,17 @@ using Microsoft.Playwright;
 namespace BotNexus.WebUI.Tests;
 
 [Trait("Category", "E2E")]
-public sealed class StreamingDisplayE2ETests : IAsyncLifetime
+[Collection("Playwright")]
+public sealed class StreamingDisplayE2ETests
 {
     private const string AgentA = "agent-a";
-    private WebUiE2ETestHost? _host;
+    private readonly PlaywrightFixture _fixture;
 
-    public async Task InitializeAsync()
+    public StreamingDisplayE2ETests(PlaywrightFixture fixture)
     {
-        _host = await WebUiE2ETestHost.StartAsync();
+        _fixture = fixture;
     }
-
-    public async Task DisposeAsync()
-    {
-        if (_host is not null)
-            await _host.DisposeAsync();
-    }
-
-    [PlaywrightFact(Timeout = 90000)]
+[PlaywrightFact(Timeout = 90000)]
     public async Task ContentDelta_AppendsTextProgressively()
     {
         var host = await OpenChatAsync();
@@ -117,11 +111,13 @@ public sealed class StreamingDisplayE2ETests : IAsyncLifetime
 
     private async Task<WebUiE2ETestHost> OpenChatAsync()
     {
-        var host = GetHost();
+        var host = await _fixture.CreatePageAsync();
         await host.OpenAgentTimelineAsync(AgentA);
         return host;
     }
-
-    private WebUiE2ETestHost GetHost()
-        => _host ?? throw new InvalidOperationException("Playwright host was not initialized.");
 }
+
+
+
+
+

@@ -4,26 +4,20 @@ using Microsoft.Playwright;
 namespace BotNexus.WebUI.Tests;
 
 [Trait("Category", "E2E")]
-public sealed class ConnectionLifecycleE2ETests : IAsyncLifetime
+[Collection("Playwright")]
+public sealed class ConnectionLifecycleE2ETests
 {
     private const string AgentA = "agent-a";
-    private WebUiE2ETestHost? _host;
+    private readonly PlaywrightFixture _fixture;
 
-    public async Task InitializeAsync()
+    public ConnectionLifecycleE2ETests(PlaywrightFixture fixture)
     {
-        _host = await WebUiE2ETestHost.StartAsync();
+        _fixture = fixture;
     }
-
-    public async Task DisposeAsync()
-    {
-        if (_host is not null)
-            await _host.DisposeAsync();
-    }
-
-    [PlaywrightFact(Timeout = 90000)]
+[PlaywrightFact(Timeout = 90000)]
     public async Task InitialLoad_ShowsConnectedStatus()
     {
-        var host = GetHost();
+        await using var host = await _fixture.CreatePageAsync();
         await Assertions.Expect(host.Page.Locator("#connection-status.connected")).ToBeVisibleAsync();
         await Assertions.Expect(host.Page.Locator("#connection-status .status-text")).ToContainTextAsync("Connected");
     }
@@ -31,7 +25,7 @@ public sealed class ConnectionLifecycleE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task InitialLoad_LoadsAgentsInSidebar()
     {
-        var host = GetHost();
+        await using var host = await _fixture.CreatePageAsync();
         await Assertions.Expect(host.Page.Locator("#agents-list .list-item")).ToHaveCountAsync(2, new() { Timeout = 15000 });
         var text = await host.Page.Locator("#agents-list").InnerTextAsync();
         text.Should().Contain(AgentA);
@@ -41,7 +35,7 @@ public sealed class ConnectionLifecycleE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task InitialLoad_LoadsSessionsInSidebar()
     {
-        var host = GetHost();
+        await using var host = await _fixture.CreatePageAsync();
         await host.OpenAgentTimelineAsync(AgentA);
         var sessionId = await host.SendMessageAsync("seed-session-list");
         await host.WaitForStreamingCompleteAsync();
@@ -53,11 +47,13 @@ public sealed class ConnectionLifecycleE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task InitialLoad_ShowsWelcomeScreen()
     {
-        var host = GetHost();
+        await using var host = await _fixture.CreatePageAsync();
         await Assertions.Expect(host.Page.Locator("#welcome-screen")).ToBeVisibleAsync();
         await Assertions.Expect(host.Page.Locator("#chat-view")).ToBeHiddenAsync();
     }
-
-    private WebUiE2ETestHost GetHost()
-        => _host ?? throw new InvalidOperationException("Playwright host was not initialized.");
 }
+
+
+
+
+

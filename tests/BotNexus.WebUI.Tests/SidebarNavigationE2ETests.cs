@@ -4,27 +4,21 @@ using Microsoft.Playwright;
 namespace BotNexus.WebUI.Tests;
 
 [Trait("Category", "E2E")]
-public sealed class SidebarNavigationE2ETests : IAsyncLifetime
+[Collection("Playwright")]
+public sealed class SidebarNavigationE2ETests
 {
     private const string AgentA = "agent-a";
     private const string AgentB = "agent-b";
-    private WebUiE2ETestHost? _host;
+    private readonly PlaywrightFixture _fixture;
 
-    public async Task InitializeAsync()
+    public SidebarNavigationE2ETests(PlaywrightFixture fixture)
     {
-        _host = await WebUiE2ETestHost.StartAsync();
+        _fixture = fixture;
     }
-
-    public async Task DisposeAsync()
-    {
-        if (_host is not null)
-            await _host.DisposeAsync();
-    }
-
-    [PlaywrightFact(Timeout = 90000)]
+[PlaywrightFact(Timeout = 90000)]
     public async Task ChannelEntry_OpensTimeline()
     {
-        var host = GetHost();
+        await using var host = await _fixture.CreatePageAsync();
         await host.Page.Locator($"#sessions-list .list-item[data-agent-id='{AgentA}'][data-channel-type='web chat']").First.ClickAsync();
         await Assertions.Expect(host.Page.Locator("#chat-view")).ToBeVisibleAsync();
         await Assertions.Expect(host.Page.Locator("#chat-title")).ToContainTextAsync(AgentA);
@@ -33,7 +27,7 @@ public sealed class SidebarNavigationE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task AgentGroupHeader_TogglesCollapse()
     {
-        var host = GetHost();
+        await using var host = await _fixture.CreatePageAsync();
         var header = host.Page.Locator("#sessions-list .agent-group-header").First;
         await header.ClickAsync();
         (await header.GetAttributeAsync("class")).Should().Contain("collapsed");
@@ -44,7 +38,7 @@ public sealed class SidebarNavigationE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task ActiveChannel_HighlightedInSidebar()
     {
-        var host = GetHost();
+        await using var host = await _fixture.CreatePageAsync();
         await host.OpenAgentTimelineAsync(AgentB);
         var activeEntry = host.Page.Locator($"#sessions-list .list-item.active[data-agent-id='{AgentB}'][data-channel-type='web chat']").First;
         await Assertions.Expect(activeEntry).ToBeVisibleAsync();
@@ -53,7 +47,7 @@ public sealed class SidebarNavigationE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task RefreshSessions_ReloadsFromAPI()
     {
-        var host = GetHost();
+        await using var host = await _fixture.CreatePageAsync();
         await host.OpenAgentTimelineAsync(AgentA);
         var sessionId = await host.SendMessageAsync("refresh-seed");
         await host.WaitForStreamingCompleteAsync();
@@ -64,7 +58,7 @@ public sealed class SidebarNavigationE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task SectionHeaders_ToggleCollapse()
     {
-        var host = GetHost();
+        await using var host = await _fixture.CreatePageAsync();
         var header = host.Page.Locator(".section-header[data-toggle='channels-list']").First;
         var section = host.Page.Locator("#channels-list");
         await header.ClickAsync();
@@ -72,7 +66,9 @@ public sealed class SidebarNavigationE2ETests : IAsyncLifetime
         await header.ClickAsync();
         (await section.GetAttributeAsync("class")).Should().NotContain("collapsed");
     }
-
-    private WebUiE2ETestHost GetHost()
-        => _host ?? throw new InvalidOperationException("Playwright host was not initialized.");
 }
+
+
+
+
+

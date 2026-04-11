@@ -3,26 +3,20 @@ using Microsoft.Playwright;
 namespace BotNexus.WebUI.Tests;
 
 [Trait("Category", "E2E")]
-public sealed class AbortE2ETests : IAsyncLifetime
+[Collection("Playwright")]
+public sealed class AbortE2ETests
 {
     private const string AgentA = "agent-a";
-    private WebUiE2ETestHost? _host;
+    private readonly PlaywrightFixture _fixture;
 
-    public async Task InitializeAsync()
+    public AbortE2ETests(PlaywrightFixture fixture)
     {
-        _host = await WebUiE2ETestHost.StartAsync();
+        _fixture = fixture;
     }
-
-    public async Task DisposeAsync()
-    {
-        if (_host is not null)
-            await _host.DisposeAsync();
-    }
-
-    [PlaywrightFact(Timeout = 90000)]
+[PlaywrightFact(Timeout = 90000)]
     public async Task AbortButton_StopsStreaming()
     {
-        var host = await StartStreamingAsync();
+        await using var host = await StartStreamingAsync();
         await host.ClickAbortAsync();
         await host.WaitForSystemMessageAsync("Request aborted.");
         await host.WaitForAbortButtonHiddenAsync();
@@ -31,7 +25,7 @@ public sealed class AbortE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task AbortButton_HidesProcessingBar()
     {
-        var host = await StartStreamingAsync();
+        await using var host = await StartStreamingAsync();
         await host.ClickAbortAsync();
         await host.WaitForProcessingBarHiddenAsync();
     }
@@ -39,7 +33,7 @@ public sealed class AbortE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task EscapeKey_AbortsWhenStreaming()
     {
-        var host = await StartStreamingAsync();
+        await using var host = await StartStreamingAsync();
         await host.PressEscapeAsync();
         await host.WaitForSystemMessageAsync("Request aborted.");
     }
@@ -47,7 +41,7 @@ public sealed class AbortE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task AfterAbort_SendButtonReturnsToNormal()
     {
-        var host = await StartStreamingAsync();
+        await using var host = await StartStreamingAsync();
         await host.ClickAbortAsync();
         await host.WaitForAbortButtonHiddenAsync();
         await Assertions.Expect(host.Page.Locator("#btn-send")).ToContainTextAsync("Send");
@@ -56,7 +50,7 @@ public sealed class AbortE2ETests : IAsyncLifetime
 
     private async Task<WebUiE2ETestHost> StartStreamingAsync()
     {
-        var host = GetHost();
+        var host = await _fixture.CreatePageAsync();
         await host.OpenAgentTimelineAsync(AgentA);
         host.Supervisor.EnqueueAgentStreamPlan(AgentA, new RecordingStreamPlan
         {
@@ -67,7 +61,9 @@ public sealed class AbortE2ETests : IAsyncLifetime
         await host.WaitForAbortButtonVisibleAsync();
         return host;
     }
-
-    private WebUiE2ETestHost GetHost()
-        => _host ?? throw new InvalidOperationException("Playwright host was not initialized.");
 }
+
+
+
+
+

@@ -4,27 +4,21 @@ using Microsoft.Playwright;
 namespace BotNexus.WebUI.Tests;
 
 [Trait("Category", "E2E")]
-public sealed class SessionSwitchingE2ETests : IAsyncLifetime
+[Collection("Playwright")]
+public sealed class SessionSwitchingE2ETests
 {
     private const string AgentA = "agent-a";
     private const string AgentB = "agent-b";
-    private WebUiE2ETestHost? _host;
+    private readonly PlaywrightFixture _fixture;
 
-    public async Task InitializeAsync()
+    public SessionSwitchingE2ETests(PlaywrightFixture fixture)
     {
-        _host = await WebUiE2ETestHost.StartAsync();
+        _fixture = fixture;
     }
-
-    public async Task DisposeAsync()
-    {
-        if (_host is not null)
-            await _host.DisposeAsync();
-    }
-
-    [PlaywrightFact(Timeout = 90000)]
+[PlaywrightFact(Timeout = 90000)]
     public async Task BasicSwitchAndSend_RoutesMessagesToSelectedSessions()
     {
-        var host = GetHost();
+        await using var host = await _fixture.CreatePageAsync();
 
         await host.OpenAgentTimelineAsync(AgentA);
         var sessionA = await host.SendMessageAsync("basic-a");
@@ -50,7 +44,7 @@ public sealed class SessionSwitchingE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task SwitchBackAndSend_RoutesToOriginalSession()
     {
-        var host = GetHost();
+        await using var host = await _fixture.CreatePageAsync();
 
         await host.OpenAgentTimelineAsync(AgentA);
         var sessionA = await host.SendMessageAsync("switchback-seed");
@@ -71,7 +65,7 @@ public sealed class SessionSwitchingE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task RapidSwitchAndSend_RoutesToLatestSelection()
     {
-        var host = GetHost();
+        await using var host = await _fixture.CreatePageAsync();
 
         await host.OpenAgentTimelineAsync(AgentA);
         await host.SendMessageAsync("rapid-seed-a");
@@ -97,7 +91,7 @@ public sealed class SessionSwitchingE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task SendDuringLoading_DoesNotMisrouteToPreviousSession()
     {
-        var host = GetHost();
+        await using var host = await _fixture.CreatePageAsync();
 
         await host.OpenAgentTimelineAsync(AgentA);
         var sessionA = await host.SendMessageAsync("loading-seed-a");
@@ -135,7 +129,7 @@ public sealed class SessionSwitchingE2ETests : IAsyncLifetime
     [PlaywrightFact(Timeout = 90000)]
     public async Task InboundEvents_AreIsolatedToOriginSession()
     {
-        var host = GetHost();
+        await using var host = await _fixture.CreatePageAsync();
 
         await host.OpenAgentTimelineAsync(AgentA);
         var sessionA = await host.SendMessageAsync("isolation-seed-a");
@@ -161,7 +155,9 @@ public sealed class SessionSwitchingE2ETests : IAsyncLifetime
         (await host.Page.Locator("#chat-messages").InnerTextAsync()).Should().Contain(delayedResponse);
         (await host.WaitForCurrentSessionIdAsync()).Should().Be(sessionA);
     }
-
-    private WebUiE2ETestHost GetHost()
-        => _host ?? throw new InvalidOperationException("Playwright host was not initialized.");
 }
+
+
+
+
+
