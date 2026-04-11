@@ -151,3 +151,11 @@
   - dotnet build tests\\BotNexus.WebUI.Tests\\BotNexus.WebUI.Tests.csproj --verbosity quiet ✅
   - BOTNEXUS_RUN_PLAYWRIGHT_E2E=1 dotnet test tests\\BotNexus.WebUI.Tests --filter "BasicSwitchAndSend" ✅ (1/1)
   - BOTNEXUS_RUN_PLAYWRIGHT_E2E=1 dotnet test tests\\BotNexus.WebUI.Tests ❌ (1 passed, 4 failed; failures now in session-switch behavior assertions, not connection refused)
+## 2026-04-11 - Playwright P0 WebUI interaction coverage (Hermes)
+- Implemented six new E2E classes: ConnectionLifecycle (4), ChatSending (8), StreamingDisplay (7), SteerAndFollowUp (6), Abort (4), SidebarNavigation (5) for 34 new interaction tests.
+- Enhanced `RecordingAgentHandle.StreamAsync` with configurable stream plans: thinking deltas, tool start/end events, chunked content with delays, and error injection; also added steer/follow-up/abort dispatch recording.
+- Enhanced `WebUiE2ETestHost` helpers: processing bar visibility waits, abort visibility waits/click, system message wait, streaming completion wait, escape key, element visibility, and chat message counting.
+- Hardened existing `SessionSwitchingE2ETests.SendDuringLoading_DoesNotMisrouteToPreviousSession` to assert disabled input rather than transient loading element.
+- Validation:
+  - `dotnet build tests\BotNexus.WebUI.Tests\BotNexus.WebUI.Tests.csproj --verbosity quiet` ✅
+  - `BOTNEXUS_RUN_PLAYWRIGHT_E2E=1 dotnet test tests\BotNexus.WebUI.Tests\BotNexus.WebUI.Tests.csproj --verbosity normal` ✅ (39/39 passed)

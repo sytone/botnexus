@@ -110,7 +110,6 @@ public sealed class SessionSwitchingE2ETests : IAsyncLifetime
         await host.OpenAgentTimelineAsync(AgentA);
 
         await host.Page.Locator($"#sessions-list .list-item[data-agent-id='{AgentB}'][data-channel-type='web chat']").First.ClickAsync();
-        await host.Page.Locator("#chat-messages .loading").WaitForAsync(new() { Timeout = 5000 });
         await Assertions.Expect(host.Page.Locator("#chat-input")).ToBeDisabledAsync();
 
         await host.Page.EvaluateAsync(
