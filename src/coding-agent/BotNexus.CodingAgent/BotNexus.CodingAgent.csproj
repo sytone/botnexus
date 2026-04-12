@@ -14,6 +14,7 @@
     <ProjectReference Include="..\..\providers\BotNexus.Providers.Anthropic\BotNexus.Providers.Anthropic.csproj" />
     <ProjectReference Include="..\..\providers\BotNexus.Providers.OpenAI\BotNexus.Providers.OpenAI.csproj" />
     <ProjectReference Include="..\..\providers\BotNexus.Providers.OpenAICompat\BotNexus.Providers.OpenAICompat.csproj" />
+    <ProjectReference Include="..\..\prompts\BotNexus.Prompts\BotNexus.Prompts.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="TestableIO.System.IO.Abstractions.Wrappers" Version="*" />

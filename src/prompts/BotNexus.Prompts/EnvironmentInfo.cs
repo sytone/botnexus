@@ -10,8 +10,8 @@ public static class EnvironmentInfo
         [
             $"- OS: {RuntimeInformation.OSDescription}",
             $"- Working directory: {workingDirectory.Replace('\\', '/')}",
-            $"- Git branch: {gitBranch ?? \"N/A\"}",
-            $"- Git status: {gitStatus ?? \"N/A\"}",
+            $"- Git branch: {gitBranch ?? "N/A"}",
+            $"- Git status: {gitStatus ?? "N/A"}",
             $"- Package manager: {packageManager}"
         ];
     }

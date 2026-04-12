@@ -1,5 +1,5 @@
-using System.Runtime.InteropServices;
 using System.Text;
+using BotNexus.Prompts;
 
 namespace BotNexus.CodingAgent;
 
@@ -32,6 +32,7 @@ public sealed class SystemPromptBuilder
     {
         ArgumentNullException.ThrowIfNull(context);
 
+        var toolRegistry = new ToolNameRegistry(context.ToolNames);
         var normalizedWorkingDirectory = context.WorkingDirectory.Replace('\\', '/');
         var timestamp = (context.CurrentDateTime ?? DateTimeOffset.Now).ToString("O");
         var builder = new StringBuilder();
@@ -45,9 +46,9 @@ public sealed class SystemPromptBuilder
             var sections = new List<(string? Title, string Content)>
             {
                 (null, "You are a coding assistant with access to tools for reading, writing, and editing files, and executing shell commands."),
-                ("Environment", BuildEnvironmentSection(context)),
+                ("Environment", BuildEnvironmentSection(context.WorkingDirectory, context.GitBranch, context.GitStatus, context.PackageManager)),
                 ("Available Tools", BuildToolsSection(context)),
-                ("Tool Guidelines", BuildToolGuidelinesSection(context))
+                ("Tool Guidelines", BuildToolGuidelinesSection(toolRegistry, context.ToolContributions))
             };
 
             builder.Append(BuildDocument(sections));
@@ -69,7 +70,7 @@ public sealed class SystemPromptBuilder
             builder.Append(contextFilesSection);
         }
 
-        var hasReadTool = context.ToolNames.Any(static name => string.Equals(name, "read", StringComparison.OrdinalIgnoreCase));
+        var hasReadTool = toolRegistry.Contains("read");
         var skillsSection = hasReadTool ? BuildSkillsSection(context.Skills) : string.Empty;
         if (!string.IsNullOrWhiteSpace(skillsSection))
         {
@@ -123,17 +124,9 @@ public sealed class SystemPromptBuilder
         return builder.ToString().TrimEnd();
     }
 
-    private static string BuildEnvironmentSection(SystemPromptContext context)
+    private static string BuildEnvironmentSection(string workingDirectory, string? gitBranch, string? gitStatus, string packageManager)
     {
-        var lines = new[]
-        {
-            $"- OS: {RuntimeInformation.OSDescription}",
-            $"- Working directory: {context.WorkingDirectory.Replace('\\', '/')}",
-            $"- Git branch: {context.GitBranch ?? "N/A"}",
-            $"- Git status: {context.GitStatus ?? "N/A"}",
-            $"- Package manager: {context.PackageManager}"
-        };
-
+        var lines = EnvironmentInfo.BuildSection(workingDirectory, gitBranch, gitStatus, packageManager);
         return string.Join(Environment.NewLine, lines);
     }
 
@@ -151,7 +144,7 @@ public sealed class SystemPromptBuilder
                 $"- {contribution.Name}: {contribution.Snippet ?? "Available for coding workflow tasks."}"));
     }
 
-    private static string BuildToolGuidelinesSection(SystemPromptContext context)
+    private static string BuildToolGuidelinesSection(ToolNameRegistry toolRegistry, IReadOnlyList<ToolPromptContribution>? toolContributions)
     {
         var guidelines = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -163,12 +156,10 @@ public sealed class SystemPromptBuilder
             "Show file paths clearly when working with files."
         };
 
-        var hasBash = context.ToolNames.Any(static name => string.Equals(name, "bash", StringComparison.OrdinalIgnoreCase));
-        var hasGrep = context.ToolNames.Any(static name => string.Equals(name, "grep", StringComparison.OrdinalIgnoreCase));
-        var hasFind = context.ToolNames.Any(static name => string.Equals(name, "find", StringComparison.OrdinalIgnoreCase) || string.Equals(name, "glob", StringComparison.OrdinalIgnoreCase));
-        var hasListDirectory = context.ToolNames.Any(static name =>
-            string.Equals(name, "ls", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(name, "list_directory", StringComparison.OrdinalIgnoreCase));
+        var hasBash = toolRegistry.Contains("bash");
+        var hasGrep = toolRegistry.Contains("grep");
+        var hasFind = toolRegistry.Contains("find") || toolRegistry.Contains("glob");
+        var hasListDirectory = toolRegistry.Contains("ls") || toolRegistry.Contains("list_directory");
 
         if (hasBash && !hasGrep && !hasFind && !hasListDirectory)
         {
@@ -179,7 +170,7 @@ public sealed class SystemPromptBuilder
             guidelines.Add("Prefer grep/find/ls tools over bash for file exploration (faster, respects .gitignore).");
         }
 
-        foreach (var guideline in (context.ToolContributions ?? []).SelectMany(contribution => contribution.Guidelines ?? []))
+        foreach (var guideline in (toolContributions ?? []).SelectMany(contribution => contribution.Guidelines ?? []))
         {
             if (!string.IsNullOrWhiteSpace(guideline))
             {
@@ -223,7 +214,7 @@ public sealed class SystemPromptBuilder
         var builder = new StringBuilder();
         foreach (var skill in skills)
         {
-            var parsed = ParseSkill(skill);
+            var parsed = SkillsParser.Parse(skill);
             builder.AppendLine("---");
             builder.AppendLine($"name: {parsed.Name}");
             if (!string.IsNullOrWhiteSpace(parsed.Description))
@@ -239,45 +230,4 @@ public sealed class SystemPromptBuilder
         return builder.ToString().TrimEnd();
     }
 
-    private static (string Name, string? Description, string Content) ParseSkill(string raw)
-    {
-        var content = raw.Trim();
-        if (!content.StartsWith("---", StringComparison.Ordinal))
-        {
-            return ("skill", null, content);
-        }
-
-        var lines = content.Split(["\r\n", "\n"], StringSplitOptions.None);
-        var closingIndex = Array.FindIndex(lines, 1, line => line.Trim().Equals("---", StringComparison.Ordinal));
-        if (closingIndex < 0)
-        {
-            return ("skill", null, content);
-        }
-
-        string? name = null;
-        string? description = null;
-        for (var i = 1; i < closingIndex; i++)
-        {
-            var line = lines[i];
-            var separator = line.IndexOf(':');
-            if (separator <= 0)
-            {
-                continue;
-            }
-
-            var key = line[..separator].Trim();
-            var value = line[(separator + 1)..].Trim().Trim('\'', '"');
-            if (key.Equals("name", StringComparison.OrdinalIgnoreCase))
-            {
-                name = value;
-            }
-            else if (key.Equals("description", StringComparison.OrdinalIgnoreCase))
-            {
-                description = value;
-            }
-        }
-
-        var body = string.Join(Environment.NewLine, lines.Skip(closingIndex + 1)).Trim();
-        return (name ?? "skill", description, body);
-    }
 }
