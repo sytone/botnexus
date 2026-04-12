@@ -7,6 +7,7 @@ export const $$ = (sel) => document.querySelectorAll(sel);
 
 // DOM element cache — safe at module level because type="module" is deferred.
 export const dom = {
+    app:                 $('#app'),
     sessionsList:        $('#sessions-list'),
     agentsList:          $('#agents-list'),
     connectionStatus:    $('#connection-status'),
@@ -242,6 +243,7 @@ export function showView(viewId) {
         if (el) el.classList.toggle('hidden', id !== viewId);
     });
     if (viewId === 'welcome-screen') {
+        document.title = 'BotNexus';
         if (location.hash) history.pushState(null, '', location.pathname);
     }
 }
@@ -271,15 +273,21 @@ export function copyMessageContent(msgEl, btn) {
 // ── Mobile Sidebar ──────────────────────────────────────────────────
 
 export function toggleSidebar() {
-    const isCollapsed = dom.sidebar.classList.toggle('collapsed');
-    dom.sidebarOverlay.classList.toggle('hidden', isCollapsed);
-    dom.sidebarToggle.setAttribute('aria-expanded', !isCollapsed);
+    const isCollapsed = !dom.app.classList.contains('sidebar-collapsed');
+    setSidebarCollapsedState(isCollapsed);
+    return isCollapsed;
 }
 
 export function closeSidebar() {
-    dom.sidebar.classList.add('collapsed');
-    dom.sidebarOverlay.classList.add('hidden');
-    dom.sidebarToggle.setAttribute('aria-expanded', 'false');
+    setSidebarCollapsedState(true);
+}
+
+export function setSidebarCollapsedState(isCollapsed) {
+    dom.app.classList.toggle('sidebar-collapsed', isCollapsed);
+    dom.sidebar.classList.toggle('collapsed', isCollapsed);
+    const isMobile = window.matchMedia('(max-width: 768px)').matches;
+    dom.sidebarOverlay.classList.toggle('hidden', !isMobile || isCollapsed);
+    dom.sidebarToggle.setAttribute('aria-expanded', String(!isCollapsed));
 }
 
 // ── Section Toggles ─────────────────────────────────────────────────

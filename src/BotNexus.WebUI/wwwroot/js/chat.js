@@ -997,6 +997,7 @@ export async function openAgentTimeline(agentId, channelType, targetSessionId = 
     syncLoadingUiForActiveSession();
 
     dom.chatTitle.textContent = `${agentId} — ${channelDisplayName(channelType)}`;
+    document.title = `${agentId} — ${channelDisplayName(channelType)} | BotNexus`;
     const hash = `#/agents/${encodeURIComponent(agentId)}/channels/${encodeURIComponent(toHubChannelType(channelType))}`;
     if (location.hash !== hash) history.pushState(null, '', hash);
 
