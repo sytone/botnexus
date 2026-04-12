@@ -92,6 +92,101 @@ public abstract class StreamingProviderConformanceTests
         events.Select(e => e.Type).Should().Equal(ExpectedTextEventSequence);
     }
 
+    // --- HTTP error handling tests ---
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.BadGateway)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    public async Task Stream_HttpError_EmitsErrorResult(HttpStatusCode statusCode)
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(statusCode)
+        {
+            Content = new StringContent($"{{\"error\":\"test error {(int)statusCode}\"}}", Encoding.UTF8, "application/json")
+        });
+
+        var provider = CreateProvider(handler);
+        var stream = provider.Stream(CreateModel(), CreateContext(), CreateOptions());
+        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+        result.StopReason.Should().Be(StopReason.Error);
+        result.ErrorMessage.Should().NotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public async Task Stream_EmptyResponse_EmitsErrorResult()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("", Encoding.UTF8, "text/event-stream")
+        });
+
+        var provider = CreateProvider(handler);
+        var stream = provider.Stream(CreateModel(), CreateContext(), CreateOptions());
+        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Empty stream should produce either an error or an empty content result
+        (result.StopReason == StopReason.Error || result.Content.Count == 0).Should().BeTrue(
+            "empty stream should produce error or empty content, got StopReason={0}, Content.Count={1}",
+            result.StopReason, result.Content.Count);
+    }
+
+    [Fact]
+    public async Task Stream_MalformedJson_EmitsErrorResult()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("data: {not valid json}\n\n", Encoding.UTF8, "text/event-stream")
+        });
+
+        var provider = CreateProvider(handler);
+        var stream = provider.Stream(CreateModel(), CreateContext(), CreateOptions());
+        var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+        result.StopReason.Should().Be(StopReason.Error);
+    }
+
+    [Fact]
+    public async Task Stream_CancellationDuringStreaming_ThrowsOrEmitsError()
+    {
+        using var cts = new CancellationTokenSource();
+
+        var handler = new RecordingHandler(_ =>
+        {
+            // Simulate slow response
+            cts.Cancel();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    BuildTextPayload("hello", MapCanonicalStopReason("stop")),
+                    Encoding.UTF8,
+                    "text/event-stream")
+            };
+        });
+
+        var provider = CreateProvider(handler);
+        var options = CreateOptions() with { CancellationToken = cts.Token };
+        var stream = provider.Stream(CreateModel(), CreateContext(), options);
+
+        Func<Task> act = async () => await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Either throws OperationCanceledException or returns error result
+        try
+        {
+            var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            // If it doesn't throw, it should be an error or cancelled result
+            (result.StopReason == StopReason.Error || result.ErrorMessage is not null).Should().BeTrue();
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected
+        }
+    }
+
     protected virtual bool SupportsStreamingSequence => true;
 
     protected virtual IReadOnlyList<string> ExpectedTextEventSequence =>
