@@ -83,12 +83,15 @@
         #activeViewId = null;
         #selectedAgentId = null;
         #isRestRequestInFlight = false;
+        #isSwitchingView = false;
 
         get activeViewId() { return this.#activeViewId; }
         get activeStore() { return this.#activeViewId ? this.#stores.get(this.#activeViewId) || null : null; }
         get activeAgentId() { return this.activeStore?.agentId || this.#selectedAgentId || null; }
         get isRestRequestInFlight() { return this.#isRestRequestInFlight; }
+        get isSwitchingView() { return this.#isSwitchingView; }
         setRestRequestInFlight(isInFlight) { this.#isRestRequestInFlight = !!isInFlight; }
+        setSwitchingView(isSwitching) { this.#isSwitchingView = !!isSwitching; }
         setSelectedAgent(agentId) { this.#selectedAgentId = agentId || null; }
 
         subscribe(sessions) {
@@ -461,6 +464,11 @@
 
     function updateSendButtonState() {
         const hasText = !!elChatInput.value.trim();
+        if (storeManager.isSwitchingView) {
+            elChatInput.disabled = true;
+            elBtnSend.disabled = true;
+            return;
+        }
         if (storeManager.isRestRequestInFlight) {
             elBtnSend.disabled = true;
             return;
@@ -524,13 +532,47 @@
     // Processing status bar
     // =========================================================================
 
-    function showProcessingStatus(stage, icon) {
-        elProcessingStatus.classList.remove('hidden');
+    function renderProcessingStatus(isVisible, stage = '', icon = '⏳') {
+        elProcessingStatus.classList.toggle('hidden', !isVisible);
         const label = $('#processing-label');
-        if (label) {
-            label.textContent = `${icon || '⏳'} ${stage}`;
+        if (!label) return;
+
+        if (isVisible) {
+            label.textContent = `${icon || '⏳'} ${stage || 'Processing...'}`;
             label.classList.remove('hidden');
+            return;
         }
+
+        label.textContent = '';
+        label.classList.add('hidden');
+    }
+
+    function syncLoadingUiForActiveSession() {
+        const activeId = getCurrentSessionId();
+        const store = activeId ? storeManager.getStore(activeId) : null;
+        if (!store) {
+            renderProcessingStatus(false);
+            elBtnAbort.classList.add('hidden');
+            elChatMessages.querySelectorAll('.streaming-indicator').forEach(el => el.remove());
+            return;
+        }
+
+        const ss = store.streamState;
+        renderProcessingStatus(ss.processingVisible, ss.processingStage, ss.processingIcon);
+        elBtnAbort.classList.toggle('hidden', !ss.isStreaming);
+        if (!ss.showStreamingIndicator) {
+            elChatMessages.querySelectorAll('.streaming-indicator').forEach(el => el.remove());
+        }
+    }
+
+    function showProcessingStatus(stage, icon, sessionId = getCurrentSessionId()) {
+        if (!sessionId) return;
+        const ss = getStreamState(sessionId);
+        ss.processingVisible = true;
+        ss.processingStage = stage || 'Processing...';
+        ss.processingIcon = icon || '⏳';
+        if (sessionId !== getCurrentSessionId()) return;
+        renderProcessingStatus(true, ss.processingStage, ss.processingIcon);
     }
 
     function updateProcessingToolCount() {
@@ -545,13 +587,15 @@
         }
     }
 
-    function hideProcessingStatus() {
-        elProcessingStatus.classList.add('hidden');
-        const label = $('#processing-label');
-        if (label) {
-            label.textContent = '';
-            label.classList.add('hidden');
+    function hideProcessingStatus(sessionId = getCurrentSessionId()) {
+        if (sessionId) {
+            const ss = getStreamState(sessionId);
+            ss.processingVisible = false;
+            ss.processingStage = '';
+            ss.processingIcon = '⏳';
         }
+        if (sessionId !== getCurrentSessionId()) return;
+        renderProcessingStatus(false);
     }
 
     // =========================================================================
@@ -820,6 +864,10 @@
                 ss.toolCallDepth = 0;
                 ss.toolStartTimes = {};
                 ss.thinkingBuffer = '';
+                ss.showStreamingIndicator = false;
+                ss.processingVisible = false;
+                ss.processingStage = '';
+                ss.processingIcon = '⏳';
                 return;
             }
             markResponseReceived();
@@ -1253,11 +1301,25 @@
     // =========================================================================
 
     function showStreamingIndicator() {
+        const sessionId = getCurrentSessionId();
+        if (!sessionId) return;
+        const ss = getStreamState(sessionId);
+        ss.showStreamingIndicator = true;
+        if (sessionId !== getCurrentSessionId()) return;
         // Bottom-of-chat indicator removed — status is shown in the processing bar at the top.
     }
 
-    function removeStreamingIndicator() {
+    function hideStreamingIndicator(sessionId = getCurrentSessionId()) {
+        if (sessionId) {
+            const ss = getStreamState(sessionId);
+            ss.showStreamingIndicator = false;
+        }
+        if (sessionId !== getCurrentSessionId()) return;
         elChatMessages.querySelectorAll('.streaming-indicator').forEach(el => el.remove());
+    }
+
+    function removeStreamingIndicator() {
+        hideStreamingIndicator();
     }
 
     // =========================================================================
@@ -1703,6 +1765,10 @@
     // =========================================================================
 
     async function sendMessage() {
+        if (storeManager.isSwitchingView) {
+            appendSystemMessage('Please wait for session switch to complete.', 'warning');
+            return;
+        }
         const activeStore = storeManager.activeStore;
         const activeAgentId = activeStore?.agentId || storeManager.activeAgentId;
         const activeSessionId = storeManager.activeViewId;
@@ -1730,7 +1796,7 @@
 
         if (isCurrentSessionStreaming() && connection?.state === signalR.HubConnectionState.Connected) {
             if (!activeSessionId) {
-                appendSystemMessage('Unable to send control message while no active session is selected.', 'warning');
+                appendSystemMessage('Unable to send control message while session is switching.', 'warning');
                 return;
             }
             if (sendModeFollowUp) {
@@ -1959,7 +2025,7 @@
                         <span class="item-meta">${timeStr}</span>
                     `;
 
-                    channelEl.addEventListener('click', () => openAgentTimeline(agentId, channelType));
+                    channelEl.addEventListener('click', () => openAgentTimeline(agentId, channelType, latestSession.sessionId));
                     channelsDiv.appendChild(channelEl);
                 }
             }
@@ -2001,19 +2067,19 @@
         // Opening a single session — load as timeline for this agent+channel
         const session = await fetchJson(`/sessions/${encodeURIComponent(sessionId)}`);
         const channelType = session?.channelType || 'Web Chat';
-        await openAgentTimeline(agentId, channelType);
+        await openAgentTimeline(agentId, channelType, sessionId);
     }
 
-    async function openAgentTimeline(agentId, channelType) {
+    async function openAgentTimeline(agentId, channelType, targetSessionId = null) {
+        storeManager.setSwitchingView(true);
+        updateSendButtonState();
+
         // Clean up outgoing session UI state
         if (storeManager.isRestRequestInFlight) setSendingState(false);
         resetQueue();
         clearResponseTimeout();
         stopToolElapsedTimer();
-        hideProcessingStatus();
         resetNewMessageCount();
-        elBtnAbort.classList.add('hidden');
-        removeStreamingIndicator();
 
         // Highlight sidebar
         elSessionsList.querySelectorAll('.list-item').forEach(el => {
@@ -2027,63 +2093,70 @@
         elAgentSelect.classList.add('hidden');
         storeManager.setSelectedAgent(agentId);
         currentChannelType = channelType;
+        storeManager.setActiveView(targetSessionId, agentId, channelType);
+        syncLoadingUiForActiveSession();
 
         elChatTitle.textContent = `${agentId} — ${channelDisplayName(channelType)}`;
 
-        // Warm cache — instant switch, zero server calls
-        const existingStore = storeManager.findStoreForAgent(agentId, channelType);
-        if (existingStore && existingStore.sessionId) {
-            const warm = storeManager.switchView(existingStore.sessionId);
-            const hasWarmContent = !!elChatMessages.querySelector('.history-sentinel');
-            if (warm && hasWarmContent) {
-                scrollToBottom();
-                elChatInput.focus();
-                updateSendButtonState();
+        try {
+            // Warm cache — instant switch, zero server calls
+            const existingStore = storeManager.findStoreForAgent(agentId, channelType);
+            if (existingStore && existingStore.sessionId) {
+                const warm = storeManager.switchView(existingStore.sessionId);
+                const hasWarmContent = !!elChatMessages.querySelector('.history-sentinel');
+                if (warm && hasWarmContent) {
+                    scrollToBottom();
+                    elChatInput.focus();
+                    updateSendButtonState();
+                    loadChatHeaderModels();
+                    fetchSubAgents();
+                    return;
+                }
+            }
+
+            // Cold start — fetch from channel history endpoint
+            elChatMessages.innerHTML = '<div class="loading">Loading timeline...</div>';
+
+            const data = await fetchJson(
+                `/api/channels/${encodeURIComponent(channelType)}/agents/${encodeURIComponent(agentId)}/history?limit=50`
+            );
+
+            if (!data || !data.messages || data.messages.length === 0) {
+                elChatMessages.innerHTML = '';
+                elChatMeta.textContent = `Agent: ${agentId} · No messages yet`;
+                storeManager.setActiveView(null, agentId, channelType);
+                updateSessionIdDisplay();
                 loadChatHeaderModels();
-                fetchSubAgents();
+                elChatInput.focus();
                 return;
             }
-        }
 
-        // Cold start — fetch from channel history endpoint
-        elChatMessages.innerHTML = '<div class="loading">Loading timeline...</div>';
+            // Use the newest message's session as the active session
+            const latestSessionId = data.messages[data.messages.length - 1].sessionId;
+            storeManager.getOrCreateStore(latestSessionId, { agentId, channelType });
+            storeManager.switchView(latestSessionId);
 
-        const data = await fetchJson(
-            `/api/channels/${encodeURIComponent(channelType)}/agents/${encodeURIComponent(agentId)}/history?limit=50`
-        );
-
-        if (!data || !data.messages || data.messages.length === 0) {
             elChatMessages.innerHTML = '';
-            elChatMeta.textContent = `Agent: ${agentId} · No messages yet`;
-            storeManager.setActiveView(null, agentId, channelType);
+
+            // Render messages with session boundary dividers
+            renderHistoryBatch(data.messages, data.sessionBoundaries);
+
+            // Set up infinite scrollback observer
+            setupScrollbackObserver(channelType, agentId, data.nextCursor, data.hasMore);
+
+            // Check if agent is still running
+            await checkAgentRunningStatus(agentId, latestSessionId);
+
+            elChatMeta.textContent = `Agent: ${agentId} · ${channelDisplayName(channelType)}`;
             updateSessionIdDisplay();
-            loadChatHeaderModels();
+            scrollToBottom();
             elChatInput.focus();
-            return;
+            updateSendButtonState();
+            loadChatHeaderModels();
+        } finally {
+            storeManager.setSwitchingView(false);
+            updateSendButtonState();
         }
-
-        // Use the newest message's session as the active session
-        const latestSessionId = data.messages[data.messages.length - 1].sessionId;
-        storeManager.getOrCreateStore(latestSessionId, { agentId, channelType });
-        storeManager.switchView(latestSessionId);
-
-        elChatMessages.innerHTML = '';
-
-        // Render messages with session boundary dividers
-        renderHistoryBatch(data.messages, data.sessionBoundaries);
-
-        // Set up infinite scrollback observer
-        setupScrollbackObserver(channelType, agentId, data.nextCursor, data.hasMore);
-
-        // Check if agent is still running
-        await checkAgentRunningStatus(agentId, latestSessionId);
-
-        elChatMeta.textContent = `Agent: ${agentId} · ${channelDisplayName(channelType)}`;
-        updateSessionIdDisplay();
-        scrollToBottom();
-        elChatInput.focus();
-        updateSendButtonState();
-        loadChatHeaderModels();
     }
 
     function renderSessionDivider(session) {
