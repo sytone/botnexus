@@ -75,22 +75,6 @@ public sealed class GatewayHub : Hub
         return new { sessions };
     }
 
-    public async Task<object> Subscribe(string sessionId)
-    {
-        var typedSessionId = ParseSessionId(sessionId);
-
-        await Groups.AddToGroupAsync(
-            Context.ConnectionId,
-            GetSessionGroup(typedSessionId),
-            Context.ConnectionAborted);
-
-        return new
-        {
-            sessionId = typedSessionId.Value,
-            status = "subscribed"
-        };
-    }
-
     public async Task<object> JoinSession(string agentId, string? sessionId)
     {
         var typedAgentId = ParseAgentId(agentId);
@@ -155,14 +139,30 @@ public sealed class GatewayHub : Hub
             GetSessionGroup(ParseSessionId(sessionId)),
             Context.ConnectionAborted);
 
-    public Task SendMessage(string agentId, string sessionId, string content)
+    public async Task<object> SendMessage(string agentId, string channelType, string content)
     {
         var typedAgentId = ParseAgentId(agentId);
-        var typedSessionId = ParseSessionId(sessionId);
+        var typedChannelType = ParseChannelType(channelType);
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
-        _logger.LogInformation("Hub SendMessage: agent={AgentId} session={SessionId} connection={ConnectionId} content={Content}",
-            typedAgentId, typedSessionId, Context.ConnectionId, content.Length > 50 ? content[..50] + "..." : content);
-        return _dispatcher.DispatchAsync(
+
+        var session = await ResolveOrCreateSessionAsync(typedAgentId, typedChannelType);
+        await SubscribeInternalAsync(session.SessionId);
+
+        _logger.LogInformation("Hub SendMessage: agent={AgentId} channel={ChannelType} session={SessionId} connection={ConnectionId} content={Content}",
+            typedAgentId, typedChannelType, session.SessionId, Context.ConnectionId, content.Length > 50 ? content[..50] + "..." : content);
+
+        await DispatchMessageAsync(typedAgentId, session.SessionId, content, "message");
+
+        return new
+        {
+            sessionId = session.SessionId.Value,
+            agentId = session.AgentId.Value,
+            channelType = session.ChannelType?.Value
+        };
+    }
+
+    private Task DispatchMessageAsync(AgentId typedAgentId, SessionId typedSessionId, string content, string messageType)
+        => _dispatcher.DispatchAsync(
             new InboundMessage
             {
                 ChannelType = ChannelKey.From("signalr"),
@@ -171,10 +171,9 @@ public sealed class GatewayHub : Hub
                 SessionId = typedSessionId.Value,
                 TargetAgentId = typedAgentId.Value,
                 Content = content,
-                Metadata = new Dictionary<string, object?> { ["messageType"] = "message" }
+                Metadata = new Dictionary<string, object?> { ["messageType"] = messageType }
             },
             CancellationToken.None);
-    }
 
     public Task Steer(string agentId, string sessionId, string content)
     {
@@ -200,7 +199,12 @@ public sealed class GatewayHub : Hub
     }
 
     public Task FollowUp(string agentId, string sessionId, string content)
-        => SendMessage(agentId, sessionId, content);
+    {
+        var typedAgentId = ParseAgentId(agentId);
+        var typedSessionId = ParseSessionId(sessionId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(content);
+        return DispatchMessageAsync(typedAgentId, typedSessionId, content, "message");
+    }
 
     public async Task Abort(string agentId, string sessionId)
     {
@@ -298,4 +302,91 @@ public sealed class GatewayHub : Hub
 
     private static string GetSessionGroup(SessionId sessionId) => $"session:{sessionId.Value}";
     private static string GetSessionGroup(string sessionId) => $"session:{sessionId}";
+
+    private static ChannelKey ParseChannelType(string channelType)
+    {
+        if (string.IsNullOrWhiteSpace(channelType))
+            throw new HubException("Channel type is required.");
+
+        return NormalizeChannelType(ChannelKey.From(channelType));
+    }
+
+    private async Task SubscribeInternalAsync(SessionId sessionId)
+    {
+        await Groups.AddToGroupAsync(
+            Context.ConnectionId,
+            GetSessionGroup(sessionId),
+            Context.ConnectionAborted);
+    }
+
+    private async Task<GatewaySession> ResolveOrCreateSessionAsync(AgentId agentId, ChannelKey channelType)
+    {
+        var summaries = await _warmup.GetAvailableSessionsAsync(agentId.Value, Context.ConnectionAborted);
+        var existing = summaries
+            .Where(summary => ChannelMatches(summary.ChannelType, channelType))
+            .OrderByDescending(summary => summary.UpdatedAt)
+            .FirstOrDefault();
+
+        var sessionId = existing is null ? SessionId.Create() : SessionId.From(existing.SessionId);
+        var session = await _sessions.GetOrCreateAsync(sessionId, agentId, Context.ConnectionAborted);
+
+        var needsSave = false;
+        if (session.Status == SessionStatus.Expired)
+        {
+            session.Status = SessionStatus.Active;
+            session.ExpiresAt = null;
+            needsSave = true;
+        }
+
+        var normalizedChannelType = NormalizeChannelType(channelType);
+        if (!session.ChannelType.HasValue || !ChannelMatches(session.ChannelType.Value, normalizedChannelType))
+        {
+            session.ChannelType = normalizedChannelType;
+            needsSave = true;
+        }
+
+        if (!session.SessionType.Equals(SessionType.UserAgent))
+        {
+            session.SessionType = SessionType.UserAgent;
+            needsSave = true;
+        }
+
+        if (session.Participants.Count == 0)
+        {
+            session.Participants.Add(new SessionParticipant
+            {
+                Type = ParticipantType.User,
+                Id = Context.ConnectionId
+            });
+            needsSave = true;
+        }
+
+        if (needsSave)
+            await _sessions.SaveAsync(session, Context.ConnectionAborted);
+
+        return session;
+    }
+
+    private static bool ChannelMatches(ChannelKey? candidate, ChannelKey target)
+    {
+        if (!candidate.HasValue)
+            return NormalizeChannelType(target).Equals(ChannelKey.From("signalr"));
+
+        return ChannelMatches(candidate.Value, target);
+    }
+
+    private static bool ChannelMatches(ChannelKey candidate, ChannelKey target)
+        => NormalizeChannelType(candidate).Equals(NormalizeChannelType(target));
+
+    private static ChannelKey NormalizeChannelType(ChannelKey channelType)
+    {
+        var value = channelType.Value;
+        if (string.Equals(value, "web chat", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "web-chat", StringComparison.OrdinalIgnoreCase))
+        {
+            return ChannelKey.From("signalr");
+        }
+
+        return channelType;
+    }
 }
