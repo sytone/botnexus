@@ -3,6 +3,9 @@ using System.Text.Json.Serialization;
 namespace BotNexus.Providers.Core.Models;
 
 [JsonConverter(typeof(JsonStringEnumConverter<StopReason>))]
+/// <summary>
+/// Specifies supported values for stop reason.
+/// </summary>
 public enum StopReason
 {
     /// <summary>
@@ -40,6 +43,9 @@ public enum StopReason
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<ThinkingLevel>))]
+/// <summary>
+/// Specifies supported values for thinking level.
+/// </summary>
 public enum ThinkingLevel
 {
     [JsonStringEnumMemberName("minimal")] Minimal,
@@ -50,6 +56,9 @@ public enum ThinkingLevel
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<CacheRetention>))]
+/// <summary>
+/// Specifies supported values for cache retention.
+/// </summary>
 public enum CacheRetention
 {
     [JsonStringEnumMemberName("none")] None,
@@ -58,6 +67,9 @@ public enum CacheRetention
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<Transport>))]
+/// <summary>
+/// Specifies supported values for transport.
+/// </summary>
 public enum Transport
 {
     [JsonStringEnumMemberName("sse")] Sse,

@@ -5,8 +5,24 @@ using BotNexus.Providers.Core.Utilities;
 
 namespace BotNexus.Providers.Core.Streaming;
 
+/// <summary>
+/// Represents open aistream processor.
+/// </summary>
 public sealed class OpenAIStreamProcessor
 {
+    /// <summary>
+    /// Executes parse open ai completions async.
+    /// </summary>
+    /// <param name="stream">The stream.</param>
+    /// <param name="reader">The reader.</param>
+    /// <param name="model">The model.</param>
+    /// <param name="api">The api.</param>
+    /// <param name="parseUsage">The parse usage.</param>
+    /// <param name="mapStopReason">The map stop reason.</param>
+    /// <param name="extractProviderErrorMessage">The extract provider error message.</param>
+    /// <param name="emitError">The emit error.</param>
+    /// <param name="onMalformedChunk">The on malformed chunk.</param>
+    /// <returns>The parse open ai completions async result.</returns>
     public async Task ParseOpenAiCompletionsAsync(
         LlmStream stream,
         StreamReader reader,
@@ -307,6 +323,16 @@ public sealed class OpenAIStreamProcessor
         stream.End(finalMessage);
     }
 
+    /// <summary>
+    /// Executes parse compat async.
+    /// </summary>
+    /// <param name="stream">The stream.</param>
+    /// <param name="reader">The reader.</param>
+    /// <param name="model">The model.</param>
+    /// <param name="api">The api.</param>
+    /// <param name="parseUsage">The parse usage.</param>
+    /// <param name="mapStopReason">The map stop reason.</param>
+    /// <returns>The parse compat async result.</returns>
     public async Task ParseCompatAsync(
         LlmStream stream,
         StreamReader reader,
@@ -512,8 +538,17 @@ public sealed class OpenAIStreamProcessor
 
     private sealed class ToolCallBuilder
     {
+        /// <summary>
+        /// Gets or sets the id.
+        /// </summary>
         public string Id { get; set; } = "";
+        /// <summary>
+        /// Gets or sets the name.
+        /// </summary>
         public string? Name { get; set; }
+        /// <summary>
+        /// Gets the arguments json.
+        /// </summary>
         public StringBuilder ArgumentsJson { get; } = new();
     }
 }

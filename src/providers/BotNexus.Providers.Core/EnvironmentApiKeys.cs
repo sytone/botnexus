@@ -26,6 +26,11 @@ public static class EnvironmentApiKeys
         ["kimi-coding"] = "KIMI_API_KEY",
     };
 
+    /// <summary>
+    /// Executes get api key.
+    /// </summary>
+    /// <param name="provider">The provider.</param>
+    /// <returns>The get api key result.</returns>
     public static string? GetApiKey(string provider)
     {
         // GitHub Copilot: try multiple env vars in priority order

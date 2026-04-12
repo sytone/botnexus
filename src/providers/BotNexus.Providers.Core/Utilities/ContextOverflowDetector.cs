@@ -40,6 +40,11 @@ public static class ContextOverflowDetector
         new("too many requests", RegexOptions.IgnoreCase | RegexOptions.Compiled),
     ];
 
+    /// <summary>
+    /// Executes is context overflow.
+    /// </summary>
+    /// <param name="errorMessage">The error message.</param>
+    /// <returns>The is context overflow result.</returns>
     public static bool IsContextOverflow(string? errorMessage)
     {
         if (string.IsNullOrWhiteSpace(errorMessage))
@@ -51,6 +56,11 @@ public static class ContextOverflowDetector
         return OverflowPatterns.Any(pattern => pattern.IsMatch(errorMessage));
     }
 
+    /// <summary>
+    /// Executes is context overflow.
+    /// </summary>
+    /// <param name="ex">The ex.</param>
+    /// <returns>The is context overflow result.</returns>
     public static bool IsContextOverflow(Exception? ex)
     {
         if (ex is null)
@@ -71,6 +81,12 @@ public static class ContextOverflowDetector
         return ex.InnerException is not null && IsContextOverflow(ex.InnerException);
     }
 
+    /// <summary>
+    /// Executes is context overflow.
+    /// </summary>
+    /// <param name="message">The message.</param>
+    /// <param name="contextWindow">The context window.</param>
+    /// <returns>The is context overflow result.</returns>
     public static bool IsContextOverflow(AssistantMessage? message, int? contextWindow = null)
     {
         if (message is null)

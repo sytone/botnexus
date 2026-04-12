@@ -12,7 +12,13 @@ namespace BotNexus.Providers.Core;
 /// </summary>
 public sealed class LlmClient
 {
+    /// <summary>
+    /// Gets the api providers.
+    /// </summary>
     public ApiProviderRegistry ApiProviders { get; }
+    /// <summary>
+    /// Gets the models.
+    /// </summary>
     public ModelRegistry Models { get; }
 
     public LlmClient(ApiProviderRegistry apiProviderRegistry, ModelRegistry modelRegistry)
@@ -21,6 +27,13 @@ public sealed class LlmClient
         Models = modelRegistry ?? throw new ArgumentNullException(nameof(modelRegistry));
     }
 
+    /// <summary>
+    /// Executes stream.
+    /// </summary>
+    /// <param name="model">The model.</param>
+    /// <param name="context">The context.</param>
+    /// <param name="options">The options.</param>
+    /// <returns>The stream result.</returns>
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
     {
         using var activity = ProviderDiagnostics.Source.StartActivity("llm.stream", ActivityKind.Client);
@@ -40,6 +53,10 @@ public sealed class LlmClient
         }
     }
 
+    /// <summary>
+    /// Executes complete async.
+    /// </summary>
+    /// <returns>The complete async result.</returns>
     public async Task<AssistantMessage> CompleteAsync(
         LlmModel model, Context context, StreamOptions? options = null)
     {
@@ -47,6 +64,13 @@ public sealed class LlmClient
         return await stream.GetResultAsync();
     }
 
+    /// <summary>
+    /// Executes stream simple.
+    /// </summary>
+    /// <param name="model">The model.</param>
+    /// <param name="context">The context.</param>
+    /// <param name="options">The options.</param>
+    /// <returns>The stream simple result.</returns>
     public LlmStream StreamSimple(LlmModel model, Context context, SimpleStreamOptions? options = null)
     {
         using var activity = ProviderDiagnostics.Source.StartActivity("llm.stream_simple", ActivityKind.Client);
@@ -66,6 +90,10 @@ public sealed class LlmClient
         }
     }
 
+    /// <summary>
+    /// Executes complete simple async.
+    /// </summary>
+    /// <returns>The complete simple async result.</returns>
     public async Task<AssistantMessage> CompleteSimpleAsync(
         LlmModel model, Context context, SimpleStreamOptions? options = null)
     {

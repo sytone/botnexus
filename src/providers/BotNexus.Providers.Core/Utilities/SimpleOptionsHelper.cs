@@ -69,6 +69,11 @@ public static class SimpleOptionsHelper
         };
     }
 
+    /// <summary>
+    /// Executes get default thinking budget.
+    /// </summary>
+    /// <param name="level">The level.</param>
+    /// <returns>The get default thinking budget result.</returns>
     public static int GetDefaultThinkingBudget(ThinkingLevel level)
     {
         if (DefaultThinkingBudgets.TryGetValue(level, out var budget))
