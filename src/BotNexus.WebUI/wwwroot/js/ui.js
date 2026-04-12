@@ -115,8 +115,14 @@ export function renderMarkdown(text) {
 
 let userScrolledUp = false;
 let newMessageCount = 0;
+let isBatchRendering = false;
+
+export function setBatchRenderingState(isRendering) {
+    isBatchRendering = isRendering === true;
+}
 
 export function scrollToBottom(force) {
+    if (isBatchRendering) return;
     if (force || !userScrolledUp) {
         requestAnimationFrame(() => { dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight; });
     }
@@ -124,7 +130,7 @@ export function scrollToBottom(force) {
 }
 
 export function updateScrollButton() {
-    if (!dom.scrollBottom) return;
+    if (!dom.scrollBottom || isBatchRendering) return;
     const threshold = 80;
     const atBottom = dom.chatMessages.scrollHeight - dom.chatMessages.scrollTop - dom.chatMessages.clientHeight < threshold;
     userScrolledUp = !atBottom;

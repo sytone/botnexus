@@ -8,7 +8,7 @@ import {
     dom, $, escapeHtml, formatTime, relativeTime, renderMarkdown, scrollToBottom,
     autoResize, incrementNewMessageCount, resetNewMessageCount,
     renderProcessingStatus, showSteerIndicator, showFollowUpIndicator,
-    showView, showConfirm, closeSidebar
+    showView, showConfirm, closeSidebar, setBatchRenderingState
 } from './ui.js';
 import {
     storeManager, getCurrentSessionId, getCurrentAgentId, getStreamState,
@@ -635,10 +635,15 @@ function renderHistoryBatch(messages, sessionBoundaries, container) {
     if (sessionBoundaries) {
         for (const b of sessionBoundaries) boundaryMap.set(b.insertBeforeIndex, b);
     }
-    for (let i = 0; i < messages.length; i++) {
-        const boundary = boundaryMap.get(i);
-        if (boundary) container.appendChild(createSessionDividerEl(boundary.sessionId, boundary.startedAt));
-        renderHistoryEntryTo(messages[i], container);
+    setBatchRenderingState(true);
+    try {
+        for (let i = 0; i < messages.length; i++) {
+            const boundary = boundaryMap.get(i);
+            if (boundary) container.appendChild(createSessionDividerEl(boundary.sessionId, boundary.startedAt));
+            renderHistoryEntryTo(messages[i], container);
+        }
+    } finally {
+        setBatchRenderingState(false);
     }
 }
 
