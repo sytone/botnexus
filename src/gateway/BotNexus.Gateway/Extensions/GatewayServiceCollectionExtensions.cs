@@ -99,6 +99,7 @@ public static class GatewayServiceCollectionExtensions
          services.TryAddSingleton<IAgentConfigurationWriter, NoOpAgentConfigurationWriter>();
         services.AddSingleton<IAgentSupervisor, DefaultAgentSupervisor>();
         services.AddSingleton<IAgentCommunicator, DefaultAgentCommunicator>();
+        services.AddSingleton<IAgentConversationService, AgentConversationService>();
         services.AddSingleton<ISubAgentManager, DefaultSubAgentManager>();
         services.TryAddSingleton<SessionLifecycleEvents>();
         services.TryAddSingleton<ISessionLifecycleEvents>(serviceProvider =>
