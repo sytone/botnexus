@@ -22,6 +22,9 @@ public readonly record struct SessionId(string Value) : IComparable<SessionId>
         return new($"{parentSessionId.Value}::subagent::{uniqueId.Trim()}");
     }
 
+    public static SessionId ForSubAgent(SessionId parentId, string uniqueId)
+        => ForSubAgent(parentId.Value, uniqueId);
+
     public static SessionId ForCrossAgent(string sourceId, string targetId)
     {
         var sourceSessionId = From(sourceId);
@@ -29,8 +32,10 @@ public readonly record struct SessionId(string Value) : IComparable<SessionId>
         return new($"xagent::{sourceSessionId.Value}::{targetSessionId.Value}");
     }
 
+    public bool IsSubAgent => Value.Contains("::subagent::", StringComparison.OrdinalIgnoreCase);
+
     public static implicit operator string(SessionId id) => id.Value;
-    public static explicit operator SessionId(string value) => From(value);
+    public static implicit operator SessionId(string value) => From(value);
 
     public override string ToString() => Value;
     public int CompareTo(SessionId other) => string.Compare(Value, other.Value, StringComparison.Ordinal);

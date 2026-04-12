@@ -12,7 +12,7 @@ public readonly record struct AgentId(string Value) : IComparable<AgentId>
             : new(value.Trim());
 
     public static implicit operator string(AgentId id) => id.Value;
-    public static explicit operator AgentId(string value) => From(value);
+    public static implicit operator AgentId(string value) => From(value);
 
     public override string ToString() => Value;
     public int CompareTo(AgentId other) => string.Compare(Value, other.Value, StringComparison.Ordinal);
