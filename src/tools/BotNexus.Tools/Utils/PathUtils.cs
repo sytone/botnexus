@@ -21,6 +21,9 @@ public static class PathUtils
     private static readonly StringComparer PathComparer = OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase
         : StringComparer.Ordinal;
+    private static readonly StringComparison PathComparison = OperatingSystem.IsWindows()
+        ? StringComparison.OrdinalIgnoreCase
+        : StringComparison.Ordinal;
 
     /// <summary>
     /// Resolves a user-provided path against a working directory while enforcing root containment.
@@ -102,7 +105,7 @@ public static class PathUtils
     /// <param name="fullPath">The full path to convert.</param>
     /// <param name="basePath">The base path to compute relativity from.</param>
     /// <returns>A relative path suitable for user-facing output.</returns>
-    public static string GetRelativePath(string fullPath, string basePath, IFileSystem? fileSystem = null)
+    public static string GetRelativePath(string fullPath, string basePath)
     {
         if (string.IsNullOrWhiteSpace(fullPath))
         {
@@ -117,26 +120,6 @@ public static class PathUtils
         var normalizedFullPath = Path.GetFullPath(fullPath);
         var normalizedBasePath = Path.GetFullPath(basePath);
         return Path.GetRelativePath(normalizedBasePath, normalizedFullPath);
-    }
-
-    /// <summary>
-    /// Checks whether Git excludes the supplied path according to repository ignore rules.
-    /// </summary>
-    /// <param name="path">Path to evaluate. Can be absolute or relative.</param>
-    /// <param name="workingDirectory">Repository working directory.</param>
-    /// <returns>
-    /// <see langword="true"/> when Git reports the path as ignored; otherwise <see langword="false"/>.
-    /// </returns>
-    /// <remarks>
-    /// Exit-code semantics from <c>git check-ignore -q</c>:
-    /// 0 = ignored, 1 = not ignored, anything else = git/runtime error.
-    /// Errors are treated as non-ignored to keep tool behavior deterministic.
-    /// </remarks>
-    public static bool IsGitIgnored(string path, string workingDirectory, IFileSystem? fileSystem = null)
-    {
-        var ignored = GetGitIgnoredPaths([path], workingDirectory, fileSystem);
-        var resolvedPath = ResolvePath(path, workingDirectory, fileSystem);
-        return ignored.Contains(resolvedPath);
     }
 
     public static HashSet<string> GetGitIgnoredPaths(IEnumerable<string> paths, string workingDirectory, IFileSystem? fileSystem = null)
@@ -157,7 +140,7 @@ public static class PathUtils
         var relativeToAbsolute = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var path in resolved)
         {
-            var relative = GetRelativePath(path, workingDirectory, fs)
+            var relative = GetRelativePath(path, workingDirectory)
                 .Replace(Path.DirectorySeparatorChar, '/');
             if (!relativeToAbsolute.ContainsKey(relative))
             {
@@ -272,8 +255,10 @@ public static class PathUtils
         var normalizedRoot = EnsureTrailingSeparator(Path.GetFullPath(root));
         var normalizedPath = Path.GetFullPath(path);
 
-        return normalizedPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase)
-               || string.Equals(normalizedPath.TrimEnd(Path.DirectorySeparatorChar), normalizedRoot.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase);
+        return normalizedPath.StartsWith(normalizedRoot, PathComparison)
+               || PathComparer.Equals(
+                   normalizedPath.TrimEnd(Path.DirectorySeparatorChar),
+                   normalizedRoot.TrimEnd(Path.DirectorySeparatorChar));
     }
 
     private static string EnsureTrailingSeparator(string path)

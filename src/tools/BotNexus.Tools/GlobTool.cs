@@ -16,7 +16,7 @@ namespace BotNexus.Tools;
 /// <remarks>
 /// <para>
 /// The matcher only returns filesystem paths under the configured working directory. Each candidate is
-/// additionally passed through <see cref="PathUtils.IsGitIgnored(string, string)"/> to keep ignored artifacts
+/// additionally checked via <see cref="PathUtils.GetGitIgnoredPaths(IEnumerable{string}, string, IFileSystem)"/> to keep ignored artifacts
 /// (build output, local secrets, generated files) out of model-visible results.
 /// </para>
 /// <para>

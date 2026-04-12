@@ -291,3 +291,8 @@
 - Observer cleanup per `(agentId, channelType)` key to prevent leaks
 
 **Validation:** `node --check` ✅, `dotnet build --verbosity quiet` ✅
+### 2026-04-12 — Wave 1 cleanup: shared OpenAI stream processor + tool line ending normalization
+- Extracted shared streaming/parsing into `OpenAIStreamProcessor` in `BotNexus.Providers.Core.Streaming` and switched both `OpenAICompletionsProvider` and `OpenAICompatProvider` to delegate SSE parsing there.
+- Moved tool-call ID sanitation/truncation primitive into `BotNexus.Providers.Core.Utilities.ToolCallIdExtensions.NormalizeToolCallId(int)` and updated provider call sites to use it.
+- Eliminated duplicate `NormalizeLineEndings` implementations by adding `BotNexus.Tools.Extensions.StringExtensions.NormalizeLineEndings()` and updated `EditTool`/`ReadTool`; also trimmed `PathUtils` by removing unused `IsGitIgnored` and simplifying `GetRelativePath` signature.
+- Validation: `dotnet build src\\providers\\BotNexus.Providers.Core\\BotNexus.Providers.Core.csproj`, `dotnet build src\\providers\\BotNexus.Providers.OpenAI\\BotNexus.Providers.OpenAI.csproj`, `dotnet build src\\providers\\BotNexus.Providers.OpenAICompat\\BotNexus.Providers.OpenAICompat.csproj`, `dotnet build src\\providers\\BotNexus.Providers.Anthropic\\BotNexus.Providers.Anthropic.csproj`, `dotnet build src\\tools\\BotNexus.Tools\\BotNexus.Tools.csproj` ✅ (full solution currently fails on unrelated gateway test drift already present in worktree).

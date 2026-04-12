@@ -3,6 +3,7 @@ using System.Text.Json;
 using BotNexus.AgentCore.Tools;
 using BotNexus.AgentCore.Types;
 using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Tools.Extensions;
 using BotNexus.Tools.Utils;
 using BotNexus.Providers.Core.Models;
 using System.IO.Abstractions;
@@ -143,7 +144,7 @@ public sealed class ReadTool : IAgentTool
 
     private static string ReadText(string textContent, string path, int offset, int? limit)
     {
-        var allLines = NormalizeLineEndings(textContent).Split('\n');
+        var allLines = textContent.NormalizeLineEndings().Split('\n');
         var startLineIndex = Math.Max(0, offset - 1);
         if (startLineIndex >= allLines.Length)
         {
@@ -278,11 +279,6 @@ public sealed class ReadTool : IAgentTool
         return entries.Count == 0
             ? $"Directory '{root}' is empty (within depth 2)."
             : string.Join(Environment.NewLine, entries);
-    }
-
-    private static string NormalizeLineEndings(string value)
-    {
-        return value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
     }
 
     private static int GetDepth(string root, string candidate)

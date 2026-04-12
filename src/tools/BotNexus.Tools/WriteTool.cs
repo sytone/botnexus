@@ -130,7 +130,7 @@ public sealed class WriteTool : IAgentTool
             await _fileSystem.File.WriteAllTextAsync(fullPath, content, new UTF8Encoding(false), cancellationToken).ConfigureAwait(false);
 
             var byteCount = Encoding.UTF8.GetByteCount(content);
-            var relativePath = PathUtils.GetRelativePath(fullPath, _workingDirectory, _fileSystem);
+            var relativePath = PathUtils.GetRelativePath(fullPath, _workingDirectory);
             var message = $"Wrote '{relativePath}' ({byteCount} bytes).";
 
             return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, message)]);

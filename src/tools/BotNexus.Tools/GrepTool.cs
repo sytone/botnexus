@@ -238,7 +238,7 @@ public sealed class GrepTool : IAgentTool
                         continue;
                     }
 
-                    var relativePath = PathUtils.GetRelativePath(file, _workingDirectory, _fileSystem);
+                    var relativePath = PathUtils.GetRelativePath(file, _workingDirectory);
                     if (contextLines == 0)
                     {
                         matches.Add($"{relativePath}:{lineNumber}: {TruncateLine(allLines[lineNumber - 1])}");

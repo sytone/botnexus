@@ -3,6 +3,7 @@ using System.Text.Json;
 using BotNexus.AgentCore.Tools;
 using BotNexus.AgentCore.Types;
 using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Tools.Extensions;
 using BotNexus.Tools.Utils;
 using BotNexus.Providers.Core.Models;
 using DiffPlex.DiffBuilder;
@@ -121,7 +122,7 @@ public sealed class EditTool : IAgentTool
                 original = original[1..];
             }
             var originalLineEnding = DetectLineEnding(original);
-            var normalizedOriginal = NormalizeLineEndings(original);
+            var normalizedOriginal = original.NormalizeLineEndings();
             var replacements = ResolveReplacements(normalizedOriginal, edits);
             var updatedNormalized = ApplyReplacements(normalizedOriginal, replacements);
             var updatedText = ApplyLineEnding(updatedNormalized, originalLineEnding);
@@ -132,7 +133,7 @@ public sealed class EditTool : IAgentTool
 
             _fileSystem.File.WriteAllText(fullPath, updatedText, new UTF8Encoding(hasUtf8Bom));
 
-            var relativePath = PathUtils.GetRelativePath(fullPath, _workingDirectory, _fileSystem);
+            var relativePath = PathUtils.GetRelativePath(fullPath, _workingDirectory);
             var diff = BuildUnifiedDiff(relativePath, normalizedOriginal, updatedNormalized);
             var message = $"Successfully replaced {replacements.Count} block(s) in '{relativePath}'.\n{diff}";
 
@@ -259,8 +260,8 @@ public sealed class EditTool : IAgentTool
         var replacements = edits
             .Select(edit =>
             {
-                var normalizedOld = NormalizeLineEndings(edit.OldText);
-                var normalizedNew = NormalizeLineEndings(edit.NewText);
+                var normalizedOld = edit.OldText.NormalizeLineEndings();
+                var normalizedNew = edit.NewText.NormalizeLineEndings();
                 var exactMatchCount = CountOccurrences(normalizedOriginal, normalizedOld);
                 if (exactMatchCount > 1)
                 {
@@ -344,12 +345,6 @@ public sealed class EditTool : IAgentTool
         }
 
         return count;
-    }
-
-    private static string NormalizeLineEndings(string value)
-    {
-        return value.Replace("\r\n", "\n", StringComparison.Ordinal)
-            .Replace('\r', '\n');
     }
 
     private static string NormalizeForFuzzyMatch(string text)
