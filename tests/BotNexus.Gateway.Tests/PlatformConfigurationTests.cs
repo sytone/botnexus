@@ -151,6 +151,37 @@ public sealed class PlatformConfigurationTests
     }
 
     [Fact]
+    public void PlatformConfigLoader_Validate_WithInvalidCrossWorldSettings_ReturnsErrors()
+    {
+        var errors = PlatformConfigLoader.Validate(new PlatformConfig
+        {
+            Gateway = new GatewaySettingsConfig
+            {
+                CrossWorld = new CrossWorldFederationConfig
+                {
+                    Peers = new Dictionary<string, CrossWorldPeerConfig>
+                    {
+                        ["world-b"] = new()
+                        {
+                            Enabled = true,
+                            Endpoint = "ftp://invalid"
+                        }
+                    },
+                    Inbound = new CrossWorldInboundConfig
+                    {
+                        Enabled = true,
+                        AllowedWorlds = ["world-b"],
+                        ApiKeys = new Dictionary<string, string>()
+                    }
+                }
+            }
+        });
+
+        errors.Should().Contain(e => e.Contains("gateway.crossWorld.peers.world-b.endpoint", StringComparison.Ordinal));
+        errors.Should().Contain(e => e.Contains("gateway.crossWorld.inbound.apiKeys.world-b", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void PlatformConfigLoader_EnsureConfigDirectory_WhenMissing_CreatesDirectory()
     {
         var path = Path.Combine(Path.GetTempPath(), "botnexus-config-dir-tests", Guid.NewGuid().ToString("N"));
@@ -728,4 +759,3 @@ public sealed class PlatformConfigurationTests
             => Write(args is { Length: > 0 } ? string.Format(format ?? string.Empty, args) : format);
     }
 }
-
