@@ -14,6 +14,6 @@ public enum SessionStatus
     /// <summary>The session expired due to inactivity or retention policy.</summary>
     Expired,
 
-    /// <summary>The session was explicitly closed and should not be reused.</summary>
-    Closed
+    /// <summary>The session was sealed and should not be reused.</summary>
+    Sealed
 }

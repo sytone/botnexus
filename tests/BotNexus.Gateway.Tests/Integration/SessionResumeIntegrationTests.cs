@@ -34,9 +34,9 @@ public sealed class SessionResumeIntegrationTests : IDisposable
         var firstStore = CreateFileStore(storePath);
         var session = await firstStore.GetOrCreateAsync("persist-1", "agent-alpha");
         var createdAt = session.CreatedAt;
-        session.ChannelType = "signalr";
+        session.ChannelType = ChannelKey.From("signalr");
         for (var i = 0; i < 5; i++)
-            session.AddEntry(new SessionEntry { Role = "user", Content = $"entry-{i}" });
+            session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"entry-{i}" });
         await firstStore.SaveAsync(session);
 
         var secondStore = CreateFileStore(storePath);
@@ -44,7 +44,7 @@ public sealed class SessionResumeIntegrationTests : IDisposable
 
         reloaded.History.Should().HaveCount(5);
         reloaded.AgentId.Should().Be("agent-alpha");
-        reloaded.ChannelType.Should().Be("signalr");
+        reloaded.ChannelType.Should().Be(ChannelKey.From("signalr"));
         reloaded.CreatedAt.Should().Be(createdAt);
     }
 
@@ -56,7 +56,7 @@ public sealed class SessionResumeIntegrationTests : IDisposable
             var seedStore = CreateFileStore(storePath);
             {
                 var session = await seedStore.GetOrCreateAsync("expired-join", TestAgentId);
-                session.AddEntry(new SessionEntry { Role = "user", Content = "persisted-message" });
+                session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "persisted-message" });
                 session.Status = SessionStatus.Expired;
                 session.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-2);
                 await seedStore.SaveAsync(session);
@@ -93,7 +93,7 @@ public sealed class SessionResumeIntegrationTests : IDisposable
         var store = factory.Services.GetRequiredService<ISessionStore>();
         var seeded = await store.GetOrCreateAsync(sessionId, TestAgentId, cts.Token);
         for (var i = 0; i < 10; i++)
-            seeded.AddEntry(new SessionEntry { Role = "user", Content = $"old-{i}" });
+            seeded.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"old-{i}" });
         await store.SaveAsync(seeded, cts.Token);
 
         await using var connection = await CreateStartedConnection(factory, cts.Token);
@@ -114,14 +114,14 @@ public sealed class SessionResumeIntegrationTests : IDisposable
         var encodedSessionId = Uri.EscapeDataString(sessionId);
 
         var first = await store.GetOrCreateAsync(sessionId, "agent-a");
-        first.AddEntry(new SessionEntry { Role = "user", Content = "first-history" });
+        first.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "first-history" });
         await store.SaveAsync(first);
         await store.ArchiveAsync(sessionId);
 
         await Task.Delay(1100);
 
         var second = await store.GetOrCreateAsync(sessionId, "agent-a");
-        second.AddEntry(new SessionEntry { Role = "assistant", Content = "second-history" });
+        second.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "second-history" });
         await store.SaveAsync(second);
         await store.ArchiveAsync(sessionId);
 
@@ -140,9 +140,9 @@ public sealed class SessionResumeIntegrationTests : IDisposable
             var alpha = await firstStore.GetOrCreateAsync("session-a", "alpha");
             var beta = await firstStore.GetOrCreateAsync("session-b", "beta");
             for (var i = 0; i < 3; i++)
-                alpha.AddEntry(new SessionEntry { Role = "user", Content = $"a-{i}" });
+                alpha.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"a-{i}" });
             for (var i = 0; i < 5; i++)
-                beta.AddEntry(new SessionEntry { Role = "assistant", Content = $"b-{i}" });
+                beta.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = $"b-{i}" });
             await firstStore.SaveAsync(alpha);
             await firstStore.SaveAsync(beta);
         }
@@ -167,18 +167,18 @@ public sealed class SessionResumeIntegrationTests : IDisposable
             var firstStore = CreateFileStore(storePath);
             var active = await firstStore.GetOrCreateAsync("active-1", "agent-a");
             active.Status = SessionStatus.Active;
-            active.AddEntry(new SessionEntry { Role = "user", Content = "active-history" });
+            active.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "active-history" });
             await firstStore.SaveAsync(active);
 
             var expired = await firstStore.GetOrCreateAsync("expired-1", "agent-b");
             expired.Status = SessionStatus.Expired;
             expired.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-10);
-            expired.AddEntry(new SessionEntry { Role = "assistant", Content = "expired-history" });
+            expired.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "expired-history" });
             await firstStore.SaveAsync(expired);
 
             var closed = await firstStore.GetOrCreateAsync("closed-1", "agent-c");
-            closed.Status = SessionStatus.Closed;
-            closed.AddEntry(new SessionEntry { Role = "tool", Content = "closed-history" });
+            closed.Status = SessionStatus.Sealed;
+            closed.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = "closed-history" });
             await firstStore.SaveAsync(closed);
         }
 
@@ -191,7 +191,7 @@ public sealed class SessionResumeIntegrationTests : IDisposable
         sessions.Should().HaveCount(3);
         activeReloaded.Status.Should().Be(SessionStatus.Active);
         expiredReloaded.Status.Should().Be(SessionStatus.Expired);
-        closedReloaded.Status.Should().Be(SessionStatus.Closed);
+        closedReloaded.Status.Should().Be(SessionStatus.Sealed);
         activeReloaded.History.Should().ContainSingle(e => e.Content == "active-history");
     }
 
@@ -228,7 +228,7 @@ public sealed class SessionResumeIntegrationTests : IDisposable
 
         reloaded.Should().NotBeNull();
         reloaded!.History.Should().HaveCount(500);
-        reloaded.History[2].Role.Should().Be("tool");
+        reloaded.History[2].Role.Should().Be(MessageRole.Tool);
         reloaded.History[2].ToolName.Should().Be("tool-2");
         reloaded.History[2].ToolCallId.Should().Be("call-2");
         reloaded.History[499].Content.Should().Be("content-499");
@@ -242,7 +242,7 @@ public sealed class SessionResumeIntegrationTests : IDisposable
         var encodedSessionId = Uri.EscapeDataString(sessionId);
         var store = CreateFileStore(storePath);
         var session = await store.GetOrCreateAsync(sessionId, "agent-a");
-        session.AddEntry(new SessionEntry { Role = "user", Content = "hello" });
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "hello" });
         await store.SaveAsync(session);
 
         await store.ArchiveAsync(sessionId);
@@ -304,7 +304,7 @@ public sealed class SessionResumeIntegrationTests : IDisposable
         loaded.Should().NotBeNull();
         loaded!.History.Should().BeEmpty();
         loaded.AgentId.Should().Be("agent-a");
-        loaded.ChannelType.Should().Be("signalr");
+        loaded.ChannelType.Should().Be(ChannelKey.From("signalr"));
         loaded.CreatedAt.Should().Be(createdAt);
     }
 
@@ -332,7 +332,7 @@ public sealed class SessionResumeIntegrationTests : IDisposable
         var encoded = Uri.EscapeDataString(sessionId);
         var store = CreateFileStore(storePath);
         var session = await store.GetOrCreateAsync(sessionId, "agent-nova");
-        session.AddEntry(new SessionEntry { Role = "user", Content = "hello 🌍" });
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "hello 🌍" });
         await store.SaveAsync(session);
 
         var reloaded = await CreateFileStore(storePath).GetAsync(sessionId);
@@ -423,3 +423,8 @@ public sealed class SessionResumeIntegrationTests : IDisposable
     private static CancellationTokenSource CreateTimeout()
         => new(TimeSpan.FromSeconds(20));
 }
+
+
+
+
+

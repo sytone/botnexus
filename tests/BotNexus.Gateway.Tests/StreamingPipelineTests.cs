@@ -31,7 +31,7 @@ public sealed class StreamingPipelineTests
         await host.DispatchAsync(CreateMessage("hello"));
         var session = await sessionStore.GetAsync("session-1");
 
-        session!.History.Should().Contain(e => e.Role == "assistant" && e.Content == "stream works");
+        session!.History.Should().Contain(e => e.Role == MessageRole.Assistant && e.Content == "stream works");
     }
 
     [Fact]
@@ -52,8 +52,8 @@ public sealed class StreamingPipelineTests
         await host.DispatchAsync(CreateMessage("what time"));
         var session = await sessionStore.GetAsync("session-1");
 
-        session!.History.Should().Contain(e => e.Role == "tool" && e.ToolName == "clock" && e.ToolCallId == "call-1");
-        session.History.Should().Contain(e => e.Role == "tool" && e.Content == "12:00");
+        session!.History.Should().Contain(e => e.Role == MessageRole.Tool && e.ToolName == "clock" && e.ToolCallId == "call-1");
+        session.History.Should().Contain(e => e.Role == MessageRole.Tool && e.Content == "12:00");
     }
 
     [Fact]
@@ -75,7 +75,11 @@ public sealed class StreamingPipelineTests
         await host.DispatchAsync(CreateMessage("solve"));
         var session = await sessionStore.GetAsync("session-1");
 
-        session!.History.Select(h => h.Role).Should().Equal("user", "tool", "tool", "assistant");
+        session!.History.Select(h => h.Role).Should().Equal(
+            MessageRole.User,
+            MessageRole.Tool,
+            MessageRole.Tool,
+            MessageRole.Assistant);
         session.History.Last().Content.Should().Be("The answer is 42.");
     }
 
@@ -109,14 +113,14 @@ public sealed class StreamingPipelineTests
         var session = await sessionStore.GetAsync("session-1");
 
         session!.History.Should().HaveCount(1);
-        session.History[0].Role.Should().Be("user");
+        session.History[0].Role.Should().Be(MessageRole.User);
         session.History[0].Content.Should().Be("empty");
     }
 
     private static Mock<IChannelAdapter> CreateStreamingChannel()
     {
         var channel = new Mock<IChannelAdapter>();
-        channel.SetupGet(c => c.ChannelType).Returns("web");
+        channel.SetupGet(c => c.ChannelType).Returns(ChannelKey.From("web"));
         channel.SetupGet(c => c.DisplayName).Returns("Web");
         channel.SetupGet(c => c.SupportsStreaming).Returns(true);
         channel.Setup(c => c.SendStreamDeltaAsync("conv-1", It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -176,7 +180,7 @@ public sealed class StreamingPipelineTests
     private static InboundMessage CreateMessage(string content)
         => new()
         {
-            ChannelType = "web",
+            ChannelType = ChannelKey.From("web"),
             SenderId = "sender-1",
             ConversationId = "conv-1",
             Content = content,
@@ -229,3 +233,6 @@ public sealed class StreamingPipelineTests
         }
     }
 }
+
+
+

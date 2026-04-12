@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Domain.Primitives;
 
 namespace BotNexus.Gateway.Abstractions.Sessions;
 
@@ -61,6 +62,6 @@ public interface ISessionStore
     /// </summary>
     Task<IReadOnlyList<GatewaySession>> ListByChannelAsync(
         string agentId,
-        string channelType,
+        ChannelKey channelType,
         CancellationToken cancellationToken = default);
 }

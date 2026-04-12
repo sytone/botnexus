@@ -1,6 +1,7 @@
 using BotNexus.Cron.Actions;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Domain.Primitives;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
@@ -49,7 +50,7 @@ public sealed class AgentPromptActionTests
         await action.ExecuteAsync(context);
 
         captured.Should().NotBeNull();
-        captured!.ChannelType.Should().Be(AgentPromptAction.CronChannelType);
+        captured!.ChannelType.Should().Be(ChannelKey.From(AgentPromptAction.CronChannelType));
         context.SessionId.Should().NotBeNull();
         context.SessionId.Should().StartWith("cron:job-1:");
     }

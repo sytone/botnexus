@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Domain.Primitives;
 using BotNexus.Channels.Core.Diagnostics;
 using Microsoft.Extensions.Logging;
 
@@ -29,7 +30,7 @@ public abstract class ChannelAdapterBase : IChannelAdapter
     protected ChannelAdapterBase(ILogger logger) => Logger = logger;
 
     /// <inheritdoc />
-    public abstract string ChannelType { get; }
+    public abstract ChannelKey ChannelType { get; }
 
     /// <inheritdoc />
     public abstract string DisplayName { get; }

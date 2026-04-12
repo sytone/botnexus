@@ -3,6 +3,10 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using ChannelKey = BotNexus.Domain.Primitives.ChannelKey;
+using ParticipantType = BotNexus.Domain.Primitives.ParticipantType;
+using SessionParticipant = BotNexus.Domain.Primitives.SessionParticipant;
+using SessionType = BotNexus.Domain.Primitives.SessionType;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -105,7 +109,18 @@ public sealed class GatewayHub : Hub
 
         if (session.ChannelType is null)
         {
-            session.ChannelType = "signalr";
+            session.ChannelType = ChannelKey.From("signalr");
+            needsSave = true;
+        }
+
+        session.SessionType = SessionType.UserAgent;
+        if (session.Participants.Count == 0)
+        {
+            session.Participants.Add(new SessionParticipant
+            {
+                Type = ParticipantType.User,
+                Id = Context.ConnectionId
+            });
             needsSave = true;
         }
 
@@ -138,7 +153,7 @@ public sealed class GatewayHub : Hub
         return _dispatcher.DispatchAsync(
             new InboundMessage
             {
-                ChannelType = "signalr",
+                ChannelType = ChannelKey.From("signalr"),
                 SenderId = Context.ConnectionId,
                 ConversationId = sessionId,
                 SessionId = sessionId,
@@ -153,7 +168,7 @@ public sealed class GatewayHub : Hub
         => _dispatcher.DispatchAsync(
             new InboundMessage
             {
-                ChannelType = "signalr",
+                ChannelType = ChannelKey.From("signalr"),
                 SenderId = Context.ConnectionId,
                 ConversationId = sessionId,
                 SessionId = sessionId,
@@ -233,7 +248,7 @@ public sealed class GatewayHub : Hub
             new GatewayActivity
             {
                 Type = GatewayActivityType.System,
-                ChannelType = "signalr",
+                ChannelType = ChannelKey.From("signalr"),
                 Message = "Web Chat client connected.",
                 Data = new Dictionary<string, object?> { ["connectionId"] = Context.ConnectionId }
             },

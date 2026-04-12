@@ -1,6 +1,7 @@
 using System.Text;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Domain.Primitives;
 using BotNexus.Providers.Core;
 using BotNexus.Providers.Core.Models;
 using Microsoft.Extensions.Logging;
@@ -75,7 +76,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
 
         var compactionEntry = new SessionEntry
         {
-            Role = "system",
+            Role = MessageRole.System,
             Content = summary,
             IsCompactionSummary = true,
             Timestamp = DateTimeOffset.UtcNow
@@ -119,7 +120,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
 
         for (var i = history.Count - 1; i >= 0; i--)
         {
-            if (!string.Equals(history[i].Role, "user", StringComparison.OrdinalIgnoreCase))
+            if (!history[i].Role.Equals(MessageRole.User))
             {
                 continue;
             }

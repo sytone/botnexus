@@ -1,5 +1,9 @@
 using System.Text.Json;
 using System.Diagnostics;
+using ChannelKey = BotNexus.Domain.Primitives.ChannelKey;
+using MessageRole = BotNexus.Domain.Primitives.MessageRole;
+using SessionType = BotNexus.Domain.Primitives.SessionType;
+using SessionParticipant = BotNexus.Domain.Primitives.SessionParticipant;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.Data.Sqlite;
@@ -71,7 +75,12 @@ public sealed class SqliteSessionStore : ISessionStore
                 return loaded;
             }
 
-            var session = new GatewaySession { SessionId = sessionId, AgentId = agentId };
+            var session = new GatewaySession
+            {
+                SessionId = sessionId,
+                AgentId = agentId,
+                SessionType = InferSessionType(sessionId, null)
+            };
             _cache[sessionId] = session;
             return session;
         }
@@ -138,7 +147,7 @@ public sealed class SqliteSessionStore : ISessionStore
             var session = await LoadSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
             if (session is not null)
             {
-                session.Status = SessionStatus.Closed;
+                session.Status = SessionStatus.Sealed;
                 session.UpdatedAt = DateTimeOffset.UtcNow;
                 _cache[sessionId] = session;
                 await using var connection = CreateConnection();
@@ -194,7 +203,7 @@ public sealed class SqliteSessionStore : ISessionStore
     /// <inheritdoc />
     public async Task<IReadOnlyList<GatewaySession>> ListByChannelAsync(
         string agentId,
-        string channelType,
+        ChannelKey channelType,
         CancellationToken cancellationToken = default)
     {
         using var activity = ActivitySource.StartActivity("session.list_by_channel", ActivityKind.Internal);
@@ -214,19 +223,11 @@ public sealed class SqliteSessionStore : ISessionStore
                 FROM sessions
                 WHERE agent_id = $agentId
                   AND channel_type IS NOT NULL
-                  AND (
-                      CASE
-                          WHEN trim(lower(channel_type)) = ''
-                               OR lower(channel_type) = 'signalr'
-                               OR lower(channel_type) = 'web-chat'
-                          THEN 'web chat'
-                          ELSE lower(channel_type)
-                      END
-                  ) = $channelType
+                  AND lower(channel_type) = $channelType
                 ORDER BY created_at DESC
                 """;
             command.Parameters.AddWithValue("$agentId", agentId);
-            command.Parameters.AddWithValue("$channelType", NormalizeChannelKey(channelType));
+            command.Parameters.AddWithValue("$channelType", channelType.Value);
 
             var sessions = new List<GatewaySession>();
             await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -262,6 +263,8 @@ public sealed class SqliteSessionStore : ISessionStore
                 agent_id TEXT,
                 channel_type TEXT,
                 caller_id TEXT,
+                session_type TEXT,
+                participants_json TEXT,
                 status TEXT,
                 metadata TEXT,
                 created_at TEXT,
@@ -306,6 +309,29 @@ public sealed class SqliteSessionStore : ISessionStore
             }
             catch (SqliteException) { /* column already exists */ }
         }
+
+        foreach (var migration in new[]
+                 {
+                     ("session_type", "TEXT"),
+                     ("participants_json", "TEXT")
+                 })
+        {
+            try
+            {
+                await using var cmd = connection.CreateCommand();
+                cmd.CommandText = $"ALTER TABLE sessions ADD COLUMN {migration.Item1} {migration.Item2}";
+                await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (SqliteException) { /* column already exists */ }
+        }
+
+        await using var renameStatus = connection.CreateCommand();
+        renameStatus.CommandText = """
+            UPDATE sessions
+            SET status = 'Sealed'
+            WHERE lower(status) = 'closed'
+            """;
+        await renameStatus.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<GatewaySession?> LoadSessionAsync(string sessionId, CancellationToken cancellationToken)
@@ -319,7 +345,7 @@ public sealed class SqliteSessionStore : ISessionStore
     {
         await using var sessionCommand = connection.CreateCommand();
         sessionCommand.CommandText = """
-            SELECT id, agent_id, channel_type, caller_id, status, metadata, created_at, updated_at
+            SELECT id, agent_id, channel_type, caller_id, session_type, participants_json, status, metadata, created_at, updated_at
             FROM sessions
             WHERE id = $sessionId
             """;
@@ -329,16 +355,23 @@ public sealed class SqliteSessionStore : ISessionStore
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             return null;
 
-        var createdAt = ParseTimestamp(reader.GetString(6));
-        var updatedAt = ParseTimestamp(reader.GetString(7));
-        var metadata = DeserializeMetadata(reader.IsDBNull(5) ? null : reader.GetString(5));
-        var status = ParseStatus(reader.IsDBNull(4) ? null : reader.GetString(4));
+        var createdAt = ParseTimestamp(reader.GetString(8));
+        var updatedAt = ParseTimestamp(reader.GetString(9));
+        var metadata = DeserializeMetadata(reader.IsDBNull(7) ? null : reader.GetString(7));
+        var status = ParseStatus(reader.IsDBNull(6) ? null : reader.GetString(6));
+        ChannelKey? channelType = default;
+        if (!reader.IsDBNull(2))
+            channelType = ChannelKey.From(reader.GetString(2));
+        var sessionType = ParseSessionType(reader.IsDBNull(4) ? null : reader.GetString(4), sessionId, channelType);
+        var participants = DeserializeParticipants(reader.IsDBNull(5) ? null : reader.GetString(5));
         var session = new GatewaySession
         {
             SessionId = reader.GetString(0),
             AgentId = reader.IsDBNull(1) ? string.Empty : reader.GetString(1),
-            ChannelType = reader.IsDBNull(2) ? null : reader.GetString(2),
+            ChannelType = channelType,
             CallerId = reader.IsDBNull(3) ? null : reader.GetString(3),
+            SessionType = sessionType,
+            Participants = participants,
             Status = status,
             CreatedAt = createdAt,
             UpdatedAt = updatedAt,
@@ -362,7 +395,7 @@ public sealed class SqliteSessionStore : ISessionStore
         {
             entries.Add(new SessionEntry
             {
-                Role = historyReader.IsDBNull(0) ? "user" : historyReader.GetString(0),
+                Role = MessageRole.FromString(historyReader.IsDBNull(0) ? "user" : historyReader.GetString(0)),
                 Content = historyReader.IsDBNull(1) ? string.Empty : historyReader.GetString(1),
                 Timestamp = ParseTimestamp(historyReader.IsDBNull(2) ? null : historyReader.GetString(2)),
                 ToolName = historyReader.IsDBNull(3) ? null : historyReader.GetString(3),
@@ -386,12 +419,14 @@ public sealed class SqliteSessionStore : ISessionStore
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO sessions (id, agent_id, channel_type, caller_id, status, metadata, created_at, updated_at)
-            VALUES ($id, $agentId, $channelType, $callerId, $status, $metadata, $createdAt, $updatedAt)
+            INSERT INTO sessions (id, agent_id, channel_type, caller_id, session_type, participants_json, status, metadata, created_at, updated_at)
+            VALUES ($id, $agentId, $channelType, $callerId, $sessionType, $participantsJson, $status, $metadata, $createdAt, $updatedAt)
             ON CONFLICT(id) DO UPDATE SET
                 agent_id = excluded.agent_id,
                 channel_type = excluded.channel_type,
                 caller_id = excluded.caller_id,
+                session_type = excluded.session_type,
+                participants_json = excluded.participants_json,
                 status = excluded.status,
                 metadata = excluded.metadata,
                 created_at = excluded.created_at,
@@ -399,8 +434,10 @@ public sealed class SqliteSessionStore : ISessionStore
             """;
         command.Parameters.AddWithValue("$id", session.SessionId);
         command.Parameters.AddWithValue("$agentId", session.AgentId);
-        command.Parameters.AddWithValue("$channelType", (object?)session.ChannelType ?? DBNull.Value);
+        command.Parameters.AddWithValue("$channelType", session.ChannelType.HasValue ? session.ChannelType.Value.Value : DBNull.Value);
         command.Parameters.AddWithValue("$callerId", (object?)session.CallerId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$sessionType", session.SessionType.Value);
+        command.Parameters.AddWithValue("$participantsJson", JsonSerializer.Serialize(session.Participants, JsonOptions));
         command.Parameters.AddWithValue("$status", session.Status.ToString());
         command.Parameters.AddWithValue("$metadata", JsonSerializer.Serialize(session.Metadata, JsonOptions));
         command.Parameters.AddWithValue("$createdAt", session.CreatedAt.ToString("O"));
@@ -428,7 +465,7 @@ public sealed class SqliteSessionStore : ISessionStore
                 VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary)
                 """;
             insertCommand.Parameters.AddWithValue("$sessionId", session.SessionId);
-            insertCommand.Parameters.AddWithValue("$role", entry.Role);
+            insertCommand.Parameters.AddWithValue("$role", entry.Role.Value);
             insertCommand.Parameters.AddWithValue("$content", entry.Content);
             insertCommand.Parameters.AddWithValue("$timestamp", entry.Timestamp.ToString("O"));
             insertCommand.Parameters.AddWithValue("$toolName", (object?)entry.ToolName ?? DBNull.Value);
@@ -448,9 +485,28 @@ public sealed class SqliteSessionStore : ISessionStore
             : DateTimeOffset.UtcNow;
 
     private static SessionStatus ParseStatus(string? status)
-        => Enum.TryParse<SessionStatus>(status, ignoreCase: true, out var parsed)
-            ? parsed
-            : SessionStatus.Active;
+        => status?.Trim().ToLowerInvariant() switch
+        {
+            "closed" => SessionStatus.Sealed,
+            _ when Enum.TryParse<SessionStatus>(status, ignoreCase: true, out var parsed) => parsed,
+            _ => SessionStatus.Active
+        };
+
+    private static SessionType ParseSessionType(string? raw, string sessionId, ChannelKey? channelType)
+    {
+        if (!string.IsNullOrWhiteSpace(raw))
+            return SessionType.FromString(raw);
+
+        return InferSessionType(sessionId, channelType);
+    }
+
+    private static List<SessionParticipant> DeserializeParticipants(string? participantsJson)
+    {
+        if (string.IsNullOrWhiteSpace(participantsJson))
+            return [];
+
+        return JsonSerializer.Deserialize<List<SessionParticipant>>(participantsJson, JsonOptions) ?? [];
+    }
 
     private static Dictionary<string, object?> DeserializeMetadata(string? metadataJson)
     {
@@ -460,11 +516,14 @@ public sealed class SqliteSessionStore : ISessionStore
         return JsonSerializer.Deserialize<Dictionary<string, object?>>(metadataJson, JsonOptions) ?? [];
     }
 
-    private static string NormalizeChannelKey(string? raw)
+    private static SessionType InferSessionType(string sessionId, ChannelKey? channelType)
     {
-        var normalized = (raw ?? string.Empty).Trim().ToLowerInvariant();
-        if (string.IsNullOrEmpty(normalized) || normalized is "signalr" or "web-chat")
-            return "web chat";
-        return normalized;
+        if (sessionId.Contains("::subagent::", StringComparison.OrdinalIgnoreCase))
+            return SessionType.AgentSubAgent;
+
+        if (channelType.HasValue && string.Equals(channelType.Value, "cron", StringComparison.OrdinalIgnoreCase))
+            return SessionType.Cron;
+
+        return SessionType.UserAgent;
     }
 }

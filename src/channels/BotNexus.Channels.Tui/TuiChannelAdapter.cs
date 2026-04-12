@@ -1,6 +1,7 @@
 using BotNexus.Channels.Core;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Channels.Tui;
@@ -18,7 +19,7 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger)
     /// <summary>
     /// Gets the channel type identifier.
     /// </summary>
-    public override string ChannelType => "tui";
+    public override ChannelKey ChannelType => ChannelKey.From("tui");
 
     /// <summary>
     /// Gets the human-readable channel display name.

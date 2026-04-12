@@ -56,7 +56,7 @@ public sealed class SignalRHubTests
             Times.Once);
         activity.Verify(value => value.PublishAsync(
                 It.Is<GatewayActivity>(a =>
-                    a.ChannelType == "signalr" &&
+                    a.ChannelType == ChannelKey.From("signalr") &&
                     a.Message == "Web Chat client connected."),
                 It.IsAny<CancellationToken>()),
             Times.Once);
@@ -124,8 +124,8 @@ public sealed class SignalRHubTests
                 AgentId = "agent-a",
                 History =
                 [
-                    new SessionEntry { Role = "user", Content = "hello" },
-                    new SessionEntry { Role = "assistant", Content = "hi" }
+                    new SessionEntry { Role = MessageRole.User, Content = "hello" },
+                    new SessionEntry { Role = MessageRole.Assistant, Content = "hi" }
                 ]
             });
 
@@ -148,7 +148,7 @@ public sealed class SignalRHubTests
             ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1),
             History =
             [
-                new SessionEntry { Role = "user", Content = "persisted" }
+                new SessionEntry { Role = MessageRole.User, Content = "persisted" }
             ]
         };
 
@@ -206,7 +206,7 @@ public sealed class SignalRHubTests
 
         dispatcher.Verify(value => value.DispatchAsync(
                 It.Is<InboundMessage>(m =>
-                    m.ChannelType == "signalr" &&
+                    m.ChannelType == ChannelKey.From("signalr") &&
                     m.SenderId == "conn-1" &&
                     m.ConversationId == "session-1" &&
                     m.SessionId == "session-1" &&
@@ -351,3 +351,5 @@ public sealed class SignalRHubTests
         public override void Abort() { }
     }
 }
+
+

@@ -13,7 +13,7 @@ public sealed class GatewaySessionThreadSafetyTests
         const int totalEntries = 500;
 
         var writers = Enumerable.Range(0, totalEntries)
-            .Select(i => Task.Run(() => session.AddEntry(new SessionEntry { Role = "user", Content = $"entry-{i}" })));
+            .Select(i => Task.Run(() => session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"entry-{i}" })));
         await Task.WhenAll(writers);
 
         var snapshot = session.GetHistorySnapshot();
@@ -32,7 +32,7 @@ public sealed class GatewaySessionThreadSafetyTests
         {
             for (var i = 0; i < 250; i++)
             {
-                session.AddEntry(new SessionEntry { Role = "assistant", Content = $"m-{i}" });
+                session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = $"m-{i}" });
                 await Task.Yield();
             }
 
@@ -73,7 +73,7 @@ public sealed class GatewaySessionThreadSafetyTests
             for (var batch = 0; batch < batchCount; batch++)
             {
                 var batchEntries = Enumerable.Range(0, batchSize)
-                    .Select(i => new SessionEntry { Role = "user", Content = $"batch-{batch}-entry-{i}" });
+                    .Select(i => new SessionEntry { Role = MessageRole.User, Content = $"batch-{batch}-entry-{i}" });
                 session.AddEntries(batchEntries);
                 await Task.Yield();
             }
@@ -112,7 +112,7 @@ public sealed class GatewaySessionThreadSafetyTests
     {
         var session = CreateSession();
         for (var i = 0; i < 10; i++)
-            session.AddEntry(new SessionEntry { Role = "user", Content = $"entry-{i}" });
+            session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"entry-{i}" });
 
         var snapshot = session.GetHistorySnapshot(offset: 3, limit: 4);
 
@@ -181,3 +181,4 @@ public sealed class GatewaySessionThreadSafetyTests
     private static GatewaySession CreateSession()
         => new() { SessionId = $"session-{Guid.NewGuid():N}", AgentId = "agent-a" };
 }
+

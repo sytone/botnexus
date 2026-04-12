@@ -155,13 +155,13 @@ public sealed class SessionWarmupServiceTests
         return registry.Object;
     }
 
-    private static GatewaySession CreateSession(string sessionId, string agentId, SessionStatus status, DateTimeOffset updatedAt)
+    private static GatewaySession CreateSession(string sessionId, string agentId, BotNexus.Gateway.Abstractions.Models.SessionStatus status, DateTimeOffset updatedAt)
         => new()
         {
             SessionId = sessionId,
             AgentId = agentId,
             Status = status,
             UpdatedAt = updatedAt,
-            ExpiresAt = status == SessionStatus.Expired ? updatedAt : null
+            ExpiresAt = status == BotNexus.Gateway.Abstractions.Models.SessionStatus.Expired ? updatedAt : null
         };
 }

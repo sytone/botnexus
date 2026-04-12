@@ -75,7 +75,7 @@ public sealed class GatewayHostTests
 
         await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1"));
 
-        session.History.Should().Contain(e => e.Role == "assistant" && e.Content == "hello world");
+        session.History.Should().Contain(e => e.Role == MessageRole.Assistant && e.Content == "hello world");
         channel.Verify(c => c.SendStreamDeltaAsync("conv-1", "hello ", It.IsAny<CancellationToken>()), Times.Once);
         channel.Verify(c => c.SendStreamDeltaAsync("conv-1", "world", It.IsAny<CancellationToken>()), Times.Once);
         sessions.Verify(s => s.SaveAsync(session, It.IsAny<CancellationToken>()), Times.Once);
@@ -233,7 +233,7 @@ public sealed class GatewayHostTests
 
         await host.DispatchAsync(CreateMessage("run", channelType: "cron", conversationId: "cron:job-1:run-1", sessionId: "cron:job-1:run-1"));
 
-        session.ChannelType.Should().Be("cron");
+        session.ChannelType.Should().Be(ChannelKey.From("cron"));
     }
 
     [Fact]
@@ -278,7 +278,7 @@ public sealed class GatewayHostTests
         var supervisor = new Mock<IAgentSupervisor>();
         var sessions = new InMemorySessionStore();
         var session = await sessions.GetOrCreateAsync("session-1", "agent-a");
-        session.Status = SessionStatus.Closed;
+        session.Status = SessionStatus.Sealed;
         await sessions.SaveAsync(session);
         var channel = CreateChannelAdapter("web", supportsStreaming: false);
         await using var host = CreateHost(supervisor.Object, router.Object, sessions, new RecordingActivityBroadcaster(), CreateChannelManager(channel.Object));
@@ -700,7 +700,7 @@ public sealed class GatewayHostTests
         router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["agent-a"]);
         var supervisor = new Mock<IAgentSupervisor>();
-        var session = new GatewaySession { SessionId = "session-1", AgentId = "agent-a", Status = SessionStatus.Closed };
+        var session = new GatewaySession { SessionId = "session-1", AgentId = "agent-a", Status = SessionStatus.Sealed };
         var sessions = new Mock<ISessionStore>();
         sessions.Setup(s => s.GetOrCreateAsync("session-1", "agent-a", It.IsAny<CancellationToken>()))
             .ReturnsAsync(session);
@@ -863,3 +863,6 @@ public sealed class GatewayHostTests
         }
     }
 }
+
+
+

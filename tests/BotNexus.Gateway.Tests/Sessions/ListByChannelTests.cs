@@ -12,11 +12,11 @@ public sealed class ListByChannelTests
     public async Task FiltersByAgentAndChannel()
     {
         var store = new InMemorySessionStore();
-        await SaveSessionAsync(store, "match", "agent-a", "web", DateTimeOffset.UtcNow.AddMinutes(-3));
-        await SaveSessionAsync(store, "wrong-agent", "agent-b", "web", DateTimeOffset.UtcNow.AddMinutes(-2));
-        await SaveSessionAsync(store, "wrong-channel", "agent-a", "telegram", DateTimeOffset.UtcNow.AddMinutes(-1));
+        await SaveSessionAsync(store, "match", "agent-a", ChannelKey.From("web"), DateTimeOffset.UtcNow.AddMinutes(-3));
+        await SaveSessionAsync(store, "wrong-agent", "agent-b", ChannelKey.From("web"), DateTimeOffset.UtcNow.AddMinutes(-2));
+        await SaveSessionAsync(store, "wrong-channel", "agent-a", ChannelKey.From("telegram"), DateTimeOffset.UtcNow.AddMinutes(-1));
 
-        var sessions = await InvokeListByChannelAsync(store, "agent-a", "web");
+        var sessions = await InvokeListByChannelAsync(store, "agent-a", ChannelKey.From("web"));
 
         sessions.Select(s => s.SessionId).Should().BeEquivalentTo(["match"]);
     }
@@ -25,11 +25,11 @@ public sealed class ListByChannelTests
     public async Task OrderedByCreatedAtDescending()
     {
         var store = new InMemorySessionStore();
-        await SaveSessionAsync(store, "oldest", "agent-a", "web", DateTimeOffset.UtcNow.AddMinutes(-30));
-        await SaveSessionAsync(store, "middle", "agent-a", "web", DateTimeOffset.UtcNow.AddMinutes(-20));
-        await SaveSessionAsync(store, "newest", "agent-a", "web", DateTimeOffset.UtcNow.AddMinutes(-10));
+        await SaveSessionAsync(store, "oldest", "agent-a", ChannelKey.From("web"), DateTimeOffset.UtcNow.AddMinutes(-30));
+        await SaveSessionAsync(store, "middle", "agent-a", ChannelKey.From("web"), DateTimeOffset.UtcNow.AddMinutes(-20));
+        await SaveSessionAsync(store, "newest", "agent-a", ChannelKey.From("web"), DateTimeOffset.UtcNow.AddMinutes(-10));
 
-        var sessions = await InvokeListByChannelAsync(store, "agent-a", "web");
+        var sessions = await InvokeListByChannelAsync(store, "agent-a", ChannelKey.From("web"));
 
         sessions.Select(s => s.SessionId).Should().ContainInOrder("newest", "middle", "oldest");
         sessions.Select(s => s.CreatedAt).Should().BeInDescendingOrder();
@@ -40,9 +40,9 @@ public sealed class ListByChannelTests
     {
         var store = new InMemorySessionStore();
         await SaveSessionAsync(store, "null-channel", "agent-a", null, DateTimeOffset.UtcNow.AddMinutes(-2));
-        await SaveSessionAsync(store, "web", "agent-a", "web", DateTimeOffset.UtcNow.AddMinutes(-1));
+        await SaveSessionAsync(store, "web", "agent-a", ChannelKey.From("web"), DateTimeOffset.UtcNow.AddMinutes(-1));
 
-        var sessions = await InvokeListByChannelAsync(store, "agent-a", "web");
+        var sessions = await InvokeListByChannelAsync(store, "agent-a", ChannelKey.From("web"));
 
         sessions.Select(s => s.SessionId).Should().BeEquivalentTo(["web"]);
     }
@@ -51,7 +51,7 @@ public sealed class ListByChannelTests
         ISessionStore store,
         string sessionId,
         string agentId,
-        string? channelType,
+        ChannelKey? channelType,
         DateTimeOffset createdAt)
     {
         var session = new GatewaySession
@@ -69,12 +69,12 @@ public sealed class ListByChannelTests
     private static async Task<IReadOnlyList<GatewaySession>> InvokeListByChannelAsync(
         ISessionStore store,
         string agentId,
-        string channelType)
+        ChannelKey channelType)
     {
         var method = store.GetType().GetMethod(
             "ListByChannelAsync",
             BindingFlags.Instance | BindingFlags.Public,
-            [typeof(string), typeof(string), typeof(CancellationToken)]);
+            [typeof(string), typeof(ChannelKey), typeof(CancellationToken)]);
 
         method.Should().NotBeNull("ListByChannelAsync must exist on session store implementations.");
         var invocationResult = method!.Invoke(store, [agentId, channelType, CancellationToken.None]);
@@ -90,3 +90,4 @@ public sealed class ListByChannelTests
         return sessions!;
     }
 }
+

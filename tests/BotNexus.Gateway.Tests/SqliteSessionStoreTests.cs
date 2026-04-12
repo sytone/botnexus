@@ -40,7 +40,7 @@ public sealed class SqliteSessionStoreTests
         var store = fixture.CreateStore();
         var session = await store.GetOrCreateAsync("s1", "agent-a");
         session.Metadata["tenant"] = "a";
-        session.History.Add(new SessionEntry { Role = "user", Content = "hello" });
+        session.History.Add(new SessionEntry { Role = MessageRole.User, Content = "hello" });
 
         await store.SaveAsync(session);
         var reloaded = await fixture.CreateStore().GetAsync("s1");
@@ -56,7 +56,7 @@ public sealed class SqliteSessionStoreTests
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
         var session = await store.GetOrCreateAsync("s1", "agent-a");
-        session.ChannelType = "signalr";
+        session.ChannelType = ChannelKey.From("signalr");
         session.CallerId = "caller-a";
         session.Metadata["version"] = 1L;
         await store.SaveAsync(session);
@@ -69,7 +69,7 @@ public sealed class SqliteSessionStoreTests
         var reloaded = await fixture.CreateStore().GetAsync("s1");
         reloaded.Should().NotBeNull();
         reloaded!.Status.Should().Be(SessionStatus.Suspended);
-        reloaded.ChannelType.Should().Be("signalr");
+        reloaded.ChannelType.Should().Be(ChannelKey.From("signalr"));
         reloaded.CallerId.Should().Be("caller-a");
         reloaded.Metadata.Should().ContainKey("version");
         reloaded.Metadata["version"]!.ToString().Should().Be("2");
@@ -85,9 +85,9 @@ public sealed class SqliteSessionStoreTests
         var session = await store.GetOrCreateAsync("s1", "agent-a");
 
         session.AddEntries([
-            new SessionEntry { Role = "system", Content = "boot" },
-            new SessionEntry { Role = "user", Content = "hello" },
-            new SessionEntry { Role = "assistant", Content = "world" }
+            new SessionEntry { Role = MessageRole.System, Content = "boot" },
+            new SessionEntry { Role = MessageRole.User, Content = "hello" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "world" }
         ]);
 
         await store.SaveAsync(session);
@@ -117,7 +117,7 @@ public sealed class SqliteSessionStoreTests
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
         var session = await store.GetOrCreateAsync("s1", "agent-a");
-        session.AddEntry(new SessionEntry { Role = "user", Content = "hello" });
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "hello" });
         await store.SaveAsync(session);
 
         await store.DeleteAsync("s1");
@@ -145,7 +145,7 @@ public sealed class SqliteSessionStoreTests
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT status FROM sessions WHERE id = 's1'";
         var status = (string?)await command.ExecuteScalarAsync();
-        status.Should().Be(SessionStatus.Closed.ToString());
+        status.Should().Be(SessionStatus.Sealed.ToString());
     }
 
     [Fact]
@@ -187,21 +187,21 @@ public sealed class SqliteSessionStoreTests
         {
             SessionId = "s-old",
             AgentId = "agent-a",
-            ChannelType = "signalr",
+            ChannelType = ChannelKey.From("web chat"),
             CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-5)
         });
         await store.SaveAsync(new GatewaySession
         {
             SessionId = "s-new",
             AgentId = "agent-a",
-            ChannelType = "web chat",
+            ChannelType = ChannelKey.From("web chat"),
             CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-1)
         });
         await store.SaveAsync(new GatewaySession
         {
             SessionId = "s-other-channel",
             AgentId = "agent-a",
-            ChannelType = "telegram"
+            ChannelType = ChannelKey.From("telegram")
         });
         await store.SaveAsync(new GatewaySession
         {
@@ -209,7 +209,7 @@ public sealed class SqliteSessionStoreTests
             AgentId = "agent-a"
         });
 
-        var sessions = await store.ListByChannelAsync("agent-a", "web-chat");
+        var sessions = await store.ListByChannelAsync("agent-a", ChannelKey.From("web chat"));
 
         sessions.Select(s => s.SessionId).Should().Equal("s-new", "s-old");
     }
@@ -225,7 +225,7 @@ public sealed class SqliteSessionStoreTests
             {
                 var sessionId = $"s{i:D2}";
                 var session = await store.GetOrCreateAsync(sessionId, "agent-a");
-                session.AddEntry(new SessionEntry { Role = "user", Content = $"m-{i}" });
+                session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"m-{i}" });
                 session.Metadata["index"] = i;
                 await store.SaveAsync(session);
                 return await store.GetAsync(sessionId);
@@ -313,7 +313,7 @@ public sealed class SqliteSessionStoreTests
 
         var store = fixture.CreateStore();
         var session = await store.GetOrCreateAsync("s1", "agent-a");
-        session.AddEntry(new SessionEntry { Role = "system", Content = "summary", IsCompactionSummary = true });
+        session.AddEntry(new SessionEntry { Role = MessageRole.System, Content = "summary", IsCompactionSummary = true });
         await store.SaveAsync(session);
 
         await using var verifyConnection = new SqliteConnection(fixture.ConnectionString);
@@ -361,3 +361,9 @@ public sealed class SqliteSessionStoreTests
         }
     }
 }
+
+
+
+
+
+

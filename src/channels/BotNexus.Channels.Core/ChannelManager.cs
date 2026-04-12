@@ -19,5 +19,5 @@ public sealed class ChannelManager : IChannelManager
 
     /// <summary>Gets a channel adapter by type, or <c>null</c> if not registered.</summary>
     public IChannelAdapter? Get(string channelType)
-        => _adapters.Find(a => a.ChannelType.Equals(channelType, StringComparison.OrdinalIgnoreCase));
+        => _adapters.Find(a => string.Equals(a.ChannelType, channelType, StringComparison.OrdinalIgnoreCase));
 }

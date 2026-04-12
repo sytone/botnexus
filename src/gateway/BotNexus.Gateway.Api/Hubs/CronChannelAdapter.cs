@@ -1,5 +1,6 @@
 using BotNexus.Channels.Core;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Api.Hubs;
@@ -12,7 +13,7 @@ namespace BotNexus.Gateway.Api.Hubs;
 public sealed class CronChannelAdapter(ILogger<CronChannelAdapter> logger)
     : ChannelAdapterBase(logger)
 {
-    public override string ChannelType => "cron";
+    public override ChannelKey ChannelType => ChannelKey.From("cron");
     public override string DisplayName => "Cron Scheduler";
     public override bool SupportsStreaming => false;
     public override bool SupportsSteering => false;

@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Domain.Primitives;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BotNexus.Gateway.Api.Controllers;
@@ -62,8 +63,9 @@ public sealed class ChatController : ControllerBase
             }
 
             var session = await _sessions.GetOrCreateAsync(sessionId, request.AgentId, CancellationToken.None);
-            session.AddEntry(new SessionEntry { Role = "user", Content = request.Message });
-            session.AddEntry(new SessionEntry { Role = "assistant", Content = response.Content });
+            session.SessionType = SessionType.UserAgent;
+            session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = request.Message });
+            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
             await _sessions.SaveAsync(session, CancellationToken.None);
 
             return Ok(new ChatResponse(sessionId, response.Content, response.Usage));

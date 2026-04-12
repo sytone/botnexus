@@ -150,7 +150,7 @@ public sealed class LlmSessionCompactorTests
         });
 
         var summaryEntry = session.GetHistorySnapshot().First();
-        summaryEntry.Role.Should().Be("system");
+        summaryEntry.Role.Should().Be(MessageRole.System);
         summaryEntry.IsCompactionSummary.Should().BeTrue();
     }
 
@@ -180,14 +180,14 @@ public sealed class LlmSessionCompactorTests
     {
         var history = new List<SessionEntry>
         {
-            new() { Role = "user", Content = "u1" },
-            new() { Role = "assistant", Content = "a1" },
-            new() { Role = "tool", Content = "t1" },
-            new() { Role = "user", Content = "u2" },
-            new() { Role = "assistant", Content = "a2" },
-            new() { Role = "tool", Content = "t2" },
-            new() { Role = "user", Content = "u3" },
-            new() { Role = "assistant", Content = "a3" }
+            new() { Role = MessageRole.User, Content = "u1" },
+            new() { Role = MessageRole.Assistant, Content = "a1" },
+            new() { Role = MessageRole.Tool, Content = "t1" },
+            new() { Role = MessageRole.User, Content = "u2" },
+            new() { Role = MessageRole.Assistant, Content = "a2" },
+            new() { Role = MessageRole.Tool, Content = "t2" },
+            new() { Role = MessageRole.User, Content = "u3" },
+            new() { Role = MessageRole.Assistant, Content = "a3" }
         };
 
         var splitHistory = typeof(LlmSessionCompactor).GetMethod(
@@ -258,3 +258,5 @@ public sealed class LlmSessionCompactorTests
         return stream;
     }
 }
+
+

@@ -21,13 +21,13 @@ public sealed class ChannelHistoryControllerTests
         await store.SaveAsync(CreateSession(
             "s-old",
             "agent-a",
-            "signalr",
+            "web chat",
             DateTimeOffset.UtcNow.AddMinutes(-5),
             "o0", "o1"));
 
         var controller = new ChannelHistoryController(store);
 
-        var result = await controller.GetHistory("web-chat", "agent-a", limit: 4, cancellationToken: CancellationToken.None);
+        var result = await controller.GetHistory("web chat", "agent-a", limit: 4, cancellationToken: CancellationToken.None);
 
         var payload = (result.Result as OkObjectResult)?.Value as ChannelHistoryResponse;
         payload.Should().NotBeNull();
@@ -98,8 +98,9 @@ public sealed class ChannelHistoryControllerTests
             CreatedAt = createdAt
         };
         foreach (var message in messages)
-            session.AddEntry(new SessionEntry { Role = "user", Content = message });
+            session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = message });
 
         return session;
     }
 }
+

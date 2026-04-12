@@ -32,13 +32,13 @@ public sealed class CompactionModelTests
     {
         var session = new GatewaySession { SessionId = "session-a", AgentId = "agent-a" };
         session.AddEntries([
-            new SessionEntry { Role = "user", Content = "old-1" },
-            new SessionEntry { Role = "assistant", Content = "old-2" }
+            new SessionEntry { Role = MessageRole.User, Content = "old-1" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "old-2" }
         ]);
 
         session.ReplaceHistory([
-            new SessionEntry { Role = "system", Content = "summary", IsCompactionSummary = true },
-            new SessionEntry { Role = "user", Content = "new-1" }
+            new SessionEntry { Role = MessageRole.System, Content = "summary", IsCompactionSummary = true },
+            new SessionEntry { Role = MessageRole.User, Content = "new-1" }
         ]);
 
         session.GetHistorySnapshot().Select(entry => entry.Content)
@@ -53,7 +53,7 @@ public sealed class CompactionModelTests
         var initialUpdatedAt = session.UpdatedAt;
         Thread.Sleep(10);
 
-        session.ReplaceHistory([new SessionEntry { Role = "user", Content = "new-content" }]);
+        session.ReplaceHistory([new SessionEntry { Role = MessageRole.User, Content = "new-content" }]);
 
         session.UpdatedAt.Should().BeAfter(initialUpdatedAt);
     }
@@ -61,7 +61,7 @@ public sealed class CompactionModelTests
     [Fact]
     public void SessionEntry_IsCompactionSummary_DefaultFalse()
     {
-        var entry = new SessionEntry { Role = "user", Content = "hello" };
+        var entry = new SessionEntry { Role = MessageRole.User, Content = "hello" };
 
         entry.IsCompactionSummary.Should().BeFalse();
     }
@@ -71,7 +71,7 @@ public sealed class CompactionModelTests
     {
         var original = new SessionEntry
         {
-            Role = "system",
+            Role = MessageRole.System,
             Content = "compacted",
             IsCompactionSummary = true
         };
@@ -90,10 +90,10 @@ public sealed class CompactionModelTests
         var store = fixture.CreateStore();
         var session = await store.GetOrCreateAsync("s1", "agent-a");
         session.ReplaceHistory([
-            new SessionEntry { Role = "user", Content = "before-1" },
-            new SessionEntry { Role = "assistant", Content = "before-2" },
-            new SessionEntry { Role = "system", Content = "summary", IsCompactionSummary = true },
-            new SessionEntry { Role = "user", Content = "after-1" }
+            new SessionEntry { Role = MessageRole.User, Content = "before-1" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "before-2" },
+            new SessionEntry { Role = MessageRole.System, Content = "summary", IsCompactionSummary = true },
+            new SessionEntry { Role = MessageRole.User, Content = "after-1" }
         ]);
         await store.SaveAsync(session);
 
@@ -112,11 +112,11 @@ public sealed class CompactionModelTests
         var store = fixture.CreateStore();
         var session = await store.GetOrCreateAsync("s1", "agent-a");
         session.ReplaceHistory([
-            new SessionEntry { Role = "user", Content = "before-1" },
-            new SessionEntry { Role = "system", Content = "summary-1", IsCompactionSummary = true },
-            new SessionEntry { Role = "user", Content = "between" },
-            new SessionEntry { Role = "system", Content = "summary-2", IsCompactionSummary = true },
-            new SessionEntry { Role = "assistant", Content = "after" }
+            new SessionEntry { Role = MessageRole.User, Content = "before-1" },
+            new SessionEntry { Role = MessageRole.System, Content = "summary-1", IsCompactionSummary = true },
+            new SessionEntry { Role = MessageRole.User, Content = "between" },
+            new SessionEntry { Role = MessageRole.System, Content = "summary-2", IsCompactionSummary = true },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "after" }
         ]);
         await store.SaveAsync(session);
 
@@ -135,8 +135,8 @@ public sealed class CompactionModelTests
         var store = fixture.CreateStore();
         var session = await store.GetOrCreateAsync("s1", "agent-a");
         session.ReplaceHistory([
-            new SessionEntry { Role = "user", Content = "one" },
-            new SessionEntry { Role = "assistant", Content = "two" }
+            new SessionEntry { Role = MessageRole.User, Content = "one" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "two" }
         ]);
         await store.SaveAsync(session);
 
@@ -170,3 +170,4 @@ public sealed class CompactionModelTests
         }
     }
 }
+

@@ -1,6 +1,7 @@
 using System.Reflection;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
+using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Api.Controllers;
 using BotNexus.Gateway.Sessions;
@@ -13,9 +14,9 @@ public sealed class SessionModelWave2Tests
     [Fact]
     public void SessionStatus_Rename_UsesSealed_NotClosed()
     {
-        var names = Enum.GetNames<SessionStatus>();
+        var names = Enum.GetNames<GatewaySessionStatus>();
 
-        names.Should().Contain(nameof(SessionStatus.Sealed));
+        names.Should().Contain(nameof(GatewaySessionStatus.Sealed));
         names.Should().NotContain("Closed");
     }
 
@@ -24,7 +25,7 @@ public sealed class SessionModelWave2Tests
     {
         var session = CreateSession();
 
-        session.Status.Should().Be(SessionStatus.Active);
+        session.Status.Should().Be(GatewaySessionStatus.Active);
     }
 
     [Fact]
@@ -32,9 +33,9 @@ public sealed class SessionModelWave2Tests
     {
         var session = CreateSession();
 
-        session.Status = SessionStatus.Suspended;
+        session.Status = GatewaySessionStatus.Suspended;
 
-        session.Status.Should().Be(SessionStatus.Suspended);
+        session.Status.Should().Be(GatewaySessionStatus.Suspended);
     }
 
     [Fact]
@@ -42,20 +43,20 @@ public sealed class SessionModelWave2Tests
     {
         var session = CreateSession();
 
-        session.Status = SessionStatus.Sealed;
+        session.Status = GatewaySessionStatus.Sealed;
 
-        session.Status.Should().Be(SessionStatus.Sealed);
+        session.Status.Should().Be(GatewaySessionStatus.Sealed);
     }
 
     [Fact]
     public void SessionStatusLifecycle_SuspendedToSealed_Works()
     {
         var session = CreateSession();
-        session.Status = SessionStatus.Suspended;
+        session.Status = GatewaySessionStatus.Suspended;
 
-        session.Status = SessionStatus.Sealed;
+        session.Status = GatewaySessionStatus.Sealed;
 
-        session.Status.Should().Be(SessionStatus.Sealed);
+        session.Status.Should().Be(GatewaySessionStatus.Sealed);
     }
 
     [Fact]
@@ -63,14 +64,14 @@ public sealed class SessionModelWave2Tests
     {
         var store = new InMemorySessionStore();
         var session = await store.GetOrCreateAsync("s1", "agent-a");
-        session.Status = SessionStatus.Suspended;
+        session.Status = GatewaySessionStatus.Suspended;
         var controller = new SessionsController(store);
 
         var result = await controller.Resume("s1", CancellationToken.None);
 
         var resumed = result.Value ?? (result.Result as Microsoft.AspNetCore.Mvc.OkObjectResult)?.Value as GatewaySession;
         resumed.Should().NotBeNull();
-        resumed!.Status.Should().Be(SessionStatus.Active);
+        resumed!.Status.Should().Be(GatewaySessionStatus.Active);
     }
 
     [Fact]
@@ -78,13 +79,13 @@ public sealed class SessionModelWave2Tests
     {
         var store = new InMemorySessionStore();
         var session = await store.GetOrCreateAsync("s1", "agent-a");
-        session.Status = SessionStatus.Sealed;
+        session.Status = GatewaySessionStatus.Sealed;
         var controller = new SessionsController(store);
 
         var result = await controller.Resume("s1", CancellationToken.None);
 
         result.Result.Should().BeOfType<Microsoft.AspNetCore.Mvc.ConflictObjectResult>();
-        session.Status.Should().Be(SessionStatus.Sealed);
+        session.Status.Should().Be(GatewaySessionStatus.Sealed);
     }
 
     [Fact]
@@ -217,3 +218,4 @@ public sealed class SessionModelWave2Tests
     private static GatewaySession CreateSession()
         => new() { SessionId = $"s-{Guid.NewGuid():N}", AgentId = "agent-a" };
 }
+

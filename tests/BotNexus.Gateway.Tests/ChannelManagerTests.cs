@@ -40,11 +40,11 @@ public sealed class ChannelManagerTests
     {
         public TestChannelAdapter(string channelType)
         {
-            ChannelType = channelType;
+            ChannelType = ChannelKey.From(channelType);
             DisplayName = channelType;
         }
 
-        public string ChannelType { get; }
+        public ChannelKey ChannelType { get; }
         public string DisplayName { get; }
         public bool SupportsStreaming => false;
         public bool SupportsSteering => false;

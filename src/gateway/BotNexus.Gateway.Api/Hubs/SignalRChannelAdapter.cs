@@ -1,6 +1,7 @@
 using BotNexus.Channels.Core;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Domain.Primitives;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 
@@ -16,7 +17,7 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
 {
     private readonly IHubContext<GatewayHub> _hubContext = hubContext;
 
-    public override string ChannelType => "signalr";
+    public override ChannelKey ChannelType => ChannelKey.From("signalr");
     public override string DisplayName => "Web Chat";
     public override bool SupportsStreaming => true;
     public override bool SupportsSteering => true;

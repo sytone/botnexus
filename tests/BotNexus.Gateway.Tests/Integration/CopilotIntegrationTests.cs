@@ -80,7 +80,11 @@ public sealed class CopilotIntegrationTests
 
         var session = await harness.Sessions.GetAsync("integration-session");
         session.Should().NotBeNull();
-        session!.History.Select(entry => entry.Role).Should().ContainInOrder("user", "assistant", "user", "assistant");
+        session!.History.Select(entry => entry.Role).Should().ContainInOrder(
+            MessageRole.User,
+            MessageRole.Assistant,
+            MessageRole.User,
+            MessageRole.Assistant);
     }
 
     [Fact]
@@ -100,7 +104,7 @@ public sealed class CopilotIntegrationTests
             return;
 
         var session = await harness.Sessions.GetAsync("integration-session");
-        var assistantContent = session?.History.LastOrDefault(entry => entry.Role == "assistant")?.Content;
+        var assistantContent = session?.History.LastOrDefault(entry => entry.Role == MessageRole.Assistant)?.Content;
         assistantContent.Should().NotBeNullOrWhiteSpace();
         assistantContent.Should().Be(string.Concat(harness.Channel.StreamDeltas));
     }
@@ -166,7 +170,7 @@ public sealed class CopilotIntegrationTests
             return;
 
         webUiChannel.SentMessages.Should().ContainSingle();
-        webUiChannel.SentMessages.Single().ChannelType.Should().Be("web");
+        webUiChannel.SentMessages.Single().ChannelType.Should().Be(ChannelKey.From("web"));
     }
 
     private static Harness CreateHarness(CopilotAuth auth, bool supportsStreaming, RecordingChannelAdapter? channel = null)
@@ -206,7 +210,7 @@ public sealed class CopilotIntegrationTests
     private static InboundMessage CreateMessage(string content)
         => new()
         {
-            ChannelType = "web",
+            ChannelType = ChannelKey.From("web"),
             SenderId = "integration-user",
             ConversationId = "copilot-integration-conversation",
             Content = content,
@@ -397,7 +401,7 @@ public sealed class CopilotIntegrationTests
 
     private class RecordingChannelAdapter(bool supportsStreaming) : IChannelAdapter
     {
-        public virtual string ChannelType => "web";
+        public virtual ChannelKey ChannelType => ChannelKey.From("web");
         public virtual string DisplayName => "Integration Channel";
         public bool SupportsStreaming => supportsStreaming;
         public bool SupportsSteering => false;
@@ -448,3 +452,6 @@ public sealed class CopilotIntegrationTests
         }
     }
 }
+
+
+

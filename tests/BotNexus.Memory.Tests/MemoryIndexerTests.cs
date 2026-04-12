@@ -21,10 +21,10 @@ public sealed class MemoryIndexerTests
         try
         {
             var session = CreateSession("session-1", "agent-a", [
-                new SessionEntry { Role = "user", Content = "Hello" },
-                new SessionEntry { Role = "assistant", Content = "Hi there" },
-                new SessionEntry { Role = "user", Content = "How are you?" },
-                new SessionEntry { Role = "assistant", Content = "Doing great" }
+                new SessionEntry { Role = MessageRole.User, Content = "Hello" },
+                new SessionEntry { Role = MessageRole.Assistant, Content = "Hi there" },
+                new SessionEntry { Role = MessageRole.User, Content = "How are you?" },
+                new SessionEntry { Role = MessageRole.Assistant, Content = "Doing great" }
             ]);
 
             await lifecycle.RaiseAsync(new SessionLifecycleEvent("session-1", "agent-a", SessionLifecycleEventType.Closed, session));
@@ -53,9 +53,9 @@ public sealed class MemoryIndexerTests
         try
         {
             var session = CreateSession("session-2", "agent-a", [
-                new SessionEntry { Role = "user", Content = "Run search" },
-                new SessionEntry { Role = "tool", Content = "tool output", ToolName = "memory_search" },
-                new SessionEntry { Role = "assistant", Content = "Here is what I found" }
+                new SessionEntry { Role = MessageRole.User, Content = "Run search" },
+                new SessionEntry { Role = MessageRole.Tool, Content = "tool output", ToolName = "memory_search" },
+                new SessionEntry { Role = MessageRole.Assistant, Content = "Here is what I found" }
             ]);
 
             await lifecycle.RaiseAsync(new SessionLifecycleEvent("session-2", "agent-a", SessionLifecycleEventType.Closed, session));
@@ -83,8 +83,8 @@ public sealed class MemoryIndexerTests
         try
         {
             var session = CreateSession("session-3", "agent-a", [
-                new SessionEntry { Role = "user", Content = "Remember me" },
-                new SessionEntry { Role = "assistant", Content = "I will" }
+                new SessionEntry { Role = MessageRole.User, Content = "Remember me" },
+                new SessionEntry { Role = MessageRole.Assistant, Content = "I will" }
             ]);
 
             var closedEvent = new SessionLifecycleEvent("session-3", "agent-a", SessionLifecycleEventType.Closed, session);
@@ -113,8 +113,8 @@ public sealed class MemoryIndexerTests
         try
         {
             var session = CreateSession("session-4", "agent-a", [
-                new SessionEntry { Role = "user", Content = "Ping" },
-                new SessionEntry { Role = "assistant", Content = "Pong" }
+                new SessionEntry { Role = MessageRole.User, Content = "Ping" },
+                new SessionEntry { Role = MessageRole.Assistant, Content = "Pong" }
             ]);
 
             await lifecycle.RaiseAsync(new SessionLifecycleEvent("session-4", "agent-a", SessionLifecycleEventType.Expired, session));
@@ -224,3 +224,4 @@ public sealed class MemoryIndexerTests
         public IReadOnlyList<MemoryEntry> GetAll() => _entries.Values.ToList();
     }
 }
+

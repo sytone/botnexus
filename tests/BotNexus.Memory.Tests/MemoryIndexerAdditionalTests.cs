@@ -41,8 +41,8 @@ public sealed class MemoryIndexerAdditionalTests
         {
             var session = CreateSession("s-created", "agent-a",
             [
-                new SessionEntry { Role = "user", Content = "hello" },
-                new SessionEntry { Role = "assistant", Content = "world" }
+                new SessionEntry { Role = MessageRole.User, Content = "hello" },
+                new SessionEntry { Role = MessageRole.Assistant, Content = "world" }
             ]);
 
             await lifecycle.RaiseAsync(new SessionLifecycleEvent("s-created", "agent-a", SessionLifecycleEventType.Created, session));
@@ -67,12 +67,12 @@ public sealed class MemoryIndexerAdditionalTests
         {
             var session = CreateSession("s-expired", "agent-a",
             [
-                new SessionEntry { Role = "user", Content = "one" },
-                new SessionEntry { Role = "assistant", Content = "first" },
-                new SessionEntry { Role = "user", Content = "two" },
-                new SessionEntry { Role = "tool", Content = "ignored" },
-                new SessionEntry { Role = "assistant", Content = "second" },
-                new SessionEntry { Role = "assistant", Content = "orphan" }
+                new SessionEntry { Role = MessageRole.User, Content = "one" },
+                new SessionEntry { Role = MessageRole.Assistant, Content = "first" },
+                new SessionEntry { Role = MessageRole.User, Content = "two" },
+                new SessionEntry { Role = MessageRole.Tool, Content = "ignored" },
+                new SessionEntry { Role = MessageRole.Assistant, Content = "second" },
+                new SessionEntry { Role = MessageRole.Assistant, Content = "orphan" }
             ]);
 
             await lifecycle.RaiseAsync(new SessionLifecycleEvent("s-expired", "agent-a", SessionLifecycleEventType.Expired, session));
@@ -103,8 +103,8 @@ public sealed class MemoryIndexerAdditionalTests
                 {
                     var session = CreateSession($"s-{i}", "agent-a",
                     [
-                        new SessionEntry { Role = "user", Content = $"u{i}" },
-                        new SessionEntry { Role = "assistant", Content = $"a{i}" }
+                        new SessionEntry { Role = MessageRole.User, Content = $"u{i}" },
+                        new SessionEntry { Role = MessageRole.Assistant, Content = $"a{i}" }
                     ]);
                     return lifecycle.RaiseAsync(new SessionLifecycleEvent($"s-{i}", "agent-a", SessionLifecycleEventType.Closed, session));
                 });
@@ -131,13 +131,13 @@ public sealed class MemoryIndexerAdditionalTests
         {
             var first = CreateSession("s-fail", "agent-a",
             [
-                new SessionEntry { Role = "user", Content = "u1" },
-                new SessionEntry { Role = "assistant", Content = "a1" }
+                new SessionEntry { Role = MessageRole.User, Content = "u1" },
+                new SessionEntry { Role = MessageRole.Assistant, Content = "a1" }
             ]);
             var second = CreateSession("s-pass", "agent-a",
             [
-                new SessionEntry { Role = "user", Content = "u2" },
-                new SessionEntry { Role = "assistant", Content = "a2" }
+                new SessionEntry { Role = MessageRole.User, Content = "u2" },
+                new SessionEntry { Role = MessageRole.Assistant, Content = "a2" }
             ]);
 
             await lifecycle.RaiseAsync(new SessionLifecycleEvent("s-fail", "agent-a", SessionLifecycleEventType.Closed, first));
@@ -164,8 +164,8 @@ public sealed class MemoryIndexerAdditionalTests
 
         var session = CreateSession("s-after-stop", "agent-a",
         [
-            new SessionEntry { Role = "user", Content = "u" },
-            new SessionEntry { Role = "assistant", Content = "a" }
+            new SessionEntry { Role = MessageRole.User, Content = "u" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "a" }
         ]);
         await lifecycle.RaiseAsync(new SessionLifecycleEvent("s-after-stop", "agent-a", SessionLifecycleEventType.Closed, session));
         await Task.Delay(100);
@@ -274,3 +274,4 @@ public sealed class MemoryIndexerAdditionalTests
         }
     }
 }
+

@@ -99,7 +99,7 @@ public sealed class TelegramChannelAdapterTests
 
         await adapter.SendAsync(new OutboundMessage
         {
-            ChannelType = "telegram",
+            ChannelType = ChannelKey.From("telegram"),
             ConversationId = "42",
             Content = new string('a', 5000)
         });
@@ -130,7 +130,7 @@ public sealed class TelegramChannelAdapterTests
 
         await adapter.SendAsync(new OutboundMessage
         {
-            ChannelType = "telegram",
+            ChannelType = ChannelKey.From("telegram"),
             ConversationId = "42",
             Content = "_*[]()~`>#+-=|{}.!\\"
         });
@@ -371,7 +371,7 @@ public sealed class TelegramChannelAdapterTests
 
         Func<Task> act = () => adapter.SendAsync(new OutboundMessage
         {
-            ChannelType = "telegram",
+            ChannelType = ChannelKey.From("telegram"),
             ConversationId = "99",
             Content = "blocked"
         });
@@ -450,3 +450,4 @@ public sealed class TelegramChannelAdapterTests
         }
     }
 }
+

@@ -89,7 +89,7 @@ public sealed class SessionLifecycleTests
     {
         var store = new InMemorySessionStore();
         var session = await store.GetOrCreateAsync("closed", "agent-a");
-        session.Status = SessionStatus.Closed;
+        session.Status = SessionStatus.Sealed;
         session.UpdatedAt = DateTimeOffset.UtcNow - TimeSpan.FromDays(8);
         await store.SaveAsync(session);
 
@@ -162,3 +162,4 @@ public sealed class SessionLifecycleTests
         }
     }
 }
+

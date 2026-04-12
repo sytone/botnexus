@@ -1,3 +1,5 @@
+using BotNexus.Domain.Primitives;
+
 namespace BotNexus.Gateway.Abstractions.Models;
 
 /// <summary>
@@ -6,7 +8,7 @@ namespace BotNexus.Gateway.Abstractions.Models;
 public sealed record InboundMessage
 {
     /// <summary>The channel this message arrived from (e.g., "signalr", "telegram").</summary>
-    public required string ChannelType { get; init; }
+    public required ChannelKey ChannelType { get; init; }
 
     /// <summary>Identifier of the sender within the channel.</summary>
     public required string SenderId { get; init; }
@@ -44,7 +46,7 @@ public sealed record InboundMessage
 public sealed record OutboundMessage
 {
     /// <summary>The channel to send through.</summary>
-    public required string ChannelType { get; init; }
+    public required ChannelKey ChannelType { get; init; }
 
     /// <summary>Target conversation identifier within the channel.</summary>
     public required string ConversationId { get; init; }

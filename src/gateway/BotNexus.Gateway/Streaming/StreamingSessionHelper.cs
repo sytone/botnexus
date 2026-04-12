@@ -1,4 +1,5 @@
 using System.Text;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Sessions;
@@ -42,7 +43,7 @@ public static class StreamingSessionHelper
                 case AgentStreamEventType.ToolStart when evt.ToolCallId is not null || evt.ToolName is not null:
                     streamedHistory.Add(new SessionEntry
                     {
-                        Role = "tool",
+                        Role = MessageRole.Tool,
                         Content = $"Tool '{evt.ToolName ?? "unknown"}' started.",
                         ToolName = evt.ToolName,
                         ToolCallId = evt.ToolCallId
@@ -51,7 +52,7 @@ public static class StreamingSessionHelper
                 case AgentStreamEventType.ToolEnd when evt.ToolCallId is not null || evt.ToolName is not null:
                     streamedHistory.Add(new SessionEntry
                     {
-                        Role = "tool",
+                        Role = MessageRole.Tool,
                         Content = evt.ToolResult ?? (evt.ToolIsError == true ? "Tool execution failed." : "Tool execution completed."),
                         ToolName = evt.ToolName,
                         ToolCallId = evt.ToolCallId
@@ -60,7 +61,7 @@ public static class StreamingSessionHelper
                 case AgentStreamEventType.Error when options.IncludeErrorsInHistory && !string.IsNullOrWhiteSpace(evt.ErrorMessage):
                     streamedHistory.Add(new SessionEntry
                     {
-                        Role = "system",
+                        Role = MessageRole.System,
                         Content = $"Agent stream error: {evt.ErrorMessage}"
                     });
                     break;
@@ -74,7 +75,7 @@ public static class StreamingSessionHelper
 
         session.AddEntries(streamedHistory);
         if (streamedContent.Length > 0)
-            session.AddEntry(new SessionEntry { Role = "assistant", Content = streamedContent.ToString() });
+            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = streamedContent.ToString() });
         await sessionStore.SaveAsync(session, cancellationToken);
         if (lifecycleEvents is not null)
         {

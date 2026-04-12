@@ -1,3 +1,5 @@
+using BotNexus.Domain.Primitives;
+
 namespace BotNexus.Gateway.Abstractions.Models;
 
 /// <summary>
@@ -17,10 +19,19 @@ public sealed class GatewaySession
     public required string AgentId { get; set; }
 
     /// <summary>The channel this session originated from (e.g., "signalr", "telegram").</summary>
-    public string? ChannelType { get; set; }
+    public ChannelKey? ChannelType { get; set; }
 
     /// <summary>Caller-specific identifier within the channel (e.g., user ID, chat ID).</summary>
     public string? CallerId { get; set; }
+
+    /// <summary>Session type discriminator.</summary>
+    public SessionType SessionType { get; set; } = SessionType.UserAgent;
+
+    /// <summary>Computed interactivity marker.</summary>
+    public bool IsInteractive => SessionType.Equals(SessionType.UserAgent);
+
+    /// <summary>Participants in this session.</summary>
+    public List<SessionParticipant> Participants { get; init; } = [];
 
     /// <summary>When the session was created.</summary>
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
@@ -169,8 +180,8 @@ public sealed class GatewaySession
 /// </summary>
 public sealed record SessionEntry
 {
-    /// <summary>Message role: "user", "assistant", "system", or "tool".</summary>
-    public required string Role { get; init; }
+    /// <summary>Message role.</summary>
+    public required MessageRole Role { get; init; }
 
     /// <summary>Message content.</summary>
     public required string Content { get; init; }
@@ -178,7 +189,7 @@ public sealed record SessionEntry
     /// <summary>When this entry was recorded.</summary>
     public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
 
-    /// <summary>Tool name (when Role is "tool").</summary>
+    /// <summary>Tool name (when Role is <see cref="MessageRole.Tool"/>).</summary>
     public string? ToolName { get; init; }
 
     /// <summary>Tool call ID for correlating requests and results.</summary>

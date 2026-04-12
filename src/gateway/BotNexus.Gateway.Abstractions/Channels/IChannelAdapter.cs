@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Domain.Primitives;
 
 namespace BotNexus.Gateway.Abstractions.Channels;
 
@@ -22,7 +23,7 @@ namespace BotNexus.Gateway.Abstractions.Channels;
 public interface IChannelAdapter
 {
     /// <summary>The channel type identifier (e.g., "telegram", "discord", "tui").</summary>
-    string ChannelType { get; }
+    ChannelKey ChannelType { get; }
 
     /// <summary>Human-readable display name for this channel.</summary>
     string DisplayName { get; }

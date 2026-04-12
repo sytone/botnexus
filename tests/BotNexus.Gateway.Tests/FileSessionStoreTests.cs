@@ -40,7 +40,7 @@ public sealed class FileSessionStoreTests
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
         var session = await store.GetOrCreateAsync("s1", "agent-a");
-        session.History.Add(new SessionEntry { Role = "user", Content = "hello" });
+        session.History.Add(new SessionEntry { Role = MessageRole.User, Content = "hello" });
 
         await store.SaveAsync(session);
         var reloaded = await fixture.CreateStore().GetAsync("s1");
@@ -83,7 +83,7 @@ public sealed class FileSessionStoreTests
         const string sessionId = "archive-me";
         var encodedName = Uri.EscapeDataString(sessionId);
         var session = await store.GetOrCreateAsync(sessionId, "agent-a");
-        session.History.Add(new SessionEntry { Role = "user", Content = "persist-me" });
+        session.History.Add(new SessionEntry { Role = MessageRole.User, Content = "persist-me" });
         await store.SaveAsync(session);
 
         await store.ArchiveAsync(sessionId);
@@ -112,7 +112,7 @@ public sealed class FileSessionStoreTests
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
         var oldSession = await store.GetOrCreateAsync("s1", "agent-a");
-        oldSession.History.Add(new SessionEntry { Role = "user", Content = "old-message" });
+        oldSession.History.Add(new SessionEntry { Role = MessageRole.User, Content = "old-message" });
         await store.SaveAsync(oldSession);
 
         await store.ArchiveAsync("s1");
@@ -147,21 +147,21 @@ public sealed class FileSessionStoreTests
         {
             SessionId = "s-old",
             AgentId = "agent-a",
-            ChannelType = "signalr",
+            ChannelType = ChannelKey.From("web chat"),
             CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-5)
         });
         await store.SaveAsync(new GatewaySession
         {
             SessionId = "s-new",
             AgentId = "agent-a",
-            ChannelType = "web chat",
+            ChannelType = ChannelKey.From("web chat"),
             CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-1)
         });
         await store.SaveAsync(new GatewaySession
         {
             SessionId = "s-other-channel",
             AgentId = "agent-a",
-            ChannelType = "telegram"
+            ChannelType = ChannelKey.From("telegram")
         });
         await store.SaveAsync(new GatewaySession
         {
@@ -169,7 +169,7 @@ public sealed class FileSessionStoreTests
             AgentId = "agent-a"
         });
 
-        var sessions = await store.ListByChannelAsync("agent-a", "web-chat");
+        var sessions = await store.ListByChannelAsync("agent-a", ChannelKey.From("web chat"));
 
         sessions.Select(s => s.SessionId).Should().Equal("s-new", "s-old");
     }
@@ -184,7 +184,7 @@ public sealed class FileSessionStoreTests
             .Select(async i =>
             {
                 var session = await store.GetOrCreateAsync($"s{i}", "agent-a");
-                session.History.Add(new SessionEntry { Role = "user", Content = $"msg-{i}" });
+                session.History.Add(new SessionEntry { Role = MessageRole.User, Content = $"msg-{i}" });
                 await store.SaveAsync(session);
             });
 
@@ -202,7 +202,7 @@ public sealed class FileSessionStoreTests
         var store = fixture.CreateStore();
         var session = await store.GetOrCreateAsync("large", "agent-a");
         for (var i = 0; i < 1000; i++)
-            session.History.Add(new SessionEntry { Role = "user", Content = $"line-{i}" });
+            session.History.Add(new SessionEntry { Role = MessageRole.User, Content = $"line-{i}" });
 
         await store.SaveAsync(session);
         var reloaded = await fixture.CreateStore().GetAsync("large");
@@ -218,7 +218,7 @@ public sealed class FileSessionStoreTests
         var store = fixture.CreateStore();
         const string sessionId = "s/日本語?:*&%20";
         var created = await store.GetOrCreateAsync(sessionId, "agent-a");
-        created.History.Add(new SessionEntry { Role = "user", Content = "hello" });
+        created.History.Add(new SessionEntry { Role = MessageRole.User, Content = "hello" });
 
         await store.SaveAsync(created);
         var reloaded = await fixture.CreateStore().GetAsync(sessionId);
@@ -287,3 +287,7 @@ public sealed class FileSessionStoreTests
         }
     }
 }
+
+
+
+

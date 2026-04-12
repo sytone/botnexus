@@ -1,6 +1,9 @@
 using System.Text.Json;
 using System.Diagnostics;
 using System.IO.Abstractions;
+using ChannelKey = BotNexus.Domain.Primitives.ChannelKey;
+using SessionType = BotNexus.Domain.Primitives.SessionType;
+using SessionParticipant = BotNexus.Domain.Primitives.SessionParticipant;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.Extensions.Logging;
@@ -84,7 +87,12 @@ public sealed class FileSessionStore : ISessionStore
                 return loaded;
             }
 
-            var session = new GatewaySession { SessionId = sessionId, AgentId = agentId };
+            var session = new GatewaySession
+            {
+                SessionId = sessionId,
+                AgentId = agentId,
+                SessionType = InferSessionType(sessionId, null)
+            };
             _cache[sessionId] = session;
             return session;
         }
@@ -170,14 +178,13 @@ public sealed class FileSessionStore : ISessionStore
     /// <inheritdoc />
     public async Task<IReadOnlyList<GatewaySession>> ListByChannelAsync(
         string agentId,
-        string channelType,
+        ChannelKey channelType,
         CancellationToken cancellationToken = default)
     {
         using var activity = ActivitySource.StartActivity("session.list_by_channel", ActivityKind.Internal);
         activity?.SetTag("botnexus.agent.id", agentId);
         activity?.SetTag("botnexus.channel.type", channelType);
 
-        var normalizedChannelType = NormalizeChannelKey(channelType);
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -189,7 +196,7 @@ public sealed class FileSessionStore : ISessionStore
                 if (session is null || session.ChannelType is null)
                     continue;
 
-                if (session.AgentId == agentId && NormalizeChannelKey(session.ChannelType) == normalizedChannelType)
+                if (session.AgentId == agentId && session.ChannelType == channelType)
                     sessions.Add(session);
             }
 
@@ -215,6 +222,8 @@ public sealed class FileSessionStore : ISessionStore
             AgentId = meta.AgentId,
             ChannelType = meta.ChannelType,
             CallerId = meta.CallerId,
+            SessionType = meta.SessionType ?? InferSessionType(sessionId, meta.ChannelType),
+            Participants = meta.Participants ?? [],
             CreatedAt = meta.CreatedAt,
             UpdatedAt = meta.UpdatedAt,
             Status = meta.Status,
@@ -266,6 +275,8 @@ public sealed class FileSessionStore : ISessionStore
             session.AgentId,
             session.ChannelType,
             session.CallerId,
+            session.SessionType,
+            session.Participants,
             session.CreatedAt,
             session.UpdatedAt,
             session.Status,
@@ -281,18 +292,23 @@ public sealed class FileSessionStore : ISessionStore
 
     private static string SanitizeFileName(string name) => Uri.EscapeDataString(name);
 
-    private static string NormalizeChannelKey(string? raw)
+    private static SessionType InferSessionType(string sessionId, ChannelKey? channelType)
     {
-        var normalized = (raw ?? string.Empty).Trim().ToLowerInvariant();
-        if (string.IsNullOrEmpty(normalized) || normalized is "signalr" or "web-chat")
-            return "web chat";
-        return normalized;
+        if (sessionId.Contains("::subagent::", StringComparison.OrdinalIgnoreCase))
+            return SessionType.AgentSubAgent;
+
+        if (channelType.HasValue && string.Equals(channelType.Value, "cron", StringComparison.OrdinalIgnoreCase))
+            return SessionType.Cron;
+
+        return SessionType.UserAgent;
     }
 
     private sealed record SessionMeta(
         string AgentId,
-        string? ChannelType,
+        ChannelKey? ChannelType,
         string? CallerId,
+        SessionType? SessionType,
+        List<SessionParticipant>? Participants,
         DateTimeOffset CreatedAt,
         DateTimeOffset UpdatedAt,
         SessionStatus Status = SessionStatus.Active,

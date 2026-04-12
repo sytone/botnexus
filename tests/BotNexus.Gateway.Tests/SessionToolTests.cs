@@ -121,8 +121,8 @@ public sealed class SessionToolTests
     {
         var store = new Mock<ISessionStore>();
         var session = CreateSession("s1", "agent-a");
-        session.AddEntry(new SessionEntry { Role = "user", Content = "Hello" });
-        session.AddEntry(new SessionEntry { Role = "assistant", Content = "Hi there!" });
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "Hello" });
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "Hi there!" });
         store.Setup(s => s.GetAsync("s1", It.IsAny<CancellationToken>())).ReturnsAsync(session);
         var tool = new SessionTool(store.Object, "agent-a");
 
@@ -139,8 +139,8 @@ public sealed class SessionToolTests
     {
         var store = new Mock<ISessionStore>();
         var session = CreateSession("s1", "agent-a");
-        session.AddEntry(new SessionEntry { Role = "user", Content = "Tell me about weather in Seattle" });
-        session.AddEntry(new SessionEntry { Role = "assistant", Content = "Seattle has mild winters." });
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "Tell me about weather in Seattle" });
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "Seattle has mild winters." });
         store.Setup(s => s.ListAsync("agent-a", It.IsAny<CancellationToken>()))
             .ReturnsAsync([session]);
         var tool = new SessionTool(store.Object, "agent-a");
@@ -157,7 +157,7 @@ public sealed class SessionToolTests
     {
         var store = new Mock<ISessionStore>();
         var session = CreateSession("s1", "agent-a");
-        session.AddEntry(new SessionEntry { Role = "user", Content = "Hello world" });
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "Hello world" });
         store.Setup(s => s.ListAsync("agent-a", It.IsAny<CancellationToken>()))
             .ReturnsAsync([session]);
         var tool = new SessionTool(store.Object, "agent-a");
@@ -173,7 +173,7 @@ public sealed class SessionToolTests
         {
             SessionId = sessionId,
             AgentId = agentId,
-            ChannelType = "Web Chat",
+            ChannelType = ChannelKey.From("Web Chat"),
             CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-30),
             UpdatedAt = DateTimeOffset.UtcNow
         };
@@ -190,3 +190,5 @@ public sealed class SessionToolTests
     private static string ReadText(AgentToolResult result)
         => result.Content.Single(c => c.Type == AgentToolContentType.Text).Value;
 }
+
+

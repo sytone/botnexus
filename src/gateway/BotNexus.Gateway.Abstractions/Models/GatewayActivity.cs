@@ -1,3 +1,5 @@
+using BotNexus.Domain.Primitives;
+
 namespace BotNexus.Gateway.Abstractions.Models;
 
 /// <summary>
@@ -19,7 +21,7 @@ public sealed record GatewayActivity
     public string? SessionId { get; init; }
 
     /// <summary>The channel involved, if any.</summary>
-    public string? ChannelType { get; init; }
+    public ChannelKey? ChannelType { get; init; }
 
     /// <summary>Human-readable summary of the activity.</summary>
     public string? Message { get; init; }

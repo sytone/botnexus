@@ -205,3 +205,9 @@ Validation: `dotnet build src\gateway\BotNexus.Cli\BotNexus.Cli.csproj --nologo 
 - 2026-04-12: Removed legacy root-level gateway duplicates from `PlatformConfig`, migrated all consumers/tests to `Gateway.*`, and added `PlatformConfigLoader.MigrateLegacyGatewaySettings` to preserve compatibility with old config files.
 - 2026-04-12: Validation now applies schema checks to the migrated in-memory config object, allowing one-time legacy root-key migration while keeping schema strict for persisted nested shape.
 
+## 2026-04-12T04:10Z — Wave 2 Session Model + Value Object Adoption
+- Completed Wave 2 gateway session model migration: `SessionStatus.Closed` renamed to `Sealed`, and `GatewaySession` now includes `SessionType`, `IsInteractive`, and `Participants`.
+- Added domain participant model in `src/domain/BotNexus.Domain/Primitives/SessionParticipant.cs` (`SessionParticipant`, `ParticipantType`) and persisted session metadata in in-memory/file/sqlite stores.
+- Adopted domain primitives across gateway contracts and runtime: typed `ChannelKey` and `MessageRole` in channel adapters, session stores, APIs, streaming helpers, compactor, and memory indexer.
+- Updated SQLite migration/load paths to support new columns and legacy status compatibility (`closed` remapped to `Sealed`).
+- Validation: `dotnet build BotNexus.slnx --nologo --tl:off`, `dotnet test tests\BotNexus.Gateway.Tests\BotNexus.Gateway.Tests.csproj --nologo --tl:off --no-build`, and `dotnet test tests\BotNexus.Domain.Tests\BotNexus.Domain.Tests.csproj --nologo --tl:off` all passed.

@@ -92,7 +92,7 @@ public sealed class ChannelCapabilityTests
         {
         }
 
-        public override string ChannelType => "test";
+        public override ChannelKey ChannelType => ChannelKey.From("test");
         public override string DisplayName => "Test";
 
         public override Task SendAsync(OutboundMessage message, CancellationToken cancellationToken = default)

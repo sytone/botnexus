@@ -1,5 +1,6 @@
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Domain.Primitives;
 using BotNexus.Memory.Models;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -76,17 +77,17 @@ public sealed class MemoryIndexer(
         {
             cancellationToken.ThrowIfCancellationRequested();
             var entry = history[i];
-            if (string.Equals(entry.Role, "tool", StringComparison.OrdinalIgnoreCase))
+            if (entry.Role.Equals(MessageRole.Tool))
                 continue;
 
-            if (string.Equals(entry.Role, "user", StringComparison.OrdinalIgnoreCase))
+            if (entry.Role.Equals(MessageRole.User))
             {
                 pendingUser = entry;
                 pendingTurnIndex = i;
                 continue;
             }
 
-            if (pendingUser is null || pendingTurnIndex is null || !string.Equals(entry.Role, "assistant", StringComparison.OrdinalIgnoreCase))
+            if (pendingUser is null || pendingTurnIndex is null || !entry.Role.Equals(MessageRole.Assistant))
                 continue;
 
             if (!indexedTurns.Contains(pendingTurnIndex.Value))

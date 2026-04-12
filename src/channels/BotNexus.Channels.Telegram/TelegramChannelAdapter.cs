@@ -1,6 +1,7 @@
 using BotNexus.Channels.Core;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.Collections.Concurrent;
@@ -29,7 +30,7 @@ public sealed class TelegramChannelAdapter(
     /// <summary>
     /// Gets the channel type identifier.
     /// </summary>
-    public override string ChannelType => "telegram";
+    public override ChannelKey ChannelType => ChannelKey.From("telegram");
 
     /// <summary>
     /// Gets the human-readable channel display name.

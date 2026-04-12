@@ -1,5 +1,6 @@
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Domain.Primitives;
 
 namespace BotNexus.Cron.Actions;
 
@@ -31,7 +32,7 @@ public sealed class AgentPromptAction : ICronAction
         var sessionId = $"cron:{context.Job.Id}:{context.RunId}";
         var inbound = new InboundMessage
         {
-            ChannelType = CronChannelType,
+            ChannelType = ChannelKey.From(CronChannelType),
             SenderId = $"cron:{context.Job.Id}",
             ConversationId = sessionId,
             SessionId = sessionId,

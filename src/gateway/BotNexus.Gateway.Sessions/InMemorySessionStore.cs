@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 
@@ -33,7 +34,12 @@ public sealed class InMemorySessionStore : ISessionStore
             if (_sessions.TryGetValue(sessionId, out var existing))
                 return Task.FromResult(existing);
 
-            var session = new GatewaySession { SessionId = sessionId, AgentId = agentId };
+            var session = new GatewaySession
+            {
+                SessionId = sessionId,
+                AgentId = agentId,
+                SessionType = InferSessionType(sessionId, null)
+            };
             _sessions[sessionId] = session;
             return Task.FromResult(session);
         }
@@ -83,26 +89,28 @@ public sealed class InMemorySessionStore : ISessionStore
     /// <inheritdoc />
     public Task<IReadOnlyList<GatewaySession>> ListByChannelAsync(
         string agentId,
-        string channelType,
+        ChannelKey channelType,
         CancellationToken cancellationToken = default)
     {
-        var normalizedChannelType = NormalizeChannelKey(channelType);
         lock (_sync)
         {
             var sessions = _sessions.Values
                 .Where(s => s.AgentId == agentId)
-                .Where(s => s.ChannelType is not null && NormalizeChannelKey(s.ChannelType) == normalizedChannelType)
+                .Where(s => s.ChannelType is not null && s.ChannelType.Value.Equals(channelType))
                 .OrderByDescending(s => s.CreatedAt)
                 .ToList();
             return Task.FromResult<IReadOnlyList<GatewaySession>>(sessions);
         }
     }
 
-    private static string NormalizeChannelKey(string? raw)
+    private static SessionType InferSessionType(string sessionId, ChannelKey? channelType)
     {
-        var normalized = (raw ?? string.Empty).Trim().ToLowerInvariant();
-        if (string.IsNullOrEmpty(normalized) || normalized is "signalr" or "web-chat")
-            return "web chat";
-        return normalized;
+        if (sessionId.Contains("::subagent::", StringComparison.OrdinalIgnoreCase))
+            return SessionType.AgentSubAgent;
+
+        if (channelType.HasValue && string.Equals(channelType.Value, "cron", StringComparison.OrdinalIgnoreCase))
+            return SessionType.Cron;
+
+        return SessionType.UserAgent;
     }
 }

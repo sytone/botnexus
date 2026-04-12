@@ -201,7 +201,7 @@ public sealed class SessionSwitchingTests : IAsyncDisposable
         var store = factory.Services.GetRequiredService<ISessionStore>();
         var first = await store.GetAsync(sessionA, cts.Token);
         first.Should().NotBeNull();
-        first!.AddEntry(new SessionEntry { Role = "user", Content = "hello a" });
+        first!.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "hello a" });
         await store.SaveAsync(first, cts.Token);
 
         var aJoin = await connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionA, cts.Token);
@@ -326,3 +326,4 @@ public sealed class SessionSwitchingTests : IAsyncDisposable
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }
+

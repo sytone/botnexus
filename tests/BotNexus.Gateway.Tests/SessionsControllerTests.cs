@@ -165,7 +165,7 @@ public sealed class SessionsControllerTests
         var store = new InMemorySessionStore();
         var session = await store.GetOrCreateAsync("s1", "agent-a");
         for (var i = 0; i < 60; i++)
-            session.AddEntry(new SessionEntry { Role = "user", Content = $"m-{i}" });
+            session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"m-{i}" });
 
         var controller = new SessionsController(store);
 
@@ -186,7 +186,7 @@ public sealed class SessionsControllerTests
         var store = new InMemorySessionStore();
         var session = await store.GetOrCreateAsync("s1", "agent-a");
         for (var i = 0; i < 260; i++)
-            session.AddEntry(new SessionEntry { Role = "user", Content = $"m-{i}" });
+            session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"m-{i}" });
 
         var controller = new SessionsController(store);
 
@@ -208,7 +208,7 @@ public sealed class SessionsControllerTests
         var store = new InMemorySessionStore();
         var session = await store.GetOrCreateAsync("s1", "agent-a");
         for (var i = 0; i < 3; i++)
-            session.AddEntry(new SessionEntry { Role = "user", Content = $"m-{i}" });
+            session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"m-{i}" });
 
         var controller = new SessionsController(store);
 
@@ -576,3 +576,4 @@ public sealed class SessionsControllerTests
         };
     }
 }
+

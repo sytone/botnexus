@@ -72,7 +72,7 @@ public sealed class SessionCleanupService(
 
             if (options.ClosedSessionRetention.HasValue &&
                 options.ClosedSessionRetention.Value > TimeSpan.Zero &&
-                session.Status == SessionStatus.Closed &&
+                session.Status == SessionStatus.Sealed &&
                 now - session.UpdatedAt > options.ClosedSessionRetention.Value)
             {
                 await _sessionStore.DeleteAsync(session.SessionId, cancellationToken);

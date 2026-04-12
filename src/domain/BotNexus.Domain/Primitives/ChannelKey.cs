@@ -16,7 +16,7 @@ public readonly record struct ChannelKey : IComparable<ChannelKey>, IEquatable<C
     public static ChannelKey From(string value) => new(value);
 
     public static implicit operator string(ChannelKey channelKey) => channelKey.Value;
-    public static explicit operator ChannelKey(string value) => From(value);
+    public static implicit operator ChannelKey(string value) => From(value);
 
     public bool Equals(ChannelKey other) =>
         string.Equals(Value, other.Value, StringComparison.OrdinalIgnoreCase);

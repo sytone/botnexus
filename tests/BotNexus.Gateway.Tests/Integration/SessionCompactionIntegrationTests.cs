@@ -40,17 +40,17 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         var session = await store.GetOrCreateAsync("compaction-persist", "agent-a");
 
         for (var i = 0; i < 10; i++)
-            session.AddEntry(new SessionEntry { Role = "user", Content = $"before-{i}" });
+            session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"before-{i}" });
 
         session.AddEntry(new SessionEntry
         {
-            Role = "system",
+            Role = MessageRole.System,
             Content = "compaction-summary",
             IsCompactionSummary = true
         });
 
         for (var i = 0; i < 10; i++)
-            session.AddEntry(new SessionEntry { Role = "assistant", Content = $"after-{i}" });
+            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = $"after-{i}" });
 
         await store.SaveAsync(session);
 
@@ -71,14 +71,14 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
 
         session.AddEntries(
         [
-            new SessionEntry { Role = "user", Content = "start-1" },
-            new SessionEntry { Role = "assistant", Content = "start-2" },
-            new SessionEntry { Role = "system", Content = "summary-1", IsCompactionSummary = true },
-            new SessionEntry { Role = "user", Content = "middle-1" },
-            new SessionEntry { Role = "assistant", Content = "middle-2" },
-            new SessionEntry { Role = "system", Content = "summary-2", IsCompactionSummary = true },
-            new SessionEntry { Role = "user", Content = "tail-1" },
-            new SessionEntry { Role = "assistant", Content = "tail-2" }
+            new SessionEntry { Role = MessageRole.User, Content = "start-1" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "start-2" },
+            new SessionEntry { Role = MessageRole.System, Content = "summary-1", IsCompactionSummary = true },
+            new SessionEntry { Role = MessageRole.User, Content = "middle-1" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "middle-2" },
+            new SessionEntry { Role = MessageRole.System, Content = "summary-2", IsCompactionSummary = true },
+            new SessionEntry { Role = MessageRole.User, Content = "tail-1" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "tail-2" }
         ]);
 
         await store.SaveAsync(session);
@@ -100,17 +100,17 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         var session = await store.GetOrCreateAsync(sessionId, "agent-a");
 
         for (var i = 0; i < 6; i++)
-            session.AddEntry(new SessionEntry { Role = "user", Content = $"pre-{i}" });
+            session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"pre-{i}" });
 
         session.AddEntry(new SessionEntry
         {
-            Role = "system",
+            Role = MessageRole.System,
             Content = "summary-on-disk",
             IsCompactionSummary = true
         });
 
         for (var i = 0; i < 4; i++)
-            session.AddEntry(new SessionEntry { Role = "assistant", Content = $"post-{i}" });
+            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = $"post-{i}" });
 
         await store.SaveAsync(session);
 
@@ -132,17 +132,17 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         var session = await store.GetOrCreateAsync("sqlite-compaction", "agent-a");
 
         for (var i = 0; i < 10; i++)
-            session.AddEntry(new SessionEntry { Role = "user", Content = $"before-{i}" });
+            session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"before-{i}" });
 
         session.AddEntry(new SessionEntry
         {
-            Role = "system",
+            Role = MessageRole.System,
             Content = "sqlite-summary",
             IsCompactionSummary = true
         });
 
         for (var i = 0; i < 10; i++)
-            session.AddEntry(new SessionEntry { Role = "assistant", Content = $"after-{i}" });
+            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = $"after-{i}" });
 
         await store.SaveAsync(session);
         var reloaded = await fixture.CreateStore().GetAsync("sqlite-compaction");
@@ -160,8 +160,8 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         var originalEntries = new List<SessionEntry>();
         for (var turn = 1; turn <= 10; turn++)
         {
-            originalEntries.Add(new SessionEntry { Role = "user", Content = $"user-{turn}" });
-            originalEntries.Add(new SessionEntry { Role = "assistant", Content = $"assistant-{turn}" });
+            originalEntries.Add(new SessionEntry { Role = MessageRole.User, Content = $"user-{turn}" });
+            originalEntries.Add(new SessionEntry { Role = MessageRole.Assistant, Content = $"assistant-{turn}" });
         }
         session.AddEntries(originalEntries);
 
@@ -190,12 +190,12 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         var session = new GatewaySession { SessionId = "tool-grouping", AgentId = "agent-a" };
         session.AddEntries(
         [
-            new SessionEntry { Role = "user", Content = "u1" },
-            new SessionEntry { Role = "assistant", Content = "a1" },
-            new SessionEntry { Role = "user", Content = "u2" },
-            new SessionEntry { Role = "assistant", Content = "a2" },
-            new SessionEntry { Role = "tool", Content = "tool-call", ToolName = "search", ToolCallId = "1" },
-            new SessionEntry { Role = "tool", Content = "tool-result", ToolName = "search", ToolCallId = "1" }
+            new SessionEntry { Role = MessageRole.User, Content = "u1" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "a1" },
+            new SessionEntry { Role = MessageRole.User, Content = "u2" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "a2" },
+            new SessionEntry { Role = MessageRole.Tool, Content = "tool-call", ToolName = "search", ToolCallId = "1" },
+            new SessionEntry { Role = MessageRole.Tool, Content = "tool-result", ToolName = "search", ToolCallId = "1" }
         ]);
 
         var compactor = CreateCompactor("tool-summary");
@@ -216,10 +216,10 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         var session = new GatewaySession { SessionId = "compact-send", AgentId = "agent-a" };
         session.AddEntries(
         [
-            new SessionEntry { Role = "user", Content = "u1" },
-            new SessionEntry { Role = "assistant", Content = "a1" },
-            new SessionEntry { Role = "user", Content = "u2" },
-            new SessionEntry { Role = "assistant", Content = "a2" }
+            new SessionEntry { Role = MessageRole.User, Content = "u1" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "a1" },
+            new SessionEntry { Role = MessageRole.User, Content = "u2" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "a2" }
         ]);
 
         var compactor = CreateCompactor("coherent-summary");
@@ -229,8 +229,8 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
             SummarizationModel = TestModel.Id
         });
 
-        session.AddEntry(new SessionEntry { Role = "user", Content = "u3" });
-        session.AddEntry(new SessionEntry { Role = "assistant", Content = "a3" });
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "u3" });
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "a3" });
 
         session.GetHistorySnapshot().Select(entry => entry.Content)
             .Should()
@@ -247,10 +247,10 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         var session = await store.GetOrCreateAsync(sessionId, "agent-a");
         session.AddEntries(
         [
-            new SessionEntry { Role = "user", Content = "u1" },
-            new SessionEntry { Role = "assistant", Content = "a1" },
-            new SessionEntry { Role = "user", Content = "u2" },
-            new SessionEntry { Role = "assistant", Content = "a2" }
+            new SessionEntry { Role = MessageRole.User, Content = "u1" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "a1" },
+            new SessionEntry { Role = MessageRole.User, Content = "u2" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "a2" }
         ]);
 
         var compactor = CreateCompactor("archived-summary");
@@ -321,7 +321,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
     public void ShouldCompact_SessionWithOnlyCompactionEntry_ReturnsFalse()
     {
         var session = new GatewaySession { SessionId = "only-summary", AgentId = "agent-a" };
-        session.AddEntry(new SessionEntry { Role = "system", Content = "summary", IsCompactionSummary = true });
+        session.AddEntry(new SessionEntry { Role = MessageRole.System, Content = "summary", IsCompactionSummary = true });
         var compactor = CreateCompactor("unused");
 
         compactor.ShouldCompact(session, new CompactionOptions()).Should().BeFalse();
@@ -334,8 +334,8 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         var session = new GatewaySession { SessionId = "concurrent", AgentId = "agent-a" };
         for (var i = 0; i < 12; i++)
         {
-            session.AddEntry(new SessionEntry { Role = "user", Content = $"u-{i}" });
-            session.AddEntry(new SessionEntry { Role = "assistant", Content = $"a-{i}" });
+            session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"u-{i}" });
+            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = $"a-{i}" });
         }
 
         var compactor = CreateCompactor("concurrent-summary");
@@ -344,7 +344,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
             PreservedTurns = 2,
             SummarizationModel = TestModel.Id
         });
-        var addTask = Task.Run(() => session.AddEntry(new SessionEntry { Role = "user", Content = "late-user" }));
+        var addTask = Task.Run(() => session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "late-user" }));
 
         var act = async () => await Task.WhenAll(compactTask, addTask);
         await act.Should().NotThrowAsync();
@@ -352,7 +352,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         var history = session.GetHistorySnapshot();
         foreach (var entry in history)
         {
-            entry.Role.Should().NotBeNullOrWhiteSpace();
+            entry.Role.Value.Should().NotBeNullOrWhiteSpace();
             entry.Content.Should().NotBeNull();
         }
 
@@ -367,7 +367,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
     {
         var entry = new SessionEntry
         {
-            Role = "system",
+            Role = MessageRole.System,
             Content = "summary",
             IsCompactionSummary = true
         };
@@ -398,10 +398,10 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         var session = new GatewaySession { SessionId = Guid.NewGuid().ToString("N"), AgentId = "agent-a" };
         session.AddEntries(
         [
-            new SessionEntry { Role = "user", Content = "older-user" },
-            new SessionEntry { Role = "assistant", Content = "older-assistant" },
-            new SessionEntry { Role = "user", Content = "recent-user" },
-            new SessionEntry { Role = "assistant", Content = "recent-assistant" }
+            new SessionEntry { Role = MessageRole.User, Content = "older-user" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "older-assistant" },
+            new SessionEntry { Role = MessageRole.User, Content = "recent-user" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "recent-assistant" }
         ]);
         return session;
     }
@@ -490,3 +490,4 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         }
     }
 }
+

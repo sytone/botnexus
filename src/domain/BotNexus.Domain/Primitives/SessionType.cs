@@ -28,6 +28,7 @@ public sealed class SessionType : IEquatable<SessionType>
         return Registry.GetOrAdd(value.Trim().ToLowerInvariant(), static v => new SessionType(v));
     }
 
+    public static implicit operator SessionType(string value) => FromString(value);
     public static implicit operator string(SessionType type) => type.Value;
 
     public bool Equals(SessionType? other) =>

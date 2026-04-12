@@ -28,11 +28,11 @@ public sealed class StreamingSessionHelperTests
             store.Object);
 
         session.History.Should().HaveCount(3);
-        session.History[0].Role.Should().Be("tool");
+        session.History[0].Role.Should().Be(MessageRole.Tool);
         session.History[0].Content.Should().Be("Tool 'clock' started.");
-        session.History[1].Role.Should().Be("tool");
+        session.History[1].Role.Should().Be(MessageRole.Tool);
         session.History[1].Content.Should().Be("12:00");
-        session.History[2].Role.Should().Be("assistant");
+        session.History[2].Role.Should().Be(MessageRole.Assistant);
         session.History[2].Content.Should().Be("Hello world");
         store.Verify(s => s.SaveAsync(session, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -59,7 +59,7 @@ public sealed class StreamingSessionHelperTests
             }));
 
         session.History.Should().ContainSingle();
-        session.History[0].Role.Should().Be("assistant");
+        session.History[0].Role.Should().Be(MessageRole.Assistant);
         session.History[0].Content.Should().Be("Final answer.");
         callbackTypes.Should().Contain(AgentStreamEventType.ThinkingDelta);
     }
@@ -87,3 +87,4 @@ public sealed class StreamingSessionHelperTests
         }
     }
 }
+

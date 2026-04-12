@@ -68,7 +68,7 @@ public sealed class SessionStoreEdgeCaseTests
         var store = new InMemorySessionStore();
         var session = await store.GetOrCreateAsync("large-history", "agent-a");
         for (var i = 0; i < 1200; i++)
-            session.AddEntry(new SessionEntry { Role = "user", Content = $"m-{i}" });
+            session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"m-{i}" });
 
         var controller = new SessionsController(store);
 
@@ -107,3 +107,4 @@ public sealed class SessionStoreEdgeCaseTests
         }
     }
 }
+

@@ -172,7 +172,7 @@ public sealed class Phase5IntegrationTests
 
         await host.DispatchAsync(new InboundMessage
         {
-            ChannelType = "web",
+            ChannelType = ChannelKey.From("web"),
             SenderId = "phase5-tester",
             ConversationId = "phase5-live-conv",
             SessionId = "phase5-live",
@@ -316,7 +316,7 @@ public sealed class Phase5IntegrationTests
 
     private sealed class StreamingCaptureChannel : IChannelAdapter
     {
-        public string ChannelType => "web";
+        public ChannelKey ChannelType => ChannelKey.From("web");
         public string DisplayName => "Phase5 Test Channel";
         public bool SupportsStreaming => true;
         public bool SupportsSteering => false;
@@ -409,3 +409,4 @@ public sealed class Phase5IntegrationTests
         }
     }
 }
+

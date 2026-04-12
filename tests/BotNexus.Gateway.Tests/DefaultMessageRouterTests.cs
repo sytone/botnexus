@@ -99,7 +99,7 @@ public sealed class DefaultMessageRouterTests
     private static InboundMessage CreateMessage(string? targetAgentId = null, string? sessionId = null)
         => new()
         {
-            ChannelType = "web",
+            ChannelType = ChannelKey.From("web"),
             SenderId = "sender-1",
             ConversationId = "conv-1",
             Content = "hello",
@@ -107,3 +107,4 @@ public sealed class DefaultMessageRouterTests
             SessionId = sessionId
         };
 }
+

@@ -26,6 +26,7 @@ public sealed class MessageRole : IEquatable<MessageRole>
         return Registry.GetOrAdd(value.Trim().ToLowerInvariant(), static v => new MessageRole(v));
     }
 
+    public static implicit operator MessageRole(string value) => FromString(value);
     public static implicit operator string(MessageRole role) => role.Value;
 
     public bool Equals(MessageRole? other) =>

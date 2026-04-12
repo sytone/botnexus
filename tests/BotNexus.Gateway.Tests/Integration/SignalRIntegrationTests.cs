@@ -60,7 +60,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
             SessionId = "manifest-1",
             AgentId = TestAgentId,
             Status = SessionStatus.Active,
-            ChannelType = "signalr"
+            ChannelType = ChannelKey.From("signalr")
         }, cts.Token);
 
         await using var connection = await CreateStartedConnection(factory, cts.Token);
@@ -890,4 +890,5 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }
+
 

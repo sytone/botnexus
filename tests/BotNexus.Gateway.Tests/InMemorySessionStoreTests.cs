@@ -95,21 +95,21 @@ public sealed class InMemorySessionStoreTests
         {
             SessionId = "s-old",
             AgentId = "agent-a",
-            ChannelType = "signalr",
+            ChannelType = ChannelKey.From("web chat"),
             CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-5)
         });
         await store.SaveAsync(new GatewaySession
         {
             SessionId = "s-new",
             AgentId = "agent-a",
-            ChannelType = "web chat",
+            ChannelType = ChannelKey.From("web chat"),
             CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-1)
         });
         await store.SaveAsync(new GatewaySession
         {
             SessionId = "s-other-agent",
             AgentId = "agent-b",
-            ChannelType = "web chat"
+            ChannelType = ChannelKey.From("web chat")
         });
         await store.SaveAsync(new GatewaySession
         {
@@ -117,7 +117,7 @@ public sealed class InMemorySessionStoreTests
             AgentId = "agent-a"
         });
 
-        var sessions = await store.ListByChannelAsync("agent-a", "web-chat");
+        var sessions = await store.ListByChannelAsync("agent-a", ChannelKey.From("web chat"));
 
         sessions.Select(s => s.SessionId).Should().Equal("s-new", "s-old");
     }
@@ -132,3 +132,6 @@ public sealed class InMemorySessionStoreTests
         session.Should().BeNull();
     }
 }
+
+
+

@@ -8,6 +8,10 @@ using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Sessions;
+using MessageRole = BotNexus.Domain.Primitives.MessageRole;
+using ParticipantType = BotNexus.Domain.Primitives.ParticipantType;
+using SessionParticipant = BotNexus.Domain.Primitives.SessionParticipant;
+using SessionType = BotNexus.Domain.Primitives.SessionType;
 using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Streaming;
@@ -222,6 +226,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             var session = existingSession ?? await _sessions.GetOrCreateAsync(sessionId, agentId, cancellationToken);
             session.ChannelType ??= message.ChannelType;
             session.CallerId ??= message.SenderId;
+            session.SessionType = ResolveSessionType(session, message);
+            EnsureCallerParticipant(session, message.SenderId);
             if (ShouldInitializeSystemPrompt(session))
             {
                 session.Metadata[SystemPromptInitializedMetadataKey] = true;
@@ -258,7 +264,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 }
             }
 
-            session.AddEntry(new SessionEntry { Role = "user", Content = message.Content });
+            session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = message.Content });
             if (_compactor.ShouldCompact(session, _compactionOptions.Value))
             {
                 _logger.LogInformation("Auto-compacting session {SessionId}", sessionId);
@@ -331,7 +337,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                         }, cancellationToken);
                     }
 
-                    session.AddEntry(new SessionEntry { Role = "assistant", Content = response.Content });
+                    session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
                 }
 
                 if (!sessionSaved)
@@ -450,7 +456,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
 
         // Record steering message in session history
         var session = await _sessions.GetOrCreateAsync(sessionId, agentId, cancellationToken);
-        session.AddEntry(new SessionEntry { Role = "user", Content = message.Content });
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = message.Content });
         await _sessions.SaveAsync(session, cancellationToken);
 
         await handle.SteerAsync(message.Content, cancellationToken);
@@ -532,7 +538,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         sessionActivity?.SetTag("botnexus.session.id", message.SessionId);
 
         var session = await _sessions.GetAsync(message.SessionId, cancellationToken);
-        if (session?.Status is not SessionStatus.Closed)
+        if (session?.Status is not SessionStatus.Sealed)
             return;
 
         if (_sessionQueues.TryRemove(queueKey, out var state))
@@ -566,6 +572,32 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
     {
         await CompleteSessionQueuesAsync();
         base.Dispose();
+    }
+
+    private static void EnsureCallerParticipant(GatewaySession session, string? callerId)
+    {
+        if (string.IsNullOrWhiteSpace(callerId))
+            return;
+
+        if (session.Participants.Any(p => p.Type == ParticipantType.User && string.Equals(p.Id, callerId, StringComparison.Ordinal)))
+            return;
+
+        session.Participants.Add(new SessionParticipant
+        {
+            Type = ParticipantType.User,
+            Id = callerId
+        });
+    }
+
+    private static SessionType ResolveSessionType(GatewaySession session, InboundMessage message)
+    {
+        if (session.SessionId.Contains("::subagent::", StringComparison.OrdinalIgnoreCase))
+            return SessionType.AgentSubAgent;
+
+        if (string.Equals(message.ChannelType, "cron", StringComparison.OrdinalIgnoreCase))
+            return SessionType.Cron;
+
+        return SessionType.UserAgent;
     }
 
     private IChannelAdapter? ResolveChannelAdapter(string channelType)

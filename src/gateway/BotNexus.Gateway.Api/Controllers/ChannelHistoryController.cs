@@ -1,5 +1,6 @@
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Domain.Primitives;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
@@ -37,8 +38,7 @@ public sealed class ChannelHistoryController : ControllerBase
             return BadRequest(new { error = "limit must be greater than zero." });
 
         var boundedLimit = Math.Min(limit, 200);
-        var normalizedChannelType = NormalizeChannelKey(channelType);
-        var sessions = (await _sessions.ListByChannelAsync(agentId, normalizedChannelType, cancellationToken))
+        var sessions = (await _sessions.ListByChannelAsync(agentId, ChannelKey.From(channelType), cancellationToken))
             .Where(session => session.History.Count > 0)
             .ToList();
 
@@ -168,14 +168,6 @@ public sealed class ChannelHistoryController : ControllerBase
         return true;
     }
 
-    private static string NormalizeChannelKey(string? raw)
-    {
-        var normalized = (raw ?? string.Empty).Trim().ToLowerInvariant();
-        if (string.IsNullOrEmpty(normalized) || normalized is "signalr" or "web-chat")
-            return "web chat";
-        return normalized;
-    }
-
     private sealed record HistorySlice(
         int SessionIndex,
         GatewaySession Session,
@@ -198,7 +190,7 @@ public sealed record ChannelHistoryResponse(
 public sealed record ChannelHistoryMessage(
     string Id,
     string SessionId,
-    string Role,
+    MessageRole Role,
     string Content,
     DateTimeOffset Timestamp,
     IReadOnlyDictionary<string, object?> Metadata);

@@ -280,15 +280,14 @@ internal sealed class ResettableInMemorySessionStore : ISessionStore
 
     public Task<IReadOnlyList<GatewaySession>> ListByChannelAsync(
         string agentId,
-        string channelType,
+        ChannelKey channelType,
         CancellationToken cancellationToken = default)
     {
-        var normalizedChannelType = NormalizeChannelKey(channelType);
         lock (_sync)
         {
             var sessions = _sessions.Values
                 .Where(s => s.AgentId == agentId)
-                .Where(s => s.ChannelType is not null && NormalizeChannelKey(s.ChannelType) == normalizedChannelType)
+                .Where(s => s.ChannelType is not null && s.ChannelType == channelType)
                 .OrderByDescending(s => s.CreatedAt)
                 .ToList();
             return Task.FromResult<IReadOnlyList<GatewaySession>>(sessions);
@@ -313,7 +312,7 @@ internal sealed class ResettableInMemorySessionStore : ISessionStore
                 {
                     SessionId = sessionId,
                     AgentId = agentId,
-                    ChannelType = "web chat",
+                    ChannelType = ChannelKey.From("web chat"),
                     CallerId = "playwright-tests"
                 };
             }
@@ -335,7 +334,7 @@ internal sealed class ResettableInMemorySessionStore : ISessionStore
                 {
                     SessionId = sessionId,
                     AgentId = agentId,
-                    ChannelType = "web chat",
+                    ChannelType = ChannelKey.From("web chat"),
                     CallerId = "playwright-tests",
                     CreatedAt = baseTime.AddMinutes(i),
                     UpdatedAt = baseTime.AddMinutes(i)
@@ -360,7 +359,7 @@ internal sealed class ResettableInMemorySessionStore : ISessionStore
                 {
                     SessionId = sessionId,
                     AgentId = agentId,
-                    ChannelType = "web chat",
+                    ChannelType = ChannelKey.From("web chat"),
                     CallerId = "playwright-tests",
                     CreatedAt = createdAt,
                     UpdatedAt = createdAt
@@ -382,13 +381,6 @@ internal sealed class ResettableInMemorySessionStore : ISessionStore
         }
     }
 
-    private static string NormalizeChannelKey(string? raw)
-    {
-        var normalized = (raw ?? string.Empty).Trim().ToLowerInvariant();
-        if (string.IsNullOrEmpty(normalized) || normalized is "signalr" or "web-chat")
-            return "web chat";
-        return normalized;
-    }
 }
 
 internal sealed class TestSessionWarmupService(ResettableInMemorySessionStore sessionStore) : ISessionWarmupService
@@ -421,3 +413,4 @@ internal sealed class TestSessionWarmupService(ResettableInMemorySessionStore se
             session.CreatedAt,
             session.UpdatedAt);
 }
+
