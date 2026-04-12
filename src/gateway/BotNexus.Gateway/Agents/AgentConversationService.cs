@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Agents;
 
@@ -16,17 +17,20 @@ public sealed class AgentConversationService : IAgentConversationService
     private readonly IAgentRegistry _registry;
     private readonly IAgentSupervisor _supervisor;
     private readonly ISessionStore _sessionStore;
+    private readonly IOptions<Gateway.Configuration.GatewayOptions> _options;
     private readonly ILogger<AgentConversationService> _logger;
 
     public AgentConversationService(
         IAgentRegistry registry,
         IAgentSupervisor supervisor,
         ISessionStore sessionStore,
+        IOptions<Gateway.Configuration.GatewayOptions> options,
         ILogger<AgentConversationService> logger)
     {
         _registry = registry;
         _supervisor = supervisor;
         _sessionStore = sessionStore;
+        _options = options;
         _logger = logger;
     }
 
@@ -48,6 +52,9 @@ public sealed class AgentConversationService : IAgentConversationService
             throw new UnauthorizedAccessException(
                 $"Agent '{request.InitiatorId}' is not allowed to converse with '{request.TargetId}'.");
 
+        var normalizedChain = NormalizeChain(request.CallChain, request.InitiatorId);
+        EnsureCallChainAllowed(normalizedChain, request.TargetId);
+
         var sessionId = SessionId.ForAgentConversation(request.InitiatorId, request.TargetId, Guid.NewGuid().ToString("N"));
         var session = await _sessionStore.GetOrCreateAsync(sessionId, request.InitiatorId, cancellationToken).ConfigureAwait(false);
         session.SessionType = SessionType.AgentAgent;
@@ -68,10 +75,10 @@ public sealed class AgentConversationService : IAgentConversationService
             Role = "target"
         });
 
-        var chain = request.CallChain.Count == 0
-            ? [request.InitiatorId.Value]
-            : request.CallChain.Select(id => id.Value).ToArray();
-        session.Metadata["callChain"] = chain;
+        session.Metadata["callChain"] = normalizedChain
+            .Select(id => id.Value)
+            .Append(request.TargetId.Value)
+            .ToArray();
         session.Metadata["objective"] = request.Objective;
         session.Metadata["maxTurns"] = request.MaxTurns;
 
@@ -155,5 +162,34 @@ public sealed class AgentConversationService : IAgentConversationService
 
         return $"{targetObjective}\n\nLatest response:\n{latestResponse}\n\n" +
                "When complete, include the phrase \"OBJECTIVE MET\" in your response.";
+    }
+
+    private static IReadOnlyList<AgentId> NormalizeChain(IReadOnlyList<AgentId> chain, AgentId initiatorId)
+    {
+        if (chain.Count == 0)
+            return [initiatorId];
+        if (string.Equals(chain[^1].Value, initiatorId.Value, StringComparison.OrdinalIgnoreCase))
+            return chain;
+        return [.. chain, initiatorId];
+    }
+
+    private void EnsureCallChainAllowed(IReadOnlyList<AgentId> chain, AgentId targetId)
+    {
+        if (chain.Any(id => string.Equals(id.Value, targetId.Value, StringComparison.OrdinalIgnoreCase)))
+        {
+            var chainText = string.Join(" -> ", chain.Select(id => id.Value).Append(targetId.Value));
+            throw new InvalidOperationException($"Cycle detected: {chainText}");
+        }
+
+        var maxDepth = _options.Value.AgentConversationMaxDepth <= 0
+            ? 1
+            : _options.Value.AgentConversationMaxDepth;
+        var nextDepth = chain.Count + 1;
+        if (nextDepth > maxDepth)
+        {
+            var chainText = string.Join(" -> ", chain.Select(id => id.Value).Append(targetId.Value));
+            throw new InvalidOperationException(
+                $"Agent conversation call chain depth {nextDepth} exceeded maximum configured depth {maxDepth}. Chain: {chainText}");
+        }
     }
 }

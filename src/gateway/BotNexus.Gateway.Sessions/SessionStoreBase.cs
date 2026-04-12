@@ -85,6 +85,9 @@ public abstract class SessionStoreBase : ISessionStore
         if (sessionId.IsSubAgent)
             return SessionType.AgentSubAgent;
 
+        if (sessionId.IsAgentConversation)
+            return SessionType.AgentAgent;
+
         if (sessionId.IsSoul)
             return SessionType.Soul;
 

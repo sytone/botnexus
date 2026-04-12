@@ -18,6 +18,11 @@ public sealed class GatewayOptions
     public int CrossAgentTimeoutSeconds { get; set; } = 120;
 
     /// <summary>
+    /// Maximum depth for <c>agent_converse</c> call chains.
+    /// </summary>
+    public int AgentConversationMaxDepth { get; set; } = 3;
+
+    /// <summary>
     /// Options controlling background sub-agent spawning behavior.
     /// </summary>
     public SubAgentOptions SubAgents { get; set; } = new();
