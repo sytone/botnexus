@@ -121,15 +121,14 @@ Edit `~/.botnexus/config.json` to configure:
 Connect to `http://localhost:5005/hub/gateway` with a SignalR client.
 
 **Hub methods:**
-- `JoinSession(agentId, sessionId?)`
-- `SendMessage(agentId, sessionId, content)`
+- `SubscribeAll()`
+- `SendMessage(agentId, channelType, content)`
 - `Steer(agentId, sessionId, content)`
 - `Abort(agentId, sessionId)`
 - `ResetSession(agentId, sessionId)`
 
 **Server events:**
 - `Connected`
-- `SessionJoined`
 - `MessageStart`, `ThinkingDelta`, `ContentDelta`, `ToolStart`, `ToolEnd`, `MessageEnd`, `Error`
 
 ### Architecture

@@ -10,9 +10,8 @@
 
 ## Hub Methods (Client → Server)
 
-- `JoinSession(agentId, sessionId?)`
-- `LeaveSession(sessionId)`
-- `SendMessage(agentId, sessionId, content)`
+- `SubscribeAll()`
+- `SendMessage(agentId, channelType, content)`
 - `Steer(agentId, sessionId, content)`
 - `FollowUp(agentId, sessionId, content)`
 - `Abort(agentId, sessionId)`
@@ -23,7 +22,6 @@
 ## Server Events (Server → Client)
 
 - `Connected`
-- `SessionJoined`
 - `SessionReset`
 - `MessageStart`
 - `ThinkingDelta`
@@ -36,5 +34,6 @@
 ## Notes
 
 - All gateway-originated messages use `channelType = "signalr"`.
-- Clients should call `JoinSession` before sending messages for a session.
+- Clients should call `SubscribeAll` after connecting and on reconnect.
+- Channel switching is a client-only UI operation. Do not call join/leave methods.
 - Session fan-out uses SignalR groups: `session:{sessionId}`.
