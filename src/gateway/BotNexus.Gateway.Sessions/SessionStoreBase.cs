@@ -85,6 +85,9 @@ public abstract class SessionStoreBase : ISessionStore
         if (sessionId.IsSubAgent)
             return SessionType.AgentSubAgent;
 
+        if (sessionId.IsSoul)
+            return SessionType.Soul;
+
         if (channelType.HasValue && string.Equals(channelType.Value, "cron", StringComparison.OrdinalIgnoreCase))
             return SessionType.Cron;
 

@@ -648,6 +648,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         if (session.SessionId.IsSubAgent)
             return SessionType.AgentSubAgent;
 
+        if (session.SessionId.IsSoul)
+            return SessionType.Soul;
+
         if (string.Equals(message.ChannelType, "cron", StringComparison.OrdinalIgnoreCase))
             return SessionType.Cron;
 

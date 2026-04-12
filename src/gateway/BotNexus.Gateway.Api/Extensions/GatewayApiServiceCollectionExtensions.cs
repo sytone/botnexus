@@ -22,7 +22,9 @@ public static class GatewayApiServiceCollectionExtensions
         services.AddSingleton<ILoggerProvider>(serviceProvider =>
             new RecentLogEntryLoggerProvider(serviceProvider.GetRequiredService<IRecentLogStore>()));
         services.AddSingleton<CronTrigger>();
+        services.AddSingleton<SoulTrigger>();
         services.AddSingleton<IInternalTrigger>(provider => provider.GetRequiredService<CronTrigger>());
+        services.AddSingleton<IInternalTrigger>(provider => provider.GetRequiredService<SoulTrigger>());
         services.AddSingleton<SignalRChannelAdapter>();
         services.AddSingleton<IChannelAdapter>(provider => provider.GetRequiredService<SignalRChannelAdapter>());
         services.AddControllers()
