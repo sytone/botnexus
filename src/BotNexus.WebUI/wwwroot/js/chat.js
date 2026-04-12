@@ -21,8 +21,22 @@ import { getShowTools, setShowTools, getShowThinking, setShowThinking } from './
 
 // ── Module state ────────────────────────────────────────────────────
 
+// Toggle state is per-channel (stored on each SessionStore).
+// These module-level vars mirror the active store for fast access during rendering.
 let showTools = true;
 let showThinking = true;
+
+// Sync module-level toggle vars from the active session store
+export function syncTogglesFromActiveStore() {
+    const store = storeManager.activeStore;
+    if (store) {
+        showTools = store.showTools;
+        showThinking = store.showThinking;
+    }
+    // Sync checkbox DOM
+    if (dom.toggleTools) dom.toggleTools.checked = showTools;
+    if (dom.toggleThinking) dom.toggleThinking.checked = showThinking;
+}
 let sendModeFollowUp = false;
 let messageQueueCount = 0;
 let pendingQueuedMessages = [];
@@ -994,6 +1008,7 @@ export async function openAgentTimeline(agentId, channelType, targetSessionId = 
     storeManager.setSelectedAgent(agentId);
     setCurrentChannelType(channelType);
     storeManager.setActiveView(targetSessionId, agentId, channelType);
+    syncTogglesFromActiveStore();
     syncLoadingUiForActiveSession();
 
     dom.chatTitle.textContent = `${agentId} — ${channelDisplayName(channelType)}`;
@@ -1368,13 +1383,25 @@ export async function handleModelChange() {
 
 export function toggleToolVisibility() {
     showTools = dom.toggleTools.checked;
-    setShowTools(showTools);
+    const store = storeManager.activeStore;
+    if (store) {
+        store.showTools = showTools;
+        setShowTools(store.agentId, store.channelType, showTools);
+    } else {
+        setShowTools(null, null, showTools);
+    }
     applyToggleState();
 }
 
 export function toggleThinkingVisibility() {
     showThinking = dom.toggleThinking.checked;
-    setShowThinking(showThinking);
+    const store = storeManager.activeStore;
+    if (store) {
+        store.showThinking = showThinking;
+        setShowThinking(store.agentId, store.channelType, showThinking);
+    } else {
+        setShowThinking(null, null, showThinking);
+    }
     applyToggleState();
 }
 

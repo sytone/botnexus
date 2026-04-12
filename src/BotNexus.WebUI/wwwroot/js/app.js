@@ -24,12 +24,12 @@ import {
     toggleSendMode, updateSessionIdDisplay, copySessionId,
     showCommandPalette, hideCommandPalette, isCommandPaletteVisible,
     navigateCommandPalette, acceptCommandPalette, executeReset,
-    toggleToolVisibility, toggleThinkingVisibility,
+    toggleToolVisibility, toggleThinkingVisibility, syncTogglesFromActiveStore,
     openToolModal, closeToolModal, handleModelChange,
     appendSystemMessage, initSubAgentPanel, openAgentTimeline
 } from './chat.js';
 import {
-    getShowTools, getShowThinking, getLastContext,
+    getLastContext,
     getSidebarCollapsed, setSidebarCollapsed
 } from './storage.js';
 
@@ -114,11 +114,8 @@ function initEventListeners() {
 
     dom.toggleTools.addEventListener('change', toggleToolVisibility);
     dom.toggleThinking.addEventListener('change', toggleThinkingVisibility);
-    // Restore toggle state from storage and sync checkboxes
-    dom.toggleTools.checked = getShowTools();
-    dom.toggleThinking.checked = getShowThinking();
-    toggleToolVisibility();
-    toggleThinkingVisibility();
+    // Per-channel toggles — synced from active store when switching views
+    syncTogglesFromActiveStore();
     dom.toggleActivity.addEventListener('change', toggleActivity);
 
     $('#btn-refresh-sessions').addEventListener('click', (e) => { e.stopPropagation(); loadSessions(); });

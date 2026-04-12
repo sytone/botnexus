@@ -1,24 +1,21 @@
-// ── storage.js — Centralized localStorage management ────────────────
-// Single source of truth for all persisted UI state.
+// ═══════════════════════════════════════════════════════════════════
+// storage.js — Centralized localStorage management
+// ═══════════════════════════════════════════════════════════════════
+//
+// Two categories of settings:
+//   1. GENERAL — applies globally across all channels/tabs
+//   2. CHANNEL — per agent+channel, so each conversation keeps its own prefs
+//
+// Multi-tab safety: general settings are shared across tabs (same prefs
+// everywhere). Channel settings are keyed by agent+channel so tabs
+// viewing different agents don't interfere. All values are read once
+// at init or view-switch — no live polling between tabs.
+//
 // All keys namespaced under 'botnexus:' to avoid collisions.
 
 const PREFIX = 'botnexus:';
 
-const KEYS = {
-    collapsedAgents: `${PREFIX}collapsed-agents`,
-    sidebarCollapsed: `${PREFIX}sidebar-collapsed`,
-    showTools: `${PREFIX}show-tools`,
-    showThinking: `${PREFIX}show-thinking`,
-    lastAgent: `${PREFIX}last-agent`,
-    lastChannel: `${PREFIX}last-channel`,
-    lastSessionId: `${PREFIX}last-session-id`,
-    sendMode: `${PREFIX}send-mode`,
-    selectedModel: `${PREFIX}selected-model`,
-    agentCache: `${PREFIX}agent-cache`,
-    sessionCache: `${PREFIX}session-cache`,
-};
-
-// ── Primitive Helpers ──────────────────────────────────────────────
+// ── Primitive Helpers (private) ────────────────────────────────────
 
 function getJson(key, fallback = null) {
     try {
@@ -50,18 +47,34 @@ function setString(key, value) {
     else localStorage.setItem(key, value);
 }
 
-// ── Sidebar Collapse State ─────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// GENERAL SETTINGS — shared across all channels and tabs
+// ═══════════════════════════════════════════════════════════════════
+
+const GENERAL = {
+    sidebarCollapsed:  `${PREFIX}sidebar-collapsed`,
+    collapsedAgents:   `${PREFIX}collapsed-agents`,
+    sendMode:          `${PREFIX}send-mode`,
+    selectedModel:     `${PREFIX}selected-model`,
+    lastAgent:         `${PREFIX}last-agent`,
+    lastChannel:       `${PREFIX}last-channel`,
+    lastSessionId:     `${PREFIX}last-session-id`,
+    agentCache:        `${PREFIX}agent-cache`,
+    sessionCache:      `${PREFIX}session-cache`,
+};
+
+// ── Sidebar ────────────────────────────────────────────────────────
+
+export function getSidebarCollapsed() { return getBool(GENERAL.sidebarCollapsed, false); }
+export function setSidebarCollapsed(v) { setBool(GENERAL.sidebarCollapsed, v); }
 
 export function getCollapsedAgents() {
-    return new Set(getJson(KEYS.collapsedAgents, []));
+    return new Set(getJson(GENERAL.collapsedAgents, []));
 }
 
 export function setCollapsedAgents(agentSet) {
-    setJson(KEYS.collapsedAgents, [...agentSet]);
+    setJson(GENERAL.collapsedAgents, [...agentSet]);
 }
-
-export function getSidebarCollapsed() { return getBool(KEYS.sidebarCollapsed, false); }
-export function setSidebarCollapsed(v) { setBool(KEYS.sidebarCollapsed, v); }
 
 export function toggleAgentCollapsed(displayName, isCollapsed) {
     const set = getCollapsedAgents();
@@ -70,52 +83,44 @@ export function toggleAgentCollapsed(displayName, isCollapsed) {
     setCollapsedAgents(set);
 }
 
-// ── Toggle State ───────────────────────────────────────────────────
+// ── Send Mode ──────────────────────────────────────────────────────
 
-export function getShowTools() { return getBool(KEYS.showTools, true); }
-export function setShowTools(v) { setBool(KEYS.showTools, v); }
+export function getSendMode() { return getString(GENERAL.sendMode, 'chat'); }
+export function setSendMode(mode) { setString(GENERAL.sendMode, mode); }
 
-export function getShowThinking() { return getBool(KEYS.showThinking, true); }
-export function setShowThinking(v) { setBool(KEYS.showThinking, v); }
+// ── Model Selection ────────────────────────────────────────────────
 
-// ── Last Active Context (resume on reload) ─────────────────────────
-// Multi-tab note: this is only read at startup as a fallback when no hash
-// route is present. Runtime tab state remains in memory per-tab.
+export function getSelectedModel() { return getString(GENERAL.selectedModel); }
+export function setSelectedModel(modelId) { setString(GENERAL.selectedModel, modelId); }
+
+// ── Last Active Context ────────────────────────────────────────────
+// Read once at startup as fallback when no hash route is present.
+// Each tab's runtime state is in-memory (storeManager).
 
 export function getLastContext() {
     return {
-        agentId: getString(KEYS.lastAgent),
-        channelType: getString(KEYS.lastChannel),
-        sessionId: getString(KEYS.lastSessionId),
+        agentId: getString(GENERAL.lastAgent),
+        channelType: getString(GENERAL.lastChannel),
+        sessionId: getString(GENERAL.lastSessionId),
     };
 }
 
 export function setLastContext(agentId, channelType, sessionId) {
-    setString(KEYS.lastAgent, agentId);
-    setString(KEYS.lastChannel, channelType);
-    setString(KEYS.lastSessionId, sessionId);
+    setString(GENERAL.lastAgent, agentId);
+    setString(GENERAL.lastChannel, channelType);
+    setString(GENERAL.lastSessionId, sessionId);
 }
 
 export function clearLastContext() {
-    localStorage.removeItem(KEYS.lastAgent);
-    localStorage.removeItem(KEYS.lastChannel);
-    localStorage.removeItem(KEYS.lastSessionId);
+    localStorage.removeItem(GENERAL.lastAgent);
+    localStorage.removeItem(GENERAL.lastChannel);
+    localStorage.removeItem(GENERAL.lastSessionId);
 }
 
-// ── Send Mode ──────────────────────────────────────────────────────
-
-export function getSendMode() { return getString(KEYS.sendMode, 'chat'); }
-export function setSendMode(mode) { setString(KEYS.sendMode, mode); }
-
-// ── Model Selection ────────────────────────────────────────────────
-
-export function getSelectedModel() { return getString(KEYS.selectedModel); }
-export function setSelectedModel(modelId) { setString(KEYS.selectedModel, modelId); }
-
 // ── API Response Caching ───────────────────────────────────────────
-// Cached data for instant initial render; refreshed in background.
+// Instant initial render; refreshed in background. 5-minute TTL.
 
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL_MS = 5 * 60 * 1000;
 
 function getCached(key) {
     const entry = getJson(key);
@@ -128,14 +133,55 @@ function setCached(key, data) {
     setJson(key, { data, ts: Date.now() });
 }
 
-export function getCachedAgents() { return getCached(KEYS.agentCache); }
-export function setCachedAgents(agents) { setCached(KEYS.agentCache, agents); }
+export function getCachedAgents() { return getCached(GENERAL.agentCache); }
+export function setCachedAgents(agents) { setCached(GENERAL.agentCache, agents); }
 
-export function getCachedSessions() { return getCached(KEYS.sessionCache); }
-export function setCachedSessions(sessions) { setCached(KEYS.sessionCache, sessions); }
+export function getCachedSessions() { return getCached(GENERAL.sessionCache); }
+export function setCachedSessions(sessions) { setCached(GENERAL.sessionCache, sessions); }
 
-// ── Cleanup ────────────────────────────────────────────────────────
+
+// ═══════════════════════════════════════════════════════════════════
+// CHANNEL SETTINGS — per agent+channel, independent across tabs
+// ═══════════════════════════════════════════════════════════════════
+//
+// Each channel (e.g., nova/signalr, aurum/signalr) stores its own
+// preferences. Tabs viewing different channels read different values.
+// Format: botnexus:ch:{agentId}:{channelType}:{setting}
+
+function channelKey(agentId, channelType, setting) {
+    const a = (agentId || '_').toLowerCase();
+    const c = (channelType || '_').toLowerCase();
+    return `${PREFIX}ch:${a}:${c}:${setting}`;
+}
+
+// ── Tool & Thinking Visibility ─────────────────────────────────────
+
+export function getShowTools(agentId, channelType) {
+    return getBool(channelKey(agentId, channelType, 'show-tools'), true);
+}
+
+export function setShowTools(agentId, channelType, v) {
+    setBool(channelKey(agentId, channelType, 'show-tools'), v);
+}
+
+export function getShowThinking(agentId, channelType) {
+    return getBool(channelKey(agentId, channelType, 'show-thinking'), true);
+}
+
+export function setShowThinking(agentId, channelType, v) {
+    setBool(channelKey(agentId, channelType, 'show-thinking'), v);
+}
+
+// ── Future per-channel settings ────────────────────────────────────
+// Add here as needed: scroll position, font size, collapsed sections, etc.
+// All use channelKey(agentId, channelType, 'setting-name').
+
+
+// ═══════════════════════════════════════════════════════════════════
+// Cleanup
+// ═══════════════════════════════════════════════════════════════════
 
 export function clearAll() {
-    Object.values(KEYS).forEach(k => localStorage.removeItem(k));
+    const keys = Object.keys(localStorage).filter(k => k.startsWith(PREFIX));
+    keys.forEach(k => localStorage.removeItem(k));
 }

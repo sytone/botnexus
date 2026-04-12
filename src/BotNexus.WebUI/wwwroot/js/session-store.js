@@ -2,9 +2,9 @@
 
 import { normalizeChannelKey } from './api.js';
 import { dom } from './ui.js';
-// Circular-import–safe: these are hoisted function declarations used only at call-time.
 import { updateSessionIdDisplay, syncLoadingUiForActiveSession, updateSendButtonState } from './chat.js';
 import { updateSidebarBadge } from './sidebar.js';
+import { getShowTools, getShowThinking } from './storage.js';
 
 // ── Shared channel state ────────────────────────────────────────────
 
@@ -24,6 +24,9 @@ export class SessionStore {
         this.timelineMeta = null;
         this.lastViewed = null;
         this.unreadCount = 0;
+        // Per-channel toggle state — loaded from storage, falls back to true
+        this.showTools = getShowTools(this.agentId, this.channelType);
+        this.showThinking = getShowThinking(this.agentId, this.channelType);
     }
 
     static createStreamState() {
