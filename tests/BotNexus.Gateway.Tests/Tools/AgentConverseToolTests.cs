@@ -1,4 +1,5 @@
 using BotNexus.AgentCore.Tools;
+using BotNexus.AgentCore.Types;
 using BotNexus.Domain.Conversations;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
