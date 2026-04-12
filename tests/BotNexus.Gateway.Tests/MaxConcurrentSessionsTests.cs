@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Agents;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -96,6 +97,6 @@ public sealed class MaxConcurrentSessionsTests
                 return Task.FromResult(handle.Object);
             });
 
-        return new DefaultAgentSupervisor(registry, [strategy.Object], NullLogger<DefaultAgentSupervisor>.Instance);
+        return new DefaultAgentSupervisor(registry, [strategy.Object], Mock.Of<ISessionStore>(), NullLogger<DefaultAgentSupervisor>.Instance);
     }
 }

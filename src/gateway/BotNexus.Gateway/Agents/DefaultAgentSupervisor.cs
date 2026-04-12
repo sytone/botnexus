@@ -2,6 +2,7 @@ using System.Diagnostics;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Diagnostics;
 using Microsoft.Extensions.Logging;
@@ -15,6 +16,7 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
 {
     private readonly IAgentRegistry _registry;
     private readonly IReadOnlyDictionary<string, IIsolationStrategy> _strategies;
+    private readonly ISessionStore _sessionStore;
     private readonly Dictionary<AgentSessionKey, (AgentInstance Instance, IAgentHandle Handle)> _instances = [];
     private readonly Dictionary<AgentSessionKey, Task<(AgentInstance Instance, IAgentHandle Handle)>> _pendingCreates = [];
     private readonly Lock _sync = new();
@@ -23,10 +25,12 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
     public DefaultAgentSupervisor(
         IAgentRegistry registry,
         IEnumerable<IIsolationStrategy> strategies,
+        ISessionStore sessionStore,
         ILogger<DefaultAgentSupervisor> logger)
     {
         _registry = registry;
         _strategies = strategies.ToDictionary(s => s.Name, StringComparer.OrdinalIgnoreCase);
+        _sessionStore = sessionStore;
         _logger = logger;
     }
 

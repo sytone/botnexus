@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Agents;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -31,7 +32,7 @@ public sealed class DefaultAgentSupervisorTests
                 await Task.Delay(40);
                 return handle.Object;
             });
-        var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], NullLogger<DefaultAgentSupervisor>.Instance);
+        var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], Mock.Of<ISessionStore>(), NullLogger<DefaultAgentSupervisor>.Instance);
 
         var tasks = Enumerable.Range(0, 25)
             .Select(_ => supervisor.GetOrCreateAsync("agent-a", "session-1"));
@@ -57,7 +58,7 @@ public sealed class DefaultAgentSupervisorTests
         strategy.SetupGet(s => s.Name).Returns("test");
         strategy.Setup(s => s.CreateAsync(It.IsAny<AgentDescriptor>(), It.IsAny<AgentExecutionContext>(), It.IsAny<CancellationToken>()))
             .Returns((AgentDescriptor _, AgentExecutionContext context, CancellationToken _) => Task.FromResult(CreateHandleMock("agent-a", context.SessionId).Object));
-        var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], NullLogger<DefaultAgentSupervisor>.Instance);
+        var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], Mock.Of<ISessionStore>(), NullLogger<DefaultAgentSupervisor>.Instance);
 
         await Task.WhenAll(
             supervisor.GetOrCreateAsync("agent-a", "session-1"),
@@ -85,7 +86,7 @@ public sealed class DefaultAgentSupervisorTests
         strategy.SetupGet(s => s.Name).Returns("test");
         strategy.Setup(s => s.CreateAsync(It.IsAny<AgentDescriptor>(), It.IsAny<AgentExecutionContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(firstHandle.Object);
-        var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], NullLogger<DefaultAgentSupervisor>.Instance);
+        var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], Mock.Of<ISessionStore>(), NullLogger<DefaultAgentSupervisor>.Instance);
 
         await supervisor.GetOrCreateAsync("agent-a", "session-1");
         var act = () => supervisor.GetOrCreateAsync("agent-a", "session-2");
@@ -109,7 +110,7 @@ public sealed class DefaultAgentSupervisorTests
 
         var strategy = new Mock<IIsolationStrategy>();
         strategy.SetupGet(s => s.Name).Returns("test");
-        var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], NullLogger<DefaultAgentSupervisor>.Instance);
+        var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], Mock.Of<ISessionStore>(), NullLogger<DefaultAgentSupervisor>.Instance);
 
         var act = () => supervisor.GetOrCreateAsync("agent-a", "session-1");
 
@@ -161,7 +162,7 @@ public sealed class DefaultAgentSupervisorTests
                 throw new InvalidOperationException("Creation failed!");
             });
 
-        var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], NullLogger<DefaultAgentSupervisor>.Instance);
+        var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], Mock.Of<ISessionStore>(), NullLogger<DefaultAgentSupervisor>.Instance);
 
         // Fire 5 concurrent requests — first starts creation, others wait
         var tasks = Enumerable.Range(0, 5)
@@ -201,7 +202,7 @@ public sealed class DefaultAgentSupervisorTests
                 return Task.FromResult(handle.Object);
             });
 
-        var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], NullLogger<DefaultAgentSupervisor>.Instance);
+        var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], Mock.Of<ISessionStore>(), NullLogger<DefaultAgentSupervisor>.Instance);
 
         // First call fails
         var firstAct = () => supervisor.GetOrCreateAsync("agent-retry", "session-1");
@@ -237,7 +238,7 @@ public sealed class DefaultAgentSupervisorTests
                 return Task.FromResult(h.Object);
             });
 
-        var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], NullLogger<DefaultAgentSupervisor>.Instance);
+        var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], Mock.Of<ISessionStore>(), NullLogger<DefaultAgentSupervisor>.Instance);
 
         await supervisor.GetOrCreateAsync("agent-stop", "session-1");
         await supervisor.GetOrCreateAsync("agent-stop", "session-2");
@@ -279,7 +280,7 @@ public sealed class DefaultAgentSupervisorTests
                 return Task.FromResult(h.Object);
             });
 
-        var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], NullLogger<DefaultAgentSupervisor>.Instance);
+        var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], Mock.Of<ISessionStore>(), NullLogger<DefaultAgentSupervisor>.Instance);
 
         await supervisor.GetOrCreateAsync("agent-stop-err", "s1");
         await supervisor.GetOrCreateAsync("agent-stop-err", "s2");

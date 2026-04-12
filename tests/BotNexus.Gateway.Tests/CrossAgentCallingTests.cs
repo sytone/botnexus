@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Agents;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -28,7 +29,7 @@ public sealed class CrossAgentCallingTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(handle.Object);
 
-        var supervisor = new DefaultAgentSupervisor(registry.Object, [strategy.Object], NullLogger<DefaultAgentSupervisor>.Instance);
+        var supervisor = new DefaultAgentSupervisor(registry.Object, [strategy.Object], Mock.Of<ISessionStore>(), NullLogger<DefaultAgentSupervisor>.Instance);
         var communicator = new DefaultAgentCommunicator(registry.Object, supervisor, NullLogger<DefaultAgentCommunicator>.Instance);
 
         await communicator.CallCrossAgentAsync("caller-agent", string.Empty, "target-agent", "hello");
