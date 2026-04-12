@@ -295,6 +295,12 @@ internal sealed class ResettableInMemorySessionStore : ISessionStore
         }
     }
 
+    public Task<IReadOnlyList<GatewaySession>> GetExistenceAsync(
+        AgentId agentId,
+        ExistenceQuery query,
+        CancellationToken cancellationToken = default)
+        => throw new NotImplementedException();
+
     public void Reset()
     {
         lock (_sync)
@@ -414,4 +420,3 @@ internal sealed class TestSessionWarmupService(ResettableInMemorySessionStore se
             session.CreatedAt,
             session.UpdatedAt);
 }
-

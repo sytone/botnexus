@@ -250,6 +250,13 @@ public sealed class SqliteSessionStore : ISessionStore
         finally { _lock.Release(); }
     }
 
+    /// <inheritdoc />
+    public Task<IReadOnlyList<GatewaySession>> GetExistenceAsync(
+        AgentId agentId,
+        ExistenceQuery query,
+        CancellationToken cancellationToken = default)
+        => throw new NotImplementedException();
+
     private async Task EnsureCreatedAsync(CancellationToken cancellationToken)
     {
         if (_initialized)

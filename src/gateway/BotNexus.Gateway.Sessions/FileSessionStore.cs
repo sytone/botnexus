@@ -209,6 +209,13 @@ public sealed class FileSessionStore : ISessionStore
         finally { _lock.Release(); }
     }
 
+    /// <inheritdoc />
+    public Task<IReadOnlyList<GatewaySession>> GetExistenceAsync(
+        AgentId agentId,
+        ExistenceQuery query,
+        CancellationToken cancellationToken = default)
+        => throw new NotImplementedException();
+
     private async Task<GatewaySession?> LoadFromFileAsync(SessionId sessionId, CancellationToken cancellationToken)
     {
         var metaPath = GetMetaPath(sessionId);

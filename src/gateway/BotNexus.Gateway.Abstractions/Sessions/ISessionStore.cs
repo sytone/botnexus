@@ -64,4 +64,12 @@ public interface ISessionStore
         AgentId agentId,
         ChannelKey channelType,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Lists sessions where the agent either owns the session or is listed as a participant.
+    /// </summary>
+    Task<IReadOnlyList<GatewaySession>> GetExistenceAsync(
+        AgentId agentId,
+        ExistenceQuery query,
+        CancellationToken cancellationToken = default);
 }

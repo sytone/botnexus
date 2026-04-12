@@ -103,6 +103,13 @@ public sealed class InMemorySessionStore : ISessionStore
         }
     }
 
+    /// <inheritdoc />
+    public Task<IReadOnlyList<GatewaySession>> GetExistenceAsync(
+        AgentId agentId,
+        ExistenceQuery query,
+        CancellationToken cancellationToken = default)
+        => throw new NotImplementedException();
+
     private static SessionType InferSessionType(SessionId sessionId, ChannelKey? channelType)
     {
         if (sessionId.IsSubAgent)
