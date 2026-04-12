@@ -449,7 +449,7 @@ This table tracks all DDD types being introduced in BotNexus. Follow this roadma
 |------|----------|---------|--------|------------|-------|
 | `SessionParticipant` | Domain Entity | Record | ✅ Done | 2.0 | Captures `ParticipantType` (User/Agent), participant ID, optional world ID, optional role. Replaces `CallerId`-only model. |
 | `SubAgentArchetype` | Discriminator | Smart Enum | ✅ Done | 2.0 | Known values: Researcher, Coder, Planner, Reviewer, Writer, General. Extensible. |
-| `TriggerType` | Discriminator | Smart Enum | ✅ Done | 2.0 | Known values: Channel, Cron, SystemTimer. Extensible. Now `IInternalTrigger` interface decouples Cron from `IChannelAdapter`. |
+| `TriggerType` | Discriminator | Smart Enum | ✅ Done | 2.0 | Known values: Cron, Soul, Heartbeat. Extensible. Now `IInternalTrigger` interface decouples Cron from `IChannelAdapter`. |
 
 ### Phase 3-4: Advanced (Deferred)
 
