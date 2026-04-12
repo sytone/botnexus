@@ -99,7 +99,7 @@ export async function loadSessions() {
     if (newFingerprint === sessionsFingerprint) return;
     sessionsFingerprint = newFingerprint;
 
-    const collapsedAgents = new Set();
+    const collapsedAgents = new Set(JSON.parse(localStorage.getItem('botnexus:collapsed-agents') || '[]'));
     dom.sessionsList.querySelectorAll('.agent-group-header.collapsed').forEach(el => {
         collapsedAgents.add(el.textContent.replace('▼', '').trim());
     });
@@ -116,7 +116,14 @@ export async function loadSessions() {
         const header = document.createElement('div');
         header.className = 'agent-group-header' + (collapsedAgents.has(displayName) ? ' collapsed' : '');
         header.innerHTML = `<span class="collapse-icon">▼</span> ${escapeHtml(displayName)}`;
-        header.addEventListener('click', () => header.classList.toggle('collapsed'));
+        header.addEventListener('click', () => {
+            header.classList.toggle('collapsed');
+            // Persist collapsed state to localStorage
+            const all = new Set(JSON.parse(localStorage.getItem('botnexus:collapsed-agents') || '[]'));
+            if (header.classList.contains('collapsed')) all.add(displayName);
+            else all.delete(displayName);
+            localStorage.setItem('botnexus:collapsed-agents', JSON.stringify([...all]));
+        });
         group.appendChild(header);
 
         const channelsDiv = document.createElement('div');
