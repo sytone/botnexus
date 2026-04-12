@@ -489,6 +489,91 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Hub_MultipleAgentsIsolation_JoinThenSend_RoutesToJoinedSessions()
+    {
+        const string agentA = "agent-a";
+        const string agentB = "agent-b";
+        var dispatcher = new RecordingDispatcher();
+        await using var factory = CreateTestFactory(services =>
+        {
+            services.RemoveAll<IChannelDispatcher>();
+            services.AddSingleton<IChannelDispatcher>(dispatcher);
+        });
+        using var cts = CreateTimeout();
+        await RegisterAgentAsync(factory, cts.Token, agentA);
+        await RegisterAgentAsync(factory, cts.Token, agentB);
+
+        const string sessionA = "multi-agent-join-a";
+        const string sessionB = "multi-agent-join-b";
+        await SeedSessionAsync(factory, new GatewaySession
+        {
+            SessionId = sessionA,
+            AgentId = agentA,
+            ChannelType = ChannelKey.From("signalr"),
+            SessionType = BotNexus.Domain.Primitives.SessionType.UserAgent,
+            Status = GatewaySessionStatus.Active
+        }, cts.Token);
+        await SeedSessionAsync(factory, new GatewaySession
+        {
+            SessionId = sessionB,
+            AgentId = agentB,
+            ChannelType = ChannelKey.From("signalr"),
+            SessionType = BotNexus.Domain.Primitives.SessionType.UserAgent,
+            Status = GatewaySessionStatus.Active
+        }, cts.Token);
+
+        await using var connection = await CreateStartedConnection(factory, cts.Token);
+        await connection.InvokeAsync<JsonElement>("JoinSession", agentA, sessionA, cts.Token);
+        await connection.InvokeAsync<JsonElement>("JoinSession", agentB, sessionB, cts.Token);
+        await connection.InvokeAsync("SendMessage", agentA, "signalr", "message-for-a", cts.Token);
+        await connection.InvokeAsync("SendMessage", agentB, "signalr", "message-for-b", cts.Token);
+
+        dispatcher.Messages.Should().HaveCount(2);
+        dispatcher.Messages.Should().ContainSingle(m =>
+            m.TargetAgentId == agentA &&
+            m.SessionId == sessionA &&
+            m.Content == "message-for-a");
+        dispatcher.Messages.Should().ContainSingle(m =>
+            m.TargetAgentId == agentB &&
+            m.SessionId == sessionB &&
+            m.Content == "message-for-b");
+    }
+
+    [Fact]
+    public async Task Hub_SendMessage_AfterLeaveSession_HandlesStaleSessionGracefully()
+    {
+        var dispatcher = new RecordingDispatcher();
+        await using var factory = CreateTestFactory(services =>
+        {
+            services.RemoveAll<IChannelDispatcher>();
+            services.AddSingleton<IChannelDispatcher>(dispatcher);
+        });
+        using var cts = CreateTimeout();
+        await RegisterAgentAsync(factory, cts.Token);
+
+        const string sessionA = "stale-session-a";
+        await SeedSessionAsync(factory, new GatewaySession
+        {
+            SessionId = sessionA,
+            AgentId = TestAgentId,
+            ChannelType = ChannelKey.From("signalr"),
+            SessionType = BotNexus.Domain.Primitives.SessionType.UserAgent,
+            Status = GatewaySessionStatus.Active
+        }, cts.Token);
+
+        await using var connection = await CreateStartedConnection(factory, cts.Token);
+        await connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionA, cts.Token);
+        await connection.InvokeAsync("LeaveSession", sessionA, cts.Token);
+
+        var result = await connection.InvokeAsync<JsonElement>("SendMessage", TestAgentId, "signalr", "after-leave", cts.Token);
+
+        result.GetProperty("sessionId").GetString().Should().NotBeNullOrWhiteSpace();
+        dispatcher.Messages.Should().ContainSingle();
+        dispatcher.Messages[0].Content.Should().Be("after-leave");
+        dispatcher.Messages[0].SessionId.Should().NotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
     public async Task Hub_SessionSwitch_ConcurrentClientsDifferentSessions_ReceiveOnlyOwnEvents()
     {
         await using var factory = CreateTestFactory();
