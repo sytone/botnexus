@@ -1596,7 +1596,7 @@ The `IsInteractive` property returns `true` only for `UserAgent` sessions, enabl
 
 - **Active** — Accepting messages, running normally
 - **Suspended** — Paused temporarily, can be resumed  
-- **Sealed** — Closed permanently (replaces old "Closed" naming; sealed implies terminal and preserved)
+- **Sealed** — Terminal state; the session is complete and preserved (replaces old "Closed" naming)
 
 ### Session Storage
 
