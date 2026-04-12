@@ -74,6 +74,7 @@
     <Project Path="tests/BotNexus.Extensions.Mcp.Tests/BotNexus.Extensions.Mcp.Tests.csproj" />
     <Project Path="tests/BotNexus.Extensions.McpInvoke.Tests/BotNexus.Extensions.McpInvoke.Tests.csproj" />
     <Project Path="tests/BotNexus.WebUI.Tests/BotNexus.WebUI.Tests.csproj" />
+    <Project Path="tests/BotNexus.Prompts.Tests/BotNexus.Prompts.Tests.csproj" />
   </Folder>
   <Project Path="extensions/tools/exec/BotNexus.Extensions.ExecTool/BotNexus.Extensions.ExecTool.csproj" />
   <Project Path="tests/BotNexus.Extensions.ExecTool.Tests/BotNexus.Extensions.ExecTool.Tests.csproj" />
