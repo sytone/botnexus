@@ -6,6 +6,9 @@ using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Channels.Core;
 
+/// <summary>
+/// Represents cross world channel adapter.
+/// </summary>
 public sealed class CrossWorldChannelAdapter(
     ILogger<CrossWorldChannelAdapter> logger,
     HttpClient httpClient,
@@ -26,9 +29,21 @@ public sealed class CrossWorldChannelAdapter(
     protected override Task OnStartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     protected override Task OnStopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
+    /// <summary>
+    /// Executes send async.
+    /// </summary>
+    /// <param name="message">The message.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The send async result.</returns>
     public override async Task SendAsync(OutboundMessage message, CancellationToken cancellationToken = default)
         => _ = await ExchangeAsync(message, cancellationToken).ConfigureAwait(false);
 
+    /// <summary>
+    /// Executes exchange async.
+    /// </summary>
+    /// <param name="message">The message.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The exchange async result.</returns>
     public async Task<CrossWorldRelayResponse> ExchangeAsync(OutboundMessage message, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -98,7 +113,13 @@ public sealed class CrossWorldChannelAdapter(
     }
 }
 
+/// <summary>
+/// Represents cross world channel options.
+/// </summary>
 public sealed class CrossWorldChannelOptions
 {
+    /// <summary>
+    /// Gets or sets the relay path.
+    /// </summary>
     public string RelayPath { get; set; } = "api/federation/cross-world/relay";
 }
