@@ -8,6 +8,9 @@ using System.IO.Abstractions;
 
 namespace BotNexus.Tools;
 
+/// <summary>
+/// Represents list directory tool.
+/// </summary>
 public sealed class ListDirectoryTool : IAgentTool
 {
     private const int MaxEntries = 500;
@@ -47,6 +50,12 @@ public sealed class ListDirectoryTool : IAgentTool
             }
             """).RootElement.Clone());
 
+    /// <summary>
+    /// Executes prepare arguments async.
+    /// </summary>
+    /// <param name="arguments">The arguments.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The prepare arguments async result.</returns>
     public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -71,6 +80,14 @@ public sealed class ListDirectoryTool : IAgentTool
         return Task.FromResult<IReadOnlyDictionary<string, object?>>(prepared);
     }
 
+    /// <summary>
+    /// Executes execute async.
+    /// </summary>
+    /// <param name="toolCallId">The tool call id.</param>
+    /// <param name="arguments">The arguments.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="onUpdate">The on update.</param>
+    /// <returns>The execute async result.</returns>
     public Task<AgentToolResult> ExecuteAsync(string toolCallId, IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken = default, AgentToolUpdateCallback? onUpdate = null)
     {
         cancellationToken.ThrowIfCancellationRequested();

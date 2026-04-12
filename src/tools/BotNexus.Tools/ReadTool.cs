@@ -10,6 +10,9 @@ using System.IO.Abstractions;
 
 namespace BotNexus.Tools;
 
+/// <summary>
+/// Represents read tool.
+/// </summary>
 public sealed class ReadTool : IAgentTool
 {
     private const int MaxOutputLines = 2000;
@@ -36,6 +39,12 @@ public sealed class ReadTool : IAgentTool
 
     public string Label => "Read File";
 
+    /// <summary>
+    /// Executes new.
+    /// </summary>
+    /// <param name="Name">The name.</param>
+    /// <param name="arguments">The arguments.</param>
+    /// <returns>The new result.</returns>
     public Tool Definition => new(
         Name,
         "Read file content with optional offset/limit, or list directory entries.",
@@ -60,6 +69,11 @@ public sealed class ReadTool : IAgentTool
             }
             """).RootElement.Clone());
 
+    /// <summary>
+    /// Executes prepare arguments async.
+    /// </summary>
+    /// <param name="arguments">The arguments.</param>
+    /// <returns>The prepare arguments async result.</returns>
     public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(
         IReadOnlyDictionary<string, object?> arguments,
         CancellationToken cancellationToken = default)
@@ -93,6 +107,13 @@ public sealed class ReadTool : IAgentTool
         return Task.FromResult<IReadOnlyDictionary<string, object?>>(prepared);
     }
 
+    /// <summary>
+    /// Executes execute async.
+    /// </summary>
+    /// <param name="toolCallId">The tool call id.</param>
+    /// <param name="arguments">The arguments.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The execute async result.</returns>
     public async Task<AgentToolResult> ExecuteAsync(
         string toolCallId,
         IReadOnlyDictionary<string, object?> arguments,

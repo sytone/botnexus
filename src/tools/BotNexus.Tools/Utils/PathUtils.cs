@@ -122,6 +122,13 @@ public static class PathUtils
         return Path.GetRelativePath(normalizedBasePath, normalizedFullPath);
     }
 
+    /// <summary>
+    /// Executes get git ignored paths.
+    /// </summary>
+    /// <param name="paths">The paths.</param>
+    /// <param name="workingDirectory">The working directory.</param>
+    /// <param name="fileSystem">The file system.</param>
+    /// <returns>The get git ignored paths result.</returns>
     public static HashSet<string> GetGitIgnoredPaths(IEnumerable<string> paths, string workingDirectory, IFileSystem? fileSystem = null)
     {
         var fs = fileSystem ?? new FileSystem();

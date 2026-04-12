@@ -42,6 +42,12 @@ public sealed class GrepTool : IAgentTool
 
     public string Label => "Grep Search";
 
+    /// <summary>
+    /// Executes new.
+    /// </summary>
+    /// <param name="Name">The name.</param>
+    /// <param name="arguments">The arguments.</param>
+    /// <returns>The new result.</returns>
     public Tool Definition => new(
         Name,
         "Search file contents using pattern matching. Returns matching lines with file paths and line numbers.",
@@ -62,6 +68,11 @@ public sealed class GrepTool : IAgentTool
             }
             """).RootElement.Clone());
 
+    /// <summary>
+    /// Executes prepare arguments async.
+    /// </summary>
+    /// <param name="arguments">The arguments.</param>
+    /// <returns>The prepare arguments async result.</returns>
     public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(
         IReadOnlyDictionary<string, object?> arguments,
         CancellationToken cancellationToken = default)
@@ -154,6 +165,13 @@ public sealed class GrepTool : IAgentTool
         return Task.FromResult<IReadOnlyDictionary<string, object?>>(prepared);
     }
 
+    /// <summary>
+    /// Executes execute async.
+    /// </summary>
+    /// <param name="toolCallId">The tool call id.</param>
+    /// <param name="arguments">The arguments.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The execute async result.</returns>
     public async Task<AgentToolResult> ExecuteAsync(
         string toolCallId,
         IReadOnlyDictionary<string, object?> arguments,

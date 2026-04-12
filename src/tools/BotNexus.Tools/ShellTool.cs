@@ -413,6 +413,9 @@ public sealed class ShellTool : IAgentTool
         }
     }
 
+    /// <summary>
+    /// Represents shell tool details.
+    /// </summary>
     public sealed record ShellToolDetails(int ExitCode, bool TimedOut, bool IsError);
 
     private sealed record ShellInvocation(string FileName, string Args, string? WarningPrefix);
