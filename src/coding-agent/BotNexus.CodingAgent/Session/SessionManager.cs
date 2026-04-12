@@ -1,8 +1,9 @@
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.IO.Abstractions;
 using BotNexus.AgentCore.Types;
+using BotNexus.Domain.Primitives;
+using BotNexus.Sessions.Common;
 
 namespace BotNexus.CodingAgent.Session;
 
@@ -45,6 +46,22 @@ public sealed class SessionManager
             ParentSessionId: parentSessionId);
 
         await WriteEntriesAsync(filePath, [header]).ConfigureAwait(false);
+        await SessionMetadataSidecar.WriteAsync(
+            _fileSystem,
+            GetMetaPath(filePath),
+            new SessionMetadata(
+                header.Version,
+                header.SessionId,
+                header.Name,
+                header.WorkingDirectory,
+                header.CreatedAt,
+                header.UpdatedAt,
+                header.ParentSessionId,
+                header.Model,
+                header.Provider,
+                null,
+                new Dictionary<string, string>(StringComparer.Ordinal)),
+            JsonOptions).ConfigureAwait(false);
 
         return new SessionInfo(
             Id: id,
@@ -340,6 +357,11 @@ public sealed class SessionManager
         {
             _fileSystem.File.Delete(filePath);
         }
+        var metadataPath = GetMetaPath(filePath);
+        if (_fileSystem.File.Exists(metadataPath))
+        {
+            _fileSystem.File.Delete(metadataPath);
+        }
 
         var legacyDirectory = Path.Combine(root, sessionId);
         if (_fileSystem.Directory.Exists(legacyDirectory))
@@ -419,16 +441,12 @@ public sealed class SessionManager
 
     private async Task<SessionState?> LoadJsonlStateAsync(string filePath)
     {
-        await using var stream = _fileSystem.FileStream.New(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        using var reader = new StreamReader(stream, Encoding.UTF8);
-        var lines = new List<string>();
-        string? currentLine;
-        while ((currentLine = await reader.ReadLineAsync().ConfigureAwait(false)) is not null)
-        {
-            lines.Add(currentLine);
-        }
+        var payloads = await SessionJsonl.ReadAllAsync<JsonElement>(
+            _fileSystem,
+            filePath,
+            JsonOptions).ConfigureAwait(false);
 
-        if (lines.Count == 0)
+        if (payloads.Count == 0)
         {
             return null;
         }
@@ -439,20 +457,15 @@ public sealed class SessionManager
         var branchNames = new Dictionary<string, string>(StringComparer.Ordinal);
         string? activeLeafId = null;
 
-        foreach (var line in lines)
+        foreach (var payload in payloads)
         {
-            if (string.IsNullOrWhiteSpace(line))
-            {
-                continue;
-            }
-
-            using var doc = JsonDocument.Parse(line);
-            if (!doc.RootElement.TryGetProperty("type", out var typeElement))
+            if (!payload.TryGetProperty("type", out var typeElement))
             {
                 continue;
             }
 
             var type = typeElement.GetString();
+            var line = payload.GetRawText();
             switch (type)
             {
                 case "session_header":
@@ -517,7 +530,32 @@ public sealed class SessionManager
 
         if (header is null)
         {
-            return null;
+            var sidecar = await SessionMetadataSidecar.ReadAsync<SessionMetadata>(
+                _fileSystem,
+                GetMetaPath(filePath),
+                JsonOptions).ConfigureAwait(false);
+            if (sidecar is null)
+            {
+                return null;
+            }
+
+            header = new SessionHeaderEntry(
+                Type: "session_header",
+                Version: sidecar.Version,
+                SessionId: sidecar.SessionId,
+                Name: sidecar.Name,
+                WorkingDirectory: sidecar.WorkingDirectory,
+                CreatedAt: sidecar.CreatedAt,
+                UpdatedAt: sidecar.UpdatedAt,
+                ParentSessionId: sidecar.ParentSessionId,
+                Model: sidecar.Model,
+                Provider: sidecar.Provider);
+
+            activeLeafId ??= sidecar.ActiveLeafId;
+            foreach (var branch in sidecar.BranchNames)
+            {
+                branchNames[branch.Key] = branch.Value;
+            }
         }
 
         activeLeafId ??= entries.LastOrDefault()?.EntryId;
@@ -548,22 +586,38 @@ public sealed class SessionManager
         allEntries.AddRange(state.MetadataEntries.OrderBy(entry => entry.Timestamp));
 
         await WriteEntriesAsync(state.FilePath, allEntries).ConfigureAwait(false);
+        await WriteMetadataSidecarAsync(state).ConfigureAwait(false);
     }
 
     private async Task WriteEntriesAsync(string filePath, IEnumerable<object> entries)
     {
-        var directory = Path.GetDirectoryName(filePath);
-        if (!string.IsNullOrWhiteSpace(directory))
-        {
-            _fileSystem.Directory.CreateDirectory(directory);
-        }
+        await SessionJsonl.WriteAllAsync(
+            _fileSystem,
+            filePath,
+            entries,
+            JsonOptions).ConfigureAwait(false);
+    }
 
-        await using var stream = _fileSystem.FileStream.New(filePath, FileMode.Create, FileAccess.Write, FileShare.Read);
-        await using var writer = new StreamWriter(stream, new UTF8Encoding(false));
-        foreach (var entry in entries)
-        {
-            await writer.WriteLineAsync(JsonSerializer.Serialize(entry, JsonOptions)).ConfigureAwait(false);
-        }
+    private async Task WriteMetadataSidecarAsync(SessionState state)
+    {
+        var metadata = new SessionMetadata(
+            state.Header.Version,
+            state.Header.SessionId,
+            state.Header.Name,
+            state.Header.WorkingDirectory,
+            state.Header.CreatedAt,
+            state.Header.UpdatedAt,
+            state.Header.ParentSessionId,
+            state.Header.Model,
+            state.Header.Provider,
+            state.ActiveLeafId,
+            new Dictionary<string, string>(state.BranchNames, StringComparer.Ordinal));
+
+        await SessionMetadataSidecar.WriteAsync(
+            _fileSystem,
+            GetMetaPath(state.FilePath),
+            metadata,
+            JsonOptions).ConfigureAwait(false);
     }
 
     private static SessionEntryBase CreateEntry(AgentMessage message, string? parentEntryId)
@@ -644,7 +698,7 @@ public sealed class SessionManager
 
     private static bool MessagesEqual(AgentMessage left, AgentMessage right)
     {
-        if (!string.Equals(left.Role, right.Role, StringComparison.Ordinal))
+        if (!MessageRole.FromString(left.Role).Equals(MessageRole.FromString(right.Role)))
         {
             return false;
         }
@@ -675,10 +729,10 @@ public sealed class SessionManager
     {
         return message switch
         {
-            UserMessage user => new MessageEnvelope("user", JsonSerializer.SerializeToElement(user, JsonOptions)),
-            AssistantAgentMessage assistant => new MessageEnvelope("assistant", JsonSerializer.SerializeToElement(assistant, JsonOptions)),
-            ToolResultAgentMessage tool => new MessageEnvelope("tool", JsonSerializer.SerializeToElement(tool, JsonOptions)),
-            SystemAgentMessage system => new MessageEnvelope("system", JsonSerializer.SerializeToElement(system, JsonOptions)),
+            UserMessage user => new MessageEnvelope(MessageRole.User, JsonSerializer.SerializeToElement(user, JsonOptions)),
+            AssistantAgentMessage assistant => new MessageEnvelope(MessageRole.Assistant, JsonSerializer.SerializeToElement(assistant, JsonOptions)),
+            ToolResultAgentMessage tool => new MessageEnvelope(MessageRole.Tool, JsonSerializer.SerializeToElement(tool, JsonOptions)),
+            SystemAgentMessage system => new MessageEnvelope(MessageRole.System, JsonSerializer.SerializeToElement(system, JsonOptions)),
             _ => throw new NotSupportedException($"Unsupported message type: {message.GetType().Name}")
         };
     }
@@ -687,17 +741,20 @@ public sealed class SessionManager
     {
         return envelope.Type switch
         {
-            "user" => envelope.Payload.Deserialize<UserMessage>(JsonOptions)
+            var role when role == MessageRole.User => envelope.Payload.Deserialize<UserMessage>(JsonOptions)
                       ?? throw new InvalidOperationException("Invalid user message payload."),
-            "assistant" => envelope.Payload.Deserialize<AssistantAgentMessage>(JsonOptions)
-                           ?? throw new InvalidOperationException("Invalid assistant message payload."),
-            "tool" => envelope.Payload.Deserialize<ToolResultAgentMessage>(JsonOptions)
-                      ?? throw new InvalidOperationException("Invalid tool message payload."),
-            "system" => envelope.Payload.Deserialize<SystemAgentMessage>(JsonOptions)
-                        ?? throw new InvalidOperationException("Invalid system message payload."),
-            _ => throw new NotSupportedException($"Unsupported message type '{envelope.Type}'.")
+            var role when role == MessageRole.Assistant => envelope.Payload.Deserialize<AssistantAgentMessage>(JsonOptions)
+                            ?? throw new InvalidOperationException("Invalid assistant message payload."),
+            var role when role == MessageRole.Tool => envelope.Payload.Deserialize<ToolResultAgentMessage>(JsonOptions)
+                       ?? throw new InvalidOperationException("Invalid tool message payload."),
+            var role when role == MessageRole.System => envelope.Payload.Deserialize<SystemAgentMessage>(JsonOptions)
+                         ?? throw new InvalidOperationException("Invalid system message payload."),
+            _ => throw new NotSupportedException($"Unsupported message type '{envelope.Type.Value}'.")
         };
     }
+
+    private static string GetMetaPath(string sessionFilePath)
+        => Path.ChangeExtension(sessionFilePath, "meta.json");
 
     private sealed class SessionState
     {
@@ -755,5 +812,18 @@ public sealed class SessionManager
         string Key,
         string? Value);
 
-    private sealed record MessageEnvelope(string Type, JsonElement Payload);
+    private sealed record SessionMetadata(
+        int Version,
+        string SessionId,
+        string Name,
+        string WorkingDirectory,
+        DateTimeOffset CreatedAt,
+        DateTimeOffset UpdatedAt,
+        string? ParentSessionId,
+        string? Model,
+        string? Provider,
+        string? ActiveLeafId,
+        Dictionary<string, string> BranchNames);
+
+    private sealed record MessageEnvelope(MessageRole Type, JsonElement Payload);
 }
