@@ -211,3 +211,11 @@ Validation: `dotnet build src\gateway\BotNexus.Cli\BotNexus.Cli.csproj --nologo 
 - Adopted domain primitives across gateway contracts and runtime: typed `ChannelKey` and `MessageRole` in channel adapters, session stores, APIs, streaming helpers, compactor, and memory indexer.
 - Updated SQLite migration/load paths to support new columns and legacy status compatibility (`closed` remapped to `Sealed`).
 - Validation: `dotnet build BotNexus.slnx --nologo --tl:off`, `dotnet test tests\BotNexus.Gateway.Tests\BotNexus.Gateway.Tests.csproj --nologo --tl:off --no-build`, and `dotnet test tests\BotNexus.Domain.Tests\BotNexus.Domain.Tests.csproj --nologo --tl:off` all passed.
+
+## 2026-04-12T03:00Z — Wave 2 Session Model Orchestration (Cross-Agent Update)
+
+**Coordination with Hermes (SessionModelWave2Tests.cs):**
+- SessionModelWave2Tests written against Wave 2 abstractions (commit 836f6bf); compile issues expected during integration
+- Tests cover: Sealed enum rename, SessionType/IsInteractive/Participants property contracts, domain participant model round-trip, ChannelKey/MessageRole integration, backward-compatibility scenarios (legacy closed → Sealed)
+- Status: Tests should compile cleanly once db21650 integrated
+- Action: Monitor compile results; if failures emerge, coordinate with Hermes on contract mismatches
