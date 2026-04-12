@@ -678,17 +678,14 @@
             hideConnectionBanner();
             debugLog('lifecycle', 'Connected! connectionId:', connectionId);
 
-            // Phase 2: Subscribe to all sessions (multi-session model)
-            if (data.capabilities?.multiSession) {
-                hubInvoke('SubscribeAll').then(result => {
-                    if (result?.sessions) {
-                        storeManager.subscribe(result.sessions);
-                        debugLog('lifecycle', `SubscribeAll: ${result.sessions.length} sessions`);
-                    }
-                }).catch(err => {
-                    debugLog('lifecycle', 'SubscribeAll failed:', err.message);
-                });
-            }
+            hubInvoke('SubscribeAll').then(result => {
+                if (result?.sessions) {
+                    storeManager.subscribe(result.sessions);
+                    debugLog('lifecycle', `SubscribeAll: ${result.sessions.length} sessions`);
+                }
+            }).catch(err => {
+                debugLog('lifecycle', 'SubscribeAll failed:', err.message);
+            });
         });
 
         // SessionJoined is no longer sent as a separate callback.
