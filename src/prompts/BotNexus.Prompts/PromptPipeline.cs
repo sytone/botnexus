@@ -21,6 +21,11 @@ public sealed class PromptPipeline
 
     public string Build(PromptContext context)
     {
+        return string.Join("\n", BuildLines(context));
+    }
+
+    public IReadOnlyList<string> BuildLines(PromptContext context)
+    {
         ArgumentNullException.ThrowIfNull(context);
 
         var blocks = new List<(int Order, int TieBreaker, IReadOnlyList<string> Lines)>();
@@ -43,9 +48,10 @@ public sealed class PromptPipeline
             blocks.Add((contribution.Order ?? contributor.Priority, sectionIndex++, lines));
         }
 
-        return string.Join("\n", blocks
+        return blocks
             .OrderBy(static item => item.Order)
             .ThenBy(static item => item.TieBreaker)
-            .SelectMany(static item => item.Lines));
+            .SelectMany(static item => item.Lines)
+            .ToList();
     }
 }

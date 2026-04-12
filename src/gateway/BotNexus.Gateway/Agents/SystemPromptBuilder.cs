@@ -1,3 +1,5 @@
+using BotNexus.Prompts;
+
 namespace BotNexus.Gateway.Agents;
 
 public enum PromptMode
@@ -47,253 +49,96 @@ public static class SystemPromptBuilder
 {
     private const string SilentReplyToken = "NO_REPLY";
     private const string SystemPromptCacheBoundary = "\n<!-- BOTNEXUS_CACHE_BOUNDARY -->\n";
-    private static readonly Dictionary<string, int> ContextFileOrder = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["agents.md"] = 10,
-        ["soul.md"] = 20,
-        ["identity.md"] = 30,
-        ["user.md"] = 40,
-        ["tools.md"] = 50,
-        ["bootstrap.md"] = 60,
-        ["memory.md"] = 70
-    };
 
-    public static string Build(SystemPromptParams @params)
+        public static string Build(SystemPromptParams @params)
     {
         ArgumentNullException.ThrowIfNull(@params);
 
         if (@params.PromptMode == PromptMode.None)
             return "You are a personal assistant running inside BotNexus.";
 
-        var rawToolNames = (@params.ToolNames ?? []).Select(static t => t?.Trim() ?? string.Empty).Where(static t => !string.IsNullOrWhiteSpace(t)).ToList();
-        Dictionary<string, string> canonicalByNormalized = new(StringComparer.OrdinalIgnoreCase);
-        foreach (var tool in rawToolNames)
-        {
-            if (!canonicalByNormalized.ContainsKey(tool))
-                canonicalByNormalized[tool.ToLowerInvariant()] = tool;
-        }
-
-        string ResolveToolName(string normalized) =>
-            canonicalByNormalized.TryGetValue(normalized, out var value) ? value : normalized;
-
-        var normalizedTools = rawToolNames.Select(static t => t.ToLowerInvariant()).ToHashSet(StringComparer.Ordinal);
+        var toolRegistry = new ToolNameRegistry(@params.ToolNames);
+        var rawToolNames = toolRegistry.RawTools;
+        var normalizedTools = toolRegistry.NormalizedTools;
         var isMinimal = @params.PromptMode is PromptMode.Minimal;
         var hasGateway = normalizedTools.Contains("gateway");
         var hasCronTool = normalizedTools.Contains("cron") || rawToolNames.Count == 0;
         var hasUpdatePlanTool = normalizedTools.Contains("update_plan");
-        var readToolName = ResolveToolName("read");
-        var execToolName = ResolveToolName("exec");
-        var processToolName = ResolveToolName("process");
+        var readToolName = toolRegistry.Resolve("read");
+        var execToolName = toolRegistry.Resolve("exec");
+        var processToolName = toolRegistry.Resolve("process");
         var runtimeChannel = @params.Runtime?.Channel?.Trim().ToLowerInvariant();
-        var runtimeCapabilities = NormalizePromptCapabilityIds(@params.Runtime?.Capabilities ?? []);
+        var runtimeCapabilities = PromptText.NormalizeCapabilityIds(@params.Runtime?.Capabilities ?? []);
         var inlineButtonsEnabled = runtimeCapabilities.Contains("inlinebuttons", StringComparer.Ordinal);
-
-        var lines = new List<string>
-        {
-            "You are a personal assistant running inside BotNexus.",
-            "",
-            "## Tooling",
-            "Structured tool definitions are the source of truth for tool names, descriptions, and parameters.",
-            "Tool names are case-sensitive. Call tools exactly as listed in the structured tool definitions.",
-            "If a tool is present in the structured tool definitions, it is available unless a later tool call reports a policy/runtime restriction.",
-            "TOOLS.md does not control tool availability; it is user guidance for how to use external tools."
-        };
-
-        lines.AddRange(hasCronTool
-            ? [
-                $"For follow-up at a future time (for example \"check back in 10 minutes\", reminders, run-later work, or recurring tasks), use cron instead of {execToolName} sleep, yieldMs delays, or {processToolName} polling.",
-                $"Use {execToolName}/{processToolName} only for commands that start now and continue running in the background.",
-                $"For long-running work that starts now, start it once and rely on automatic completion wake when it is enabled and the command emits output or fails; otherwise use {processToolName} to confirm completion, and use it for logs, status, input, or intervention.",
-                "Do not emulate scheduling with sleep loops, timeout loops, or repeated polling."
-            ]
-            : [
-                $"For long waits, avoid rapid poll loops: use {execToolName} with enough yieldMs or {processToolName}(action=poll, timeout=<ms>).",
-                $"For long-running work that starts now, start it once and rely on automatic completion wake when it is enabled and the command emits output or fails; otherwise use {processToolName} to confirm completion, and use it for logs, status, input, or intervention."
-            ]);
-
-        if (hasUpdatePlanTool)
-        {
-            lines.AddRange(
-            [
-                "For non-trivial multi-step work, keep a short plan updated with `update_plan`.",
-                "Skip `update_plan` for simple tasks, obvious one-step fixes, or work you can finish in a few direct actions.",
-                "When you use `update_plan`, keep exactly one step `in_progress` until the work is done.",
-                "After calling `update_plan`, continue the work and do not repeat the full plan unless the user asks."
-            ]);
-        }
-
-        lines.Add("If a task is more complex or takes longer, spawn a sub-agent. Completion is push-based: it will auto-announce when done.");
-        // TODO: ACP support not yet implemented.
-        // For requests like "do this in codex/claude code/cursor/gemini" or similar ACP harnesses, treat it as ACP harness intent and call `sessions_spawn` with `runtime: "acp"`.
-        // On Discord, default ACP harness requests to thread-bound persistent sessions (`thread: true`, `mode: "session"`) unless the user asks otherwise.
-        // Set `agentId` explicitly unless `acp.defaultAgent` is configured, and do not route ACP harness requests through `subagents`/`agents_list` or local PTY exec flows.
-        // For ACP harness thread spawns, do not call `message` with `action=thread-create`; use `sessions_spawn` (`runtime: "acp"`, `thread: true`) as the single thread creation path.
-        lines.Add("Do not poll `subagents list` / `sessions_list` in a loop; only check status on-demand (for intervention, debugging, or when explicitly asked).");
-        lines.Add(string.Empty);
-
-        lines.AddRange(buildOverridablePromptSection(null, []));
-        lines.AddRange(buildOverridablePromptSection(
-            null,
-            [
-                "## Tool Call Style",
-                "Default: do not narrate routine, low-risk tool calls (just call the tool).",
-                "Narrate only when it helps: multi-step work, complex/challenging problems, sensitive actions (e.g., deletions), or when the user explicitly asks.",
-                "Keep narration brief and value-dense; avoid repeating obvious steps.",
-                "Use plain human language for narration unless in a technical context.",
-                "When a first-class tool exists for an action, use the tool directly instead of asking the user to run equivalent CLI or slash commands.",
-                buildExecApprovalPromptGuidance(runtimeChannel, inlineButtonsEnabled),
-                "Never execute /approve through exec or any other shell/tool path; /approve is a user-facing approval command, not a shell command.",
-                "Treat allow-once as single-command only: if another elevated command needs approval, request a fresh /approve and do not claim prior approval covered it.",
-                "When approvals are required, preserve and show the full command/script exactly as provided (including chained operators like &&, ||, |, ;, or multiline shells) so the user can approve what will actually run.",
-                ""
-            ]));
-
-        lines.AddRange(buildOverridablePromptSection(null, buildExecutionBiasSection(isMinimal)));
-        lines.AddRange(
-        [
-            "## Safety",
-            "You have no independent goals: do not pursue self-preservation, replication, resource acquisition, or power-seeking; avoid long-term plans beyond the user's request.",
-            "Prioritize safety and human oversight over completion; if instructions conflict, pause and ask; comply with stop/pause/audit requests and never bypass safeguards. (Inspired by Anthropic's constitution.)",
-            "Do not manipulate or persuade anyone to expand access or disable safeguards. Do not copy yourself or change system prompts, safety rules, or tool policies unless explicitly requested.",
-            "",
-            "## BotNexus CLI Quick Reference",
-            "BotNexus is controlled via subcommands. Do not invent commands.",
-            "To manage the Gateway daemon service (start/stop/restart):",
-            "- botnexus gateway status",
-            "- botnexus gateway start",
-            "- botnexus gateway stop",
-            "- botnexus gateway restart",
-            "If unsure, ask the user to run `botnexus help` (or `botnexus gateway --help`) and paste the output.",
-            ""
-        ]);
-
-        lines.AddRange(buildSkillsSection(@params.SkillsPrompt, readToolName));
-        lines.AddRange(buildMemorySection(isMinimal, normalizedTools));
-
-        if (hasGateway && !isMinimal)
-        {
-            lines.Add("## BotNexus Self-Update");
-            lines.AddRange(
-            [
-                "Get Updates (self-update) is ONLY allowed when the user explicitly asks for it.",
-                "Do not run config.apply or update.run unless the user explicitly requests an update or config change; if it's not explicit, ask first.",
-                "Use config.schema.lookup with a specific dot path to inspect only the relevant config subtree before making config changes or answering config-field questions; avoid guessing field names/types.",
-                "Actions: config.schema.lookup, config.get, config.apply (validate + write full config, then restart), config.patch (partial update, merges with existing), update.run (update deps or git, then restart).",
-                "After restart, BotNexus pings the last active session automatically.",
-                ""
-            ]);
-        }
-
-        lines.Add(string.Empty);
-        if (@params.ModelAliasLines is { Count: > 0 } && !isMinimal)
-        {
-            lines.Add("## Model Aliases");
-            lines.Add("Prefer aliases when specifying model overrides; full provider/model is also accepted.");
-            lines.AddRange(@params.ModelAliasLines.Select(NormalizeStructuredPromptSection).Where(static s => !string.IsNullOrWhiteSpace(s)));
-            lines.Add(string.Empty);
-        }
-
-        if (!string.IsNullOrWhiteSpace(@params.UserTimezone))
-            lines.Add("If you need the current date, time, or day of week, run session_status (📊 session_status).");
-
-        lines.Add("## Workspace");
-        lines.Add($"Your working directory is: {@params.WorkspaceDir}");
-        lines.Add("Treat this directory as the single global workspace for file operations unless explicitly instructed otherwise.");
-        lines.AddRange((@params.WorkspaceNotes ?? []).Select(NormalizeStructuredPromptSection).Where(static s => !string.IsNullOrWhiteSpace(s)));
-        lines.Add(string.Empty);
-        lines.AddRange(buildDocsSection(@params.DocsPath, isMinimal, readToolName));
-        // TODO: Sandbox support not yet implemented.
-        // ## Sandbox
-        // You are running in a sandboxed runtime (tools execute in Docker).
-        // Some tools may be unavailable due to sandbox policy.
-        // Sub-agents stay sandboxed (no elevated/host access). Need outside-sandbox read/write? Don't spawn; ask first.
-        lines.AddRange(buildUserIdentitySection(@params.OwnerIdentity, isMinimal));
-        lines.AddRange(buildTimeSection(@params.UserTimezone));
-        lines.Add("## Workspace Files (injected)");
-        lines.Add("These user-editable files are loaded by BotNexus and included below in Project Context.");
-        lines.Add(string.Empty);
-        lines.AddRange(buildReplyTagsSection(isMinimal));
-        lines.AddRange(buildMessagingSection(isMinimal, normalizedTools, runtimeChannel, inlineButtonsEnabled));
-        lines.AddRange(buildVoiceSection(isMinimal, @params.TtsHint));
-        // TODO: Reaction guidance injection not yet implemented.
-        // ## Reactions
-        // Reactions are enabled for {channel} in MINIMAL/EXTENSIVE mode...
-        if (@params.ReasoningTagHint)
-        {
-            lines.Add("## Reasoning Format");
-            lines.Add(BuildReasoningHint());
-            lines.Add(string.Empty);
-        }
 
         var contextFiles = (@params.ContextFiles ?? []).Where(static file => !string.IsNullOrWhiteSpace(file.Path)).ToList();
         var orderedContextFiles = sortContextFilesForPrompt(contextFiles);
         var stableContextFiles = orderedContextFiles.Where(static file => !IsDynamicContextFile(file.Path)).ToList();
         var dynamicContextFiles = orderedContextFiles.Where(static file => IsDynamicContextFile(file.Path)).ToList();
-        lines.AddRange(buildProjectContextSection(stableContextFiles, "# Project Context", dynamic: false));
 
-        if (!isMinimal)
+        var promptContext = new PromptContext
         {
-            lines.AddRange(
-            [
-                "## Silent Replies",
-                $"Use {SilentReplyToken} ONLY when no user-visible reply is required.",
-                "",
-                "⚠️ Rules:",
-                "- Valid cases: silent housekeeping, deliberate no-op ambient wakeups, or after a messaging tool already delivered the user-visible reply.",
-                "- Never use it to avoid doing requested work or to end an actionable turn early.",
-                "- It must be your ENTIRE message - nothing else",
-                $"- Never append it to an actual response (never include \"{SilentReplyToken}\" in real replies)",
-                "- Never wrap it in markdown or code blocks",
-                "",
-                $"❌ Wrong: \"Here's help... {SilentReplyToken}\"",
-                $"❌ Wrong: \"{SilentReplyToken}\"",
-                $"✅ Right: {SilentReplyToken}",
-                ""
-            ]);
-        }
+            WorkspaceDir = @params.WorkspaceDir,
+            ContextFiles = contextFiles.Select(static file => new BotNexus.Prompts.ContextFile(file.Path, file.Content)).ToList(),
+            AvailableTools = normalizedTools,
+            IsMinimal = isMinimal,
+            Channel = runtimeChannel,
+            Extensions = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                [GatewayPromptDataKey] = new GatewayPromptData(
+                    @params,
+                    rawToolNames,
+                    normalizedTools,
+                    hasGateway,
+                    hasCronTool,
+                    hasUpdatePlanTool,
+                    readToolName,
+                    execToolName,
+                    processToolName,
+                    runtimeChannel,
+                    runtimeCapabilities,
+                    inlineButtonsEnabled,
+                    stableContextFiles,
+                    dynamicContextFiles)
+            }
+        };
 
-        lines.Add(SystemPromptCacheBoundary);
-        lines.AddRange(
-            buildProjectContextSection(
-                dynamicContextFiles,
-                stableContextFiles.Count > 0 ? "# Dynamic Project Context" : "# Project Context",
-                dynamic: true));
+        var pipeline = new PromptPipeline()
+            .Add(new LambdaPromptSection(10, BuildToolingSection))
+            .Add(new LambdaPromptSection(20, BuildToolCallStyleSection))
+            .Add(new LambdaPromptSection(30, static context => buildOverridablePromptSection(null, buildExecutionBiasSection(GetGatewayData(context).IsMinimal))))
+            .Add(new LambdaPromptSection(40, BuildSafetyAndCliSection))
+            .Add(new LambdaPromptSection(50, static context => buildSkillsSection(GetGatewayData(context).Parameters.SkillsPrompt, GetGatewayData(context).ReadToolName)))
+            .Add(new LambdaPromptSection(60, static context => buildMemorySection(GetGatewayData(context).IsMinimal, GetGatewayData(context).NormalizedTools)))
+            .Add(new LambdaPromptSection(70, BuildSelfUpdateSection, static context => GetGatewayData(context).HasGateway && !GetGatewayData(context).IsMinimal))
+            .Add(new LambdaPromptSection(80, BuildModelAliasesSection))
+            .Add(new LambdaPromptSection(90, BuildWorkspaceSection))
+            .Add(new LambdaPromptSection(100, static context => buildDocsSection(GetGatewayData(context).Parameters.DocsPath, GetGatewayData(context).IsMinimal, GetGatewayData(context).ReadToolName)))
+            .Add(new LambdaPromptSection(110, static context => buildUserIdentitySection(GetGatewayData(context).Parameters.OwnerIdentity, GetGatewayData(context).IsMinimal)))
+            .Add(new LambdaPromptSection(120, static context => buildTimeSection(GetGatewayData(context).Parameters.UserTimezone)))
+            .Add(new LambdaPromptSection(130, static _ => ["## Workspace Files (injected)", "These user-editable files are loaded by BotNexus and included below in Project Context.", string.Empty]))
+            .Add(new LambdaPromptSection(140, static context => buildReplyTagsSection(GetGatewayData(context).IsMinimal)))
+            .Add(new LambdaPromptSection(150, static context => buildMessagingSection(GetGatewayData(context).IsMinimal, GetGatewayData(context).NormalizedTools, GetGatewayData(context).RuntimeChannel, GetGatewayData(context).InlineButtonsEnabled)))
+            .Add(new LambdaPromptSection(160, static context => buildVoiceSection(GetGatewayData(context).IsMinimal, GetGatewayData(context).Parameters.TtsHint)))
+            .Add(new LambdaPromptSection(170, BuildReasoningSection, static context => GetGatewayData(context).Parameters.ReasoningTagHint))
+            .Add(new LambdaPromptSection(180, static context => buildProjectContextSection(GetGatewayData(context).StableContextFiles, "# Project Context", dynamic: false)))
+            .Add(new LambdaPromptSection(190, BuildSilentRepliesSection, static context => !GetGatewayData(context).IsMinimal))
+            .Add(new LambdaPromptSection(200, static _ => [SystemPromptCacheBoundary]))
+            .Add(new LambdaPromptSection(210, static context => buildProjectContextSection(
+                GetGatewayData(context).DynamicContextFiles,
+                GetGatewayData(context).StableContextFiles.Count > 0 ? "# Dynamic Project Context" : "# Project Context",
+                dynamic: true)))
+            .Add(new LambdaPromptSection(220, BuildExtraSystemPromptSection))
+            .Add(new LambdaPromptSection(230, BuildHeartbeatSection, static context => !GetGatewayData(context).IsMinimal))
+            .Add(new LambdaPromptSection(240, BuildRuntimeSection));
 
-        var extraSystemPrompt = NormalizeStructuredPromptSection(@params.ExtraSystemPrompt);
-        if (!string.IsNullOrWhiteSpace(extraSystemPrompt))
-        {
-            lines.Add(@params.PromptMode == PromptMode.Minimal ? "## Subagent Context" : "## Group Chat Context");
-            lines.Add(extraSystemPrompt);
-            lines.Add(string.Empty);
-        }
-
-        var heartbeatPrompt = NormalizeStructuredPromptSection(@params.HeartbeatPrompt);
-        if (!isMinimal && !string.IsNullOrWhiteSpace(heartbeatPrompt))
-        {
-            lines.AddRange(
-            [
-                "## Heartbeats",
-                $"Heartbeat prompt: {heartbeatPrompt}",
-                "If you receive a heartbeat poll (a user message matching the heartbeat prompt above), and there is nothing that needs attention, reply exactly:",
-                "HEARTBEAT_OK",
-                "BotNexus treats a leading/trailing \"HEARTBEAT_OK\" as a heartbeat ack (and may discard it).",
-                "If something needs attention, do NOT include \"HEARTBEAT_OK\"; reply with the alert text instead.",
-                ""
-            ]);
-        }
-
-        lines.Add("## Runtime");
-        lines.Add(buildRuntimeLine(@params.Runtime));
-        lines.Add($"Reasoning: {(@params.ReasoningLevel ?? "off")} (hidden unless on/stream). Toggle /reasoning; /status shows Reasoning when enabled.");
-
+        var lines = pipeline.BuildLines(promptContext);
         return string.Join("\n", lines.Where(static line => !string.IsNullOrEmpty(line)));
     }
-
     public static IReadOnlyList<ContextFile> sortContextFilesForPrompt(IReadOnlyList<ContextFile> contextFiles)
     {
-        return contextFiles.OrderBy(file => ContextFileOrder.TryGetValue(GetContextFileBasename(file.Path), out var order) ? order : int.MaxValue)
-            .ThenBy(file => GetContextFileBasename(file.Path), StringComparer.Ordinal)
-            .ThenBy(file => NormalizeContextFilePath(file.Path), StringComparer.Ordinal)
+        return ContextFileOrdering.SortForPrompt(contextFiles.Select(static file => new BotNexus.Prompts.ContextFile(file.Path, file.Content)).ToList())
+            .Select(static file => new ContextFile(file.Path, file.Content))
             .ToList();
     }
 
@@ -482,27 +327,19 @@ public static class SystemPromptBuilder
 
     public static string buildRuntimeLine(RuntimeInfo? runtime)
     {
-        var normalizedRuntimeCapabilities = NormalizePromptCapabilityIds(runtime?.Capabilities ?? []);
-        var parts = new List<string>
+        return RuntimeLineFormatter.BuildRuntimeLine(runtime is null ? null : new PromptRuntimeInfo
         {
-            !string.IsNullOrWhiteSpace(runtime?.AgentId) ? $"agent={runtime!.AgentId}" : string.Empty,
-            !string.IsNullOrWhiteSpace(runtime?.Host) ? $"host={runtime!.Host}" : string.Empty,
-            !string.IsNullOrWhiteSpace(runtime?.Os)
-                ? $"os={runtime!.Os}{(!string.IsNullOrWhiteSpace(runtime.Arch) ? $" ({runtime.Arch})" : string.Empty)}"
-                : !string.IsNullOrWhiteSpace(runtime?.Arch)
-                    ? $"arch={runtime!.Arch}"
-                    : string.Empty,
-            !string.IsNullOrWhiteSpace(runtime?.Provider) ? $"provider={runtime!.Provider}" : string.Empty,
-            !string.IsNullOrWhiteSpace(runtime?.Model) ? $"model={runtime!.Model}" : string.Empty,
-            !string.IsNullOrWhiteSpace(runtime?.DefaultModel) ? $"default_model={runtime!.DefaultModel}" : string.Empty,
-            !string.IsNullOrWhiteSpace(runtime?.Shell) ? $"shell={runtime!.Shell}" : string.Empty,
-            !string.IsNullOrWhiteSpace(runtime?.Channel) ? $"channel={runtime!.Channel.Trim().ToLowerInvariant()}" : string.Empty,
-            !string.IsNullOrWhiteSpace(runtime?.Channel)
-                ? $"capabilities={(normalizedRuntimeCapabilities.Count > 0 ? string.Join(",", normalizedRuntimeCapabilities) : "none")}"
-                : string.Empty
-        };
-
-        return $"Runtime: {string.Join(" | ", parts.Where(static value => !string.IsNullOrWhiteSpace(value)))}";
+            AgentId = runtime.AgentId,
+            Host = runtime.Host,
+            Os = runtime.Os,
+            Arch = runtime.Arch,
+            Provider = runtime.Provider,
+            Model = runtime.Model,
+            DefaultModel = runtime.DefaultModel,
+            Shell = runtime.Shell,
+            Channel = runtime.Channel,
+            Capabilities = runtime.Capabilities
+        });
     }
 
     public static IReadOnlyList<string> buildOverridablePromptSection(string? overrideValue, IReadOnlyList<string> fallback)
@@ -512,6 +349,247 @@ public static class SystemPromptBuilder
             return [overrideSection, ""];
 
         return fallback;
+    }
+
+    private const string GatewayPromptDataKey = "gateway";
+
+    private static GatewayPromptData GetGatewayData(PromptContext context)
+        => context.Get<GatewayPromptData>(GatewayPromptDataKey)
+            ?? throw new InvalidOperationException("Gateway prompt context data is missing.");
+
+    private static IReadOnlyList<string> BuildToolingSection(PromptContext context)
+    {
+        var data = GetGatewayData(context);
+        var lines = new List<string>
+        {
+            "You are a personal assistant running inside BotNexus.",
+            string.Empty,
+            "## Tooling",
+            "Structured tool definitions are the source of truth for tool names, descriptions, and parameters.",
+            "Tool names are case-sensitive. Call tools exactly as listed in the structured tool definitions.",
+            "If a tool is present in the structured tool definitions, it is available unless a later tool call reports a policy/runtime restriction.",
+            "TOOLS.md does not control tool availability; it is user guidance for how to use external tools."
+        };
+
+        lines.AddRange(data.HasCronTool
+            ? [
+                $"For follow-up at a future time (for example \"check back in 10 minutes\", reminders, run-later work, or recurring tasks), use cron instead of {data.ExecToolName} sleep, yieldMs delays, or {data.ProcessToolName} polling.",
+                $"Use {data.ExecToolName}/{data.ProcessToolName} only for commands that start now and continue running in the background.",
+                $"For long-running work that starts now, start it once and rely on automatic completion wake when it is enabled and the command emits output or fails; otherwise use {data.ProcessToolName} to confirm completion, and use it for logs, status, input, or intervention.",
+                "Do not emulate scheduling with sleep loops, timeout loops, or repeated polling."
+            ]
+            : [
+                $"For long waits, avoid rapid poll loops: use {data.ExecToolName} with enough yieldMs or {data.ProcessToolName}(action=poll, timeout=<ms>).",
+                $"For long-running work that starts now, start it once and rely on automatic completion wake when it is enabled and the command emits output or fails; otherwise use {data.ProcessToolName} to confirm completion, and use it for logs, status, input, or intervention."
+            ]);
+
+        if (data.HasUpdatePlanTool)
+        {
+            lines.AddRange(
+            [
+                "For non-trivial multi-step work, keep a short plan updated with `update_plan`.",
+                "Skip `update_plan` for simple tasks, obvious one-step fixes, or work you can finish in a few direct actions.",
+                "When you use `update_plan`, keep exactly one step `in_progress` until the work is done.",
+                "After calling `update_plan`, continue the work and do not repeat the full plan unless the user asks."
+            ]);
+        }
+
+        lines.Add("If a task is more complex or takes longer, spawn a sub-agent. Completion is push-based: it will auto-announce when done.");
+        lines.Add("Do not poll `subagents list` / `sessions_list` in a loop; only check status on-demand (for intervention, debugging, or when explicitly asked).");
+        lines.Add(string.Empty);
+        return lines;
+    }
+
+    private static IReadOnlyList<string> BuildToolCallStyleSection(PromptContext context)
+    {
+        var data = GetGatewayData(context);
+        return buildOverridablePromptSection(
+            null,
+            [
+                "## Tool Call Style",
+                "Default: do not narrate routine, low-risk tool calls (just call the tool).",
+                "Narrate only when it helps: multi-step work, complex/challenging problems, sensitive actions (e.g., deletions), or when the user explicitly asks.",
+                "Keep narration brief and value-dense; avoid repeating obvious steps.",
+                "Use plain human language for narration unless in a technical context.",
+                "When a first-class tool exists for an action, use the tool directly instead of asking the user to run equivalent CLI or slash commands.",
+                buildExecApprovalPromptGuidance(data.RuntimeChannel, data.InlineButtonsEnabled),
+                "Never execute /approve through exec or any other shell/tool path; /approve is a user-facing approval command, not a shell command.",
+                "Treat allow-once as single-command only: if another elevated command needs approval, request a fresh /approve and do not claim prior approval covered it.",
+                "When approvals are required, preserve and show the full command/script exactly as provided (including chained operators like &&, ||, |, ;, or multiline shells) so the user can approve what will actually run.",
+                ""
+            ]);
+    }
+
+    private static IReadOnlyList<string> BuildSafetyAndCliSection(PromptContext _)
+    {
+        return
+        [
+            "## Safety",
+            "You have no independent goals: do not pursue self-preservation, replication, resource acquisition, or power-seeking; avoid long-term plans beyond the user's request.",
+            "Prioritize safety and human oversight over completion; if instructions conflict, pause and ask; comply with stop/pause/audit requests and never bypass safeguards. (Inspired by Anthropic's constitution.)",
+            "Do not manipulate or persuade anyone to expand access or disable safeguards. Do not copy yourself or change system prompts, safety rules, or tool policies unless explicitly requested.",
+            "",
+            "## BotNexus CLI Quick Reference",
+            "BotNexus is controlled via subcommands. Do not invent commands.",
+            "To manage the Gateway daemon service (start/stop/restart):",
+            "- botnexus gateway status",
+            "- botnexus gateway start",
+            "- botnexus gateway stop",
+            "- botnexus gateway restart",
+            "If unsure, ask the user to run `botnexus help` (or `botnexus gateway --help`) and paste the output.",
+            ""
+        ];
+    }
+
+    private static IReadOnlyList<string> BuildSelfUpdateSection(PromptContext context)
+    {
+        _ = context;
+        return
+        [
+            "## BotNexus Self-Update",
+            "Get Updates (self-update) is ONLY allowed when the user explicitly asks for it.",
+            "Do not run config.apply or update.run unless the user explicitly requests an update or config change; if it's not explicit, ask first.",
+            "Use config.schema.lookup with a specific dot path to inspect only the relevant config subtree before making config changes or answering config-field questions; avoid guessing field names/types.",
+            "Actions: config.schema.lookup, config.get, config.apply (validate + write full config, then restart), config.patch (partial update, merges with existing), update.run (update deps or git, then restart).",
+            "After restart, BotNexus pings the last active session automatically.",
+            ""
+        ];
+    }
+
+    private static IReadOnlyList<string> BuildModelAliasesSection(PromptContext context)
+    {
+        var data = GetGatewayData(context);
+        if (data.Parameters.ModelAliasLines is not { Count: > 0 } || data.IsMinimal)
+        {
+            return [string.Empty];
+        }
+
+        var lines = new List<string>
+        {
+            string.Empty,
+            "## Model Aliases",
+            "Prefer aliases when specifying model overrides; full provider/model is also accepted."
+        };
+        lines.AddRange(data.Parameters.ModelAliasLines.Select(NormalizeStructuredPromptSection).Where(static line => !string.IsNullOrWhiteSpace(line)));
+        lines.Add(string.Empty);
+        return lines;
+    }
+
+    private static IReadOnlyList<string> BuildWorkspaceSection(PromptContext context)
+    {
+        var data = GetGatewayData(context);
+        var lines = new List<string>();
+        if (!string.IsNullOrWhiteSpace(data.Parameters.UserTimezone))
+            lines.Add("If you need the current date, time, or day of week, run session_status (📊 session_status).");
+
+        lines.Add("## Workspace");
+        lines.Add($"Your working directory is: {data.Parameters.WorkspaceDir}");
+        lines.Add("Treat this directory as the single global workspace for file operations unless explicitly instructed otherwise.");
+        lines.AddRange((data.Parameters.WorkspaceNotes ?? []).Select(NormalizeStructuredPromptSection).Where(static line => !string.IsNullOrWhiteSpace(line)));
+        lines.Add(string.Empty);
+        return lines;
+    }
+
+    private static IReadOnlyList<string> BuildReasoningSection(PromptContext _)
+        => ["## Reasoning Format", BuildReasoningHint(), string.Empty];
+
+    private static IReadOnlyList<string> BuildSilentRepliesSection(PromptContext _)
+        =>
+        [
+            "## Silent Replies",
+            $"Use {SilentReplyToken} ONLY when no user-visible reply is required.",
+            "",
+            "⚠️ Rules:",
+            "- Valid cases: silent housekeeping, deliberate no-op ambient wakeups, or after a messaging tool already delivered the user-visible reply.",
+            "- Never use it to avoid doing requested work or to end an actionable turn early.",
+            "- It must be your ENTIRE message - nothing else",
+            $"- Never append it to an actual response (never include \"{SilentReplyToken}\" in real replies)",
+            "- Never wrap it in markdown or code blocks",
+            "",
+            $"❌ Wrong: \"Here's help... {SilentReplyToken}\"",
+            $"❌ Wrong: \"{SilentReplyToken}\"",
+            $"✅ Right: {SilentReplyToken}",
+            ""
+        ];
+
+    private static IReadOnlyList<string> BuildExtraSystemPromptSection(PromptContext context)
+    {
+        var data = GetGatewayData(context);
+        var extraSystemPrompt = NormalizeStructuredPromptSection(data.Parameters.ExtraSystemPrompt);
+        if (string.IsNullOrWhiteSpace(extraSystemPrompt))
+        {
+            return [];
+        }
+
+        return
+        [
+            data.Parameters.PromptMode == PromptMode.Minimal ? "## Subagent Context" : "## Group Chat Context",
+            extraSystemPrompt,
+            string.Empty
+        ];
+    }
+
+    private static IReadOnlyList<string> BuildHeartbeatSection(PromptContext context)
+    {
+        var data = GetGatewayData(context);
+        var heartbeatPrompt = NormalizeStructuredPromptSection(data.Parameters.HeartbeatPrompt);
+        if (string.IsNullOrWhiteSpace(heartbeatPrompt))
+        {
+            return [];
+        }
+
+        return
+        [
+            "## Heartbeats",
+            $"Heartbeat prompt: {heartbeatPrompt}",
+            "If you receive a heartbeat poll (a user message matching the heartbeat prompt above), and there is nothing that needs attention, reply exactly:",
+            "HEARTBEAT_OK",
+            "BotNexus treats a leading/trailing \"HEARTBEAT_OK\" as a heartbeat ack (and may discard it).",
+            "If something needs attention, do NOT include \"HEARTBEAT_OK\"; reply with the alert text instead.",
+            ""
+        ];
+    }
+
+    private static IReadOnlyList<string> BuildRuntimeSection(PromptContext context)
+    {
+        var data = GetGatewayData(context);
+        return
+        [
+            "## Runtime",
+            buildRuntimeLine(data.Parameters.Runtime),
+            $"Reasoning: {(data.Parameters.ReasoningLevel ?? "off")} (hidden unless on/stream). Toggle /reasoning; /status shows Reasoning when enabled."
+        ];
+    }
+
+    private sealed class LambdaPromptSection(
+        int order,
+        Func<PromptContext, IReadOnlyList<string>> build,
+        Func<PromptContext, bool>? shouldInclude = null) : IPromptSection
+    {
+        public int Order => order;
+
+        public bool ShouldInclude(PromptContext context) => shouldInclude?.Invoke(context) ?? true;
+
+        public IReadOnlyList<string> Build(PromptContext context) => build(context);
+    }
+
+    private sealed record GatewayPromptData(
+        SystemPromptParams Parameters,
+        IReadOnlyList<string> RawToolNames,
+        IReadOnlySet<string> NormalizedTools,
+        bool HasGateway,
+        bool HasCronTool,
+        bool HasUpdatePlanTool,
+        string ReadToolName,
+        string ExecToolName,
+        string ProcessToolName,
+        string? RuntimeChannel,
+        IReadOnlyList<string> RuntimeCapabilities,
+        bool InlineButtonsEnabled,
+        IReadOnlyList<ContextFile> StableContextFiles,
+        IReadOnlyList<ContextFile> DynamicContextFiles)
+    {
+        public bool IsMinimal => Parameters.PromptMode is PromptMode.Minimal;
     }
 
     private static string buildExecApprovalPromptGuidance(string? runtimeChannel, bool inlineButtonsEnabled)
@@ -539,34 +617,18 @@ public static class SystemPromptBuilder
     }
 
     private static string NormalizeStructuredPromptSection(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return string.Empty;
-
-        var normalized = value.Replace("\r\n", "\n").Replace('\r', '\n');
-        var lines = normalized.Split('\n').Select(static line => line.TrimEnd());
-        return string.Join("\n", lines).Trim();
-    }
+        => PromptText.NormalizeStructuredSection(value);
 
     private static IReadOnlyList<string> NormalizePromptCapabilityIds(IEnumerable<string> capabilities)
-    {
-        return capabilities.Select(capability => capability.Trim().ToLowerInvariant())
-            .Where(static capability => capability.Length > 0)
-            .Distinct(StringComparer.Ordinal)
-            .OrderBy(static capability => capability, StringComparer.Ordinal)
-            .ToList();
-    }
+        => PromptText.NormalizeCapabilityIds(capabilities);
 
     private static bool IsDynamicContextFile(string pathValue) =>
-        string.Equals(GetContextFileBasename(pathValue), "heartbeat.md", StringComparison.Ordinal);
+        ContextFileOrdering.IsDynamic(pathValue);
 
     private static string NormalizeContextFilePath(string pathValue) =>
-        pathValue.Trim().Replace('\\', '/');
+        ContextFileOrdering.NormalizePath(pathValue);
 
     private static string GetContextFileBasename(string pathValue)
-    {
-        var normalizedPath = NormalizeContextFilePath(pathValue);
-        var segments = normalizedPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        return (segments.LastOrDefault() ?? normalizedPath).ToLowerInvariant();
-    }
+        => ContextFileOrdering.GetBasename(pathValue);
 }
+
