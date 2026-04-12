@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using BotNexus.Providers.Core.Models;
 using BotNexus.Providers.Core.Utilities;
 
@@ -9,7 +8,7 @@ namespace BotNexus.Providers.Anthropic;
 /// Converts BotNexus messages to Anthropic API message format and handles
 /// cache control, tool-name mapping, and tool-call ID normalization.
 /// </summary>
-internal static partial class AnthropicMessageConverter
+internal static class AnthropicMessageConverter
 {
     private static readonly IReadOnlyDictionary<string, string> ClaudeCodeToolLookup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
@@ -388,14 +387,8 @@ internal static partial class AnthropicMessageConverter
         return name;
     }
 
-    [GeneratedRegex("[^a-zA-Z0-9_-]")]
-    private static partial Regex NonAlphanumericRegex();
-
     internal static string NormalizeToolCallId(string id, LlmModel sourceModel, string targetProviderId)
     {
-        var normalized = NonAlphanumericRegex().Replace(id, "_");
-        if (normalized.Length > 64)
-            normalized = normalized[..64];
-        return normalized;
+        return id.NormalizeToolCallId(64);
     }
 }

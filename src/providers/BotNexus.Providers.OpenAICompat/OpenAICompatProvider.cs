@@ -20,6 +20,7 @@ namespace BotNexus.Providers.OpenAICompat;
 public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
 {
     private readonly HttpClient _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+    private static readonly OpenAIStreamProcessor StreamProcessor = new();
 
     public string Api => "openai-compat";
 
@@ -143,156 +144,14 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
         using var responseStream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(responseStream, Encoding.UTF8);
 
-        var output = CreatePartialMessage(model);
-        var contentBuilder = new StringBuilder();
-        var toolCallBuilders = new Dictionary<int, ToolCallBuilder>();
-        var contentIndex = 0;
-        var started = false;
-        string? responseId = null;
-        string? finishReason = null;
-
-        string? line;
-        while ((line = await reader.ReadLineAsync(ct)) is not null)
-        {
-            ct.ThrowIfCancellationRequested();
-
-            // SSE format: "data: {json}" or "data: [DONE]"
-            if (!line.StartsWith("data: ", StringComparison.Ordinal))
-                continue;
-
-            var data = line[6..];
-
-            if (data == "[DONE]")
-                break;
-
-            JsonElement chunk;
-            try
-            {
-                chunk = JsonDocument.Parse(data).RootElement;
-            }
-            catch (JsonException)
-            {
-                continue; // Skip malformed chunks
-            }
-
-            responseId ??= chunk.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
-
-            // Parse usage from the chunk (some servers send it in the final chunk)
-            if (chunk.TryGetProperty("usage", out var usageProp))
-                output = output with { Usage = ParseUsage(usageProp, output.Usage, model) };
-
-            if (!chunk.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
-                continue;
-
-            var choice = choices[0];
-
-            if (choice.TryGetProperty("finish_reason", out var frProp) && frProp.ValueKind != JsonValueKind.Null)
-                finishReason = frProp.GetString();
-
-            if (!choice.TryGetProperty("delta", out var delta))
-                continue;
-
-            if (!started)
-            {
-                stream.Push(new StartEvent(output));
-                started = true;
-            }
-
-            // Text content delta
-            if (delta.TryGetProperty("content", out var contentProp) && contentProp.ValueKind == JsonValueKind.String)
-            {
-                var text = contentProp.GetString() ?? "";
-                if (text.Length > 0)
-                {
-                    var sanitized = UnicodeSanitizer.SanitizeSurrogates(text);
-
-                    if (contentBuilder.Length == 0)
-                        stream.Push(new TextStartEvent(contentIndex, output));
-
-                    contentBuilder.Append(sanitized);
-                    UpdateOutputContent(output, contentBuilder, toolCallBuilders);
-                    stream.Push(new TextDeltaEvent(contentIndex, sanitized, output));
-                }
-            }
-
-            // Tool call deltas
-            if (delta.TryGetProperty("tool_calls", out var toolCallsProp) && toolCallsProp.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var tc in toolCallsProp.EnumerateArray())
-                {
-                    var tcIndex = tc.TryGetProperty("index", out var idxProp) ? idxProp.GetInt32() : 0;
-
-                    if (!toolCallBuilders.TryGetValue(tcIndex, out var builder))
-                    {
-                        // Finish text content block if one is in progress
-                        if (contentBuilder.Length > 0)
-                        {
-                            stream.Push(new TextEndEvent(contentIndex, contentBuilder.ToString(), output));
-                            contentIndex++;
-                        }
-
-                        builder = new ToolCallBuilder();
-                        toolCallBuilders[tcIndex] = builder;
-
-                        if (tc.TryGetProperty("id", out var tcId))
-                            builder.Id = tcId.GetString() ?? "";
-                        if (tc.TryGetProperty("function", out var fn))
-                        {
-                            if (fn.TryGetProperty("name", out var nameProp))
-                                builder.Name = nameProp.GetString() ?? "";
-                        }
-
-                        stream.Push(new ToolCallStartEvent(contentIndex + tcIndex, output));
-                    }
-
-                    if (tc.TryGetProperty("function", out var fnDelta))
-                    {
-                        if (fnDelta.TryGetProperty("name", out var nameDelta))
-                            builder.Name ??= nameDelta.GetString() ?? "";
-
-                        if (fnDelta.TryGetProperty("arguments", out var argsDelta))
-                        {
-                            var argChunk = argsDelta.GetString() ?? "";
-                            builder.ArgumentsJson.Append(argChunk);
-                            UpdateOutputContent(output, contentBuilder, toolCallBuilders);
-                            stream.Push(new ToolCallDeltaEvent(contentIndex + tcIndex, argChunk, output));
-                        }
-                    }
-                }
-            }
-        }
-
-        // Finalize any open text content
-        if (contentBuilder.Length > 0 && toolCallBuilders.Count == 0)
-            stream.Push(new TextEndEvent(contentIndex, contentBuilder.ToString(), output));
-
-        // Finalize tool calls
-        foreach (var (tcIndex, builder) in toolCallBuilders)
-        {
-            var args = StreamingJsonParser.Parse(builder.ArgumentsJson.ToString());
-            var toolCall = new ToolCallContent(builder.Id, builder.Name ?? "", args);
-            stream.Push(new ToolCallEndEvent(contentIndex + tcIndex, toolCall, output));
-        }
-
-        // Determine stop reason
-        var mappedStop = MapStopReason(finishReason, toolCallBuilders.Count > 0);
-
-        // Build final message
-        var finalContent = BuildFinalContent(contentBuilder, toolCallBuilders);
-        var finalMessage = new AssistantMessage(
-            Content: finalContent,
-            Api: "openai-compat",
-            Provider: model.Provider,
-            ModelId: model.Id,
-            Usage: output.Usage,
-            StopReason: mappedStop.StopReason,
-            ErrorMessage: mappedStop.ErrorMessage,
-            ResponseId: responseId,
-            Timestamp: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-        );
-
-        stream.Push(new DoneEvent(mappedStop.StopReason, finalMessage));
-        stream.End(finalMessage);
+        await StreamProcessor.ParseCompatAsync(
+            stream,
+            reader,
+            model,
+            Api,
+            ParseUsage,
+            MapStopReason,
+            ct);
     }
 
     private static JsonObject BuildRequestBody(
@@ -584,50 +443,6 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
         return updated with { Cost = ModelRegistry.CalculateCost(model, updated) };
     }
 
-    private static void UpdateOutputContent(
-        AssistantMessage output, StringBuilder contentBuilder, Dictionary<int, ToolCallBuilder> toolCallBuilders)
-    {
-        var blocks = new List<ContentBlock>();
-        if (contentBuilder.Length > 0)
-            blocks.Add(new TextContent(contentBuilder.ToString()));
-        foreach (var (_, builder) in toolCallBuilders)
-        {
-            var args = StreamingJsonParser.Parse(builder.ArgumentsJson.ToString());
-            blocks.Add(new ToolCallContent(builder.Id, builder.Name ?? "", args));
-        }
-        // Note: AssistantMessage is a record and Content is init-only.
-        // We rebuild output at the end; intermediate events carry partial snapshots via the stream events themselves.
-    }
-
-    private static IReadOnlyList<ContentBlock> BuildFinalContent(
-        StringBuilder contentBuilder, Dictionary<int, ToolCallBuilder> toolCallBuilders)
-    {
-        var blocks = new List<ContentBlock>();
-        if (contentBuilder.Length > 0)
-            blocks.Add(new TextContent(contentBuilder.ToString()));
-        foreach (var (_, builder) in toolCallBuilders.OrderBy(kvp => kvp.Key))
-        {
-            var args = StreamingJsonParser.Parse(builder.ArgumentsJson.ToString());
-            blocks.Add(new ToolCallContent(builder.Id, builder.Name ?? "", args));
-        }
-        return blocks;
-    }
-
-    private static AssistantMessage CreatePartialMessage(LlmModel model)
-    {
-        return new AssistantMessage(
-            Content: [],
-            Api: "openai-compat",
-            Provider: model.Provider,
-            ModelId: model.Id,
-            Usage: Usage.Empty(),
-            StopReason: StopReason.Stop,
-            ErrorMessage: null,
-            ResponseId: null,
-            Timestamp: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-        );
-    }
-
     private static AssistantMessage CreateErrorMessage(LlmModel model, string error)
     {
         return new AssistantMessage(
@@ -643,10 +458,4 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
         );
     }
 
-    private sealed class ToolCallBuilder
-    {
-        public string Id { get; set; } = "";
-        public string? Name { get; set; }
-        public StringBuilder ArgumentsJson { get; } = new();
-    }
 }
