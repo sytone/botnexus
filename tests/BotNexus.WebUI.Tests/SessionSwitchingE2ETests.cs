@@ -113,7 +113,7 @@ public sealed class SessionSwitchingE2ETests
         await host.SendMessageAsync("background-trigger");
         await host.OpenAgentTimelineAsync(AgentB);
 
-        var badge = host.Page.Locator($"#sessions-list .list-item[data-session-id='{sessionA}'] .unread-badge");
+        var badge = host.Page.Locator($"#sessions-list .list-item[data-agent-id='{AgentA}'][data-channel-type='web chat'] .unread-badge");
         await Assertions.Expect(badge).ToBeVisibleAsync(new() { Timeout = 15000 });
         (await host.Page.Locator("#chat-messages").InnerTextAsync()).Should().NotContain("background-event-2");
 
@@ -142,7 +142,7 @@ public sealed class SessionSwitchingE2ETests
         await host.SendMessageAsync("badge-trigger");
         await host.OpenAgentTimelineAsync(AgentB);
 
-        var badge = host.Page.Locator($"#sessions-list .list-item[data-session-id='{sessionA}'] .unread-badge");
+        var badge = host.Page.Locator($"#sessions-list .list-item[data-agent-id='{AgentA}'][data-channel-type='web chat'] .unread-badge");
         await Assertions.Expect(badge).ToBeVisibleAsync(new() { Timeout = 15000 });
         var badgeText = await badge.InnerTextAsync();
         badgeText.Should().NotBeNullOrWhiteSpace();
@@ -171,9 +171,9 @@ public sealed class SessionSwitchingE2ETests
         await host.OpenAgentTimelineAsync(AgentB);
         await host.SendMessageAsync("instant-seed-b");
 
+        var subscribeAllBefore = host.GetHubInvocationCount("SubscribeAll");
         var joinBefore = host.GetHubInvocationCount("JoinSession");
         var leaveBefore = host.GetHubInvocationCount("LeaveSession");
-        var subscribeBefore = host.GetHubInvocationCount("Subscribe");
         var sendBefore = host.GetHubInvocationCount("SendMessage");
 
         var sw = Stopwatch.StartNew();
@@ -184,7 +184,7 @@ public sealed class SessionSwitchingE2ETests
 
         host.GetHubInvocationCount("JoinSession").Should().Be(joinBefore);
         host.GetHubInvocationCount("LeaveSession").Should().Be(leaveBefore);
-        host.GetHubInvocationCount("Subscribe").Should().Be(subscribeBefore);
+        host.GetHubInvocationCount("SubscribeAll").Should().Be(subscribeAllBefore);
         host.GetHubInvocationCount("SendMessage").Should().Be(sendBefore);
         sw.ElapsedMilliseconds.Should().BeLessThan(2500);
     }
