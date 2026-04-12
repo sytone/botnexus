@@ -1,6 +1,5 @@
 using BotNexus.Cron.Actions;
-using BotNexus.Gateway.Abstractions.Channels;
-using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Triggers;
 using BotNexus.Domain.Primitives;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
@@ -11,53 +10,49 @@ namespace BotNexus.Cron.Tests;
 public sealed class AgentPromptActionTests
 {
     [Fact]
-    public async Task ExecuteAsync_DispatchesMessageToGateway()
+    public async Task ExecuteAsync_CreatesSessionUsingCronTrigger()
     {
         var action = new AgentPromptAction();
-        var dispatcher = new Mock<IChannelDispatcher>();
-        InboundMessage? captured = null;
+        var trigger = new Mock<IInternalTrigger>();
+        AgentId capturedAgentId = default;
+        string? capturedPrompt = null;
+        var createdSession = SessionId.From("cron:job-1:run-1");
 
-        dispatcher.Setup(value => value.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
-            .Callback<InboundMessage, CancellationToken>((message, _) => captured = message)
-            .Returns(Task.CompletedTask);
+        trigger.SetupGet(value => value.Type).Returns(TriggerType.Cron);
+        trigger.Setup(value => value.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<AgentId, string, CancellationToken>((agentId, prompt, _) =>
+            {
+                capturedAgentId = agentId;
+                capturedPrompt = prompt;
+            })
+            .ReturnsAsync(createdSession);
 
-        var services = BuildServices(dispatcher.Object);
+        var services = BuildServices(trigger.Object);
         var context = CreateContext(services);
 
         await action.ExecuteAsync(context);
 
-        captured.Should().NotBeNull();
-        captured!.TargetAgentId.Should().Be("agent-a");
-        captured.Content.Should().Be("Ping from cron");
-        captured.Metadata.Should().ContainKey("jobId");
-        dispatcher.Verify(value => value.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Once);
+        capturedAgentId.Should().Be(AgentId.From("agent-a"));
+        capturedPrompt.Should().Be("Ping from cron");
+        context.SessionId.Should().Be(createdSession.Value);
+        trigger.Verify(value => value.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task ExecuteAsync_CreatesSessionWithCronChannelType()
+    public async Task ExecuteAsync_ThrowsWhenCronTriggerMissing()
     {
         var action = new AgentPromptAction();
-        var dispatcher = new Mock<IChannelDispatcher>();
-        InboundMessage? captured = null;
-
-        dispatcher.Setup(value => value.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
-            .Callback<InboundMessage, CancellationToken>((message, _) => captured = message)
-            .Returns(Task.CompletedTask);
-
-        var services = BuildServices(dispatcher.Object);
+        var services = new ServiceCollection().BuildServiceProvider();
         var context = CreateContext(services);
 
-        await action.ExecuteAsync(context);
-
-        captured.Should().NotBeNull();
-        captured!.ChannelType.Should().Be(ChannelKey.From(AgentPromptAction.CronChannelType));
-        context.SessionId.Should().NotBeNull();
-        context.SessionId.Should().StartWith("cron:job-1:");
+        var act = () => action.ExecuteAsync(context);
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*Cron internal trigger is not registered*");
     }
 
-    private static IServiceProvider BuildServices(IChannelDispatcher dispatcher)
+    private static IServiceProvider BuildServices(IInternalTrigger trigger)
         => new ServiceCollection()
-            .AddSingleton(dispatcher)
+            .AddSingleton<IInternalTrigger>(trigger)
             .BuildServiceProvider();
 
     private static CronExecutionContext CreateContext(IServiceProvider services)

@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Triggers;
 using BotNexus.Gateway.Api.Hubs;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -15,8 +16,8 @@ public static class GatewayApiServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddBotNexusGatewayApi(this IServiceCollection services)
     {
-        services.AddSingleton<CronChannelAdapter>();
-        services.AddSingleton<IChannelAdapter>(provider => provider.GetRequiredService<CronChannelAdapter>());
+        services.AddSingleton<CronTrigger>();
+        services.AddSingleton<IInternalTrigger>(provider => provider.GetRequiredService<CronTrigger>());
         services.AddSingleton<SignalRChannelAdapter>();
         services.AddSingleton<IChannelAdapter>(provider => provider.GetRequiredService<SignalRChannelAdapter>());
         services.AddControllers()

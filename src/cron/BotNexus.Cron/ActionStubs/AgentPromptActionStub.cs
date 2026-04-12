@@ -1,18 +1,16 @@
-using BotNexus.Gateway.Abstractions.Channels;
-using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Triggers;
 using BotNexus.Domain.Primitives;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace BotNexus.Cron.Actions;
 
 #pragma warning disable CS1591 // Public members implement framework contracts
 
 /// <summary>
-/// Executes a cron job by dispatching a prompt through the gateway channel pipeline.
+/// Executes a cron job by triggering an internal gateway session.
 /// </summary>
 public sealed class AgentPromptAction : ICronAction
 {
-    public const string CronChannelType = "cron";
-
     public string ActionType => "agent-prompt";
 
     public async Task ExecuteAsync(CronExecutionContext context, CancellationToken cancellationToken = default)
@@ -26,27 +24,14 @@ public sealed class AgentPromptAction : ICronAction
         if (string.IsNullOrWhiteSpace(message))
             throw new InvalidOperationException("Cron job must define a message for agent-prompt actions.");
 
-        var dispatcher = context.Services.GetService(typeof(IChannelDispatcher)) as IChannelDispatcher
-            ?? throw new InvalidOperationException("IChannelDispatcher is not registered.");
+        var trigger = context.Services.GetServices<IInternalTrigger>()
+            .FirstOrDefault(candidate => candidate.Type.Equals(TriggerType.Cron))
+            ?? throw new InvalidOperationException("Cron internal trigger is not registered.");
 
-        var sessionId = $"cron:{context.Job.Id}:{context.RunId}";
-        var inbound = new InboundMessage
-        {
-            ChannelType = ChannelKey.From(CronChannelType),
-            SenderId = $"cron:{context.Job.Id}",
-            ConversationId = sessionId,
-            SessionId = sessionId,
-            TargetAgentId = agentId,
-            Content = message,
-            Metadata = new Dictionary<string, object?>
-            {
-                ["source"] = "cron",
-                ["jobId"] = context.Job.Id,
-                ["runId"] = context.RunId
-            }
-        };
+        var sessionId = await trigger
+            .CreateSessionAsync(AgentId.From(agentId), message, cancellationToken)
+            .ConfigureAwait(false);
 
-        await dispatcher.DispatchAsync(inbound, cancellationToken).ConfigureAwait(false);
         context.RecordSessionId(sessionId);
     }
 }

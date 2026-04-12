@@ -1,32 +1,45 @@
-using BotNexus.Channels.Core;
-using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Abstractions.Triggers;
 using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Api.Hubs;
 
-#pragma warning disable CS1591 // Channel adapter members follow base contracts
-
 /// <summary>
-/// Internal adapter used for cron-triggered sessions.
+/// Internal trigger used for cron-triggered sessions.
 /// </summary>
-public sealed class CronChannelAdapter(ILogger<CronChannelAdapter> logger)
-    : ChannelAdapterBase(logger)
+public sealed class CronTrigger(
+    IAgentSupervisor supervisor,
+    ISessionStore sessions,
+    ILogger<CronTrigger> logger) : IInternalTrigger
 {
-    public override ChannelKey ChannelType => ChannelKey.From("cron");
-    public override string DisplayName => "Cron Scheduler";
-    public override bool SupportsStreaming => false;
-    public override bool SupportsSteering => false;
-    public override bool SupportsFollowUp => false;
-    public override bool SupportsThinkingDisplay => false;
-    public override bool SupportsToolDisplay => false;
+    public TriggerType Type => TriggerType.Cron;
+    public string DisplayName => "Cron Scheduler";
 
-    protected override Task OnStartAsync(CancellationToken cancellationToken)
-        => Task.CompletedTask;
+    public async Task<SessionId> CreateSessionAsync(AgentId agentId, string prompt, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(agentId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
 
-    protected override Task OnStopAsync(CancellationToken cancellationToken)
-        => Task.CompletedTask;
+        var sessionId = SessionId.From($"cron:{DateTimeOffset.UtcNow:yyyyMMddHHmmss}:{Guid.NewGuid():N}");
+        var session = await sessions.GetOrCreateAsync(sessionId, agentId, ct).ConfigureAwait(false);
+        session.ChannelType ??= ChannelKey.From(Type.Value);
+        session.CallerId ??= $"{Type.Value}:{agentId.Value}";
+        session.SessionType = SessionType.Cron;
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = prompt });
 
-    public override Task SendAsync(OutboundMessage message, CancellationToken cancellationToken = default)
-        => Task.CompletedTask;
+        var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);
+        var response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
+
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
+        await sessions.SaveAsync(session, ct).ConfigureAwait(false);
+
+        logger.LogInformation(
+            "Cron trigger created session '{SessionId}' for agent '{AgentId}'.",
+            sessionId,
+            agentId);
+
+        return sessionId;
+    }
 }
