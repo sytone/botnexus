@@ -582,12 +582,18 @@ function renderHistoryEntryTo(entry, container) {
     if (entry.role === 'tool') renderToolCallHistoryTo(entry, container);
 }
 
+function parseToolNameFromContent(content) {
+    if (!content) return null;
+    const match = content.match(/Tool '([^']+)'/);
+    return match ? match[1] : null;
+}
+
 function renderToolCallHistoryTo(tc, container) {
     const callId = `hist-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const div = document.createElement('div');
     div.className = `message tool-call tool-complete${showTools ? '' : ' hidden'}`;
     div.dataset.callId = callId;
-    const toolName = tc.toolName || tc.name || 'unknown';
+    const toolName = tc.toolName || tc.name || parseToolNameFromContent(tc.content) || 'unknown';
     const argsPreview = formatToolArgsPreview(tc);
     const argsStr = JSON.stringify(tc.arguments || tc.args || {}, null, 2);
     const resultStr = tc.content || tc.output || tc.result || '(no result)';
