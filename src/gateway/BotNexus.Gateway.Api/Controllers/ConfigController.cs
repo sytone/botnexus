@@ -7,6 +7,9 @@ namespace BotNexus.Gateway.Api.Controllers;
 /// <summary>
 /// REST API for platform configuration diagnostics.
 /// </summary>
+/// <summary>
+/// Represents config controller.
+/// </summary>
 [ApiController]
 [Route("api/config")]
 public sealed class ConfigController : ControllerBase
@@ -16,6 +19,7 @@ public sealed class ConfigController : ControllerBase
     /// </summary>
     /// <param name="path">Optional explicit path to a config file. Defaults to <c>~/.botnexus/config.json</c>.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The config validation result.</returns>
     [HttpGet("validate")]
     public async Task<ActionResult<ConfigValidationResponse>> Validate([FromQuery] string? path, CancellationToken cancellationToken)
     {

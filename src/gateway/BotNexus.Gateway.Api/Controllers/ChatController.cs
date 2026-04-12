@@ -10,6 +10,9 @@ namespace BotNexus.Gateway.Api.Controllers;
 /// REST endpoint for non-streaming chat. Routes through the gateway message queue
 /// to ensure proper session serialization. For real-time streaming, use the WebSocket endpoint.
 /// </summary>
+/// <summary>
+/// Represents chat controller.
+/// </summary>
 [ApiController]
 [Route("api/[controller]")]
 public sealed class ChatController : ControllerBase
@@ -32,6 +35,12 @@ public sealed class ChatController : ControllerBase
     /// Sends a message to an agent and returns the complete response.
     /// For streaming, connect via SignalR at <c>/hub/gateway</c>.
     /// </summary>
+    /// <summary>
+    /// Executes send.
+    /// </summary>
+    /// <param name="request">The request.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The send result.</returns>
     [HttpPost]
     public async Task<ActionResult<ChatResponse>> Send([FromBody] ChatRequest request, CancellationToken cancellationToken)
     {
@@ -85,6 +94,12 @@ public sealed class ChatController : ControllerBase
     /// <summary>
     /// Injects a steering message into an active agent run.
     /// </summary>
+    /// <summary>
+    /// Executes steer.
+    /// </summary>
+    /// <param name="request">The request.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The steer result.</returns>
     [HttpPost("steer")]
     public async Task<IActionResult> Steer([FromBody] AgentControlRequest request, CancellationToken cancellationToken)
     {
@@ -107,6 +122,12 @@ public sealed class ChatController : ControllerBase
     /// <summary>
     /// Queues a follow-up message for an active agent session.
     /// </summary>
+    /// <summary>
+    /// Executes follow up.
+    /// </summary>
+    /// <param name="request">The request.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The follow up result.</returns>
     [HttpPost("follow-up")]
     public async Task<IActionResult> FollowUp([FromBody] AgentControlRequest request, CancellationToken cancellationToken)
     {

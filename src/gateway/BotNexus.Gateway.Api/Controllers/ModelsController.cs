@@ -8,6 +8,9 @@ namespace BotNexus.Gateway.Api.Controllers;
 /// <summary>
 /// REST API for available LLM models.
 /// </summary>
+/// <summary>
+/// Represents models controller.
+/// </summary>
 [ApiController]
 [Route("api/models")]
 public sealed class ModelsController : ControllerBase
@@ -25,6 +28,12 @@ public sealed class ModelsController : ControllerBase
     /// <summary>
     /// Get all available models from all registered providers.
     /// </summary>
+    /// <summary>
+    /// Executes get models.
+    /// </summary>
+    /// <param name="provider">The provider.</param>
+    /// <param name="agentId">The agent id.</param>
+    /// <returns>The get models result.</returns>
     [HttpGet]
     public ActionResult<IEnumerable<ModelInfo>> GetModels([FromQuery] string? provider = null, [FromQuery] string? agentId = null)
     {
@@ -71,6 +80,12 @@ public sealed class ModelsController : ControllerBase
     /// <summary>
     /// Get allowed models for a specific agent.
     /// </summary>
+    /// <summary>
+    /// Executes get agent models.
+    /// </summary>
+    /// <param name="agentId">The agent id.</param>
+    /// <param name="provider">The provider.</param>
+    /// <returns>The get agent models result.</returns>
     [HttpGet("/api/agents/{agentId}/models")]
     public ActionResult<IEnumerable<ModelInfo>> GetAgentModels(string agentId, [FromQuery] string? provider = null)
     {

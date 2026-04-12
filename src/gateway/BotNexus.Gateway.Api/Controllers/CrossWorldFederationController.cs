@@ -9,6 +9,14 @@ using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 
 namespace BotNexus.Gateway.Api.Controllers;
 
+/// <summary>
+/// Represents cross world federation controller.
+/// </summary>
+/// <param name="registry">The agent registry.</param>
+/// <param name="supervisor">The agent supervisor.</param>
+/// <param name="sessionStore">The session store.</param>
+/// <param name="inboundAuthService">The inbound authentication service.</param>
+/// <param name="platformConfig">The platform configuration.</param>
 [ApiController]
 [Route("api/federation/cross-world")]
 public sealed class CrossWorldFederationController(
@@ -20,6 +28,10 @@ public sealed class CrossWorldFederationController(
 {
     private readonly string _localWorldId = WorldIdentityResolver.Resolve(platformConfig).Id;
 
+    /// <summary>
+    /// Executes relay async.
+    /// </summary>
+    /// <returns>The relay async result.</returns>
     [HttpPost("relay")]
     public async Task<ActionResult<CrossWorldRelayResponse>> RelayAsync(
         [FromBody] CrossWorldRelayRequest request,

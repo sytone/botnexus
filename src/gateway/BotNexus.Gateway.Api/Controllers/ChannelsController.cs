@@ -7,6 +7,9 @@ namespace BotNexus.Gateway.Api.Controllers;
 /// <summary>
 /// REST API for inspecting registered channel adapters.
 /// </summary>
+/// <summary>
+/// Represents channels controller.
+/// </summary>
 [ApiController]
 [Route("api/[controller]")]
 public sealed class ChannelsController : ControllerBase
@@ -23,6 +26,10 @@ public sealed class ChannelsController : ControllerBase
     /// Lists registered channel adapters and their capabilities.
     /// </summary>
     /// <returns>Registered channel adapters with runtime status and capability flags.</returns>
+    /// <summary>
+    /// Executes list.
+    /// </summary>
+    /// <returns>The list result.</returns>
     [HttpGet]
     [ProducesResponseType(typeof(IReadOnlyList<ChannelAdapterResponse>), StatusCodes.Status200OK)]
     public ActionResult<IReadOnlyList<ChannelAdapterResponse>> List()

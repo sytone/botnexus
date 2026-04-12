@@ -22,9 +22,23 @@ public sealed class SoulTrigger(
     private static readonly TimeZoneInfo DefaultTimeZone = TimeZoneInfo.Utc;
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
+    /// <summary>
+    /// Gets the trigger type identifier.
+    /// </summary>
     public TriggerType Type => TriggerType.Soul;
+
+    /// <summary>
+    /// Gets the display name for the trigger.
+    /// </summary>
     public string DisplayName => "Soul Session";
 
+    /// <summary>
+    /// Executes create session async.
+    /// </summary>
+    /// <param name="agentId">The agent id.</param>
+    /// <param name="prompt">The prompt.</param>
+    /// <param name="ct">The ct.</param>
+    /// <returns>The create session async result.</returns>
     public async Task<SessionId> CreateSessionAsync(AgentId agentId, string prompt, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(agentId);

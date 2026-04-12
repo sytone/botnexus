@@ -21,6 +21,7 @@ public sealed class CorrelationIdMiddleware
     /// Initializes a new instance of the <see cref="CorrelationIdMiddleware"/> class.
     /// </summary>
     /// <param name="next">The next middleware in the pipeline.</param>
+/// <param name="logger">The logger instance.</param>
     public CorrelationIdMiddleware(RequestDelegate next, ILogger<CorrelationIdMiddleware> logger)
     {
         _next = next;

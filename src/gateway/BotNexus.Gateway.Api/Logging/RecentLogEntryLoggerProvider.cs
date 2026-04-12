@@ -2,10 +2,21 @@ using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Api.Logging;
 
+/// <summary>
+/// Represents recent log entry logger provider.
+/// </summary>
 public sealed class RecentLogEntryLoggerProvider(IRecentLogStore store) : ILoggerProvider
 {
+    /// <summary>
+    /// Executes create logger.
+    /// </summary>
+    /// <param name="categoryName">The category name.</param>
+    /// <returns>The create logger result.</returns>
     public ILogger CreateLogger(string categoryName) => new RecentLogEntryLogger(categoryName, store);
 
+    /// <summary>
+    /// Executes dispose.
+    /// </summary>
     public void Dispose()
     {
     }
@@ -14,6 +25,11 @@ public sealed class RecentLogEntryLoggerProvider(IRecentLogStore store) : ILogge
     {
         public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
 
+        /// <summary>
+        /// Executes is enabled.
+        /// </summary>
+        /// <param name="logLevel">The log level.</param>
+        /// <returns>The is enabled result.</returns>
         public bool IsEnabled(LogLevel logLevel) => true;
 
         public void Log<TState>(
@@ -54,6 +70,9 @@ public sealed class RecentLogEntryLoggerProvider(IRecentLogStore store) : ILogge
         {
             public static readonly NullScope Instance = new();
 
+            /// <summary>
+            /// Executes dispose.
+            /// </summary>
             public void Dispose()
             {
             }

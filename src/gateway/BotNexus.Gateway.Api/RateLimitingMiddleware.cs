@@ -125,9 +125,21 @@ public sealed class RateLimitingMiddleware
 
     private sealed class ClientWindow(DateTimeOffset windowStart)
     {
+        /// <summary>
+        /// Gets the sync.
+        /// </summary>
         public object Sync { get; } = new();
+        /// <summary>
+        /// Gets or sets the window start.
+        /// </summary>
         public DateTimeOffset WindowStart { get; set; } = windowStart;
+        /// <summary>
+        /// Gets or sets the last accessed.
+        /// </summary>
         public DateTimeOffset LastAccessed { get; set; } = windowStart;
+        /// <summary>
+        /// Gets or sets the request count.
+        /// </summary>
         public int RequestCount { get; set; }
     }
 

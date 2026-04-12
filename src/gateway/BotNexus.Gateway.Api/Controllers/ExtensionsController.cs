@@ -8,6 +8,9 @@ namespace BotNexus.Gateway.Api.Controllers;
 /// <summary>
 /// REST API for inspecting loaded runtime extensions.
 /// </summary>
+/// <summary>
+/// Represents extensions controller.
+/// </summary>
 [ApiController]
 [Route("api/[controller]")]
 public sealed class ExtensionsController : ControllerBase
@@ -24,6 +27,10 @@ public sealed class ExtensionsController : ControllerBase
     /// Lists loaded extensions and their declared extension types.
     /// </summary>
     /// <returns>Loaded extension metadata for each extension type.</returns>
+    /// <summary>
+    /// Executes list.
+    /// </summary>
+    /// <returns>The list result.</returns>
     [HttpGet]
     [ProducesResponseType(typeof(IReadOnlyList<ExtensionResponse>), StatusCodes.Status200OK)]
     public ActionResult<IReadOnlyList<ExtensionResponse>> List()

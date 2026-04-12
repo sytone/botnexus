@@ -6,6 +6,9 @@ namespace BotNexus.Gateway.Api.Controllers;
 /// <summary>
 /// REST API for available LLM providers.
 /// </summary>
+/// <summary>
+/// Represents providers controller.
+/// </summary>
 [ApiController]
 [Route("api/providers")]
 public sealed class ProvidersController : ControllerBase
@@ -21,6 +24,10 @@ public sealed class ProvidersController : ControllerBase
     /// <summary>
     /// Get all available providers.
     /// </summary>
+    /// <summary>
+    /// Executes get providers.
+    /// </summary>
+    /// <returns>The get providers result.</returns>
     [HttpGet]
     public ActionResult<IEnumerable<ProviderInfo>> GetProviders()
     {

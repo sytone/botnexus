@@ -15,9 +15,23 @@ public sealed class CronTrigger(
     ISessionStore sessions,
     ILogger<CronTrigger> logger) : IInternalTrigger
 {
+    /// <summary>
+    /// Gets the trigger type identifier.
+    /// </summary>
     public TriggerType Type => TriggerType.Cron;
+
+    /// <summary>
+    /// Gets the display name for the trigger.
+    /// </summary>
     public string DisplayName => "Cron Scheduler";
 
+    /// <summary>
+    /// Executes create session async.
+    /// </summary>
+    /// <param name="agentId">The agent id.</param>
+    /// <param name="prompt">The prompt.</param>
+    /// <param name="ct">The ct.</param>
+    /// <returns>The create session async result.</returns>
     public async Task<SessionId> CreateSessionAsync(AgentId agentId, string prompt, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(agentId);

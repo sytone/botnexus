@@ -55,6 +55,10 @@ public sealed class GatewayHub : Hub
         _logger = logger;
     }
 
+    /// <summary>
+    /// Executes subscribe all.
+    /// </summary>
+    /// <returns>The subscribe all result.</returns>
     public async Task<object> SubscribeAll()
     {
         var sessions = await _warmup.GetAvailableSessionsAsync(Context.ConnectionAborted);
@@ -75,6 +79,12 @@ public sealed class GatewayHub : Hub
         return new { sessions };
     }
 
+    /// <summary>
+    /// Executes join session.
+    /// </summary>
+    /// <param name="agentId">The agent id.</param>
+    /// <param name="sessionId">The session id.</param>
+    /// <returns>The join session result.</returns>
     [Obsolete("JoinSession is deprecated. Use SubscribeAll and SendMessage(agentId, channelType, content).")]
     public async Task<object> JoinSession(string agentId, string? sessionId)
     {
@@ -134,6 +144,11 @@ public sealed class GatewayHub : Hub
         };
     }
 
+    /// <summary>
+    /// Executes leave session.
+    /// </summary>
+    /// <param name="sessionId">The session id.</param>
+    /// <returns>The leave session result.</returns>
     [Obsolete("LeaveSession is deprecated. Clients remain subscribed via SubscribeAll.")]
     public Task LeaveSession(string sessionId)
         => Groups.RemoveFromGroupAsync(
@@ -141,6 +156,13 @@ public sealed class GatewayHub : Hub
             GetSessionGroup(ParseSessionId(sessionId)),
             Context.ConnectionAborted);
 
+    /// <summary>
+    /// Executes send message.
+    /// </summary>
+    /// <param name="agentId">The agent id.</param>
+    /// <param name="channelType">The channel type.</param>
+    /// <param name="content">The content.</param>
+    /// <returns>The send message result.</returns>
     public async Task<object> SendMessage(AgentId agentId, ChannelKey channelType, string content)
     {
         var typedAgentId = NormalizeAgentId(agentId);
@@ -177,6 +199,13 @@ public sealed class GatewayHub : Hub
             },
             CancellationToken.None);
 
+    /// <summary>
+    /// Executes steer.
+    /// </summary>
+    /// <param name="agentId">The agent id.</param>
+    /// <param name="sessionId">The session id.</param>
+    /// <param name="content">The content.</param>
+    /// <returns>The steer result.</returns>
     public Task Steer(AgentId agentId, SessionId sessionId, string content)
     {
         var typedAgentId = NormalizeAgentId(agentId);
@@ -200,6 +229,13 @@ public sealed class GatewayHub : Hub
             CancellationToken.None);
     }
 
+    /// <summary>
+    /// Executes follow up.
+    /// </summary>
+    /// <param name="agentId">The agent id.</param>
+    /// <param name="sessionId">The session id.</param>
+    /// <param name="content">The content.</param>
+    /// <returns>The follow up result.</returns>
     public Task FollowUp(AgentId agentId, SessionId sessionId, string content)
     {
         var typedAgentId = NormalizeAgentId(agentId);
@@ -208,6 +244,12 @@ public sealed class GatewayHub : Hub
         return DispatchMessageAsync(typedAgentId, typedSessionId, content, "message");
     }
 
+    /// <summary>
+    /// Executes abort.
+    /// </summary>
+    /// <param name="agentId">The agent id.</param>
+    /// <param name="sessionId">The session id.</param>
+    /// <returns>The abort result.</returns>
     public async Task Abort(AgentId agentId, SessionId sessionId)
     {
         var typedAgentId = NormalizeAgentId(agentId);
@@ -220,6 +262,12 @@ public sealed class GatewayHub : Hub
         await handle.AbortAsync(CancellationToken.None);
     }
 
+    /// <summary>
+    /// Executes reset session.
+    /// </summary>
+    /// <param name="agentId">The agent id.</param>
+    /// <param name="sessionId">The session id.</param>
+    /// <returns>The reset session result.</returns>
     public async Task ResetSession(AgentId agentId, SessionId sessionId)
     {
         var typedAgentId = NormalizeAgentId(agentId);
@@ -229,6 +277,12 @@ public sealed class GatewayHub : Hub
         await Clients.Caller.SendAsync("SessionReset", new { agentId = typedAgentId.Value, sessionId = typedSessionId.Value });
     }
 
+    /// <summary>
+    /// Executes compact session.
+    /// </summary>
+    /// <param name="agentId">The agent id.</param>
+    /// <param name="sessionId">The session id.</param>
+    /// <returns>The compact session result.</returns>
     public async Task<object> CompactSession(AgentId agentId, SessionId sessionId)
     {
         _ = NormalizeAgentId(agentId);
@@ -253,12 +307,26 @@ public sealed class GatewayHub : Hub
         };
     }
 
+    /// <summary>
+    /// Executes get agents.
+    /// </summary>
+    /// <returns>The get agents result.</returns>
     public Task<IReadOnlyList<AgentDescriptor>> GetAgents()
         => Task.FromResult(_registry.GetAll());
 
+    /// <summary>
+    /// Executes get agent status.
+    /// </summary>
+    /// <param name="agentId">The agent id.</param>
+    /// <param name="sessionId">The session id.</param>
+    /// <returns>The get agent status result.</returns>
     public AgentInstance? GetAgentStatus(AgentId agentId, SessionId sessionId)
         => _supervisor.GetInstance(NormalizeAgentId(agentId), NormalizeSessionId(sessionId));
 
+    /// <summary>
+    /// Executes on connected async.
+    /// </summary>
+    /// <returns>The on connected async result.</returns>
     public override async Task OnConnectedAsync()
     {
         var clientVersion = Context.GetHttpContext()?.Request.Query["clientVersion"].FirstOrDefault() ?? "unknown";

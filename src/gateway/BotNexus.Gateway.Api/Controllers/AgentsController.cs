@@ -9,6 +9,9 @@ namespace BotNexus.Gateway.Api.Controllers;
 /// <summary>
 /// REST API for agent registration and lifecycle management.
 /// </summary>
+/// <summary>
+/// Represents agents controller.
+/// </summary>
 [ApiController]
 [Route("api/[controller]")]
 public sealed class AgentsController : ControllerBase
@@ -31,10 +34,19 @@ public sealed class AgentsController : ControllerBase
     }
 
     /// <summary>Lists all registered agents.</summary>
+    /// <summary>
+    /// Executes list.
+    /// </summary>
+    /// <returns>The list result.</returns>
     [HttpGet]
     public ActionResult<IReadOnlyList<AgentDescriptor>> List() => Ok(_registry.GetAll());
 
     /// <summary>Gets a specific agent by ID.</summary>
+    /// <summary>
+    /// Executes get.
+    /// </summary>
+    /// <param name="agentId">The agent id.</param>
+    /// <returns>The get result.</returns>
     [HttpGet("{agentId}")]
     public ActionResult<AgentDescriptor> Get(string agentId)
     {
@@ -43,6 +55,12 @@ public sealed class AgentsController : ControllerBase
     }
 
     /// <summary>Registers a new agent.</summary>
+    /// <summary>
+    /// Executes register.
+    /// </summary>
+    /// <param name="descriptor">The descriptor.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The register result.</returns>
     [HttpPost]
     public async Task<ActionResult> Register([FromBody] AgentDescriptor descriptor, CancellationToken cancellationToken)
     {
@@ -97,6 +115,12 @@ public sealed class AgentsController : ControllerBase
     }
 
     /// <summary>Unregisters an agent.</summary>
+    /// <summary>
+    /// Executes unregister.
+    /// </summary>
+    /// <param name="agentId">The agent id.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The unregister result.</returns>
     [HttpDelete("{agentId}")]
     public async Task<ActionResult> Unregister(string agentId, CancellationToken cancellationToken)
     {
@@ -106,6 +130,12 @@ public sealed class AgentsController : ControllerBase
     }
 
     /// <summary>Gets the status of a running agent instance.</summary>
+    /// <summary>
+    /// Executes get instance status.
+    /// </summary>
+    /// <param name="agentId">The agent id.</param>
+    /// <param name="sessionId">The session id.</param>
+    /// <returns>The get instance status result.</returns>
     [HttpGet("{agentId}/sessions/{sessionId}/status")]
     public ActionResult<AgentInstance> GetInstanceStatus(string agentId, string sessionId)
     {
@@ -114,10 +144,20 @@ public sealed class AgentsController : ControllerBase
     }
 
     /// <summary>Lists all active agent instances.</summary>
+    /// <summary>
+    /// Executes list instances.
+    /// </summary>
+    /// <returns>The list instances result.</returns>
     [HttpGet("instances")]
     public ActionResult<IReadOnlyList<AgentInstance>> ListInstances() => Ok(_supervisor.GetAllInstances());
 
     /// <summary>Gets runtime health for active instances of an agent.</summary>
+    /// <summary>
+    /// Executes get health.
+    /// </summary>
+    /// <param name="agentId">The agent id.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The get health result.</returns>
     [HttpGet("{agentId}/health")]
     public async Task<ActionResult<AgentHealthResponse>> GetHealth(string agentId, CancellationToken cancellationToken)
     {
@@ -151,6 +191,13 @@ public sealed class AgentsController : ControllerBase
     }
 
     /// <summary>Stops a specific agent instance.</summary>
+    /// <summary>
+    /// Executes stop instance.
+    /// </summary>
+    /// <param name="agentId">The agent id.</param>
+    /// <param name="sessionId">The session id.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The stop instance result.</returns>
     [HttpPost("{agentId}/sessions/{sessionId}/stop")]
     public async Task<ActionResult> StopInstance(string agentId, string sessionId, CancellationToken cancellationToken)
     {

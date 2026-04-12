@@ -1,5 +1,8 @@
 namespace BotNexus.Gateway.Api.Logging;
 
+/// <summary>
+/// Represents recent log entry.
+/// </summary>
 public sealed record RecentLogEntry(
     DateTimeOffset Timestamp,
     string Category,

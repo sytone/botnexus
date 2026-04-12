@@ -9,6 +9,9 @@ namespace BotNexus.Gateway.Api.Controllers;
 /// <summary>
 /// REST API for loading channel history across multiple sessions.
 /// </summary>
+/// <summary>
+/// Represents channel history controller.
+/// </summary>
 [ApiController]
 [Route("api/channels/{channelType}/agents/{agentId}/history")]
 public sealed class ChannelHistoryController : ControllerBase
@@ -24,6 +27,12 @@ public sealed class ChannelHistoryController : ControllerBase
     /// <summary>
     /// Loads channel history with cursor-based pagination across sessions.
     /// </summary>
+    /// <param name="channelType">The channel type.</param>
+    /// <param name="agentId">The agent id.</param>
+    /// <param name="cursor">The optional pagination cursor in <c>{sessionId}:{messageIndex}</c> format.</param>
+    /// <param name="limit">The maximum number of messages to return.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The channel history page.</returns>
     [HttpGet]
     [ProducesResponseType(typeof(ChannelHistoryResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
