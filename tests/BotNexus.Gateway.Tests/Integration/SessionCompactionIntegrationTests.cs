@@ -166,7 +166,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         session.AddEntries(originalEntries);
 
         var compactor = CreateCompactor("fixed-summary");
-        await compactor.CompactAsync(session, new CompactionOptions
+        await compactor.CompactAsync(session.Session, new CompactionOptions
         {
             PreservedTurns = 3,
             SummarizationModel = TestModel.Id
@@ -199,7 +199,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         ]);
 
         var compactor = CreateCompactor("tool-summary");
-        await compactor.CompactAsync(session, new CompactionOptions
+        await compactor.CompactAsync(session.Session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
@@ -223,7 +223,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         ]);
 
         var compactor = CreateCompactor("coherent-summary");
-        await compactor.CompactAsync(session, new CompactionOptions
+        await compactor.CompactAsync(session.Session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
@@ -254,7 +254,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         ]);
 
         var compactor = CreateCompactor("archived-summary");
-        await compactor.CompactAsync(session, new CompactionOptions
+        await compactor.CompactAsync(session.Session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
@@ -276,7 +276,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         var session = BuildCompactionSession();
         var compactor = CreateCompactor(new string('x', 50_000));
 
-        await compactor.CompactAsync(session, new CompactionOptions
+        await compactor.CompactAsync(session.Session, new CompactionOptions
         {
             PreservedTurns = 1,
             MaxSummaryChars = 16_000,
@@ -293,7 +293,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         var session = BuildCompactionSession();
         var compactor = CreateCompactor(string.Empty);
 
-        var act = async () => await compactor.CompactAsync(session, new CompactionOptions
+        var act = async () => await compactor.CompactAsync(session.Session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
@@ -313,7 +313,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("empty"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a") };
         var compactor = CreateCompactor("unused");
 
-        compactor.ShouldCompact(session, new CompactionOptions()).Should().BeFalse();
+        compactor.ShouldCompact(session.Session, new CompactionOptions()).Should().BeFalse();
     }
 
     [Fact]
@@ -324,7 +324,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         session.AddEntry(new SessionEntry { Role = MessageRole.System, Content = "summary", IsCompactionSummary = true });
         var compactor = CreateCompactor("unused");
 
-        compactor.ShouldCompact(session, new CompactionOptions()).Should().BeFalse();
+        compactor.ShouldCompact(session.Session, new CompactionOptions()).Should().BeFalse();
     }
 
     [Fact]
@@ -339,7 +339,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         }
 
         var compactor = CreateCompactor("concurrent-summary");
-        var compactTask = compactor.CompactAsync(session, new CompactionOptions
+        var compactTask = compactor.CompactAsync(session.Session, new CompactionOptions
         {
             PreservedTurns = 2,
             SummarizationModel = TestModel.Id
@@ -490,4 +490,3 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         }
     }
 }
-

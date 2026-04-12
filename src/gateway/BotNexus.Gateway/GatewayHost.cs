@@ -294,12 +294,12 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             }
 
             session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = message.Content });
-            if (_compactor.ShouldCompact(session, _compactionOptions.Value))
+            if (_compactor.ShouldCompact(session.Session, _compactionOptions.Value))
             {
                 _logger.LogInformation("Auto-compacting session {SessionId}", sessionId);
                 try
                 {
-                    var result = await _compactor.CompactAsync(session, _compactionOptions.Value, cancellationToken);
+                    var result = await _compactor.CompactAsync(session.Session, _compactionOptions.Value, cancellationToken);
                     await _sessions.SaveAsync(session, cancellationToken);
                     _logger.LogInformation(
                         "Session {SessionId} compacted: {Summarized} entries summarized, {Preserved} preserved",
@@ -525,7 +525,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         string sessionId,
         CancellationToken cancellationToken)
     {
-        var result = await _compactor.CompactAsync(session, _compactionOptions.Value, cancellationToken);
+        var result = await _compactor.CompactAsync(session.Session, _compactionOptions.Value, cancellationToken);
         await _sessions.SaveAsync(session, cancellationToken);
 
         var feedback = $"Session compacted: {result.EntriesSummarized} entries summarized, {result.EntriesPreserved} preserved.";

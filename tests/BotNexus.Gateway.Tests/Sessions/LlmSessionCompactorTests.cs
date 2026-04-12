@@ -33,7 +33,7 @@ public sealed class LlmSessionCompactorTests
         var compactor = CreateCompactor("summary");
         var options = new CompactionOptions { ContextWindowTokens = 100, TokenThresholdRatio = 0.5 };
 
-        compactor.ShouldCompact(session, options).Should().BeFalse();
+        compactor.ShouldCompact(session.Session, options).Should().BeFalse();
     }
 
     [Fact]
@@ -43,7 +43,7 @@ public sealed class LlmSessionCompactorTests
         var compactor = CreateCompactor("summary");
         var options = new CompactionOptions { ContextWindowTokens = 100, TokenThresholdRatio = 0.5 };
 
-        compactor.ShouldCompact(session, options).Should().BeTrue();
+        compactor.ShouldCompact(session.Session, options).Should().BeTrue();
     }
 
     [Fact]
@@ -60,7 +60,7 @@ public sealed class LlmSessionCompactorTests
             ("assistant", "a3"));
         var compactor = CreateCompactor("summary-u1");
 
-        await compactor.CompactAsync(session, new CompactionOptions
+        await compactor.CompactAsync(session.Session, new CompactionOptions
         {
             PreservedTurns = 2,
             SummarizationModel = TestModel.Id
@@ -85,7 +85,7 @@ public sealed class LlmSessionCompactorTests
             ("assistant", "recent-response"));
         var compactor = CreateCompactor("structured summary");
 
-        var result = await compactor.CompactAsync(session, new CompactionOptions
+        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
@@ -103,7 +103,7 @@ public sealed class LlmSessionCompactorTests
         var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("s1"), AgentId = BotNexus.Domain.Primitives.AgentId.From("a1") };
         var compactor = CreateCompactor("summary");
 
-        var result = await compactor.CompactAsync(session, new CompactionOptions());
+        var result = await compactor.CompactAsync(session.Session, new CompactionOptions());
 
         result.Summary.Should().BeEmpty();
         result.EntriesSummarized.Should().Be(0);
@@ -122,7 +122,7 @@ public sealed class LlmSessionCompactorTests
         var originalHistory = session.GetHistorySnapshot().ToList();
         var compactor = CreateCompactor("unused");
 
-        var result = await compactor.CompactAsync(session, new CompactionOptions
+        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
         {
             PreservedTurns = 3,
             SummarizationModel = TestModel.Id
@@ -143,7 +143,7 @@ public sealed class LlmSessionCompactorTests
             ("user", "recent"));
         var compactor = CreateCompactor("compacted");
 
-        await compactor.CompactAsync(session, new CompactionOptions
+        await compactor.CompactAsync(session.Session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
@@ -164,7 +164,7 @@ public sealed class LlmSessionCompactorTests
             ("user", "recent"));
         var compactor = CreateCompactor(longSummary);
 
-        var result = await compactor.CompactAsync(session, new CompactionOptions
+        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
         {
             PreservedTurns = 1,
             MaxSummaryChars = 40,
@@ -258,5 +258,4 @@ public sealed class LlmSessionCompactorTests
         return stream;
     }
 }
-
 

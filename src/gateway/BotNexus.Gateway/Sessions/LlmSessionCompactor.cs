@@ -27,7 +27,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         _logger = logger;
     }
 
-    public bool ShouldCompact(GatewaySession session, CompactionOptions options)
+    public bool ShouldCompact(Session session, CompactionOptions options)
     {
         var estimatedTokens = EstimateTokenCount(session);
         var threshold = (int)(options.ContextWindowTokens * options.TokenThresholdRatio);
@@ -35,11 +35,11 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     }
 
     public async Task<CompactionResult> CompactAsync(
-        GatewaySession session,
+        Session session,
         CompactionOptions options,
         CancellationToken cancellationToken = default)
     {
-        var history = session.GetHistorySnapshot();
+        var history = session.History;
         if (history.Count == 0)
         {
             return new CompactionResult
@@ -84,7 +84,8 @@ public sealed class LlmSessionCompactor : ISessionCompactor
 
         var newHistory = new List<SessionEntry> { compactionEntry };
         newHistory.AddRange(toPreserve);
-        session.ReplaceHistory(newHistory);
+        session.History = newHistory;
+        session.UpdatedAt = DateTimeOffset.UtcNow;
 
         var tokensAfter = EstimateTokenCount(session);
 
@@ -256,9 +257,9 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         return null;
     }
 
-    private static int EstimateTokenCount(GatewaySession session)
+    private static int EstimateTokenCount(Session session)
     {
-        var totalChars = session.GetHistorySnapshot().Sum(entry => entry.Content?.Length ?? 0);
+        var totalChars = session.History.Sum(entry => entry.Content?.Length ?? 0);
         return totalChars / 4;
     }
 }

@@ -10,14 +10,14 @@ public interface ISessionCompactor
     /// <summary>
     /// Determines whether the session should be compacted based on history size and options.
     /// </summary>
-    bool ShouldCompact(GatewaySession session, CompactionOptions options);
+    bool ShouldCompact(Session session, CompactionOptions options);
 
     /// <summary>
     /// Compacts the session history: summarizes older messages, preserves recent turns,
     /// and returns the result. The session's history is modified in place.
     /// </summary>
     Task<CompactionResult> CompactAsync(
-        GatewaySession session,
+        Session session,
         CompactionOptions options,
         CancellationToken cancellationToken = default);
 }

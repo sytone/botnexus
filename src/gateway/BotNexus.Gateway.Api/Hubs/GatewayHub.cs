@@ -214,7 +214,7 @@ public sealed class GatewayHub : Hub
         var compactor = requestServices?.GetService<ISessionCompactor>() ?? _compactor;
         var options = requestServices?.GetService<IOptions<CompactionOptions>>()?.Value ?? _compactionOptions.Value;
 
-        var result = await compactor.CompactAsync(session, options, CancellationToken.None);
+        var result = await compactor.CompactAsync(session.Session, options, CancellationToken.None);
         await _sessions.SaveAsync(session, CancellationToken.None);
 
         return new

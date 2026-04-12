@@ -248,7 +248,7 @@ public sealed class SignalRHubTests
         sessions.Setup(value => value.SaveAsync(session, CancellationToken.None)).Returns(Task.CompletedTask);
 
         var compactor = new Mock<ISessionCompactor>();
-        compactor.Setup(value => value.CompactAsync(session, It.IsAny<CompactionOptions>(), CancellationToken.None))
+        compactor.Setup(value => value.CompactAsync(session.Session, It.IsAny<CompactionOptions>(), CancellationToken.None))
             .ReturnsAsync(new CompactionResult
             {
                 Summary = "summary",
