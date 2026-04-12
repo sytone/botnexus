@@ -9,6 +9,13 @@ namespace BotNexus.Domain.Primitives;
 /// </summary>
 public readonly record struct ChannelKey : IComparable<ChannelKey>, IEquatable<ChannelKey>
 {
+    private static readonly Dictionary<string, string> Aliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["web chat"] = "signalr",
+        ["web-chat"] = "signalr",
+        ["webchat"] = "signalr"
+    };
+
     /// <summary>
     /// Gets the value.
     /// </summary>
@@ -69,6 +76,7 @@ public readonly record struct ChannelKey : IComparable<ChannelKey>, IEquatable<C
         if (string.IsNullOrWhiteSpace(value))
             throw new ArgumentException("ChannelKey cannot be empty", nameof(value));
 
-        return value.Trim().ToLowerInvariant();
+        var normalized = value.Trim().ToLowerInvariant();
+        return Aliases.TryGetValue(normalized, out var canonical) ? canonical : normalized;
     }
 }
