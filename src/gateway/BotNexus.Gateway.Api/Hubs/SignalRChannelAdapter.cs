@@ -38,8 +38,11 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The send async result.</returns>
     public override Task SendAsync(OutboundMessage message, CancellationToken cancellationToken = default)
-        => _hubContext.Clients.Group(GetSessionGroup(NormalizeSessionId(message.SessionId ?? message.ConversationId)))
-            .SendAsync("ContentDelta", message.Content, cancellationToken);
+    {
+        var normalizedSessionId = NormalizeSessionId(message.SessionId ?? message.ConversationId);
+        return _hubContext.Clients.Group(GetSessionGroup(normalizedSessionId))
+            .SendAsync("ContentDelta", new { sessionId = normalizedSessionId, contentDelta = message.Content }, cancellationToken);
+    }
 
     /// <summary>
     /// Executes send stream delta async.
@@ -49,8 +52,11 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The send stream delta async result.</returns>
     public override Task SendStreamDeltaAsync(string conversationId, string delta, CancellationToken cancellationToken = default)
-        => _hubContext.Clients.Group(GetSessionGroup(NormalizeSessionId(conversationId)))
-            .SendAsync("ContentDelta", delta, cancellationToken);
+    {
+        var normalizedSessionId = NormalizeSessionId(conversationId);
+        return _hubContext.Clients.Group(GetSessionGroup(normalizedSessionId))
+            .SendAsync("ContentDelta", new { sessionId = normalizedSessionId, contentDelta = delta }, cancellationToken);
+    }
 
     /// <summary>
     /// Executes send stream event async.

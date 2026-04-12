@@ -128,8 +128,11 @@
         }
 
         routeEvent(evt) {
-            const sessionId = evt?.sessionId || this.#activeViewId;
-            if (!sessionId) return { isActive: false };
+            const sessionId = evt?.sessionId;
+            if (!sessionId) {
+                console.warn('routeEvent: event missing sessionId, dropping', evt);
+                return { isActive: false };
+            }
             const store = this.getOrCreateStore(sessionId, {
                 agentId: evt?.agentId || evt?.targetAgentId || this.#selectedAgentId,
                 channelType: evt?.channelType || currentChannelType
