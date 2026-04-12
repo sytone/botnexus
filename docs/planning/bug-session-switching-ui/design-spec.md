@@ -162,3 +162,86 @@ function onAgentCompleted(sessionId: string) {
 - **Primarily frontend** — the core bug is a WebUI rendering/state management issue
 - **Minor backend enrichment** — `AgentStreamEvent.SessionId` property added for client-side routing verification; `SignalRChannelAdapter.SendStreamEventAsync` enriches outbound events with `sessionId`
 - Agent work continues unaffected in background
+
+## Updated Root Cause Analysis (2026-04-10)
+
+The original analysis identified three probable patterns (shared stream, component state, global loading). After reading the actual code, the root cause is more specific:
+
+### Confirmed: Client-Side State Race in openAgentTimeline
+
+The server (`GatewayHub.cs`) is stateless — every `SendMessage` call takes explicit `agentId` + `sessionId` params. The server routes correctly based on what it receives. **The bug is the client sending the wrong session ID.**
+
+The race window in `app.js`:
+1. `openAgentTimeline()` (line 1778) sets `currentSessionId = null` after leaving the old session
+2. It then does multiple async operations (fetch session list, render history)
+3. `joinSession()` is called at the end, and `currentSessionId` is only set after the async hub response
+4. If the user types and sends during this window, `sendMessage()` (line 1499) reads `currentSessionId` as either `null` (creating a brand new session) or stale (routing to the old session)
+
+### Send-Side Misrouting (New Finding)
+
+Jon confirmed on 2026-04-10: switching from Nova -> assistant session, the UI visually updated, but the sent message ("hey...") was delivered to Nova's session. This is the race window described above — `currentSessionId` hadn't been updated yet when Enter was pressed.
+
+## Expanded Testing Plan
+
+### Layer 1: Extend SignalR Integration Tests (C#)
+
+Extend `tests/BotNexus.Gateway.Tests/Integration/SignalRIntegrationTests.cs` using existing patterns (`RecordingDispatcher`, `WebApplicationFactory`, `CreateStartedConnection`).
+
+These validate the server contract. Some already exist — add edge cases:
+
+| # | Scenario | Status |
+|---|----------|--------|
+| 1 | Switch session: leave A, join B, send to B | EXISTS (`Hub_SwitchSession_JoinNewAfterLeavingOld`) |
+| 2 | Rapid switch: concurrent join A + join B, send to B | EXISTS (`Hub_RapidSessionSwitch_LatestWins`) |
+| 3 | Multiple agents: join agent-a/s1, join agent-b/s2, send to each | NEW |
+| 4 | Send with stale session ID after leave | NEW — simulates the bug: leave A, send to A before joining B |
+| 5 | Two clients in different sessions, events isolated | EXISTS (`Hub_ChannelAdapter_SendsToCorrectGroup`) |
+
+### Layer 2: Playwright E2E Tests (New — Critical)
+
+Create `tests/BotNexus.WebUI.Tests/` with Playwright tests that drive the actual browser UI. This is the **only** layer that can catch the JS state bug.
+
+**Setup:**
+- Use `WebApplicationFactory<Program>` to host the gateway (same as integration tests)
+- Playwright connects to the test server URL
+- Use `RecordingDispatcher` to capture dispatched messages for assertion
+- Expose a test-only REST endpoint (or use the existing `/sessions` API) to verify which session received the message
+
+**Test Scenarios:**
+
+| # | Scenario | Steps | Assert |
+|---|----------|-------|--------|
+| 1 | Basic switch + send | Create 2 agents. Click agent A, send msg. Click agent B, send msg. | RecordingDispatcher shows msg 1 -> A's session, msg 2 -> B's session |
+| 2 | Switch back + send | Click A, click B, click A, send msg | Message dispatched to A's session |
+| 3 | Rapid switch + send | Click A, immediately click B (< 200ms), wait for load, send msg | Message dispatched to B's session |
+| 4 | Send during loading | Click A, then click B, type and send before "Loading timeline..." completes | Message either queued or dispatched to B (never to A) |
+| 5 | Inbound event isolation | Agent A responds while viewing B | Response appears in A's session history, not in B's canvas |
+| 6 | Two browser tabs | Open two tabs, each viewing a different agent, send from each | Each message goes to the correct agent's session |
+| 7 | Refresh persistence | Switch to B, refresh page | B's session is still active after reload |
+
+**Key assertion pattern:**
+```
+// Pseudocode for Playwright test
+const dispatcher = getRecordingDispatcher();
+await page.click('[data-agent-id="agent-b"]');
+await page.waitForSelector('.chat-input:not([disabled])');
+await page.fill('.chat-input', 'test message');
+await page.click('.btn-send');
+// Verify the message went to the right session
+expect(dispatcher.lastMessage.sessionId).toBe(agentBSessionId);
+expect(dispatcher.lastMessage.targetAgentId).toBe('agent-b');
+```
+
+### Layer 3: JS Unit Tests (Optional, Post-Fix)
+
+If `app.js` is refactored to extract session state management into a testable module, add Vitest/Jest tests for the state machine logic. Not required for the initial fix.
+
+## Acceptance Criteria (Updated)
+
+- [ ] Bug is reproduced in a Playwright E2E test (message goes to wrong session)
+- [ ] Fix is implemented — `sendMessage()` cannot send to a stale/null session during switch
+- [ ] All Playwright test scenarios pass
+- [ ] Existing `SignalRIntegrationTests` continue to pass
+- [ ] New integration tests for edge cases added and passing
+- [ ] Chat input is disabled or sends are queued during session switch (no silent misrouting)
+- [ ] Test suite runs in CI or as a pre-release gate

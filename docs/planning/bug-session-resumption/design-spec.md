@@ -1,4 +1,4 @@
----
+﻿---
 id: bug-session-resumption
 title: "Session Resumption After Gateway Restart"
 type: bug
@@ -24,7 +24,7 @@ Fix session resumption so that when the BotNexus gateway restarts, agents resume
 3. Agent can reference what was previously discussed without user re-explaining
 4. Works for SignalR channel (primary use case)
 5. **Cron and heartbeat sessions MUST be excluded from session matching.** These are ephemeral one-shot sessions and must not interfere with the main conversation session. The session lookup query must filter them out (e.g., `session_type != 'cron'` or `source = 'channel'`).
-6. **Resumed session notification**: The agent MUST be informed that this is a resumed session (e.g., via a system message or metadata flag). The agent needs to know so it can behave appropriately — load memory, greet contextually, not re-introduce itself. Without this signal, the agent has no way to distinguish a resumed session from a fresh one.
+6. **Resumed session notification**: The agent MUST be informed that this is a resumed session (e.g., via a system message or metadata flag). The agent needs to know so it can behave appropriately â€” load memory, greet contextually, not re-introduce itself. Without this signal, the agent has no way to distinguish a resumed session from a fresh one.
 ### Should Have
 7. Works for all channel types (cron sessions excluded - they are one-shot)
 8. Graceful handling when previous session is too old (e.g., >24h)
@@ -55,10 +55,10 @@ When a channel connects (e.g., SignalR client connects):
 When resuming a session, the gateway should inject context into the LLM request:
 
 **Context injection ordering** (this ordering is critical):
-1. **System prompt** — the agent's base system prompt
-2. **Workspace context files** — AGENTS.md, SOUL.md, USER.md, TOOLS.md, etc.
-3. **Compaction summary** — the session's compaction summary (if available), injected as a system message summarizing prior conversation
-4. **Recent messages** — the preserved N recent turns from the session history
+1. **System prompt** â€” the agent's base system prompt
+2. **Workspace context files** â€” AGENTS.md, SOUL.md, USER.md, TOOLS.md, etc.
+3. **Compaction summary** â€” the session's compaction summary (if available), injected as a system message summarizing prior conversation
+4. **Recent messages** â€” the preserved N recent turns from the session history
 
 The compaction summary goes AFTER the system prompt and workspace context but BEFORE the conversation history. This ensures the agent has its identity and instructions loaded first, then the "what happened before" context, then the actual recent messages to continue from.
 
@@ -74,6 +74,12 @@ The compaction summary goes AFTER the system prompt and workspace context but BE
 - Plus last N messages since last compaction
 - Plus post-compaction context refresh (AGENTS.md sections)
 **Recommendation: Option C** - matches what OpenClaw does with `readPostCompactionContext()`
+**Context Injection Ordering**: The injection order matters for LLM attention. The correct order is:
+1. System prompt (agent identity, rules)
+2. Workspace context files (AGENTS.md, SOUL.md, USER.md, TOOLS.md, etc.)
+3. Compaction summary (if session was compacted)
+4. Recent conversation messages (post-compaction or last N)
+5. Current user message
 
 ### Multi-Client Synchronization
 
@@ -83,7 +89,7 @@ When multiple clients are connected to the same channel simultaneously (e.g., We
 2. **Late-join catch-up**: A client that connects after a conversation is already in progress must load the conversation history so it appears identical to what other clients see. This is the "walk into the room and read the scrollback" pattern.
 3. **No split-brain**: There is exactly ONE session per `agent_id + channel_type`. Two clients on the same channel must never end up in different sessions.
 
-This is analogous to how Telegram and Discord work — open the app on any device and you see the same chat with the same history.
+This is analogous to how Telegram and Discord work â€” open the app on any device and you see the same chat with the same history.
 
 **Implementation consideration**: The gateway needs a pub/sub or broadcast mechanism per session. When a message is added to a session, all connected clients for that `agent_id + channel_type` pair get notified (e.g., via SignalR group, WebSocket broadcast, or equivalent). The session ID can serve as the pub/sub topic/group name.
 
@@ -102,9 +108,11 @@ ALTER TABLE sessions ADD COLUMN last_compaction_at TEXT;
 ALTER TABLE sessions ADD COLUMN resume_count INTEGER DEFAULT 0;
 -- resume_count: telemetry only. Tracks how many times this session has been
 -- resumed across gateway restarts. No behavioral logic is attached to this
--- value — it exists purely for diagnostics and observability (e.g., "this
+-- value â€” it exists purely for diagnostics and observability (e.g., "this
 -- session has been resumed 14 times, maybe we should investigate why the
 -- gateway is restarting so often").
+-- Note: resume_count is telemetry only - no behavioral logic is attached.
+-- Used for observability and debugging session stability.
 ```
 ## API Changes
 ### Session Lookup Endpoint (internal)
@@ -138,8 +146,8 @@ Returns the session to resume (if any) with its compaction summary and recent me
 3. **Old session**: Set TTL low, wait, verify new session created
 4. **Multiple sessions**: Have 2+ sessions, verify most recent is resumed
 5. **Clean restart**: No prior sessions, verify fresh session created normally
-6. **Cron during active session**: Start a main conversation session. Trigger a cron job (which creates its own session). Restart the gateway. Verify that the main conversation session is resumed — NOT the cron session. This validates that `session_type != 'cron'` filtering works correctly.
-7. **Multi-client sync**: Open the WebUI in two different browsers (or browser tabs). Send a message from one. Verify the message and the agent's response appear on both clients in real time. Then close one browser, continue the conversation on the other, and reopen the first browser — verify it catches up with the full conversation history including the messages it missed.
+6. **Cron during active session**: Start a main conversation session. Trigger a cron job (which creates its own session). Restart the gateway. Verify that the main conversation session is resumed â€” NOT the cron session. This validates that `session_type != 'cron'` filtering works correctly.
+7. **Multi-client sync**: Open the WebUI in two different browsers (or browser tabs). Send a message from one. Verify the message and the agent's response appear on both clients in real time. Then close one browser, continue the conversation on the other, and reopen the first browser â€” verify it catches up with the full conversation history including the messages it missed.
 ## Success Criteria
 - After `botnexus restart`, agent can reference conversation from before the restart
 - No user action required ("it just works")

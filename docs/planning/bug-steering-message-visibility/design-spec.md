@@ -97,3 +97,10 @@ Or simply render as a normal message — most chat apps don't distinguish betwee
 - **Frontend only** if using Option A
 - **Frontend + backend** if using Option B
 - No changes needed to agent/LLM layer (steering delivery already works)
+
+## Additional Requirement: Agent Attribution in Status Messages
+
+### Must Have (added 2026-04-10)
+6. Steering and queued message indicators must show the correct executing agent identity
+7. Sub-agent tool calls must NOT be displayed as parent agent activity
+8. Sub-agent name (from spawn parameters) should be visible in the status indicator

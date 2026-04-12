@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-11
 **Author:** Leela (Lead/Architect)
-**Status:** Draft
+**Status:** Done
 **Design Item:** [feature-tool-permission-model](./design-item.md)
 **Requested By:** Jon Bullen
 

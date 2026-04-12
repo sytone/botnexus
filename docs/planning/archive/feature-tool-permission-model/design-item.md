@@ -3,7 +3,7 @@ id: feature-tool-permission-model
 title: "Per-Agent File System Permission Model"
 type: feature
 priority: high
-status: draft
+status: done
 created: 2026-04-11
 author: Jon Bullen
 tags: [security, tools, permissions, agent-config]
