@@ -138,6 +138,31 @@ public sealed class SignalRHubTests
     }
 
     [Fact]
+    public async Task JoinSession_WhitespaceIds_NormalizesBeforeSessionLookup()
+    {
+        var groups = new Mock<IGroupManager>();
+        groups.Setup(value => value.AddToGroupAsync("conn-1", "session:s1", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(value => value.GetOrCreateAsync(BotNexus.Domain.Primitives.SessionId.From("s1"), BotNexus.Domain.Primitives.AgentId.From("agent-a"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewaySession
+            {
+                SessionId = BotNexus.Domain.Primitives.SessionId.From("s1"),
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a")
+            });
+
+        var hub = CreateHub(groups: groups.Object, sessions: sessions.Object, connectionId: "conn-1");
+
+        var result = await hub.JoinSession("  agent-a  ", "  s1  ");
+
+        groups.Verify(value => value.AddToGroupAsync("conn-1", "session:s1", It.IsAny<CancellationToken>()), Times.Once);
+        sessions.Verify(value => value.GetOrCreateAsync(BotNexus.Domain.Primitives.SessionId.From("s1"), BotNexus.Domain.Primitives.AgentId.From("agent-a"), It.IsAny<CancellationToken>()), Times.Once);
+        HasPropertyValue([result], "sessionId", "s1").Should().BeTrue();
+        HasPropertyValue([result], "agentId", "agent-a").Should().BeTrue();
+    }
+
+    [Fact]
     public async Task JoinSession_ExpiredSession_ReactivatesAndReturnsResumed()
     {
         var expiredSession = new GatewaySession
@@ -212,6 +237,27 @@ public sealed class SignalRHubTests
                     m.SessionId == "session-1" &&
                     m.TargetAgentId == "agent-a" &&
                     m.Content == "hello"),
+                CancellationToken.None),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task GatewayHub_SendMessage_WhitespaceIds_DispatchesNormalizedIds()
+    {
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(value => value.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var hub = CreateHub(dispatcher: dispatcher.Object, connectionId: "conn-1");
+
+        await hub.SendMessage("  agent-a  ", "  session-1  ", "hello");
+
+        dispatcher.Verify(value => value.DispatchAsync(
+                It.Is<InboundMessage>(m =>
+                    m.ChannelType == ChannelKey.From("signalr") &&
+                    m.ConversationId == "session-1" &&
+                    m.SessionId == "session-1" &&
+                    m.TargetAgentId == "agent-a"),
                 CancellationToken.None),
             Times.Once);
     }
@@ -351,4 +397,3 @@ public sealed class SignalRHubTests
         public override void Abort() { }
     }
 }
-
