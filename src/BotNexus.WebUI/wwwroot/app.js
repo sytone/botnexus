@@ -130,7 +130,21 @@
         routeEvent(evt) {
             const sessionId = evt?.sessionId || this.#activeViewId;
             if (!sessionId) return { isActive: false };
-            const store = this.getOrCreateStore(sessionId);
+            const store = this.getOrCreateStore(sessionId, {
+                agentId: evt?.agentId || evt?.targetAgentId || this.#selectedAgentId,
+                channelType: evt?.channelType || currentChannelType
+            });
+            if (evt?.agentId && !store.agentId) store.agentId = evt.agentId;
+            if (evt?.channelType && !store.channelType) store.channelType = evt.channelType;
+
+            if (!this.#activeViewId) {
+                this.#activeViewId = sessionId;
+                if (store.agentId) this.#selectedAgentId = store.agentId;
+                if (store.channelType) currentChannelType = store.channelType;
+                updateSessionIdDisplay();
+                return { isActive: true };
+            }
+
             const isActive = sessionId === this.#activeViewId;
             if (!isActive) {
                 store.unreadCount++;
@@ -224,7 +238,12 @@
     }
 
     function updateSidebarBadge(sessionId, count) {
-        const el = elSessionsList.querySelector(`.list-item[data-session-id="${CSS.escape(sessionId)}"]`);
+        const store = storeManager.getStore(sessionId);
+        if (!store?.agentId) return;
+        const channelKey = normalizeChannelKey(store.channelType || currentChannelType || 'web chat');
+        const el = elSessionsList.querySelector(
+            `.list-item[data-agent-id="${CSS.escape(store.agentId)}"][data-channel-type="${CSS.escape(channelKey)}"]`
+        );
         if (!el) return;
         let badge = el.querySelector('.unread-badge');
         if (count > 0) {
@@ -667,20 +686,12 @@
                         debugLog('lifecycle', `SubscribeAll: ${result.sessions.length} sessions`);
                     }
                 }).catch(err => {
-                    debugLog('lifecycle', 'SubscribeAll failed, falling back:', err.message);
-                    // Fallback: re-join current session if active
-                    if (getCurrentSessionId() && getCurrentAgentId()) {
-                        setTimeout(() => joinSession(getCurrentAgentId(), getCurrentSessionId()), 0);
-                    }
+                    debugLog('lifecycle', 'SubscribeAll failed:', err.message);
                 });
-            } else if (getCurrentSessionId() && getCurrentAgentId()) {
-                // Legacy fallback for servers without multi-session
-                setTimeout(() => joinSession(getCurrentAgentId(), getCurrentSessionId()), 0);
             }
         });
 
-        // SessionJoined is no longer sent as a separate callback —
-        // JoinSession returns the data directly via invoke result.
+        // SessionJoined is no longer sent as a separate callback.
 
         connection.on('SessionReset', (data) => {
             const sid = data?.sessionId || storeManager.activeViewId;
@@ -927,43 +938,6 @@
             setStatus('disconnected');
             showConnectionBanner('❌ Cannot connect to Gateway. Check that the server is running.', 'error', true);
             setTimeout(startConnection, 5000);
-        }
-    }
-
-    async function joinSession(agentId, sessionId) {
-        if (!connection || connection.state !== signalR.HubConnectionState.Connected) {
-            debugLog('session', 'Cannot join — not connected');
-            return;
-        }
-
-        debugLog('session', `Join: ${agentId} ${sessionId || '(new)'}`);
-        storeManager.setSelectedAgent(agentId);
-
-        try {
-            const result = await hubInvoke('JoinSession', agentId, sessionId || null);
-
-            if (result?.sessionId) {
-                storeManager.setActiveView(result.sessionId, result.agentId || agentId, currentChannelType || 'Web Chat');
-                debugLog('session', `Joined: session=${getCurrentSessionId()} agent=${getCurrentAgentId()}`);
-
-                // Subscribe to the new session's SignalR group
-                try { await hubInvoke('Subscribe', getCurrentSessionId()); } catch {}
-
-                // Register in store manager
-                storeManager.getOrCreateStore(getCurrentSessionId(), {
-                    agentId: getCurrentAgentId(),
-                    channelType: currentChannelType || 'Web Chat'
-                });
-
-                if (result.isResumed && result.messageCount > 0) {
-                    appendSystemMessage(`Session resumed (${result.messageCount} messages).`);
-                }
-                updateSessionIdDisplay();
-                fetchSubAgents();
-            }
-        } catch (err) {
-            debugLog('session', 'Join failed:', err.message);
-            appendSystemMessage(`Failed to join session: ${err.message}`, 'error');
         }
     }
 
@@ -1743,11 +1717,6 @@
         autoResize(elChatInput);
         updateSendButtonState();
 
-        if (!getCurrentSessionId()) {
-            // First message — join will create the session
-            await joinSession(getCurrentAgentId(), null);
-        }
-
         if (isCurrentSessionStreaming() && connection?.state === signalR.HubConnectionState.Connected) {
             if (sendModeFollowUp) {
                 pendingQueuedMessages.push(text);
@@ -1775,12 +1744,24 @@
         appendChatMessage('user', text);
         trackActivity('message', getCurrentAgentId(), text.substring(0, 60));
         setSendingState(true);
-        getStreamState(getCurrentSessionId()).isStreaming = true;
+        if (getCurrentSessionId()) {
+            getStreamState(getCurrentSessionId()).isStreaming = true;
+        }
         incrementQueue();
         startResponseTimeout();
 
         try {
-            await hubInvoke('SendMessage', getCurrentAgentId(), getCurrentSessionId(), text);
+            const channelType = toHubChannelType(currentChannelType || 'Web Chat');
+            const result = await hubInvoke('SendMessage', getCurrentAgentId(), channelType, text);
+            if (result?.sessionId) {
+                const sessionChannelType = result.channelType || channelType;
+                storeManager.getOrCreateStore(result.sessionId, {
+                    agentId: result.agentId || getCurrentAgentId(),
+                    channelType: sessionChannelType
+                });
+                storeManager.switchView(result.sessionId);
+                updateSessionIdDisplay();
+            }
         } catch (err) {
             appendSystemMessage(`Error: ${err.message}`, 'error');
             getStreamState(getCurrentSessionId()).isStreaming = false;
@@ -1879,7 +1860,7 @@
         // Build a fingerprint to detect actual changes
         const newFingerprint = JSON.stringify({
             agents: agents.map(a => a.agentId || a.name),
-            sessions: (sessions || []).map(s => s.sessionId + ':' + (s.updatedAt || '')),
+            sessions: (sessions || []).map(s => (s.agentId || s.agentName || 'unknown') + ':' + normalizeChannelKey(s.channelType) + ':' + (s.updatedAt || '')),
             active: getCurrentSessionId()
         });
 
@@ -1950,7 +1931,6 @@
 
                     const channelEl = document.createElement('div');
                     channelEl.className = 'list-item' + (isActive ? ' active' : '');
-                    channelEl.dataset.sessionId = latestSession.sessionId;
                     channelEl.dataset.agentId = agentId;
                     channelEl.dataset.channelType = channelType;
 
@@ -2253,6 +2233,12 @@
         const n = (raw || '').toLowerCase();
         if (!n || n === 'signalr' || n === 'web-chat') return 'web chat';
         return n;
+    }
+
+    function toHubChannelType(raw) {
+        const normalized = normalizeChannelKey(raw);
+        if (normalized === 'web chat') return 'signalr';
+        return normalized;
     }
 
     function channelDisplayName(name) {
