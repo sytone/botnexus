@@ -160,6 +160,71 @@ public sealed class PathValidatorTests
         sut.CanRead(@"Q:\repos\botnexus-other\src").Should().BeFalse();
     }
 
+    [Fact]
+    public void GlobStar_MatchesAllUnderDirectory()
+    {
+        var sut = CreateValidator(new FileAccessPolicy
+        {
+            AllowedReadPaths = [@"Q:\repos\*"]
+        }, workspace: @"Q:\workspace");
+
+        sut.CanRead(@"Q:\repos\botnexus\file.cs").Should().BeTrue();
+    }
+
+    [Fact]
+    public void GlobDoubleStar_MatchesRecursive()
+    {
+        var sut = CreateValidator(new FileAccessPolicy
+        {
+            AllowedReadPaths = [@"Q:\repos\**\*.cs"]
+        }, workspace: @"Q:\workspace");
+
+        sut.CanRead(@"Q:\repos\botnexus\src\gateway\Program.cs").Should().BeTrue();
+        sut.CanRead(@"Q:\repos\botnexus\src\gateway\file.txt").Should().BeFalse();
+    }
+
+    [Fact]
+    public void GlobInDeny_BlocksPattern()
+    {
+        var sut = CreateValidator(new FileAccessPolicy
+        {
+            AllowedReadPaths = [@"Q:\repos\botnexus"],
+            DeniedPaths = [@"**\*.env"]
+        });
+
+        sut.CanRead(@"Q:\repos\botnexus\src\.env").Should().BeFalse();
+        sut.CanRead(@"Q:\repos\botnexus\config\production.env").Should().BeFalse();
+        sut.CanRead(@"Q:\repos\botnexus\src\Program.cs").Should().BeTrue();
+    }
+
+    [Fact]
+    public void GlobAndLiteral_BothWork()
+    {
+        var sut = CreateValidator(new FileAccessPolicy
+        {
+            AllowedReadPaths =
+            [
+                @"Q:\repos\botnexus\docs",
+                @"Q:\repos\**\*.cs"
+            ]
+        }, workspace: @"Q:\workspace");
+
+        sut.CanRead(@"Q:\repos\botnexus\docs\spec.md").Should().BeTrue();
+        sut.CanRead(@"Q:\repos\botnexus\src\Program.cs").Should().BeTrue();
+        sut.CanRead(@"Q:\repos\botnexus\src\readme.md").Should().BeFalse();
+    }
+
+    [Fact]
+    public void GlobNoMatch_ReturnsFalse()
+    {
+        var sut = CreateValidator(new FileAccessPolicy
+        {
+            AllowedReadPaths = [@"Q:\other\*"]
+        }, workspace: @"Q:\workspace");
+
+        sut.CanRead(@"Q:\repos\file.cs").Should().BeFalse();
+    }
+
     private static DefaultPathValidator CreateValidator(FileAccessPolicy? policy, string workspace = Workspace)
         => new(policy, workspace);
 }

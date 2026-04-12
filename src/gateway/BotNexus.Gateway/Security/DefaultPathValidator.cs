@@ -1,3 +1,4 @@
+using System.IO.Enumeration;
 using BotNexus.Gateway.Abstractions.Security;
 
 namespace BotNexus.Gateway.Security;
@@ -67,7 +68,7 @@ public sealed class DefaultPathValidator : IPathValidator
             return IsUnderPath(absolutePath, _workspacePath);
         }
 
-        if (allowedPaths.Any(path => IsUnderPath(absolutePath, path)))
+        if (allowedPaths.Any(pattern => PathMatchesPattern(absolutePath, pattern)))
         {
             return true;
         }
@@ -76,7 +77,30 @@ public sealed class DefaultPathValidator : IPathValidator
     }
 
     private bool IsDenied(string absolutePath)
-        => _deniedPaths.Any(path => IsUnderPath(absolutePath, path));
+        => _deniedPaths.Any(pattern => PathMatchesPattern(absolutePath, pattern));
+
+    private static bool PathMatchesPattern(string absolutePath, string pattern)
+    {
+        if (IsGlobPattern(pattern))
+        {
+            // Normalize to forward slashes so backslash isn't treated as escape
+            var normalizedPath = absolutePath.Replace('\\', '/');
+            var normalizedPattern = pattern.Replace('\\', '/');
+            return FileSystemName.MatchesSimpleExpression(
+                normalizedPattern, normalizedPath, ignoreCase: OperatingSystem.IsWindows());
+        }
+
+        return IsUnderPath(absolutePath, pattern);
+    }
+
+    private static bool IsGlobPattern(string path)
+        => path.Contains('*') || path.Contains('?');
+
+    private static string ResolveGlobPath(string rawPath)
+    {
+        return ExpandUserHome(rawPath.Trim())
+            .Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+    }
 
     private IReadOnlyList<string> ResolvePolicyPaths(IReadOnlyList<string>? paths)
     {
@@ -93,7 +117,7 @@ public sealed class DefaultPathValidator : IPathValidator
                 continue;
             }
 
-            resolved.Add(ResolvePath(path));
+            resolved.Add(IsGlobPattern(path) ? ResolveGlobPath(path) : ResolvePath(path));
         }
 
         return resolved;
