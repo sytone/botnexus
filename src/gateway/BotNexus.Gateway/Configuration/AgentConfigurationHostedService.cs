@@ -1,5 +1,6 @@
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -22,7 +23,7 @@ internal sealed class AgentConfigurationHostedService(
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         _codeBasedAgentIds = _registry.GetAll()
-            .Select(descriptor => descriptor.AgentId)
+            .Select(descriptor => descriptor.AgentId.Value)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         foreach (var source in _sources)
@@ -114,8 +115,9 @@ internal sealed class AgentConfigurationHostedService(
             .ToArray();
         foreach (var removedId in removedIds)
         {
-            if (_registry.Contains(removedId))
-                _registry.Unregister(removedId);
+            var typedRemovedId = AgentId.From(removedId);
+            if (_registry.Contains(typedRemovedId))
+                _registry.Unregister(typedRemovedId);
 
             _appliedConfigDescriptors.Remove(removedId);
         }
@@ -127,15 +129,17 @@ internal sealed class AgentConfigurationHostedService(
                 if (existingDescriptor == descriptor)
                     continue;
 
-                if (_registry.Contains(agentId))
-                    _registry.Unregister(agentId);
+                var typedAgentId = AgentId.From(agentId);
+                if (_registry.Contains(typedAgentId))
+                    _registry.Unregister(typedAgentId);
 
                 _registry.Register(descriptor);
                 _appliedConfigDescriptors[agentId] = descriptor;
                 continue;
             }
 
-            if (_registry.Contains(agentId))
+            var typedId = AgentId.From(agentId);
+            if (_registry.Contains(typedId))
             {
                 _logger.LogWarning(
                     "Skipping config-based agent '{AgentId}' because it is already registered by a non-config source.",

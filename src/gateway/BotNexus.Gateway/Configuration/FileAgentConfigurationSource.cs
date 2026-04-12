@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.IO.Abstractions;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
@@ -142,7 +143,7 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
 
         return new AgentDescriptor
         {
-            AgentId = config.AgentId ?? string.Empty,
+            AgentId = AgentId.From(config.AgentId ?? string.Empty),
             DisplayName = config.DisplayName ?? string.Empty,
             Description = config.Description,
             ModelId = config.ModelId ?? string.Empty,

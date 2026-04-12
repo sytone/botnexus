@@ -15,6 +15,7 @@ using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Security;
@@ -149,7 +150,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 
         var subAgentOptions = _serviceProvider.GetService<IOptions<GatewayOptions>>()?.Value.SubAgents;
         var subAgentManager = _serviceProvider.GetService<ISubAgentManager>();
-        var isSubAgentSession = context.SessionId.Contains("::subagent::", StringComparison.OrdinalIgnoreCase);
+        var isSubAgentSession = context.SessionId.IsSubAgent;
         if (subAgentManager is not null &&
             subAgentOptions is { MaxDepth: > 0 } &&
             !isSubAgentSession)
@@ -409,8 +410,8 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable
 
     public InProcessAgentHandle(
         Agent agent,
-        string agentId,
-        string sessionId,
+        AgentId agentId,
+        SessionId sessionId,
         ILogger logger,
         McpServerManager? mcpManager = null,
         McpInvokeTool? mcpInvokeTool = null,
@@ -431,10 +432,10 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable
     }
 
     /// <inheritdoc />
-    public string AgentId { get; }
+    public AgentId AgentId { get; }
 
     /// <inheritdoc />
-    public string SessionId { get; }
+    public SessionId SessionId { get; }
 
     /// <inheritdoc />
     public bool IsRunning => _agent.Status == AgentStatus.Running;

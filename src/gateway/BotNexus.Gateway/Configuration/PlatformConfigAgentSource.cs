@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
+using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
@@ -66,7 +67,7 @@ public sealed class PlatformConfigAgentSource(
 
             var descriptor = new AgentDescriptor
             {
-                AgentId = agentId,
+                AgentId = AgentId.From(agentId),
                 DisplayName = agentConfig.DisplayName ?? agentId,
                 Description = agentConfig.Description,
                 ModelId = agentConfig.Model ?? string.Empty,

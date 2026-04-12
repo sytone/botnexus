@@ -2,6 +2,7 @@ using System.Diagnostics;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Diagnostics;
 using Microsoft.Extensions.Logging;
 
@@ -14,8 +15,8 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
 {
     private readonly IAgentRegistry _registry;
     private readonly IReadOnlyDictionary<string, IIsolationStrategy> _strategies;
-    private readonly Dictionary<string, (AgentInstance Instance, IAgentHandle Handle)> _instances = [];
-    private readonly Dictionary<string, Task<(AgentInstance Instance, IAgentHandle Handle)>> _pendingCreates = [];
+    private readonly Dictionary<AgentSessionKey, (AgentInstance Instance, IAgentHandle Handle)> _instances = [];
+    private readonly Dictionary<AgentSessionKey, Task<(AgentInstance Instance, IAgentHandle Handle)>> _pendingCreates = [];
     private readonly Lock _sync = new();
     private readonly ILogger<DefaultAgentSupervisor> _logger;
 
@@ -30,7 +31,7 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
     }
 
     /// <inheritdoc />
-    public async Task<IAgentHandle> GetOrCreateAsync(string agentId, string sessionId, CancellationToken cancellationToken = default)
+    public async Task<IAgentHandle> GetOrCreateAsync(AgentId agentId, SessionId sessionId, CancellationToken cancellationToken = default)
     {
         using var activity = GatewayDiagnostics.Source.StartActivity("gateway.agent_lifecycle", ActivityKind.Internal);
         activity?.SetTag("botnexus.agent.id", agentId);
@@ -39,7 +40,7 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
 
         var descriptor = _registry.Get(agentId)
             ?? throw new KeyNotFoundException($"Agent '{agentId}' is not registered.");
-        var key = MakeKey(agentId, sessionId);
+        var key = AgentSessionKey.From(agentId, sessionId);
         Task<(AgentInstance Instance, IAgentHandle Handle)> creationTask;
         TaskCompletionSource<(AgentInstance Instance, IAgentHandle Handle)>? creationCompletion = null;
 
@@ -94,9 +95,9 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
     }
 
     /// <inheritdoc />
-    public async Task StopAsync(string agentId, string sessionId, CancellationToken cancellationToken = default)
+    public async Task StopAsync(AgentId agentId, SessionId sessionId, CancellationToken cancellationToken = default)
     {
-        var key = MakeKey(agentId, sessionId);
+        var key = AgentSessionKey.From(agentId, sessionId);
         (AgentInstance Instance, IAgentHandle Handle) entry;
 
         lock (_sync)
@@ -113,15 +114,15 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
     }
 
     /// <inheritdoc />
-    public AgentInstance? GetInstance(string agentId, string sessionId)
+    public AgentInstance? GetInstance(AgentId agentId, SessionId sessionId)
     {
-        lock (_sync) return _instances.GetValueOrDefault(MakeKey(agentId, sessionId)).Instance;
+        lock (_sync) return _instances.GetValueOrDefault(AgentSessionKey.From(agentId, sessionId)).Instance;
     }
 
     /// <inheritdoc />
-    public IAgentHandle? GetHandle(string agentId, string sessionId)
+    public IAgentHandle? GetHandle(AgentId agentId, SessionId sessionId)
     {
-        lock (_sync) return _instances.GetValueOrDefault(MakeKey(agentId, sessionId)).Handle;
+        lock (_sync) return _instances.GetValueOrDefault(AgentSessionKey.From(agentId, sessionId)).Handle;
     }
 
     /// <inheritdoc />
@@ -150,30 +151,27 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
         }
     }
 
-    private static string MakeKey(string agentId, string sessionId) => $"{agentId}::{sessionId}";
-
-    private int CountActiveSessionsForAgent(string agentId)
+    private int CountActiveSessionsForAgent(AgentId agentId)
     {
-        var keyPrefix = $"{agentId}::";
         var activeInstanceKeys = _instances
             .Where(pair =>
-                pair.Value.Instance.AgentId.Equals(agentId, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(pair.Value.Instance.AgentId, agentId, StringComparison.OrdinalIgnoreCase) &&
                 pair.Value.Instance.Status is not AgentInstanceStatus.Stopped and not AgentInstanceStatus.Faulted)
-            .Select(pair => pair.Key);
+            .Select(pair => pair.Key.SessionId);
 
-        var pendingKeys = _pendingCreates.Keys
-            .Where(key => key.StartsWith(keyPrefix, StringComparison.OrdinalIgnoreCase));
+        var pendingKeys = _pendingCreates.Keys.Where(key => string.Equals(key.AgentId, agentId, StringComparison.OrdinalIgnoreCase))
+            .Select(key => key.SessionId);
 
         return activeInstanceKeys
             .Concat(pendingKeys)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Distinct()
             .Count();
     }
 
     private async Task<(AgentInstance Instance, IAgentHandle Handle)> CreateEntryAsync(
         AgentDescriptor descriptor,
-        string sessionId,
-        string key,
+        SessionId sessionId,
+        AgentSessionKey key,
         CancellationToken cancellationToken)
     {
         var descriptorErrors = AgentDescriptorValidator.Validate(descriptor, _strategies.Keys);
@@ -194,7 +192,7 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
 
         var instance = new AgentInstance
         {
-            InstanceId = key,
+            InstanceId = key.ToString(),
             AgentId = descriptor.AgentId,
             SessionId = sessionId,
             IsolationStrategy = descriptor.IsolationStrategy,

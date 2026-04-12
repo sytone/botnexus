@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Agents;
@@ -39,7 +40,7 @@ public sealed class DefaultAgentRegistry : IAgentRegistry
     }
 
     /// <inheritdoc />
-    public void Unregister(string agentId)
+    public void Unregister(AgentId agentId)
     {
         lock (_sync)
         {
@@ -56,7 +57,7 @@ public sealed class DefaultAgentRegistry : IAgentRegistry
     }
 
     /// <inheritdoc />
-    public bool Update(string agentId, AgentDescriptor descriptor)
+    public bool Update(AgentId agentId, AgentDescriptor descriptor)
     {
         if (!string.Equals(agentId, descriptor.AgentId, StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("The descriptor AgentId must match the route agentId.", nameof(descriptor));
@@ -78,7 +79,7 @@ public sealed class DefaultAgentRegistry : IAgentRegistry
     }
 
     /// <inheritdoc />
-    public AgentDescriptor? Get(string agentId)
+    public AgentDescriptor? Get(AgentId agentId)
     {
         lock (_sync) return _agents.GetValueOrDefault(agentId);
     }
@@ -90,12 +91,12 @@ public sealed class DefaultAgentRegistry : IAgentRegistry
     }
 
     /// <inheritdoc />
-    public bool Contains(string agentId)
+    public bool Contains(AgentId agentId)
     {
         lock (_sync) return _agents.ContainsKey(agentId);
     }
 
-    private void PublishActivity(GatewayActivityType type, string agentId, string message, IReadOnlyDictionary<string, object?>? data)
+    private void PublishActivity(GatewayActivityType type, AgentId agentId, string message, IReadOnlyDictionary<string, object?>? data)
     {
         if (_activity is null)
             return;

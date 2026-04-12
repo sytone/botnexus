@@ -1,6 +1,7 @@
 using System.Text.Json;
 using BotNexus.AgentCore.Tools;
 using BotNexus.AgentCore.Types;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Providers.Core.Models;
 
@@ -8,7 +9,7 @@ namespace BotNexus.Gateway.Tools;
 
 public sealed class SubAgentManageTool(
     ISubAgentManager subAgentManager,
-    string sessionId) : IAgentTool
+    SessionId sessionId) : IAgentTool
 {
     public string Name => "manage_subagent";
     public string Label => "Manage Sub-Agent";

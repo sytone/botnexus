@@ -1,6 +1,7 @@
 using System.Text.Json;
 using BotNexus.AgentCore.Tools;
 using BotNexus.AgentCore.Types;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Providers.Core.Models;
 
@@ -12,7 +13,7 @@ namespace BotNexus.Gateway.Tools;
 /// </summary>
 public sealed class SessionTool(
     ISessionStore sessionStore,
-    string agentId,
+    AgentId agentId,
     SessionAccessLevel accessLevel = SessionAccessLevel.Own,
     IReadOnlyList<string>? allowedAgents = null) : IAgentTool
 {
@@ -90,7 +91,9 @@ public sealed class SessionTool(
 
     private async Task<AgentToolResult> ListAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken ct)
     {
-        var filterAgentId = ReadString(arguments, "agentId") ?? agentId;
+        var filterAgentId = ReadString(arguments, "agentId") is { } requestedAgentId
+            ? AgentId.From(requestedAgentId)
+            : agentId;
         EnsureCanAccess(filterAgentId);
 
         var sessions = await sessionStore.ListAsync(filterAgentId, ct);
@@ -113,7 +116,7 @@ public sealed class SessionTool(
         var sessionId = ReadString(arguments, "sessionId")
             ?? throw new ArgumentException("Missing required argument: sessionId.");
 
-        var session = await sessionStore.GetAsync(sessionId, ct)
+        var session = await sessionStore.GetAsync(SessionId.From(sessionId), ct)
             ?? throw new KeyNotFoundException($"Session '{sessionId}' not found.");
 
         EnsureCanAccess(session.AgentId);
@@ -144,11 +147,12 @@ public sealed class SessionTool(
         IReadOnlyList<Abstractions.Models.GatewaySession> sessions;
 
         if (accessLevel == SessionAccessLevel.All)
-            sessions = await sessionStore.ListAsync(targetAgentId, ct);
+            sessions = await sessionStore.ListAsync(targetAgentId is null ? null : AgentId.From(targetAgentId), ct);
         else if (accessLevel == SessionAccessLevel.Allowlist && targetAgentId is not null)
         {
-            EnsureCanAccess(targetAgentId);
-            sessions = await sessionStore.ListAsync(targetAgentId, ct);
+            var typedTargetAgentId = AgentId.From(targetAgentId);
+            EnsureCanAccess(typedTargetAgentId);
+            sessions = await sessionStore.ListAsync(typedTargetAgentId, ct);
         }
         else
             sessions = await sessionStore.ListAsync(agentId, ct);
@@ -191,7 +195,7 @@ public sealed class SessionTool(
         var offset = ReadInt(arguments, "offset", 0);
         var limit = ReadInt(arguments, "limit", 20);
 
-        var session = await sessionStore.GetAsync(sessionId, ct)
+        var session = await sessionStore.GetAsync(SessionId.From(sessionId), ct)
             ?? throw new KeyNotFoundException($"Session '{sessionId}' not found.");
 
         EnsureCanAccess(session.AgentId);
@@ -210,7 +214,7 @@ public sealed class SessionTool(
         return TextResult(JsonSerializer.Serialize(result, JsonOptions));
     }
 
-    private void EnsureCanAccess(string targetAgentId)
+    private void EnsureCanAccess(AgentId targetAgentId)
     {
         if (accessLevel == SessionAccessLevel.All)
             return;

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Routing;
@@ -49,8 +50,9 @@ public sealed class DefaultMessageRouter : IMessageRouter
         // Priority 1: Explicit target
         if (!string.IsNullOrEmpty(message.TargetAgentId))
         {
-            if (_registry.Contains(message.TargetAgentId))
-                return Complete([message.TargetAgentId]);
+            var targetAgentId = AgentId.From(message.TargetAgentId);
+            if (_registry.Contains(targetAgentId))
+                return Complete([targetAgentId]);
 
             _logger.LogWarning("Explicit target agent '{AgentId}' not found", message.TargetAgentId);
             return Complete([]);
@@ -61,15 +63,19 @@ public sealed class DefaultMessageRouter : IMessageRouter
         {
             using var sessionActivity = GatewayDiagnostics.Source.StartActivity("session.get", ActivityKind.Internal);
             sessionActivity?.SetTag("botnexus.session.id", message.SessionId);
-            var session = await _sessions.GetAsync(message.SessionId, cancellationToken);
+            var session = await _sessions.GetAsync(SessionId.From(message.SessionId), cancellationToken);
             if (session is not null && _registry.Contains(session.AgentId))
                 return Complete([session.AgentId]);
         }
 
         // Priority 3: Default agent
         var defaultAgentId = _options.CurrentValue.DefaultAgentId;
-        if (!string.IsNullOrWhiteSpace(defaultAgentId) && _registry.Contains(defaultAgentId))
-            return Complete([defaultAgentId]);
+        if (!string.IsNullOrWhiteSpace(defaultAgentId))
+        {
+            var typedDefaultAgentId = AgentId.From(defaultAgentId);
+            if (_registry.Contains(typedDefaultAgentId))
+                return Complete([typedDefaultAgentId]);
+        }
 
         _logger.LogWarning("No routable agent found for message from {ChannelType}:{SenderId}", message.ChannelType, message.SenderId);
         return Complete([]);

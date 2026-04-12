@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using BotNexus.AgentCore.Diagnostics;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
@@ -55,9 +56,9 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The sub-agent response.</returns>
     public async Task<AgentResponse> CallSubAgentAsync(
-        string parentAgentId,
-        string parentSessionId,
-        string childAgentId,
+        AgentId parentAgentId,
+        SessionId parentSessionId,
+        AgentId childAgentId,
         string message,
         CancellationToken cancellationToken = default)
     {
@@ -69,7 +70,7 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
         activity?.SetTag("botnexus.session.id", parentSessionId);
         activity?.SetTag("botnexus.correlation.id", System.Diagnostics.Activity.Current?.TraceId.ToString());
 
-        var childSessionId = $"{parentSessionId}::sub::{childAgentId}";
+        var childSessionId = SessionId.ForSubAgent(parentSessionId, childAgentId);
         _logger.LogInformation(
             "Sub-agent call from '{ParentAgentId}' session '{ParentSessionId}' to '{ChildAgentId}' session '{ChildSessionId}'",
             parentAgentId,
@@ -94,9 +95,9 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
     /// <exception cref="KeyNotFoundException">Thrown when the target agent is not registered.</exception>
     /// <exception cref="InvalidOperationException">Thrown when recursive call cycles are detected.</exception>
     public async Task<AgentResponse> CallCrossAgentAsync(
-        string sourceAgentId,
+        AgentId sourceAgentId,
         string targetEndpoint,
-        string targetAgentId,
+        AgentId targetAgentId,
         string message,
         CancellationToken cancellationToken = default)
     {
@@ -117,7 +118,7 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
         if (!_registry.Contains(targetAgentId))
             throw new KeyNotFoundException($"Agent '{targetAgentId}' is not registered.");
 
-        var crossSessionId = $"{sourceAgentId}::cross::{targetAgentId}::{Guid.NewGuid():N}";
+        var crossSessionId = SessionId.From($"{SessionId.ForCrossAgent(sourceAgentId, targetAgentId)}::{Guid.NewGuid():N}");
         _logger.LogInformation(
             "Cross-agent call from '{SourceAgentId}' to '{TargetAgentId}' session '{CrossSessionId}'",
             sourceAgentId,
@@ -128,7 +129,7 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
         return await PromptWithTimeoutAsync(handle, message, sourceAgentId, targetAgentId, cancellationToken);
     }
 
-    private static IDisposable EnterCallChain(string sourceAgentId, string targetAgentId, int maxCallChainDepth)
+    private static IDisposable EnterCallChain(AgentId sourceAgentId, AgentId targetAgentId, int maxCallChainDepth)
     {
         if (maxCallChainDepth <= 0)
             throw new ArgumentOutOfRangeException(nameof(maxCallChainDepth), "Max call chain depth must be greater than zero.");
@@ -141,19 +142,19 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
         }
 
         var entryCount = path.Count;
-        if (path.Count == 0 || !string.Equals(path[^1], sourceAgentId, StringComparison.OrdinalIgnoreCase))
-            path.Add(sourceAgentId);
+        if (path.Count == 0 || !string.Equals(path[^1], sourceAgentId.Value, StringComparison.OrdinalIgnoreCase))
+            path.Add(sourceAgentId.Value);
 
-        if (path.Contains(targetAgentId, StringComparer.OrdinalIgnoreCase))
+        if (path.Contains(targetAgentId.Value, StringComparer.OrdinalIgnoreCase))
         {
-            var chain = string.Join(" -> ", path.Concat([targetAgentId]));
+            var chain = string.Join(" -> ", path.Concat([targetAgentId.Value]));
             ResetPath(path, entryCount);
 
             throw new InvalidOperationException(
                 $"Recursive cross-agent call detected while targeting '{targetAgentId}'. Active chain: {chain}");
         }
 
-        path.Add(targetAgentId);
+        path.Add(targetAgentId.Value);
         var depth = path.Count - 1;
         if (depth > maxCallChainDepth)
         {
@@ -179,8 +180,8 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
     private async Task<AgentResponse> PromptWithTimeoutAsync(
         IAgentHandle handle,
         string message,
-        string sourceAgentId,
-        string targetAgentId,
+        AgentId sourceAgentId,
+        AgentId targetAgentId,
         CancellationToken cancellationToken)
     {
         var timeoutSeconds = _options.Value.CrossAgentTimeoutSeconds;
