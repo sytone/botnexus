@@ -22,6 +22,21 @@ public abstract class SessionStoreBase : ISessionStore
         return ApplyAgentFilter(sessions, agentId).ToList();
     }
 
+    public async Task<IReadOnlyList<GatewaySession>> ListAsync(
+        AgentId? agentId,
+        BotNexus.Gateway.Abstractions.Models.SessionStatus? status,
+        CancellationToken cancellationToken = default)
+    {
+        var sessions = await EnumerateSessionsAsync(cancellationToken).ConfigureAwait(false);
+        IEnumerable<GatewaySession> result = ApplyAgentFilter(sessions, agentId);
+        if (status is not null)
+        {
+            result = result.Where(session => session.Status == status.Value);
+        }
+
+        return result.ToList();
+    }
+
     public async Task<IReadOnlyList<GatewaySession>> ListByChannelAsync(
         AgentId agentId,
         ChannelKey channelType,
@@ -40,7 +55,7 @@ public abstract class SessionStoreBase : ISessionStore
         ExistenceQuery query,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(query);
+        query ??= new ExistenceQuery();
 
         var sessions = await EnumerateSessionsAsync(cancellationToken).ConfigureAwait(false);
         IEnumerable<GatewaySession> result = sessions
