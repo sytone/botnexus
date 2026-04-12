@@ -26,7 +26,7 @@ import {
     navigateCommandPalette, acceptCommandPalette, executeReset,
     toggleToolVisibility, toggleThinkingVisibility,
     openToolModal, closeToolModal, handleModelChange,
-    appendSystemMessage, initSubAgentPanel
+    appendSystemMessage, initSubAgentPanel, openAgentTimeline
 } from './chat.js';
 import { getShowTools, getShowThinking, getLastContext } from './storage.js';
 
@@ -197,6 +197,7 @@ function initEventListeners() {
 
     dom.sidebarToggle.addEventListener('click', toggleSidebar);
     dom.sidebarOverlay.addEventListener('click', closeSidebar);
+    window.addEventListener('popstate', () => { void handleHistoryNavigation(); });
 
     // Global keyboard shortcuts
     document.addEventListener('keydown', (e) => {
@@ -222,6 +223,45 @@ function initEventListeners() {
     });
 }
 
+function hasAgentOption(agentId) {
+    return !!agentId && Array.from(dom.agentSelect.options).some(o => o.value === agentId);
+}
+
+async function waitForSidebarLoad(agentId = null) {
+    for (let i = 0; i < 30; i++) {
+        const hasAnyAgents = dom.agentSelect.options.length > 0;
+        if (hasAnyAgents && (!agentId || hasAgentOption(agentId))) return;
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+}
+
+async function handleHashRoute() {
+    const match = location.hash.match(/^#\/agents\/([^/]+)\/channels\/([^/]+)$/);
+    if (!match) return false;
+
+    const agentId = decodeURIComponent(match[1]);
+    const channelType = decodeURIComponent(match[2]);
+    await waitForSidebarLoad(agentId);
+    await openAgentTimeline(agentId, channelType);
+    return true;
+}
+
+async function handleHistoryNavigation() {
+    const routedFromHash = await handleHashRoute();
+    if (!routedFromHash) showView('welcome-screen');
+}
+
+async function restoreInitialView() {
+    const routedFromHash = await handleHashRoute();
+    if (routedFromHash) return;
+
+    const last = getLastContext();
+    if (!last.agentId || !last.channelType) return;
+
+    await waitForSidebarLoad(last.agentId);
+    await openAgentTimeline(last.agentId, last.channelType, last.sessionId);
+}
+
 // ── Init ─────────────────────────────────────────────────────────────
 
 function init() {
@@ -235,6 +275,7 @@ function init() {
     initHub(registerEventHandlers);
     initSubAgentPanel();
     initVersionCheck();
+    void restoreInitialView();
 
     if (window.innerWidth <= 768) {
         dom.sidebar.classList.add('collapsed');

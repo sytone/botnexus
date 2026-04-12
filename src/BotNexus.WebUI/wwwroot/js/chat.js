@@ -17,7 +17,7 @@ import {
 import { hubInvoke, getConnection } from './hub.js';
 import { loadSessions, trackActivity } from './sidebar.js';
 import { activeSubAgents } from './events.js';
-import { getShowTools, setShowTools, getShowThinking, setShowThinking, setLastContext } from './storage.js';
+import { getShowTools, setShowTools, getShowThinking, setShowThinking } from './storage.js';
 
 // ── Module state ────────────────────────────────────────────────────
 
@@ -997,6 +997,8 @@ export async function openAgentTimeline(agentId, channelType, targetSessionId = 
     syncLoadingUiForActiveSession();
 
     dom.chatTitle.textContent = `${agentId} — ${channelDisplayName(channelType)}`;
+    const hash = `#/agents/${encodeURIComponent(agentId)}/channels/${encodeURIComponent(toHubChannelType(channelType))}`;
+    if (location.hash !== hash) history.pushState(null, '', hash);
 
     try {
         const existingStore = storeManager.findStoreForAgent(agentId, channelType);

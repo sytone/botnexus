@@ -241,6 +241,9 @@ export function showView(viewId) {
         const el = document.getElementById(id);
         if (el) el.classList.toggle('hidden', id !== viewId);
     });
+    if (viewId === 'welcome-screen') {
+        if (location.hash) history.pushState(null, '', location.pathname);
+    }
 }
 
 // ── Copy Message Content ────────────────────────────────────────────
