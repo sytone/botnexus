@@ -9,6 +9,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Sessions;
 using AgentId = BotNexus.Domain.Primitives.AgentId;
+using ChannelKey = BotNexus.Domain.Primitives.ChannelKey;
 using MessageRole = BotNexus.Domain.Primitives.MessageRole;
 using ParticipantType = BotNexus.Domain.Primitives.ParticipantType;
 using SessionId = BotNexus.Domain.Primitives.SessionId;
@@ -651,13 +652,13 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         if (session.SessionId.IsSoul)
             return SessionType.Soul;
 
-        if (string.Equals(message.ChannelType, "cron", StringComparison.OrdinalIgnoreCase))
+        if (message.ChannelType.Equals(ChannelKey.From("cron")))
             return SessionType.Cron;
 
         return SessionType.UserAgent;
     }
 
-    private IChannelAdapter? ResolveChannelAdapter(string channelType)
+    private IChannelAdapter? ResolveChannelAdapter(ChannelKey channelType)
     {
         var adapter = _channelManager.Get(channelType);
         if (adapter is not null)

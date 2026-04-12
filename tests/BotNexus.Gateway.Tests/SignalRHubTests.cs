@@ -223,6 +223,28 @@ public sealed class SignalRHubTests
     }
 
     [Fact]
+    public async Task GatewayHub_SendMessage_DefaultAgentId_ThrowsHubException()
+    {
+        var hub = CreateHub();
+
+        Func<Task> act = () => hub.SendMessage(default, ChannelKey.From("signalr"), "hello");
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("Agent ID is required.");
+    }
+
+    [Fact]
+    public async Task GatewayHub_SendMessage_DefaultChannelType_ThrowsHubException()
+    {
+        var hub = CreateHub();
+
+        Func<Task> act = () => hub.SendMessage(BotNexus.Domain.Primitives.AgentId.From("agent-a"), default, "hello");
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("Channel type is required.");
+    }
+
+    [Fact]
     public async Task ResetSession_ArchivesInsteadOfDeleting()
     {
         var caller = new Mock<ISingleClientProxy>();

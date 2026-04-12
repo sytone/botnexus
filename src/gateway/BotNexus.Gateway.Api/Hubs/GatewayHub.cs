@@ -141,10 +141,10 @@ public sealed class GatewayHub : Hub
             GetSessionGroup(ParseSessionId(sessionId)),
             Context.ConnectionAborted);
 
-    public async Task<object> SendMessage(string agentId, string channelType, string content)
+    public async Task<object> SendMessage(AgentId agentId, ChannelKey channelType, string content)
     {
-        var typedAgentId = ParseAgentId(agentId);
-        var typedChannelType = ParseChannelType(channelType);
+        var typedAgentId = NormalizeAgentId(agentId);
+        var typedChannelType = NormalizeChannelKey(channelType);
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
 
         var session = await ResolveOrCreateSessionAsync(typedAgentId, typedChannelType);
@@ -177,10 +177,10 @@ public sealed class GatewayHub : Hub
             },
             CancellationToken.None);
 
-    public Task Steer(string agentId, string sessionId, string content)
+    public Task Steer(AgentId agentId, SessionId sessionId, string content)
     {
-        var typedAgentId = ParseAgentId(agentId);
-        var typedSessionId = ParseSessionId(sessionId);
+        var typedAgentId = NormalizeAgentId(agentId);
+        var typedSessionId = NormalizeSessionId(sessionId);
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
         return _dispatcher.DispatchAsync(
             new InboundMessage
@@ -200,18 +200,18 @@ public sealed class GatewayHub : Hub
             CancellationToken.None);
     }
 
-    public Task FollowUp(string agentId, string sessionId, string content)
+    public Task FollowUp(AgentId agentId, SessionId sessionId, string content)
     {
-        var typedAgentId = ParseAgentId(agentId);
-        var typedSessionId = ParseSessionId(sessionId);
+        var typedAgentId = NormalizeAgentId(agentId);
+        var typedSessionId = NormalizeSessionId(sessionId);
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
         return DispatchMessageAsync(typedAgentId, typedSessionId, content, "message");
     }
 
-    public async Task Abort(string agentId, string sessionId)
+    public async Task Abort(AgentId agentId, SessionId sessionId)
     {
-        var typedAgentId = ParseAgentId(agentId);
-        var typedSessionId = ParseSessionId(sessionId);
+        var typedAgentId = NormalizeAgentId(agentId);
+        var typedSessionId = NormalizeSessionId(sessionId);
         var instance = _supervisor.GetInstance(typedAgentId, typedSessionId);
         if (instance is null)
             return;
@@ -220,19 +220,19 @@ public sealed class GatewayHub : Hub
         await handle.AbortAsync(CancellationToken.None);
     }
 
-    public async Task ResetSession(string agentId, string sessionId)
+    public async Task ResetSession(AgentId agentId, SessionId sessionId)
     {
-        var typedAgentId = ParseAgentId(agentId);
-        var typedSessionId = ParseSessionId(sessionId);
+        var typedAgentId = NormalizeAgentId(agentId);
+        var typedSessionId = NormalizeSessionId(sessionId);
         await _supervisor.StopAsync(typedAgentId, typedSessionId, CancellationToken.None);
         await _sessions.ArchiveAsync(typedSessionId, CancellationToken.None);
         await Clients.Caller.SendAsync("SessionReset", new { agentId = typedAgentId.Value, sessionId = typedSessionId.Value });
     }
 
-    public async Task<object> CompactSession(string agentId, string sessionId)
+    public async Task<object> CompactSession(AgentId agentId, SessionId sessionId)
     {
-        _ = ParseAgentId(agentId);
-        var typedSessionId = ParseSessionId(sessionId);
+        _ = NormalizeAgentId(agentId);
+        var typedSessionId = NormalizeSessionId(sessionId);
         var session = await _sessions.GetAsync(typedSessionId, CancellationToken.None);
         if (session is null)
             throw new HubException($"Session '{typedSessionId.Value}' not found.");
@@ -256,8 +256,8 @@ public sealed class GatewayHub : Hub
     public Task<IReadOnlyList<AgentDescriptor>> GetAgents()
         => Task.FromResult(_registry.GetAll());
 
-    public AgentInstance? GetAgentStatus(string agentId, string sessionId)
-        => _supervisor.GetInstance(ParseAgentId(agentId), ParseSessionId(sessionId));
+    public AgentInstance? GetAgentStatus(AgentId agentId, SessionId sessionId)
+        => _supervisor.GetInstance(NormalizeAgentId(agentId), NormalizeSessionId(sessionId));
 
     public override async Task OnConnectedAsync()
     {
@@ -286,6 +286,8 @@ public sealed class GatewayHub : Hub
         await base.OnConnectedAsync();
     }
 
+    private static string GetSessionGroup(SessionId sessionId) => $"session:{sessionId.Value}";
+
     private static AgentId ParseAgentId(string agentId)
     {
         if (string.IsNullOrWhiteSpace(agentId))
@@ -301,16 +303,40 @@ public sealed class GatewayHub : Hub
 
         return SessionId.From(sessionId);
     }
-
-    private static string GetSessionGroup(SessionId sessionId) => $"session:{sessionId.Value}";
-    private static string GetSessionGroup(string sessionId) => $"session:{sessionId}";
-
-    private static ChannelKey ParseChannelType(string channelType)
+    private static AgentId NormalizeAgentId(AgentId agentId)
     {
-        if (string.IsNullOrWhiteSpace(channelType))
-            throw new HubException("Channel type is required.");
+        try
+        {
+            return AgentId.From(agentId.Value);
+        }
+        catch (ArgumentException)
+        {
+            throw new HubException("Agent ID is required.");
+        }
+    }
 
-        return NormalizeChannelType(ChannelKey.From(channelType));
+    private static SessionId NormalizeSessionId(SessionId sessionId)
+    {
+        try
+        {
+            return SessionId.From(sessionId.Value);
+        }
+        catch (ArgumentException)
+        {
+            throw new HubException("Session ID is required.");
+        }
+    }
+
+    private static ChannelKey NormalizeChannelKey(ChannelKey channelType)
+    {
+        try
+        {
+            return NormalizeChannelType(ChannelKey.From(channelType.Value));
+        }
+        catch (ArgumentException)
+        {
+            throw new HubException("Channel type is required.");
+        }
     }
 
     private async Task SubscribeInternalAsync(SessionId sessionId)

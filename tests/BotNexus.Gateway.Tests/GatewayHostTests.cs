@@ -739,10 +739,10 @@ public sealed class GatewayHostTests
 
         var manager = new Mock<IChannelManager>();
         manager.SetupGet(m => m.Adapters).Returns([firstChannel.Object, secondChannel.Object]);
-        manager.Setup(m => m.Get(It.IsAny<string>())).Returns((string channelType) =>
-            string.Equals(channelType, "web", StringComparison.OrdinalIgnoreCase)
+        manager.Setup(m => m.Get(It.IsAny<ChannelKey>())).Returns((ChannelKey channelType) =>
+            channelType.Equals(ChannelKey.From("web"))
                 ? firstChannel.Object
-                : string.Equals(channelType, "telegram", StringComparison.OrdinalIgnoreCase)
+                : channelType.Equals(ChannelKey.From("telegram"))
                     ? secondChannel.Object
                     : null);
 
@@ -793,8 +793,8 @@ public sealed class GatewayHostTests
     {
         var manager = new Mock<IChannelManager>();
         manager.SetupGet(m => m.Adapters).Returns(adapter is null ? [] : [adapter]);
-        manager.Setup(m => m.Get(It.IsAny<string>())).Returns((string channelType) =>
-            adapter is not null && string.Equals(channelType, adapter.ChannelType, StringComparison.OrdinalIgnoreCase)
+        manager.Setup(m => m.Get(It.IsAny<ChannelKey>())).Returns((ChannelKey channelType) =>
+            adapter is not null && channelType.Equals(adapter.ChannelType)
                 ? adapter
                 : null);
         return manager.Object;

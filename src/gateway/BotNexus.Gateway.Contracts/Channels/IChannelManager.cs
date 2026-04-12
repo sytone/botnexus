@@ -1,3 +1,5 @@
+using ChannelKey = BotNexus.Domain.Primitives.ChannelKey;
+
 namespace BotNexus.Gateway.Abstractions.Channels;
 
 /// <summary>
@@ -9,5 +11,5 @@ public interface IChannelManager
     IReadOnlyList<IChannelAdapter> Adapters { get; }
 
     /// <summary>Gets a channel adapter by type, or <c>null</c> if not registered.</summary>
-    IChannelAdapter? Get(string channelType);
+    IChannelAdapter? Get(ChannelKey channelType);
 }

@@ -13,7 +13,7 @@ public sealed class ChannelManagerTests
         var adapter = new TestChannelAdapter("SignalR");
         var manager = new ChannelManager([adapter]);
 
-        var resolved = manager.Get("signalr");
+        var resolved = manager.Get(ChannelKey.From("signalr"));
 
         resolved.Should().BeSameAs(adapter);
     }
@@ -23,7 +23,7 @@ public sealed class ChannelManagerTests
     {
         var manager = new ChannelManager([]);
 
-        var resolved = manager.Get("signalr");
+        var resolved = manager.Get(ChannelKey.From("signalr"));
 
         resolved.Should().BeNull();
     }
