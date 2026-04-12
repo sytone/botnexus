@@ -1635,9 +1635,9 @@ public interface IInternalTrigger
 ```
 
 **Trigger Types** (smart enum):
-- **Channel** — User-initiated via Discord, Slack, Telegram, WebSocket
 - **Cron** — Scheduled background execution
-- **SystemTimer** — One-off system timers
+- **Soul** — Daily soul session creation and heartbeat
+- **Heartbeat** — Periodic internal agent maintenance
 - Extensible for custom triggers
 
 This separation means:
