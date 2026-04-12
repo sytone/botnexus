@@ -44,7 +44,7 @@ public static class ServiceCollectionExtensions
         var fileSystem = new FileSystem();
         var loader = new AssemblyLoadContextExtensionLoader(services, hookDispatcher, logger, fileSystem);
 
-        var extensionsConfig = platformConfig.GetExtensions();
+        var extensionsConfig = platformConfig.Gateway?.Extensions;
         if (extensionsConfig?.Enabled is false)
             return [];
 

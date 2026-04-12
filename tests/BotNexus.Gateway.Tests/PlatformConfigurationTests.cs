@@ -20,7 +20,7 @@ public sealed class PlatformConfigurationTests
 
         config.Should().NotBeNull();
         config.Version.Should().Be(1);
-        config.DefaultAgentId.Should().BeNull();
+        config.Gateway.Should().BeNull();
     }
 
     [Fact]
@@ -46,9 +46,9 @@ public sealed class PlatformConfigurationTests
 
         var config = await PlatformConfigLoader.LoadAsync(configPath);
 
-        config.GetListenUrl().Should().Be("http://localhost:18790");
-        config.GetDefaultAgentId().Should().Be("agent-a");
-        config.GetLogLevel().Should().Be("Debug");
+        config.Gateway?.ListenUrl.Should().Be("http://localhost:18790");
+        config.Gateway?.DefaultAgentId.Should().Be("agent-a");
+        config.Gateway?.LogLevel.Should().Be("Debug");
         config.Providers.Should().ContainKey("copilot");
         config.Providers!["copilot"].ApiKey.Should().Be("test-key");
         config.Providers["copilot"].BaseUrl.Should().Be("https://api.githubcopilot.com");
@@ -68,7 +68,7 @@ public sealed class PlatformConfigurationTests
 
         var config = await PlatformConfigLoader.LoadAsync(configPath);
 
-        config.DefaultAgentId.Should().Be("custom-agent");
+        config.Gateway?.DefaultAgentId.Should().Be("custom-agent");
     }
 
     [Fact]
@@ -76,9 +76,12 @@ public sealed class PlatformConfigurationTests
     {
         var errors = PlatformConfigLoader.Validate(new PlatformConfig
         {
-            ListenUrl = "not-a-url",
-            LogLevel = "verbose",
-            AgentsDirectory = "bad\0path"
+            Gateway = new GatewaySettingsConfig
+            {
+                ListenUrl = "not-a-url",
+                LogLevel = "verbose",
+                AgentsDirectory = "bad\0path"
+            }
         });
 
         errors.Should().Contain(e => e.Contains("listenUrl", StringComparison.Ordinal));
@@ -89,7 +92,13 @@ public sealed class PlatformConfigurationTests
     [Fact]
     public void PlatformConfigLoader_Validate_WithInvalidListenUrl_ReturnsListenUrlError()
     {
-        var errors = PlatformConfigLoader.Validate(new PlatformConfig { ListenUrl = "ws://localhost:8080" });
+        var errors = PlatformConfigLoader.Validate(new PlatformConfig
+        {
+            Gateway = new GatewaySettingsConfig
+            {
+                ListenUrl = "ws://localhost:8080"
+            }
+        });
 
         errors.Should().ContainSingle(e => e.Contains("listenUrl", StringComparison.Ordinal));
     }
@@ -97,7 +106,13 @@ public sealed class PlatformConfigurationTests
     [Fact]
     public void PlatformConfigLoader_Validate_WithInvalidLogLevel_ReturnsLogLevelError()
     {
-        var errors = PlatformConfigLoader.Validate(new PlatformConfig { LogLevel = "chatty" });
+        var errors = PlatformConfigLoader.Validate(new PlatformConfig
+        {
+            Gateway = new GatewaySettingsConfig
+            {
+                LogLevel = "chatty"
+            }
+        });
 
         errors.Should().ContainSingle(e => e.Contains("logLevel", StringComparison.Ordinal));
     }
@@ -154,19 +169,12 @@ public sealed class PlatformConfigurationTests
         var config = new PlatformConfig();
 
         config.Version.Should().Be(1);
-        config.ListenUrl.Should().BeNull();
-        config.DefaultAgentId.Should().BeNull();
-        config.AgentsDirectory.Should().BeNull();
-        config.SessionsDirectory.Should().BeNull();
         config.ApiKey.Should().BeNull();
-        config.ApiKeys.Should().BeNull();
         config.Gateway.Should().BeNull();
         config.Agents.Should().BeNull();
         config.Channels.Should().BeNull();
         config.Cron.Should().BeNull();
-        config.LogLevel.Should().BeNull();
         config.Providers.Should().BeNull();
-        config.SessionStore.Should().BeNull();
     }
 
     [Fact]
@@ -294,9 +302,12 @@ public sealed class PlatformConfigurationTests
     {
         var errors = PlatformConfigLoader.Validate(new PlatformConfig
         {
-            ApiKeys = new Dictionary<string, ApiKeyConfig>
+            Gateway = new GatewaySettingsConfig
             {
-                ["tenant-a"] = new()
+                ApiKeys = new Dictionary<string, ApiKeyConfig>
+                {
+                    ["tenant-a"] = new()
+                }
             }
         });
 
@@ -338,7 +349,10 @@ public sealed class PlatformConfigurationTests
     {
         var errors = PlatformConfigLoader.Validate(new PlatformConfig
         {
-            SessionStore = new SessionStoreConfig { Type = "Sql" }
+            Gateway = new GatewaySettingsConfig
+            {
+                SessionStore = new SessionStoreConfig { Type = "Sql" }
+            }
         });
 
         errors.Should().ContainSingle(e => e.Contains("gateway.sessionStore.type", StringComparison.Ordinal));
@@ -349,7 +363,10 @@ public sealed class PlatformConfigurationTests
     {
         var errors = PlatformConfigLoader.Validate(new PlatformConfig
         {
-            SessionStore = new SessionStoreConfig { Type = "File" }
+            Gateway = new GatewaySettingsConfig
+            {
+                SessionStore = new SessionStoreConfig { Type = "File" }
+            }
         });
 
         errors.Should().ContainSingle(e => e.Contains("gateway.sessionStore.filePath", StringComparison.Ordinal));
@@ -360,7 +377,10 @@ public sealed class PlatformConfigurationTests
     {
         var errors = PlatformConfigLoader.Validate(new PlatformConfig
         {
-            SessionStore = new SessionStoreConfig { Type = "Sqlite" }
+            Gateway = new GatewaySettingsConfig
+            {
+                SessionStore = new SessionStoreConfig { Type = "Sqlite" }
+            }
         });
 
         errors.Should().ContainSingle(e => e.Contains("gateway.sessionStore.connectionString", StringComparison.Ordinal));
@@ -391,9 +411,12 @@ public sealed class PlatformConfigurationTests
     {
         using var fixture = new PlatformConfigFixture(new PlatformConfig
         {
-            SessionStore = new SessionStoreConfig
+            Gateway = new GatewaySettingsConfig
             {
-                Type = "InMemory"
+                SessionStore = new SessionStoreConfig
+                {
+                    Type = "InMemory"
+                }
             }
         });
 
@@ -412,10 +435,13 @@ public sealed class PlatformConfigurationTests
     {
         using var fixture = new PlatformConfigFixture(new PlatformConfig
         {
-            SessionStore = new SessionStoreConfig
+            Gateway = new GatewaySettingsConfig
             {
-                Type = "File",
-                FilePath = "session-store"
+                SessionStore = new SessionStoreConfig
+                {
+                    Type = "File",
+                    FilePath = "session-store"
+                }
             }
         });
 
@@ -434,10 +460,13 @@ public sealed class PlatformConfigurationTests
     {
         using var fixture = new PlatformConfigFixture(new PlatformConfig
         {
-            SessionStore = new SessionStoreConfig
+            Gateway = new GatewaySettingsConfig
             {
-                Type = "Sqlite",
-                ConnectionString = "Data Source=sessions.db"
+                SessionStore = new SessionStoreConfig
+                {
+                    Type = "Sqlite",
+                    ConnectionString = "Data Source=sessions.db"
+                }
             }
         });
 
@@ -521,7 +550,7 @@ public sealed class PlatformConfigurationTests
         var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
         var errors = PlatformConfigLoader.Validate(config);
 
-        config.GetListenUrl().Should().Be("http://localhost:5005");
+        config.Gateway?.ListenUrl.Should().Be("http://localhost:5005");
         config.Providers.Should().BeNull();
         config.Channels.Should().BeNull();
         config.Agents.Should().BeNull();
@@ -579,8 +608,8 @@ public sealed class PlatformConfigurationTests
 
         var results = await Task.WhenAll(loads);
 
-        results.Should().OnlyContain(config => config.GetListenUrl() == "http://localhost:5005");
-        results.Should().OnlyContain(config => config.GetDefaultAgentId() == "assistant");
+        results.Select(config => config.Gateway?.ListenUrl).Should().OnlyContain(value => value == "http://localhost:5005");
+        results.Select(config => config.Gateway?.DefaultAgentId).Should().OnlyContain(value => value == "assistant");
     }
 
     [Fact]
@@ -601,7 +630,7 @@ public sealed class PlatformConfigurationTests
         await File.WriteAllTextAsync(fixture.ConfigPath, JsonSerializer.Serialize(original));
         var reloaded = await PlatformConfigLoader.LoadAsync(fixture.ConfigPath, validateOnLoad: false);
 
-        reloaded.GetLogLevel().Should().Be("Warning");
+        reloaded.Gateway?.LogLevel.Should().Be("Warning");
         reloaded.Providers.Should().ContainKey("copilot");
         reloaded.Providers!["copilot"].ApiKey.Should().Be("updated-key");
     }
@@ -616,17 +645,20 @@ public sealed class PlatformConfigurationTests
             ConfigPath = Path.Combine(RootPath, "config.json");
             var config = new PlatformConfig
             {
-                DefaultAgentId = "config-agent",
-                AgentsDirectory = "agents",
-                SessionsDirectory = "sessions",
-                LogLevel = "Information",
-                ApiKeys = new Dictionary<string, ApiKeyConfig>
+                Gateway = new GatewaySettingsConfig
                 {
-                    ["tenant-a"] = new()
+                    DefaultAgentId = "config-agent",
+                    AgentsDirectory = "agents",
+                    SessionsDirectory = "sessions",
+                    LogLevel = "Information",
+                    ApiKeys = new Dictionary<string, ApiKeyConfig>
                     {
-                        ApiKey = "tenant-a-secret",
-                        TenantId = "tenant-a",
-                        Permissions = ["chat:send"]
+                        ["tenant-a"] = new()
+                        {
+                            ApiKey = "tenant-a-secret",
+                            TenantId = "tenant-a",
+                            Permissions = ["chat:send"]
+                        }
                     }
                 }
             };
@@ -639,14 +671,21 @@ public sealed class PlatformConfigurationTests
                 config.Channels = configOverride.Channels;
                 config.Cron = configOverride.Cron;
                 config.ApiKey = configOverride.ApiKey;
-                config.ApiKeys = configOverride.ApiKeys;
-                config.ListenUrl = configOverride.ListenUrl;
-                config.DefaultAgentId = configOverride.DefaultAgentId ?? config.DefaultAgentId;
-                config.AgentsDirectory = configOverride.AgentsDirectory ?? config.AgentsDirectory;
-                config.SessionsDirectory = configOverride.SessionsDirectory ?? config.SessionsDirectory;
-                config.SessionStore = configOverride.SessionStore ?? config.SessionStore;
-                config.Compaction = configOverride.Compaction ?? config.Compaction;
-                config.LogLevel = configOverride.LogLevel ?? config.LogLevel;
+                if (configOverride.Gateway is not null)
+                {
+                    config.Gateway ??= new GatewaySettingsConfig();
+                    config.Gateway.ListenUrl = configOverride.Gateway.ListenUrl ?? config.Gateway.ListenUrl;
+                    config.Gateway.DefaultAgentId = configOverride.Gateway.DefaultAgentId ?? config.Gateway.DefaultAgentId;
+                    config.Gateway.AgentsDirectory = configOverride.Gateway.AgentsDirectory ?? config.Gateway.AgentsDirectory;
+                    config.Gateway.SessionsDirectory = configOverride.Gateway.SessionsDirectory ?? config.Gateway.SessionsDirectory;
+                    config.Gateway.SessionStore = configOverride.Gateway.SessionStore ?? config.Gateway.SessionStore;
+                    config.Gateway.Compaction = configOverride.Gateway.Compaction ?? config.Gateway.Compaction;
+                    config.Gateway.Cors = configOverride.Gateway.Cors ?? config.Gateway.Cors;
+                    config.Gateway.RateLimit = configOverride.Gateway.RateLimit ?? config.Gateway.RateLimit;
+                    config.Gateway.LogLevel = configOverride.Gateway.LogLevel ?? config.Gateway.LogLevel;
+                    config.Gateway.ApiKeys = configOverride.Gateway.ApiKeys ?? config.Gateway.ApiKeys;
+                    config.Gateway.Extensions = configOverride.Gateway.Extensions ?? config.Gateway.Extensions;
+                }
             }
 
             File.WriteAllText(ConfigPath, JsonSerializer.Serialize(config));
@@ -689,3 +728,4 @@ public sealed class PlatformConfigurationTests
             => Write(args is { Length: > 0 } ? string.Format(format ?? string.Empty, args) : format);
     }
 }
+

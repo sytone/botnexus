@@ -54,7 +54,7 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     {
         ArgumentNullException.ThrowIfNull(platformConfig);
         _logger = logger;
-        _identitiesByApiKey = BuildIdentityMap(platformConfig.ApiKey, platformConfig.GetApiKeys());
+        _identitiesByApiKey = BuildIdentityMap(platformConfig.ApiKey, platformConfig.Gateway?.ApiKeys);
     }
 
     /// <inheritdoc />

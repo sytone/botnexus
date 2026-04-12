@@ -117,7 +117,7 @@ public sealed class ConfigPathResolverTests
 
         setResult.ExitCode.Should().Be(0);
         var config = await fixture.LoadConfigAsync();
-        config.GetCors()!.AllowedOrigins.Should().Equal("https://one.test", "https://two.test");
+        config.Gateway?.Cors?.AllowedOrigins.Should().Equal("https://one.test", "https://two.test");
     }
 
     [Fact]
@@ -226,7 +226,7 @@ public sealed class ConfigPathResolverTests
 
         setResult.ExitCode.Should().Be(0);
         var config = await fixture.LoadConfigAsync();
-        config.GetCors()!.AllowedOrigins![0].Should().Be("https://updated.test");
+        config.Gateway?.Cors?.AllowedOrigins?[0].Should().Be("https://updated.test");
     }
 
     [Fact]
@@ -365,3 +365,4 @@ public sealed class ConfigPathResolverTests
         public string CombinedOutput => $"{StdOut}{Environment.NewLine}{StdErr}";
     }
 }
+

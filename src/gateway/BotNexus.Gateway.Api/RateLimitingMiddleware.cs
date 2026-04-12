@@ -48,7 +48,7 @@ public sealed class RateLimitingMiddleware
             return;
         }
 
-        var configuredRateLimit = _platformConfig.GetRateLimit();
+        var configuredRateLimit = _platformConfig.Gateway?.RateLimit;
         var requestsPerMinute = configuredRateLimit?.RequestsPerMinute > 0
             ? configuredRateLimit.RequestsPerMinute
             : DefaultRequestsPerMinute;

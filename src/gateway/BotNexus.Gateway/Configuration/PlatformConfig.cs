@@ -29,88 +29,12 @@ public sealed class PlatformConfig
     /// <summary>Channel settings keyed by channel name.</summary>
     public Dictionary<string, ChannelConfig>? Channels { get; set; }
 
-    /// <summary>Extensions loading settings (legacy root-level form).</summary>
-    public ExtensionsConfig? Extensions { get; set; }
-
     /// <summary>API key for Gateway authentication (null = dev mode, no auth).</summary>
     public string? ApiKey { get; set; }
-
-    /// <summary>Multi-tenant API keys keyed by key ID.</summary>
-    public Dictionary<string, ApiKeyConfig>? ApiKeys { get; set; }
-
-    /// <summary>Default Gateway listen URL (legacy root-level form).</summary>
-    public string? ListenUrl { get; set; }
-
-    /// <summary>Default agent to use when none specified (legacy root-level form).</summary>
-    public string? DefaultAgentId { get; set; }
-
-    /// <summary>Path to agents configuration directory (legacy root-level form).</summary>
-    public string? AgentsDirectory { get; set; }
-
-    /// <summary>Path to sessions storage directory (legacy root-level form).</summary>
-    public string? SessionsDirectory { get; set; }
-
-    /// <summary>Session store selection and configuration (legacy root-level form).</summary>
-    public SessionStoreConfig? SessionStore { get; set; }
-
-    /// <summary>Session compaction settings (legacy root-level form).</summary>
-    public CompactionOptions? Compaction { get; set; }
-
-    /// <summary>CORS settings (legacy root-level form).</summary>
-    public CorsConfig? Cors { get; set; }
-
-    /// <summary>Rate limiting settings (legacy root-level form).</summary>
-    public RateLimitConfig? RateLimit { get; set; }
 
     /// <summary>Cron scheduler settings and optional seed jobs.</summary>
     public CronConfig? Cron { get; set; }
 
-    /// <summary>Logging level.</summary>
-    public string? LogLevel { get; set; }
-
-    /// <summary>Returns the configured listen URL, preferring the nested Gateway section.</summary>
-    public string? GetListenUrl()
-        => Gateway?.ListenUrl ?? ListenUrl;
-
-    /// <summary>Returns the default agent ID, preferring the nested Gateway section.</summary>
-    public string? GetDefaultAgentId()
-        => Gateway?.DefaultAgentId ?? DefaultAgentId;
-
-    /// <summary>Returns the agents directory, preferring the nested Gateway section.</summary>
-    public string? GetAgentsDirectory()
-        => Gateway?.AgentsDirectory ?? AgentsDirectory;
-
-    /// <summary>Returns the sessions directory, preferring the nested Gateway section.</summary>
-    public string? GetSessionsDirectory()
-        => Gateway?.SessionsDirectory ?? SessionsDirectory;
-
-    /// <summary>Returns the log level, preferring the nested Gateway section.</summary>
-    public string? GetLogLevel()
-        => Gateway?.LogLevel ?? LogLevel;
-
-    /// <summary>Returns configured multi-tenant API keys, preferring the nested Gateway section.</summary>
-    public Dictionary<string, ApiKeyConfig>? GetApiKeys()
-        => Gateway?.ApiKeys ?? ApiKeys;
-
-    /// <summary>Returns configured session store settings, preferring the nested Gateway section.</summary>
-    public SessionStoreConfig? GetSessionStore()
-        => Gateway?.SessionStore ?? SessionStore;
-
-    /// <summary>Returns configured compaction settings, preferring the nested Gateway section.</summary>
-    public CompactionOptions? GetCompaction()
-        => Gateway?.Compaction ?? Compaction;
-
-    /// <summary>Returns configured CORS settings, preferring the nested Gateway section.</summary>
-    public CorsConfig? GetCors()
-        => Gateway?.Cors ?? Cors;
-
-    /// <summary>Returns configured extensions settings, preferring the nested Gateway section.</summary>
-    public ExtensionsConfig? GetExtensions()
-        => Gateway?.Extensions ?? Extensions;
-
-    /// <summary>Returns configured rate limiting settings, preferring the nested Gateway section.</summary>
-    public RateLimitConfig? GetRateLimit()
-        => Gateway?.RateLimit ?? RateLimit;
 }
 
 /// <summary>Provider-specific configuration.</summary>

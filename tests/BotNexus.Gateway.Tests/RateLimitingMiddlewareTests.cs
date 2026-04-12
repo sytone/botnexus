@@ -315,18 +315,17 @@ public sealed class RateLimitingMiddlewareTests
     }
 
     [Fact]
-    public void GetRateLimit_PrefersGatewayScopedRateLimit()
+    public void RateLimit_IsReadFromGatewaySettings()
     {
         var config = new PlatformConfig
         {
-            RateLimit = new RateLimitConfig { RequestsPerMinute = 10, WindowSeconds = 30 },
             Gateway = new GatewaySettingsConfig
             {
                 RateLimit = new RateLimitConfig { RequestsPerMinute = 75, WindowSeconds = 45 }
             }
         };
 
-        var rateLimit = config.GetRateLimit();
+        var rateLimit = config.Gateway?.RateLimit;
 
         rateLimit.Should().NotBeNull();
         rateLimit!.RequestsPerMinute.Should().Be(75);
@@ -393,3 +392,4 @@ public sealed class RateLimitingMiddlewareTests
             .GetField("_lastCleanupTicks", BindingFlags.Instance | BindingFlags.NonPublic)!
             .SetValue(middleware, 0L);
 }
+

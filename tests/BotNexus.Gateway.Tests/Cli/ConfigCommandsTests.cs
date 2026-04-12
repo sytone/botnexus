@@ -34,7 +34,7 @@ public sealed class ConfigCommandsTests
         File.Exists(schemaPath).Should().BeTrue();
 
         var config = await fixture.LoadConfigAsync();
-        config.GetDefaultAgentId().Should().Be("reviewer");
+        config.Gateway?.DefaultAgentId.Should().Be("reviewer");
     }
 
     [Fact]
@@ -59,3 +59,4 @@ public sealed class ConfigCommandsTests
         result.CombinedOutput.Should().Contain("Property 'invalidPath' does not exist");
     }
 }
+

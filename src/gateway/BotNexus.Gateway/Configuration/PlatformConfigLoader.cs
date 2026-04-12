@@ -59,6 +59,7 @@ public static class PlatformConfigLoader
             rawJson = reader.ReadToEnd();
             config = JsonSerializer.Deserialize<PlatformConfig>(rawJson, JsonOptions)
                 ?? new PlatformConfig();
+            config = MigrateLegacyGatewaySettings(config, rawJson);
         }
         catch (JsonException ex)
         {
@@ -74,7 +75,7 @@ public static class PlatformConfigLoader
             return config;
         }
 
-        var errors = new List<string>(PlatformConfigSchema.ValidateJson(rawJson, fs));
+        var errors = new List<string>(PlatformConfigSchema.ValidateObject(config));
         errors.AddRange(Validate(config));
         if (errors.Count > 0)
             throw new OptionsValidationException(nameof(PlatformConfig), typeof(PlatformConfig), errors);
@@ -104,6 +105,7 @@ public static class PlatformConfigLoader
             rawJson = await reader.ReadToEndAsync(cancellationToken);
             config = JsonSerializer.Deserialize<PlatformConfig>(rawJson, JsonOptions)
                 ?? new PlatformConfig();
+            config = MigrateLegacyGatewaySettings(config, rawJson);
         }
         catch (JsonException ex)
         {
@@ -119,7 +121,7 @@ public static class PlatformConfigLoader
             return config;
         }
 
-        var errors = new List<string>(PlatformConfigSchema.ValidateJson(rawJson, fs));
+        var errors = new List<string>(PlatformConfigSchema.ValidateObject(config));
         errors.AddRange(Validate(config));
         if (errors.Count > 0)
             throw new OptionsValidationException(nameof(PlatformConfig), typeof(PlatformConfig), errors);
@@ -151,7 +153,7 @@ public static class PlatformConfigLoader
 
         List<string> errors = [];
         Uri? listenUri = null;
-        var listenUrl = config.GetListenUrl();
+        var listenUrl = config.Gateway?.ListenUrl;
 
         if (!string.IsNullOrWhiteSpace(listenUrl) &&
             !Uri.TryCreate(listenUrl, UriKind.Absolute, out listenUri))
@@ -163,12 +165,12 @@ public static class PlatformConfigLoader
             errors.Add("gateway.listenUrl must use http or https.");
         }
 
-        ValidatePath(config.GetAgentsDirectory(), "gateway.agentsDirectory", errors);
-        ValidatePath(config.GetSessionsDirectory(), "gateway.sessionsDirectory", errors);
-        ValidateSessionStore(config.GetSessionStore(), errors);
-        ValidateCors(config.GetCors(), errors);
+        ValidatePath(config.Gateway?.AgentsDirectory, "gateway.agentsDirectory", errors);
+        ValidatePath(config.Gateway?.SessionsDirectory, "gateway.sessionsDirectory", errors);
+        ValidateSessionStore(config.Gateway?.SessionStore, errors);
+        ValidateCors(config.Gateway?.Cors, errors);
 
-        var logLevel = config.GetLogLevel();
+        var logLevel = config.Gateway?.LogLevel;
         if (!string.IsNullOrWhiteSpace(logLevel) &&
             !Enum.TryParse<LogLevel>(logLevel, ignoreCase: true, out _))
         {
@@ -178,7 +180,7 @@ public static class PlatformConfigLoader
         ValidateProviders(config.Providers, errors);
         ValidateChannels(config.Channels, errors);
         ValidateAgents(config.Agents, errors);
-        ValidateApiKeys(config.GetApiKeys(), errors);
+        ValidateApiKeys(config.Gateway?.ApiKeys, errors);
         ValidateCron(config.Cron, errors);
 
         return errors;
@@ -266,6 +268,78 @@ public static class PlatformConfigLoader
                 errors.Add($"providers.{providerKey}.baseUrl must be a valid http or https absolute URL.");
             }
         }
+    }
+
+    internal static PlatformConfig MigrateLegacyGatewaySettings(PlatformConfig config, string rawJson)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        if (string.IsNullOrWhiteSpace(rawJson))
+            return config;
+
+        using var document = JsonDocument.Parse(rawJson);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+            return config;
+
+        var root = document.RootElement;
+        var gateway = config.Gateway ?? new GatewaySettingsConfig();
+        var migrated = false;
+
+        migrated |= TryMigrateString(root, "listenUrl", gateway.ListenUrl, value => gateway.ListenUrl = value);
+        migrated |= TryMigrateString(root, "defaultAgentId", gateway.DefaultAgentId, value => gateway.DefaultAgentId = value);
+        migrated |= TryMigrateString(root, "agentsDirectory", gateway.AgentsDirectory, value => gateway.AgentsDirectory = value);
+        migrated |= TryMigrateString(root, "sessionsDirectory", gateway.SessionsDirectory, value => gateway.SessionsDirectory = value);
+        migrated |= TryMigrateString(root, "logLevel", gateway.LogLevel, value => gateway.LogLevel = value);
+        migrated |= TryMigrateObject(root, "apiKeys", gateway.ApiKeys, value => gateway.ApiKeys = value);
+        migrated |= TryMigrateObject(root, "sessionStore", gateway.SessionStore, value => gateway.SessionStore = value);
+        migrated |= TryMigrateObject(root, "compaction", gateway.Compaction, value => gateway.Compaction = value);
+        migrated |= TryMigrateObject(root, "cors", gateway.Cors, value => gateway.Cors = value);
+        migrated |= TryMigrateObject(root, "rateLimit", gateway.RateLimit, value => gateway.RateLimit = value);
+        migrated |= TryMigrateObject(root, "extensions", gateway.Extensions, value => gateway.Extensions = value);
+
+        if (migrated || config.Gateway is not null)
+            config.Gateway = gateway;
+
+        return config;
+    }
+
+    private static bool TryMigrateString(
+        JsonElement root,
+        string propertyName,
+        string? currentValue,
+        Action<string> setter)
+    {
+        if (!string.IsNullOrWhiteSpace(currentValue) || !root.TryGetProperty(propertyName, out var element))
+            return false;
+
+        if (element.ValueKind != JsonValueKind.String)
+            return false;
+
+        var value = element.GetString();
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        setter(value);
+        return true;
+    }
+
+    private static bool TryMigrateObject<T>(
+        JsonElement root,
+        string propertyName,
+        T? currentValue,
+        Action<T> setter) where T : class
+    {
+        if (currentValue is not null || !root.TryGetProperty(propertyName, out var element))
+            return false;
+
+        if (element.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return false;
+
+        var value = JsonSerializer.Deserialize<T>(element.GetRawText(), JsonOptions);
+        if (value is null)
+            return false;
+
+        setter(value);
+        return true;
     }
 
     private static void ValidateChannels(Dictionary<string, ChannelConfig>? channels, List<string> errors)

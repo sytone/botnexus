@@ -150,7 +150,7 @@ internal sealed class ValidateCommand
         try
         {
             var config = PlatformConfigLoader.Load(validateOnLoad: false);
-            return config.GetListenUrl() ?? "http://localhost:5005";
+            return config.Gateway?.ListenUrl ?? "http://localhost:5005";
         }
         catch
         {

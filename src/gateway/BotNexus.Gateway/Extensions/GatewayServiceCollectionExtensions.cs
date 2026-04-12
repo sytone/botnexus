@@ -202,19 +202,19 @@ public static class GatewayServiceCollectionExtensions
                 serviceProvider.GetRequiredService<IOptions<PlatformConfig>>().Value,
                 serviceProvider.GetRequiredService<ILogger<ApiKeyGatewayAuthHandler>>())));
 
-        var defaultAgentId = config.GetDefaultAgentId();
+        var defaultAgentId = config.Gateway?.DefaultAgentId;
         if (!string.IsNullOrWhiteSpace(defaultAgentId))
         {
             services.PostConfigure<GatewayOptions>(options => options.DefaultAgentId = defaultAgentId);
         }
-        if (config.GetCompaction() is { } compaction)
+        if (config.Gateway?.Compaction is { } compaction)
         {
             services.AddSingleton<IOptions<CompactionOptions>>(_ => Options.Create(compaction));
         }
 
         ConfigureSessionStore(services, config, configDirectory);
 
-        var agentsDirectory = config.GetAgentsDirectory();
+        var agentsDirectory = config.Gateway?.AgentsDirectory;
         if (!string.IsNullOrWhiteSpace(agentsDirectory))
         {
             var agentsPath = ResolveConfiguredPath(configDirectory, agentsDirectory);
@@ -249,16 +249,7 @@ public static class GatewayServiceCollectionExtensions
         target.Providers = source.Providers;
         target.Channels = source.Channels;
         target.ApiKey = source.ApiKey;
-        target.ApiKeys = source.ApiKeys;
-        target.ListenUrl = source.ListenUrl;
-        target.DefaultAgentId = source.DefaultAgentId;
-        target.AgentsDirectory = source.AgentsDirectory;
-        target.SessionsDirectory = source.SessionsDirectory;
-        target.SessionStore = source.SessionStore;
-        target.Compaction = source.Compaction;
-        target.Cors = source.Cors;
         target.Cron = source.Cron;
-        target.LogLevel = source.LogLevel;
     }
 
     private static int ParseInt(string? value, int defaultValue)
@@ -274,9 +265,9 @@ public static class GatewayServiceCollectionExtensions
 
     private static void ConfigureSessionStore(IServiceCollection services, PlatformConfig config, string configDirectory)
     {
-        var sessionStore = config.GetSessionStore();
+        var sessionStore = config.Gateway?.SessionStore;
         var explicitType = sessionStore?.Type?.Trim();
-        var sessionsDirectory = config.GetSessionsDirectory();
+        var sessionsDirectory = config.Gateway?.SessionsDirectory;
         var resolvedType = !string.IsNullOrWhiteSpace(explicitType)
             ? explicitType
             : !string.IsNullOrWhiteSpace(sessionsDirectory)

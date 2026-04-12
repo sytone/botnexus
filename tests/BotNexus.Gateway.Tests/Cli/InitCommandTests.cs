@@ -34,7 +34,7 @@ public sealed class InitCommandTests
 
         result.ExitCode.Should().Be(0);
         result.CombinedOutput.Should().Contain("Use --force to overwrite");
-        config.GetListenUrl().Should().Be("http://localhost:5999");
+        config.Gateway?.ListenUrl.Should().Be("http://localhost:5999");
     }
 
     [Fact]
@@ -46,7 +46,8 @@ public sealed class InitCommandTests
         var config = await fixture.LoadConfigAsync();
 
         result.ExitCode.Should().Be(0);
-        config.GetListenUrl().Should().Be("http://localhost:5005");
+        config.Gateway?.ListenUrl.Should().Be("http://localhost:5005");
         config.Agents.Should().ContainKey("assistant");
     }
 }
+

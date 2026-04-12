@@ -154,7 +154,7 @@ public sealed class SchemaValidationTests
             var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
             var errors = PlatformConfigLoader.Validate(config);
 
-            config.GetListenUrl().Should().Be("http://localhost:5005");
+            config.Gateway?.ListenUrl.Should().Be("http://localhost:5005");
             config.Providers.Should().ContainKey("copilot");
             config.Providers!["copilot"].ApiKey.Should().Be("provider-key");
             errors.Should().NotBeNull();
@@ -167,20 +167,28 @@ public sealed class SchemaValidationTests
     }
 
     [Fact]
-    public void Validate_WithNestedGatewayShape_AlignsWithPlatformConfigModel()
+    public async Task LoadAsync_WithLegacyRootGatewayFields_MigratesToGatewaySection()
     {
-        var config = new PlatformConfig
+        var rootPath = Path.Combine(Path.GetTempPath(), "botnexus-schema-validation-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(rootPath);
+        var configPath = Path.Combine(rootPath, "config.json");
+
+        try
         {
-            ListenUrl = "http://localhost:1111",
-            Gateway = new GatewaySettingsConfig
-            {
-                ListenUrl = "http://localhost:5005"
-            }
-        };
+            await File.WriteAllTextAsync(configPath, """{"listenUrl":"http://localhost:5005","defaultAgentId":"assistant"}""");
 
-        var errors = PlatformConfigLoader.Validate(config);
+            var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
+            var errors = PlatformConfigLoader.Validate(config);
 
-        errors.Should().BeEmpty();
-        config.GetListenUrl().Should().Be("http://localhost:5005");
+            errors.Should().BeEmpty();
+            config.Gateway?.ListenUrl.Should().Be("http://localhost:5005");
+            config.Gateway?.DefaultAgentId.Should().Be("assistant");
+        }
+        finally
+        {
+            if (Directory.Exists(rootPath))
+                Directory.Delete(rootPath, recursive: true);
+        }
     }
 }
+

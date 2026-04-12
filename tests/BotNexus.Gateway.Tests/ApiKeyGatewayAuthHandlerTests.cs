@@ -57,15 +57,18 @@ public sealed class ApiKeyGatewayAuthHandlerTests
     {
         var config = new PlatformConfig
         {
-            ApiKeys = new Dictionary<string, ApiKeyConfig>
+            Gateway = new GatewaySettingsConfig
             {
-                ["tenant-a"] = new()
+                ApiKeys = new Dictionary<string, ApiKeyConfig>
                 {
-                    ApiKey = "tenant-a-secret",
-                    TenantId = "tenant-a",
-                    CallerId = "caller-a",
-                    Permissions = ["chat:send", "sessions:read"],
-                    AllowedAgents = ["assistant-a"]
+                    ["tenant-a"] = new()
+                    {
+                        ApiKey = "tenant-a-secret",
+                        TenantId = "tenant-a",
+                        CallerId = "caller-a",
+                        Permissions = ["chat:send", "sessions:read"],
+                        AllowedAgents = ["assistant-a"]
+                    }
                 }
             }
         };

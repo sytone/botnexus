@@ -29,7 +29,7 @@ public sealed class PlatformConfigWatcherTests : IDisposable
         var completed = await Task.WhenAny(callback.Task, Task.Delay(TimeSpan.FromSeconds(10)));
 
         completed.Should().Be(callback.Task);
-        (await callback.Task).DefaultAgentId.Should().Be("agent-b");
+        (await callback.Task).Gateway?.DefaultAgentId.Should().Be("agent-b");
     }
 
     [Fact]
@@ -46,7 +46,7 @@ public sealed class PlatformConfigWatcherTests : IDisposable
 
             var completed = await Task.WhenAny(callback.Task, Task.Delay(TimeSpan.FromSeconds(10)));
             completed.Should().Be(callback.Task);
-            (await callback.Task).DefaultAgentId.Should().Be("agent-c");
+            (await callback.Task).Gateway?.DefaultAgentId.Should().Be("agent-c");
         }
         finally
         {

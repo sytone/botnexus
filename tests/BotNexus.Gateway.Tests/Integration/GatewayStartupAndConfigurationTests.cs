@@ -129,7 +129,7 @@ public sealed class GatewayStartupAndConfigurationTests
 
                 var resolvedConfigPath = configuration["BotNexus:ConfigPath"];
                 var config = PlatformConfigLoader.Load(resolvedConfigPath, validateOnLoad: false);
-                config.GetDefaultAgentId().Should().Be("from-env");
+                config.Gateway?.DefaultAgentId.Should().Be("from-env");
                 return Task.CompletedTask;
             }
             finally
@@ -158,7 +158,7 @@ public sealed class GatewayStartupAndConfigurationTests
 
             var resolvedConfigPath = configuration["BotNexus:ConfigPath"];
             var config = PlatformConfigLoader.Load(resolvedConfigPath, validateOnLoad: false);
-            config.GetDefaultAgentId().Should().Be("from-appsettings");
+            config.Gateway?.DefaultAgentId.Should().Be("from-appsettings");
             return Task.CompletedTask;
         });
     }
@@ -173,7 +173,7 @@ public sealed class GatewayStartupAndConfigurationTests
         {
             Environment.SetEnvironmentVariable(ConfigPathKey, null);
             var config = PlatformConfigLoader.Load(validateOnLoad: false);
-            config.GetDefaultAgentId().Should().Be("from-default");
+            config.Gateway?.DefaultAgentId.Should().Be("from-default");
             return Task.CompletedTask;
         });
     }
@@ -277,4 +277,5 @@ public sealed class GatewayStartupAndConfigurationTests
         }
     }
 }
+
 

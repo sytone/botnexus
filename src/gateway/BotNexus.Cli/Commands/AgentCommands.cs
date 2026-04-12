@@ -135,7 +135,7 @@ internal sealed class AgentCommands
             return 1;
         }
 
-        var defaultAgent = config.GetDefaultAgentId();
+        var defaultAgent = config.Gateway?.DefaultAgentId;
         if (!string.IsNullOrWhiteSpace(defaultAgent) &&
             string.Equals(defaultAgent, matchedId, StringComparison.OrdinalIgnoreCase))
         {

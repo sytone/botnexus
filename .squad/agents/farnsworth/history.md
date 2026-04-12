@@ -201,3 +201,7 @@ Validation: `dotnet build src\gateway\BotNexus.Cli\BotNexus.Cli.csproj --nologo 
 - Added/updated tests for channel filtering + ordering and controller cursor behavior.
 - Validation: dotnet test (targeted Gateway tests) and dotnet build Q:\repos\botnexus --verbosity quiet passed.
 
+- 2026-04-12: Added `src/domain/BotNexus.Domain` (net9.0) with zero dependencies, introducing domain primitives (value objects + smart enums) and dedicated JSON converters under `Primitives/` and `Serialization/`.
+- 2026-04-12: Removed legacy root-level gateway duplicates from `PlatformConfig`, migrated all consumers/tests to `Gateway.*`, and added `PlatformConfigLoader.MigrateLegacyGatewaySettings` to preserve compatibility with old config files.
+- 2026-04-12: Validation now applies schema checks to the migrated in-memory config object, allowing one-time legacy root-key migration while keeping schema strict for persisted nested shape.
+

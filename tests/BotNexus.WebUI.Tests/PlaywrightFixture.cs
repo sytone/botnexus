@@ -186,7 +186,8 @@ public sealed class PlaywrightFixture : IAsyncLifetime
 
                 services.PostConfigure<PlatformConfig>(config =>
                 {
-                    config.RateLimit = new RateLimitConfig
+                    config.Gateway ??= new GatewaySettingsConfig();
+                    config.Gateway.RateLimit = new RateLimitConfig
                     {
                         RequestsPerMinute = 10000,
                         WindowSeconds = 60

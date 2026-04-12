@@ -93,10 +93,13 @@ public sealed class ApiKeyAuthEdgeCaseTests
     {
         var config = new PlatformConfig
         {
-            ApiKeys = new Dictionary<string, ApiKeyConfig>
+            Gateway = new GatewaySettingsConfig
             {
-                ["tenant-a"] = new() { ApiKey = "token-a", CallerId = "caller-a", TenantId = "tenant-a", Permissions = [] },
-                ["tenant-b"] = new() { ApiKey = "token-b", CallerId = "caller-b", TenantId = "tenant-b", Permissions = [] }
+                ApiKeys = new Dictionary<string, ApiKeyConfig>
+                {
+                    ["tenant-a"] = new() { ApiKey = "token-a", CallerId = "caller-a", TenantId = "tenant-a", Permissions = [] },
+                    ["tenant-b"] = new() { ApiKey = "token-b", CallerId = "caller-b", TenantId = "tenant-b", Permissions = [] }
+                }
             }
         };
         var handler = new ApiKeyGatewayAuthHandler(config, NullLogger<ApiKeyGatewayAuthHandler>.Instance);

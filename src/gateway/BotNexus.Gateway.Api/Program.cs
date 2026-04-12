@@ -106,7 +106,7 @@ builder.Services.AddCors(options =>
             return;
         }
 
-        var configuredOrigins = startupPlatformConfig.GetCors()?.AllowedOrigins?
+        var configuredOrigins = startupPlatformConfig.Gateway?.Cors?.AllowedOrigins?
             .Where(origin => !string.IsNullOrWhiteSpace(origin))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -179,7 +179,7 @@ using (var bootstrapLoggerFactory = new Serilog.Extensions.Logging.SerilogLogger
 var app = builder.Build();
 
 var platformConfig = app.Services.GetRequiredService<PlatformConfig>();
-var listenUrl = platformConfig.GetListenUrl();
+var listenUrl = platformConfig.Gateway?.ListenUrl;
 if (!string.IsNullOrWhiteSpace(listenUrl))
 {
     app.Urls.Clear();
