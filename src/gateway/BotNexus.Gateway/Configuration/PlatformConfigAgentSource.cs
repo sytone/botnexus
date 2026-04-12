@@ -84,6 +84,7 @@ public sealed class PlatformConfigAgentSource(
                 Metadata = ConvertObject(agentConfig.Metadata),
                 IsolationOptions = ConvertObject(agentConfig.IsolationOptions),
                 Memory = CloneMemoryConfig(agentConfig.Memory),
+                Soul = CloneSoulConfig(agentConfig.Soul),
                 SessionAccessLevel = agentConfig.SessionAccess?.Level ?? "own",
                 SessionAllowedAgents = agentConfig.SessionAccess?.AllowedAgents?.ToArray() ?? [],
                 ExtensionConfig = agentConfig.Extensions ?? new Dictionary<string, JsonElement>()
@@ -138,6 +139,21 @@ public sealed class PlatformConfigAgentSource(
                             HalfLifeDays = memoryConfig.Search.TemporalDecay.HalfLifeDays
                         }
                 }
+        };
+    }
+
+    private static SoulAgentConfig? CloneSoulConfig(SoulAgentConfig? soulConfig)
+    {
+        if (soulConfig is null)
+            return null;
+
+        return new SoulAgentConfig
+        {
+            Enabled = soulConfig.Enabled,
+            Timezone = soulConfig.Timezone,
+            DayBoundary = soulConfig.DayBoundary,
+            ReflectionOnSeal = soulConfig.ReflectionOnSeal,
+            ReflectionPrompt = soulConfig.ReflectionPrompt
         };
     }
 

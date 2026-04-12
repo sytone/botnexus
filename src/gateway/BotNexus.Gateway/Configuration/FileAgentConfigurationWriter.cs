@@ -97,6 +97,8 @@ public sealed class FileAgentConfigurationWriter(string directoryPath, BotNexusH
 
         public IReadOnlyDictionary<string, object?> IsolationOptions { get; init; } = new Dictionary<string, object?>();
 
+        public SoulAgentConfig? Soul { get; init; }
+
         public IReadOnlyList<string> SubAgentIds { get; init; } = [];
 
         public static AgentConfigurationFile FromDescriptor(AgentDescriptor descriptor)
@@ -114,6 +116,7 @@ public sealed class FileAgentConfigurationWriter(string directoryPath, BotNexusH
                 MaxConcurrentSessions = descriptor.MaxConcurrentSessions,
                 Metadata = descriptor.Metadata,
                 IsolationOptions = descriptor.IsolationOptions,
+                Soul = descriptor.Soul,
                 SubAgentIds = descriptor.SubAgentIds
             };
     }

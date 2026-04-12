@@ -89,6 +89,9 @@ public sealed record AgentDescriptor
     /// <summary>Memory system configuration for this agent. Null means memory is disabled.</summary>
     public MemoryAgentConfig? Memory { get; init; }
 
+    /// <summary>Soul session lifecycle configuration for this agent. Null means soul sessions are disabled.</summary>
+    public SoulAgentConfig? Soul { get; init; }
+
     /// <summary>Session access level for this agent's session tool. Defaults to "own".</summary>
     public string SessionAccessLevel { get; init; } = "own";
 

@@ -155,7 +155,23 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
             IsolationStrategy = string.IsNullOrWhiteSpace(config.IsolationStrategy) ? "in-process" : config.IsolationStrategy,
             MaxConcurrentSessions = config.MaxConcurrentSessions ?? 0,
             Metadata = ConvertObject(config.Metadata),
-            IsolationOptions = ConvertObject(config.IsolationOptions)
+            IsolationOptions = ConvertObject(config.IsolationOptions),
+            Soul = CloneSoulConfig(config.Soul)
+        };
+    }
+
+    private static SoulAgentConfig? CloneSoulConfig(SoulAgentConfig? soulConfig)
+    {
+        if (soulConfig is null)
+            return null;
+
+        return new SoulAgentConfig
+        {
+            Enabled = soulConfig.Enabled,
+            Timezone = soulConfig.Timezone,
+            DayBoundary = soulConfig.DayBoundary,
+            ReflectionOnSeal = soulConfig.ReflectionOnSeal,
+            ReflectionPrompt = soulConfig.ReflectionPrompt
         };
     }
 
@@ -314,6 +330,8 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
         public JsonElement? Metadata { get; init; }
 
         public JsonElement? IsolationOptions { get; init; }
+
+        public SoulAgentConfig? Soul { get; init; }
 
         public IReadOnlyList<string>? SubAgents { get; init; }
 

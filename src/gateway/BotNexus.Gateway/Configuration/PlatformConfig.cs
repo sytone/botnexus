@@ -84,6 +84,24 @@ public sealed class GatewaySettingsConfig
     public ExtensionsConfig? Extensions { get; set; }
     /// <summary>World identity shown by gateway clients.</summary>
     public WorldIdentity? World { get; set; }
+    /// <summary>Optional explicit cross-world communication permissions.</summary>
+    public List<CrossWorldPermissionConfig>? CrossWorldPermissions { get; set; }
+}
+
+/// <summary>Configuration for granting communication with another world.</summary>
+public sealed class CrossWorldPermissionConfig
+{
+    /// <summary>Identifier of the target world this permission applies to.</summary>
+    public string? TargetWorldId { get; set; }
+
+    /// <summary>Specific agents allowed to communicate. Null means all hosted agents.</summary>
+    public List<string>? AllowedAgents { get; set; }
+
+    /// <summary>Whether inbound communication from the target world is allowed.</summary>
+    public bool AllowInbound { get; set; } = true;
+
+    /// <summary>Whether outbound communication to the target world is allowed.</summary>
+    public bool AllowOutbound { get; set; } = true;
 }
 
 /// <summary>CORS settings for gateway HTTP endpoints.</summary>
@@ -197,6 +215,8 @@ public sealed class AgentDefinitionConfig
     public bool Enabled { get; set; } = true;
     /// <summary>Memory system configuration for this agent.</summary>
     public MemoryAgentConfig? Memory { get; set; }
+    /// <summary>Soul session lifecycle configuration for this agent.</summary>
+    public SoulAgentConfig? Soul { get; set; }
     /// <summary>Session access configuration for this agent's session tool.</summary>
     public SessionAccessConfig? SessionAccess { get; set; }
 

@@ -56,6 +56,7 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
             SetOptionalInt(entry, "maxConcurrentSessions", descriptor.MaxConcurrentSessions);
             SetOptionalObject(entry, "metadata", descriptor.Metadata);
             SetOptionalObject(entry, "isolationOptions", descriptor.IsolationOptions);
+            SetOptionalNode(entry, "soul", descriptor.Soul);
 
             await WriteRootAtomicallyAsync(root, cancellationToken);
         }
@@ -134,6 +135,17 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
         }
 
         target[propertyName] = JsonSerializer.SerializeToNode(values, JsonOptions);
+    }
+
+    private static void SetOptionalNode<T>(JsonObject target, string propertyName, T? value) where T : class
+    {
+        if (value is null)
+        {
+            target.Remove(propertyName);
+            return;
+        }
+
+        target[propertyName] = JsonSerializer.SerializeToNode(value, JsonOptions);
     }
 
     private async Task<JsonObject> ReadRootAsync(CancellationToken cancellationToken)
