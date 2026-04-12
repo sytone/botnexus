@@ -65,6 +65,8 @@ BotNexus is a multi-agent platform where intelligent agents live, think, communi
 +--------------------------------------------------------------+
 ```
 
+---
+
 ## Agent
 
 An Agent is the central domain object in BotNexus. It represents an intelligent entity that can think, communicate, remember, and act. Agents are the *who* of the system — everything else exists in service of them.
