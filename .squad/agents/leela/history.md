@@ -398,3 +398,53 @@ Updated the per-agent file permission model to support glob patterns in AllowedR
 - `docs/planning/feature-tool-permission-model/design-spec.md`
 - `src/gateway/BotNexus.Gateway/Security/DefaultPathValidator.cs`
 - `tests/BotNexus.Gateway.Tests/Security/PathValidatorTests.cs`
+
+## 2026-07-08 — DDD Refactoring Design Review (Lead)
+
+**Status:** ✅ Design Review Complete — Approved with 8 modifications (Grade: B+)
+**Requested by:** Jon Bullen
+**Spec:** `docs/planning/ddd-refactoring/design-spec.md`
+
+**Context:**
+Comprehensive DDD refactoring spec proposing 9 phases to align codebase with domain model. Introduced BotNexus.Domain project, value objects, smart enums, session model improvements, cron decoupling, sub-agent identity fix, abstractions split, dedup.
+
+**Key Findings:**
+1. **Spec is well-researched** — All claims verified: NormalizeChannelKey x5, Role magic strings x13, IsolationStrategy strings x40+ files, sub-agent identity theft confirmed
+2. **Phase 1.1 too large** — 20 types in one shot is a big-bang; decomposed into 1.1a (primitives), 1.1b (session), 1.1c (agent)
+3. **Missing serialization strategy** — Value objects need JsonConverter + SQLite column mapping. Decided: readonly record struct + implicit string conversion
+4. **Missing test migration** — ~2,000 tests use string patterns. Decided: implicit conversion for backward compat
+5. **Abstractions split blast radius** — 13 projects reference Gateway.Abstractions. Decided: TypeForwardedTo attributes for incremental migration
+6. **Phases 4/5 are speculative** — World (no consumer) and Agent-to-Agent (feature, not refactor) deferred
+7. **GatewaySession decomposition underestimated** — Lock + replay buffer extraction is highest-risk; requires dedicated sub-spec
+
+**8 Architectural Decisions:**
+- D1: Value objects use `readonly record struct` + implicit string conversion + JsonConverter
+- D2: Tests migrate incrementally via implicit conversion
+- D3: Defer Phase 4 (World) — YAGNI
+- D4: Defer Phase 5 (Agent-to-Agent) — needs own feature spec
+- D5: Defer Phase 2.3 (Soul Session) — underspecified
+- D6: Move Phases 9.4/9.5/9.6 to Wave 1 — zero Domain dependency, parallelize
+- D7: Phase 7.2 requires dedicated sub-spec — highest-risk item
+- D8: Phase 7.1 uses TypeForwardedTo for incremental migration
+
+**Wave Plan:** 6 waves across 2 delivery cycles
+- Waves 1-4 (this cycle, ~3-4 weeks): Domain foundation, session model, identity fixes, existence queries
+- Waves 5-6 (next cycle, ~2-3 weeks): Abstractions split, GatewaySession decomposition, SystemPromptBuilder
+- Future: World, Agent-to-Agent, Soul Session, Cross-World
+
+**Agent Assignments:**
+- Farnsworth: Core domain types, value objects, session model, store improvements, abstractions split
+- Bender: Sub-agent archetypes, cron decoupling, provider consolidation, SystemPromptBuilder
+- Hermes: Tests throughout (per-wave), ~120-150 new tests estimated
+- Kif: DDD patterns guide, session model docs, prompt architecture docs
+
+**Decision written to:** `.squad/decisions/inbox/leela-ddd-design-review.md`
+
+## Learnings — DDD Refactoring Patterns (2026-07-08)
+
+1. **Value object pattern for C#/.NET**: Use `readonly record struct` with implicit string conversion for backward compat. Smart enums use `sealed class` with `ConcurrentDictionary` registry for extensibility. Both need `JsonConverter<T>`.
+2. **Gateway.Abstractions has 13 downstream dependents** — Any split requires TypeForwardedTo attributes for incremental migration. Cold-turkey removal breaks the build across the entire solution.
+3. **GatewaySession mixes domain + infra** — Has `Lock _historyLock` with 5 locked methods, replay buffer, streaming state. Decomposition is the highest-risk refactor item. Requires snapshot tests before touching.
+4. **NormalizeChannelKey exists in 5 locations** (3 stores + ChannelHistoryController + PlaywrightFixture tests). A ChannelKey value object eliminates all of them.
+5. **Sub-agent identity theft** — DefaultSubAgentManager.cs line 64: `childAgentId = request.ParentAgentId`. Makes parent and child indistinguishable in logs, audit, and session queries.
+6. **Only 1 record struct exists in codebase** (ConfigPathResolver). Value objects will introduce a new pattern — needs team documentation.

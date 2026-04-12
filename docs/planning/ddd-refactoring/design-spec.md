@@ -1,4 +1,10 @@
+---
+status: in-progress
+---
+
 # BotNexus Domain-Driven Design Refactoring Plan
+
+**Status**: In Progress
 
 This plan maps the [domain model](botnexus-domain-model.md) to the current codebase and defines the work needed to align them. The goal is cleaner contracts, better separation of concerns, simpler testing, and a codebase that speaks the same language as the architecture.
 
