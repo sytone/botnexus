@@ -2014,13 +2014,16 @@
             }
         }
 
-        // Cold start — fetch session list
+        // Cold start — fetch from channel history endpoint
         elChatMessages.innerHTML = '<div class="loading">Loading timeline...</div>';
 
-        const allSessions = await fetchJson(`/sessions?agentId=${encodeURIComponent(agentId)}`);
-        if (!allSessions || allSessions.length === 0) {
+        const data = await fetchJson(
+            `/api/channels/${encodeURIComponent(channelType)}/agents/${encodeURIComponent(agentId)}/history?limit=50`
+        );
+
+        if (!data || !data.messages || data.messages.length === 0) {
             elChatMessages.innerHTML = '';
-            elChatMeta.textContent = `Agent: ${agentId} · No sessions yet`;
+            elChatMeta.textContent = `Agent: ${agentId} · No messages yet`;
             currentSessionId = null;
             updateSessionIdDisplay();
             loadChatHeaderModels();
@@ -2028,64 +2031,23 @@
             return;
         }
 
-        const normalizedChannel = normalizeChannelKey(channelType);
-        const channelSessions = allSessions
-            .filter(s => normalizeChannelKey(s.channelType) === normalizedChannel)
-            .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
-
-        if (channelSessions.length === 0) {
-            elChatMessages.innerHTML = '';
-            elChatMeta.textContent = `Agent: ${agentId} · No ${channelType} sessions`;
-            currentSessionId = null;
-            updateSessionIdDisplay();
-            loadChatHeaderModels();
-            elChatInput.focus();
-            return;
-        }
-
-        // Set the latest session as active — no JoinSession call
-        const latestSession = channelSessions[channelSessions.length - 1];
-        storeManager.getOrCreateStore(latestSession.sessionId, {
-            agentId: agentId,
-            channelType: channelType
-        });
-        storeManager.switchView(latestSession.sessionId);
+        // Use the newest message's session as the active session
+        const latestSessionId = data.messages[data.messages.length - 1].sessionId;
+        storeManager.getOrCreateStore(latestSessionId, { agentId, channelType });
+        storeManager.switchView(latestSessionId);
 
         elChatMessages.innerHTML = '';
 
-        // Render timeline (recent sessions)
-        const maxInitialSessions = 3;
-        const recentSessions = channelSessions.slice(-maxInitialSessions);
-        const olderCount = channelSessions.length - recentSessions.length;
+        // Render messages with session boundary dividers
+        renderHistoryBatch(data.messages, data.sessionBoundaries);
 
-        if (olderCount > 0) {
-            const loadOlderEl = document.createElement('div');
-            loadOlderEl.className = 'load-more-history';
-            loadOlderEl.dataset.agentId = agentId;
-            loadOlderEl.dataset.channelType = channelType;
-            loadOlderEl.dataset.olderSessionIds = JSON.stringify(
-                channelSessions.slice(0, olderCount).map(s => s.sessionId)
-            );
-            loadOlderEl.textContent = `↑ Load ${olderCount} older session${olderCount > 1 ? 's' : ''}`;
-            loadOlderEl.style.cssText = 'text-align:center;padding:8px;cursor:pointer;color:var(--text-secondary);font-size:0.85rem;';
-            loadOlderEl.addEventListener('click', () => loadOlderSessions(loadOlderEl));
-            elChatMessages.appendChild(loadOlderEl);
-        }
-
-        let totalMessages = 0;
-        for (const session of recentSessions) {
-            renderSessionDivider(session);
-            const count = session.messageCount || 0;
-            totalMessages += count;
-            await renderSessionMessages(session.sessionId, count);
-            // If user switched away during REST call, bail early
-            if (storeManager.activeViewId !== latestSession.sessionId) return;
-        }
+        // Set up infinite scrollback observer
+        setupScrollbackObserver(channelType, agentId, data.nextCursor, data.hasMore);
 
         // Check if agent is still running
-        await checkAgentRunningStatus(agentId, latestSession.sessionId);
+        await checkAgentRunningStatus(agentId, latestSessionId);
 
-        elChatMeta.textContent = `Agent: ${agentId} · ${totalMessages} messages across ${channelSessions.length} session${channelSessions.length > 1 ? 's' : ''}`;
+        elChatMeta.textContent = `Agent: ${agentId} · ${channelDisplayName(channelType)}`;
         updateSessionIdDisplay();
         scrollToBottom();
         elChatInput.focus();
@@ -2094,14 +2056,7 @@
     }
 
     function renderSessionDivider(session) {
-        const divider = document.createElement('div');
-        divider.className = 'session-divider';
-        divider.dataset.sessionId = session.sessionId;
-        const date = new Date(session.createdAt || Date.now());
-        const dateStr = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-        const timeStr = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-        divider.innerHTML = `<span class="session-divider-line"></span><span class="session-divider-label">Session started ${dateStr} at ${timeStr}</span><span class="session-divider-line"></span>`;
-        elChatMessages.appendChild(divider);
+        elChatMessages.appendChild(createSessionDividerEl(session.sessionId, session.createdAt));
     }
 
     async function renderSessionMessages(sessionId, totalCount) {
@@ -2110,120 +2065,139 @@
         const offset = Math.max(0, totalCount - pageSize);
         const historyPage = await fetchJson(`/sessions/${encodeURIComponent(sessionId)}/history?offset=${offset}&limit=${pageSize}`);
 
-        if (offset > 0) {
-            const loadMoreEl = document.createElement('div');
-            loadMoreEl.className = 'load-more-history';
-            loadMoreEl.dataset.sessionId = sessionId;
-            loadMoreEl.dataset.nextOffset = '0';
-            loadMoreEl.dataset.endOffset = String(offset);
-            loadMoreEl.textContent = `↑ Load earlier messages (${offset} more)`;
-            loadMoreEl.style.cssText = 'text-align:center;padding:8px;cursor:pointer;color:var(--text-secondary);font-size:0.85rem;';
-            loadMoreEl.addEventListener('click', () => loadEarlierMessages(sessionId, loadMoreEl));
-            elChatMessages.appendChild(loadMoreEl);
-        }
-
         if (historyPage?.entries) {
             for (const entry of historyPage.entries) renderHistoryEntry(entry);
         }
     }
 
-    async function loadOlderSessions(loadOlderEl) {
-        const sessionIds = JSON.parse(loadOlderEl.dataset.olderSessionIds || '[]');
-        if (sessionIds.length === 0) { loadOlderEl.remove(); return; }
+    // ── Infinite scrollback (IntersectionObserver) ──────────────────────
 
-        loadOlderEl.textContent = 'Loading...';
-
-        const fragment = document.createDocumentFragment();
-        for (const sessionId of sessionIds) {
-            const session = await fetchJson(`/sessions/${encodeURIComponent(sessionId)}`);
-            if (!session) continue;
-
-            const divider = document.createElement('div');
-            divider.className = 'session-divider';
-            divider.dataset.sessionId = sessionId;
-            const date = new Date(session.createdAt || Date.now());
-            const dateStr = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-            const timeStr = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-            divider.innerHTML = `<span class="session-divider-line"></span><span class="session-divider-label">Session started ${dateStr} at ${timeStr}</span><span class="session-divider-line"></span>`;
-            fragment.appendChild(divider);
-
-            const count = session.messageCount || (session.history ? session.history.length : 0);
-            if (count > 0) {
-                const historyPage = await fetchJson(`/sessions/${encodeURIComponent(sessionId)}/history?offset=0&limit=200`);
-                if (historyPage?.entries) {
-                    // Temporarily redirect renderHistoryEntry to fragment
-                    const tempContainer = document.createElement('div');
-                    const savedParent = elChatMessages;
-                    for (const entry of historyPage.entries) {
-                        renderHistoryEntryTo(entry, tempContainer);
-                    }
-                    for (const child of [...tempContainer.children]) {
-                        fragment.appendChild(child);
-                    }
-                }
-            }
-        }
-
-        // Insert before the load-older button, then remove it
-        loadOlderEl.parentNode.insertBefore(fragment, loadOlderEl);
-        loadOlderEl.remove();
+    function createSessionDividerEl(sessionId, timestamp) {
+        const divider = document.createElement('div');
+        divider.className = 'session-divider';
+        divider.dataset.sessionId = sessionId;
+        const date = new Date(timestamp || Date.now());
+        const dateStr = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+        const timeStr = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+        divider.innerHTML = `<span class="session-divider-line"></span><span class="session-divider-label">Session started ${dateStr} at ${timeStr}</span><span class="session-divider-line"></span>`;
+        return divider;
     }
 
-    async function loadEarlierMessages(sessionId, loadMoreEl) {
-        const endOffset = parseInt(loadMoreEl.dataset.endOffset, 10);
-        if (endOffset <= 0) return;
+    function renderHistoryBatch(messages, sessionBoundaries, container) {
+        container = container || elChatMessages;
+        const boundaryMap = new Map();
+        if (sessionBoundaries) {
+            for (const b of sessionBoundaries) boundaryMap.set(b.insertBeforeIndex, b);
+        }
+        for (let i = 0; i < messages.length; i++) {
+            const boundary = boundaryMap.get(i);
+            if (boundary) {
+                container.appendChild(createSessionDividerEl(boundary.sessionId, boundary.startedAt));
+            }
+            renderHistoryEntryTo(messages[i], container);
+        }
+    }
 
-        loadMoreEl.textContent = 'Loading...';
-        const pageSize = 30;
-        const offset = Math.max(0, endOffset - pageSize);
-        const limit = endOffset - offset;
+    const _scrollbackCleanups = new Map();
 
-        const historyPage = await fetchJson(`/sessions/${encodeURIComponent(sessionId)}/history?offset=${offset}&limit=${limit}`);
-        if (!historyPage?.entries?.length) {
-            loadMoreEl.remove();
-            return;
+    function setupScrollbackObserver(channelType, agentId, initialCursor, initialHasMore) {
+        const viewKey = `${agentId}::${normalizeChannelKey(channelType)}`;
+        const oldCleanup = _scrollbackCleanups.get(viewKey);
+        if (oldCleanup) oldCleanup();
+
+        const sentinel = document.createElement('div');
+        sentinel.className = 'history-sentinel';
+        elChatMessages.prepend(sentinel);
+
+        let nextCursor = initialCursor;
+        let hasMore = initialHasMore !== false;
+        let isFetching = false;
+
+        if (!hasMore || nextCursor === null) {
+            showEndOfHistory(sentinel);
+            _scrollbackCleanups.delete(viewKey);
+            return () => {};
         }
 
-        // Insert entries after the load-more button (before existing messages)
-        const fragment = document.createDocumentFragment();
-        for (const entry of historyPage.entries) {
-            const tempContainer = document.createElement('div');
-            // Render into temp, then move nodes
-            const prevCount = elChatMessages.children.length;
-            renderHistoryEntry(entry);
-            // The renderHistoryEntry appends to elChatMessages, so grab the last added node
-        }
+        const observer = new IntersectionObserver(entries => {
+            if (entries[0].isIntersecting && !isFetching && nextCursor !== null) {
+                fetchOlder();
+            }
+        }, { root: elChatMessages, rootMargin: '200px 0px 0px 0px' });
 
-        // Simpler approach: remove button, prepend entries, re-add button if needed
-        const nextSibling = loadMoreEl.nextSibling;
-        loadMoreEl.remove();
+        observer.observe(sentinel);
 
-        // Re-render: create entries before existing content
-        const tempDiv = document.createElement('div');
-        const savedHTML = elChatMessages.innerHTML;
-        elChatMessages.innerHTML = '';
+        async function fetchOlder() {
+            isFetching = true;
+            showTopSpinner(sentinel);
 
-        if (offset > 0) {
-            const newLoadMore = document.createElement('div');
-            newLoadMore.className = 'load-more-history';
-            newLoadMore.dataset.sessionId = sessionId;
-            newLoadMore.dataset.endOffset = String(offset);
-            newLoadMore.textContent = `↑ Load earlier messages (${offset} more)`;
-            newLoadMore.style.cssText = 'text-align:center;padding:8px;cursor:pointer;color:var(--text-secondary);font-size:0.85rem;';
-            newLoadMore.addEventListener('click', () => loadEarlierMessages(sessionId, newLoadMore));
-            elChatMessages.appendChild(newLoadMore);
-        }
+            const data = await fetchJson(
+                `/api/channels/${encodeURIComponent(channelType)}/agents/${encodeURIComponent(agentId)}/history?cursor=${encodeURIComponent(nextCursor)}&limit=50`
+            );
 
-        for (const entry of historyPage.entries) renderHistoryEntry(entry);
-        // Re-append existing messages
-        const tempContainer = document.createElement('div');
-        tempContainer.innerHTML = savedHTML;
-        // Skip the old load-more button if it was in savedHTML
-        for (const child of [...tempContainer.children]) {
-            if (!child.classList.contains('load-more-history')) {
-                elChatMessages.appendChild(child);
+            // Discard if user switched away during fetch
+            if (currentAgentId !== agentId ||
+                normalizeChannelKey(currentChannelType) !== normalizeChannelKey(channelType)) {
+                isFetching = false;
+                return;
+            }
+
+            if (!data || !data.messages || data.messages.length === 0) {
+                observer.disconnect();
+                showEndOfHistory(sentinel);
+                isFetching = false;
+                return;
+            }
+
+            // Prepend without scroll jump
+            const scrollHeightBefore = elChatMessages.scrollHeight;
+
+            const fragment = document.createDocumentFragment();
+            renderHistoryBatch(data.messages, data.sessionBoundaries, fragment);
+            sentinel.after(fragment);
+
+            elChatMessages.scrollTop += elChatMessages.scrollHeight - scrollHeightBefore;
+
+            nextCursor = data.nextCursor;
+            hasMore = data.hasMore;
+            hideTopSpinner(sentinel);
+            isFetching = false;
+
+            if (!hasMore) {
+                observer.disconnect();
+                showEndOfHistory(sentinel);
             }
         }
+
+        const cleanup = () => observer.disconnect();
+        _scrollbackCleanups.set(viewKey, cleanup);
+        return cleanup;
+    }
+
+    function showTopSpinner(sentinel) {
+        let spinner = sentinel.querySelector('.history-spinner');
+        if (!spinner) {
+            spinner = document.createElement('div');
+            spinner.className = 'history-spinner';
+            spinner.textContent = 'Loading older messages...';
+            spinner.style.cssText = 'text-align:center;padding:8px;color:var(--text-secondary);font-size:0.85rem;';
+            sentinel.appendChild(spinner);
+        }
+        spinner.classList.remove('hidden');
+    }
+
+    function hideTopSpinner(sentinel) {
+        const spinner = sentinel.querySelector('.history-spinner');
+        if (spinner) spinner.classList.add('hidden');
+    }
+
+    function showEndOfHistory(sentinel) {
+        sentinel.innerHTML = '';
+        const endEl = document.createElement('div');
+        endEl.className = 'history-end';
+        endEl.style.cssText = 'text-align:center;padding:12px;color:var(--text-secondary);font-size:0.85rem;';
+        endEl.innerHTML = '<span class="session-divider-line"></span> Beginning of conversation history <span class="session-divider-line"></span>';
+        sentinel.appendChild(endEl);
     }
 
     // =========================================================================
