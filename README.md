@@ -272,6 +272,8 @@ See [Architecture Guide](docs/architecture.md#provider-architecture-pi-style) an
 
 ```
 src/
+├── domain/
+│   └── BotNexus.Domain       # Domain primitives (value objects, smart enums)
 ├── BotNexus.Core          # Abstractions, config, extension loader
 ├── BotNexus.Gateway       # Main host, agent router, SignalR routing, hot reload
 ├── BotNexus.Cli           # CLI tool (botnexus command)
