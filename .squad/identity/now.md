@@ -1,15 +1,15 @@
 ---
-updated_at: 2026-04-11T19:30:00Z
-focus_area: Multi-session Connection Model Delivered (Phase 1+2)
-active_issues: []
-status: multi_session_model_complete
+updated_at: 2026-04-12T00:13:00Z
+focus_area: Infinite Scrollback Wave 1–2 Delivered
+active_issues: [Wave 3 UI blocked on Fry]
+status: scrollback_wave2_complete
 ---
 
 # What We're Focused On
 
-**Multi-session connection model fully delivered (2026-04-11 19:30Z).** Fundamental architectural pivot: sessions now pre-warmed at gateway startup, WebUI holds all sessions simultaneously (separate connection per channel/session), switching is pure UI with zero server calls. Eliminated entire class of race conditions. 6 commits, 9 tests, 83/83 E2E passing.
+**Infinite scrollback Wave 1 & 2 delivered (2026-04-12 00:13Z).** API for cross-session history + IntersectionObserver client pattern. 4-agent team: Leela design review + wave plan, Farnsworth (ListByChannelAsync + ChannelHistoryController), Bender (IntersectionObserver + fetchOlderMessages, removed broken loadEarlierMessages/loadOlderSessions), Hermes (19 tests: 10 API + 3 store + 6 pagination). Commits: 21fb7bb, fcc3785, 5ab9951.
 
-**Previous:** Session switching bug fully delivered including Playwright E2E (2026-04-10 21:10Z). Fry fixed send-during-switch race condition (sessionSwitchInProgress flag, input disable, sendMessage guard — commit 84b0350). Hermes expanded SignalR tests (4 new scenarios, commit f18e476) + built Playwright E2E suite (BotNexus.WebUI.Tests, 5 scenarios, commit bc855e1). Build green.
+**Previous:** Multi-session connection model fully delivered (2026-04-11 19:30Z). Fundamental architectural pivot: sessions now pre-warmed at gateway startup, WebUI holds all sessions simultaneously (separate connection per channel/session), switching is pure UI with zero server calls. Eliminated entire class of race conditions. 6 commits, 9 tests, 83/83 E2E passing.
 
 ## Current Status
 

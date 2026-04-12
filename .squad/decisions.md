@@ -10494,6 +10494,62 @@ Ordering verified correct — correlation IDs for all responses, auth before rat
 
 ---
 
+### Leela — Infinite Scrollback Design Review
+
+**Date:** 2026-04-12  
+**Author:** Leela (Lead/Architect)  
+**Date:** 2025-07-24  
+**Status:** APPROVED  
+**Spec:** docs/planning/feature-infinite-scrollback/design-spec.md
+
+**Code-Level Findings**
+
+All three verification points confirmed — the spec is accurate:
+
+1. **`ISessionStore`** — No `ListByChannelAsync`. Current methods: `GetAsync`, `GetOrCreateAsync`, `SaveAsync`, `DeleteAsync`, `ArchiveAsync`, `ListAsync(agentId?)`. The existing `ListAsync` filters only by `agentId`, not `channelType`. `GatewaySession.ChannelType` exists as `string?` — the new method can filter on it.
+
+2. **`SessionsController`** — No cross-session endpoint. Only `GET /sessions/{sessionId}/history` (offset-based, lines 88–110). No `ChannelHistoryController` exists. The per-session endpoint stays for admin/debug use.
+
+3. **`app.js`** — Confirmed destructive patterns:
+   - `loadEarlierMessages` (line 2172): Wipes DOM via `innerHTML = ''` (line 2204), re-renders everything.
+   - `loadOlderSessions` (line 2130): N+1 HTTP calls (one per session), sequential `fetchJson` in a loop.
+   - Zero `IntersectionObserver` usage — purely click-driven.
+
+**Wave Plan**
+
+### Wave 1 — API (Farnsworth)
+
+| Task | Detail |
+|------|--------|
+| `ISessionStore.ListByChannelAsync` | Add `Task<IReadOnlyList<GatewaySession>> ListByChannelAsync(string agentId, string channelType, CancellationToken)`. Implement in `FileSessionStore` + `InMemorySessionStore`. Filter on `GatewaySession.ChannelType`, order by `CreatedAt DESC`. |
+| `ChannelHistoryController` | New controller at `api/channels/{channelType}/agents/{agentId}/history`. Cursor parsing (`{sessionId}:{messageIndex}`), cross-session walk using `ListByChannelAsync`, response assembly with `sessionBoundaries`. Reuse existing `GetHistorySnapshot(offset, limit)` for per-session reads. |
+
+**Blocker for Wave 2.** Client work cannot start until this endpoint exists.
+
+### Wave 2 — Client (Bender + Fry, parallel)
+
+| Task | Owner | Detail |
+|------|-------|--------|
+| Delete `loadEarlierMessages` + `loadOlderSessions` | Bender | Remove both functions and their click-handler wiring (lines 2071, 2121). |
+| `IntersectionObserver` + `fetchOlderMessages` | Bender | Sentinel div, prepend logic, `scrollTop` adjustment (spec §4). `isFetching` guard. |
+| Cache layer | Bender | Cache fetched pages by cursor key in existing `SessionStore`. Invalidate on channel switch. |
+| Session divider rendering | Fry | Insert dividers at `sessionBoundaries[].insertBeforeIndex` positions. |
+| "New messages" floating button | Fry | Detect new messages while scrolled up, show/dismiss button anchored to bottom. |
+
+### Wave 3 — Tests (Hermes)
+
+| Task | Detail |
+|------|--------|
+| Integration tests | Cursor continuity across sessions, boundary markers, empty-session skipping, `hasMore: false` terminal state, limit clamping to 200. |
+| E2E tests | Scroll triggers fetch, no scroll jump, session dividers render, end-of-history sentinel, "new messages" button appears/dismisses. |
+
+**Notes**
+
+- No spec changes needed — the design is verified against current code.
+- `GatewaySession.ChannelType` is nullable (`string?`). `ListByChannelAsync` impl should skip sessions where `ChannelType` is null.
+
+---
+
 ### Leela — Phase 12 Wave 3 Design Review
 
 **Date:** 2026-04-06  
