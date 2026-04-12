@@ -10,14 +10,11 @@
     // --- State ---
     /** @type {signalR.HubConnection|null} */
     let connection = null;
-    let currentSessionId = null;
-    let currentAgentId = null;
     let currentChannelType = null;
     let connectionId = null;
     let responseTimeoutTimer = null;
     let steerIndicatorTimer = null;
     let hasReceivedResponse = false;
-    let isRestRequestInFlight = false;
     let showTools = false;
     let showThinking = false;
     let isActivitySubscribed = false;
@@ -44,41 +41,6 @@
     /** @type {Map<string, Object>} */
     let activeSubAgents = new Map();
 
-    // --- Per-session state (W3.1) ---
-    const sessionState = new Map();
-    const SESSION_STATE_MAX = 20;
-
-    function getSessionState(sessionId) {
-        if (!sessionId) {
-            return { isStreaming: false, activeMessageId: null, activeToolCalls: {}, activeToolCount: 0, thinkingBuffer: '', toolCallDepth: 0, toolStartTimes: {} };
-        }
-        // Route through SessionStore if available
-        const store = storeManager.getStore(sessionId);
-        if (store) return store.streamState;
-        // Fallback to legacy Map for sessions not yet in store
-        if (sessionState.has(sessionId)) {
-            const state = sessionState.get(sessionId);
-            sessionState.delete(sessionId);
-            sessionState.set(sessionId, state);
-            return state;
-        }
-        const state = { isStreaming: false, activeMessageId: null, activeToolCalls: {}, activeToolCount: 0, thinkingBuffer: '', toolCallDepth: 0, toolStartTimes: {} };
-        sessionState.set(sessionId, state);
-        if (sessionState.size > SESSION_STATE_MAX) {
-            const oldest = sessionState.keys().next().value;
-            sessionState.delete(oldest);
-        }
-        return state;
-    }
-
-    function isCurrentSessionStreaming() {
-        return currentSessionId ? getSessionState(currentSessionId).isStreaming : false;
-    }
-
-    function cleanupSessionState(sessionId) {
-        sessionState.delete(sessionId);
-    }
-
     // ─── Multi-Session Store (Phase 2) ──────────────────────────
     // All SignalR events route to per-session stores.
     // switchView() is synchronous DOM re-render — no join/leave on switch.
@@ -88,7 +50,14 @@
             this.sessionId = sessionId;
             this.agentId = info.agentId || null;
             this.channelType = info.channelType || null;
-            this.streamState = {
+            this.streamState = SessionStore.createStreamState();
+            this.cachedDom = null;
+            this.timelineMeta = null;
+            this.lastViewed = null;
+            this.unreadCount = 0;
+        }
+        static createStreamState() {
+            return {
                 isStreaming: false,
                 activeMessageId: null,
                 activeToolCalls: {},
@@ -97,10 +66,9 @@
                 toolCallDepth: 0,
                 toolStartTimes: {},
             };
-            this.cachedDom = null;
-            this.timelineMeta = null;
-            this.lastViewed = null;
-            this.unreadCount = 0;
+        }
+        resetStreamState() {
+            this.streamState = SessionStore.createStreamState();
         }
         get isStreaming() { return this.streamState.isStreaming; }
     }
@@ -109,8 +77,15 @@
         #stores = new Map();
         #maxStores = 20;
         #activeViewId = null;
+        #selectedAgentId = null;
+        #isRestRequestInFlight = false;
 
         get activeViewId() { return this.#activeViewId; }
+        get activeStore() { return this.#activeViewId ? this.#stores.get(this.#activeViewId) || null : null; }
+        get activeAgentId() { return this.activeStore?.agentId || this.#selectedAgentId || null; }
+        get isRestRequestInFlight() { return this.#isRestRequestInFlight; }
+        setRestRequestInFlight(isInFlight) { this.#isRestRequestInFlight = !!isInFlight; }
+        setSelectedAgent(agentId) { this.#selectedAgentId = agentId || null; }
 
         subscribe(sessions) {
             for (const info of sessions) {
@@ -119,7 +94,6 @@
         }
 
         switchView(sessionId) {
-            // Save current view's DOM before switching away
             if (this.#activeViewId && this.#activeViewId !== sessionId) {
                 const oldStore = this.#stores.get(this.#activeViewId);
                 if (oldStore && elChatMessages.children.length > 0) {
@@ -136,13 +110,9 @@
             if (!store) return false;
             store.unreadCount = 0;
             store.lastViewed = new Date();
-
-            // Update backward-compat aliases
-            currentSessionId = sessionId;
-            currentAgentId = store.agentId;
+            if (store.agentId) this.#selectedAgentId = store.agentId;
             currentChannelType = store.channelType;
 
-            // Restore cached DOM if available (warm switch — zero server calls)
             if (store.cachedDom) {
                 elChatMessages.innerHTML = '';
                 elChatMessages.appendChild(store.cachedDom);
@@ -150,11 +120,11 @@
                 if (store.timelineMeta) elChatMeta.textContent = store.timelineMeta;
                 updateSessionIdDisplay();
                 updateSidebarBadge(sessionId, 0);
-                return true; // warm switch completed
+                return true;
             }
 
             updateSessionIdDisplay();
-            return false; // cold start — caller loads content
+            return false;
         }
 
         routeEvent(evt) {
@@ -170,13 +140,20 @@
         }
 
         setActiveView(sessionId, agentId, channelType) {
-            this.#activeViewId = sessionId;
-            currentSessionId = sessionId;
-            currentAgentId = agentId;
-            currentChannelType = channelType;
+            this.#activeViewId = sessionId || null;
+            if (sessionId) {
+                const store = this.getOrCreateStore(sessionId, { agentId, channelType });
+                if (agentId) store.agentId = agentId;
+                if (channelType) store.channelType = channelType;
+                if (store.agentId) this.#selectedAgentId = store.agentId;
+            } else if (agentId) {
+                this.#selectedAgentId = agentId;
+            }
+            if (channelType) currentChannelType = channelType;
         }
 
         getOrCreateStore(sessionId, info = {}) {
+            if (!sessionId) return null;
             if (this.#stores.has(sessionId)) {
                 const s = this.#stores.get(sessionId);
                 this.#stores.delete(sessionId);
@@ -213,9 +190,38 @@
         getStore(sessionId) {
             return this.#stores.get(sessionId) || null;
         }
+
+        clearStore(sessionId) {
+            this.#stores.delete(sessionId);
+        }
     }
 
     const storeManager = new SessionStoreManager();
+
+    function getCurrentSessionId() {
+        return storeManager.activeViewId;
+    }
+
+    function getCurrentAgentId() {
+        return storeManager.activeAgentId;
+    }
+
+    function getStreamState(sessionId = storeManager.activeViewId) {
+        if (!sessionId) return SessionStore.createStreamState();
+        return storeManager.getOrCreateStore(sessionId).streamState;
+    }
+
+    function isCurrentSessionStreaming() {
+        const store = storeManager.activeStore;
+        return !!store?.streamState?.isStreaming;
+    }
+
+    function cleanupSessionState(sessionId) {
+        if (!sessionId) return;
+        const store = storeManager.getStore(sessionId);
+        if (!store) return;
+        store.resetStreamState();
+    }
 
     function updateSidebarBadge(sessionId, count) {
         const el = elSessionsList.querySelector(`.list-item[data-session-id="${CSS.escape(sessionId)}"]`);
@@ -425,7 +431,7 @@
 
     function updateSendButtonState() {
         const hasText = !!elChatInput.value.trim();
-        if (isRestRequestInFlight) {
+        if (storeManager.isRestRequestInFlight) {
             elBtnSend.disabled = true;
             return;
         }
@@ -456,7 +462,7 @@
     }
 
     function setSendingState(isSending) {
-        isRestRequestInFlight = isSending;
+        storeManager.setRestRequestInFlight(isSending);
         elBtnSend.classList.toggle('btn-sending', isSending);
         elBtnSend.textContent = isSending ? 'Sending' : 'Send';
         updateSendButtonState();
@@ -501,7 +507,7 @@
         const label = $('#processing-label');
         if (!label || label.classList.contains('hidden')) return;
 
-        const runningCount = Object.values(getSessionState(currentSessionId).activeToolCalls).filter(t => t.status === 'running').length;
+        const runningCount = Object.values(getStreamState(getCurrentSessionId()).activeToolCalls).filter(t => t.status === 'running').length;
         if (runningCount > 0) {
             const currentText = label.textContent;
             const baseText = currentText.replace(/\s*·\s*🔧.*$/, '');
@@ -555,7 +561,7 @@
             if (wasHealthy !== gatewayHealthy) {
                 if (!gatewayHealthy) {
                     showConnectionBanner('⚠️ Gateway offline', 'warning');
-                } else if (!currentAgentId) {
+                } else if (!getCurrentAgentId()) {
                     hideConnectionBanner();
                 }
             }
@@ -663,13 +669,13 @@
                 }).catch(err => {
                     debugLog('lifecycle', 'SubscribeAll failed, falling back:', err.message);
                     // Fallback: re-join current session if active
-                    if (currentSessionId && currentAgentId) {
-                        setTimeout(() => joinSession(currentAgentId, currentSessionId), 0);
+                    if (getCurrentSessionId() && getCurrentAgentId()) {
+                        setTimeout(() => joinSession(getCurrentAgentId(), getCurrentSessionId()), 0);
                     }
                 });
-            } else if (currentSessionId && currentAgentId) {
+            } else if (getCurrentSessionId() && getCurrentAgentId()) {
                 // Legacy fallback for servers without multi-session
-                setTimeout(() => joinSession(currentAgentId, currentSessionId), 0);
+                setTimeout(() => joinSession(getCurrentAgentId(), getCurrentSessionId()), 0);
             }
         });
 
@@ -680,7 +686,7 @@
             const sid = data?.sessionId || storeManager.activeViewId;
             cleanupSessionState(sid);
             if (sid !== storeManager.activeViewId) return;
-            currentSessionId = null;
+            storeManager.setActiveView(null, getCurrentAgentId(), currentChannelType);
             updateSessionIdDisplay();
             clearSubAgentPanel();
             elChatMessages.innerHTML = '';
@@ -691,7 +697,7 @@
         connection.on('MessageStart', (evt) => {
             const sid = evt?.sessionId || storeManager.activeViewId;
             {
-                const ss = getSessionState(sid);
+                const ss = getStreamState(sid);
                 ss.activeMessageId = evt.messageId;
                 ss.isStreaming = true;
                 ss.activeToolCount = 0;
@@ -731,7 +737,7 @@
 
         connection.on('ThinkingDelta', (evt) => {
             const sid = evt?.sessionId || storeManager.activeViewId;
-            const ss = getSessionState(sid);
+            const ss = getStreamState(sid);
             const text = evt?.thinkingContent || evt?.delta || '';
             if (text) ss.thinkingBuffer += text;
             const { isActive } = storeManager.routeEvent(evt);
@@ -745,7 +751,7 @@
             const { isActive } = storeManager.routeEvent(evt);
             if (!isActive) {
                 // Update store state even for background sessions
-                const ss = getSessionState(sid);
+                const ss = getStreamState(sid);
                 const callId = evt.toolCallId || `tc-${Date.now()}`;
                 ss.activeToolCount++;
                 ss.toolStartTimes[callId] = Date.now();
@@ -757,7 +763,7 @@
             }
             showProcessingStatus(`Using tool: ${evt.toolName || 'tool'}`, '🔧');
             handleToolStart(evt);
-            trackActivity('tool', currentAgentId, `🔧 ${evt.toolName || 'tool'} started`);
+            trackActivity('tool', getCurrentAgentId(), `🔧 ${evt.toolName || 'tool'} started`);
         });
 
         connection.on('ToolEnd', (evt) => {
@@ -765,7 +771,7 @@
             const { isActive } = storeManager.routeEvent(evt);
             if (!isActive) {
                 // Update store state even for background sessions
-                const ss = getSessionState(sid);
+                const ss = getStreamState(sid);
                 const callId = evt.toolCallId || 'unknown';
                 if (ss.activeToolCalls[callId]) {
                     ss.activeToolCalls[callId].result = evt.toolResult || '';
@@ -775,7 +781,7 @@
                 return;
             }
             handleToolEnd(evt);
-            const remainingTools = Object.values(getSessionState(currentSessionId).activeToolCalls).filter(t => t.status === 'running');
+            const remainingTools = Object.values(getStreamState(getCurrentSessionId()).activeToolCalls).filter(t => t.status === 'running');
             if (remainingTools.length > 0) {
                 showProcessingStatus(`Using tool: ${remainingTools[0].toolName}`, '🔧');
             } else {
@@ -785,7 +791,7 @@
 
         connection.on('MessageEnd', (evt) => {
             const sid = evt?.sessionId || storeManager.activeViewId;
-            const ss = getSessionState(sid);
+            const ss = getStreamState(sid);
             ss.isStreaming = false;
             ss.activeMessageId = null;
             const { isActive } = storeManager.routeEvent(evt);
@@ -798,18 +804,18 @@
                 return;
             }
             markResponseReceived();
-            trackActivity('response', currentAgentId, 'Response complete');
+            trackActivity('response', getCurrentAgentId(), 'Response complete');
             hideProcessingStatus();
             finalizeMessage(evt || {});
         });
 
         connection.on('Error', (evt) => {
             const sid = evt?.sessionId || storeManager.activeViewId;
-            getSessionState(sid).isStreaming = false;
+            getStreamState(sid).isStreaming = false;
             const { isActive } = storeManager.routeEvent(evt);
             if (!isActive) return;
             markResponseReceived();
-            trackActivity('error', currentAgentId, evt?.message || 'Error');
+            trackActivity('error', getCurrentAgentId(), evt?.message || 'Error');
             hideProcessingStatus();
             handleError({ message: evt?.message || 'Unknown error', code: evt?.code });
         });
@@ -831,7 +837,7 @@
             });
             if (!isActive) return;
             renderSubAgentPanel();
-            trackActivity('tool', currentAgentId, `🚀 Sub-agent spawned: ${evt.name || evt.subAgentId}`);
+            trackActivity('tool', getCurrentAgentId(), `🚀 Sub-agent spawned: ${evt.name || evt.subAgentId}`);
         });
 
         connection.on('SubAgentCompleted', (evt) => {
@@ -846,7 +852,7 @@
             }
             if (!isActive) return;
             renderSubAgentPanel();
-            trackActivity('response', currentAgentId, `✅ Sub-agent completed: ${evt.name || evt.subAgentId}`);
+            trackActivity('response', getCurrentAgentId(), `✅ Sub-agent completed: ${evt.name || evt.subAgentId}`);
         });
 
         connection.on('SubAgentFailed', (evt) => {
@@ -861,7 +867,7 @@
             if (!isActive) return;
             renderSubAgentPanel();
             const icon = evt.timedOut ? '⏱' : '❌';
-            trackActivity('error', currentAgentId, `${icon} Sub-agent failed: ${evt.name || evt.subAgentId}`);
+            trackActivity('error', getCurrentAgentId(), `${icon} Sub-agent failed: ${evt.name || evt.subAgentId}`);
         });
 
         connection.on('SubAgentKilled', (evt) => {
@@ -874,7 +880,7 @@
             }
             if (!isActive) return;
             renderSubAgentPanel();
-            trackActivity('tool', currentAgentId, `🛑 Sub-agent killed: ${evt.name || evt.subAgentId}`);
+            trackActivity('tool', getCurrentAgentId(), `🛑 Sub-agent killed: ${evt.name || evt.subAgentId}`);
         });
 
         // Connection lifecycle
@@ -931,22 +937,21 @@
         }
 
         debugLog('session', `Join: ${agentId} ${sessionId || '(new)'}`);
-        currentAgentId = agentId;
+        storeManager.setSelectedAgent(agentId);
 
         try {
             const result = await hubInvoke('JoinSession', agentId, sessionId || null);
 
             if (result?.sessionId) {
-                currentSessionId = result.sessionId;
-                currentAgentId = result.agentId || agentId;
-                debugLog('session', `Joined: session=${currentSessionId} agent=${currentAgentId}`);
+                storeManager.setActiveView(result.sessionId, result.agentId || agentId, currentChannelType || 'Web Chat');
+                debugLog('session', `Joined: session=${getCurrentSessionId()} agent=${getCurrentAgentId()}`);
 
                 // Subscribe to the new session's SignalR group
-                try { await hubInvoke('Subscribe', currentSessionId); } catch {}
+                try { await hubInvoke('Subscribe', getCurrentSessionId()); } catch {}
 
                 // Register in store manager
-                storeManager.getOrCreateStore(currentSessionId, {
-                    agentId: currentAgentId,
+                storeManager.getOrCreateStore(getCurrentSessionId(), {
+                    agentId: getCurrentAgentId(),
                     channelType: currentChannelType || 'Web Chat'
                 });
 
@@ -963,13 +968,13 @@
     }
 
     async function reloadCurrentSessionHistory() {
-        if (!currentSessionId) return 0;
-        const session = await fetchJson(`/sessions/${encodeURIComponent(currentSessionId)}`);
+        if (!getCurrentSessionId()) return 0;
+        const session = await fetchJson(`/sessions/${encodeURIComponent(getCurrentSessionId())}`);
         if (!session || !session.history) return 0;
         elChatMessages.innerHTML = '';
         for (const entry of session.history) renderHistoryEntry(entry);
         const msgCount = session.history.length || session.messageCount || 0;
-        elChatMeta.textContent = `Agent: ${currentAgentId || 'unknown'} · ${msgCount} messages`;
+        elChatMeta.textContent = `Agent: ${getCurrentAgentId() || 'unknown'} · ${msgCount} messages`;
         scrollToBottom();
         return msgCount;
     }
@@ -978,7 +983,7 @@
         try {
             const status = await fetchJson(`/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/status`);
             if (status && (status.status === 'Running' || status.status === 'Idle')) {
-                getSessionState(sessionId).isStreaming = true;
+                getStreamState(sessionId).isStreaming = true;
                 showStreamingIndicator();
                 showProcessingStatus('Agent is processing...', '⏳');
                 setSendingState(false);
@@ -1000,7 +1005,7 @@
 
     function handleThinkingDelta(msg) {
         if (!msg.delta) return;
-        const ss = getSessionState(currentSessionId);
+        const ss = getStreamState(getCurrentSessionId());
         ss.thinkingBuffer += msg.delta;
 
         let thinkingEl = elChatMessages.querySelector('.thinking-block');
@@ -1028,7 +1033,7 @@
     function finalizeThinkingBlock() {
         const thinkingEl = elChatMessages.querySelector('.thinking-block');
         if (thinkingEl) {
-            const charCount = getSessionState(currentSessionId).thinkingBuffer.length > 0 ? ` (${formatCharCount(getSessionState(currentSessionId).thinkingBuffer.length)})` : '';
+            const charCount = getStreamState(getCurrentSessionId()).thinkingBuffer.length > 0 ? ` (${formatCharCount(getStreamState(getCurrentSessionId()).thinkingBuffer.length)})` : '';
             thinkingEl.querySelector('.thinking-label').textContent = `Thought process${charCount}`;
             thinkingEl.querySelector('.thinking-stats').textContent = '';
             thinkingEl.classList.add('complete');
@@ -1058,12 +1063,12 @@
     // =========================================================================
 
     function updateSessionIdDisplay() {
-        if (currentSessionId) {
-            const truncated = currentSessionId.length > 12
-                ? currentSessionId.substring(0, 12) + '...'
-                : currentSessionId;
+        if (getCurrentSessionId()) {
+            const truncated = getCurrentSessionId().length > 12
+                ? getCurrentSessionId().substring(0, 12) + '...'
+                : getCurrentSessionId();
             elSessionIdText.textContent = `Session: ${truncated}`;
-            elSessionIdText.title = currentSessionId;
+            elSessionIdText.title = getCurrentSessionId();
             elSessionIdDisplay.classList.remove('hidden');
         } else {
             elSessionIdDisplay.classList.add('hidden');
@@ -1071,8 +1076,8 @@
     }
 
     function copySessionId() {
-        if (!currentSessionId) return;
-        navigator.clipboard.writeText(currentSessionId).then(() => {
+        if (!getCurrentSessionId()) return;
+        navigator.clipboard.writeText(getCurrentSessionId()).then(() => {
             const btn = $('#btn-copy-session-id');
             btn.textContent = '✅';
             btn.classList.add('copy-flash');
@@ -1080,7 +1085,7 @@
         }).catch(() => {
             // Fallback for older browsers
             const ta = document.createElement('textarea');
-            ta.value = currentSessionId;
+            ta.value = getCurrentSessionId();
             ta.style.position = 'fixed';
             ta.style.opacity = '0';
             document.body.appendChild(ta);
@@ -1141,11 +1146,11 @@
     // =========================================================================
 
     /** @type {Object<string, number>} */
-    // toolStartTimes is now per-session via getSessionState()
+    // toolStartTimes is now per-session via getStreamState()
     let toolElapsedTimer = null;
 
     function handleToolStart(msg) {
-        const ss = getSessionState(currentSessionId);
+        const ss = getStreamState(getCurrentSessionId());
         const callId = msg.toolCallId || `tc-${Date.now()}`;
         ss.activeToolCount++;
         ss.toolStartTimes[callId] = Date.now();
@@ -1162,7 +1167,7 @@
     }
 
     function handleToolEnd(msg) {
-        const ss = getSessionState(currentSessionId);
+        const ss = getStreamState(getCurrentSessionId());
         const callId = msg.toolCallId || 'unknown';
         const isError = msg.toolIsError === true;
         const status = isError ? 'error' : 'complete';
@@ -1174,7 +1179,7 @@
         delete ss.toolStartTimes[callId];
         updateToolCallStatus(callId, status, elapsed, msg.toolResult);
         if (isError) {
-            trackActivity('error', currentAgentId, `🔧 ${msg.toolName || ss.activeToolCalls[callId]?.toolName || 'tool'} failed`);
+            trackActivity('error', getCurrentAgentId(), `🔧 ${msg.toolName || ss.activeToolCalls[callId]?.toolName || 'tool'} failed`);
         }
 
         // Show a notification when a skill is loaded
@@ -1250,7 +1255,7 @@
     function startToolElapsedTimer() {
         if (toolElapsedTimer) return;
         toolElapsedTimer = setInterval(() => {
-            for (const [callId, startTime] of Object.entries(getSessionState(currentSessionId).toolStartTimes)) {
+            for (const [callId, startTime] of Object.entries(getStreamState(getCurrentSessionId()).toolStartTimes)) {
                 const el = elChatMessages.querySelector(`.tool-call[data-call-id="${callId}"] .tool-elapsed`);
                 if (el) el.textContent = `${Math.round((Date.now() - startTime) / 1000)}s`;
             }
@@ -1278,7 +1283,7 @@
     // =========================================================================
 
     function finalizeMessage(msg) {
-        const ss = getSessionState(currentSessionId);
+        const ss = getStreamState(getCurrentSessionId());
         ss.isStreaming = false;
         ss.activeMessageId = null;
         clearResponseTimeout();
@@ -1340,7 +1345,7 @@
     }
 
     function handleError(msg) {
-        getSessionState(currentSessionId).isStreaming = false;
+        getStreamState(getCurrentSessionId()).isStreaming = false;
         clearResponseTimeout();
         stopToolElapsedTimer();
         elBtnAbort.classList.add('hidden');
@@ -1480,7 +1485,7 @@
             </div>
         `;
         div.style.cursor = 'pointer';
-        getSessionState(currentSessionId).activeToolCalls[callId] = {
+        getStreamState(getCurrentSessionId()).activeToolCalls[callId] = {
             toolName,
             args: argsStr,
             result: resultStr,
@@ -1601,7 +1606,7 @@
     async function executeReset(commandType = 'reset') {
         // Reset streaming state but preserve the timeline
         {
-            const ss = getSessionState(currentSessionId);
+            const ss = getStreamState(getCurrentSessionId());
             ss.activeMessageId = null;
             ss.activeToolCalls = {};
             ss.activeToolCount = 0;
@@ -1615,9 +1620,9 @@
         hideProcessingStatus();
         setSendingState(false);
 
-        if (commandType === 'reset' && currentAgentId && currentSessionId && connection?.state === signalR.HubConnectionState.Connected) {
+        if (commandType === 'reset' && getCurrentAgentId() && getCurrentSessionId() && connection?.state === signalR.HubConnectionState.Connected) {
             try {
-                await hubInvoke('ResetSession', currentAgentId, currentSessionId);
+                await hubInvoke('ResetSession', getCurrentAgentId(), getCurrentSessionId());
             } catch (err) {
                 console.warn('Failed to reset session via SignalR:', err);
             }
@@ -1635,15 +1640,15 @@
             appendSystemMessage('New session started. Previous messages are still visible above.');
         }
 
-        currentSessionId = null;
+        storeManager.setActiveView(null, getCurrentAgentId(), currentChannelType);
         updateSessionIdDisplay();
-        currentAgentId = elAgentSelect.value || currentAgentId;
+        storeManager.setSelectedAgent(elAgentSelect.value || getCurrentAgentId());
         loadSessions();
     }
 
     function clearChatForSessionReset() {
         {
-            const ss = getSessionState(currentSessionId);
+            const ss = getStreamState(getCurrentSessionId());
             ss.activeMessageId = null;
             ss.activeToolCalls = {};
             ss.activeToolCount = 0;
@@ -1716,7 +1721,7 @@
     // =========================================================================
 
     async function sendMessage() {
-        if (!currentAgentId) return;
+        if (!getCurrentAgentId()) return;
         const text = elChatInput.value.trim();
         if (!text) return;
 
@@ -1738,9 +1743,9 @@
         autoResize(elChatInput);
         updateSendButtonState();
 
-        if (!currentSessionId) {
+        if (!getCurrentSessionId()) {
             // First message — join will create the session
-            await joinSession(currentAgentId, null);
+            await joinSession(getCurrentAgentId(), null);
         }
 
         if (isCurrentSessionStreaming() && connection?.state === signalR.HubConnectionState.Connected) {
@@ -1748,18 +1753,18 @@
                 pendingQueuedMessages.push(text);
                 incrementQueue();
                 showFollowUpIndicator();
-                trackActivity('message', currentAgentId, `Follow-up: ${text.substring(0, 60)}`);
+                trackActivity('message', getCurrentAgentId(), `Follow-up: ${text.substring(0, 60)}`);
                 try {
-                    await hubInvoke('FollowUp', currentAgentId, currentSessionId, text);
+                    await hubInvoke('FollowUp', getCurrentAgentId(), getCurrentSessionId(), text);
                 } catch (err) {
                     appendSystemMessage(`Failed to queue: ${err.message}`, 'error');
                 }
             } else {
                 appendSystemMessage(`🧭 Steering: ${text}`);
                 showSteerIndicator();
-                trackActivity('message', currentAgentId, `Steer: ${text.substring(0, 60)}`);
+                trackActivity('message', getCurrentAgentId(), `Steer: ${text.substring(0, 60)}`);
                 try {
-                    await hubInvoke('Steer', currentAgentId, currentSessionId, text);
+                    await hubInvoke('Steer', getCurrentAgentId(), getCurrentSessionId(), text);
                 } catch (err) {
                     appendSystemMessage(`Failed to steer: ${err.message}`, 'error');
                 }
@@ -1768,26 +1773,26 @@
         }
 
         appendChatMessage('user', text);
-        trackActivity('message', currentAgentId, text.substring(0, 60));
+        trackActivity('message', getCurrentAgentId(), text.substring(0, 60));
         setSendingState(true);
-        getSessionState(currentSessionId).isStreaming = true;
+        getStreamState(getCurrentSessionId()).isStreaming = true;
         incrementQueue();
         startResponseTimeout();
 
         try {
-            await hubInvoke('SendMessage', currentAgentId, currentSessionId, text);
+            await hubInvoke('SendMessage', getCurrentAgentId(), getCurrentSessionId(), text);
         } catch (err) {
             appendSystemMessage(`Error: ${err.message}`, 'error');
-            getSessionState(currentSessionId).isStreaming = false;
+            getStreamState(getCurrentSessionId()).isStreaming = false;
             setSendingState(false);
         }
     }
 
     async function abortRequest() {
-        if (currentAgentId && currentSessionId && connection?.state === signalR.HubConnectionState.Connected) {
-            try { await hubInvoke('Abort', currentAgentId, currentSessionId); } catch {}
+        if (getCurrentAgentId() && getCurrentSessionId() && connection?.state === signalR.HubConnectionState.Connected) {
+            try { await hubInvoke('Abort', getCurrentAgentId(), getCurrentSessionId()); } catch {}
         }
-        getSessionState(currentSessionId).isStreaming = false;
+        getStreamState(getCurrentSessionId()).isStreaming = false;
         clearResponseTimeout();
         stopToolElapsedTimer();
         elBtnAbort.classList.add('hidden');
@@ -1803,9 +1808,9 @@
         const agentId = elAgentSelect.value || null;
         if (!agentId) return;
 
-        currentSessionId = null;
+        storeManager.setActiveView(null, agentId, 'Web Chat');
         resetQueue();
-        currentAgentId = agentId;
+        storeManager.setSelectedAgent(agentId);
         currentChannelType = 'Web Chat';
 
         // Open the timeline for this agent — shows all past sessions
@@ -1875,7 +1880,7 @@
         const newFingerprint = JSON.stringify({
             agents: agents.map(a => a.agentId || a.name),
             sessions: (sessions || []).map(s => s.sessionId + ':' + (s.updatedAt || '')),
-            active: currentSessionId
+            active: getCurrentSessionId()
         });
 
         if (newFingerprint === sessionsFingerprint) return; // No changes
@@ -1932,7 +1937,7 @@
                 `;
                 emptyChannelEl.addEventListener('click', () => {
                     elAgentSelect.value = agentId;
-                    currentAgentId = agentId;
+                    storeManager.setSelectedAgent(agentId);
                     startNewChat();
                 });
                 channelsDiv.appendChild(emptyChannelEl);
@@ -1940,7 +1945,7 @@
                 for (const latestSession of latestByChannel.values()) {
                     const channelType = normalizeChannelKey(latestSession.channelType);
                     const displayName = channelDisplayName(channelType);
-                    const isActive = currentAgentId === agentId &&
+                    const isActive = getCurrentAgentId() === agentId &&
                         currentChannelType && normalizeChannelKey(currentChannelType) === channelType;
 
                     const channelEl = document.createElement('div');
@@ -1979,9 +1984,9 @@
                 try {
                     const res = await fetch(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
                     if (res.ok || res.status === 204) {
-                        if (currentSessionId === sessionId) {
-                            currentSessionId = null;
-                            currentAgentId = null;
+                        if (getCurrentSessionId() === sessionId) {
+                            storeManager.setActiveView(null, null, currentChannelType);
+                            storeManager.setSelectedAgent(null);
                             updateSessionIdDisplay();
                             showView('welcome-screen');
                         }
@@ -2006,7 +2011,7 @@
 
     async function openAgentTimeline(agentId, channelType) {
         // Clean up outgoing session UI state
-        if (isRestRequestInFlight) setSendingState(false);
+        if (storeManager.isRestRequestInFlight) setSendingState(false);
         resetQueue();
         clearResponseTimeout();
         stopToolElapsedTimer();
@@ -2025,7 +2030,7 @@
         showView('chat-view');
         if (agentId) elAgentSelect.value = agentId;
         elAgentSelect.classList.add('hidden');
-        currentAgentId = agentId;
+        storeManager.setSelectedAgent(agentId);
         currentChannelType = channelType;
 
         elChatTitle.textContent = `${agentId} — ${channelDisplayName(channelType)}`;
@@ -2055,7 +2060,7 @@
         if (!data || !data.messages || data.messages.length === 0) {
             elChatMessages.innerHTML = '';
             elChatMeta.textContent = `Agent: ${agentId} · No messages yet`;
-            currentSessionId = null;
+            storeManager.setActiveView(null, agentId, channelType);
             updateSessionIdDisplay();
             loadChatHeaderModels();
             elChatInput.focus();
@@ -2167,7 +2172,7 @@
             );
 
             // Discard if user switched away during fetch
-            if (currentAgentId !== agentId ||
+            if (getCurrentAgentId() !== agentId ||
                 normalizeChannelKey(currentChannelType) !== normalizeChannelKey(channelType)) {
                 isFetching = false;
                 return;
@@ -2405,7 +2410,7 @@
                 </div>
                 <span class="item-meta">${model ? 'Model: ' + escapeHtml(model) : ''}</span>
             `;
-            el.addEventListener('click', () => { currentAgentId = name; openAgentConfig(name); });
+            el.addEventListener('click', () => { storeManager.setSelectedAgent(name); openAgentConfig(name); });
             elAgentsList.appendChild(el);
         }
         populateAgentSelect(agents);
@@ -2422,11 +2427,11 @@
             opt.textContent = name;
             elAgentSelect.appendChild(opt);
         }
-        if (!currentAgentId && agents.length > 0) {
-            currentAgentId = agents[0].name || agents[0].agentId || agents[0].id;
+        if (!getCurrentAgentId() && agents.length > 0) {
+            storeManager.setSelectedAgent(agents[0].name || agents[0].agentId || agents[0].id);
         }
-        if (currentAgentId && !elAgentSelect.value) {
-            elAgentSelect.value = currentAgentId;
+        if (getCurrentAgentId() && !elAgentSelect.value) {
+            elAgentSelect.value = getCurrentAgentId();
         }
     }
 
@@ -2443,8 +2448,8 @@
     };
 
     async function fetchSubAgents() {
-        if (!currentSessionId) return;
-        const data = await fetchJson(`/sessions/${encodeURIComponent(currentSessionId)}/subagents`);
+        if (!getCurrentSessionId()) return;
+        const data = await fetchJson(`/sessions/${encodeURIComponent(getCurrentSessionId())}/subagents`);
         if (!data) return;
         activeSubAgents.clear();
         const list = Array.isArray(data) ? data : (data.subAgents || data.subagents || []);
@@ -2560,12 +2565,12 @@
     }
 
     async function killSubAgent(subAgentId) {
-        if (!currentSessionId || !subAgentId) return;
+        if (!getCurrentSessionId() || !subAgentId) return;
         const btn = elSubAgentList.querySelector(`.btn-kill-subagent[data-id="${subAgentId}"]`);
         if (btn) { btn.disabled = true; btn.textContent = '…'; }
         try {
             const res = await fetch(
-                `${API_BASE}/sessions/${encodeURIComponent(currentSessionId)}/subagents/${encodeURIComponent(subAgentId)}`,
+                `${API_BASE}/sessions/${encodeURIComponent(getCurrentSessionId())}/subagents/${encodeURIComponent(subAgentId)}`,
                 { method: 'DELETE' }
             );
             if (res.ok) {
@@ -2653,7 +2658,7 @@
         $('#btn-agent-chat').onclick = () => {
             // Switch back to chat with this agent
             showView('chat-view');
-            currentAgentId = agentId;
+            storeManager.setSelectedAgent(agentId);
             elAgentSelect.value = agentId;
             startNewChat();
         };
@@ -2966,10 +2971,10 @@
         html += `</div>`;
 
         // Current session info
-        if (currentSessionId && currentAgentId === agentId) {
+        if (getCurrentSessionId() && getCurrentAgentId() === agentId) {
             html += `<div class="debug-section"><h4>Current Session</h4>`;
             html += `<table class="debug-table">`;
-            html += `<tr><td>Session ID</td><td><code>${escapeHtml(currentSessionId)}</code></td></tr>`;
+            html += `<tr><td>Session ID</td><td><code>${escapeHtml(getCurrentSessionId())}</code></td></tr>`;
             html += `<tr><td>Connection ID</td><td><code>${escapeHtml(connectionId || 'none')}</code></td></tr>`;
             html += `<tr><td>SignalR</td><td>${connection?.state === signalR.HubConnectionState.Connected ? '🟢 Connected' : '🔴 Disconnected'}</td></tr>`;
             html += `<tr><td>Streaming</td><td>${isCurrentSessionStreaming() ? '⏳ Yes' : 'No'}</td></tr>`;
@@ -2977,7 +2982,7 @@
 
             // Try to fetch session status
             try {
-                const sessionStatus = await fetchJson(`/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(currentSessionId)}/status`);
+                const sessionStatus = await fetchJson(`/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(getCurrentSessionId())}/status`);
                 if (sessionStatus) {
                     html += `<div class="debug-section"><h4>Session Status</h4>`;
                     html += `<table class="debug-table">`;
@@ -2994,7 +2999,7 @@
         // Quick actions
         html += `<div class="debug-section"><h4>Quick Actions</h4>`;
         html += `<div class="debug-actions">`;
-        if (currentSessionId && currentAgentId === agentId) {
+        if (getCurrentSessionId() && getCurrentAgentId() === agentId) {
             html += `<button class="btn-sm btn-danger-sm" id="debug-btn-stop">⏹ Stop Agent</button>`;
             html += `<button class="btn-sm" id="debug-btn-reset">🔄 Reset Session</button>`;
             html += `<button class="btn-sm" id="debug-btn-copy-sid">📋 Copy Session ID</button>`;
@@ -3015,8 +3020,8 @@
         // Bind quick-action buttons
         const btnStop = body.querySelector('#debug-btn-stop');
         if (btnStop) btnStop.addEventListener('click', async () => {
-            if (currentSessionId && currentAgentId) {
-                await fetch(`${API_BASE}/agents/${encodeURIComponent(currentAgentId)}/sessions/${encodeURIComponent(currentSessionId)}/stop`, { method: 'POST' });
+            if (getCurrentSessionId() && getCurrentAgentId()) {
+                await fetch(`${API_BASE}/agents/${encodeURIComponent(getCurrentAgentId())}/sessions/${encodeURIComponent(getCurrentSessionId())}/stop`, { method: 'POST' });
                 showAgentDebugInfo(agentId);
             }
         });
@@ -3029,13 +3034,13 @@
 
         const btnCopy = body.querySelector('#debug-btn-copy-sid');
         if (btnCopy) btnCopy.addEventListener('click', () => {
-            if (currentSessionId) {
-                navigator.clipboard.writeText(currentSessionId).then(() => {
+            if (getCurrentSessionId()) {
+                navigator.clipboard.writeText(getCurrentSessionId()).then(() => {
                     btnCopy.textContent = '✅ Copied!';
                     setTimeout(() => { btnCopy.textContent = '📋 Copy Session ID'; }, 1200);
                 }).catch(() => {
                     const ta = document.createElement('textarea');
-                    ta.value = currentSessionId;
+                    ta.value = getCurrentSessionId();
                     ta.style.cssText = 'position:fixed;opacity:0';
                     document.body.appendChild(ta);
                     ta.select();
@@ -3174,10 +3179,10 @@
     // =========================================================================
 
     async function loadChatHeaderModels() {
-        if (!currentAgentId) return;
+        if (!getCurrentAgentId()) return;
         try {
             // First, get the current model from agent
-            const agent = await fetchJson(`/agents/${encodeURIComponent(currentAgentId)}`);
+            const agent = await fetchJson(`/agents/${encodeURIComponent(getCurrentAgentId())}`);
             const currentModel = agent?.modelId || '';
             
             // Try to fetch models list
@@ -3225,12 +3230,12 @@
     }
 
     async function handleModelChange() {
-        if (!currentAgentId || !elModelSelect.value) return;
+        if (!getCurrentAgentId() || !elModelSelect.value) return;
         
         const newModel = elModelSelect.value;
         try {
             // Get current agent descriptor
-            const agent = await fetchJson(`/agents/${encodeURIComponent(currentAgentId)}`);
+            const agent = await fetchJson(`/agents/${encodeURIComponent(getCurrentAgentId())}`);
             if (!agent) {
                 appendSystemMessage('❌ Failed to load agent details', 'error');
                 return;
@@ -3239,7 +3244,7 @@
             // Update model
             agent.modelId = newModel;
             
-            const res = await fetch(`${API_BASE}/agents/${encodeURIComponent(currentAgentId)}`, {
+            const res = await fetch(`${API_BASE}/agents/${encodeURIComponent(getCurrentAgentId())}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(agent)
@@ -3591,14 +3596,14 @@
         elAgentSelect.addEventListener('change', () => {
             const newAgent = elAgentSelect.value;
             const hasMessages = elChatMessages.children.length > 0;
-            if (hasMessages && currentSessionId && currentAgentId && newAgent !== currentAgentId) {
+            if (hasMessages && getCurrentSessionId() && getCurrentAgentId() && newAgent !== getCurrentAgentId()) {
                 showConfirm(
                     `Switch to agent "${newAgent}"? This will start a new session.`,
                     'Switch Agent',
                     () => { elAgentSelect.value = newAgent; startNewChat(); },
                     'Switch'
                 );
-                elAgentSelect.value = currentAgentId;
+                elAgentSelect.value = getCurrentAgentId();
                 return;
             }
             startNewChat();
@@ -3819,5 +3824,6 @@
         init();
     }
 })();
+
 
 
