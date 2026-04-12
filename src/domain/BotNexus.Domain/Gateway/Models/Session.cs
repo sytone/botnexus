@@ -7,9 +7,9 @@ namespace BotNexus.Gateway.Abstractions.Models;
 /// </summary>
 public sealed record Session
 {
-    public required SessionId SessionId { get; init; }
+    public SessionId SessionId { get; set; }
 
-    public required AgentId AgentId { get; set; }
+    public AgentId AgentId { get; set; }
 
     public ChannelKey? ChannelType { get; set; }
 
@@ -19,17 +19,17 @@ public sealed record Session
 
     public bool IsInteractive => SessionType.Equals(SessionType.UserAgent);
 
-    public List<SessionParticipant> Participants { get; init; } = [];
+    public List<SessionParticipant> Participants { get; set; } = [];
 
-    public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public DateTimeOffset? ExpiresAt { get; set; }
 
-    public Dictionary<string, object?> Metadata { get; init; } = [];
+    public Dictionary<string, object?> Metadata { get; set; } = [];
 
-    public List<SessionEntry> History { get; init; } = [];
+    public List<SessionEntry> History { get; set; } = [];
 
     public int MessageCount => History.Count;
 }

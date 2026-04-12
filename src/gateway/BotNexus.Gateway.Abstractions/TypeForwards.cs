@@ -15,6 +15,7 @@ using System.Runtime.CompilerServices;
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.GatewayActivity))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.GatewayActivityType))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.GatewaySession))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.GatewaySessionRuntime))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.Session))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.SessionEntry))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.GatewaySessionStreamEvent))]
