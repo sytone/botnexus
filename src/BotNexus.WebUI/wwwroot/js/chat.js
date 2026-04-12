@@ -21,8 +21,8 @@ import { activeSubAgents } from './events.js';
 
 // ── Module state ────────────────────────────────────────────────────
 
-let showTools = true;
-let showThinking = true;
+let showTools = localStorage.getItem('botnexus:show-tools') !== 'false';
+let showThinking = localStorage.getItem('botnexus:show-thinking') !== 'false';
 let sendModeFollowUp = false;
 let messageQueueCount = 0;
 let pendingQueuedMessages = [];
@@ -1365,11 +1365,13 @@ export async function handleModelChange() {
 
 export function toggleToolVisibility() {
     showTools = dom.toggleTools.checked;
+    localStorage.setItem('botnexus:show-tools', showTools);
     applyToggleState();
 }
 
 export function toggleThinkingVisibility() {
     showThinking = dom.toggleThinking.checked;
+    localStorage.setItem('botnexus:show-thinking', showThinking);
     applyToggleState();
 }
 

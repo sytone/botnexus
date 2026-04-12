@@ -110,6 +110,11 @@ function initEventListeners() {
 
     dom.toggleTools.addEventListener('change', toggleToolVisibility);
     dom.toggleThinking.addEventListener('change', toggleThinkingVisibility);
+    // Restore toggle state from localStorage and sync checkboxes
+    dom.toggleTools.checked = localStorage.getItem('botnexus:show-tools') !== 'false';
+    dom.toggleThinking.checked = localStorage.getItem('botnexus:show-thinking') !== 'false';
+    toggleToolVisibility();
+    toggleThinkingVisibility();
     dom.toggleActivity.addEventListener('change', toggleActivity);
 
     $('#btn-refresh-sessions').addEventListener('click', (e) => { e.stopPropagation(); loadSessions(); });
