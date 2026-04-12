@@ -164,7 +164,7 @@ public sealed class GatewayStartupAndConfigurationTests
     }
 
     [Fact]
-    public async Task GatewayApi_WorldEndpoint_ReturnsConfiguredWorldIdentity()
+    public async Task GatewayApi_WorldEndpoint_ReturnsConfiguredWorldDescriptor()
     {
         using var fixture = new GatewayStartupFixture();
         fixture.WriteDefaultConfig("""
@@ -187,10 +187,14 @@ public sealed class GatewayStartupAndConfigurationTests
 
             var world = await client.GetFromJsonAsync<JsonElement>("/api/world");
 
-            world.GetProperty("id").GetString().Should().Be("local-dev");
-            world.GetProperty("name").GetString().Should().Be("Local Development");
-            world.GetProperty("description").GetString().Should().Be("Local development gateway");
-            world.GetProperty("emoji").GetString().Should().Be("🏠");
+            world.GetProperty("identity").GetProperty("id").GetString().Should().Be("local-dev");
+            world.GetProperty("identity").GetProperty("name").GetString().Should().Be("Local Development");
+            world.GetProperty("identity").GetProperty("description").GetString().Should().Be("Local development gateway");
+            world.GetProperty("identity").GetProperty("emoji").GetString().Should().Be("🏠");
+            world.GetProperty("hostedAgents").ValueKind.Should().Be(JsonValueKind.Array);
+            world.GetProperty("locations").ValueKind.Should().Be(JsonValueKind.Array);
+            world.GetProperty("availableStrategies").ValueKind.Should().Be(JsonValueKind.Array);
+            world.GetProperty("crossWorldPermissions").ValueKind.Should().Be(JsonValueKind.Array);
         });
     }
 
@@ -206,8 +210,8 @@ public sealed class GatewayStartupAndConfigurationTests
 
             var world = await client.GetFromJsonAsync<JsonElement>("/api/world");
 
-            world.GetProperty("id").GetString().Should().Be(Environment.MachineName);
-            world.GetProperty("name").GetString().Should().Be("BotNexus Gateway");
+            world.GetProperty("identity").GetProperty("id").GetString().Should().Be(Environment.MachineName);
+            world.GetProperty("identity").GetProperty("name").GetString().Should().Be("BotNexus Gateway");
         });
     }
 
@@ -325,5 +329,4 @@ public sealed class GatewayStartupAndConfigurationTests
         }
     }
 }
-
 
