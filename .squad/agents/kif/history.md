@@ -7,31 +7,17 @@
 
 ## Core Context
 
-**Phases 1-11 Complete, Phase 12 Wave 1 Initiated.** Kif owns developer experience, training materials, documentation. Phase 12 Wave 1 assignment: WebSocket channel README (P0). Created lifecycle skill, dev guide, deployment scripts. Built OpenAPI spec export infrastructure. Manages project documentation and knowledge transfer. Currently: protocol docs, API reference updates, config reference, architecture diagrams queued for Wave 2-3.
+**Phases 1-11 Complete, Phase 12 Waves 1-4 Complete.** Kif owns developer experience, training materials, documentation. Delivered across: Phase 11 Wave 1 (XML docs, module READMEs), Phase 12 Wave 1 (WebSocket channel docs), Wave 2-3 (Sub-agent spawning feature docs, DDD patterns developer reference), Wave 4 (Architecture docs updated for DDD Waves 2-3 implementation). Key deliverables: 470-line sub-agent feature doc, 20.5KB DDD patterns guide, type catalog tracking 15+ value objects + 6 smart enums with phase/wave breakdown. Currently: Wave 4 DDD architecture docs finalized with SessionParticipant, SubAgentArchetype, TriggerType patterns documented; dual-lookup session store architecture with ExistenceQuery validated; full cross-store consistency documentation complete.
 
 ---
 
-## Session: Phase 3 Port Audit Design Review (2026-04-05T09:49:50Z)
+## Archived Early Phases (2026-04-05 to 2026-04-06)
 
-Participated in design review ceremony for Phase 3 architecture. All ADs approved (9–17):
-- **AD-9** DefaultMessageConverter → Farnsworth
-- **AD-10** --thinking CLI + /thinking command → Bender  
-- **AD-11** ListDirectoryTool → Bender
-- **AD-12** ContextFileDiscovery → Bender
-- **AD-14** session metadata entries → Bender
-- **AD-15** ModelRegistry utilities → Farnsworth
-- **AD-17** /thinking slash command → Bender
-- **AD-13** deferred (OpenRouter routing types, no provider yet)
-- **AD-16** already present (maxRetryDelayMs)
+**Phase 3 Port Audit:** Participated in design review (AD-9 through AD-17) with role assignments. Delivered training module updates (5 modules, 7 P0 decisions, 18+ P1 items). Completed dev loop documentation overhaul with bug fixes (pre-commit hook path, dev-loop.md rewrite, phantom script references removed, section numbering fixes).
 
-**Orchestration logs:** .squad/orchestration-log/2026-04-05T09-49-50Z-{agent}.md
+**Phase 11 Wave 1:** Added 14 XML doc comments to Gateway.Api (CS1591: 0), created 3 module READMEs (Gateway, Gateway.Api, Cli), reduced build warnings 39→0.
 
-**Session log:** .squad/log/2026-04-05T09-49-50Z-port-audit-phase-3.md
-
-**Boundaries:** AgentCore ↔ CodingAgent (DefaultMessageConverter), CodingAgent ↔ Session (MetadataEntry), Providers.Core (ModelRegistry utilities).
-
-**Next:** Parallel execution tracks. Farnsworth + Bender begin implementation. Kif writes training docs. Nibbler runs consistency review.
-
+**Phase 12 Wave 1:** WebSocket channel README (final channel project without docs), full message protocol documentation (6 inbound, 10 outbound types), reconnection replay flow, all 5 capability flags, GatewayWebSocketOptions, JavaScript examples, cross-referenced to source code.
 
 ---
 
@@ -95,24 +81,11 @@ Participated in design review ceremony for Phase 3 architecture. All ADs approve
 
 ---
 
-## Dev Loop Documentation Overhaul
+## 2026-04-05 Early Sessions — Port Audit & Phase 3 Design Review
 
-**Status:** ✅ Complete  
-**Scope:** Full audit and update of dev loop docs, scripts, and getting-started guides.
+**Phase 3 Port Audit Design Review (2026-04-05T09:49:50Z)** — Participated in design review ceremony for Phase 3 architecture. All ADs approved (9–17): DefaultMessageConverter (Farnsworth), --thinking CLI + /thinking command (Bender), ListDirectoryTool (Bender), ContextFileDiscovery (Bender), session metadata entries (Bender), ModelRegistry utilities (Farnsworth), /thinking slash command (Bender). AD-13 deferred (OpenRouter), AD-16 already present. Orchestration logs and session log recorded.
 
-**Issues Found & Fixed:**
-
-1. **`scripts/install-pre-commit-hook.ps1`** — Path bug: used `$PSScriptRoot` (resolves to `scripts/`) for `.git/hooks/` path, which put the hook in `scripts/.git/hooks/` instead of repo root `.git/hooks/`. Fixed to use `Split-Path -Parent $PSScriptRoot` pattern. Also fixed reference to non-existent `tests/BotNexus.Tests.Unit/` — changed to `tests/BotNexus.Gateway.Tests` which is the actual test project.
-
-2. **`docs/dev-loop.md`** — Rewrote entirely. Added: quick start section, full dev loop diagram (edit→build→test→run→verify), project structure table for edit targets, `-SkipBuild` and `-SkipTests` parameters for `dev-loop.ps1`, `-SkipBuild` for `start-gateway.ps1`, `export-openapi.ps1` reference, live testing with Copilot section (OAuth flow + WebSocket testing), auth.json documentation, environment variables table, expanded troubleshooting.
-
-3. **`docs/development-workflow.md`** — Removed phantom references to `scripts/pack.ps1` and `scripts/install.ps1` (don't exist), fixed `BotNexus.Agent.Tests` → `BotNexus.AgentCore.Tests`, fixed port 18790 → 5005, fixed `gateway.log` → `botnexus-*.log`, removed stale CLI install section.
-
-4. **`docs/getting-started-dev.md`** — Fixed missing section 4 (skipped from 3 to 5), renumbered sections 4–12, fixed `dotnet run --project src/gateway/BotNexus.Cli -- validate` (CLI project is at `src/gateway/BotNexus.Cli/`, but validation via API is more reliable).
-
-5. **`docs/dev-guide.md`** — Added `-SkipBuild` and `-SkipTests` to `dev-loop.ps1` parameter table, added `-SkipBuild` to `start-gateway.ps1` table, added fast restart example.
-
-**Verified:** Build succeeds (0 warnings, 0 errors). All documented file paths confirmed against BotNexus.slnx and actual directory structure.
+**Dev Loop Documentation Overhaul** — Full audit and update of dev loop docs, scripts, and getting-started guides. Fixed path bugs in install-pre-commit-hook.ps1, rewrote dev-loop.md with full dev loop diagram, fixed phantom script references in development-workflow.md, corrected section numbering in getting-started-dev.md. Build verified with 0 warnings/errors.
 
 ---
 
@@ -270,3 +243,15 @@ Created `docs/development/ddd-patterns.md` — comprehensive developer reference
 - **Wave 2-3 Summary:** Documentation must reflect completed DDD implementation. Update type catalogs to show status (✅ Done vs. Planned), add new sections for Wave 2-3 patterns (e.g., SessionParticipant, SubAgentArchetype, TriggerType, IInternalTrigger), and update architecture sections that reference changed models (Session, Cron).
 - Backward compatibility is critical when documenting DDD changes: the `CallerId` field remains on `GatewaySession` even though `Participants` is canonical. Implicit operators on value objects let existing tests compile without modification. Document both the new pattern and the legacy path.
 - Session model redesign (Wave 2-3) includes domain language improvements: "Closed" → "Sealed" reflects semantics better (sealed = terminal and preserved, not deleted). This distinction matters in documentation because it affects team mental model of session lifecycle.
+
+## 2026-04-12 - DDD Wave 4 Architecture Documentation
+- Updated architecture documentation reflecting DDD Waves 2-3 implementation completion
+- SessionParticipant value object introduction — participant model in Session aggregate
+- Session model redesign documentation — Participants collection, sealed semantics vs. closed
+- SubAgentArchetype smart enum patterns — extensibility model for agent archetypes
+- TriggerType extensibility patterns — registry-based trigger discovery and registration
+- Dual-lookup session store architecture — ExistenceQuery enabling owner OR participant search
+- Type catalog refresh: Wave 1 ✅ Complete (AgentId, SessionId, ChannelKey, ConversationId, SenderId, AgentSessionKey, ToolName, MessageRole, SessionStatus, SessionType, ExecutionStrategy); Wave 2-3 ✅ Complete (SessionParticipant, SubAgentArchetype, TriggerType)
+- Developer migration guide extended for incremental adoption patterns
+- Architecture diagrams updated with cross-store consistency validation flow
+- Two conventional commits capturing Waves 2-3 architecture changes

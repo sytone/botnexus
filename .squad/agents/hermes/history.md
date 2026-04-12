@@ -103,3 +103,12 @@
 - Expanded `PlatformConfigurationTests` versioning coverage for sync-load missing version default (`1`), warnings for unsupported versions, no warnings for supported versions, and trace warning emission checks.
 - Validation: `dotnet build Q:\repos\botnexus --verbosity quiet` and `dotnet test Q:\repos\botnexus\tests\BotNexus.Gateway.Tests --verbosity quiet` passed.
 
+
+## 2026-04-12 - DDD Wave 4 Test Coverage
+- Implemented existence dual-lookup tests (26da24c) validating ExistenceQuery interface across in-memory, file, and SQLite stores
+- Validated AgentId owner matches, participant ID matches, combined search (owner OR participant), time range filtering, session type discrimination, result limit enforcement
+- Implemented SessionStoreBase contract tests (c1c9475) for new ListAsync(AgentId?, GatewaySessionStatus?, CancellationToken) overload
+- Ensured backward compatibility with existing ISessionStore.ListAsync(AgentId?, CancellationToken)
+- Cross-store consistency validation complete
+- Test Discipline: Updated all affected test suites when ExistenceQuery/SessionStoreBase APIs changed. Ensured contract compliance before store implementations.
+- Validation: 794/794 gateway tests passing. Build green (0 errors, 0 warnings).

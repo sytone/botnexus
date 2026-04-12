@@ -2,6 +2,20 @@
 
 ## Active Decisions
 
+### SessionStoreBase Status-Filter Overload (2026-04-12)
+
+**Decision Date:** 2026-04-12  
+**Decided By:** Farnsworth (Platform Dev)  
+**Status:** Implemented
+
+**Context:** New contract tests assert that session stores expose status-based filtering via a ListAsync overload while still honoring the existing ISessionStore contract.
+
+**Decision:** Implement ListAsync(AgentId?, GatewaySessionStatus?, CancellationToken) on SessionStoreBase as a public overload (not interface change), and keep existing ISessionStore.ListAsync(AgentId?, CancellationToken) unchanged.
+
+**Rationale:** This keeps API compatibility for interface consumers while enabling consistent status filtering behavior in all concrete stores through shared base logic.
+
+---
+
 ### Cross-Platform Image Handling in ReadTool (2026-04-06)
 
 **Decision Date:** 2026-04-06  
