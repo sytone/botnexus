@@ -215,7 +215,7 @@ app.MapGet("/api/version", () =>
     var buildTime = File.GetLastWriteTimeUtc(assembly.Location).ToString("yyyyMMddHHmmss");
     return Results.Ok(new { version = buildTime });
 });
-app.MapGet("/api/world", () => Results.Ok(worldIdentity));
+app.MapGet("/api/world", () => Results.Ok(worldDescriptor));
 app.MapFallbackToFile("index.html");
 
 LogGatewayStartup(app, builder.Environment, startupPlatformConfig, worldDescriptor, listenUrl);
