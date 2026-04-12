@@ -107,7 +107,8 @@ $script:gwProc = $null
 
 # Use a C# handler for CancelKeyPress because PowerShell script blocks
 # crash on the native signal thread (no Runspace available).
-Add-Type -TypeDefinition @"
+if (-not ([System.Management.Automation.PSTypeName]'CtrlCHandler').Type) {
+    Add-Type -TypeDefinition @"
 using System;
 public static class CtrlCHandler {
     public static volatile bool Pressed;
@@ -119,6 +120,7 @@ public static class CtrlCHandler {
     }
 }
 "@
+}
 
 $cancelHandler = [System.ConsoleCancelEventHandler]{
     param($sender, $e)
