@@ -3,6 +3,7 @@ using BotNexus.Gateway.Api.Hubs;
 using BotNexus.Gateway.Api;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Extensions;
 using BotNexus.Providers.Anthropic;
@@ -12,6 +13,7 @@ using BotNexus.Providers.OpenAI;
 using BotNexus.Providers.OpenAICompat;
 using BotNexus.Cron;
 using BotNexus.Cron.Extensions;
+using BotNexus.Domain.World;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.OpenApi.Models;
 using OpenTelemetry.Trace;
@@ -182,7 +184,11 @@ using (var bootstrapLoggerFactory = new Serilog.Extensions.Logging.SerilogLogger
 var app = builder.Build();
 
 var platformConfig = app.Services.GetRequiredService<PlatformConfig>();
-var worldIdentity = WorldIdentityResolver.Resolve(platformConfig);
+var worldDescriptor = WorldDescriptorBuilder.Build(
+    platformConfig,
+    app.Services.GetRequiredService<IAgentRegistry>(),
+    app.Services.GetServices<IIsolationStrategy>());
+var worldIdentity = worldDescriptor.Identity;
 var listenUrl = platformConfig.Gateway?.ListenUrl;
 if (!string.IsNullOrWhiteSpace(listenUrl))
 {
@@ -212,7 +218,7 @@ app.MapGet("/api/version", () =>
 app.MapGet("/api/world", () => Results.Ok(worldIdentity));
 app.MapFallbackToFile("index.html");
 
-LogGatewayStartup(app, builder.Environment, startupPlatformConfig, worldIdentity, listenUrl);
+LogGatewayStartup(app, builder.Environment, startupPlatformConfig, worldDescriptor, listenUrl);
 
 app.Run();
 
@@ -220,9 +226,10 @@ static void LogGatewayStartup(
     WebApplication app,
     IWebHostEnvironment environment,
     PlatformConfig startupPlatformConfig,
-    BotNexus.Domain.WorldIdentity worldIdentity,
+    WorldDescriptor worldDescriptor,
     string? configuredListenUrl)
 {
+    var worldIdentity = worldDescriptor.Identity;
     var gatewayAssembly = typeof(Program).Assembly;
     var version = gatewayAssembly.GetName().Version?.ToString() ?? "dev";
     var informationalVersion = gatewayAssembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? version;
@@ -303,6 +310,12 @@ static void LogGatewayStartup(
         channels);
 
     app.Logger.LogInformation("Gateway endpoints registered: {Endpoints}", endpoints);
+    app.Logger.LogInformation(
+        "World descriptor initialized: hostedAgents={HostedAgentCount} locations={LocationCount} strategies={StrategyCount} crossWorldPermissions={CrossWorldPermissionCount}",
+        worldDescriptor.HostedAgents.Count,
+        worldDescriptor.Locations.Count,
+        worldDescriptor.AvailableStrategies.Count,
+        worldDescriptor.CrossWorldPermissions.Count);
 }
 
 /// <summary>
