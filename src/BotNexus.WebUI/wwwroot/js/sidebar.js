@@ -13,8 +13,8 @@ import {
     isCurrentSessionStreaming, getCurrentChannelType
 } from './session-store.js';
 import { hubInvoke, getConnection, getConnectionId } from './hub.js';
-// Circular-import–safe: hoisted function declarations used only at call-time.
 import { openAgentTimeline, startNewChat, appendSystemMessage } from './chat.js';
+import { getCollapsedAgents, toggleAgentCollapsed, getCachedAgents, setCachedAgents, getCachedSessions, setCachedSessions } from './storage.js';
 
 // ── Caches ──────────────────────────────────────────────────────────
 
@@ -99,7 +99,7 @@ export async function loadSessions() {
     if (newFingerprint === sessionsFingerprint) return;
     sessionsFingerprint = newFingerprint;
 
-    const collapsedAgents = new Set(JSON.parse(localStorage.getItem('botnexus:collapsed-agents') || '[]'));
+    const collapsedAgents = getCollapsedAgents();
     dom.sessionsList.querySelectorAll('.agent-group-header.collapsed').forEach(el => {
         collapsedAgents.add(el.textContent.replace('▼', '').trim());
     });
@@ -118,11 +118,7 @@ export async function loadSessions() {
         header.innerHTML = `<span class="collapse-icon">▼</span> ${escapeHtml(displayName)}`;
         header.addEventListener('click', () => {
             header.classList.toggle('collapsed');
-            // Persist collapsed state to localStorage
-            const all = new Set(JSON.parse(localStorage.getItem('botnexus:collapsed-agents') || '[]'));
-            if (header.classList.contains('collapsed')) all.add(displayName);
-            else all.delete(displayName);
-            localStorage.setItem('botnexus:collapsed-agents', JSON.stringify([...all]));
+            toggleAgentCollapsed(displayName, header.classList.contains('collapsed'));
         });
         group.appendChild(header);
 

@@ -15,14 +15,14 @@ import {
     isCurrentSessionStreaming, setCurrentChannelType, getCurrentChannelType
 } from './session-store.js';
 import { hubInvoke, getConnection } from './hub.js';
-// Circular-import–safe: hoisted function declarations used only at call-time.
 import { loadSessions, trackActivity } from './sidebar.js';
 import { activeSubAgents } from './events.js';
+import { getShowTools, setShowTools, getShowThinking, setShowThinking, setLastContext } from './storage.js';
 
 // ── Module state ────────────────────────────────────────────────────
 
-let showTools = localStorage.getItem('botnexus:show-tools') !== 'false';
-let showThinking = localStorage.getItem('botnexus:show-thinking') !== 'false';
+let showTools = true;
+let showThinking = true;
 let sendModeFollowUp = false;
 let messageQueueCount = 0;
 let pendingQueuedMessages = [];
@@ -1365,13 +1365,13 @@ export async function handleModelChange() {
 
 export function toggleToolVisibility() {
     showTools = dom.toggleTools.checked;
-    localStorage.setItem('botnexus:show-tools', showTools);
+    setShowTools(showTools);
     applyToggleState();
 }
 
 export function toggleThinkingVisibility() {
     showThinking = dom.toggleThinking.checked;
-    localStorage.setItem('botnexus:show-thinking', showThinking);
+    setShowThinking(showThinking);
     applyToggleState();
 }
 

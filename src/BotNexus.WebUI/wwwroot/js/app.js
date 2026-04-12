@@ -28,6 +28,7 @@ import {
     openToolModal, closeToolModal, handleModelChange,
     appendSystemMessage, initSubAgentPanel
 } from './chat.js';
+import { getShowTools, getShowThinking, getLastContext } from './storage.js';
 
 // ── Gateway health check ────────────────────────────────────────────
 
@@ -110,9 +111,9 @@ function initEventListeners() {
 
     dom.toggleTools.addEventListener('change', toggleToolVisibility);
     dom.toggleThinking.addEventListener('change', toggleThinkingVisibility);
-    // Restore toggle state from localStorage and sync checkboxes
-    dom.toggleTools.checked = localStorage.getItem('botnexus:show-tools') !== 'false';
-    dom.toggleThinking.checked = localStorage.getItem('botnexus:show-thinking') !== 'false';
+    // Restore toggle state from storage and sync checkboxes
+    dom.toggleTools.checked = getShowTools();
+    dom.toggleThinking.checked = getShowThinking();
     toggleToolVisibility();
     toggleThinkingVisibility();
     dom.toggleActivity.addEventListener('change', toggleActivity);
