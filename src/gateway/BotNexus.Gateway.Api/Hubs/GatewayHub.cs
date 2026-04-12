@@ -399,7 +399,7 @@ public sealed class GatewayHub : Hub
     {
         try
         {
-            return NormalizeChannelType(ChannelKey.From(channelType.Value));
+            return ChannelKey.From(channelType.Value);
         }
         catch (ArgumentException)
         {
@@ -434,7 +434,7 @@ public sealed class GatewayHub : Hub
             needsSave = true;
         }
 
-        var normalizedChannelType = NormalizeChannelType(channelType);
+        var normalizedChannelType = channelType;
         if (!session.ChannelType.HasValue || !ChannelMatches(session.ChannelType.Value, normalizedChannelType))
         {
             session.ChannelType = normalizedChannelType;
@@ -466,23 +466,11 @@ public sealed class GatewayHub : Hub
     private static bool ChannelMatches(ChannelKey? candidate, ChannelKey target)
     {
         if (!candidate.HasValue)
-            return NormalizeChannelType(target).Equals(ChannelKey.From("signalr"));
+            return target.Equals(ChannelKey.From("signalr"));
 
         return ChannelMatches(candidate.Value, target);
     }
 
     private static bool ChannelMatches(ChannelKey candidate, ChannelKey target)
-        => NormalizeChannelType(candidate).Equals(NormalizeChannelType(target));
-
-    private static ChannelKey NormalizeChannelType(ChannelKey channelType)
-    {
-        var value = channelType.Value;
-        if (string.Equals(value, "web chat", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(value, "web-chat", StringComparison.OrdinalIgnoreCase))
-        {
-            return ChannelKey.From("signalr");
-        }
-
-        return channelType;
-    }
+        => candidate.Equals(target);
 }
