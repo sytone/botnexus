@@ -751,6 +751,7 @@
             if (sid !== storeManager.activeViewId) return;
             storeManager.setActiveView(null, getCurrentAgentId(), currentChannelType);
             updateSessionIdDisplay();
+            syncLoadingUiForActiveSession();
             clearSubAgentPanel();
             elChatMessages.innerHTML = '';
             appendSystemMessage('Session reset. System prompt regenerated.');
@@ -779,8 +780,8 @@
             }
             setSendingState(false);
             elBtnAbort.classList.remove('hidden');
-            showStreamingIndicator();
-            showProcessingStatus('Agent is processing...', '⏳');
+            showStreamingIndicator(sid);
+            showProcessingStatus('Agent is processing...', '⏳', sid);
             startResponseTimeout();
             updateSendButtonState();
             decrementQueue();
@@ -1014,8 +1015,8 @@
             const status = await fetchJson(`/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/status`);
             if (status && (status.status === 'Running' || status.status === 'Idle')) {
                 getStreamState(sessionId).isStreaming = true;
-                showStreamingIndicator();
-                showProcessingStatus('Agent is processing...', '⏳');
+                showStreamingIndicator(sessionId);
+                showProcessingStatus('Agent is processing...', '⏳', sessionId);
                 setSendingState(false);
                 updateSendButtonState();
             }
@@ -1300,8 +1301,7 @@
     // Streaming / message indicators
     // =========================================================================
 
-    function showStreamingIndicator() {
-        const sessionId = getCurrentSessionId();
+    function showStreamingIndicator(sessionId = getCurrentSessionId()) {
         if (!sessionId) return;
         const ss = getStreamState(sessionId);
         ss.showStreamingIndicator = true;
@@ -1685,6 +1685,7 @@
         }
 
         storeManager.setActiveView(null, getCurrentAgentId(), currentChannelType);
+        syncLoadingUiForActiveSession();
         updateSessionIdDisplay();
         storeManager.setSelectedAgent(elAgentSelect.value || getCurrentAgentId());
         loadSessions();
@@ -1871,6 +1872,7 @@
         if (!agentId) return;
 
         storeManager.setActiveView(null, agentId, 'Web Chat');
+        syncLoadingUiForActiveSession();
         resetQueue();
         storeManager.setSelectedAgent(agentId);
         currentChannelType = 'Web Chat';
@@ -2047,6 +2049,7 @@
                     if (res.ok || res.status === 204) {
                         if (getCurrentSessionId() === sessionId) {
                             storeManager.setActiveView(null, null, currentChannelType);
+                            syncLoadingUiForActiveSession();
                             storeManager.setSelectedAgent(null);
                             updateSessionIdDisplay();
                             showView('welcome-screen');
@@ -2117,14 +2120,16 @@
             // Cold start — fetch from channel history endpoint
             elChatMessages.innerHTML = '<div class="loading">Loading timeline...</div>';
 
+            const historyChannelType = toHubChannelType(channelType);
             const data = await fetchJson(
-                `/api/channels/${encodeURIComponent(channelType)}/agents/${encodeURIComponent(agentId)}/history?limit=50`
+                `/api/channels/${encodeURIComponent(historyChannelType)}/agents/${encodeURIComponent(agentId)}/history?limit=50`
             );
 
             if (!data || !data.messages || data.messages.length === 0) {
                 elChatMessages.innerHTML = '';
                 elChatMeta.textContent = `Agent: ${agentId} · No messages yet`;
                 storeManager.setActiveView(null, agentId, channelType);
+                syncLoadingUiForActiveSession();
                 updateSessionIdDisplay();
                 loadChatHeaderModels();
                 elChatInput.focus();
@@ -2235,8 +2240,9 @@
             isFetching = true;
             showTopSpinner(sentinel);
 
+            const historyChannelType = toHubChannelType(channelType);
             const data = await fetchJson(
-                `/api/channels/${encodeURIComponent(channelType)}/agents/${encodeURIComponent(agentId)}/history?cursor=${encodeURIComponent(nextCursor)}&limit=50`
+                `/api/channels/${encodeURIComponent(historyChannelType)}/agents/${encodeURIComponent(agentId)}/history?cursor=${encodeURIComponent(nextCursor)}&limit=50`
             );
 
             // Discard if user switched away during fetch
