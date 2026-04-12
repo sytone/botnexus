@@ -178,6 +178,7 @@
                 this.#selectedAgentId = agentId;
             }
             if (channelType) currentChannelType = channelType;
+            syncLoadingUiForActiveSession();
         }
 
         getOrCreateStore(sessionId, info = {}) {
