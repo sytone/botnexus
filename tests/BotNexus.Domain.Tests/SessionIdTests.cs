@@ -52,6 +52,20 @@ public sealed class SessionIdTests
     }
 
     [Fact]
+    public void SessionId_ForAgentConversation_WhenValuesAreValid_ShouldUseExpectedFormat()
+    {
+        var sessionId = SessionId.ForAgentConversation("agent-a", "agent-b", "abc123");
+        sessionId.Value.Should().Be("agent-a::agent-agent::agent-b::abc123");
+    }
+
+    [Fact]
+    public void SessionId_IsAgentConversation_WhenPatternMatches_ShouldBeTrue()
+    {
+        var sessionId = SessionId.ForAgentConversation("agent-a", "agent-b", "abc123");
+        sessionId.IsAgentConversation.Should().BeTrue();
+    }
+
+    [Fact]
     public void SessionId_Equals_WhenValuesMatch_ShouldBeTrue()
     {
         var left = SessionId.From("session-1");
