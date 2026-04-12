@@ -10378,6 +10378,34 @@ Program.cs reduced to thin DI wiring + command registration.
 
 ---
 
+### Bender — Wave 3: Sub-Agent Archetype Identity & Cron Trigger Decoupling
+
+**Date:** 2026-04-12  
+**Status:** ✅ Implemented
+
+**Context:** Wave 3 required fixing sub-agent identity reuse and decoupling cron from channel adapters while preserving runtime behavior.
+
+**Decision 1: Sub-Agent Identity with Archetype**
+- Child agent IDs are generated as `{parentAgentId}::subagent::{archetype}::{uniqueId}`
+- This keeps parent lineage visible while ensuring child identity is distinct
+- Archetype is modeled as a Domain smart enum with values: `researcher`, `coder`, `planner`, `reviewer`, `writer`, `general`
+- Spawn request and runtime sub-agent info now carry archetype metadata; default is `general`
+- **Rationale:** Distinct child IDs remove parent/child identity collisions in logs and lifecycle handling; archetype-aware IDs support future policy/routing differentiation without changing session discoverability patterns
+
+**Decision 2: Cron Moved to Internal Trigger Abstraction**
+- Added `TriggerType` smart enum and `IInternalTrigger` contract
+- Replaced cron channel adapter usage with `CronTrigger` to create internal cron sessions directly
+- `AgentPromptAction` now resolves a cron internal trigger and records returned session IDs
+- **Rationale:** Internal trigger abstraction aligns cron with domain intent (trigger, not external channel) and removes no-op channel adapter coupling
+
+**Validation:**
+- `dotnet test tests\BotNexus.Domain.Tests\BotNexus.Domain.Tests.csproj` ✅
+- `dotnet test tests\BotNexus.Cron.Tests\BotNexus.Cron.Tests.csproj` ✅
+
+**Commits:** 8677d2e (archetype identity), 1e51667 (cron decoupling)
+
+---
+
 ### Farnsworth — Phase 12 Wave 2 Session Metadata + Config Versioning
 
 **Date:** 2026-04-06  

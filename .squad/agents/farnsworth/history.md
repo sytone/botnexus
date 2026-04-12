@@ -169,6 +169,40 @@ Validation: `dotnet build src\gateway\BotNexus.Cli\BotNexus.Cli.csproj --nologo 
 - HttpClient injection with owned/external lifecycle management
 - No external NuGet dependencies — System.Net.Http, System.Text.Json, System.Text.RegularExpressions only
 
+## 2026-04-12T04:00Z — Wave 3: AgentId+SessionId Typed ID Adoption (Full Stack)
+
+**Status:** ✅ Complete  
+**Commits:** 7f29cc4, 4d11398, 88a6e93, b6e4276, c201fd7, a2422b5  
+**Tests:** 755/755 gateway tests passing
+
+**Domain Primitives (7f29cc4):**
+- AgentId, SessionId smart enums with value object equality and JSON converters
+- Typed IDs reduce parent/child collisions and enable type-safe routing
+
+**Abstractions (4d11398):**
+- IAgent, ISession contracts updated to use typed IDs
+- IAgentSupervisor signature changes for spawn/list operations
+
+**Session Stores (88a6e93):**
+- InMemorySessionStore, FileSessionStore, SqliteSessionStore updated for AgentId/SessionId
+- SQLite migrations support legacy `closed` status remapped to `Sealed`
+
+**Gateway Runtime (b6e4276):**
+- AgentExecutor, SessionManager, IsolationStrategy integration with typed IDs
+- Sub-agent archetype routing support (Bender's Wave 3 identity work)
+
+**API Controllers (c201fd7):**
+- SessionController, HistoryController, ChannelController payload/routing updated
+- No breaking changes to consumed endpoints
+
+**Tests (a2422b5):**
+- Gateway suite comprehensive; 755/755 passing
+
+**Cross-Agent Context:**
+- Bender: Sub-agent archetype identity and cron trigger decoupling
+- Hermes: Wave 3 test coverage validates typed ID integration
+- All Wave 3 tests passing; build green, 0 errors
+
 **Build:** ✅ `dotnet build extensions\web\BotNexus.Extensions.WebTools` — Clean, 0 warnings, 0 errors
 
 ## Learnings

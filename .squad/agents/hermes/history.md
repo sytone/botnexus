@@ -233,3 +233,33 @@
 
 - 2026-04-12: Wave 3 QA coverage added for CronTrigger (IInternalTrigger contract, TriggerType.Cron, cron session creation with SessionType.Cron), sub-agent archetype identity semantics (distinct child AgentId with archetype + parent traceability, default General archetype), and typed ID adoption checks (GatewaySession AgentId/SessionId types, AgentSessionKey replacing MakeKey, typed ISessionStore usage with string back-compat assertions).
 - 2026-04-12: Validation status during Wave 3 handoff: BotNexus.Cron.Tests passed; BotNexus.Gateway.Tests is currently blocked by ongoing AgentId/SessionId migration compile errors in BotNexus.Gateway.Api controllers/hubs and related callers.
+## 2026-04-12T04:00Z — Wave 3: Sub-Agent Archetype, Cron Trigger, Typed ID Tests
+
+**Status:** ✅ Complete  
+**Commit:** 91c6171
+
+**Wave 3 Test Coverage:**
+- Archetype identity validation: parent lineage visible, child IDs distinct, archetype metadata in spawn/runtime
+- Internal trigger behavior: TriggerType enum coverage, CronTrigger model tests, no channel coupling
+- Typed ID round-trip: AgentId/SessionId serialization/deserialization, JSON converter tests
+- Integration cross-talk: sub-agent spawning with typed IDs, session store round-trip, API payload mapping
+
+**Domain Tests:**
+- `dotnet test tests\BotNexus.Domain.Tests` ✅
+- SubAgentArchetype smart enum validation
+- AgentId/SessionId value object equality tests
+
+**Cron Tests:**
+- `dotnet test tests\BotNexus.Cron.Tests` ✅
+- TriggerType enum coverage
+- Internal trigger contract validation
+
+**Gateway Tests:**
+- `dotnet test tests\BotNexus.Gateway.Tests` ✅ (755/755 passing)
+- Typed ID propagation across session store/API layers
+- Sub-agent spawn/list/kill with archetype routing
+
+**Cross-Agent Context:**
+- Bender: Sub-agent archetype identity and cron trigger decoupling (2 commits)
+- Farnsworth: AgentId+SessionId adoption across 6 commits; full stack integration
+- All Wave 3 tests passing; build green, 0 errors

@@ -243,6 +243,28 @@
 - `switchView()` is synchronous DOM re-render from cached DOM fragments. Revisiting a previously viewed agent is instant — zero server calls.
 - `Connected` handler calls `SubscribeAll()` on connect and reconnect. Fallback to legacy `joinSession()` if server lacks `multiSession` capability.
 - All 13 SignalR event handlers rewritten: extract `sessionId`, update store stream state, render only if active.
+
+## 2026-04-12T04:00Z — Wave 3: Sub-Agent Archetype Identity & Cron Trigger Decoupling
+
+**Status:** ✅ Complete  
+**Commits:** 8677d2e (archetype identity), 1e51667 (cron decoupling)
+
+**Archetype Identity (8677d2e):**
+- Child agent IDs now generated as `{parentAgentId}::subagent::{archetype}::{uniqueId}`
+- SubAgentArchetype smart enum with values: researcher, coder, planner, reviewer, writer, general
+- Distinct child IDs eliminate parent/child collisions in logs and lifecycle handling
+- Archetype metadata in spawn request and runtime sub-agent info enables future policy/routing
+
+**Cron Trigger Decoupling (1e51667):**
+- Added TriggerType smart enum and IInternalTrigger contract in domain
+- Replaced cron channel adapter usage with CronTrigger to create internal cron sessions directly
+- AgentPromptAction now resolves cron internal trigger and records returned session IDs
+- Internal trigger abstraction aligns cron with domain intent; removes no-op channel adapter coupling
+
+**Cross-Agent Context:**
+- Farnsworth: AgentId+SessionId typed ID adoption across 6 commits; 755 gateway tests passing
+- Hermes: Wave 3 test coverage for archetype/trigger/typed-ID integration
+- All Wave 3 tests passing; build green, 0 errors
 - `openAgentTimeline()` rewritten from 130+ lines with try/finally/safety-timer to ~100 lines. No `LeaveSession`, no `JoinSession` on switch.
 - `sendMessage()` no longer blocked by `sessionSwitchInProgress`. First-message flow uses `joinSession()` → `Subscribe()`.
 - `getSessionState()` routes through `SessionStore.streamState` when store exists.
