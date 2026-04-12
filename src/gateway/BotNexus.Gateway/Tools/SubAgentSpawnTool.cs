@@ -3,14 +3,15 @@ using BotNexus.AgentCore.Tools;
 using BotNexus.AgentCore.Types;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Domain.Primitives;
 using BotNexus.Providers.Core.Models;
 
 namespace BotNexus.Gateway.Tools;
 
 public sealed class SubAgentSpawnTool(
     ISubAgentManager subAgentManager,
-    string agentId,
-    string sessionId) : IAgentTool
+    AgentId agentId,
+    SessionId sessionId) : IAgentTool
 {
     public string Name => "spawn_subagent";
     public string Label => "Spawn Sub-Agent";
@@ -34,6 +35,12 @@ public sealed class SubAgentSpawnTool(
                 "systemPrompt": { "type": "string", "description": "Optional system prompt override." },
                 "maxTurns": { "type": "integer", "minimum": 1, "description": "Optional max turn budget." },
                 "timeoutSeconds": { "type": "integer", "minimum": 1, "description": "Optional timeout in seconds." }
+                ,
+                "archetype": {
+                  "type": "string",
+                  "enum": ["researcher", "coder", "planner", "reviewer", "writer", "general"],
+                  "description": "Optional behavioral archetype for the sub-agent."
+                }
               },
               "required": ["task"]
             }
@@ -71,7 +78,8 @@ public sealed class SubAgentSpawnTool(
             ToolIds = ReadStringArray(arguments, "tools"),
             SystemPromptOverride = ReadString(arguments, "systemPrompt"),
             MaxTurns = ReadInt(arguments, "maxTurns", 30),
-            TimeoutSeconds = ReadInt(arguments, "timeoutSeconds", 600)
+            TimeoutSeconds = ReadInt(arguments, "timeoutSeconds", 600),
+            Archetype = ReadArchetype(arguments)
         };
 
         var spawned = await subAgentManager.SpawnAsync(request, cancellationToken).ConfigureAwait(false);
@@ -141,6 +149,14 @@ public sealed class SubAgentSpawnTool(
         }
 
         return null;
+    }
+
+    private static SubAgentArchetype ReadArchetype(IReadOnlyDictionary<string, object?> args)
+    {
+        var archetype = ReadString(args, "archetype");
+        return string.IsNullOrWhiteSpace(archetype)
+            ? SubAgentArchetype.General
+            : SubAgentArchetype.FromString(archetype);
     }
 
     private static AgentToolResult TextResult(string text)

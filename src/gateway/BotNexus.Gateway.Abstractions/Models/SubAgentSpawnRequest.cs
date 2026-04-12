@@ -1,3 +1,5 @@
+using BotNexus.Domain.Primitives;
+
 namespace BotNexus.Gateway.Abstractions.Models;
 
 /// <summary>
@@ -8,12 +10,12 @@ public sealed record SubAgentSpawnRequest
     /// <summary>
     /// Gets the parent agent identifier initiating the spawn.
     /// </summary>
-    public required string ParentAgentId { get; init; }
+    public required AgentId ParentAgentId { get; init; }
 
     /// <summary>
     /// Gets the parent session identifier that owns the sub-agent.
     /// </summary>
-    public required string ParentSessionId { get; init; }
+    public required SessionId ParentSessionId { get; init; }
 
     /// <summary>
     /// Gets the delegated task prompt for the sub-agent.
@@ -54,4 +56,9 @@ public sealed record SubAgentSpawnRequest
     /// Gets the timeout, in seconds, for the sub-agent execution.
     /// </summary>
     public int TimeoutSeconds { get; init; } = 600;
+
+    /// <summary>
+    /// Gets the behavioral archetype to apply to the sub-agent.
+    /// </summary>
+    public SubAgentArchetype Archetype { get; init; } = SubAgentArchetype.General;
 }

@@ -73,13 +73,19 @@ public sealed class DefaultSubAgentManagerActivityTests
     {
         supervisor = new Mock<IAgentSupervisor>();
         supervisor
-            .Setup(s => s.GetOrCreateAsync("parent-agent", It.Is<string>(id => id.Contains("::subagent::", StringComparison.Ordinal)), It.IsAny<CancellationToken>()))
+            .Setup(s => s.GetOrCreateAsync(
+                It.Is<string>(id => id.StartsWith("parent-agent::subagent::", StringComparison.Ordinal)),
+                It.Is<string>(id => id.Contains("::subagent::", StringComparison.Ordinal)),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(childHandle.Object);
         supervisor
             .Setup(s => s.GetOrCreateAsync("parent-agent", "parent-session", It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreateSuccessfulHandle().Object);
         supervisor
-            .Setup(s => s.StopAsync("parent-agent", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.StopAsync(
+                It.Is<string>(id => id.StartsWith("parent-agent::subagent::", StringComparison.Ordinal)),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var registry = new Mock<IAgentRegistry>();

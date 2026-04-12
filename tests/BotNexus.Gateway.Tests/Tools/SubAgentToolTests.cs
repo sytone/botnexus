@@ -1,6 +1,7 @@
 using System.Text.Json;
 using BotNexus.AgentCore.Tools;
 using BotNexus.AgentCore.Types;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Tools;
@@ -52,6 +53,7 @@ public sealed class SubAgentToolTests
         captured.SystemPromptOverride.Should().BeNull();
         captured.MaxTurns.Should().Be(30);
         captured.TimeoutSeconds.Should().Be(600);
+        captured.Archetype.Should().Be(SubAgentArchetype.General);
     }
 
     [Fact]
@@ -71,7 +73,8 @@ public sealed class SubAgentToolTests
             ["tools"] = new[] { "read", "write" },
             ["systemPrompt"] = "Focus on failures",
             ["maxTurns"] = 12,
-            ["timeoutSeconds"] = 45
+            ["timeoutSeconds"] = 45,
+            ["archetype"] = "reviewer"
         });
 
         captured.Should().NotBeNull();
@@ -80,6 +83,7 @@ public sealed class SubAgentToolTests
         captured.SystemPromptOverride.Should().Be("Focus on failures");
         captured.MaxTurns.Should().Be(12);
         captured.TimeoutSeconds.Should().Be(45);
+        captured.Archetype.Should().Be(SubAgentArchetype.Reviewer);
     }
 
     [Fact]

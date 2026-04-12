@@ -1,3 +1,5 @@
+using BotNexus.Domain.Primitives;
+
 namespace BotNexus.Gateway.Abstractions.Models;
 
 /// <summary>
@@ -13,12 +15,12 @@ public sealed record SubAgentInfo
     /// <summary>
     /// Gets the parent session identifier that owns this sub-agent.
     /// </summary>
-    public required string ParentSessionId { get; init; }
+    public required SessionId ParentSessionId { get; init; }
 
     /// <summary>
     /// Gets the child session identifier used by the sub-agent.
     /// </summary>
-    public required string ChildSessionId { get; init; }
+    public required SessionId ChildSessionId { get; init; }
 
     /// <summary>
     /// Gets an optional friendly name for the sub-agent.
@@ -34,6 +36,11 @@ public sealed record SubAgentInfo
     /// Gets the model selected for the sub-agent run.
     /// </summary>
     public string? Model { get; init; }
+
+    /// <summary>
+    /// Gets the behavioral archetype used for this sub-agent run.
+    /// </summary>
+    public SubAgentArchetype Archetype { get; init; } = SubAgentArchetype.General;
 
     /// <summary>
     /// Gets the current execution status.

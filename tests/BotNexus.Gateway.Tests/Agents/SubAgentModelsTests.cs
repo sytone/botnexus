@@ -1,4 +1,5 @@
 using System.Reflection;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
 using FluentAssertions;
@@ -36,6 +37,7 @@ public sealed class SubAgentModelsTests
         request.ApiProviderOverride.Should().BeNull();
         request.ToolIds.Should().BeNull();
         request.SystemPromptOverride.Should().BeNull();
+        request.Archetype.Should().Be(SubAgentArchetype.General);
     }
 
     [Fact]
@@ -80,6 +82,7 @@ public sealed class SubAgentModelsTests
         };
 
         info.Status.Should().Be(SubAgentStatus.Running);
+        info.Archetype.Should().Be(SubAgentArchetype.General);
         info.StartedAt.Should().Be(default);
         info.CompletedAt.Should().BeNull();
     }

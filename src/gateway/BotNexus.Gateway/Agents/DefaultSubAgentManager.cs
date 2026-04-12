@@ -3,6 +3,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -19,9 +20,9 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     private readonly IOptions<GatewayOptions> _options;
     private readonly ILogger<DefaultSubAgentManager> _logger;
     private readonly ConcurrentDictionary<string, SubAgentInfo> _subAgents = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, ConcurrentBag<string>> _parentChildren = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, string> _parentAgentIds = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, string> _childAgentIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<SessionId, ConcurrentBag<string>> _parentChildren = [];
+    private readonly ConcurrentDictionary<string, AgentId> _parentAgentIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, AgentId> _childAgentIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _timeouts = new(StringComparer.OrdinalIgnoreCase);
 
     public DefaultSubAgentManager(
@@ -59,9 +60,19 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         }
 
         var uniqueId = Guid.NewGuid().ToString("N");
-        var childSessionId = $"{request.ParentSessionId}::subagent::{uniqueId}";
+        var archetype = request.Archetype ?? SubAgentArchetype.General;
+        var childSessionId = SessionId.ForSubAgent(request.ParentSessionId, uniqueId);
         var subAgentId = uniqueId;
-        var childAgentId = request.ParentAgentId;
+        var childAgentId = AgentId.From($"{request.ParentAgentId}::subagent::{archetype.Value}::{uniqueId}");
+
+        if (!_registry.Contains(childAgentId))
+        {
+            _registry.Register(parentDescriptor with
+            {
+                AgentId = childAgentId,
+                DisplayName = $"{parentDescriptor.DisplayName} ({archetype.Value})"
+            });
+        }
 
         var handle = await _supervisor.GetOrCreateAsync(childAgentId, childSessionId, ct);
 
@@ -77,6 +88,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             Name = request.Name,
             Task = request.Task,
             Model = request.ModelOverride ?? configuredDefaultModel ?? parentDescriptor.ModelId,
+            Archetype = archetype,
             Status = SubAgentStatus.Running,
             StartedAt = DateTimeOffset.UtcNow,
             TurnsUsed = 0
@@ -118,10 +130,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     }
 
     /// <inheritdoc />
-    public Task<IReadOnlyList<SubAgentInfo>> ListAsync(string parentSessionId, CancellationToken ct = default)
+    public Task<IReadOnlyList<SubAgentInfo>> ListAsync(SessionId parentSessionId, CancellationToken ct = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(parentSessionId);
-
         if (!_parentChildren.TryGetValue(parentSessionId, out var subAgentIds))
             return Task.FromResult<IReadOnlyList<SubAgentInfo>>([]);
 
@@ -143,10 +153,9 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     }
 
     /// <inheritdoc />
-    public async Task<bool> KillAsync(string subAgentId, string requestingSessionId, CancellationToken ct = default)
+    public async Task<bool> KillAsync(string subAgentId, SessionId requestingSessionId, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(subAgentId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(requestingSessionId);
 
         if (!_subAgents.TryGetValue(subAgentId, out var info))
             return false;
@@ -164,7 +173,10 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         }
 
         if (_childAgentIds.TryGetValue(subAgentId, out var childAgentId))
+        {
             await _supervisor.StopAsync(childAgentId, info.ChildSessionId, ct);
+            _registry.Unregister(childAgentId);
+        }
 
         if (!TryUpdateSubAgent(
             subAgentId,
@@ -264,6 +276,11 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 "Failed delivering completion follow-up for sub-agent '{SubAgentId}' to parent session '{ParentSessionId}'.",
                 subAgentId,
                 updated.ParentSessionId);
+        }
+        finally
+        {
+            if (_childAgentIds.TryGetValue(subAgentId, out var childAgentId))
+                _registry.Unregister(childAgentId);
         }
     }
 
