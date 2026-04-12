@@ -71,6 +71,21 @@ public sealed class GatewaySessionBehaviorSnapshotTests
         session.GetStreamEventSnapshot().Select(evt => evt.SequenceId).Should().ContainInOrder(1, 2);
     }
 
+    [Fact]
+    public void GatewaySession_Composition_UsesSharedDomainSessionState()
+    {
+        var domainSession = new Session
+        {
+            SessionId = SessionId.From("domain-session"),
+            AgentId = AgentId.From("agent-snapshot")
+        };
+        var gatewaySession = GatewaySession.FromSession(domainSession);
+
+        gatewaySession.Runtime.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "from-runtime" });
+        gatewaySession.Session.History.Should().ContainSingle(entry => entry.Content == "from-runtime");
+        gatewaySession.MessageCount.Should().Be(1);
+    }
+
     private static GatewaySession CreateSession()
         => new()
         {
