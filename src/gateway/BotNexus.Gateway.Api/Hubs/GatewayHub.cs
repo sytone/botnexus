@@ -75,6 +75,7 @@ public sealed class GatewayHub : Hub
         return new { sessions };
     }
 
+    [Obsolete("JoinSession is deprecated. Use SubscribeAll and SendMessage(agentId, channelType, content).")]
     public async Task<object> JoinSession(string agentId, string? sessionId)
     {
         var typedAgentId = ParseAgentId(agentId);
@@ -133,6 +134,7 @@ public sealed class GatewayHub : Hub
         };
     }
 
+    [Obsolete("LeaveSession is deprecated. Clients remain subscribed via SubscribeAll.")]
     public Task LeaveSession(string sessionId)
         => Groups.RemoveFromGroupAsync(
             Context.ConnectionId,
