@@ -13,6 +13,15 @@
 
         <!-- Sidebar -->
         <aside id="sidebar" class="sidebar">
+            <button id="btn-sidebar-toggle" class="btn-sidebar-toggle" title="Toggle sidebar" aria-label="Toggle sidebar" aria-expanded="true">☰</button>
+            <div class="sidebar-rail" aria-label="Sidebar sections">
+                <button class="rail-icon" data-section="sessions-list" title="Channels / Sessions" aria-label="Channels / Sessions">📋</button>
+                <button class="rail-icon" data-section="channels-list" title="Channels" aria-label="Channels">📡</button>
+                <button class="rail-icon" data-section="extensions-list" title="Extensions" aria-label="Extensions">🧩</button>
+                <button class="rail-icon" data-section="agents-list" title="Agents" aria-label="Agents">🧠</button>
+                <button class="rail-icon" data-view="cron" title="Cron" aria-label="Cron">⏰</button>
+                <button class="rail-icon" data-section="activity-feed" title="Activity" aria-label="Activity">📊</button>
+            </div>
             <div class="sidebar-header">
                 <h1>🤖 BotNexus</h1>
                 <div id="world-identity" class="world-identity text-muted">🌍 BotNexus Gateway</div>
@@ -104,9 +113,6 @@
 
         <!-- Main content -->
         <main id="main-content" class="main-content">
-            <header class="app-header">
-                <button id="btn-sidebar-toggle" class="btn-sidebar-toggle" title="Toggle sidebar" aria-label="Toggle sidebar" aria-expanded="true">☰</button>
-            </header>
             <div id="connection-banner" class="connection-banner hidden" role="status" aria-live="polite">
                 <span id="connection-banner-text"></span>
                 <button id="btn-reconnect" class="btn btn-reconnect hidden" aria-label="Reconnect">🔄 Reconnect</button>
