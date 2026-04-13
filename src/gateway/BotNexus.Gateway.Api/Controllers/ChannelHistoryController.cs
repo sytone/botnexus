@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Domain.Primitives;
@@ -114,7 +115,7 @@ public sealed class ChannelHistoryController : ControllerBase
                     $"{slice.Session.SessionId}:{messageIndex}",
                     slice.Session.SessionId,
                     entry.Role,
-                    entry.Content,
+                    StripControlTags(entry.Content),
                     entry.Timestamp,
                     EmptyMetadata,
                     entry.ToolName,
@@ -129,6 +130,13 @@ public sealed class ChannelHistoryController : ControllerBase
 
         return Ok(new ChannelHistoryResponse(messages, nextCursor, hasMore, boundaries));
     }
+
+    private static readonly Regex ControlTagPattern = new(
+        @"\[\[\s*reply_to_current\s*\]\]|\[\[\s*reply_to:\s*\S+\s*\]\]",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static string StripControlTags(string content)
+        => string.IsNullOrEmpty(content) ? content : ControlTagPattern.Replace(content, "").TrimStart();
 
     private static bool TryResolveCursor(
         string? cursor,

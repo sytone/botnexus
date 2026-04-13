@@ -509,7 +509,9 @@ function handleError(msg) {
 function stripControlTags(text) {
     if (!text) return text;
     return text.replace(/\[\[\s*reply_to_current\s*\]\]/gi, '')
-               .replace(/\[\[\s*reply_to:\s*\w+\s*\]\]/gi, '');
+               .replace(/\[\[\s*reply_to:\s*\S+\s*\]\]/gi, '')
+               .replace(/\[\[reply_to_current\]\]/g, '')
+               .trim();
 }
 
 export function appendChatMessage(role, content, timestamp) {
