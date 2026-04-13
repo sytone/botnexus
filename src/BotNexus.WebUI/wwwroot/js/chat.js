@@ -89,12 +89,17 @@ export function onError(evt) {
 // ── Session ID display ──────────────────────────────────────────────
 
 export function updateSessionIdDisplay() {
-    if (getCurrentSessionId()) {
-        const truncated = getCurrentSessionId().length > 12
-            ? getCurrentSessionId().substring(0, 12) + '...'
-            : getCurrentSessionId();
+    const sessionId = getCurrentSessionId();
+    if (sessionId) {
+        const truncated = sessionId.length > 12
+            ? sessionId.substring(0, 12) + '...'
+            : sessionId;
         dom.sessionIdText.textContent = `Session: ${truncated}`;
-        dom.sessionIdText.title = getCurrentSessionId();
+        dom.sessionIdText.title = sessionId;
+        dom.sessionIdDisplay.classList.remove('hidden');
+    } else if (getCurrentAgentId()) {
+        dom.sessionIdText.textContent = 'Session: —';
+        dom.sessionIdText.title = '';
         dom.sessionIdDisplay.classList.remove('hidden');
     } else {
         dom.sessionIdDisplay.classList.add('hidden');
@@ -1009,12 +1014,23 @@ export async function openAgentTimeline(agentId, channelType, targetSessionId = 
     dom.agentSelect.classList.add('hidden');
     storeManager.setSelectedAgent(agentId);
     setCurrentChannelType(channelType);
-    storeManager.setActiveView(targetSessionId, agentId, channelType);
-    syncTogglesFromActiveStore();
-    syncLoadingUiForActiveSession();
 
+    // Save old view's DOM before clearing
+    storeManager.snapshotActiveView();
+
+    // Immediately clear display for the new agent — prevents stale data from the
+    // previous agent's view bleeding into this one during async resolution.
+    dom.chatMessages.innerHTML = '';
+    dom.chatMeta.textContent = `Agent: ${agentId} · ${channelDisplayName(channelType)}`;
     dom.chatTitle.textContent = `${agentId} — ${channelDisplayName(channelType)}`;
     document.title = `${agentId} — ${channelDisplayName(channelType)} | BotNexus`;
+
+    // Defer activeViewId — set to null until the real session resolves.
+    // This ensures events from the old session don't render here.
+    storeManager.setActiveView(null, agentId, channelType);
+    updateSessionIdDisplay();
+    syncTogglesFromActiveStore();
+    syncLoadingUiForActiveSession();
     const hash = `#/agents/${encodeURIComponent(agentId)}/channels/${encodeURIComponent(toHubChannelType(channelType))}`;
     if (location.hash !== hash) history.pushState(null, '', hash);
 
@@ -1043,8 +1059,6 @@ export async function openAgentTimeline(agentId, channelType, targetSessionId = 
         if (!data || !data.messages || data.messages.length === 0) {
             dom.chatMessages.innerHTML = '';
             dom.chatMeta.textContent = `Agent: ${agentId} · No messages yet`;
-            storeManager.setActiveView(null, agentId, channelType);
-            syncLoadingUiForActiveSession();
             updateSessionIdDisplay();
             loadChatHeaderModels();
             dom.chatInput.focus();
@@ -1061,7 +1075,6 @@ export async function openAgentTimeline(agentId, channelType, targetSessionId = 
 
         await checkAgentRunningStatus(agentId, latestSessionId);
 
-        dom.chatMeta.textContent = `Agent: ${agentId} · ${channelDisplayName(channelType)}`;
         updateSessionIdDisplay();
         scrollToBottom();
         dom.chatInput.focus();
