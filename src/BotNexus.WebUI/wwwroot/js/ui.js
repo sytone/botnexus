@@ -20,7 +20,8 @@ export const dom = {
     chatView:            $('#chat-view'),
     chatTitle:           $('#chat-title'),
     chatMeta:            $('#chat-meta'),
-    chatMessages:        $('#chat-messages'),
+    chatMessages:        null,  // removed — per-channel; use channelManager.active.messagesEl
+    channelViews:        $('#channel-views'),
     chatInput:           $('#chat-input'),
     btnSend:             $('#btn-send'),
     btnAbort:            $('#btn-abort'),
@@ -122,18 +123,22 @@ export function setBatchRenderingState(isRendering) {
     isBatchRendering = isRendering === true;
 }
 
-export function scrollToBottom(force) {
+export function scrollToBottom(force, el) {
     if (isBatchRendering) return;
+    const target = el || dom.channelViews?.querySelector('.channel-view.active .channel-messages');
+    if (!target) return;
     if (force || !userScrolledUp) {
-        requestAnimationFrame(() => { dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight; });
+        requestAnimationFrame(() => { target.scrollTop = target.scrollHeight; });
     }
-    updateScrollButton();
+    updateScrollButton(target);
 }
 
-export function updateScrollButton() {
+export function updateScrollButton(el) {
     if (!dom.scrollBottom || isBatchRendering) return;
+    const target = el || dom.channelViews?.querySelector('.channel-view.active .channel-messages');
+    if (!target) return;
     const threshold = 80;
-    const atBottom = dom.chatMessages.scrollHeight - dom.chatMessages.scrollTop - dom.chatMessages.clientHeight < threshold;
+    const atBottom = target.scrollHeight - target.scrollTop - target.clientHeight < threshold;
     userScrolledUp = !atBottom;
     dom.scrollBottom.classList.toggle('hidden', atBottom);
     if (atBottom) resetNewMessageCount();
