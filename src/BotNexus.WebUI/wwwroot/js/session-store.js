@@ -1,6 +1,6 @@
 // BotNexus WebUI — Session state management
 
-import { normalizeChannelKey } from './api.js';
+import { normalizeChannelKey, channelDisplayName } from './api.js';
 import { dom } from './ui.js';
 import { updateSessionIdDisplay, syncLoadingUiForActiveSession, updateSendButtonState } from './chat.js';
 import { updateSidebarBadge } from './sidebar.js';
@@ -69,6 +69,19 @@ export class SessionStoreManager {
     setSwitchingView(v) { this.#isSwitchingView = !!v; }
     setSelectedAgent(agentId) { this.#selectedAgentId = agentId || null; }
 
+    /** Save the active view's DOM into its store before switching away. */
+    snapshotActiveView() {
+        if (!this.#activeViewId) return;
+        const oldStore = this.#stores.get(this.#activeViewId);
+        if (oldStore && dom.chatMessages.children.length > 0) {
+            oldStore.cachedDom = document.createDocumentFragment();
+            while (dom.chatMessages.firstChild) {
+                oldStore.cachedDom.appendChild(dom.chatMessages.firstChild);
+            }
+            oldStore.timelineMeta = dom.chatMeta.textContent;
+        }
+    }
+
     subscribe(sessions) {
         for (const info of sessions) this.getOrCreateStore(info.sessionId, info);
     }
@@ -105,6 +118,9 @@ export class SessionStoreManager {
             return true;
         }
 
+        if (store.agentId) {
+            dom.chatMeta.textContent = `Agent: ${store.agentId} · ${channelDisplayName(store.channelType || 'Web Chat')}`;
+        }
         updateSessionIdDisplay();
         syncLoadingUiForActiveSession();
         updateSendButtonState();
