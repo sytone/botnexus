@@ -43,6 +43,12 @@ function findLocation(name) {
     return locationsCache.find(x => x.name.toLowerCase() === name.toLowerCase()) || null;
 }
 
+function setCheckResult(text) {
+    const result = $('#locations-check-result');
+    if (!result) return;
+    result.textContent = text || '';
+}
+
 function wireActionButtons() {
     const body = $('#locations-body');
     if (!body) return;
@@ -180,10 +186,15 @@ export async function checkLocation(name) {
     });
 
     if (!res.ok) {
-        window.alert(body?.error || `Health check failed (${res.status}).`);
+        const errorText = body?.error || `Health check failed (${res.status}).`;
+        setCheckResult(`❌ ${current.name}: ${errorText}`);
+        window.alert(errorText);
         return;
     }
 
+    const status = (body?.status || 'unknown').toLowerCase();
+    const icon = status === 'healthy' ? '✅' : status === 'unhealthy' ? '❌' : '⚪';
+    setCheckResult(`${icon} ${current.name}: ${body?.message || status}`);
     window.alert(`${current.name}: ${body?.status || 'unknown'}${body?.message ? `\n${body.message}` : ''}`);
     await loadLocations();
 }

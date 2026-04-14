@@ -1206,6 +1206,12 @@ body {
 }
 .locations-header h2 { margin: 0; font-size: 1.2rem; }
 .locations-actions { display: flex; gap: 8px; }
+.location-check-result {
+    min-width: 220px;
+    font-size: 0.8rem;
+    display: inline-flex;
+    align-items: center;
+}
 .locations-body { padding: 24px; overflow-y: auto; max-height: calc(100vh - 70px); }
 .locations-table { width: 100%; border-collapse: collapse; }
 .locations-table th {
@@ -1248,4 +1254,5 @@ body {
     .cron-form .config-grid { grid-template-columns: 1fr; }
     .locations-body { padding: 16px; }
     .locations-table { font-size: 0.82rem; }
+    .location-check-result { display: none; }
 }
