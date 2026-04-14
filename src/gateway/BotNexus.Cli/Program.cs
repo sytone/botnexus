@@ -9,6 +9,7 @@ var verboseOption = new Option<bool>("--verbose", "Show additional command outpu
 using var serviceProvider = new ServiceCollection()
     .AddSingleton<IConfigPathResolver, ConfigPathResolver>()
     .AddSingleton<ValidateCommand>()
+    .AddSingleton<DoctorCommand>()
     .AddSingleton<InitCommand>()
     .AddSingleton<AgentCommands>()
     .AddSingleton<ConfigCommands>()
@@ -22,4 +23,5 @@ root.AddCommand(serviceProvider.GetRequiredService<InitCommand>().Build(verboseO
 root.AddCommand(serviceProvider.GetRequiredService<AgentCommands>().Build(verboseOption));
 root.AddCommand(serviceProvider.GetRequiredService<ConfigCommands>().Build(verboseOption));
 root.AddCommand(serviceProvider.GetRequiredService<LocationsCommand>().Build(verboseOption));
+root.AddCommand(serviceProvider.GetRequiredService<DoctorCommand>().Build(verboseOption));
 return await root.InvokeAsync(args);
