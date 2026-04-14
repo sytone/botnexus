@@ -60,6 +60,7 @@ using System.Runtime.CompilerServices;
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Channels.IStreamEventChannelAdapter))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Channels.IChannelManager))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Configuration.IConfigPathResolver))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Configuration.ILocationResolver))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Hooks.BeforePromptBuildEvent))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Hooks.BeforePromptBuildResult))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Hooks.BeforeToolCallEvent))]

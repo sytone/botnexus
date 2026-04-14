@@ -207,6 +207,11 @@ public static class GatewayServiceCollectionExtensions
         services.Replace(ServiceDescriptor.Singleton(serviceProvider =>
             serviceProvider.GetRequiredService<IOptions<PlatformConfig>>().Value));
         services.TryAddSingleton<GatewayAuthManager>();
+        services.TryAddSingleton<ILocationResolver>(serviceProvider =>
+            new DefaultLocationResolver(
+                serviceProvider.GetRequiredService<IOptions<PlatformConfig>>().Value,
+                serviceProvider.GetService<IAgentRegistry>(),
+                serviceProvider.GetServices<IIsolationStrategy>()));
         services.Replace(ServiceDescriptor.Singleton<IGatewayAuthHandler>(serviceProvider =>
             new ApiKeyGatewayAuthHandler(
                 serviceProvider.GetRequiredService<IOptions<PlatformConfig>>().Value,
