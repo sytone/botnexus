@@ -104,18 +104,81 @@
       ])
     ]));
     const tbody = el('tbody');
-    logs.forEach(entry => {
+    logs.forEach((entry, idx) => {
       const level = entry.level || 'info';
-      tbody.appendChild(el('tr', { class: 'clickable', onclick: () => navigateTo(`/logs.html?correlation=${encodeURIComponent(entry.correlationId || '')}`) }, [
+      const row = el('tr', { class: 'clickable', 'data-log-idx': String(idx) }, [
         el('td', { class: 'mono-sm', text: formatTimestamp(entry.timestamp), title: formatTimestampUTC(entry.timestamp) }),
         el('td', {}, [el('span', { class: `badge ${levelClass(level)}`, text: level.substring(0, 4).toUpperCase() })]),
         el('td', { text: truncate(entry.message || entry.renderedMessage || '', 80) }),
-        el('td', { class: 'mono-sm text-muted', text: truncate(entry.sourceContext || '', 30) })
-      ]));
+        el('td', { class: 'mono-sm text-muted', text: truncate(entry.sourceFile || entry.sourceContext || '', 30) })
+      ]);
+      row.onclick = () => toggleLogDetail(idx);
+      tbody.appendChild(row);
+
+      // Expandable detail row
+      const detailRow = el('tr', { class: 'log-detail' });
+      const detailTd = el('td', { colspan: '4' });
+
+      // Full message
+      if (entry.message) {
+        detailTd.appendChild(el('div', { class: 'mb-8', style: { wordBreak: 'break-all' } }, [
+          el('strong', { text: 'Message: ' }),
+          document.createTextNode(entry.message)
+        ]));
+      }
+
+      // Properties
+      const props = entry.properties || {};
+      const allProps = { ...props };
+      if (entry.sourceFile) allProps['SourceFile'] = entry.sourceFile;
+      if (entry.lineNumber) allProps['LineNumber'] = String(entry.lineNumber);
+      if (entry.sessionId) allProps['SessionId'] = entry.sessionId;
+      if (entry.correlationId) allProps['CorrelationId'] = entry.correlationId;
+      if (entry.agentId) allProps['AgentId'] = entry.agentId;
+      if (entry.channel) allProps['Channel'] = entry.channel;
+
+      const keys = Object.keys(allProps);
+      if (keys.length > 0) {
+        const tbl = el('table', { class: 'props-table' });
+        keys.forEach(k => {
+          const val = typeof allProps[k] === 'object' ? JSON.stringify(allProps[k], null, 2) : String(allProps[k]);
+          const valEl = el('code', { text: val });
+          // Make IDs clickable for correlation
+          if (['SessionId', 'CorrelationId', 'session', 'correlation'].includes(k) && allProps[k]) {
+            valEl.classList.add('id-link');
+            valEl.style.cursor = 'pointer';
+            valEl.onclick = (e) => { e.stopPropagation(); goCorrelate(allProps[k]); };
+          }
+          tbl.appendChild(el('tr', {}, [el('td', { text: k }), el('td', {}, [valEl])]));
+        });
+        detailTd.appendChild(tbl);
+      }
+
+      // Exception
+      if (entry.exception) {
+        detailTd.appendChild(el('pre', { class: 'mt-8', text: entry.exception }));
+      }
+
+      detailRow.appendChild(detailTd);
+      tbody.appendChild(detailRow);
     });
     table.appendChild(tbody);
     wrap.appendChild(table);
     return wrap;
+  }
+
+  function toggleLogDetail(idx) {
+    const details = document.querySelectorAll('.log-detail');
+    const rows = document.querySelectorAll('tr[data-log-idx]');
+    if (details[idx]) {
+      const isOpen = details[idx].classList.contains('open');
+      details.forEach(d => d.classList.remove('open'));
+      rows.forEach(r => r.classList.remove('selected'));
+      if (!isOpen) {
+        details[idx].classList.add('open');
+        rows[idx].classList.add('selected');
+      }
+    }
   }
 
   function renderSessionsList(sessions) {
