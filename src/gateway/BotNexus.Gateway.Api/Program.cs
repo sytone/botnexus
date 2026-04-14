@@ -213,7 +213,8 @@ app.MapGet("/api/version", () =>
 {
     var assembly = typeof(Program).Assembly;
     var buildTime = File.GetLastWriteTimeUtc(assembly.Location).ToString("yyyyMMddHHmmss");
-    return Results.Ok(new { version = buildTime });
+    var gitHash = GetGitCommitHash();
+    return Results.Ok(new { version = buildTime, commit = gitHash });
 });
 app.MapGet("/api/world", () => Results.Ok(worldDescriptor));
 app.MapFallbackToFile("index.html");
@@ -316,6 +317,24 @@ static void LogGatewayStartup(
         worldDescriptor.Locations.Count,
         worldDescriptor.AvailableStrategies.Count,
         worldDescriptor.CrossWorldPermissions.Count);
+}
+
+static string? GetGitCommitHash()
+{
+    try
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("git", "rev-parse --short HEAD")
+        {
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        using var proc = System.Diagnostics.Process.Start(psi);
+        var hash = proc?.StandardOutput.ReadToEnd().Trim();
+        proc?.WaitForExit(3000);
+        return string.IsNullOrEmpty(hash) ? null : hash;
+    }
+    catch { return null; }
 }
 
 /// <summary>

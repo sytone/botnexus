@@ -38,21 +38,13 @@ public sealed class RateLimitingMiddleware
     /// <returns>A task representing middleware completion.</returns>
     public async Task InvokeAsync(HttpContext context)
     {
-        // Exempt health checks, WebSocket upgrades, static files, and high-frequency polling endpoints
-        var path = context.Request.Path;
-        if (path.Equals("/health", StringComparison.OrdinalIgnoreCase) ||
-            context.WebSockets.IsWebSocketRequest ||
-            path.StartsWithSegments("/hub", StringComparison.OrdinalIgnoreCase) ||
-            path.Equals("/api/version", StringComparison.OrdinalIgnoreCase) ||
-            path.Equals("/api/channels", StringComparison.OrdinalIgnoreCase) ||
-            path.Equals("/api/log", StringComparison.OrdinalIgnoreCase) ||
-            IsStaticFileRequest(path))
+        // Rate limiting is opt-in. Disabled by default for local development.
+        var configuredRateLimit = _platformConfig.Gateway?.RateLimit;
+        if (configuredRateLimit?.Enabled != true)
         {
             await _next(context);
             return;
         }
-
-        var configuredRateLimit = _platformConfig.Gateway?.RateLimit;
         var requestsPerMinute = configuredRateLimit?.RequestsPerMinute > 0
             ? configuredRateLimit.RequestsPerMinute
             : DefaultRequestsPerMinute;

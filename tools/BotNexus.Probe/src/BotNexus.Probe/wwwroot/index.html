@@ -1,14 +1,96 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>BotNexus Probe</title>
-    <link rel="stylesheet" href="/css/probe.css" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard — BotNexus Probe</title>
+    <link rel="stylesheet" href="/css/probe.css">
 </head>
 <body>
-    <h1>BotNexus Probe</h1>
-    <p>Probe backend is running. Full UI is being built by another agent.</p>
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <h1>🔍 Probe</h1>
+            <div class="version" id="version">v0.1.0</div>
+        </div>
+        <ul class="nav-links">
+            <li><a href="/">📊 Dashboard</a></li>
+            <li><a href="/logs.html">📄 Logs</a></li>
+            <li><a href="/sessions.html">💬 Sessions</a></li>
+            <li><a href="/traces.html">🔗 Traces</a></li>
+            <li><a href="/live.html">⚡ Live</a></li>
+            <li><a href="/correlate.html">🔎 Correlate</a></li>
+        </ul>
+        <div class="sidebar-footer">BotNexus Diagnostic Tool</div>
+    </nav>
+
+    <main class="content">
+        <div class="page-header">
+            <h2>📊 Dashboard</h2>
+            <p>System overview and quick access to diagnostic data</p>
+        </div>
+
+        <!-- Status Cards -->
+        <div class="card-row" id="status-cards">
+            <div class="card">
+                <div class="card-label">Gateway</div>
+                <div class="card-value" id="card-gateway">
+                    <span class="status-dot unknown"></span> —
+                </div>
+                <div class="card-sub" id="card-gateway-sub">Checking…</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Log Files</div>
+                <div class="card-value" id="card-logs">—</div>
+                <div class="card-sub" id="card-logs-sub">&nbsp;</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Sessions</div>
+                <div class="card-value" id="card-sessions">—</div>
+                <div class="card-sub" id="card-sessions-sub">&nbsp;</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Traces</div>
+                <div class="card-value" id="card-traces">—</div>
+                <div class="card-sub" id="card-traces-sub">&nbsp;</div>
+            </div>
+        </div>
+
+        <!-- Quick Correlation Search -->
+        <div class="section">
+            <div class="section-header">
+                <h3>🔎 Quick Correlation Search</h3>
+            </div>
+            <div class="search-bar">
+                <input type="text" id="correlation-input" placeholder="Enter session ID, correlation ID, or agent ID…" />
+                <button id="correlation-btn" onclick="doQuickCorrelate()">Search</button>
+            </div>
+            <div id="correlation-results"></div>
+        </div>
+
+        <!-- Recent Activity -->
+        <div class="section">
+            <div class="section-header">
+                <h3>📄 Recent Log Entries</h3>
+                <a href="/logs.html" class="text-sm">View all →</a>
+            </div>
+            <div id="recent-logs">
+                <div class="loading">Loading…</div>
+            </div>
+        </div>
+
+        <!-- Active Sessions -->
+        <div class="section">
+            <div class="section-header">
+                <h3>💬 Active Sessions</h3>
+                <a href="/sessions.html" class="text-sm">View all →</a>
+            </div>
+            <div id="active-sessions">
+                <div class="loading">Loading…</div>
+            </div>
+        </div>
+    </main>
+
     <script src="/js/probe.js"></script>
+    <script src="/js/dashboard.js"></script>
 </body>
 </html>

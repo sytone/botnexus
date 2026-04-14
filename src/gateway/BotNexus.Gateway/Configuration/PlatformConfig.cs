@@ -171,8 +171,11 @@ public sealed class CorsConfig
 /// <summary>Rate limiting settings for gateway HTTP endpoints.</summary>
 public sealed class RateLimitConfig
 {
+    /// <summary>Whether rate limiting is active. Defaults to false (disabled).</summary>
+    public bool Enabled { get; set; }
+
     /// <summary>Maximum requests allowed in a window for a single client.</summary>
-    public int RequestsPerMinute { get; set; } = 60;
+    public int RequestsPerMinute { get; set; } = 300;
 
     /// <summary>Window size in seconds used for request counting.</summary>
     public int WindowSeconds { get; set; } = 60;

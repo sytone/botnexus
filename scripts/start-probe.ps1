@@ -49,7 +49,7 @@ param(
     [int]$Port = 5050,
 
     [Parameter()]
-    [string]$GatewayUrl,
+    [string]$GatewayUrl = "http://localhost:5005",
 
     [Parameter()]
     [string]$LogsPath,

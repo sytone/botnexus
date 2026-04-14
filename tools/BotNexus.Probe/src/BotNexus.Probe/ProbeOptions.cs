@@ -5,4 +5,5 @@ public sealed record ProbeOptions(
     string? GatewayUrl,
     string LogsPath,
     string SessionsPath,
+    string SessionDbPath,
     int? OtlpPort);

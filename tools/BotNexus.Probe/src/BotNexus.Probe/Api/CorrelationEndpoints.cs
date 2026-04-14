@@ -10,6 +10,7 @@ public static class CorrelationEndpoints
         ProbeOptions options,
         SerilogFileParser logParser,
         JsonlSessionReader sessionReader,
+        SessionDbReader? sessionDbReader,
         TraceStore traceStore,
         bool tracesEnabled)
     {
@@ -17,7 +18,7 @@ public static class CorrelationEndpoints
         {
             var normalizedTake = Math.Clamp(take ?? 250, 1, 1_000);
             var logs = new List<LogEntry>();
-            var sessions = new List<SessionMessage>();
+            var sessions = new List<object>();
 
             var logQuery = new LogQuery(
                 CorrelationId: id,
@@ -45,7 +46,15 @@ public static class CorrelationEndpoints
                             continue;
                         }
 
-                        sessions.Add(message);
+                        sessions.Add(new
+                        {
+                            source = "jsonl",
+                            sessionId = message.SessionId,
+                            role = message.Role,
+                            content = message.Content,
+                            timestamp = message.Timestamp,
+                            agentId = message.AgentId
+                        });
                         if (sessions.Count >= normalizedTake)
                         {
                             break;
@@ -56,6 +65,73 @@ public static class CorrelationEndpoints
                     {
                         break;
                     }
+                }
+            }
+
+            if (sessions.Count < normalizedTake && sessionDbReader is not null)
+            {
+                try
+                {
+                    var detail = await sessionDbReader.GetSessionAsync(id, cancellationToken);
+                    if (detail is not null)
+                    {
+                        sessions.Add(new
+                        {
+                            source = "sqlite",
+                            match = "sessions.id",
+                            sessionId = detail.Id,
+                            agentId = detail.AgentId,
+                            status = detail.Status,
+                            createdAt = detail.CreatedAt
+                        });
+                    }
+
+                    var bySessionId = await sessionDbReader.GetHistoryAsync(id, take: Math.Min(normalizedTake - sessions.Count, 100), ct: cancellationToken);
+                    foreach (var entry in bySessionId)
+                    {
+                        sessions.Add(new
+                        {
+                            source = "sqlite",
+                            match = "session_history.session_id",
+                            sessionId = entry.SessionId,
+                            role = entry.Role,
+                            content = entry.Content,
+                            timestamp = entry.Timestamp,
+                            toolName = entry.ToolName
+                        });
+
+                        if (sessions.Count >= normalizedTake)
+                        {
+                            break;
+                        }
+                    }
+
+                    if (sessions.Count < normalizedTake)
+                    {
+                        var byContent = await sessionDbReader.SearchHistoryAsync(id, null, Math.Min(normalizedTake - sessions.Count, 100), cancellationToken);
+                        foreach (var entry in byContent)
+                        {
+                            sessions.Add(new
+                            {
+                                source = "sqlite",
+                                match = "session_history.content",
+                                sessionId = entry.SessionId,
+                                role = entry.Role,
+                                content = entry.Content,
+                                timestamp = entry.Timestamp,
+                                toolName = entry.ToolName
+                            });
+
+                            if (sessions.Count >= normalizedTake)
+                            {
+                                break;
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                    // Best effort only.
                 }
             }
 
