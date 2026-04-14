@@ -15,7 +15,9 @@ $extensions = @(
     @{ Id = "botnexus-skills";  Src = "extensions/skills/BotNexus.Extensions.Skills" },
     @{ Id = "botnexus-exec";    Src = "extensions/tools/exec/BotNexus.Extensions.ExecTool" },
     @{ Id = "botnexus-process"; Src = "extensions/tools/process/BotNexus.Extensions.ProcessTool" },
-    @{ Id = "botnexus-mcp";     Src = "extensions/mcp/BotNexus.Extensions.Mcp" }
+    @{ Id = "botnexus-mcp";     Src = "extensions/mcp/BotNexus.Extensions.Mcp" },
+    @{ Id = "botnexus-mcp-invoke"; Src = "extensions/mcp-invoke/BotNexus.Extensions.McpInvoke" },
+    @{ Id = "botnexus-web";     Src = "extensions/web/BotNexus.Extensions.WebTools" }
 )
 
 foreach ($ext in $extensions) {
