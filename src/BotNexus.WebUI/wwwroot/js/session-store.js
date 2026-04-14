@@ -1,7 +1,7 @@
 // BotNexus WebUI — Channel-based state management
 // Each agent+channelType pair gets a permanent ChannelContext with its own DOM.
 
-import { normalizeChannelKey, channelDisplayName } from './api.js';
+import { normalizeChannelKey, channelDisplayName, serverLog } from './api.js';
 import { dom } from './ui.js';
 import { updateSessionIdDisplay, syncLoadingUiForActiveSession, updateSendButtonState } from './chat.js';
 import { updateSidebarBadge } from './sidebar.js';
@@ -159,6 +159,8 @@ export class ChannelManager {
                 ctx = this.getOrCreate(agentId, channelType);
                 this.registerSession(sessionId, ctx);
             } else {
+                console.warn('routeEvent: unknown session and no agent context to create one', sessionId, evt);
+                serverLog('warn', 'routeEvent dropped — unknown session', { sessionId, eventType: evt?.type });
                 return { ctx: null, isActive: false };
             }
         }
