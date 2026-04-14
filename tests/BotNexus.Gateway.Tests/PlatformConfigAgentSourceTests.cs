@@ -1,7 +1,9 @@
 using System.Reflection;
 using System.Text.Json;
 using BotNexus.AgentCore.Tools;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
@@ -161,6 +163,151 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         descriptor.FileAccess!.AllowedReadPaths.Should().Equal(@"Q:\repos\botnexus\docs");
         descriptor.FileAccess.AllowedWritePaths.Should().Equal(@"Q:\repos\botnexus\artifacts");
         descriptor.FileAccess.DeniedPaths.Should().Equal(@"Q:\repos\botnexus\docs\secrets");
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithLocationReferenceInAllowedReadPaths_ResolvesLocationPath()
+    {
+        var config = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["assistant"] = new()
+                {
+                    Provider = "copilot",
+                    Model = "gpt-4.1",
+                    FileAccess = new FileAccessPolicyConfig
+                    {
+                        AllowedReadPaths = ["@repo-botnexus"]
+                    }
+                }
+            }
+        };
+
+        var source = new PlatformConfigAgentSource(
+            Options.Create(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>(),
+            new StubLocationResolver(new Dictionary<string, string>
+            {
+                ["repo-botnexus"] = @"Q:\repos\botnexus"
+            }));
+
+        var descriptor = (await source.LoadAsync()).Should().ContainSingle().Subject;
+
+        descriptor.FileAccess.Should().NotBeNull();
+        descriptor.FileAccess!.AllowedReadPaths.Should().Equal(Path.GetFullPath(@"Q:\repos\botnexus"));
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithLocationReferenceSubPath_ResolvesCombinedPath()
+    {
+        var config = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["assistant"] = new()
+                {
+                    Provider = "copilot",
+                    Model = "gpt-4.1",
+                    FileAccess = new FileAccessPolicyConfig
+                    {
+                        AllowedReadPaths = ["@repo-botnexus/docs/planning"]
+                    }
+                }
+            }
+        };
+
+        var source = new PlatformConfigAgentSource(
+            Options.Create(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>(),
+            new StubLocationResolver(new Dictionary<string, string>
+            {
+                ["repo-botnexus"] = @"Q:\repos\botnexus"
+            }));
+
+        var descriptor = (await source.LoadAsync()).Should().ContainSingle().Subject;
+
+        descriptor.FileAccess.Should().NotBeNull();
+        descriptor.FileAccess!.AllowedReadPaths.Should().Equal(Path.GetFullPath(@"Q:\repos\botnexus\docs\planning"));
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithUnknownLocationReference_LogsWarningAndSkipsPath()
+    {
+        var logger = new ListLogger<PlatformConfigAgentSource>();
+        var config = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["assistant"] = new()
+                {
+                    Provider = "copilot",
+                    Model = "gpt-4.1",
+                    FileAccess = new FileAccessPolicyConfig
+                    {
+                        AllowedReadPaths = ["@missing"]
+                    }
+                }
+            }
+        };
+
+        var source = new PlatformConfigAgentSource(
+            Options.Create(config),
+            _configDirectory,
+            logger,
+            new StubLocationResolver(new Dictionary<string, string>()));
+
+        var descriptor = (await source.LoadAsync()).Should().ContainSingle().Subject;
+
+        descriptor.FileAccess.Should().NotBeNull();
+        descriptor.FileAccess!.AllowedReadPaths.Should().BeEmpty();
+        logger.Entries.Should().Contain(entry =>
+            entry.Level == LogLevel.Warning &&
+            entry.Message.Contains("Skipping unresolved location reference '@missing'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithMixedLocationReferencesAndRawPaths_MapsAllResolvedPaths()
+    {
+        var config = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["assistant"] = new()
+                {
+                    Provider = "copilot",
+                    Model = "gpt-4.1",
+                    FileAccess = new FileAccessPolicyConfig
+                    {
+                        AllowedReadPaths = ["@repo-botnexus/docs", @"Q:\repos\shared"],
+                        AllowedWritePaths = ["@repo-botnexus/artifacts"],
+                        DeniedPaths = ["@repo-botnexus/.env", @"Q:\repos\shared\blocked"]
+                    }
+                }
+            }
+        };
+
+        var source = new PlatformConfigAgentSource(
+            Options.Create(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>(),
+            new StubLocationResolver(new Dictionary<string, string>
+            {
+                ["repo-botnexus"] = @"Q:\repos\botnexus"
+            }));
+
+        var descriptor = (await source.LoadAsync()).Should().ContainSingle().Subject;
+
+        descriptor.FileAccess.Should().NotBeNull();
+        descriptor.FileAccess!.AllowedReadPaths.Should().Equal(
+            Path.GetFullPath(@"Q:\repos\botnexus\docs"),
+            @"Q:\repos\shared");
+        descriptor.FileAccess.AllowedWritePaths.Should().Equal(Path.GetFullPath(@"Q:\repos\botnexus\artifacts"));
+        descriptor.FileAccess.DeniedPaths.Should().Equal(
+            Path.GetFullPath(@"Q:\repos\botnexus\.env"),
+            @"Q:\repos\shared\blocked");
     }
 
     [Fact]
@@ -399,5 +546,19 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         public Task ClearAsync(CancellationToken ct = default) => Task.CompletedTask;
         public Task<MemoryStoreStats> GetStatsAsync(CancellationToken ct = default) => Task.FromResult(new MemoryStoreStats(0, 0, null));
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class StubLocationResolver(IReadOnlyDictionary<string, string> paths) : ILocationResolver
+    {
+        private readonly IReadOnlyDictionary<string, string> _paths = paths;
+
+        public Location? Resolve(string locationName)
+            => null;
+
+        public string? ResolvePath(string locationName)
+            => _paths.TryGetValue(locationName, out var path) ? path : null;
+
+        public IReadOnlyList<Location> GetAll()
+            => [];
     }
 }
