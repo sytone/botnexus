@@ -78,7 +78,7 @@ body {
     width: 36px;
     height: 36px;
     min-height: 36px;
-    margin: 8px auto 4px;
+    margin: 8px 0 4px 8px;
     border-radius: 8px;
     background: var(--bg-tertiary);
     color: var(--text-primary);
