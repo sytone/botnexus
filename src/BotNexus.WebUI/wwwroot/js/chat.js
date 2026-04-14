@@ -17,7 +17,7 @@ import {
 import { hubInvoke, getConnection } from './hub.js';
 import { loadSessions, trackActivity, updateSidebarBadge } from './sidebar.js';
 import { activeSubAgents } from './events.js';
-import { getShowTools, setShowTools, getShowThinking, setShowThinking } from './storage.js';
+import { getShowTools, setShowTools, getShowThinking, setShowThinking, setLastContext } from './storage.js';
 
 // ── Module state ────────────────────────────────────────────────────
 
@@ -1003,6 +1003,7 @@ export async function sendMessage() {
             const ctx = channelManager.getOrCreate(result.agentId || activeAgentId, sessionChannelType);
             channelManager.registerSession(result.sessionId, ctx);
             channelManager.activate(ctx.key);
+            setLastContext(result.agentId || activeAgentId, sessionChannelType, result.sessionId);
             updateSessionIdDisplay();
         }
     } catch (err) {
@@ -1124,6 +1125,9 @@ export async function openAgentTimeline(agentId, channelType, targetSessionId = 
     ctx.unreadCount = 0;
     updateSidebarBadge(ctx.sessionId, 0);
 
+    // Persist last context for restore on reload
+    setLastContext(agentId, channelType, ctx.sessionId);
+
     try {
         // If history already loaded, just scroll and focus
         if (ctx.historyLoaded) {
@@ -1155,6 +1159,7 @@ export async function openAgentTimeline(agentId, channelType, targetSessionId = 
 
         const latestSessionId = data.messages[data.messages.length - 1].sessionId;
         channelManager.registerSession(latestSessionId, ctx);
+        setLastContext(agentId, channelType, latestSessionId);
 
         ctx.messagesEl.innerHTML = '';
         renderHistoryBatch(data.messages, data.sessionBoundaries, ctx.messagesEl);
