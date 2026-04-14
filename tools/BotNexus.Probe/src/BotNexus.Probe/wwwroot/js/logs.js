@@ -101,8 +101,8 @@
     try {
       const params = getFilters();
       const data = await ProbeApi.getLogs(params);
-      const entries = Array.isArray(data) ? data : (data.entries || data.logs || []);
-      totalCount = data.totalCount || data.total || entries.length + currentSkip + (entries.length === PAGE_SIZE ? 1 : 0);
+      const entries = Array.isArray(data) ? data : (data.items || data.entries || data.logs || []);
+      totalCount = data.totalCount || data.total || data.count || entries.length + currentSkip + (entries.length === PAGE_SIZE ? 1 : 0);
 
       updateStats(entries, totalCount);
       updatePagination();

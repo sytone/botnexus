@@ -55,8 +55,8 @@
   async function loadSessionStats() {
     try {
       const sessions = await ProbeApi.getSessions();
-      const arr = Array.isArray(sessions) ? sessions : (sessions.sessions || []);
-      $('#card-sessions').textContent = arr.length;
+      const arr = Array.isArray(sessions) ? sessions : (sessions.items || sessions.sessions || []);
+      $('#card-sessions').textContent = sessions.count || arr.length;
       if (arr.length > 0) {
         const latest = arr[0];
         $('#card-sessions-sub').textContent = `Latest: ${truncate(latest.sessionId || latest.id || '', 16)}`;
@@ -85,7 +85,7 @@
     const container = $('#recent-logs');
     try {
       const data = await ProbeApi.getLogs({ take: 10 });
-      const entries = Array.isArray(data) ? data : (data.entries || data.logs || []);
+      const entries = Array.isArray(data) ? data : (data.items || data.entries || data.logs || []);
       if (entries.length === 0) {
         setEmpty(container, '📄', 'No log entries found');
         return;
@@ -119,7 +119,7 @@
     const container = $('#active-sessions');
     try {
       const data = await ProbeApi.getSessions();
-      const sessions = (Array.isArray(data) ? data : (data.sessions || [])).slice(0, 5);
+      const sessions = (Array.isArray(data) ? data : (data.items || data.sessions || [])).slice(0, 5);
       if (sessions.length === 0) {
         setEmpty(container, '💬', 'No sessions available');
         return;
