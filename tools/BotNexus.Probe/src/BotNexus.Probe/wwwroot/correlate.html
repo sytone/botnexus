@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Correlate — BotNexus Probe</title>
+    <link rel="stylesheet" href="/css/probe.css">
+</head>
+<body>
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <h1>🔍 Probe</h1>
+            <div class="version">v0.1.0</div>
+        </div>
+        <ul class="nav-links">
+            <li><a href="/">📊 Dashboard</a></li>
+            <li><a href="/logs.html">📄 Logs</a></li>
+            <li><a href="/sessions.html">💬 Sessions</a></li>
+            <li><a href="/traces.html">🔗 Traces</a></li>
+            <li><a href="/live.html">⚡ Live</a></li>
+            <li><a href="/correlate.html">🔎 Correlate</a></li>
+        </ul>
+    </nav>
+
+    <main class="content">
+        <div class="page-header">
+            <h2>🔎 Correlation Pivot</h2>
+            <p>Unified search across logs, sessions, and traces by any ID</p>
+        </div>
+
+        <!-- Big Search -->
+        <div class="search-bar">
+            <input type="text" id="correlate-input" placeholder="Search by Correlation ID, Session ID, Agent ID, or Trace ID…" />
+            <button onclick="doCorrelate()">Correlate</button>
+        </div>
+
+        <!-- Results -->
+        <div id="correlate-results"></div>
+
+        <!-- Timeline -->
+        <div id="correlate-timeline" class="section hidden">
+            <div class="section-header">
+                <h3>🕐 Unified Timeline</h3>
+            </div>
+            <div class="timeline" id="timeline-container"></div>
+        </div>
+    </main>
+
+    <script src="/js/probe.js"></script>
+    <script src="/js/correlate.js"></script>
+</body>
+</html>

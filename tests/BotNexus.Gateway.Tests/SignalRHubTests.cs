@@ -73,7 +73,7 @@ public sealed class SignalRHubTests
         var warmup = new Mock<ISessionWarmupService>();
         warmup.Setup(value => value.GetAvailableSessionsAsync("agent-a", It.IsAny<CancellationToken>()))
             .ReturnsAsync([
-                new SessionSummary("s1", "agent-a", ChannelKey.From("signalr"), SessionStatus.Active, SessionType.UserAgent, 3, DateTimeOffset.UtcNow.AddMinutes(-10), DateTimeOffset.UtcNow)
+                new SessionSummary("s1", "agent-a", ChannelKey.From("signalr"), SessionStatus.Active, SessionType.UserAgent, true, 3, DateTimeOffset.UtcNow.AddMinutes(-10), DateTimeOffset.UtcNow)
             ]);
 
         var existing = new GatewaySession
@@ -153,7 +153,7 @@ public sealed class SignalRHubTests
         var warmup = new Mock<ISessionWarmupService>();
         warmup.Setup(value => value.GetAvailableSessionsAsync("agent-a", It.IsAny<CancellationToken>()))
             .ReturnsAsync([
-                new SessionSummary("session-1", "agent-a", ChannelKey.From("signalr"), SessionStatus.Active, SessionType.UserAgent, 0, DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow)
+                new SessionSummary("session-1", "agent-a", ChannelKey.From("signalr"), SessionStatus.Active, SessionType.UserAgent, true, 0, DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow)
             ]);
 
         var sessions = new Mock<ISessionStore>();
@@ -192,8 +192,8 @@ public sealed class SignalRHubTests
         var warmup = new Mock<ISessionWarmupService>();
         warmup.Setup(value => value.GetAvailableSessionsAsync("agent-a", It.IsAny<CancellationToken>()))
             .ReturnsAsync([
-                new SessionSummary("signalr-session", "agent-a", ChannelKey.From("signalr"), SessionStatus.Active, SessionType.UserAgent, 1, DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddMinutes(-4)),
-                new SessionSummary("telegram-session", "agent-a", ChannelKey.From("telegram"), SessionStatus.Active, SessionType.UserAgent, 2, DateTimeOffset.UtcNow.AddMinutes(-3), DateTimeOffset.UtcNow.AddMinutes(-2))
+                new SessionSummary("signalr-session", "agent-a", ChannelKey.From("signalr"), SessionStatus.Active, SessionType.UserAgent, true, 1, DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddMinutes(-4)),
+                new SessionSummary("telegram-session", "agent-a", ChannelKey.From("telegram"), SessionStatus.Active, SessionType.UserAgent, true, 2, DateTimeOffset.UtcNow.AddMinutes(-3), DateTimeOffset.UtcNow.AddMinutes(-2))
             ]);
 
         var sessions = new Mock<ISessionStore>();
@@ -230,7 +230,7 @@ public sealed class SignalRHubTests
         var warmup = new Mock<ISessionWarmupService>();
         warmup.Setup(value => value.GetAvailableSessionsAsync("agent-a", It.IsAny<CancellationToken>()))
             .ReturnsAsync([
-                new SessionSummary("signalr-session", "agent-a", ChannelKey.From("signalr"), SessionStatus.Active, SessionType.UserAgent, 1, DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddMinutes(-4))
+                new SessionSummary("signalr-session", "agent-a", ChannelKey.From("signalr"), SessionStatus.Active, SessionType.UserAgent, true, 1, DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddMinutes(-4))
             ]);
 
         GatewaySession? capturedSession = null;
@@ -273,7 +273,7 @@ public sealed class SignalRHubTests
         var warmup = new Mock<ISessionWarmupService>();
         warmup.Setup(value => value.GetAvailableSessionsAsync("agent-a", It.IsAny<CancellationToken>()))
             .ReturnsAsync([
-                new SessionSummary("session-1", "agent-a", ChannelKey.From("signalr"), SessionStatus.Active, SessionType.UserAgent, 0, DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow)
+                new SessionSummary("session-1", "agent-a", ChannelKey.From("signalr"), SessionStatus.Active, SessionType.UserAgent, true, 0, DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow)
             ]);
 
         var sessions = new Mock<ISessionStore>();

@@ -13,6 +13,7 @@ public sealed record SessionSummary(
     ChannelKey? ChannelType,
     SessionStatus Status,
     SessionType SessionType,
+    bool IsInteractive,
     int MessageCount,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);

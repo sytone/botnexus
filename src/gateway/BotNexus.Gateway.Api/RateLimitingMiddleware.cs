@@ -10,7 +10,7 @@ namespace BotNexus.Gateway.Api;
 /// </summary>
 public sealed class RateLimitingMiddleware
 {
-    private const int DefaultRequestsPerMinute = 60;
+    private const int DefaultRequestsPerMinute = 300;
     private const int DefaultWindowSeconds = 60;
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan MinimumRetryAfter = TimeSpan.FromSeconds(1);
@@ -38,11 +38,15 @@ public sealed class RateLimitingMiddleware
     /// <returns>A task representing middleware completion.</returns>
     public async Task InvokeAsync(HttpContext context)
     {
-        // Exempt health checks, WebSocket upgrades, and static files from rate limiting
-        if (context.Request.Path.Equals("/health", StringComparison.OrdinalIgnoreCase) ||
+        // Exempt health checks, WebSocket upgrades, static files, and high-frequency polling endpoints
+        var path = context.Request.Path;
+        if (path.Equals("/health", StringComparison.OrdinalIgnoreCase) ||
             context.WebSockets.IsWebSocketRequest ||
-            context.Request.Path.StartsWithSegments("/hub", StringComparison.OrdinalIgnoreCase) ||
-            IsStaticFileRequest(context.Request.Path))
+            path.StartsWithSegments("/hub", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("/api/version", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("/api/channels", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("/api/log", StringComparison.OrdinalIgnoreCase) ||
+            IsStaticFileRequest(path))
         {
             await _next(context);
             return;

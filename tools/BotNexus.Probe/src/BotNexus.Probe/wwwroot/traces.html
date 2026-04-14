@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Traces — BotNexus Probe</title>
+    <link rel="stylesheet" href="/css/probe.css">
+</head>
+<body>
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <h1>🔍 Probe</h1>
+            <div class="version">v0.1.0</div>
+        </div>
+        <ul class="nav-links">
+            <li><a href="/">📊 Dashboard</a></li>
+            <li><a href="/logs.html">📄 Logs</a></li>
+            <li><a href="/sessions.html">💬 Sessions</a></li>
+            <li><a href="/traces.html">🔗 Traces</a></li>
+            <li><a href="/live.html">⚡ Live</a></li>
+            <li><a href="/correlate.html">🔎 Correlate</a></li>
+        </ul>
+    </nav>
+
+    <main class="content">
+        <div class="page-header">
+            <h2>🔗 Trace Viewer</h2>
+            <p>OpenTelemetry distributed traces captured by Probe</p>
+        </div>
+
+        <div id="otlp-notice" class="notice hidden">
+            ⚠️ OTLP receiver is not enabled. Start Probe with <code>--otlp-port</code> to capture traces.
+        </div>
+
+        <!-- Trace List -->
+        <div id="trace-list-section">
+            <div class="section-header">
+                <h3>Recent Traces</h3>
+                <span class="count" id="trace-count"></span>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Trace ID</th>
+                            <th>Root Service</th>
+                            <th>Root Operation</th>
+                            <th>Duration</th>
+                            <th>Spans</th>
+                            <th>Status</th>
+                            <th>Timestamp</th>
+                        </tr>
+                    </thead>
+                    <tbody id="trace-body"></tbody>
+                </table>
+            </div>
+            <div id="trace-list-empty"></div>
+        </div>
+
+        <!-- Trace Detail (hidden until selected) -->
+        <div id="trace-detail-section" class="hidden">
+            <div class="flex-between mb-16">
+                <h3 id="trace-detail-title">Trace Detail</h3>
+                <button class="btn-secondary btn-small" onclick="closeTraceDetail()">← Back to list</button>
+            </div>
+
+            <!-- Waterfall -->
+            <div id="waterfall-container"></div>
+
+            <!-- Span Detail -->
+            <div id="span-detail" class="hidden"></div>
+        </div>
+    </main>
+
+    <script src="/js/probe.js"></script>
+    <script src="/js/traces.js"></script>
+</body>
+</html>

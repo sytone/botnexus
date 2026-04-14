@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live — BotNexus Probe</title>
+    <link rel="stylesheet" href="/css/probe.css">
+</head>
+<body>
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <h1>🔍 Probe</h1>
+            <div class="version">v0.1.0</div>
+        </div>
+        <ul class="nav-links">
+            <li><a href="/">📊 Dashboard</a></li>
+            <li><a href="/logs.html">📄 Logs</a></li>
+            <li><a href="/sessions.html">💬 Sessions</a></li>
+            <li><a href="/traces.html">🔗 Traces</a></li>
+            <li><a href="/live.html">⚡ Live</a></li>
+            <li><a href="/correlate.html">🔎 Correlate</a></li>
+        </ul>
+    </nav>
+
+    <main class="content">
+        <div class="page-header">
+            <h2>⚡ Live Activity Stream</h2>
+            <p>Real-time gateway activity via Server-Sent Events</p>
+        </div>
+
+        <!-- Connection Banner -->
+        <div id="connection-banner" class="connection-banner disconnected">
+            <span class="status-dot disconnected"></span>
+            <span id="connection-text">Not connected to gateway</span>
+        </div>
+
+        <!-- Connect Controls -->
+        <div id="connect-controls" class="toolbar" style="position:static">
+            <div class="field" style="flex:1">
+                <label>Gateway SSE Endpoint</label>
+                <input type="text" id="gateway-url" value="/api/gateway/activity" placeholder="/api/gateway/activity" style="width:100%"/>
+            </div>
+            <div class="actions">
+                <button id="btn-connect" onclick="toggleConnection()">Connect</button>
+            </div>
+        </div>
+
+        <!-- Controls bar -->
+        <div class="flex-between mt-16 mb-16">
+            <div class="flex gap-8" style="align-items:center">
+                <label class="text-sm">
+                    <input type="checkbox" id="auto-scroll" checked /> Auto-scroll
+                </label>
+                <label class="text-sm">
+                    <input type="checkbox" id="show-all-types" checked onchange="toggleAllTypes()" /> All types
+                </label>
+            </div>
+            <div class="stats-bar">
+                <div class="stat">Events: <strong id="stat-total">0</strong></div>
+                <div class="stat">Rate: <strong id="stat-rate">0</strong>/s</div>
+            </div>
+        </div>
+
+        <!-- Type Filters -->
+        <div id="type-filters" class="flex gap-8 mb-16" style="flex-wrap:wrap"></div>
+
+        <!-- Activity Stream -->
+        <div class="activity-stream" id="activity-stream">
+            <div class="empty-state">
+                <div class="icon">⚡</div>
+                <p>Connect to see live activity</p>
+            </div>
+        </div>
+
+        <!-- Clear button -->
+        <div class="mt-8">
+            <button class="btn-secondary btn-small" onclick="clearStream()">Clear Stream</button>
+        </div>
+    </main>
+
+    <script src="/js/probe.js"></script>
+    <script src="/js/live.js"></script>
+</body>
+</html>

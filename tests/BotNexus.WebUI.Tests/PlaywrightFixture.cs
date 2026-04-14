@@ -435,6 +435,7 @@ internal sealed class TestSessionWarmupService(ResettableInMemorySessionStore se
             session.ChannelType,
             session.Status,
             SessionType.UserAgent,
+            true,
             session.MessageCount,
             session.CreatedAt,
             session.UpdatedAt);

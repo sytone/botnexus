@@ -69,3 +69,4 @@
 - 2026-04-12: Extracted SessionStoreBase to centralize ListAsync, ListByChannelAsync, and GetExistenceAsync filtering logic while keeping store-specific persistence/locking behavior in derived stores.
 - 2026-04-12: Added SessionStoreBase.ListAsync(AgentId?, SessionStatus?, CancellationToken) overload to enforce consistent status filtering for contract tests without changing ISessionStore surface.
 - **Wave 4 Completion:** DDD refactoring Wave 4 delivered. ExistenceQuery + dual-lookup implementation across 3 stores complete. All 794 gateway tests passing. Build green (0 errors, 0 warnings). Decisions merged to decisions.md. Architecture docs updated by Kif for Waves 2-3 changes.
+- 2026-04-14: Built standalone tools/BotNexus.Probe (independent .sln) with Minimal API host, streamed Serilog/JSONL ingestion, optional OTLP JSON receiver, Gateway REST+SignalR clients, and correlation endpoint /api/correlate/{id}.

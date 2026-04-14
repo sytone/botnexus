@@ -165,6 +165,7 @@ public sealed class SessionWarmupService : ISessionWarmupService, IHostedService
                 session.ChannelType,
                 session.Status,
                 session.SessionType,
+                session.IsInteractive,
                 session.MessageCount,
                 session.CreatedAt,
                 session.UpdatedAt))
@@ -179,12 +180,11 @@ public sealed class SessionWarmupService : ISessionWarmupService, IHostedService
         DateTimeOffset updatedAfter,
         bool collapseChannelContinuations)
     {
+        // Core design: any session that is not Sealed is visible.
+        // IsInteractive on the session determines if the user can send messages.
         var visibleCandidates = sessions
             .Where(session =>
-                (session.SessionType.Equals(SessionType.UserAgent) || session.SessionType.Equals(SessionType.Cron))
-                && (session.Status == GatewaySessionStatus.Active
-                    || session.Status == GatewaySessionStatus.Suspended
-                    || session.Status == GatewaySessionStatus.Sealed)
+                session.Status != GatewaySessionStatus.Sealed
                 && session.UpdatedAt >= updatedAfter)
             .ToArray();
 

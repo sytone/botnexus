@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Logs — BotNexus Probe</title>
+    <link rel="stylesheet" href="/css/probe.css">
+</head>
+<body>
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <h1>🔍 Probe</h1>
+            <div class="version">v0.1.0</div>
+        </div>
+        <ul class="nav-links">
+            <li><a href="/">📊 Dashboard</a></li>
+            <li><a href="/logs.html">📄 Logs</a></li>
+            <li><a href="/sessions.html">💬 Sessions</a></li>
+            <li><a href="/traces.html">🔗 Traces</a></li>
+            <li><a href="/live.html">⚡ Live</a></li>
+            <li><a href="/correlate.html">🔎 Correlate</a></li>
+        </ul>
+    </nav>
+
+    <main class="content">
+        <div class="page-header">
+            <h2>📄 Log Browser</h2>
+            <p>Browse and filter structured log entries</p>
+        </div>
+
+        <!-- File Selector -->
+        <div class="flex-between mb-16">
+            <div class="flex gap-8" style="align-items:center">
+                <label class="text-sm text-muted">Log file:</label>
+                <select id="file-select" onchange="onFileChange()">
+                    <option value="">All files</option>
+                </select>
+            </div>
+            <div class="stats-bar" id="stats-bar"></div>
+        </div>
+
+        <!-- Filter Toolbar -->
+        <div class="toolbar" id="toolbar">
+            <div class="field">
+                <label>Level</label>
+                <select id="filter-level">
+                    <option value="">All</option>
+                    <option value="Debug">Debug</option>
+                    <option value="Information">Info</option>
+                    <option value="Warning">Warn</option>
+                    <option value="Error">Error</option>
+                    <option value="Fatal">Fatal</option>
+                </select>
+            </div>
+            <div class="field">
+                <label>From</label>
+                <input type="datetime-local" id="filter-from" />
+            </div>
+            <div class="field">
+                <label>To</label>
+                <input type="datetime-local" id="filter-to" />
+            </div>
+            <div class="field">
+                <label>Session ID</label>
+                <input type="text" id="filter-session" placeholder="Session…" />
+            </div>
+            <div class="field">
+                <label>Correlation ID</label>
+                <input type="text" id="filter-correlation" placeholder="Correlation…" />
+            </div>
+            <div class="field">
+                <label>Agent ID</label>
+                <input type="text" id="filter-agent" placeholder="Agent…" />
+            </div>
+            <div class="field">
+                <label>Search</label>
+                <input type="search" id="filter-text" placeholder="Free text…" />
+            </div>
+            <div class="actions">
+                <button onclick="doSearch()">Search</button>
+                <button class="btn-secondary" onclick="doClear()">Clear</button>
+            </div>
+        </div>
+
+        <!-- Log Table -->
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width:160px">Time</th>
+                        <th style="width:70px">Level</th>
+                        <th>Message</th>
+                        <th style="width:110px">Session</th>
+                        <th style="width:110px">Correlation</th>
+                        <th style="width:100px">Agent</th>
+                    </tr>
+                </thead>
+                <tbody id="log-body"></tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        <div class="pagination" id="pagination">
+            <span id="page-info" class="text-muted">—</span>
+            <div class="page-controls">
+                <button class="btn-secondary btn-small" id="btn-prev" onclick="prevPage()" disabled>← Prev</button>
+                <span id="page-num" class="mono-sm">Page 1</span>
+                <button class="btn-secondary btn-small" id="btn-next" onclick="nextPage()">Next →</button>
+            </div>
+        </div>
+    </main>
+
+    <script src="/js/probe.js"></script>
+    <script src="/js/logs.js"></script>
+</body>
+</html>

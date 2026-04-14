@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sessions — BotNexus Probe</title>
+    <link rel="stylesheet" href="/css/probe.css">
+</head>
+<body>
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <h1>🔍 Probe</h1>
+            <div class="version">v0.1.0</div>
+        </div>
+        <ul class="nav-links">
+            <li><a href="/">📊 Dashboard</a></li>
+            <li><a href="/logs.html">📄 Logs</a></li>
+            <li><a href="/sessions.html">💬 Sessions</a></li>
+            <li><a href="/traces.html">🔗 Traces</a></li>
+            <li><a href="/live.html">⚡ Live</a></li>
+            <li><a href="/correlate.html">🔎 Correlate</a></li>
+        </ul>
+    </nav>
+
+    <main class="content">
+        <div class="page-header">
+            <h2>💬 Session Viewer</h2>
+            <p>Browse captured bot sessions and conversation threads</p>
+        </div>
+
+        <div class="split-panel" id="session-layout">
+            <!-- Session List -->
+            <div>
+                <div class="toolbar" style="position:static; margin-bottom:8px;">
+                    <div class="field" style="flex:1">
+                        <input type="search" id="session-search" placeholder="Filter sessions…" style="width:100%"/>
+                    </div>
+                </div>
+                <div class="panel-list" id="session-list">
+                    <div class="loading">Loading…</div>
+                </div>
+            </div>
+
+            <!-- Session Detail -->
+            <div class="panel-detail" id="session-detail">
+                <div class="empty-state">
+                    <div class="icon">💬</div>
+                    <p>Select a session to view details</p>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="/js/probe.js"></script>
+    <script src="/js/sessions.js"></script>
+</body>
+</html>
