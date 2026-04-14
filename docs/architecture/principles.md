@@ -31,17 +31,23 @@
 
 **Principle:** Dependencies flow inward. High-level modules depend on abstractions, not concrete implementations.
 
-**Layers:**
+**Dependency Flow:**
 
 ```
-Domain (no deps) ← Providers ← AgentCore ← Gateway ← Presentation
+Independent libraries (no BotNexus knowledge):
+  AgentCore    Providers.Core → Providers.{Anthropic,OpenAI,...}
+
+BotNexus platform:
+  Domain (no deps) ← Gateway.Contracts, Prompts, Sessions.Common ← Gateway ← Presentation
 ```
+
+AgentCore and Providers are **independent libraries** — they have no knowledge of BotNexus or its Domain. The Gateway bridges between them, mapping BotNexus domain types to the generic types AgentCore and Providers expect.
 
 **Application:**
 
 - Gateway depends on `ISessionStore`, not `SqliteSessionStore`
 - AgentCore depends on `IAgentTool`, not specific tool implementations
-- Providers depend on `LlmModel` (domain), not provider-specific types
+- Providers depend on their own `LlmModel` type, not BotNexus domain types
 - Presentation depends on Gateway contracts (`IAgentSupervisor`), not implementations
 
 **Benefits:**
@@ -178,10 +184,10 @@ Domain (no deps) ← Providers ← AgentCore ← Gateway ← Presentation
 
 **Application:**
 
-- `SubscribeAll()` + `SendMessage()` added alongside `JoinSession()` + `Prompt()`
-- Old APIs marked `[Obsolete]` with guidance
-- Both models coexist for backwards compatibility
-- Remove only in major version bumps
+- `SubscribeAll()` + `SendMessage()` added as the primary API surface
+- Legacy APIs (where applicable) marked `[Obsolete]` with guidance
+- Old and new models coexist for backwards compatibility
+- Remove deprecated APIs only in major version bumps
 
 **Benefits:**
 
@@ -212,21 +218,22 @@ Domain (no deps) ← Providers ← AgentCore ← Gateway ← Presentation
 
 ---
 
-### 11. Per-Channel Isolation (WebUI)
+### 11. Per-Channel Containers (WebUI)
 
-**Principle:** Each channel type gets independent session management. WebUI uses subscribe-all for multi-session UI.
+**Principle:** Each (agent, channel) pair gets its own permanent DOM container. WebUI uses subscribe-all for multi-session UI.
 
 **Application:**
 
 - WebUI subscribes to all sessions upfront (`SubscribeAll()`)
-- Client-side DOM switching selects active session
-- All events broadcast to session groups: `session:{sessionId}`
+- Each agent+channel gets its own permanent DOM container — no DOM swapping
+- Events route to the correct container by `sessionId`
 - Other channels (Telegram, TUI) manage their own session lifecycle
 
 **Benefits:**
 
 - WebUI supports multi-session without manual join/leave
-- Real-time updates across all sessions
+- No DOM content loss when switching between sessions
+- Real-time updates across all sessions simultaneously
 - Future: multi-client collaboration (multiple users in same session)
 
 ---

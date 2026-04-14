@@ -154,7 +154,7 @@ Loop: Drain Steering → Convert Context → Call LLM → Accumulate Response �
 
 | From | To | Trigger |
 |------|-----|---------|
-| (none) | Active | First message via `SendMessage()` or `JoinSession()` |
+| (none) | Active | First message via `SendMessage()` (auto-session) |
 | Active | Suspended | User pauses, system timeout |
 | Active | Sealed | Cron completes, soul session rotates |
 | Suspended | Active | User resumes |

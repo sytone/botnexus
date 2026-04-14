@@ -353,7 +353,7 @@ public record Location(WorldId? WorldId, AgentId AgentId, SessionId? SessionId);
 
 ## Summary
 
-The domain model provides a clean, framework-agnostic foundation for BotNexus. All higher layers (Gateway, AgentCore, Providers) depend on these primitives and follow the domain rules. Extensions and customizations respect domain invariants through interfaces and policies.
+The domain model provides a clean, framework-agnostic foundation for BotNexus. BotNexus platform projects (Gateway, Prompts, Sessions.Common) depend on these primitives and follow the domain rules. AgentCore and Providers are independent libraries that do NOT depend on the domain model — the Gateway bridges between them. Extensions and customizations respect domain invariants through interfaces and policies.
 
 **For implementation details:**
 
