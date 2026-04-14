@@ -14,6 +14,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Playwright;
+using SessionType = BotNexus.Domain.Primitives.SessionType;
 
 namespace BotNexus.WebUI.Tests;
 
@@ -433,6 +434,7 @@ internal sealed class TestSessionWarmupService(ResettableInMemorySessionStore se
             session.AgentId,
             session.ChannelType,
             session.Status,
+            SessionType.UserAgent,
             session.MessageCount,
             session.CreatedAt,
             session.UpdatedAt);

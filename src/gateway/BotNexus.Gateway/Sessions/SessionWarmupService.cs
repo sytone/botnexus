@@ -164,6 +164,7 @@ public sealed class SessionWarmupService : ISessionWarmupService, IHostedService
                 session.AgentId,
                 session.ChannelType,
                 session.Status,
+                session.SessionType,
                 session.MessageCount,
                 session.CreatedAt,
                 session.UpdatedAt))
@@ -180,8 +181,7 @@ public sealed class SessionWarmupService : ISessionWarmupService, IHostedService
     {
         var visibleCandidates = sessions
             .Where(session =>
-                session.SessionType.Equals(SessionType.UserAgent)
-                && (!session.ChannelType.HasValue || !session.ChannelType.Value.Equals(ChannelKey.From("cron")))
+                (session.SessionType.Equals(SessionType.UserAgent) || session.SessionType.Equals(SessionType.Cron))
                 && (session.Status == GatewaySessionStatus.Active
                     || session.Status == GatewaySessionStatus.Suspended
                     || session.Status == GatewaySessionStatus.Sealed)
