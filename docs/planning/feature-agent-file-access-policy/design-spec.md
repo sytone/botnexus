@@ -3,7 +3,7 @@ id: feature-agent-file-access-policy
 title: "Per-Agent File Access Policy Configuration"
 type: feature
 priority: high
-status: ready
+status: delivered
 created: 2026-07-18
 author: nova
 tags: [security, agents, configuration, file-access, path-validation]
@@ -14,7 +14,7 @@ ddd_types: [AgentDescriptor, FileAccessPolicy, DefaultPathValidator, AgentDefini
 
 **Type**: Feature
 **Priority**: High (blocks agent access to repos and other safe locations)
-**Status**: Ready
+**Status**: Delivered
 **Author**: Nova
 
 ## Problem
