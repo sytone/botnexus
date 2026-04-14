@@ -103,6 +103,10 @@ Gateway-level settings control the HTTP server, routing, and runtime behavior.
 | `extensions.enabled` | bool | `true` | Enable/disable dynamic extension loading |
 | `world.id` | string | `local-gateway` | Unique identifier for this Gateway instance |
 | `world.displayName` | string | `BotNexus Gateway` | Human-readable Gateway name |
+| `fileAccess.allowedReadPaths` | array | `[]` | Default read paths for all agents (world-level) |
+| `fileAccess.allowedWritePaths` | array | `[]` | Default write paths for all agents (world-level) |
+| `fileAccess.deniedPaths` | array | `[]` | Default denied paths for all agents (world-level) |
+| `rateLimit.enabled` | bool | `false` | Enable per-client rate limiting (opt-in) |
 
 ---
 
@@ -191,6 +195,52 @@ Agents are defined in the `agents` section, keyed by agent ID.
 | `toolPolicy.alwaysApprove` | array | `[]` | Tools requiring approval before execution |
 | `toolPolicy.neverApprove` | array | `[]` | Trusted tools that skip approval |
 | `toolPolicy.denied` | array | `[]` | Tools completely blocked for this agent |
+| `fileAccess.allowedReadPaths` | array | `[]` | Paths the agent can read (exact or glob). Workspace always readable |
+| `fileAccess.allowedWritePaths` | array | `[]` | Paths the agent can write (exact or glob). Workspace always writable |
+| `fileAccess.deniedPaths` | array | `[]` | Paths explicitly denied even if otherwise allowed |
+
+### File Access Policy
+
+Controls which file paths agents can access via file tools (`read`, `write`, `edit`, `grep`, `glob`, `ls`). Shell tools (`bash`, `exec`) are not restricted by this policy.
+
+**World-level default** — set under `gateway.fileAccess` to apply to all agents:
+
+```json
+{
+  "gateway": {
+    "fileAccess": {
+      "allowedReadPaths": ["Q:/repos/botnexus", "~/Documents"],
+      "allowedWritePaths": ["Q:/repos/botnexus/docs"],
+      "deniedPaths": ["**/.env", "**/secrets/**"]
+    }
+  }
+}
+```
+
+**Per-agent override** — set under the agent to replace the world default entirely:
+
+```json
+{
+  "agents": {
+    "nova": {
+      "fileAccess": {
+        "allowedReadPaths": ["Q:/repos/botnexus"],
+        "allowedWritePaths": ["Q:/repos/botnexus/docs/planning"],
+        "deniedPaths": ["Q:/repos/botnexus/.env"]
+      }
+    }
+  }
+}
+```
+
+**Path rules:**
+- Exact paths allow the directory and all children
+- Glob patterns (`*`, `**`, `?`) supported via `FileSystemName.MatchesSimpleExpression`
+- `~` expands to user home directory
+- Workspace (`~/.botnexus/agents/{id}/workspace`) is always accessible
+- Deny list takes priority over allow list
+- Per-agent `fileAccess` replaces the world default (not merged)
+- If no policy set (agent or world), workspace-only mode
 
 ### System Prompt Files
 
