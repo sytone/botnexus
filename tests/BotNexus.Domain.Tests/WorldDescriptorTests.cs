@@ -27,6 +27,7 @@ public sealed class WorldDescriptorTests
                     Name = "agents-directory",
                     Type = LocationType.FileSystem,
                     Path = "C:\\agents",
+                    Description = "Gateway agent storage",
                     Properties = new Dictionary<string, string> { ["scope"] = "gateway" }
                 }
             ],
@@ -51,6 +52,7 @@ public sealed class WorldDescriptorTests
         roundTrip.Identity.Name.Should().Be("Local Development");
         roundTrip.HostedAgents.Should().ContainSingle(agent => agent.Value == "assistant");
         roundTrip.Locations.Should().ContainSingle(location => location.Type == LocationType.FileSystem && location.Path == "C:\\agents");
+        roundTrip.Locations.Should().ContainSingle(location => location.Description == "Gateway agent storage");
         roundTrip.AvailableStrategies.Should().ContainSingle(strategy => strategy == ExecutionStrategy.InProcess);
         roundTrip.CrossWorldPermissions.Should().ContainSingle(permission => permission.TargetWorldId == "prod" && !permission.AllowOutbound);
     }

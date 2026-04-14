@@ -40,6 +40,22 @@ public sealed class WorldDescriptorBuilderTests
                 ListenUrl = "http://localhost:5005",
                 AgentsDirectory = "C:\\botnexus\\agents",
                 SessionsDirectory = "C:\\botnexus\\sessions",
+                Locations = new Dictionary<string, LocationConfig>
+                {
+                    ["provider:copilot"] = new()
+                    {
+                        Type = "filesystem",
+                        Path = "~\\declared-provider",
+                        Description = "declared takes precedence",
+                        Properties = new Dictionary<string, string> { ["source"] = "declared" }
+                    },
+                    ["repo-root"] = new()
+                    {
+                        Type = "filesystem",
+                        Path = "~\\repo",
+                        Description = "repository root"
+                    }
+                },
                 CrossWorldPermissions =
                 [
                     new CrossWorldPermissionConfig
@@ -105,9 +121,17 @@ public sealed class WorldDescriptorBuilderTests
 
         world.Locations.Should().Contain(location => location.Name == "agents-directory" && location.Type == LocationType.FileSystem);
         world.Locations.Should().Contain(location => location.Name == "sessions-directory" && location.Type == LocationType.FileSystem);
-        world.Locations.Should().Contain(location => location.Name == "provider:copilot" && location.Type == LocationType.Api);
+        world.Locations.Should().Contain(location =>
+            location.Name == "provider:copilot"
+            && location.Type == LocationType.FileSystem
+            && location.Description == "declared takes precedence"
+            && location.Properties["source"] == "declared");
         world.Locations.Should().Contain(location => location.Name == "mcp:assistant:github" && location.Type == LocationType.McpServer);
         world.Locations.Should().Contain(location => location.Name == "agent:assistant:workspace" && location.Type == LocationType.FileSystem);
+        world.Locations.Should().Contain(location =>
+            location.Name == "repo-root"
+            && location.Type == LocationType.FileSystem
+            && location.Path == Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "repo"));
 
         var permission = world.CrossWorldPermissions.Should().ContainSingle().Subject;
         permission.TargetWorldId.Should().Be("prod");
