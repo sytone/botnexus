@@ -238,6 +238,52 @@ body {
 .agent-group-channels { padding-left: 8px; }
 .agent-group-header.collapsed + .agent-group-channels { display: none; }
 
+/* === Sub-agent sidebar items === */
+.agent-group-subagents {
+    padding-left: 8px;
+    margin-top: 2px;
+    border-top: 1px solid var(--border);
+}
+.agent-group-header.collapsed ~ .agent-group-subagents { display: none; }
+
+.subagent-sidebar-item {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 12px 5px 20px; border-radius: 6px;
+    font-size: 0.8rem; color: var(--text-muted);
+    cursor: pointer; transition: background 0.15s;
+    margin-bottom: 2px;
+    border-left: 2px solid transparent;
+}
+.subagent-sidebar-item:hover { background: rgba(255,255,255,0.06); }
+.subagent-sidebar-item.viewing { background: var(--bg-tertiary); }
+
+/* Status-specific styles */
+.subagent-sidebar-item.running { border-left-color: var(--success); color: var(--text-secondary); }
+.subagent-sidebar-item.completed { color: var(--text-muted); }
+.subagent-sidebar-item.failed { border-left-color: var(--error); color: var(--text-muted); }
+.subagent-sidebar-item.killed { border-left-color: var(--error); color: var(--text-muted); }
+.subagent-sidebar-item.timedout { border-left-color: var(--warning); color: var(--text-muted); }
+.subagent-sidebar-item.sealed { opacity: 0.4; }
+
+.subagent-status-icon {
+    flex-shrink: 0; width: 16px;
+    font-size: 0.75rem; text-align: center; line-height: 1;
+}
+
+.subagent-label {
+    flex: 1; min-width: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    color: inherit;
+}
+
+.seal-btn {
+    background: transparent; border: none; color: var(--text-muted);
+    cursor: pointer; font-size: 0.75rem; padding: 2px 4px; border-radius: 3px;
+    opacity: 0; transition: opacity 0.15s, color 0.15s; line-height: 1;
+}
+.subagent-sidebar-item:hover .seal-btn { opacity: 1; }
+.seal-btn:hover { color: var(--accent); background: rgba(74,158,255,0.1); }
+
 .loading { padding: 12px; color: var(--text-muted); font-size: 0.8rem; text-align: center; }
 .empty-state { padding: 12px; color: var(--text-muted); font-size: 0.8rem; text-align: center; font-style: italic; }
 .text-muted { color: var(--text-muted); }

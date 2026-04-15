@@ -302,6 +302,36 @@ public sealed class SessionsController : ControllerBase
         return Ok(session);
     }
 
+    /// <summary>Seals a completed sub-agent session to prevent reuse.</summary>
+    /// <summary>
+    /// Executes seal.
+    /// </summary>
+    /// <param name="sessionId">The session id.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The seal result.</returns>
+    [HttpPatch("{sessionId}/seal")]
+    public async Task<ActionResult> Seal(string sessionId, CancellationToken cancellationToken)
+    {
+        var sid = SessionId.From(sessionId);
+        var session = await _sessions.GetAsync(sid, cancellationToken);
+        if (session is null)
+            return NotFound();
+
+        if (!sid.IsSubAgent)
+            return BadRequest(new { error = "Only sub-agent sessions can be sealed" });
+
+        if (session.Status == SessionStatus.Active || session.Status == SessionStatus.Suspended)
+            return Conflict(new { error = "Cannot seal an active session" });
+
+        if (session.Status == SessionStatus.Sealed)
+            return NoContent();
+
+        session.Status = SessionStatus.Sealed;
+        session.UpdatedAt = DateTimeOffset.UtcNow;
+        await _sessions.SaveAsync(session, cancellationToken);
+        return Ok(new { sessionId = sid.Value, status = "Sealed", updatedAt = session.UpdatedAt });
+    }
+
     private static object? ConvertJsonElement(JsonElement element)
         => element.ValueKind switch
         {

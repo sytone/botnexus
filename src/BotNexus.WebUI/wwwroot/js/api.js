@@ -126,3 +126,17 @@ export function serverLog(level, message, data, options = {}) {
         body: JSON.stringify({ level: normalizedLevel, message, data: toSafeLogData(data), version: CLIENT_VERSION, timestamp: new Date().toISOString() })
     }).catch(() => {});
 }
+
+// ── Session Lifecycle ───────────────────────────────────────────────
+
+/** Seal a terminal sub-agent session so it no longer appears in the sidebar. */
+export async function sealSession(sessionId) {
+    try {
+        const res = await fetch(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/seal`, {
+            method: 'PATCH'
+        });
+        return res.ok;
+    } catch {
+        return false;
+    }
+}

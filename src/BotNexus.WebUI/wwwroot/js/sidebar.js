@@ -2,7 +2,7 @@
 
 import {
     API_BASE, fetchJson, normalizeChannelKey, channelDisplayName, channelEmoji,
-    setChannelDisplayNames
+    setChannelDisplayNames, sealSession
 } from './api.js';
 import {
     dom, $, $$, escapeHtml, relativeTime, formatTime, showConfirm,
@@ -24,6 +24,36 @@ let providersCache = [];
 let modelsCache = [];
 export function getAgentsCache() { return agentsCache; }
 export function setAgentsCache(agents) { agentsCache = agents || []; }
+
+// ── Sub-Agent Helpers ───────────────────────────────────────────────
+
+const SIDEBAR_SUBAGENT_STATUS = {
+    Active:    { icon: '🟢', label: 'Running',   css: 'running' },
+    Running:   { icon: '🟢', label: 'Running',   css: 'running' },
+    Completed: { icon: '✅', label: 'Completed', css: 'completed' },
+    Failed:    { icon: '❌', label: 'Failed',    css: 'failed' },
+    Killed:    { icon: '🛑', label: 'Killed',    css: 'killed' },
+    TimedOut:  { icon: '⏱',  label: 'Timed Out', css: 'timedout' },
+    Sealed:    { icon: '🔒', label: 'Sealed',    css: 'sealed' }
+};
+
+function parseSubAgentSession(session) {
+    if (session.sessionType !== 'agent-subagent') return null;
+
+    const marker = '::subagent::';
+    const sessionId = session.sessionId || session.key || '';
+    const idx = sessionId.indexOf(marker);
+    if (idx < 0) return null;
+
+    const parentSessionId = sessionId.substring(0, idx);
+
+    const agentMarker = '--subagent--';
+    const agentIdx = (session.agentId || '').indexOf(agentMarker);
+    const parentAgentId = agentIdx > 0 ? session.agentId.substring(0, agentIdx) : null;
+
+    const subAgentUniqueId = sessionId.substring(idx + marker.length);
+    return { parentSessionId, parentAgentId, subAgentUniqueId };
+}
 
 // ── Sidebar Badge ───────────────────────────────────────────────────
 
@@ -90,6 +120,22 @@ export async function loadSessions() {
         }
     }
 
+    // Separate sub-agent sessions from regular sessions
+    const subAgentsByParent = {};
+    const regularSessionsByAgent = {};
+    for (const [agentId, sessions2] of Object.entries(sessionsByAgent)) {
+        for (const s of sessions2) {
+            const parsed = parseSubAgentSession(s);
+            if (parsed && parsed.parentAgentId) {
+                if (!subAgentsByParent[parsed.parentAgentId]) subAgentsByParent[parsed.parentAgentId] = [];
+                subAgentsByParent[parsed.parentAgentId].push({ ...s, _parsed: parsed });
+            } else {
+                if (!regularSessionsByAgent[agentId]) regularSessionsByAgent[agentId] = [];
+                regularSessionsByAgent[agentId].push(s);
+            }
+        }
+    }
+
     const currentChannel = getCurrentChannelType();
     const newFingerprint = JSON.stringify({
         agents: agents.map(a => a.agentId || a.name),
@@ -127,7 +173,7 @@ export async function loadSessions() {
         const channelsDiv = document.createElement('div');
         channelsDiv.className = 'agent-group-channels';
 
-        const agentSessions = (sessionsByAgent[agentId] || []).sort((a, b) =>
+        const agentSessions = (regularSessionsByAgent[agentId] || []).sort((a, b) =>
             new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0)
         );
         const latestByChannel = new Map();
@@ -175,6 +221,70 @@ export async function loadSessions() {
         }
 
         group.appendChild(channelsDiv);
+
+        // ── Sub-agent sessions under this agent ─────────────────────
+        const subAgents = subAgentsByParent[agentId] || [];
+        if (subAgents.length > 0) {
+            const subDiv = document.createElement('div');
+            subDiv.className = 'agent-group-subagents';
+
+            // Sort: running first, then by updatedAt descending
+            subAgents.sort((a, b) => {
+                const aStatus = a.status || 'Active';
+                const bStatus = b.status || 'Active';
+                if (aStatus === 'Active' && bStatus !== 'Active') return -1;
+                if (bStatus === 'Active' && aStatus !== 'Active') return 1;
+                return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
+            });
+
+            for (const sa of subAgents) {
+                // Filter out sealed sessions
+                if ((sa.status || '').toLowerCase() === 'sealed') continue;
+
+                const statusInfo = SIDEBAR_SUBAGENT_STATUS[sa.status] || SIDEBAR_SUBAGENT_STATUS.Active;
+                const label = sa._parsed.subAgentUniqueId ?
+                    sa._parsed.subAgentUniqueId.substring(0, 8) : sa.agentId;
+
+                const item = document.createElement('div');
+                item.className = `subagent-sidebar-item ${statusInfo.css}`;
+                item.dataset.sessionId = sa.sessionId || sa.key;
+
+                let html = `<span class="subagent-status-icon">${statusInfo.icon}</span>`;
+                html += `<span class="subagent-label">${escapeHtml(sa.name || label)}</span>`;
+
+                // Seal button for terminal states only
+                const isTerminal = ['completed', 'failed', 'killed', 'timedout'].includes((sa.status || '').toLowerCase());
+                if (isTerminal) {
+                    html += `<button class="seal-btn" title="Seal session">🔒</button>`;
+                }
+
+                item.innerHTML = html;
+
+                // Click to open sub-agent conversation (read-only)
+                item.addEventListener('click', (e) => {
+                    if (e.target.closest('.seal-btn')) return;
+                    // placeholder: openSubAgentSession will be implemented in Wave 2
+                    console.log('[subagent] open session:', sa.sessionId || sa.key);
+                });
+
+                // Seal button handler
+                const sealBtn = item.querySelector('.seal-btn');
+                if (sealBtn) {
+                    sealBtn.addEventListener('click', async (e) => {
+                        e.stopPropagation();
+                        const ok = await sealSession(sa.sessionId || sa.key);
+                        if (ok) loadSessions();
+                    });
+                }
+
+                subDiv.appendChild(item);
+            }
+
+            if (subDiv.children.length > 0) {
+                group.appendChild(subDiv);
+            }
+        }
+
         dom.sessionsList.appendChild(group);
     }
     sessionsInitialLoad = false;
