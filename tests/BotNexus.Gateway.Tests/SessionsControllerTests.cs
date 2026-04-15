@@ -566,6 +566,122 @@ public sealed class SessionsControllerTests
         payload["tags"].Should().BeAssignableTo<List<object?>>();
     }
 
+    // ── Seal endpoint tests ──────────────────────────────────────────
+
+    [Fact]
+    public async Task Seal_ExpiredSubAgent_Returns200()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync("parent::subagent::child1", "agent-a");
+        session.Status = SessionStatus.Expired;
+        var controller = new SessionsController(store);
+        var before = DateTimeOffset.UtcNow;
+
+        var result = await controller.Seal("parent::subagent::child1", CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
+        session.Status.Should().Be(SessionStatus.Sealed);
+        session.UpdatedAt.Should().BeOnOrAfter(before);
+    }
+
+    [Fact]
+    public async Task Seal_AlreadySealed_Returns204()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync("parent::subagent::child2", "agent-a");
+        session.Status = SessionStatus.Sealed;
+        var controller = new SessionsController(store);
+
+        var result = await controller.Seal("parent::subagent::child2", CancellationToken.None);
+
+        result.Should().BeOfType<NoContentResult>();
+    }
+
+    [Fact]
+    public async Task Seal_NonExistentSession_Returns404()
+    {
+        var controller = new SessionsController(new InMemorySessionStore());
+
+        var result = await controller.Seal("parent::subagent::missing", CancellationToken.None);
+
+        result.Should().BeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public async Task Seal_NonSubAgentSession_Returns400()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync("regular-session-id", "agent-a");
+        session.Status = SessionStatus.Expired;
+        var controller = new SessionsController(store);
+
+        var result = await controller.Seal("regular-session-id", CancellationToken.None);
+
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async Task Seal_ActiveSession_Returns409()
+    {
+        var store = new InMemorySessionStore();
+        await store.GetOrCreateAsync("parent::subagent::child3", "agent-a");
+        var controller = new SessionsController(store);
+
+        var result = await controller.Seal("parent::subagent::child3", CancellationToken.None);
+
+        result.Should().BeOfType<ConflictObjectResult>();
+    }
+
+    [Fact]
+    public async Task Seal_SuspendedSession_Returns409()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync("parent::subagent::child4", "agent-a");
+        session.Status = SessionStatus.Suspended;
+        var controller = new SessionsController(store);
+
+        var result = await controller.Seal("parent::subagent::child4", CancellationToken.None);
+
+        result.Should().BeOfType<ConflictObjectResult>();
+    }
+
+    [Fact]
+    public async Task Seal_PersistsChangesInSessionStore()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync("parent::subagent::child5", "agent-a");
+        session.Status = SessionStatus.Expired;
+        var controller = new SessionsController(store);
+
+        await controller.Seal("parent::subagent::child5", CancellationToken.None);
+
+        var saved = await store.GetAsync("parent::subagent::child5", CancellationToken.None);
+        saved.Should().NotBeNull();
+        saved!.Status.Should().Be(SessionStatus.Sealed);
+    }
+
+    [Fact]
+    public async Task Seal_ReturnsSessionIdAndStatusInBody()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync("parent::subagent::child6", "agent-a");
+        session.Status = SessionStatus.Expired;
+        var controller = new SessionsController(store);
+
+        var result = await controller.Seal("parent::subagent::child6", CancellationToken.None);
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var body = ok.Value;
+        body.Should().NotBeNull();
+        // Verify the anonymous object has expected shape via reflection
+        var sessionIdProp = body!.GetType().GetProperty("sessionId");
+        sessionIdProp.Should().NotBeNull();
+        sessionIdProp!.GetValue(body).Should().Be("parent::subagent::child6");
+        var statusProp = body.GetType().GetProperty("status");
+        statusProp.Should().NotBeNull();
+        statusProp!.GetValue(body).Should().Be("Sealed");
+    }
+
     private static ControllerContext CreateControllerContext(string callerId)
     {
         var httpContext = new DefaultHttpContext();

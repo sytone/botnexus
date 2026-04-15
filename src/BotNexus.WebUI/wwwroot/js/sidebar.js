@@ -13,7 +13,7 @@ import {
     isCurrentSessionStreaming, getCurrentChannelType
 } from './session-store.js';
 import { hubInvoke, getConnection, getConnectionId } from './hub.js';
-import { openAgentTimeline, startNewChat, appendSystemMessage } from './chat.js';
+import { openAgentTimeline, startNewChat, appendSystemMessage, openSubAgentSession } from './chat.js';
 import { getCollapsedAgents, toggleAgentCollapsed, getCachedAgents, setCachedAgents, getCachedSessions, setCachedSessions } from './storage.js';
 import { openLocationsView as openLocationsCanvasView } from './locations.js';
 
@@ -263,8 +263,7 @@ export async function loadSessions() {
                 // Click to open sub-agent conversation (read-only)
                 item.addEventListener('click', (e) => {
                     if (e.target.closest('.seal-btn')) return;
-                    // placeholder: openSubAgentSession will be implemented in Wave 2
-                    console.log('[subagent] open session:', sa.sessionId || sa.key);
+                    openSubAgentSession(sa.sessionId || sa.key);
                 });
 
                 // Seal button handler

@@ -2,7 +2,7 @@
 
 import {
     API_BASE, fetchJson, normalizeChannelKey, toHubChannelType, channelDisplayName,
-    debugLog, serverLog
+    debugLog, serverLog, sealSession
 } from './api.js';
 import {
     dom, $, escapeHtml, formatTime, relativeTime, renderMarkdown, scrollToBottom,
@@ -46,6 +46,10 @@ let hasReceivedResponse = false;
 let toolElapsedTimer = null;
 const _scrollbackCleanups = new Map();
 const RESPONSE_TIMEOUT_MS = 30000;
+
+// ── Sub-agent read-only view state ──────────────────────────────────
+let _subAgentViewSessionId = null;   // non-null ⇒ we are in read-only mode
+let _subAgentViewCtx = null;         // the ChannelContext hosting the view
 
 /** Get the messages element for the active channel, or null. */
 function getActiveMessagesEl() {
@@ -945,6 +949,7 @@ function appendCommandResult(title, body) {
 // ── Chat actions ────────────────────────────────────────────────────
 
 export async function sendMessage() {
+    if (_subAgentViewSessionId) return; // read-only — no input allowed
     if (channelManager.isSwitchingView) {
         appendSystemMessage('Please wait for session switch to complete.', 'warning');
         return;
@@ -1091,6 +1096,9 @@ export async function openSession(sessionId, agentId) {
 // ── Agent timeline ──────────────────────────────────────────────────
 
 export async function openAgentTimeline(agentId, channelType, targetSessionId = null) {
+    // Close any active sub-agent read-only view before switching
+    closeSubAgentView();
+
     channelManager.setSwitchingView(true);
     updateSendButtonState();
 
@@ -1450,6 +1458,186 @@ export function clearSubAgentPanel() {
 export function clearChatMessages() {
     const el = getActiveMessagesEl();
     if (el) el.innerHTML = '';
+}
+
+// ── Sub-agent read-only session view ────────────────────────────────
+
+/**
+ * True when the UI is showing a read-only sub-agent conversation.
+ * Exported so events.js can route live messages into the view.
+ */
+export function getSubAgentViewSessionId() { return _subAgentViewSessionId; }
+
+/**
+ * Open a read-only conversation view for a sub-agent session.
+ * Fetches history from `GET /sessions/{sessionId}/history`, renders it into
+ * the active channel's message container with a sticky read-only banner, and
+ * hides the input bar.
+ */
+export async function openSubAgentSession(sessionId) {
+    if (!sessionId) return;
+    debugLog('subagent', 'openSubAgentSession', sessionId);
+
+    // If already showing this session, no-op
+    if (_subAgentViewSessionId === sessionId) return;
+
+    // Close any previous sub-agent view first
+    closeSubAgentView(true /* silent — don't restore normal UI yet */);
+
+    // Fetch the session metadata to get status + agent info
+    const session = await fetchJson(`/sessions/${encodeURIComponent(sessionId)}`);
+    if (!session) {
+        appendSystemMessage(`Failed to load sub-agent session ${sessionId.substring(0, 12)}…`, 'error');
+        return;
+    }
+
+    // Determine the sub-agent lifecycle status.
+    // The session object has session-level status (active/sealed).
+    // The real lifecycle status comes from the activeSubAgents map (events.js).
+    let rawStatus = 'Running';
+    for (const sa of activeSubAgents.values()) {
+        if (sa.sessionId === sessionId || sa.subAgentId === sessionId) {
+            rawStatus = sa.status || 'Running';
+            break;
+        }
+    }
+    // Fallback: if session is sealed, show it accordingly
+    if (rawStatus === 'Running' && (session.status || '').toLowerCase() === 'sealed') {
+        rawStatus = 'Completed';
+    }
+    const statusInfo = SUBAGENT_STATUS_MAP[rawStatus] || SUBAGENT_STATUS_MAP.Running;
+    const isTerminal = ['Completed', 'Failed', 'Killed', 'TimedOut'].includes(rawStatus);
+
+    // Use the current active channel's context for display (overlay model).
+    // We stash the existing innerHTML so we can restore it on close.
+    const ctx = channelManager.active;
+    if (!ctx) return;
+
+    _subAgentViewSessionId = sessionId;
+    _subAgentViewCtx = ctx;
+
+    // Save existing content for restore
+    ctx._savedMessagesHtml = ctx.messagesEl.innerHTML;
+    ctx._savedHistoryLoaded = ctx.historyLoaded;
+
+    // Switch chat view to read-only mode
+    const chatView = dom.chatView;
+    chatView.classList.add('readonly-mode');
+
+    // Update header
+    const agentLabel = session.agentId || 'sub-agent';
+    dom.chatTitle.textContent = `${agentLabel} — sub-agent session`;
+    dom.chatMeta.textContent = `Read-only · ${rawStatus}`;
+
+    // Clear messages area and insert banner + history
+    ctx.messagesEl.innerHTML = '';
+
+    // ─── Read-only banner ───
+    const banner = document.createElement('div');
+    banner.className = 'readonly-banner';
+    banner.id = 'subagent-readonly-banner';
+    let bannerHtml = `
+        <span class="readonly-icon">🔒</span>
+        <span class="readonly-text">Read-only — sub-agent session</span>
+        <span class="readonly-status">${statusInfo.icon} ${escapeHtml(statusInfo.label)}</span>`;
+    if (isTerminal) {
+        bannerHtml += `<button class="readonly-seal-btn" id="btn-seal-subagent">Seal</button>`;
+    }
+    bannerHtml += `<button class="readonly-seal-btn" id="btn-close-subagent" title="Close sub-agent view">✕ Close</button>`;
+    banner.innerHTML = bannerHtml;
+    ctx.messagesEl.appendChild(banner);
+
+    // ─── Fetch history ───
+    const loading = document.createElement('div');
+    loading.className = 'loading';
+    loading.textContent = 'Loading sub-agent conversation...';
+    ctx.messagesEl.appendChild(loading);
+
+    const data = await fetchJson(`/sessions/${encodeURIComponent(sessionId)}/history?limit=200`);
+    loading.remove();
+
+    if (data && data.entries && data.entries.length > 0) {
+        // Map SessionEntry format (role/content/timestamp/toolName) → history entry format
+        const mapped = data.entries.map(e => ({
+            role: typeof e.role === 'string' ? e.role.toLowerCase() : 'assistant',
+            content: e.content || '',
+            timestamp: e.timestamp,
+            toolName: e.toolName || null,
+            toolCallId: e.toolCallId || null
+        }));
+        renderHistoryBatch(mapped, null, ctx.messagesEl);
+    } else {
+        const empty = document.createElement('div');
+        empty.className = 'message system-msg';
+        empty.textContent = 'No messages in this sub-agent session.';
+        ctx.messagesEl.appendChild(empty);
+    }
+
+    scrollToBottom(true, ctx.messagesEl);
+
+    // ─── Wire banner buttons ───
+    const sealBtn = ctx.messagesEl.querySelector('#btn-seal-subagent');
+    if (sealBtn) {
+        sealBtn.addEventListener('click', async () => {
+            sealBtn.disabled = true;
+            sealBtn.textContent = 'Sealing…';
+            const ok = await sealSession(sessionId);
+            if (ok) {
+                closeSubAgentView();
+                loadSessions();
+            } else {
+                sealBtn.disabled = false;
+                sealBtn.textContent = 'Seal';
+                appendSystemMessage('Failed to seal session.', 'error');
+            }
+        });
+    }
+
+    const closeBtn = ctx.messagesEl.querySelector('#btn-close-subagent');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', () => closeSubAgentView());
+    }
+
+    // Register the session in the channel manager so SignalR events route here
+    channelManager.registerSession(sessionId, ctx);
+}
+
+/**
+ * Close the read-only sub-agent view and restore the normal chat canvas.
+ * @param {boolean} silent — if true, don't restore DOM yet (used when re-opening another sub-agent)
+ */
+export function closeSubAgentView(silent = false) {
+    if (!_subAgentViewSessionId) return;
+
+    const ctx = _subAgentViewCtx;
+    _subAgentViewSessionId = null;
+    _subAgentViewCtx = null;
+
+    if (!ctx || silent) return;
+
+    // Remove readonly mode
+    dom.chatView.classList.remove('readonly-mode');
+
+    // Restore saved messages content
+    if (ctx._savedMessagesHtml !== undefined) {
+        ctx.messagesEl.innerHTML = ctx._savedMessagesHtml;
+        delete ctx._savedMessagesHtml;
+    }
+    if (ctx._savedHistoryLoaded !== undefined) {
+        ctx.historyLoaded = ctx._savedHistoryLoaded;
+        delete ctx._savedHistoryLoaded;
+    }
+
+    // Restore header to the normal agent view
+    const agentId = getCurrentAgentId();
+    const channelType = getCurrentChannelType();
+    if (agentId) {
+        dom.chatTitle.textContent = `${agentId} — ${channelDisplayName(channelType)}`;
+        dom.chatMeta.textContent = `Agent: ${agentId} · ${channelDisplayName(channelType)}`;
+    }
+
+    scrollToBottom(false, ctx.messagesEl);
+    updateSendButtonState();
 }
 
 // ── Model selector in chat header ───────────────────────────────────
