@@ -99,20 +99,26 @@ function parseSubAgentSession(session) {
 
 ### Seal endpoint
 
-Need a new endpoint or extend the existing suspend/resume pattern:
+Need a new endpoint following the existing suspend/resume pattern:
 
 ```
 PATCH /api/sessions/{sessionId}/seal
 ```
 
-Sets `session.Status = SessionStatus.Sealed` and `session.UpdatedAt = now`. Similar to the existing `Suspend` endpoint.
+Sets `session.Status = SessionStatus.Sealed` and `session.UpdatedAt = now`.
+
+**Preconditions** (from design review):
+- Session must exist → `404 NotFound`
+- Session must be a sub-agent (`SessionId.IsSubAgent`) → `400 BadRequest` if not
+- Session status must be terminal (Completed/Failed/Killed) → `409 Conflict` if Active
+- Already sealed → `204 NoContent` (idempotent)
 
 ### Sidebar rendering changes
 
 In `loadSessions()` (`sidebar.js`):
 
-1. After building `latestByChannel` for each agent, also collect sub-agent sessions where the parent agentId matches
-2. Render sub-agent sessions as indented items under the parent agent group
+1. Parse sub-agent sessions via `parseSubAgentSession()` — do NOT pass them through `latestByChannel` grouping (they don't have meaningful channel types)
+2. Group sub-agent sessions under their parent agent, rendered as a flat list AFTER channel items in a separate `.agent-group-subagents` container
 3. Filter out sessions where `status === 'sealed'` (unless show-sealed toggle is on)
 4. For sub-agent items: show name/archetype, status icon, duration, and a seal button
 
@@ -173,7 +179,9 @@ When opening a sub-agent session:
 3. **Deeply nested** (sub-agent spawns sub-agent) — parse chain works recursively. Cap UI depth at 2 levels; deeper ones show flat
 4. **Rapid completion** — sub-agent finishes before user opens it. History is fully persisted, browsable
 5. **Cron-spawned sub-agents** — parent session is a cron session. Group under the cron's agent, not a separate group
-6. **Session from before fix** — old sub-agent sessions with `::` in agentId may exist. Parse gracefully, show as orphaned
+6. **Session from before fix** — old sub-agent sessions with `::` in agentId may exist. `parseSubAgentSession` checks `sessionType === 'agent-subagent'` first. If parent agentId can't be parsed, show in an "Other Sessions" catch-all group at the bottom of the sidebar
+7. **Seal while running** — Seal endpoint MUST reject requests where session status is `Active`. Only terminal states (Completed/Failed/Killed) can be sealed. This prevents orphaning a running conversation.
+8. **Status map completeness** — `SUBAGENT_STATUS_MAP` must include `Sealed: { icon: '🔒', label: 'Sealed', css: 'sealed' }` for consistent display
 
 ## Testing Plan
 
