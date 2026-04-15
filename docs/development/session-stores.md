@@ -81,52 +81,9 @@ public record SessionParticipant
 
 ## SessionStoreBase
 
-Abstract base class that implements common logic:
+Abstract base class that implements common logic: `GetOrCreateAsync` (auto-create sessions on demand), `ArchiveAsync` (seal sessions). Defines abstract methods (`GetInternalAsync`, `SaveInternalAsync`, `DeleteInternalAsync`, `ListInternalAsync`) for subclasses to implement storage-specific behavior.
 
-```csharp
-public abstract class SessionStoreBase : ISessionStore
-{
-    public async Task<GatewaySession> GetOrCreateAsync(
-        SessionId sessionId,
-        AgentId agentId,
-        CancellationToken ct)
-    {
-        var existing = await GetAsync(sessionId, ct);
-        if (existing != null)
-            return existing;
-        
-        var session = new GatewaySession
-        {
-            SessionId = sessionId,
-            AgentId = agentId,
-            SessionType = SessionType.UserAgent,  // Default
-            Status = SessionStatus.Active,
-            CreatedAt = DateTimeOffset.UtcNow,
-            UpdatedAt = DateTimeOffset.UtcNow
-        };
-        
-        await SaveAsync(session, ct);
-        return session;
-    }
-    
-    public async Task ArchiveAsync(SessionId sessionId, CancellationToken ct)
-    {
-        var session = await GetAsync(sessionId, ct);
-        if (session == null)
-            return;
-        
-        session.Status = SessionStatus.Sealed;
-        session.UpdatedAt = DateTimeOffset.UtcNow;
-        await SaveAsync(session, ct);
-    }
-    
-    // Abstract methods for subclasses
-    protected abstract Task<GatewaySession?> GetInternalAsync(SessionId sessionId, CancellationToken ct);
-    protected abstract Task SaveInternalAsync(GatewaySession session, CancellationToken ct);
-    protected abstract Task DeleteInternalAsync(SessionId sessionId, CancellationToken ct);
-    protected abstract Task<IReadOnlyList<GatewaySession>> ListInternalAsync(AgentId agentId, CancellationToken ct);
-}
-```
+See [SessionStoreBase.cs](../../src/gateway/BotNexus.Gateway.Sessions/SessionStoreBase.cs)
 
 ## InMemorySessionStore
 
@@ -137,49 +94,9 @@ public abstract class SessionStoreBase : ISessionStore
 - Suitable for testing and development
 - No concurrency safety across processes
 
-**Implementation:**
+Uses `ConcurrentDictionary<string, GatewaySession>` for O(1) lookups. Non-durable — all data lost on restart. Suitable for testing and development.
 
-```csharp
-public sealed class InMemorySessionStore : SessionStoreBase
-{
-    private readonly ConcurrentDictionary<string, GatewaySession> _sessions = new();
-    
-    protected override Task<GatewaySession?> GetInternalAsync(
-        SessionId sessionId,
-        CancellationToken ct)
-    {
-        _sessions.TryGetValue(sessionId.Value, out var session);
-        return Task.FromResult(session);
-    }
-    
-    protected override Task SaveInternalAsync(
-        GatewaySession session,
-        CancellationToken ct)
-    {
-        session.UpdatedAt = DateTimeOffset.UtcNow;
-        _sessions[session.SessionId.Value] = session;
-        return Task.CompletedTask;
-    }
-    
-    protected override Task DeleteInternalAsync(
-        SessionId sessionId,
-        CancellationToken ct)
-    {
-        _sessions.TryRemove(sessionId.Value, out _);
-        return Task.CompletedTask;
-    }
-    
-    protected override Task<IReadOnlyList<GatewaySession>> ListInternalAsync(
-        AgentId agentId,
-        CancellationToken ct)
-    {
-        var sessions = _sessions.Values
-            .Where(s => s.AgentId == agentId)
-            .ToList();
-        return Task.FromResult<IReadOnlyList<GatewaySession>>(sessions);
-    }
-}
-```
+See [InMemorySessionStore.cs](../../src/gateway/BotNexus.Gateway.Sessions/InMemorySessionStore.cs)
 
 ## FileSessionStore
 
@@ -199,93 +116,9 @@ public sealed class InMemorySessionStore : SessionStoreBase
 └── {sessionId}.json
 ```
 
-**Implementation:**
+**Key behaviors:** Atomic writes via temp file + rename, JSON serialization with camelCase naming, one file per session. Skips `.tmp` files during enumeration and logs warnings for corrupt session files.
 
-```csharp
-public sealed class FileSessionStore : SessionStoreBase
-{
-    private readonly string _baseDirectory;
-    private readonly JsonSerializerOptions _jsonOptions;
-    
-    public FileSessionStore(string baseDirectory)
-    {
-        _baseDirectory = baseDirectory;
-        Directory.CreateDirectory(_baseDirectory);
-        
-        _jsonOptions = new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-        };
-    }
-    
-    protected override async Task<GatewaySession?> GetInternalAsync(
-        SessionId sessionId,
-        CancellationToken ct)
-    {
-        var path = GetSessionPath(sessionId);
-        if (!File.Exists(path))
-            return null;
-        
-        var json = await File.ReadAllTextAsync(path, ct);
-        return JsonSerializer.Deserialize<GatewaySession>(json, _jsonOptions);
-    }
-    
-    protected override async Task SaveInternalAsync(
-        GatewaySession session,
-        CancellationToken ct)
-    {
-        var path = GetSessionPath(session.SessionId);
-        var json = JsonSerializer.Serialize(session, _jsonOptions);
-        
-        // Atomic write via temp + rename
-        var tempPath = path + ".tmp";
-        await File.WriteAllTextAsync(tempPath, json, ct);
-        File.Move(tempPath, path, overwrite: true);
-    }
-    
-    protected override Task DeleteInternalAsync(
-        SessionId sessionId,
-        CancellationToken ct)
-    {
-        var path = GetSessionPath(sessionId);
-        if (File.Exists(path))
-            File.Delete(path);
-        return Task.CompletedTask;
-    }
-    
-    protected override async Task<IReadOnlyList<GatewaySession>> ListInternalAsync(
-        AgentId agentId,
-        CancellationToken ct)
-    {
-        var sessions = new List<GatewaySession>();
-        
-        foreach (var file in Directory.GetFiles(_baseDirectory, "*.json"))
-        {
-            if (file.EndsWith(".tmp"))
-                continue;
-            
-            try
-            {
-                var json = await File.ReadAllTextAsync(file, ct);
-                var session = JsonSerializer.Deserialize<GatewaySession>(json, _jsonOptions);
-                if (session?.AgentId == agentId)
-                    sessions.Add(session);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to load session from {File}", file);
-            }
-        }
-        
-        return sessions;
-    }
-    
-    private string GetSessionPath(SessionId sessionId)
-        => Path.Combine(_baseDirectory, $"{sessionId.Value}.json");
-}
-```
+See [FileSessionStore.cs](../../src/gateway/BotNexus.Gateway.Sessions/FileSessionStore.cs)
 
 ## SqliteSessionStore
 
@@ -322,108 +155,9 @@ CREATE INDEX idx_sessions_created_at ON sessions(created_at);
 CREATE INDEX idx_sessions_expires_at ON sessions(expires_at) WHERE expires_at IS NOT NULL;
 ```
 
-**Implementation:**
+**Key behaviors:** Parameterized queries throughout, `INSERT OR REPLACE` for upserts, JSON serialization for complex fields (`participants_json`, `history_json`, `metadata_json`), lazy schema initialization via `EnsureSchemaAsync`, and ISO 8601 date formatting.
 
-```csharp
-public sealed class SqliteSessionStore : SessionStoreBase
-{
-    private readonly string _connectionString;
-    private readonly JsonSerializerOptions _jsonOptions;
-    
-    public SqliteSessionStore(string databasePath)
-    {
-        _connectionString = $"Data Source={databasePath}";
-        EnsureSchemaAsync().GetAwaiter().GetResult();
-    }
-    
-    protected override async Task<GatewaySession?> GetInternalAsync(
-        SessionId sessionId,
-        CancellationToken ct)
-    {
-        await using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync(ct);
-        
-        await using var command = connection.CreateCommand();
-        command.CommandText = @"
-            SELECT session_id, agent_id, session_type, status, channel_type, caller_id,
-                   created_at, updated_at, expires_at,
-                   participants_json, history_json, metadata_json
-            FROM sessions
-            WHERE session_id = @sessionId";
-        command.Parameters.AddWithValue("@sessionId", sessionId.Value);
-        
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        if (!await reader.ReadAsync(ct))
-            return null;
-        
-        return DeserializeSession(reader);
-    }
-    
-    protected override async Task SaveInternalAsync(
-        GatewaySession session,
-        CancellationToken ct)
-    {
-        session.UpdatedAt = DateTimeOffset.UtcNow;
-        
-        await using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync(ct);
-        
-        await using var command = connection.CreateCommand();
-        command.CommandText = @"
-            INSERT OR REPLACE INTO sessions (
-                session_id, agent_id, session_type, status, channel_type, caller_id,
-                created_at, updated_at, expires_at,
-                participants_json, history_json, metadata_json
-            ) VALUES (
-                @sessionId, @agentId, @sessionType, @status, @channelType, @callerId,
-                @createdAt, @updatedAt, @expiresAt,
-                @participantsJson, @historyJson, @metadataJson
-            )";
-        
-        command.Parameters.AddWithValue("@sessionId", session.SessionId.Value);
-        command.Parameters.AddWithValue("@agentId", session.AgentId.Value);
-        command.Parameters.AddWithValue("@sessionType", session.SessionType.Value);
-        command.Parameters.AddWithValue("@status", session.Status.Value);
-        command.Parameters.AddWithValue("@channelType", session.ChannelType?.Value ?? (object)DBNull.Value);
-        command.Parameters.AddWithValue("@callerId", session.CallerId ?? (object)DBNull.Value);
-        command.Parameters.AddWithValue("@createdAt", session.CreatedAt.ToString("O"));
-        command.Parameters.AddWithValue("@updatedAt", session.UpdatedAt.ToString("O"));
-        command.Parameters.AddWithValue("@expiresAt", session.ExpiresAt?.ToString("O") ?? (object)DBNull.Value);
-        command.Parameters.AddWithValue("@participantsJson", JsonSerializer.Serialize(session.Participants, _jsonOptions));
-        command.Parameters.AddWithValue("@historyJson", JsonSerializer.Serialize(session.History, _jsonOptions));
-        command.Parameters.AddWithValue("@metadataJson", JsonSerializer.Serialize(session.Metadata, _jsonOptions));
-        
-        await command.ExecuteNonQueryAsync(ct);
-    }
-    
-    protected override async Task<IReadOnlyList<GatewaySession>> ListInternalAsync(
-        AgentId agentId,
-        CancellationToken ct)
-    {
-        await using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync(ct);
-        
-        await using var command = connection.CreateCommand();
-        command.CommandText = @"
-            SELECT session_id, agent_id, session_type, status, channel_type, caller_id,
-                   created_at, updated_at, expires_at,
-                   participants_json, history_json, metadata_json
-            FROM sessions
-            WHERE agent_id = @agentId
-            ORDER BY updated_at DESC";
-        command.Parameters.AddWithValue("@agentId", agentId.Value);
-        
-        var sessions = new List<GatewaySession>();
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
-        {
-            sessions.Add(DeserializeSession(reader));
-        }
-        
-        return sessions;
-    }
-}
-```
+See [SqliteSessionStore.cs](../../src/gateway/BotNexus.Gateway.Sessions/SqliteSessionStore.cs)
 
 ## Existence Queries
 
@@ -444,61 +178,9 @@ public record ExistenceQuery
 
 **Query Implementation:**
 
-```csharp
-public async Task<IReadOnlyList<GatewaySession>> QueryAsync(
-    ExistenceQuery query,
-    CancellationToken ct)
-{
-    var sql = new StringBuilder("SELECT * FROM sessions WHERE 1=1");
-    var parameters = new List<SqliteParameter>();
-    
-    if (query.AgentId is not null)
-    {
-        sql.Append(" AND agent_id = @agentId");
-        parameters.Add(new SqliteParameter("@agentId", query.AgentId.Value));
-    }
-    
-    if (query.SessionType is not null)
-    {
-        sql.Append(" AND session_type = @sessionType");
-        parameters.Add(new SqliteParameter("@sessionType", query.SessionType.Value));
-    }
-    
-    if (query.Status is not null)
-    {
-        sql.Append(" AND status = @status");
-        parameters.Add(new SqliteParameter("@status", query.Status.Value));
-    }
-    
-    if (query.ChannelType is not null)
-    {
-        sql.Append(" AND channel_type = @channelType");
-        parameters.Add(new SqliteParameter("@channelType", query.ChannelType.Value));
-    }
-    
-    if (query.CreatedAfter is not null)
-    {
-        sql.Append(" AND created_at >= @createdAfter");
-        parameters.Add(new SqliteParameter("@createdAfter", query.CreatedAfter.Value.ToString("O")));
-    }
-    
-    if (query.CreatedBefore is not null)
-    {
-        sql.Append(" AND created_at <= @createdBefore");
-        parameters.Add(new SqliteParameter("@createdBefore", query.CreatedBefore.Value.ToString("O")));
-    }
-    
-    sql.Append(" ORDER BY updated_at DESC");
-    
-    if (query.Limit is not null)
-    {
-        sql.Append(" LIMIT @limit");
-        parameters.Add(new SqliteParameter("@limit", query.Limit.Value));
-    }
-    
-    // Execute query...
-}
-```
+Builds dynamic SQL from `ExistenceQuery` filters — each non-null property adds a parameterized `WHERE` clause. Results ordered by `updated_at DESC` with optional `LIMIT`.
+
+See [SqliteSessionStore.cs](../../src/gateway/BotNexus.Gateway.Sessions/SqliteSessionStore.cs)
 
 **Example Queries:**
 
@@ -526,63 +208,13 @@ var recentSoulSessions = await _sessionStore.QueryAsync(query, ct);
 
 **Automatic Cleanup:**
 
-```csharp
-public async Task<int> CleanupExpiredAsync(
-    TimeSpan retention,
-    CancellationToken ct)
-{
-    var cutoff = DateTimeOffset.UtcNow - retention;
-    
-    await using var connection = new SqliteConnection(_connectionString);
-    await connection.OpenAsync(ct);
-    
-    await using var command = connection.CreateCommand();
-    command.CommandText = @"
-        DELETE FROM sessions
-        WHERE status = @expired
-          AND updated_at < @cutoff";
-    command.Parameters.AddWithValue("@expired", "expired");
-    command.Parameters.AddWithValue("@cutoff", cutoff.ToString("O"));
-    
-    return await command.ExecuteNonQueryAsync(ct);
-}
-```
+`CleanupExpiredAsync` deletes sessions with expired status and `updated_at` older than the retention cutoff. See [SqliteSessionStore.cs](../../src/gateway/BotNexus.Gateway.Sessions/SqliteSessionStore.cs)
 
 **SessionCleanupService:**
 
-Background service that periodically cleans up expired sessions:
+`BackgroundService` that periodically calls `CleanupExpiredAsync` with configurable interval and retention period. Logs results and handles errors with 5-minute retry backoff.
 
-```csharp
-public sealed class SessionCleanupService : BackgroundService
-{
-    private readonly ISessionStore _sessionStore;
-    private readonly IOptions<SessionCleanupOptions> _options;
-    private readonly ILogger<SessionCleanupService> _logger;
-    
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                var deleted = await _sessionStore.CleanupExpiredAsync(
-                    _options.Value.RetentionPeriod,
-                    stoppingToken);
-                
-                if (deleted > 0)
-                    _logger.LogInformation("Cleaned up {Count} expired sessions", deleted);
-                
-                await Task.Delay(_options.Value.CleanupInterval, stoppingToken);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Session cleanup failed");
-                await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
-            }
-        }
-    }
-}
-```
+See [SessionCleanupService.cs](../../src/gateway/BotNexus.Gateway/SessionCleanupService.cs)
 
 **SessionCleanupOptions:**
 
@@ -624,41 +256,9 @@ public record SessionSummary
 }
 ```
 
-**Implementation:**
+Queries all registered agents, filters to visible sessions (Active/Suspended, UserAgent/Soul, non-expired), and projects to lightweight `SessionSummary` records sorted by `UpdatedAt` descending.
 
-```csharp
-public async Task<IReadOnlyList<SessionSummary>> GetAvailableSessionsAsync(
-    CancellationToken ct)
-{
-    var agents = _agentRegistry.GetAll();
-    var allSessions = new List<GatewaySession>();
-    
-    foreach (var agent in agents)
-    {
-        var sessions = await _sessionStore.ListAsync(agent.AgentId, ct);
-        allSessions.AddRange(sessions);
-    }
-    
-    // Filter to visible sessions
-    var visible = allSessions
-        .Where(s => s.Status is SessionStatus.Active or SessionStatus.Suspended)
-        .Where(s => s.SessionType is SessionType.UserAgent or SessionType.Soul)
-        .Where(s => s.ExpiresAt == null || s.ExpiresAt > DateTimeOffset.UtcNow)
-        .OrderByDescending(s => s.UpdatedAt);
-    
-    return visible.Select(s => new SessionSummary
-    {
-        SessionId = s.SessionId.Value,
-        AgentId = s.AgentId.Value,
-        SessionType = s.SessionType.Value,
-        Status = s.Status.Value,
-        ChannelType = s.ChannelType?.Value,
-        MessageCount = s.History.Count,
-        CreatedAt = s.CreatedAt,
-        UpdatedAt = s.UpdatedAt
-    }).ToList();
-}
-```
+See [SessionWarmupService.cs](../../src/gateway/BotNexus.Gateway/Sessions/SessionWarmupService.cs)
 
 ## Summary
 

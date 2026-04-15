@@ -144,56 +144,19 @@ async function sendMessage(content) {
 
 **Server Side:**
 
+Resolves or creates a session for the agent+channel pair, subscribes the caller to the session group, and dispatches the message.
+
 ```csharp
 public async Task<object> SendMessage(AgentId agentId, ChannelKey channelType, string content)
-{
-    // 1. Resolve or create session
-    var session = await ResolveOrCreateSessionAsync(agentId, channelType);
-    
-    // 2. Subscribe caller to session group (if not already)
-    await SubscribeInternalAsync(session.SessionId);
-    
-    // 3. Dispatch message
-    await DispatchMessageAsync(agentId, session.SessionId, content, "message");
-    
-    return new
-    {
-        sessionId = session.SessionId.Value,
-        agentId = session.AgentId.Value,
-        channelType = session.ChannelType?.Value
-    };
-}
 ```
+
+See [GatewayHub.cs](../../src/gateway/BotNexus.Gateway.Api/Hubs/GatewayHub.cs)
 
 **Auto-Session Logic:**
 
-```csharp
-async Task<GatewaySession> ResolveOrCreateSessionAsync(AgentId agentId, ChannelKey channelType)
-{
-    // Find existing active session for agent + channel
-    var sessions = await _sessions.ListAsync(agentId, ct);
-    var existing = sessions.FirstOrDefault(s =>
-        s.Status == SessionStatus.Active &&
-        s.ChannelType == channelType &&
-        s.SessionType == SessionType.UserAgent);
-    
-    if (existing != null)
-        return existing;
-    
-    // Create new session
-    var sessionId = SessionId.Create();
-    var session = await _sessions.GetOrCreateAsync(sessionId, agentId, ct);
-    session.SessionType = SessionType.UserAgent;
-    session.ChannelType = channelType;
-    session.Participants.Add(new SessionParticipant {
-        Type = ParticipantType.User,
-        Id = Context.ConnectionId
-    });
-    
-    await _sessions.SaveAsync(session, ct);
-    return session;
-}
-```
+Finds an existing active UserAgent session for the agent+channel pair, or creates a new one with auto-generated SessionId and UserAgent type.
+
+See [GatewayHub.cs](../../src/gateway/BotNexus.Gateway.Api/Hubs/GatewayHub.cs)
 
 **Key Insight:**
 
@@ -203,205 +166,43 @@ Sessions are created **on first message**, not explicit creation. The client doe
 
 ### Event Types
 
-```javascript
-connection.on("MessageStart", (event) => {
-    const store = sessionStoreManager.getOrCreateStore(event.sessionId);
-    store.streamState.isStreaming = true;
-    store.streamState.activeMessageId = event.messageId;
-    
-    appendMessageToDOM(store, "assistant", "");  // Empty placeholder
-});
+Each handler resolves the `SessionStore` via `sessionStoreManager.getOrCreateStore(event.sessionId)` and updates state accordingly:
 
-connection.on("ContentDelta", (event) => {
-    const store = sessionStoreManager.getOrCreateStore(event.sessionId);
-    if (!store.streamState.isStreaming)
-        return;
-    
-    appendDeltaToLastMessage(store, event.delta);
-});
+| Event | Handler Behavior |
+|-------|-----------------|
+| `MessageStart` | Sets `isStreaming = true`, records `activeMessageId`, appends empty assistant message placeholder |
+| `ContentDelta` | Appends delta text to the last message (ignored if not streaming) |
+| `ThinkingDelta` | Accumulates delta in `thinkingBuffer`, updates thinking display (if enabled) |
+| `ToolStart` | Tracks tool call in `activeToolCalls` with name, arguments, and start time; renders tool UI |
+| `ToolEnd` | Records result and end time on the tracked tool call; updates status in DOM |
+| `MessageEnd` | Clears streaming state, finalizes message rendering, removes thinking display |
+| `Error` | Appends error message to DOM, clears streaming state |
 
-connection.on("ThinkingDelta", (event) => {
-    const store = sessionStoreManager.getOrCreateStore(event.sessionId);
-    if (!showThinking)
-        return;
-    
-    store.streamState.thinkingBuffer += event.delta;
-    updateThinkingDisplay(store);
-});
-
-connection.on("ToolStart", (event) => {
-    const store = sessionStoreManager.getOrCreateStore(event.sessionId);
-    store.streamState.activeToolCalls[event.toolCallId] = {
-        name: event.toolName,
-        arguments: event.arguments,
-        startTime: Date.now()
-    };
-    
-    if (showTools)
-        appendToolCallToDOM(store, event);
-});
-
-connection.on("ToolEnd", (event) => {
-    const store = sessionStoreManager.getOrCreateStore(event.sessionId);
-    const toolCall = store.streamState.activeToolCalls[event.toolCallId];
-    if (toolCall) {
-        toolCall.result = event.result;
-        toolCall.endTime = Date.now();
-        
-        if (showTools)
-            updateToolCallResult(store, event);
-    }
-});
-
-connection.on("MessageEnd", (event) => {
-    const store = sessionStoreManager.getOrCreateStore(event.sessionId);
-    store.streamState.isStreaming = false;
-    store.streamState.activeMessageId = null;
-    
-    finalizeMessage(store);
-    clearResponseTimeout();
-});
-
-connection.on("Error", (event) => {
-    const store = sessionStoreManager.getOrCreateStore(event.sessionId);
-    appendErrorToDOM(store, event.errorMessage);
-    store.streamState.isStreaming = false;
-});
-```
+See [events.js](../../src/BotNexus.WebUI/wwwroot/js/events.js)
 
 ### Server-Side Broadcasting
 
-```csharp
-// SignalRChannelAdapter
-public Task SendStreamEventAsync(string conversationId, AgentStreamEvent streamEvent, CancellationToken ct)
-{
-    var sessionId = SessionId.From(conversationId);
-    var method = streamEvent.Type switch
-    {
-        AgentStreamEventType.MessageStart => "MessageStart",
-        AgentStreamEventType.ThinkingDelta => "ThinkingDelta",
-        AgentStreamEventType.ContentDelta => "ContentDelta",
-        AgentStreamEventType.ToolStart => "ToolStart",
-        AgentStreamEventType.ToolEnd => "ToolEnd",
-        AgentStreamEventType.MessageEnd => "MessageEnd",
-        AgentStreamEventType.Error => "Error",
-        _ => "Unknown"
-    };
-    
-    var enrichedEvent = streamEvent with { SessionId = sessionId };
-    
-    return _hubContext.Clients.Group(GetSessionGroup(conversationId))
-        .SendAsync(method, enrichedEvent, ct);
-}
+Maps `AgentStreamEventType` to SignalR method name, enriches the event with `SessionId`, and broadcasts to the session group via `IHubContext`.
 
-private static string GetSessionGroup(string sessionId) => $"session:{sessionId}";
-```
+See [SignalRChannelAdapter.cs](../../src/gateway/BotNexus.Gateway.Api/Hubs/SignalRChannelAdapter.cs)
 
 ## Multi-Session Management
 
 ### SessionStore Class
 
-```javascript
-class SessionStore {
-    constructor(sessionId, info = {}) {
-        this.sessionId = sessionId;
-        this.agentId = info.agentId || null;
-        this.channelType = info.channelType || null;
-        this.streamState = SessionStore.createStreamState();
-        this.containerId = null;  // permanent DOM container ID
-        this.timelineMeta = null;
-        this.lastViewed = null;
-        this.unreadCount = 0;
-    }
-    
-    static createStreamState() {
-        return {
-            isStreaming: false,
-            activeMessageId: null,
-            activeToolCalls: {},
-            activeToolCount: 0,
-            thinkingBuffer: '',
-            toolCallDepth: 0,
-            toolStartTimes: {},
-        };
-    }
-    
-    resetStreamState() {
-        this.streamState = SessionStore.createStreamState();
-    }
-    
-    get isStreaming() {
-        return this.streamState.isStreaming;
-    }
-}
-```
+Per-session client state: tracks `sessionId`, `agentId`, `channelType`, streaming state (`isStreaming`, `activeToolCalls`, `thinkingBuffer`), permanent DOM container reference, and unread count.
+
+See [session-store.js](../../src/BotNexus.WebUI/wwwroot/js/session-store.js)
 
 ### SessionStoreManager
 
-```javascript
-class SessionStoreManager {
-    #stores = new Map();
-    #maxStores = 20;
-    #activeViewId = null;
-    #selectedAgentId = null;
-    
-    get activeViewId() {
-        return this.#activeViewId;
-    }
-    
-    get activeStore() {
-        return this.#activeViewId ? this.#stores.get(this.#activeViewId) : null;
-    }
-    
-    get activeAgentId() {
-        return this.activeStore?.agentId || this.#selectedAgentId || null;
-    }
-    
-    subscribe(sessions) {
-        for (const info of sessions) {
-            this.getOrCreateStore(info.sessionId, info);
-        }
-    }
-    
-    getOrCreateStore(sessionId, info = {}) {
-        if (this.#stores.has(sessionId)) {
-            return this.#stores.get(sessionId);
-        }
-        
-        const store = new SessionStore(sessionId, info);
-        this.#stores.set(sessionId, store);
-        
-        // Evict oldest if over limit
-        if (this.#stores.size > this.#maxStores) {
-            const oldest = Array.from(this.#stores.entries())
-                .sort((a, b) => (a[1].lastViewed || 0) - (b[1].lastViewed || 0))[0];
-            this.#stores.delete(oldest[0]);
-        }
-        
-        return store;
-    }
-    
-    switchView(sessionId) {
-        // Hide the previously visible container
-        if (this.#activeViewId && this.#activeViewId !== sessionId) {
-            const oldContainer = getChannelContainer(this.#activeViewId);
-            if (oldContainer) oldContainer.style.display = 'none';
-        }
-        
-        this.#activeViewId = sessionId;
-        const store = this.getOrCreateStore(sessionId);
-        store.lastViewed = Date.now();
-        store.unreadCount = 0;
-        
-        // Show (or create) the permanent container for this session
-        const container = getOrCreateChannelContainer(sessionId, store.agentId);
-        container.style.display = '';
-        
-        updateActiveSessionHighlight();
-        scrollToBottom();
-    }
-}
-```
+Key behaviors:
+
+- Manages `Map<sessionId, SessionStore>` with LRU eviction (max 20 stores)
+- `getOrCreateStore(sessionId)` — creates a new `SessionStore` on first access, evicts the oldest entry when over the limit
+- `switchView(sessionId)` — hides the current container, shows the target (no DOM rebuild), resets unread count
+
+See [session-store.js](../../src/BotNexus.WebUI/wwwroot/js/session-store.js)
 
 **Per-Channel Container Strategy:**
 
@@ -422,49 +223,9 @@ class SessionStoreManager {
 
 ### Markdown Rendering
 
-```javascript
-function appendMessageToDOM(store, role, content) {
-    const messageDiv = document.createElement('div');
-    messageDiv.className = `message message-${role}`;
-    messageDiv.dataset.messageId = generateMessageId();
-    
-    const contentDiv = document.createElement('div');
-    contentDiv.className = 'message-content';
-    
-    if (role === 'assistant') {
-        // Render Markdown
-        const html = marked.parse(content);
-        const sanitized = DOMPurify.sanitize(html);
-        contentDiv.innerHTML = sanitized;
-    } else {
-        // User messages: plain text
-        contentDiv.textContent = content;
-    }
-    
-    messageDiv.appendChild(contentDiv);
-    elChatMessages.appendChild(messageDiv);
-    
-    scrollToBottom();
-}
+Renders messages using `marked.parse()` for Markdown with `DOMPurify.sanitize()` for XSS protection. Delta updates re-render the full accumulated text to maintain valid Markdown.
 
-function appendDeltaToLastMessage(store, delta) {
-    const lastMessage = elChatMessages.querySelector('.message:last-child');
-    if (!lastMessage)
-        return;
-    
-    const contentDiv = lastMessage.querySelector('.message-content');
-    const currentText = contentDiv.dataset.rawContent || contentDiv.textContent;
-    const updatedText = currentText + delta;
-    
-    // Re-render Markdown
-    const html = marked.parse(updatedText);
-    const sanitized = DOMPurify.sanitize(html);
-    contentDiv.innerHTML = sanitized;
-    contentDiv.dataset.rawContent = updatedText;
-    
-    scrollToBottom();
-}
-```
+See [chat.js](../../src/BotNexus.WebUI/wwwroot/js/chat.js)
 
 **Sanitization:**
 
@@ -474,106 +235,21 @@ function appendDeltaToLastMessage(store, delta) {
 
 ### Tool Call Rendering
 
-```javascript
-function appendToolCallToDOM(store, event) {
-    const toolDiv = document.createElement('div');
-    toolDiv.className = 'tool-call';
-    toolDiv.dataset.toolCallId = event.toolCallId;
-    
-    toolDiv.innerHTML = `
-        <div class="tool-header">
-            <span class="tool-name">${escapeHtml(event.toolName)}</span>
-            <span class="tool-status">Running...</span>
-        </div>
-        <details>
-            <summary>Arguments</summary>
-            <pre>${escapeHtml(JSON.stringify(event.arguments, null, 2))}</pre>
-        </details>
-        <div class="tool-result" style="display: none;"></div>
-    `;
-    
-    elChatMessages.appendChild(toolDiv);
-}
+Tool calls rendered as collapsible elements with name, status indicator, arguments (in `<details>`), and result. Status updates from Running → Success/Failed on ToolEnd.
 
-function updateToolCallResult(store, event) {
-    const toolDiv = elChatMessages.querySelector(`[data-tool-call-id="${event.toolCallId}"]`);
-    if (!toolDiv)
-        return;
-    
-    const statusSpan = toolDiv.querySelector('.tool-status');
-    statusSpan.textContent = event.success ? 'Success' : 'Failed';
-    statusSpan.className = `tool-status ${event.success ? 'success' : 'failed'}`;
-    
-    const resultDiv = toolDiv.querySelector('.tool-result');
-    resultDiv.style.display = 'block';
-    resultDiv.innerHTML = `<pre>${escapeHtml(event.result)}</pre>`;
-}
-```
+See [chat.js](../../src/BotNexus.WebUI/wwwroot/js/chat.js)
 
 ### Thinking Display
 
-```javascript
-connection.on("ThinkingDelta", (event) => {
-    const store = sessionStoreManager.getOrCreateStore(event.sessionId);
-    if (!showThinking || sessionStoreManager.activeViewId !== event.sessionId)
-        return;
-    
-    let thinkingDiv = elChatMessages.querySelector('.thinking-display');
-    if (!thinkingDiv) {
-        thinkingDiv = document.createElement('div');
-        thinkingDiv.className = 'thinking-display';
-        thinkingDiv.innerHTML = '<strong>Thinking...</strong><div class="thinking-content"></div>';
-        elChatMessages.appendChild(thinkingDiv);
-    }
-    
-    const contentDiv = thinkingDiv.querySelector('.thinking-content');
-    contentDiv.textContent += event.delta;
-    scrollToBottom();
-});
+Thinking deltas accumulated in a temporary `<div>` with the thinking buffer. Removed on MessageEnd.
 
-connection.on("MessageEnd", (event) => {
-    // Remove thinking display when message ends
-    const thinkingDiv = elChatMessages.querySelector('.thinking-display');
-    if (thinkingDiv)
-        thinkingDiv.remove();
-});
-```
+See [events.js](../../src/BotNexus.WebUI/wwwroot/js/events.js)
 
 ## Sidebar and Session List
 
-```javascript
-function renderSidebar() {
-    const sessions = Array.from(sessionStoreManager.stores.values())
-        .sort((a, b) => (b.lastViewed || 0) - (a.lastViewed || 0));
-    
-    elSidebar.innerHTML = '';
-    
-    for (const store of sessions) {
-        const item = document.createElement('div');
-        item.className = 'session-item';
-        if (store.sessionId === sessionStoreManager.activeViewId)
-            item.classList.add('active');
-        
-        item.innerHTML = `
-            <div class="session-header">
-                <span class="session-agent">${escapeHtml(store.agentId || 'Unknown')}</span>
-                ${store.unreadCount > 0 ? `<span class="unread-badge">${store.unreadCount}</span>` : ''}
-            </div>
-            <div class="session-meta">
-                <span class="session-channel">${escapeHtml(store.channelType || 'N/A')}</span>
-                ${store.isStreaming ? '<span class="streaming-indicator">●</span>' : ''}
-            </div>
-        `;
-        
-        item.addEventListener('click', () => {
-            sessionStoreManager.switchView(store.sessionId);
-            renderSidebar();
-        });
-        
-        elSidebar.appendChild(item);
-    }
-}
-```
+Renders session list sorted by last-viewed time. Each entry shows agent name, channel type, unread badge, and streaming indicator. Clicking switches the active view.
+
+See [sidebar.js](../../src/BotNexus.WebUI/wwwroot/js/sidebar.js)
 
 ## Summary
 

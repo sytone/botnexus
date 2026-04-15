@@ -34,47 +34,9 @@ public interface IInternalTrigger
 
 **Implementation:**
 
-```csharp
-public sealed class CronTrigger : IInternalTrigger
-{
-    public TriggerType Type => TriggerType.Cron;
-    public string DisplayName => "Cron Scheduler";
-    
-    public async Task<SessionId> CreateSessionAsync(
-        AgentId agentId,
-        string prompt,
-        CancellationToken ct)
-    {
-        // 1. Create unique session ID
-        var sessionId = SessionId.From($"cron:{DateTimeOffset.UtcNow:yyyyMMddHHmmss}:{Guid.NewGuid():N}");
-        
-        // 2. Create session
-        var session = await _sessions.GetOrCreateAsync(sessionId, agentId, ct);
-        session.ChannelType = ChannelKey.From("cron");
-        session.CallerId = $"cron:{agentId.Value}";
-        session.SessionType = SessionType.Cron;
-        
-        // 3. Add user message
-        session.AddEntry(new SessionEntry {
-            Role = MessageRole.User,
-            Content = prompt
-        });
-        
-        // 4. Execute agent
-        var handle = await _supervisor.GetOrCreateAsync(agentId, sessionId, ct);
-        var response = await handle.PromptAsync(prompt, ct);
-        
-        // 5. Record response
-        session.AddEntry(new SessionEntry {
-            Role = MessageRole.Assistant,
-            Content = response.Content
-        });
-        
-        await _sessions.SaveAsync(session, ct);
-        return sessionId;
-    }
-}
-```
+`CreateSessionAsync` creates a unique cron session, adds the prompt as a user message, executes the agent, records the response, and saves the session.
+
+See [CronChannelAdapter.cs](../../src/gateway/BotNexus.Gateway.Api/Hubs/CronChannelAdapter.cs) for the full implementation.
 
 **Execution Flow:**
 
@@ -135,100 +97,14 @@ CronScheduler → CronTrigger → CreateSession → Agent Execution → Session 
 
 **Implementation:**
 
-```csharp
-public sealed class SoulTrigger : IInternalTrigger
-{
-    public TriggerType Type => TriggerType.Soul;
-    public string DisplayName => "Soul Session";
-    
-    public async Task<SessionId> CreateSessionAsync(
-        AgentId agentId,
-        string prompt,
-        CancellationToken ct)
-    {
-        // 1. Resolve soul date (respects timezone)
-        var soulConfig = _registry.Get(agentId)?.Soul;
-        var (timeZone, dayBoundary) = ResolveCalendarSettings(soulConfig);
-        var nowUtc = _timeProvider.GetUtcNow();
-        var soulDate = ResolveSoulDate(nowUtc, timeZone, dayBoundary);
-        
-        // 2. Create session ID tied to date
-        var sessionId = SessionId.ForSoul(agentId, soulDate);
-        // Format: "soul:{agentId}:{yyyy-MM-dd}"
-        
-        // 3. Seal older soul sessions
-        await SealOlderSoulSessionsAsync(agentId, soulDate, soulConfig, ct);
-        
-        // 4. Get or create today's soul session
-        var session = await _sessions.GetOrCreateAsync(sessionId, agentId, ct);
-        InitializeSoulSession(session, agentId, soulDate);
-        
-        // 5. Execute heartbeat prompt
-        session.AddEntry(new SessionEntry {
-            Role = MessageRole.User,
-            Content = prompt
-        });
-        
-        var handle = await _supervisor.GetOrCreateAsync(agentId, sessionId, ct);
-        var response = await handle.PromptAsync(prompt, ct);
-        
-        session.AddEntry(new SessionEntry {
-            Role = MessageRole.Assistant,
-            Content = response.Content
-        });
-        
-        await _sessions.SaveAsync(session, ct);
-        return sessionId;
-    }
-    
-    private async Task SealOlderSoulSessionsAsync(
-        AgentId agentId,
-        DateOnly todaySoulDate,
-        SoulAgentConfig? soulConfig,
-        CancellationToken ct)
-    {
-        // Find all active soul sessions older than today
-        var agentSessions = await _sessions.ListAsync(agentId, ct);
-        var oldActiveSoulSessions = agentSessions
-            .Where(s => s.SessionType == SessionType.Soul &&
-                       s.Status == SessionStatus.Active)
-            .Where(s => TryGetSoulDate(s, out var soulDate) &&
-                       soulDate < todaySoulDate)
-            .ToArray();
-        
-        foreach (var previousSession in oldActiveSoulSessions)
-        {
-            // Optional: Reflection before sealing
-            if (soulConfig?.ReflectionOnSeal == true &&
-                !string.IsNullOrWhiteSpace(soulConfig.ReflectionPrompt))
-            {
-                var reflectionPrompt = soulConfig.ReflectionPrompt;
-                previousSession.AddEntry(new SessionEntry {
-                    Role = MessageRole.User,
-                    Content = reflectionPrompt
-                });
-                
-                var handle = await _supervisor.GetOrCreateAsync(
-                    agentId, previousSession.SessionId, ct);
-                var reflection = await handle.PromptAsync(reflectionPrompt, ct);
-                
-                previousSession.AddEntry(new SessionEntry {
-                    Role = MessageRole.Assistant,
-                    Content = reflection.Content
-                });
-            }
-            
-            // Seal session
-            previousSession.Status = SessionStatus.Sealed;
-            await _sessions.SaveAsync(previousSession, ct);
-            
-            _logger.LogInformation(
-                "Sealed soul session '{SessionId}' for agent '{AgentId}'.",
-                previousSession.SessionId, agentId);
-        }
-    }
-}
-```
+`SoulTrigger` implements `IInternalTrigger` for daily soul sessions. Key behaviors:
+
+- **Resolves soul date** respecting agent timezone and day boundary via `ResolveCalendarSettings`
+- **Session ID format:** `soul:{agentId}:{yyyy-MM-dd}`
+- **Seals older soul sessions** before creating today's session
+- **Optional reflection prompt** before sealing, configurable via `SoulAgentConfig.ReflectionOnSeal`
+
+See [SoulTrigger.cs](../../src/gateway/BotNexus.Gateway.Api/Hubs/SoulTrigger.cs) for the full implementation.
 
 **Soul Date Resolution:**
 
@@ -336,76 +212,18 @@ Enables peer agent conversations via the `agent_converse` tool.
 
 **Tool Definition:**
 
-```csharp
-public sealed class AgentConverseTool : IAgentTool
-{
-    public string Name => "agent_converse";
-    
-    public Tool Definition => new Tool(
-        "agent_converse",
-        "Start a conversation with another registered agent.",
-        schema: {
-            "type": "object",
-            "properties": {
-                "agentId": {
-                    "type": "string",
-                    "description": "The target agent's ID."
-                },
-                "message": {
-                    "type": "string",
-                    "description": "Opening message to send."
-                },
-                "objective": {
-                    "type": "string",
-                    "description": "What you want to achieve."
-                },
-                "maxTurns": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "default": 1,
-                    "description": "Maximum number of turns."
-                }
-            },
-            "required": ["agentId", "message"]
-        }
-    );
-}
-```
+The `agent_converse` tool accepts the following parameters:
 
-**Execution Flow:**
+| Parameter   | Type    | Required | Description                      |
+|-------------|---------|----------|----------------------------------|
+| `agentId`   | string  | yes      | The target agent's ID            |
+| `message`   | string  | yes      | Opening message to send          |
+| `objective` | string  | no       | What you want to achieve         |
+| `maxTurns`  | integer | no       | Maximum number of turns (default: 1) |
 
-```csharp
-public async Task<AgentToolResult> ExecuteAsync(
-    string toolCallId,
-    IReadOnlyDictionary<string, object?> arguments,
-    CancellationToken ct)
-{
-    var targetAgentId = ReadString(arguments, "agentId");
-    var message = ReadString(arguments, "message");
-    var objective = ReadString(arguments, "objective");
-    var maxTurns = ReadInt(arguments, "maxTurns", 1);
-    
-    // Resolve call chain (prevent cycles)
-    var callChain = await ResolveCallChainAsync(ct);
-    
-    // Execute conversation
-    var result = await _conversationService.ConverseAsync(
-        new ConversationRequest
-        {
-            InitiatorId = _initiatorAgentId,
-            TargetId = AgentId.From(targetAgentId),
-            Message = message,
-            Objective = objective,
-            MaxTurns = maxTurns,
-            CallChain = callChain
-        },
-        ct);
-    
-    return new AgentToolResult([
-        new AgentToolContent(Text, JsonSerializer.Serialize(result))
-    ]);
-}
-```
+`ExecuteAsync` resolves the call chain to prevent cycles, then delegates to `IAgentConversationService.ConverseAsync` with a `ConversationRequest`.
+
+See [AgentConverseTool.cs](../../src/gateway/BotNexus.Gateway/Tools/AgentConverseTool.cs) for the full implementation.
 
 ### Agent Conversation Service
 
@@ -449,90 +267,16 @@ public record AgentConversationResult
 
 ### Conversation Flow
 
-```csharp
-public async Task<AgentConversationResult> ConverseAsync(
-    ConversationRequest request,
-    CancellationToken ct)
-{
-    // 1. Validate request
-    ValidateRequest(request);
-    
-    // 2. Check authorization
-    var initiatorDescriptor = _registry.Get(request.InitiatorId);
-    if (!initiatorDescriptor.SubAgentIds.Contains(request.TargetId.Value))
-        throw new UnauthorizedAccessException(
-            $"Agent '{request.InitiatorId}' cannot converse with '{request.TargetId}'.");
-    
-    // 3. Check for cycles
-    var normalizedChain = NormalizeChain(request.CallChain, request.InitiatorId);
-    EnsureCallChainAllowed(normalizedChain, request.TargetId);
-    
-    // 4. Create session
-    var sessionId = SessionId.ForAgentConversation(
-        request.InitiatorId,
-        request.TargetId,
-        Guid.NewGuid().ToString("N"));
-    
-    var session = await _sessionStore.GetOrCreateAsync(sessionId, request.InitiatorId, ct);
-    session.SessionType = SessionType.AgentAgent;
-    session.Participants.Add(new SessionParticipant {
-        Type = ParticipantType.Agent,
-        Id = request.InitiatorId.Value,
-        Role = "initiator"
-    });
-    session.Participants.Add(new SessionParticipant {
-        Type = ParticipantType.Agent,
-        Id = request.TargetId.Value,
-        Role = "target"
-    });
-    
-    // Store call chain in metadata
-    session.Metadata["callChain"] = normalizedChain
-        .Append(request.TargetId)
-        .Select(id => id.Value)
-        .ToArray();
-    
-    // 5. Execute conversation turns
-    var transcript = new List<AgentConversationTranscriptEntry>();
-    var targetHandle = await _supervisor.GetOrCreateAsync(
-        request.TargetId, sessionId, ct);
-    
-    var message = request.Message;
-    var finalResponse = string.Empty;
-    
-    for (var turn = 0; turn < request.MaxTurns; turn++)
-    {
-        // User turn (from initiator)
-        AddTurn(MessageRole.User, message, transcript, session);
-        
-        // Agent response (from target)
-        var response = await targetHandle.PromptAsync(message, ct);
-        finalResponse = response.Content ?? string.Empty;
-        AddTurn(MessageRole.Assistant, finalResponse, transcript, session);
-        
-        // Check if objective met
-        if (IsObjectiveMet(request.Objective, finalResponse))
-            break;
-        
-        // Multi-turn: generate next user message (not implemented yet)
-        if (turn < request.MaxTurns - 1)
-        {
-            message = GenerateFollowUpMessage(request.Objective, finalResponse);
-        }
-    }
-    
-    await _sessionStore.SaveAsync(session, ct);
-    
-    return new AgentConversationResult
-    {
-        SessionId = sessionId,
-        FinalResponse = finalResponse,
-        Transcript = transcript,
-        ObjectiveMet = IsObjectiveMet(request.Objective, finalResponse),
-        TurnCount = transcript.Count / 2
-    };
-}
-```
+`AgentConversationService.ConverseAsync` orchestrates the full agent-to-agent conversation:
+
+1. **Validate request** and check authorization (`SubAgentIds` whitelist)
+2. **Check for cycles** via call chain tracking
+3. **Create AgentAgent session** with both participants (initiator + target)
+4. **Execute conversation turns** up to `maxTurns`
+5. **Check objective completion** after each turn
+6. **Save session** and return transcript with result metadata
+
+See [AgentConversationService.cs](../../src/gateway/BotNexus.Gateway/Agents/AgentConversationService.cs) for the full implementation.
 
 ### Cycle Detection
 
@@ -570,178 +314,32 @@ Enables conversations between agents in different BotNexus instances.
 
 **CrossWorldAgentReference:**
 
-```csharp
-// Format: world:worldId:agentId
-// Example: world:production:data-analyst
-public static class CrossWorldAgentReference
-{
-    public static bool TryParse(string reference, out ParsedReference? result)
-    {
-        if (reference.StartsWith("world:"))
-        {
-            var parts = reference.Split(':', 3);
-            if (parts.Length == 3)
-            {
-                result = new ParsedReference {
-                    WorldId = parts[1],
-                    AgentId = parts[2]
-                };
-                return true;
-            }
-        }
-        result = null;
-        return false;
-    }
-}
-```
+Parses `world:{worldId}:{agentId}` format references for cross-world agent targeting (e.g., `world:production:data-analyst`).
+
+See [CrossWorldAgentReference.cs](../../src/domain/BotNexus.Domain/Conversations/CrossWorldAgentReference.cs) for the full implementation.
 
 **Cross-World Conversation Flow:**
 
-```csharp
-if (CrossWorldAgentReference.TryParse(request.TargetId, out var crossWorld))
-{
-    return await ConverseCrossWorldAsync(
-        request,
-        crossWorld,
-        normalizedChain,
-        ct);
-}
+When `ConverseAsync` detects a `world:` prefix in the target agent ID, it delegates to `ConverseCrossWorldAsync`, which:
 
-async Task<AgentConversationResult> ConverseCrossWorldAsync(
-    ConversationRequest request,
-    CrossWorldAgentReference target,
-    IReadOnlyList<AgentId> callChain,
-    CancellationToken ct)
-{
-    // 1. Resolve target world endpoint
-    var targetWorld = _platformConfig.FederatedWorlds
-        .FirstOrDefault(w => w.Id == target.WorldId);
-    if (targetWorld == null)
-        throw new KeyNotFoundException($"World '{target.WorldId}' not configured.");
-    
-    // 2. Create relay request
-    var relayRequest = new CrossWorldRelayRequest
-    {
-        SourceWorldId = _sourceWorldId,
-        SourceAgentId = request.InitiatorId.Value,
-        TargetAgentId = target.AgentId,
-        Message = request.Message,
-        ConversationId = Guid.NewGuid().ToString("N"),
-        CallChain = callChain.Select(id => id.Value).ToArray()
-    };
-    
-    // 3. Send via CrossWorldChannelAdapter
-    var response = await _crossWorldChannelAdapter.ExchangeAsync(
-        new OutboundMessage
-        {
-            Content = request.Message,
-            Metadata = new Dictionary<string, object?>
-            {
-                ["endpoint"] = targetWorld.Endpoint,
-                ["sourceWorldId"] = _sourceWorldId,
-                ["sourceAgentId"] = request.InitiatorId.Value,
-                ["targetAgentId"] = target.AgentId,
-                ["conversationId"] = relayRequest.ConversationId,
-                ["apiKey"] = targetWorld.ApiKey
-            }
-        },
-        ct);
-    
-    // 4. Return result
-    return new AgentConversationResult
-    {
-        SessionId = SessionId.From($"cross-world:{relayRequest.ConversationId}"),
-        FinalResponse = response.Content,
-        Transcript = [
-            new AgentConversationTranscriptEntry {
-                Role = MessageRole.User,
-                Content = request.Message
-            },
-            new AgentConversationTranscriptEntry {
-                Role = MessageRole.Assistant,
-                Content = response.Content
-            }
-        ],
-        ObjectiveMet = IsObjectiveMet(request.Objective, response.Content),
-        TurnCount = 1
-    };
-}
-```
+1. Resolves the target world endpoint from `FederatedWorlds` configuration
+2. Creates a `CrossWorldRelayRequest` with source/target metadata and the call chain
+3. Sends the request via `CrossWorldChannelAdapter`
+4. Returns the response as an `AgentConversationResult`
+
+See [AgentConversationService.cs](../../src/gateway/BotNexus.Gateway/Agents/AgentConversationService.cs) for the full implementation.
 
 **CrossWorldChannelAdapter:**
 
-```csharp
-public async Task<CrossWorldRelayResponse> ExchangeAsync(
-    OutboundMessage message,
-    CancellationToken ct)
-{
-    var endpoint = RequireMetadata(message.Metadata, "endpoint");
-    var apiKey = TryGetMetadata(message.Metadata, "apiKey");
-    
-    var requestUri = new Uri($"{endpoint.TrimEnd('/')}/api/federation/relay");
-    
-    using var request = new HttpRequestMessage(HttpMethod.Post, requestUri)
-    {
-        Content = JsonContent.Create(new CrossWorldRelayRequest
-        {
-            SourceWorldId = metadata["sourceWorldId"],
-            SourceAgentId = metadata["sourceAgentId"],
-            TargetAgentId = metadata["targetAgentId"],
-            Message = message.Content,
-            ConversationId = metadata["conversationId"]
-        })
-    };
-    
-    if (!string.IsNullOrWhiteSpace(apiKey))
-        request.Headers.Add("X-Cross-World-Key", apiKey);
-    
-    using var response = await _httpClient.SendAsync(request, ct);
-    response.EnsureSuccessStatusCode();
-    
-    return await response.Content.ReadFromJsonAsync<CrossWorldRelayResponse>(ct);
-}
-```
+Sends HTTP POST to `{endpoint}/api/federation/relay` with a `CrossWorldRelayRequest` body and optional `X-Cross-World-Key` authentication header.
+
+See [CrossWorldChannelAdapter.cs](../../src/channels/BotNexus.Channels.Core/CrossWorldChannelAdapter.cs) for the full implementation.
 
 **Relay Endpoint (Target World):**
 
-```csharp
-[HttpPost("api/federation/relay")]
-public async Task<CrossWorldRelayResponse> RelayAsync(
-    [FromBody] CrossWorldRelayRequest request,
-    CancellationToken ct)
-{
-    // 1. Authenticate
-    var apiKey = Request.Headers["X-Cross-World-Key"].FirstOrDefault();
-    _authService.ValidateCrossWorldKey(request.SourceWorldId, apiKey);
-    
-    // 2. Create session
-    var sessionId = SessionId.From($"cross-world:{request.ConversationId}");
-    var session = await _sessions.GetOrCreateAsync(
-        sessionId,
-        AgentId.From(request.TargetAgentId),
-        ct);
-    
-    session.SessionType = SessionType.AgentAgent;
-    session.Metadata["sourceWorldId"] = request.SourceWorldId;
-    session.Metadata["sourceAgentId"] = request.SourceAgentId;
-    
-    // 3. Execute agent
-    var handle = await _supervisor.GetOrCreateAsync(
-        AgentId.From(request.TargetAgentId),
-        sessionId,
-        ct);
-    
-    var response = await handle.PromptAsync(request.Message, ct);
-    
-    // 4. Return response
-    return new CrossWorldRelayResponse
-    {
-        ConversationId = request.ConversationId,
-        Content = response.Content,
-        SessionId = sessionId.Value
-    };
-}
-```
+Receives relay requests at `POST api/federation/relay`, authenticates via `X-Cross-World-Key` header, creates a cross-world session, executes the target agent, and returns the response.
+
+<!-- Note: Implementation is in the federation controller/hub handling relay requests -->
 
 ## Summary
 

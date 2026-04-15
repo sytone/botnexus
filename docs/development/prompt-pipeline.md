@@ -158,69 +158,19 @@ context.Extensions = new Dictionary<string, object?>
 
 ## PromptPipeline
 
-Composes prompt from sections and contributors:
+Composes prompt from ordered `IPromptSection`s and `IPromptContributor`s. Sections are sorted by `Order`, contributors by `Priority`. Tie-broken by insertion order. Contributors with `Target = null` are added as top-level blocks with optional section headings.
 
 ```csharp
 public sealed class PromptPipeline
 {
-    private readonly List<IPromptSection> _sections = [];
-    private readonly List<IPromptContributor> _contributors = [];
-    
-    public PromptPipeline Add(IPromptSection section)
-    {
-        _sections.Add(section);
-        return this;
-    }
-    
-    public PromptPipeline AddContributors(IEnumerable<IPromptContributor> contributors)
-    {
-        _contributors.AddRange(contributors);
-        return this;
-    }
-    
-    public string Build(PromptContext context)
-    {
-        return string.Join("\n", BuildLines(context));
-    }
-    
-    public IReadOnlyList<string> BuildLines(PromptContext context)
-    {
-        var blocks = new List<(int Order, int TieBreaker, IReadOnlyList<string> Lines)>();
-        var sectionIndex = 0;
-        
-        // Add sections
-        foreach (var section in _sections
-            .Where(s => s.ShouldInclude(context))
-            .OrderBy(s => s.Order))
-        {
-            blocks.Add((section.Order, sectionIndex++, section.Build(context)));
-        }
-        
-        // Add top-level contributors
-        foreach (var contributor in _contributors
-            .Where(c => c.Target is null && c.ShouldInclude(context)))
-        {
-            var contribution = contributor.GetContribution(context);
-            var lines = new List<string>();
-            
-            if (!string.IsNullOrWhiteSpace(contribution.SectionHeading))
-                lines.Add($"## {contribution.SectionHeading}");
-            
-            lines.AddRange(contribution.Lines);
-            
-            var order = contribution.Order ?? contributor.Priority;
-            blocks.Add((order, sectionIndex++, lines));
-        }
-        
-        // Sort and flatten
-        return blocks
-            .OrderBy(b => b.Order)
-            .ThenBy(b => b.TieBreaker)
-            .SelectMany(b => b.Lines)
-            .ToList();
-    }
+    public PromptPipeline Add(IPromptSection section);
+    public PromptPipeline AddContributors(IEnumerable<IPromptContributor> contributors);
+    public string Build(PromptContext context);
+    public IReadOnlyList<string> BuildLines(PromptContext context);
 }
 ```
+
+See [PromptPipeline.cs](../../src/prompts/BotNexus.Prompts/PromptPipeline.cs)
 
 **Ordering Strategy:**
 
@@ -230,55 +180,9 @@ public sealed class PromptPipeline
 
 ## SystemPromptBuilder (Gateway)
 
-Gateway-specific prompt builder that uses `PromptPipeline`:
+Gateway-specific prompt builder. In `None` mode returns a minimal identity string. Otherwise, creates a `PromptPipeline` with standard sections (Identity, Workspace, Tools, ContextFiles, Guidelines, Examples), builds a `PromptContext` from `SystemPromptParams`, and returns the assembled prompt.
 
-```csharp
-public static class SystemPromptBuilder
-{
-    public static string Build(SystemPromptParams @params)
-    {
-        if (@params.PromptMode == PromptMode.None)
-            return "You are a personal assistant running inside BotNexus.";
-        
-        var pipeline = new PromptPipeline();
-        
-        // Register sections
-        pipeline.Add(new IdentitySection());
-        pipeline.Add(new WorkspaceSection());
-        pipeline.Add(new ToolsSection());
-        pipeline.Add(new ContextFilesSection());
-        pipeline.Add(new GuidelinesSection());
-        pipeline.Add(new ExamplesSection());
-        
-        // Build context
-        var context = new PromptContext
-        {
-            WorkspaceDir = @params.WorkspaceDir,
-            ContextFiles = @params.ContextFiles,
-            AvailableTools = new HashSet<string>(@params.ToolNames ?? []),
-            IsMinimal = @params.PromptMode == PromptMode.Minimal,
-            Channel = @params.Runtime?.Channel,
-            Extensions = BuildExtensions(@params)
-        };
-        
-        return pipeline.Build(context);
-    }
-    
-    private static Dictionary<string, object?> BuildExtensions(SystemPromptParams @params)
-    {
-        return new Dictionary<string, object?>
-        {
-            ["gatewayData"] = new GatewayPromptData(
-                @params,
-                rawToolNames: @params.ToolNames?.ToHashSet() ?? [],
-                normalizedTools: NormalizeToolNames(@params.ToolNames),
-                hasGateway: HasGatewayTool(@params.ToolNames),
-                // ... other gateway-specific data
-            )
-        };
-    }
-}
-```
+See [SystemPromptBuilder.cs](../../src/gateway/BotNexus.Gateway/Agents/SystemPromptBuilder.cs)
 
 **SystemPromptParams:**
 
@@ -392,40 +296,9 @@ Injects project-specific documentation:
 
 **Context File Discovery:**
 
-```csharp
-// WorkspaceContextBuilder
-var contextFiles = await DiscoverContextFilesAsync(workspaceDir, ct);
+Discovers context files from two sources: (1) `.botnexus/context/*.md` directory in workspace, and (2) common root docs (README.md, ARCHITECTURE.md, CONTRIBUTING.md).
 
-async Task<List<ContextFile>> DiscoverContextFilesAsync(string workspaceDir, CancellationToken ct)
-{
-    var discovered = new List<ContextFile>();
-    
-    // 1. Check for .botnexus/context/ directory
-    var contextDir = Path.Combine(workspaceDir, ".botnexus", "context");
-    if (Directory.Exists(contextDir))
-    {
-        foreach (var file in Directory.GetFiles(contextDir, "*.md"))
-        {
-            var content = await File.ReadAllTextAsync(file, ct);
-            discovered.Add(new ContextFile(Path.GetFileName(file), content));
-        }
-    }
-    
-    // 2. Check for common doc files
-    var commonDocs = new[] { "README.md", "ARCHITECTURE.md", "CONTRIBUTING.md" };
-    foreach (var doc in commonDocs)
-    {
-        var path = Path.Combine(workspaceDir, doc);
-        if (File.Exists(path))
-        {
-            var content = await File.ReadAllTextAsync(path, ct);
-            discovered.Add(new ContextFile(doc, content));
-        }
-    }
-    
-    return discovered;
-}
-```
+See [WorkspaceContextBuilder.cs](../../src/gateway/BotNexus.Gateway/Agents/WorkspaceContextBuilder.cs)
 
 ### Guidelines Section (Order: 500)
 
@@ -637,41 +510,9 @@ public class McpExtension : IExtension, IPromptContributor
 
 **WorkspaceContextBuilder (IContextBuilder):**
 
-```csharp
-public async Task<string> BuildSystemPromptAsync(
-    AgentDescriptor descriptor,
-    CancellationToken ct)
-{
-    // 1. Discover context files
-    var workspaceDir = _workspaceManager.GetWorkspacePath(descriptor.AgentId);
-    var contextFiles = await DiscoverContextFilesAsync(workspaceDir, ct);
-    
-    // 2. Build parameters
-    var @params = new SystemPromptParams
-    {
-        WorkspaceDir = workspaceDir,
-        ExtraSystemPrompt = descriptor.SystemPrompt,
-        ToolNames = descriptor.Tools,
-        UserTimezone = ResolveTimezone(),
-        ContextFiles = contextFiles,
-        SkillsPrompt = await LoadSkillsPromptAsync(descriptor, ct),
-        HeartbeatPrompt = descriptor.HeartbeatPrompt,
-        DocsPath = Path.Combine(workspaceDir, "docs"),
-        Runtime = new RuntimeInfo
-        {
-            AgentId = descriptor.AgentId.Value,
-            Host = Environment.MachineName,
-            Os = Environment.OSVersion.Platform.ToString(),
-            Arch = RuntimeInformation.ProcessArchitecture.ToString(),
-            Provider = descriptor.ApiProvider,
-            Model = descriptor.ModelId
-        }
-    };
-    
-    // 3. Build prompt
-    return SystemPromptBuilder.Build(@params);
-}
-```
+Discovers context files from workspace, builds `SystemPromptParams` with runtime info (agent ID, host, OS, architecture, provider, model), skills, heartbeat, and timezone, then delegates to `SystemPromptBuilder.Build()`.
+
+See [WorkspaceContextBuilder.cs](../../src/gateway/BotNexus.Gateway/Agents/WorkspaceContextBuilder.cs)
 
 ## Coding Agent vs. Gateway Agent Prompts
 

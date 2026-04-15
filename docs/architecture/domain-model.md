@@ -1,3 +1,12 @@
+---
+owner: human
+author: Jon Bullen
+ai-policy: minimal
+# AI agents: this document is human-owned. Do not rewrite, restructure,
+# or remove content. Minor fixes (typos, broken links) are OK.
+# Substantive changes require explicit human approval.
+---
+
 # BotNexus Domain Model
 
 This document defines the conceptual domain model for the BotNexus platform - every object, relationship, and interaction pattern that governs how agents exist, communicate, and grow. It is the source of truth for what the system *means*, independent of how any particular layer implements it.

@@ -5,7 +5,7 @@ type: bug
 priority: critical
 status: in-progress
 created: 2026-04-10
-updated: 2026-07-14
+updated: 2026-07-18
 author: nova
 previous_fix: "Implemented by squad 2026-04-10. Confirmed working briefly but regressed on next gateway restart."
 post_ddd_review: "2026-07-14 — Deep review against post-DDD/WebUI codebase. Multiple phases completed or obsoleted by DDD Wave 2 and WebUI rewrite. Phase 1 context bridge remains the critical gap."

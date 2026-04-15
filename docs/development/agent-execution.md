@@ -132,40 +132,12 @@ Each session gets its own agent instance. This enables:
 ### GetOrCreateAsync Flow
 
 ```csharp
-async Task<IAgentHandle> GetOrCreateAsync(AgentId agentId, SessionId sessionId, CancellationToken ct)
-{
-    var key = AgentSessionKey.From(agentId, sessionId);
-    
-    // Check cache
-    lock (_sync)
-    {
-        if (_instances.TryGetValue(key, out var existing) &&
-            existing.Instance.Status is Idle or Running)
-            return existing.Handle;
-    }
-    
-    // Check concurrency limit
-    var descriptor = _registry.Get(agentId);
-    if (descriptor.MaxConcurrentSessions > 0)
-    {
-        var activeSessions = CountActiveSessionsForAgent(agentId);
-        if (activeSessions >= descriptor.MaxConcurrentSessions)
-            throw new AgentConcurrencyLimitExceededException(agentId, limit);
-    }
-    
-    // Create via isolation strategy
-    var strategy = _strategies[descriptor.ExecutionStrategy];
-    var handle = await strategy.CreateAsync(descriptor, context, ct);
-    
-    // Cache and return
-    lock (_sync)
-    {
-        _instances[key] = (Instance, handle);
-    }
-    
-    return handle;
-}
+Task<IAgentHandle> GetOrCreateAsync(AgentId agentId, SessionId sessionId, CancellationToken ct);
 ```
+
+The method checks for an existing healthy instance in the cache, enforces concurrency limits from the descriptor, creates a new instance via the appropriate `IIsolationStrategy`, and caches the result.
+
+See [DefaultAgentSupervisor](../../src/gateway/BotNexus.Gateway/Agents/DefaultAgentSupervisor.cs) for the full implementation.
 
 **Concurrency Control:**
 
@@ -213,51 +185,9 @@ public record AgentInstance
 
 **Creation Flow:**
 
-```csharp
-async Task<IAgentHandle> CreateAsync(AgentDescriptor descriptor, AgentExecutionContext context, CancellationToken ct)
-{
-    // 1. Resolve model
-    var model = _llmClient.Models.GetModel(descriptor.ApiProvider, descriptor.ModelId);
-    var apiEndpoint = _authManager.GetApiEndpoint(descriptor.ApiProvider);
-    if (!string.IsNullOrWhiteSpace(apiEndpoint))
-        model = model with { BaseUrl = apiEndpoint };
-    
-    // 2. Build system prompt
-    var systemPrompt = await _contextBuilder.BuildSystemPromptAsync(descriptor, ct);
-    
-    // 3. Setup workspace
-    var workspacePath = _workspaceManager.GetWorkspacePath(descriptor.AgentId);
-    var pathValidator = new DefaultPathValidator(descriptor.FileAccess, workspacePath);
-    
-    // 4. Create tools
-    var workspaceTools = _toolFactory.CreateTools(workspacePath, pathValidator);
-    var gatewayTools = CreateGatewayTools(descriptor, context.SessionId);
-    var allTools = workspaceTools.Concat(gatewayTools).ToList();
-    
-    // 5. Load extensions
-    var extensionTools = await LoadExtensionToolsAsync(descriptor, workspacePath, ct);
-    allTools.AddRange(extensionTools);
-    
-    // 6. Setup hooks
-    var hookDispatcher = CreateHookDispatcher(descriptor, pathValidator);
-    
-    // 7. Create AgentCore.Agent
-    var agent = new Agent(
-        model: model,
-        systemPrompt: systemPrompt,
-        tools: allTools,
-        options: new AgentOptions
-        {
-            BeforeToolCall = hookDispatcher.BeforeToolCallAsync,
-            AfterToolCall = hookDispatcher.AfterToolCallAsync,
-            ToolExecutionMode = descriptor.ToolExecutionMode ?? ToolExecutionMode.Sequential
-        },
-        llmClient: _llmClient);
-    
-    // 8. Wrap in handle
-    return new InProcessAgentHandle(agent, descriptor, context);
-}
-```
+The creation steps listed above (resolve model, build system prompt, setup workspace, create tools, load extensions, setup hooks, create `AgentCore.Agent`, wrap in handle) are implemented sequentially in `CreateAsync`.
+
+See [InProcessIsolationStrategy](../../src/gateway/BotNexus.Gateway/Isolation/InProcessIsolationStrategy.cs) for the full implementation.
 
 ### ContainerIsolationStrategy
 
@@ -320,33 +250,9 @@ Wraps `BotNexus.AgentCore.Agent` and bridges to Gateway contracts.
 
 **PromptAsync Implementation:**
 
-```csharp
-public async Task<AgentResponse> PromptAsync(string message, CancellationToken ct)
-{
-    var response = new AgentResponse();
-    
-    // Subscribe to agent events
-    var subscription = _agent.Events.Subscribe(agentEvent =>
-    {
-        var streamEvent = ConvertToGatewayEvent(agentEvent);
-        BroadcastToChannel(streamEvent);  // via IChannelAdapter
-        
-        if (agentEvent is MessageEndEvent endEvent)
-            response.Content = endEvent.Content;
-    });
-    
-    try
-    {
-        // Call AgentCore
-        await _agent.PromptAsync(message, ct);
-        return response;
-    }
-    finally
-    {
-        subscription.Dispose();
-    }
-}
-```
+`PromptAsync` subscribes to `AgentCore` events, converts them to gateway stream events (broadcast via `IChannelAdapter`), delegates to the underlying `Agent.PromptAsync`, and returns the accumulated response.
+
+See [InProcessAgentHandle](../../src/gateway/BotNexus.Gateway/Isolation/InProcessIsolationStrategy.cs) for the full implementation.
 
 **Event Conversion:**
 
@@ -385,99 +291,19 @@ The `AgentLoopRunner` implements the agent-tool execution cycle:
 6. Return final response
 ```
 
-**Detailed Flow:**
-
-```csharp
-async Task RunLoopAsync(CancellationToken ct)
-{
-    while (!ct.IsCancellationRequested)
-    {
-        // 1. Drain steering queue
-        while (_pendingQueue.TryDequeueSteer(out var steerMessage))
-        {
-            _state.Messages.Add(steerMessage);
-        }
-        
-        // 2. Convert to LLM context
-        var context = _converter.ToProviderContext(_state);
-        
-        // 3. Stream LLM response
-        var stream = await _llmClient.StreamAsync(context, ct);
-        
-        // 4. Accumulate response
-        var accumulator = new StreamAccumulator(_eventEmitter);
-        var message = await accumulator.AccumulateAsync(stream, ct);
-        _state.Messages.Add(message);
-        
-        // 5. Execute tools if requested
-        if (message.ToolCalls.Any())
-        {
-            var results = await _toolExecutor.ExecuteAsync(
-                message.ToolCalls,
-                _state.Tools,
-                _options.BeforeToolCall,
-                _options.AfterToolCall,
-                ct);
-            
-            _state.Messages.Add(new ToolResultMessage { Results = results });
-            continue;  // Next loop iteration
-        }
-        
-        // 6. Done
-        break;
-    }
-}
-```
+See [AgentLoopRunner](../../src/agent/BotNexus.AgentCore/Loop/AgentLoopRunner.cs) for the full implementation.
 
 ### Tool Execution
 
-**Sequential Execution (Default):**
+The `ToolExecutor` supports two modes: **sequential** (default), which executes tool calls one at a time, and **parallel**, which executes all tool calls concurrently via `Task.WhenAll`. The mode is configured per-agent via `ToolExecutionMode` in the descriptor.
 
-```csharp
-foreach (var toolCall in toolCalls)
-{
-    var tool = FindTool(toolCall.Name);
-    var result = await tool.ExecuteAsync(toolCall.Id, toolCall.Arguments, ct);
-    results.Add(result);
-}
-```
-
-**Parallel Execution:**
-
-```csharp
-var tasks = toolCalls.Select(async toolCall =>
-{
-    var tool = FindTool(toolCall.Name);
-    return await tool.ExecuteAsync(toolCall.Id, toolCall.Arguments, ct);
-});
-var results = await Task.WhenAll(tasks);
-```
+See [ToolExecutor](../../src/agent/BotNexus.AgentCore/Loop/ToolExecutor.cs) for the full implementation.
 
 **Hook Execution:**
 
-```csharp
-// Before tool call
-var beforeResult = await BeforeToolCallAsync(new BeforeToolCallContext
-{
-    ToolName = toolCall.Name,
-    Arguments = toolCall.Arguments
-});
+Before each tool call, registered hooks are evaluated in order — any hook returning `HookAction.Block` short-circuits execution. After execution, hooks may inspect or modify the result. This enables security policies, audit logging, and result transformation.
 
-if (beforeResult.Action == HookAction.Block)
-    return new AgentToolResult([new AgentToolContent(Text, beforeResult.BlockMessage)]);
-
-// Execute tool
-var result = await tool.ExecuteAsync(...);
-
-// After tool call
-var afterResult = await AfterToolCallAsync(new AfterToolCallContext
-{
-    ToolName = toolCall.Name,
-    Result = result
-});
-
-return afterResult.ModifiedResult ?? result;
-```
+See [HookDispatcher](../../src/gateway/BotNexus.Gateway/Hooks/HookDispatcher.cs) for the full implementation.
 
 ## Tool Registry
 
@@ -522,22 +348,9 @@ public interface IAgentToolFactory
 }
 ```
 
-**DefaultAgentToolFactory:**
+**DefaultAgentToolFactory** creates the built-in tool set (read, write, edit, shell, grep, glob), injecting the workspace path and path validator into each tool.
 
-```csharp
-public IReadOnlyList<IAgentTool> CreateTools(string workspacePath, IPathValidator pathValidator)
-{
-    return
-    [
-        new ReadTool(workspacePath, pathValidator),
-        new WriteTool(workspacePath, pathValidator),
-        new EditTool(workspacePath, pathValidator),
-        new ShellTool(workspacePath, pathValidator),
-        new GrepTool(workspacePath),
-        new GlobTool(workspacePath)
-    ];
-}
-```
+See [DefaultAgentToolFactory](../../src/gateway/BotNexus.Gateway/Agents/DefaultAgentToolFactory.cs) for the full implementation.
 
 ## Workspace and Context
 

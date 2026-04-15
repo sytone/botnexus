@@ -5,7 +5,7 @@ type: feature
 priority: medium
 status: draft
 created: 2026-04-10
-updated: 2026-04-10
+updated: 2026-07-18
 author: nova
 tags: [context, tokens, ux, diagnostics]
 depends_on: []

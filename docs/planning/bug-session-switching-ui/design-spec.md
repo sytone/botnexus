@@ -3,9 +3,9 @@ id: bug-session-switching-ui
 title: "Session Switching Broken During Active Agent Work"
 type: bug
 priority: high
-status: delivered
+status: partially-delivered
 created: 2026-04-10
-updated: 2026-04-13
+updated: 2026-07-18
 author: nova
 tags: [webui, session, ux, multi-agent, critical-ux]
 blocks: [feature-subagent-ui-visibility]

@@ -248,34 +248,9 @@ Sessions are discriminated by `SessionType`:
 
 **Auto-Creation (SendMessage):**
 
-```csharp
-// Called by GatewayHub.SendMessage()
-async Task<GatewaySession> ResolveOrCreateSessionAsync(AgentId agentId, ChannelKey channelType)
-{
-    // Find existing active session for agent + channel
-    var sessions = await _sessions.ListAsync(agentId, ct);
-    var existing = sessions.FirstOrDefault(s =>
-        s.Status == Active &&
-        s.ChannelType == channelType &&
-        s.SessionType == SessionType.UserAgent);
-    
-    if (existing != null)
-        return existing;
-    
-    // Create new session
-    var sessionId = SessionId.Create();  // Auto-generated
-    var session = await _sessions.GetOrCreateAsync(sessionId, agentId, ct);
-    session.SessionType = SessionType.UserAgent;
-    session.ChannelType = channelType;
-    session.Participants.Add(new SessionParticipant {
-        Type = ParticipantType.User,
-        Id = connectionId
-    });
-    
-    await _sessions.SaveAsync(session, ct);
-    return session;
-}
-```
+Finds an existing active UserAgent session for the agent+channel pair, or creates a new one with auto-generated SessionId. Sets session type, channel, and adds the caller as a User participant.
+
+See [GatewayHub.cs](../../src/gateway/BotNexus.Gateway.Api/Hubs/GatewayHub.cs)
 
 ### Session Participants
 

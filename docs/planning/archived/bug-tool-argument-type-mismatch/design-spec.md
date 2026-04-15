@@ -3,7 +3,7 @@ id: bug-tool-argument-type-mismatch
 title: "Tool Argument Type Mismatch Between StreamingJsonParser and Tool Parsers"
 type: bug
 priority: high
-status: delivered
+status: done
 created: 2026-04-14
 updated: 2026-04-14
 author: nova

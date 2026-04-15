@@ -3,7 +3,7 @@ id: bug-edit-tool-double-parse
 title: "EditTool Double-Parses edits Argument — ExecuteAsync Re-parses Already-Prepared EditEntry Objects"
 type: bug
 priority: high
-status: delivered
+status: done
 created: 2026-04-14
 updated: 2026-04-14
 author: nova
