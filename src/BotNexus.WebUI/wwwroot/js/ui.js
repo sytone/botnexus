@@ -1,5 +1,7 @@
 // BotNexus WebUI — Shared UI utilities
 
+import { getCollapsedSections, toggleSectionCollapsed } from './storage.js';
+
 // ── DOM Selectors ───────────────────────────────────────────────────
 
 export const $ = (sel) => document.querySelector(sel);
@@ -301,11 +303,21 @@ export function setSidebarCollapsedState(isCollapsed) {
 // ── Section Toggles ─────────────────────────────────────────────────
 
 export function initSectionToggles(onViewRequested) {
+    // Restore persisted collapsed sections
+    const collapsed = getCollapsedSections();
+    collapsed.forEach(sectionId => {
+        const el = document.getElementById(sectionId);
+        if (el) el.classList.add('collapsed');
+    });
+
     $$('.section-header[data-toggle]').forEach(header => {
         header.addEventListener('click', (e) => {
             if (e.target.closest('.btn-icon') || e.target.closest('.toggle-switch')) return;
             const target = document.getElementById(header.dataset.toggle);
-            if (target) target.classList.toggle('collapsed');
+            if (target) {
+                target.classList.toggle('collapsed');
+                toggleSectionCollapsed(header.dataset.toggle, target.classList.contains('collapsed'));
+            }
         });
     });
     $$('.section-header[data-view]').forEach(header => {

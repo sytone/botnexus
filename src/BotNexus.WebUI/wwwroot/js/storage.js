@@ -54,6 +54,7 @@ function setString(key, value) {
 const GENERAL = {
     sidebarCollapsed:  `${PREFIX}sidebar-collapsed`,
     collapsedAgents:   `${PREFIX}collapsed-agents`,
+    collapsedSections: `${PREFIX}collapsed-sections`,
     sendMode:          `${PREFIX}send-mode`,
     selectedModel:     `${PREFIX}selected-model`,
     lastAgent:         `${PREFIX}last-agent`,
@@ -81,6 +82,23 @@ export function toggleAgentCollapsed(displayName, isCollapsed) {
     if (isCollapsed) set.add(displayName);
     else set.delete(displayName);
     setCollapsedAgents(set);
+}
+
+// ── Section Collapse ────────────────────────────────────────────────
+
+export function getCollapsedSections() {
+    return new Set(getJson(GENERAL.collapsedSections, []));
+}
+
+export function setCollapsedSections(sectionSet) {
+    setJson(GENERAL.collapsedSections, [...sectionSet]);
+}
+
+export function toggleSectionCollapsed(sectionId, isCollapsed) {
+    const set = getCollapsedSections();
+    if (isCollapsed) set.add(sectionId);
+    else set.delete(sectionId);
+    setCollapsedSections(set);
 }
 
 // ── Send Mode ──────────────────────────────────────────────────────

@@ -99,6 +99,7 @@ export async function loadSessions() {
     });
     if (newFingerprint === sessionsFingerprint) return;
     sessionsFingerprint = newFingerprint;
+    sessionsInitialLoad = false;
 
     const collapsedAgents = getCollapsedAgents();
     dom.sessionsList.querySelectorAll('.agent-group-header.collapsed').forEach(el => {
