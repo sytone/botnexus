@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO.Abstractions;
+using BotNexus.Gateway.Abstractions.Security;
 
 namespace BotNexus.Tools.Utils;
 
@@ -8,11 +9,13 @@ namespace BotNexus.Tools.Utils;
 /// </summary>
 /// <remarks>
 /// <para>
-/// All public helpers enforce a single invariant: file system operations must stay inside the configured
-/// working directory root. This prevents accidental or malicious path traversal beyond the repository boundary.
+/// Most public helpers enforce workspace containment: file system operations must stay inside the configured
+/// working directory root to prevent accidental or malicious path traversal beyond the repository boundary.
+/// The exception is <see cref="NormalizePath"/>, which normalizes without enforcing containment — intended
+/// for paths that have already been validated by <see cref="IPathValidator"/>.
 /// </para>
 /// <para>
-/// These methods throw <see cref="InvalidOperationException"/> when a caller provides unsafe input.
+/// Containment-enforcing methods throw <see cref="InvalidOperationException"/> when a caller provides unsafe input.
 /// Tool implementations intentionally surface those exceptions to the agent loop as structured tool errors.
 /// </para>
 /// </remarks>
@@ -100,6 +103,43 @@ public static class PathUtils
     }
 
     /// <summary>
+    /// Normalizes a path to its full canonical form without enforcing workspace containment.
+    /// Use this for paths that have already been validated by <see cref="IPathValidator"/>.
+    /// </summary>
+    /// <param name="path">The path to normalize (absolute or relative).</param>
+    /// <param name="baseDirectory">Optional base directory for resolving relative paths.</param>
+    /// <param name="fileSystem">Optional file system abstraction.</param>
+    /// <returns>A normalized absolute path.</returns>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="path"/> is empty or relative without a base directory.</exception>
+    public static string NormalizePath(string path, string? baseDirectory = null, IFileSystem? fileSystem = null)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new ArgumentException("Path cannot be empty.", nameof(path));
+        }
+
+        var sanitized = SanitizePath(path);
+
+        string resolved;
+        if (Path.IsPathRooted(sanitized))
+        {
+            resolved = Path.GetFullPath(sanitized);
+        }
+        else if (!string.IsNullOrWhiteSpace(baseDirectory))
+        {
+            resolved = Path.GetFullPath(Path.Combine(Path.GetFullPath(baseDirectory), sanitized));
+        }
+        else
+        {
+            throw new ArgumentException(
+                "A base directory is required to resolve a relative path.", nameof(baseDirectory));
+        }
+
+        // Resolve symlinks but do NOT enforce containment — the caller has already validated access.
+        return ResolveFinalTargetPath(resolved, fileSystem);
+    }
+
+    /// <summary>
     /// Returns a display-friendly relative path from <paramref name="basePath"/> to <paramref name="fullPath"/>.
     /// </summary>
     /// <param name="fullPath">The full path to convert.</param>
@@ -123,29 +163,44 @@ public static class PathUtils
     }
 
     /// <summary>
-    /// Executes get git ignored paths.
+    /// Returns the subset of <paramref name="paths"/> that are ignored by the workspace's <c>.gitignore</c>.
     /// </summary>
-    /// <param name="paths">The paths.</param>
-    /// <param name="workingDirectory">The working directory.</param>
-    /// <param name="fileSystem">The file system.</param>
-    /// <returns>The get git ignored paths result.</returns>
+    /// <remarks>
+    /// Paths are partitioned into workspace and out-of-workspace groups. Only workspace paths are checked
+    /// against <c>git check-ignore</c>; out-of-workspace paths are silently excluded because this
+    /// workspace's <c>.gitignore</c> does not govern files in other repositories.
+    /// </remarks>
+    /// <param name="paths">Candidate file paths (absolute) to check.</param>
+    /// <param name="workingDirectory">The workspace root whose <c>.gitignore</c> rules apply.</param>
+    /// <param name="fileSystem">Optional file system abstraction for testability.</param>
+    /// <returns>A set of absolute paths from <paramref name="paths"/> that are git-ignored within the workspace.</returns>
     public static HashSet<string> GetGitIgnoredPaths(IEnumerable<string> paths, string workingDirectory, IFileSystem? fileSystem = null)
     {
         var fs = fileSystem ?? new FileSystem();
-        var resolved = paths
-            .Where(static path => !string.IsNullOrWhiteSpace(path))
-            .Select(path => ResolvePath(path, workingDirectory, fs))
-            .Distinct(PathComparer)
-            .ToList();
+        var root = Path.GetFullPath(workingDirectory);
+
+        // Partition paths: workspace paths get the full ResolvePath containment check;
+        // out-of-workspace paths are normalized only (their repo's .gitignore doesn't live here).
+        var workspacePaths = new List<string>();
+        foreach (var path in paths.Where(static p => !string.IsNullOrWhiteSpace(p)))
+        {
+            var normalized = NormalizePath(path, workingDirectory, fs);
+            if (IsUnderRoot(normalized, root))
+            {
+                workspacePaths.Add(normalized);
+            }
+            // Out-of-workspace paths are never git-ignored by THIS workspace's .gitignore.
+        }
 
         var ignored = new HashSet<string>(PathComparer);
-        if (resolved.Count == 0)
+        workspacePaths = workspacePaths.Distinct(PathComparer).ToList();
+        if (workspacePaths.Count == 0)
         {
             return ignored;
         }
 
         var relativeToAbsolute = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var path in resolved)
+        foreach (var path in workspacePaths)
         {
             var relative = GetRelativePath(path, workingDirectory)
                 .Replace(Path.DirectorySeparatorChar, '/');

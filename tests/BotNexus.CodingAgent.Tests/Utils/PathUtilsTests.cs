@@ -112,6 +112,166 @@ public sealed class PathUtilsTests : IDisposable
         }
     }
 
+    // ───────────────────────────────────────────────
+    //  NormalizePath tests
+    // ───────────────────────────────────────────────
+
+    [Fact]
+    public void NormalizePath_WithAbsolutePath_ReturnsNormalizedPath()
+    {
+        var input = Path.Combine(_workingDirectory, "src", "sub", "..", "file.txt");
+        var expected = Path.Combine(_workingDirectory, "src", "file.txt");
+
+        var result = PathUtils.NormalizePath(input);
+
+        result.Should().Be(expected);
+    }
+
+    [Fact]
+    public void NormalizePath_WithRelativePathAndBaseDirectory_ResolvesCorrectly()
+    {
+        var relativePath = Path.Combine("src", "file.txt");
+        var expected = Path.Combine(_workingDirectory, "src", "file.txt");
+
+        var result = PathUtils.NormalizePath(relativePath, _workingDirectory);
+
+        result.Should().Be(expected);
+    }
+
+    [Fact]
+    public void NormalizePath_WithRelativePathWithoutBaseDirectory_Throws()
+    {
+        var action = () => PathUtils.NormalizePath(Path.Combine("src", "file.txt"));
+
+        action.Should().Throw<ArgumentException>()
+            .WithMessage("*base directory*");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void NormalizePath_WithEmptyPath_Throws(string? path)
+    {
+        var action = () => PathUtils.NormalizePath(path!);
+
+        action.Should().Throw<ArgumentException>()
+            .WithMessage("*Path cannot be empty*");
+    }
+
+    [Fact]
+    public void NormalizePath_WithOutOfWorkspacePath_DoesNotThrow()
+    {
+        // Create a second temp directory that is definitively outside _workingDirectory.
+        var outsideDirectory = Path.Combine(Path.GetTempPath(), $"botnexus-pathutils-outside-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(outsideDirectory);
+
+        try
+        {
+            var outsidePath = Path.Combine(outsideDirectory, "some", "file.txt");
+
+            // NormalizePath should NOT throw for out-of-workspace paths (unlike ResolvePath).
+            var result = PathUtils.NormalizePath(outsidePath);
+
+            result.Should().Be(outsidePath);
+        }
+        finally
+        {
+            if (Directory.Exists(outsideDirectory))
+            {
+                Directory.Delete(outsideDirectory, recursive: true);
+            }
+        }
+    }
+
+    // ───────────────────────────────────────────────
+    //  GetGitIgnoredPaths tests
+    // ───────────────────────────────────────────────
+
+    [Fact]
+    public void GetGitIgnoredPaths_WithOutOfWorkspacePaths_DoesNotThrow()
+    {
+        var outsideDirectory = Path.Combine(Path.GetTempPath(), $"botnexus-pathutils-outside-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(outsideDirectory);
+
+        try
+        {
+            var outsidePaths = new[]
+            {
+                Path.Combine(outsideDirectory, "file1.txt"),
+                Path.Combine(outsideDirectory, "sub", "file2.txt"),
+            };
+
+            // Out-of-workspace paths must not throw (the bug that was fixed).
+            var ignored = PathUtils.GetGitIgnoredPaths(outsidePaths, _workingDirectory);
+
+            // Out-of-workspace paths are never reported as git-ignored by this workspace.
+            ignored.Should().BeEmpty();
+        }
+        finally
+        {
+            if (Directory.Exists(outsideDirectory))
+            {
+                Directory.Delete(outsideDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void GetGitIgnoredPaths_WithMixedWorkspaceAndOutOfWorkspacePaths_ProcessesWorkspaceOnly()
+    {
+        var outsideDirectory = Path.Combine(Path.GetTempPath(), $"botnexus-pathutils-outside-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(outsideDirectory);
+
+        try
+        {
+            var workspacePath = Path.Combine(_workingDirectory, "src", "app.cs");
+            var outsidePath = Path.Combine(outsideDirectory, "external.cs");
+
+            var allPaths = new[] { workspacePath, outsidePath };
+
+            // Should not throw, and out-of-workspace paths must not appear in the ignored set.
+            var ignored = PathUtils.GetGitIgnoredPaths(allPaths, _workingDirectory);
+
+            ignored.Should().NotContain(outsidePath,
+                "out-of-workspace paths should never appear in the ignored set");
+        }
+        finally
+        {
+            if (Directory.Exists(outsideDirectory))
+            {
+                Directory.Delete(outsideDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void GetGitIgnoredPaths_WithEmptyPaths_ReturnsEmptySet()
+    {
+        var paths = new[] { "", "   ", null! };
+
+        var ignored = PathUtils.GetGitIgnoredPaths(paths, _workingDirectory);
+
+        ignored.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void GetGitIgnoredPaths_WithOnlyWorkspacePaths_StillWorks()
+    {
+        // Regression test: existing behaviour for workspace-only paths must be preserved.
+        var workspacePaths = new[]
+        {
+            Path.Combine(_workingDirectory, "src", "file1.cs"),
+            Path.Combine(_workingDirectory, "tests", "file2.cs"),
+        };
+
+        // The temp directory is not a git repo, so git check-ignore will exit quickly.
+        // We only assert the call completes without throwing.
+        var action = () => PathUtils.GetGitIgnoredPaths(workspacePaths, _workingDirectory);
+
+        action.Should().NotThrow();
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_workingDirectory))
