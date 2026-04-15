@@ -216,6 +216,8 @@ app.MapGet("/api/version", () =>
     var gitHash = GetGitCommitHash();
     return Results.Ok(new { version = buildTime, commit = gitHash });
 });
+var gatewayStartedAtUtc = DateTimeOffset.UtcNow;
+app.MapGet("/api/uptime", () => Results.Ok(new { startedAt = gatewayStartedAtUtc }));
 app.MapGet("/api/world", () => Results.Ok(worldDescriptor));
 app.MapFallbackToFile("index.html");
 

@@ -1,7 +1,7 @@
 // BotNexus WebUI — Entry point (ES module)
 // Wires all modules together: hub, events, sidebar, chat, DOM listeners.
 
-import { API_BASE, initVersionCheck } from './api.js';
+import { API_BASE, initVersionCheck, initUptime } from './api.js';
 import {
     dom, $, initMarkdown, scrollToBottom, updateScrollButton, resetNewMessageCount,
     autoResize, setStatus, showConnectionBanner, hideConnectionBanner,
@@ -328,6 +328,7 @@ function init() {
         console.log('[botnexus] initHub complete');
         initSubAgentPanel();
         initVersionCheck();
+        initUptime();
         setSidebarCollapsedState(getSidebarCollapsed());
         void restoreInitialView();
         console.log('[botnexus] init complete');

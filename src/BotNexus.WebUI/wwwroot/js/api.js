@@ -113,6 +113,45 @@ function _scheduleVersionPoll() {
     }, 10000);
 }
 
+// ── Uptime Tracking ─────────────────────────────────────────────────
+
+let _uptimeInterval = null;
+let _gatewayStartedAt = null;
+
+function _formatUptime(ms) {
+    const secs = Math.floor(ms / 1000);
+    const d = Math.floor(secs / 86400);
+    const h = Math.floor((secs % 86400) / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const s = secs % 60;
+    if (d > 0) return `${d}d ${h}h ${m}m`;
+    if (h > 0) return `${h}h ${m}m ${s}s`;
+    return `${m}m ${s}s`;
+}
+
+function _updateUptimeDisplay() {
+    const el = document.getElementById('uptime-display');
+    if (!el || !_gatewayStartedAt) return;
+    const elapsed = Date.now() - _gatewayStartedAt.getTime();
+    el.textContent = `⏱ ${_formatUptime(elapsed)}`;
+    el.title = `Gateway started ${_gatewayStartedAt.toLocaleString()}`;
+}
+
+export function initUptime() {
+    fetch('/api/uptime')
+        .then(r => r.json())
+        .then(d => {
+            _gatewayStartedAt = new Date(d.startedAt);
+            _updateUptimeDisplay();
+            if (_uptimeInterval) clearInterval(_uptimeInterval);
+            _uptimeInterval = setInterval(_updateUptimeDisplay, 1000);
+        })
+        .catch(() => {
+            const el = document.getElementById('uptime-display');
+            if (el) el.textContent = '⏱ —';
+        });
+}
+
 /** Post client logs to server for unified debugging. */
 export function serverLog(level, message, data, options = {}) {
     const normalizedLevel = String(level || 'info').toLowerCase();

@@ -146,6 +146,10 @@ body {
     opacity: 0.7; transition: opacity 0.2s;
 }
 .btn-stop-gateway:hover { opacity: 1; }
+.uptime-display {
+    font-size: 0.72rem; color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
 
 /* === Buttons === */
 .btn {
