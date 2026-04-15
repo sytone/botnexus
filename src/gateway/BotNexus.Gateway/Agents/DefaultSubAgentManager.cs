@@ -63,7 +63,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         var archetype = request.Archetype ?? SubAgentArchetype.General;
         var childSessionId = SessionId.ForSubAgent(request.ParentSessionId, uniqueId);
         var subAgentId = uniqueId;
-        var childAgentId = AgentId.From($"{request.ParentAgentId}::subagent::{archetype.Value}::{uniqueId}");
+        var childAgentId = AgentId.From($"{request.ParentAgentId}--subagent--{archetype.Value}--{uniqueId}");
 
         if (!_registry.Contains(childAgentId))
         {

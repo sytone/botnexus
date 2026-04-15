@@ -74,7 +74,7 @@ public sealed class DefaultSubAgentManagerActivityTests
         supervisor = new Mock<IAgentSupervisor>();
         supervisor
             .Setup(s => s.GetOrCreateAsync(
-                It.Is<BotNexus.Domain.Primitives.AgentId>(id => id.Value.StartsWith("parent-agent::subagent::", StringComparison.Ordinal)),
+                It.Is<BotNexus.Domain.Primitives.AgentId>(id => id.Value.StartsWith("parent-agent--subagent--", StringComparison.Ordinal)),
                 It.Is<BotNexus.Domain.Primitives.SessionId>(id => id.Value.Contains("::subagent::", StringComparison.Ordinal)),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(childHandle.Object);
@@ -83,7 +83,7 @@ public sealed class DefaultSubAgentManagerActivityTests
             .ReturnsAsync(CreateSuccessfulHandle().Object);
         supervisor
             .Setup(s => s.StopAsync(
-                It.Is<BotNexus.Domain.Primitives.AgentId>(id => id.Value.StartsWith("parent-agent::subagent::", StringComparison.Ordinal)),
+                It.Is<BotNexus.Domain.Primitives.AgentId>(id => id.Value.StartsWith("parent-agent--subagent--", StringComparison.Ordinal)),
                 It.IsAny<BotNexus.Domain.Primitives.SessionId>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
