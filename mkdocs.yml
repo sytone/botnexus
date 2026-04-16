@@ -126,9 +126,13 @@ nav:
       - DDD Patterns: development/ddd-patterns.md
       - Triggers and Federation: development/triggers-and-federation.md
       - WebUI Connection: development/webui-connection.md
+  - Guides:
+      - Audio Recording: guides/audio-recording.md
   - Features:
       - Sub-Agent Spawning: features/sub-agent-spawning.md
-  - Extension Development: extension-development.md
+  - Extensions:
+      - Extension Development: extension-development.md
+      - Media Handlers: extensions/media-handlers.md
   - Observability: observability.md
   - Skills: skills.md
   - Cron & Scheduling: cron-and-scheduling.md
