@@ -2,7 +2,7 @@
 
 import {
     API_BASE, fetchJson, normalizeChannelKey, toHubChannelType, channelDisplayName,
-    debugLog, serverLog, sealSession
+    debugLog, serverLog, sealSession, getCommands, postCommandExecute
 } from './api.js';
 import {
     dom, $, escapeHtml, formatTime, relativeTime, renderMarkdown, scrollToBottom,
@@ -780,27 +780,68 @@ export function closeToolModal() { dom.toolModal.classList.add('hidden'); }
 
 // ── Command palette ─────────────────────────────────────────────────
 
-const COMMANDS = [
-    { name: '/help', description: 'Show available commands' },
-    { name: '/new', description: 'Start a new chat session' },
-    { name: '/reset', description: 'Clear chat and reset current session' },
-    { name: '/status', description: 'Show gateway health status' },
-    { name: '/agents', description: 'List available agents' },
+const FALLBACK_COMMANDS = [
+    { name: '/help', description: 'Show available commands', clientSideOnly: true },
+    { name: '/new', description: 'Start a new chat session', clientSideOnly: true },
+    { name: '/reset', description: 'Clear chat and reset current session', clientSideOnly: true },
 ];
 
-export function showCommandPalette(filter) {
-    const query = filter.toLowerCase();
-    const matches = COMMANDS.filter(c => c.name.startsWith(query));
-    if (matches.length === 0) { hideCommandPalette(); return; }
+let _commands = [...FALLBACK_COMMANDS];
+
+/** Fetch commands from the backend and cache them. Called on startup and reconnect. */
+export async function loadCommands() {
+    const cmds = await getCommands();
+    if (cmds && cmds.length > 0) {
+        _commands = cmds;
+        debugLog('commands', `Loaded ${cmds.length} commands from backend`);
+    } else {
+        debugLog('commands', 'No commands from backend, using fallback');
+    }
+}
+
+export function showCommandPalette(text) {
+    const input = text.toLowerCase();
+    const spaceIdx = input.indexOf(' ');
+    let items = [];
+
+    if (spaceIdx === -1) {
+        // Top-level: filter commands by prefix
+        const matches = _commands.filter(c => c.name.startsWith(input));
+        items = matches.map(c => ({
+            label: c.name,
+            desc: c.description,
+            action: (c.subCommands && c.subCommands.length > 0) ? 'expand' : 'execute',
+            fullInput: c.name
+        }));
+    } else {
+        // Sub-command: find parent command, filter its sub-commands
+        const cmdName = input.substring(0, spaceIdx);
+        const subFilter = input.substring(spaceIdx + 1);
+        const parent = _commands.find(c => c.name === cmdName);
+        if (parent?.subCommands) {
+            const matches = parent.subCommands.filter(sc => sc.name.startsWith(subFilter));
+            items = matches.map(sc => ({
+                label: sc.name,
+                desc: sc.description,
+                action: 'execute',
+                fullInput: `${parent.name} ${sc.name}`
+            }));
+        }
+    }
+
+    if (items.length === 0) { hideCommandPalette(); return; }
     commandPaletteIndex = 0;
     dom.commandPalette.innerHTML = '';
-    for (let i = 0; i < matches.length; i++) {
+    for (let i = 0; i < items.length; i++) {
+        const item = items[i];
         const el = document.createElement('div');
         el.className = 'command-item' + (i === 0 ? ' active' : '');
         el.setAttribute('role', 'option');
         el.dataset.index = i;
-        el.innerHTML = `<span class="command-name">${escapeHtml(matches[i].name)}</span><span class="command-desc">${escapeHtml(matches[i].description)}</span>`;
-        el.addEventListener('click', () => executeCommand(matches[i].name));
+        el.dataset.action = item.action;
+        el.dataset.fullInput = item.fullInput;
+        el.innerHTML = `<span class="command-name">${escapeHtml(item.label)}</span><span class="command-desc">${escapeHtml(item.desc)}</span>`;
+        el.addEventListener('click', () => _selectPaletteItem(item));
         dom.commandPalette.appendChild(el);
     }
     const hint = document.createElement('div');
@@ -808,6 +849,17 @@ export function showCommandPalette(filter) {
     hint.textContent = '↑↓ navigate · Tab or Enter to select · Esc to dismiss';
     dom.commandPalette.appendChild(hint);
     dom.commandPalette.classList.remove('hidden');
+}
+
+function _selectPaletteItem(item) {
+    if (item.action === 'expand') {
+        hideCommandPalette();
+        dom.chatInput.value = item.fullInput + ' ';
+        autoResize(dom.chatInput);
+        showCommandPalette(dom.chatInput.value);
+    } else {
+        executeCommand(item.fullInput);
+    }
 }
 
 export function hideCommandPalette() {
@@ -830,27 +882,52 @@ export function navigateCommandPalette(direction) {
 }
 
 export function acceptCommandPalette() {
-    const active = dom.commandPalette.querySelector('.command-item.active .command-name');
-    if (active) executeCommand(active.textContent);
+    const active = dom.commandPalette.querySelector('.command-item.active');
+    if (!active) return;
+    _selectPaletteItem({
+        action: active.dataset.action,
+        fullInput: active.dataset.fullInput
+    });
 }
 
-function executeCommand(name) {
+async function executeCommand(input) {
     hideCommandPalette();
     dom.chatInput.value = '';
     autoResize(dom.chatInput);
     updateSendButtonState();
-    switch (name) {
-        case '/help': executeHelp(); break;
-        case '/new': executeReset('new'); break;
-        case '/reset': executeReset(); break;
-        case '/status': executeStatus(); break;
-        case '/agents': executeAgents(); break;
-        default: appendSystemMessage(`Unknown command: ${name}`); break;
+
+    const cmdName = input.split(/\s/)[0].toLowerCase();
+    const cmd = _commands.find(c => c.name === cmdName);
+
+    if (!cmd) {
+        appendSystemMessage(`Unknown command: ${input}`);
+        return;
+    }
+
+    // Client-side commands execute locally
+    if (cmd.clientSideOnly) {
+        switch (cmdName) {
+            case '/reset': executeReset(); break;
+            case '/help': _executeHelpFallback(); break;
+            case '/new': executeReset('new'); break;
+            default: appendSystemMessage(`Unknown client command: ${cmdName}`); break;
+        }
+        return;
+    }
+
+    // Backend commands
+    appendSystemMessage(`⏳ Running ${input}...`);
+    const result = await postCommandExecute(input, getCurrentAgentId(), getCurrentSessionId());
+    appendCommandResult(result.title, result.body, result.isError);
+
+    // /new requires client-side session switch after backend confirms
+    if (cmdName === '/new' && !result.isError) {
+        executeReset('new');
     }
 }
 
-function executeHelp() {
-    const lines = COMMANDS.map(c => `  ${c.name.padEnd(12)} ${c.description}`).join('\n');
+function _executeHelpFallback() {
+    const lines = _commands.map(c => `  ${c.name.padEnd(12)} ${c.description}`).join('\n');
     appendCommandResult('📖 Available Commands', lines);
     appendSystemMessage('Tip: Type / in the input box or press Ctrl+K to open the command palette.');
 }
@@ -898,49 +975,11 @@ export async function executeReset(commandType = 'reset') {
     loadSessions();
 }
 
-async function executeStatus() {
-    appendSystemMessage('⏳ Checking gateway status...');
-    try {
-        const res = await fetch('/health');
-        if (res.ok) {
-            const data = await res.json().catch(() => null);
-            if (data) {
-                const lines = Object.entries(data).map(([k, v]) =>
-                    `  ${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`
-                ).join('\n');
-                appendCommandResult('✅ Gateway Status', lines);
-            } else {
-                appendCommandResult('✅ Gateway Status', `  HTTP ${res.status} — healthy`);
-            }
-        } else {
-            appendCommandResult('⚠️ Gateway Status', `  HTTP ${res.status} — ${res.statusText}`);
-        }
-    } catch (e) {
-        appendCommandResult('❌ Gateway Unreachable', `  ${e.message}`);
-    }
-}
-
-async function executeAgents() {
-    appendSystemMessage('⏳ Fetching agents...');
-    const agents = await fetchJson('/agents');
-    if (!agents || agents.length === 0) { appendCommandResult('🧠 Agents', '  No agents configured.'); return; }
-    const lines = agents.map(a => {
-        const name = a.name || a.id || 'unnamed';
-        const provider = a.provider || '';
-        const model = a.model || '';
-        const parts = [`  ${name}`];
-        if (provider) parts.push(`provider: ${provider}`);
-        if (model) parts.push(`model: ${model}`);
-        return parts.join(' — ');
-    }).join('\n');
-    appendCommandResult(`🧠 Agents (${agents.length})`, lines);
-}
-
-function appendCommandResult(title, body) {
+function appendCommandResult(title, body, isError = false) {
     const el = getActiveMessagesEl();
     if (!el) return;
     const div = document.createElement('div');
-    div.className = 'message system-msg command-result';
+    div.className = `message system-msg command-result${isError ? ' command-error' : ''}`;
     div.innerHTML = `<div class="command-result-title">${escapeHtml(title)}</div><pre>${escapeHtml(body)}</pre>`;
     el.appendChild(div);
     scrollToBottom(false, el);
@@ -963,13 +1002,13 @@ export async function sendMessage() {
 
     if (text.startsWith('/')) {
         const cmd = text.split(/\s/)[0].toLowerCase();
-        const match = COMMANDS.find(c => c.name === cmd);
+        const match = _commands.find(c => c.name === cmd);
         if (match) {
             dom.chatInput.value = '';
             autoResize(dom.chatInput);
             updateSendButtonState();
             hideCommandPalette();
-            executeCommand(match.name);
+            executeCommand(text);
             return;
         }
     }

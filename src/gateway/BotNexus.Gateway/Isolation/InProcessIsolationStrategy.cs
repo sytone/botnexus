@@ -443,13 +443,14 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 /// <summary>
 /// Agent handle that wraps an in-process <see cref="BotNexus.AgentCore.Agent"/> instance.
 /// </summary>
-internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable
+internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAgentHandleInspector
 {
     private readonly Agent _agent;
     private readonly ILogger _logger;
     private readonly McpServerManager? _mcpManager;
     private readonly McpInvokeTool? _mcpInvokeTool;
     private readonly IReadOnlyList<object> _disposableTools;
+    private readonly IReadOnlyDictionary<string, IAgentTool> _toolsByName;
 
     public InProcessAgentHandle(
         Agent agent,
@@ -472,6 +473,9 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable
             .Cast<object>()
             .ToList()
             ?? [];
+        _toolsByName = (tools ?? [])
+            .GroupBy(static tool => tool.Name, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(static group => group.Key, static group => group.First(), StringComparer.OrdinalIgnoreCase);
     }
 
     /// <inheritdoc />
@@ -482,6 +486,26 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable
 
     /// <inheritdoc />
     public bool IsRunning => _agent.Status == AgentStatus.Running;
+
+    /// <inheritdoc />
+    public IAgentHandle? GetHandle(AgentId agentId, SessionId sessionId)
+        => string.Equals(AgentId, agentId, StringComparison.OrdinalIgnoreCase) &&
+           string.Equals(SessionId, sessionId, StringComparison.OrdinalIgnoreCase)
+            ? this
+            : null;
+
+    /// <inheritdoc />
+    public IAgentTool? ResolveTool(AgentId agentId, SessionId sessionId, string toolName)
+    {
+        if (!string.Equals(AgentId, agentId, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(SessionId, sessionId, StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(toolName))
+        {
+            return null;
+        }
+
+        return _toolsByName.TryGetValue(toolName, out var tool) ? tool : null;
+    }
 
     /// <inheritdoc />
     public async Task<AgentResponse> PromptAsync(string message, CancellationToken cancellationToken = default)

@@ -12,7 +12,7 @@ import {
     getCurrentSessionId, getCurrentAgentId, isCurrentSessionStreaming,
     channelManager
 } from './session-store.js';
-import { initHub, getConnection, manualReconnect } from './hub.js';
+import { initHub, getConnection, manualReconnect, onHubReconnected } from './hub.js';
 import { registerEventHandlers } from './events.js';
 import {
     initSidebar, loadSessions, loadChannels, loadExtensions, loadAgents,
@@ -27,7 +27,8 @@ import {
     navigateCommandPalette, acceptCommandPalette, executeReset,
     toggleToolVisibility, toggleThinkingVisibility, syncTogglesFromActiveStore,
     openToolModal, closeToolModal, handleModelChange,
-    appendSystemMessage, initSubAgentPanel, openAgentTimeline
+    appendSystemMessage, initSubAgentPanel, openAgentTimeline,
+    loadCommands
 } from './chat.js';
 import {
     getLastContext,
@@ -90,7 +91,7 @@ function initEventListeners() {
         autoResize(dom.chatInput);
         updateSendButtonState();
         const text = dom.chatInput.value;
-        if (text.startsWith('/') && !text.includes(' ')) {
+        if (text.startsWith('/')) {
             showCommandPalette(text);
         } else {
             hideCommandPalette();
@@ -326,6 +327,8 @@ function init() {
         console.log('[botnexus] calling initHub...');
         initHub(registerEventHandlers);
         console.log('[botnexus] initHub complete');
+        onHubReconnected(loadCommands);
+        loadCommands();
         initSubAgentPanel();
         initVersionCheck();
         initUptime();

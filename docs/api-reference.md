@@ -11,9 +11,10 @@ Complete reference for BotNexus REST API endpoints, including agents, sessions, 
 5. [Channels Management](#channels-management)
 6. [Extensions Management](#extensions-management)
 7. [Chat](#chat)
-8. [Session Management](#session-management)
-9. [System & Status](#system--status)
-10. [Error Handling](#error-handling)
+8. [Commands](#commands)
+9. [Session Management](#session-management)
+10. [System & Status](#system--status)
+11. [Error Handling](#error-handling)
 
 ---
 
@@ -734,6 +735,204 @@ Content-Type: application/json
 **Error Responses:**
 - `404 Not Found` — Agent session not found
 - `429 Too Many Requests` — Agent concurrency limit exceeded
+
+---
+
+## Commands
+
+The Commands API allows clients to discover and execute slash commands contributed by extensions and built-in handlers. Commands are backend-driven, enabling a unified command palette across WebUI, TUI, and future client surfaces.
+
+### List Commands
+
+**Endpoint:** `GET /api/commands`
+
+**Description:** Retrieve all available commands (built-in + extension-contributed). Used by client surfaces to populate command palettes and autocomplete.
+
+**Request:**
+```http
+GET /api/commands
+X-Api-Key: your-api-key
+```
+
+**Response:** 200 OK
+```json
+[
+  {
+    "name": "/help",
+    "description": "Show available commands",
+    "category": "System",
+    "clientSideOnly": false,
+    "subCommands": null
+  },
+  {
+    "name": "/agents",
+    "description": "List available agents",
+    "category": "System",
+    "clientSideOnly": false,
+    "subCommands": null
+  },
+  {
+    "name": "/skills",
+    "description": "Manage skills for the current agent",
+    "category": "Extension",
+    "clientSideOnly": false,
+    "subCommands": [
+      {
+        "name": "list",
+        "description": "Show loaded, available, and denied skills"
+      },
+      {
+        "name": "info",
+        "description": "Show skill metadata and size"
+      },
+      {
+        "name": "add",
+        "description": "Load a skill into the current session"
+      },
+      {
+        "name": "remove",
+        "description": "Unload a skill from the current session"
+      },
+      {
+        "name": "reload",
+        "description": "Re-discover skills from disk"
+      }
+    ]
+  },
+  {
+    "name": "/reset",
+    "description": "Clear chat and reset current session",
+    "category": "System",
+    "clientSideOnly": true,
+    "subCommands": null
+  }
+]
+```
+
+**Response Fields:**
+- `name` (string) — Command name including slash (e.g., "/skills")
+- `description` (string) — Short description for the command palette
+- `category` (string) — Command category: "System" (built-in) or "Extension" (contributor)
+- `clientSideOnly` (boolean) — If true, client handles execution without backend call (e.g., `/reset` manages DOM/reconnect). If false, execution requires POST to `/api/commands/execute`
+- `subCommands` (array of objects, nullable) — Sub-command definitions (e.g., "/skills list", "/skills info <name>"). Null if command has no sub-commands
+  - `name` (string) — Sub-command name (without slash)
+  - `description` (string) — Sub-command description
+
+**Notes:**
+- Client-side commands (where `clientSideOnly: true`) execute locally without backend involvement
+- Backend commands are executed via `POST /api/commands/execute`
+- Extensions register commands via `ICommandContributor` interface during gateway startup
+- Command name collisions are resolved by first-registered-wins; duplicates are logged as warnings
+
+---
+
+### Execute Command
+
+**Endpoint:** `POST /api/commands/execute`
+
+**Description:** Execute a slash command and return the result. Routes to the appropriate handler (built-in or extension-contributed) based on command name.
+
+**Request Body:**
+```json
+{
+  "input": "/skills list",
+  "agentId": "nova",
+  "sessionId": "sess-123abc"
+}
+```
+
+**Field Descriptions:**
+- `input` (string, required) — Full command text including slash and arguments (e.g., "/skills list", "/skills info my-skill")
+- `agentId` (string, optional) — Agent context for the command. Required for agent-aware commands like `/skills`
+- `sessionId` (string, optional) — Session context for the command
+
+**Request:**
+```http
+POST /api/commands/execute
+X-Api-Key: your-api-key
+Content-Type: application/json
+
+{
+  "input": "/skills list",
+  "agentId": "nova",
+  "sessionId": "sess-123abc"
+}
+```
+
+**Response:** 200 OK
+```json
+{
+  "title": "📚 Skills for nova",
+  "body": "Loaded (3):\n  ado-work-management          Unified ADO work management...\n  m365-communication           Microsoft 365 communication...\n  reference-bank               Shared reference data...\n\nAvailable (8):\n  calendar-interaction         Calendar management...\n  datetime-helper              Date/time utilities...\n  ...\n\nConfig: max 20 loaded, ~25K token budget, ~10.5K used",
+  "isError": false
+}
+```
+
+**Response Fields:**
+- `title` (string) — Display title for the result block (e.g., "📚 Skills for nova")
+- `body` (string) — Result content (plain text, rendered in a preformatted block)
+- `isError` (boolean) — True if the command execution failed. When true, the client should render the body as an error message
+
+**Example: /skills info**
+
+**Request:**
+```http
+POST /api/commands/execute
+X-Api-Key: your-api-key
+Content-Type: application/json
+
+{
+  "input": "/skills info ado-work-management",
+  "agentId": "nova",
+  "sessionId": "sess-123abc"
+}
+```
+
+**Response:** 200 OK
+```json
+{
+  "title": "Skill: ado-work-management",
+  "body": "Name:         ado-work-management\nDescription:  Unified ADO work management...\nSource:       Global (~/.botnexus/skills/ado-work-management/)\nStatus:       Loaded (auto-load)\nSize:         ~3,200 tokens\nLicense:      MIT\nFiles:        SKILL.md, reference/features.md, workflows/",
+  "isError": false
+}
+```
+
+**Example: Error Response**
+
+**Request:**
+```http
+POST /api/commands/execute
+X-Api-Key: your-api-key
+Content-Type: application/json
+
+{
+  "input": "/skills add nonexistent-skill",
+  "agentId": "nova",
+  "sessionId": "sess-123abc"
+}
+```
+
+**Response:** 200 OK
+```json
+{
+  "title": "Error",
+  "body": "Skill 'nonexistent-skill' not found. Available skills: ado-work-management, m365-communication, ...",
+  "isError": true
+}
+```
+
+**Error Responses:**
+- `400 Bad Request` — Malformed input (e.g., empty string, missing required fields)
+- `404 Not Found` — Command not recognized (no handler found for the command name)
+- `400 Bad Request` — Invalid arguments (e.g., sub-command not found for a command with sub-commands)
+
+**Notes:**
+- All command errors return HTTP 200 with `isError: true` in the response body, not HTTP error codes. This allows clients to consistently handle command results (success or failure) in a unified way
+- Exception: Malformed requests or unrecognized commands return HTTP 4xx errors
+- Built-in commands (e.g., `/help`, `/status`, `/agents`) are implemented in the Gateway as built-in handlers
+- Extension commands (e.g., `/skills`) are implemented by extensions that implement the `ICommandContributor` interface
+- Commands are agent-aware when applicable (e.g., `/skills list` shows skills for the specified agent)
+- Sub-command parsing is case-insensitive (e.g., "/skills LIST" and "/skills list" are equivalent)
 
 ---
 

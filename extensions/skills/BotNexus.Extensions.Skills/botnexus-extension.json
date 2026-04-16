@@ -3,5 +3,5 @@
   "name": "Skills Extension",
   "version": "1.0.0",
   "entryAssembly": "BotNexus.Extensions.Skills.dll",
-  "extensionTypes": ["tool"]
+  "extensionTypes": ["tool", "command"]
 }

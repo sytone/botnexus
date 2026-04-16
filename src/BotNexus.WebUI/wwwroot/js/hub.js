@@ -6,10 +6,14 @@ import { channelManager } from './session-store.js';
 
 let connection = null;
 let connectionId = null;
+const _reconnectCallbacks = [];
 
 export function getConnection() { return connection; }
 export function getConnectionId() { return connectionId; }
 export function setConnectionId(id) { connectionId = id; }
+
+/** Register a callback to run on SignalR reconnect. */
+export function onHubReconnected(fn) { _reconnectCallbacks.push(fn); }
 
 /** Safe invoke — guards against null / disconnected connection. */
 export async function hubInvoke(method, ...args) {
@@ -72,6 +76,7 @@ export function initHub(registerEvents) {
             debugLog('lifecycle', 'Reconnect SubscribeAll failed:', err.message);
             serverLog('error', 'Reconnect SubscribeAll failed', { error: err?.message || String(err) });
         });
+        _reconnectCallbacks.forEach(fn => { try { fn(); } catch (e) { console.error('Reconnect callback error:', e); } });
     });
 
     connection.onclose(() => {

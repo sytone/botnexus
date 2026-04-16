@@ -1,6 +1,7 @@
 using BotNexus.Extensions.Skills;
 using BotNexus.Gateway.Abstractions.Models;
 using FluentAssertions;
+using System.Reflection;
 
 namespace BotNexus.Extensions.Skills.Tests;
 
@@ -195,5 +196,68 @@ public sealed class SkillToolTests
         text.Should().Contain("b");
         text.Should().Contain("Available Skills");
         text.Should().Contain("c");
+    }
+
+    [Fact]
+    public async Task TryUnload_LoadedSkill_ReturnsTrue()
+    {
+        var tool = new SkillTool([MakeSkill("calendar")], config: null);
+        await tool.ExecuteAsync("c1", Args("load", "calendar"));
+
+        var result = InvokeTryUnload(tool, "calendar");
+
+        result.Should().BeTrue();
+    }
+
+    [Fact]
+    public void TryUnload_NotLoaded_ReturnsFalse()
+    {
+        var tool = new SkillTool([MakeSkill("calendar")], config: null);
+
+        var result = InvokeTryUnload(tool, "calendar");
+
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public void DiscoveryPaths_ReturnsConfiguredPaths()
+    {
+        var tool = new SkillTool("global-path", "agent-path", "workspace-path", config: null);
+
+        var result = InvokeDiscoveryPaths(tool);
+
+        result.Should().Be(("global-path", "agent-path", "workspace-path"));
+    }
+
+    [Fact]
+    public void Config_ReturnsSkillsConfig()
+    {
+        var config = new SkillsConfig { Enabled = true };
+        var tool = new SkillTool("global-path", "agent-path", "workspace-path", config);
+
+        var result = InvokeConfig(tool);
+
+        result.Should().BeSameAs(config);
+    }
+
+    private static bool InvokeTryUnload(SkillTool tool, string skillName)
+    {
+        var method = tool.GetType().GetMethod("TryUnload", BindingFlags.Public | BindingFlags.Instance);
+        method.Should().NotBeNull("SkillTool must expose TryUnload for /skills remove.");
+        return (bool)method!.Invoke(tool, [skillName])!;
+    }
+
+    private static (string? Global, string? Agent, string? Workspace) InvokeDiscoveryPaths(SkillTool tool)
+    {
+        var property = tool.GetType().GetProperty("DiscoveryPaths", BindingFlags.Public | BindingFlags.Instance);
+        property.Should().NotBeNull("SkillTool must expose DiscoveryPaths for /skills command output.");
+        return ((string? Global, string? Agent, string? Workspace))property!.GetValue(tool)!;
+    }
+
+    private static SkillsConfig? InvokeConfig(SkillTool tool)
+    {
+        var property = tool.GetType().GetProperty("Config", BindingFlags.Public | BindingFlags.Instance);
+        property.Should().NotBeNull("SkillTool must expose Config for /skills command output.");
+        return (SkillsConfig?)property!.GetValue(tool);
     }
 }

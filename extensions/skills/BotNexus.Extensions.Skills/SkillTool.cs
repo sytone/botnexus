@@ -33,6 +33,8 @@ public sealed class SkillTool(
     private IReadOnlyList<SkillDefinition> DiscoverSkills()
         => _staticSkills ?? SkillDiscovery.Discover(globalSkillsDir, agentSkillsDir, workspaceSkillsDir, _fileSystem);
 
+    public IReadOnlyList<SkillDefinition> GetDiscoveredSkills() => DiscoverSkills();
+
     public string Name => "skills";
     public string Label => "Skill Manager";
 
@@ -59,6 +61,17 @@ public sealed class SkillTool(
 
     /// <summary>Gets the set of skill names explicitly loaded during this session.</summary>
     public IReadOnlySet<string> SessionLoadedSkills => _sessionLoaded.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+    public SkillsConfig? Config => config;
+    public (string? Global, string? Agent, string? Workspace) DiscoveryPaths
+        => (globalSkillsDir, agentSkillsDir, workspaceSkillsDir);
+
+    public bool TryUnload(string skillName)
+    {
+        if (string.IsNullOrWhiteSpace(skillName))
+            return false;
+
+        return _sessionLoaded.TryRemove(skillName, out _);
+    }
 
     public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(
         IReadOnlyDictionary<string, object?> arguments,

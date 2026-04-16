@@ -689,6 +689,13 @@ body {
     color: var(--accent);
     margin-bottom: 4px;
 }
+.command-result.command-error {
+    border-color: rgba(244,67,54,0.4);
+    background: rgba(244,67,54,0.08);
+}
+.command-result.command-error .command-result-title {
+    color: var(--error);
+}
 
 .btn-sending {
     opacity: 0.85;

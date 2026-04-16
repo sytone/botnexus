@@ -179,3 +179,29 @@ export async function sealSession(sessionId) {
         return false;
     }
 }
+
+// ── Command API ─────────────────────────────────────────────────────
+
+/** Fetch available commands from the backend. Returns array of CommandDescriptor. */
+export async function getCommands() {
+    return await fetchJson('/commands') || [];
+}
+
+/** Execute a command via the backend. Returns CommandResult { title, body, isError }. */
+export async function postCommandExecute(input, agentId, sessionId) {
+    try {
+        const res = await fetch(`${API_BASE}/commands/execute`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ input, agentId, sessionId })
+        });
+        if (!res.ok) {
+            const text = await res.text().catch(() => res.statusText);
+            return { title: '❌ Command Error', body: `HTTP ${res.status}: ${text}`, isError: true };
+        }
+        return await res.json();
+    } catch (e) {
+        console.error('Command execution error:', e);
+        return { title: '❌ Command Error', body: e.message, isError: true };
+    }
+}

@@ -3,6 +3,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.AgentCore.Tools;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Diagnostics;
 using Microsoft.Extensions.Logging;
@@ -127,6 +128,18 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
     public IAgentHandle? GetHandle(AgentId agentId, SessionId sessionId)
     {
         lock (_sync) return _instances.GetValueOrDefault(AgentSessionKey.From(agentId, sessionId)).Handle;
+    }
+
+    /// <inheritdoc />
+    public IAgentTool? ResolveTool(AgentId agentId, SessionId sessionId, string toolName)
+    {
+        if (string.IsNullOrWhiteSpace(toolName))
+            return null;
+
+        var handle = GetHandle(agentId, sessionId);
+        return handle is IAgentHandleInspector inspector
+            ? inspector.ResolveTool(agentId, sessionId, toolName)
+            : null;
     }
 
     /// <inheritdoc />
