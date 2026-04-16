@@ -1,0 +1,3433 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for BotNexus — a modular AI agent execution platform">
+      
+      
+      
+        <link rel="canonical" href="https://sytone.github.io/botnexus/development/ddd-patterns/">
+      
+      
+        <link rel="prev" href="../workspace-and-memory/">
+      
+      
+        <link rel="next" href="../triggers-and-federation/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>DDD Patterns - BotNexus Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#ddd-patterns-guide" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="BotNexus Documentation" class="md-header__button md-logo" aria-label="BotNexus Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            BotNexus Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              DDD Patterns
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/sytone/botnexus" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    sytone/botnexus
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../user-guide/getting-started/" class="md-tabs__link">
+          
+  
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../configuration/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../architecture/overview/" class="md-tabs__link">
+          
+  
+  
+  Architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../dev-guide/" class="md-tabs__link">
+          
+  
+  
+  Development
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../features/sub-agent-spawning/" class="md-tabs__link">
+          
+  
+  
+  Features
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../extension-development/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Extension Development
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../observability/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Observability
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../skills/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Skills
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../cron-and-scheduling/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Cron & Scheduling
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="BotNexus Documentation" class="md-nav__button md-logo" aria-label="BotNexus Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    BotNexus Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/sytone/botnexus" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    sytone/botnexus
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started-release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install from Release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started-dev/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/extensions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Extensions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../websocket-protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WebSocket Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/domain-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Domain Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/extension-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Extension Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/system-flows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    System Flows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agent-execution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Execution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../message-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Message Flow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llm-request-lifecycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM Request Lifecycle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../prompt-pipeline/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prompt Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../session-stores/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Session Stores
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../workspace-and-memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Workspace and Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DDD Patterns
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DDD Patterns
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#table-of-contents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Table of Contents
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-introduction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Introduction
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Introduction">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#problem-primitive-obsession" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Problem: Primitive Obsession
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#problem-lack-of-type-safety" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Problem: Lack of Type Safety
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#problem-domain-language-misalignment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Problem: Domain Language Misalignment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#solution-value-objects-and-smart-enums" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Solution: Value Objects and Smart Enums
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-value-object-pattern" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Value Object Pattern
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Value Object Pattern">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#when-to-use-value-objects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to Use Value Objects
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#code-pattern" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Code Pattern
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#jsonconverter-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        JsonConverter Implementation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#conversion-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conversion Semantics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dos-and-donts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dos and Don'ts
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-smart-enum-pattern" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Smart Enum Pattern
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Smart Enum Pattern">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#when-to-use-smart-enums" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to Use Smart Enums
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#code-pattern_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Code Pattern
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#registry-based-extensibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Registry-Based Extensibility
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#thread-safety" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Thread Safety
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#extension-registration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extension Registration
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-migration-guide" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Migration Guide
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Migration Guide">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#step-1-add-new-type-alongside-old" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1: Add New Type Alongside Old
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-2-use-implicit-conversion-for-backward-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2: Use Implicit Conversion for Backward Compatibility
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-3-update-producers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3: Update Producers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-4-update-consumers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 4: Update Consumers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-5-remove-old-type-deferred" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 5: Remove Old Type (Deferred)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-type-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Type Catalog
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Type Catalog">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-domain-foundation-wave-1-implemented" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: Domain Foundation (Wave 1) — ✅ Implemented
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-session-model-identity-fixes-wave-2-3-implemented" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: Session Model + Identity Fixes (Wave 2-3) — ✅ Implemented
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-4-advanced-deferred" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3-4: Advanced (Deferred)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-wave-2-3-implementation-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Wave 2-3 Implementation Summary
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Wave 2-3 Implementation Summary">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#key-wave-2-3-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key Wave 2-3 Changes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#migration-pattern-established" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Migration Pattern Established
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#impact-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Impact Metrics
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quick-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick Reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../triggers-and-federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Triggers and Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../webui-connection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WebUI Connection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Features
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Features
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/sub-agent-spawning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sub-Agent Spawning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../extension-development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Extension Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../skills/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cron-and-scheduling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cron & Scheduling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#table-of-contents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Table of Contents
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-introduction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Introduction
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Introduction">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#problem-primitive-obsession" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Problem: Primitive Obsession
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#problem-lack-of-type-safety" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Problem: Lack of Type Safety
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#problem-domain-language-misalignment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Problem: Domain Language Misalignment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#solution-value-objects-and-smart-enums" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Solution: Value Objects and Smart Enums
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-value-object-pattern" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Value Object Pattern
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Value Object Pattern">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#when-to-use-value-objects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to Use Value Objects
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#code-pattern" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Code Pattern
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#jsonconverter-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        JsonConverter Implementation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#conversion-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conversion Semantics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dos-and-donts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dos and Don'ts
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-smart-enum-pattern" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Smart Enum Pattern
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Smart Enum Pattern">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#when-to-use-smart-enums" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to Use Smart Enums
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#code-pattern_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Code Pattern
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#registry-based-extensibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Registry-Based Extensibility
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#thread-safety" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Thread Safety
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#extension-registration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extension Registration
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-migration-guide" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Migration Guide
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Migration Guide">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#step-1-add-new-type-alongside-old" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1: Add New Type Alongside Old
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-2-use-implicit-conversion-for-backward-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2: Use Implicit Conversion for Backward Compatibility
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-3-update-producers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3: Update Producers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-4-update-consumers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 4: Update Consumers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-5-remove-old-type-deferred" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 5: Remove Old Type (Deferred)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-type-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Type Catalog
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Type Catalog">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-domain-foundation-wave-1-implemented" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: Domain Foundation (Wave 1) — ✅ Implemented
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-session-model-identity-fixes-wave-2-3-implemented" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: Session Model + Identity Fixes (Wave 2-3) — ✅ Implemented
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-4-advanced-deferred" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3-4: Advanced (Deferred)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-wave-2-3-implementation-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Wave 2-3 Implementation Summary
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Wave 2-3 Implementation Summary">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#key-wave-2-3-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key Wave 2-3 Changes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#migration-pattern-established" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Migration Pattern Established
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#impact-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Impact Metrics
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quick-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick Reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/sytone/botnexus/edit/main/docs/development/ddd-patterns.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="ddd-patterns-guide">DDD Patterns Guide<a class="headerlink" href="#ddd-patterns-guide" title="Permanent link">&para;</a></h1>
+<p><strong>Version:</strong> 1.0<br />
+<strong>Last Updated:</strong> 2026-04-12<br />
+<strong>Status:</strong> Phase 1 — Foundation</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents<a class="headerlink" href="#table-of-contents" title="Permanent link">&para;</a></h2>
+<ol>
+<li><a href="#1-introduction">Introduction</a></li>
+<li><a href="#2-value-object-pattern">Value Object Pattern</a></li>
+<li><a href="#when-to-use-value-objects">When to Use</a></li>
+<li><a href="#code-pattern">Code Pattern</a></li>
+<li><a href="#jsonconverter-implementation">JsonConverter Implementation</a></li>
+<li><a href="#conversion-semantics">Conversion Semantics</a></li>
+<li><a href="#dos-and-donts">Dos and Don'ts</a></li>
+<li><a href="#3-smart-enum-pattern">Smart Enum Pattern</a></li>
+<li><a href="#when-to-use-smart-enums">When to Use</a></li>
+<li><a href="#code-pattern-1">Code Pattern</a></li>
+<li><a href="#registry-based-extensibility">Registry-Based Extensibility</a></li>
+<li><a href="#thread-safety">Thread Safety</a></li>
+<li><a href="#extension-registration">Extension Registration</a></li>
+<li><a href="#4-migration-guide">Migration Guide</a></li>
+<li><a href="#5-type-catalog">Type Catalog</a></li>
+<li><a href="#related-documentation">Related Documentation</a></li>
+</ol>
+<hr />
+<h2 id="1-introduction">1. Introduction<a class="headerlink" href="#1-introduction" title="Permanent link">&para;</a></h2>
+<p>BotNexus is adopting Domain-Driven Design (DDD) patterns to solve three critical problems:</p>
+<h3 id="problem-primitive-obsession">Problem: Primitive Obsession<a class="headerlink" href="#problem-primitive-obsession" title="Permanent link">&para;</a></h3>
+<p>The codebase uses raw strings for domain concepts—<code>AgentId = "test-agent"</code>, <code>ChannelType = "signalr"</code>, <code>Role = "user"</code>. This makes it easy to:
+- Accidentally swap arguments (<code>SenderId</code> and <code>ReceiverId</code> both strings)
+- Pass invalid values (empty strings, whitespace)
+- Lose domain intent (what does this string represent?)</p>
+<h3 id="problem-lack-of-type-safety">Problem: Lack of Type Safety<a class="headerlink" href="#problem-lack-of-type-safety" title="Permanent link">&para;</a></h3>
+<p>Domain logic scattered across 13 projects without shared vocabulary. Session stores normalize keys differently. Each project reimplements string validation.</p>
+<h3 id="problem-domain-language-misalignment">Problem: Domain Language Misalignment<a class="headerlink" href="#problem-domain-language-misalignment" title="Permanent link">&para;</a></h3>
+<p>Code doesn't speak the domain. The older codebase used <code>SessionStatus.Closed</code> when it meant "sealed by expiration" — the name suggested deletion when the intent was permanent archival (now corrected to <code>SessionStatus.Sealed</code>). Identity generation for sub-agents uses string concatenation (<code>"agent::subagent::123"</code>) instead of a first-class concept.</p>
+<h3 id="solution-value-objects-and-smart-enums">Solution: Value Objects and Smart Enums<a class="headerlink" href="#solution-value-objects-and-smart-enums" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Value Objects</strong> — Stack-allocated, type-safe wrappers around validated primitives (AgentId, SessionId, ChannelKey)</li>
+<li><strong>Smart Enums</strong> — Extensible class-based enumerations that support custom values registered at runtime (MessageRole, SessionType)</li>
+</ul>
+<p>These patterns give BotNexus:
+- <strong>Type Safety</strong> — Compile errors for swapped arguments
+- <strong>Validation</strong> — Rules enforced at construction time
+- <strong>Domain Clarity</strong> — Code reads like the domain, not the implementation
+- <strong>Backward Compatibility</strong> — Implicit string conversions let existing code compile without changes</p>
+<hr />
+<h2 id="2-value-object-pattern">2. Value Object Pattern<a class="headerlink" href="#2-value-object-pattern" title="Permanent link">&para;</a></h2>
+<h3 id="when-to-use-value-objects">When to Use Value Objects<a class="headerlink" href="#when-to-use-value-objects" title="Permanent link">&para;</a></h3>
+<p>Use a value object when:
+- The value represents a <strong>domain concept</strong> with meaning (not just any string)
+- The value has <strong>validation rules</strong> (non-empty, specific format, normalized)
+- Multiple places in the code use the value, risking <strong>argument confusion</strong> (swap bugs)
+- The value <strong>travels across layer boundaries</strong> (serialized to JSON/SQLite)</p>
+<p><strong>High-ROI value objects:</strong>
+- <strong>AgentId</strong> — Every agent reference. 100+ usages. P0.
+- <strong>SessionId</strong> — Every session reference. Needs factory methods for sub-agents. P0.
+- <strong>ChannelKey</strong> — Eliminates <code>NormalizeChannelKey()</code> duplication x5. P0.
+- <strong>ConversationId</strong>, <strong>SenderId</strong> — Prevent accidental swap bugs. P1.
+- <strong>ToolName</strong> — Case-insensitive equality, everywhere tool names are referenced. P1.</p>
+<h3 id="code-pattern">Code Pattern<a class="headerlink" href="#code-pattern" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">using</span><span class="w"> </span><span class="nn">System.Text.Json.Serialization</span><span class="p">;</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="c1">// Recommended pattern: readonly record struct with string backing</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="na">[JsonConverter(typeof(AgentIdJsonConverter))]</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="k">public</span><span class="w"> </span><span class="k">readonly</span><span class="w"> </span><span class="k">record</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nf">AgentId</span><span class="p">(</span><span class="kt">string</span><span class="w"> </span><span class="n">Value</span><span class="p">)</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="n">IComparable</span><span class="o">&lt;</span><span class="n">AgentId</span><span class="o">&gt;</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">{</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">    </span><span class="c1">// Factory method with validation</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="k">static</span><span class="w"> </span><span class="n">AgentId</span><span class="w"> </span><span class="nf">From</span><span class="p">(</span><span class="kt">string</span><span class="w"> </span><span class="k">value</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">        </span><span class="kt">string</span><span class="p">.</span><span class="n">IsNullOrWhiteSpace</span><span class="p">(</span><span class="k">value</span><span class="p">)</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">            </span><span class="o">?</span><span class="w"> </span><span class="k">throw</span><span class="w"> </span><span class="k">new</span><span class="w"> </span><span class="n">ArgumentException</span><span class="p">(</span><span class="s">&quot;AgentId cannot be empty&quot;</span><span class="p">,</span><span class="w"> </span><span class="k">nameof</span><span class="p">(</span><span class="k">value</span><span class="p">))</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">            </span><span class="p">:</span><span class="w"> </span><span class="k">new</span><span class="p">(</span><span class="k">value</span><span class="p">.</span><span class="n">Trim</span><span class="p">());</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">    </span><span class="c1">// Implicit conversion for backward compatibility</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">    </span><span class="c1">// Use this when existing code passes string and you want it to compile without changes</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="k">static</span><span class="w"> </span><span class="k">implicit</span><span class="w"> </span><span class="k">operator</span><span class="w"> </span><span class="nf">string</span><span class="p">(</span><span class="n">AgentId</span><span class="w"> </span><span class="n">id</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">id</span><span class="p">.</span><span class="n">Value</span><span class="p">;</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="w">    </span><span class="c1">// Explicit conversion for type-safe migration</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="w">    </span><span class="c1">// Use this when you want callers to opt-in to the new type</span>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="k">static</span><span class="w"> </span><span class="k">explicit</span><span class="w"> </span><span class="k">operator</span><span class="w"> </span><span class="nf">AgentId</span><span class="p">(</span><span class="kt">string</span><span class="w"> </span><span class="k">value</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">From</span><span class="p">(</span><span class="k">value</span><span class="p">);</span>
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="k">override</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="nf">ToString</span><span class="p">()</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">Value</span><span class="p">;</span>
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="w">    </span><span class="c1">// Comparison support (optional, but recommended for identifiers)</span>
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="nf">CompareTo</span><span class="p">(</span><span class="n">AgentId</span><span class="w"> </span><span class="n">other</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="kt">string</span><span class="p">.</span><span class="n">Compare</span><span class="p">(</span><span class="n">Value</span><span class="p">,</span><span class="w"> </span><span class="n">other</span><span class="p">.</span><span class="n">Value</span><span class="p">,</span><span class="w"> </span><span class="n">StringComparison</span><span class="p">.</span><span class="n">Ordinal</span><span class="p">);</span>
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>Key components:</strong>
+- <code>readonly record struct</code> — Stack-allocated, immutable, compiler-generated equality
+- <code>[JsonConverter(...)]</code> — Controls JSON serialization
+- <code>From()</code> factory method — Enforces validation
+- Operators — Control implicit vs explicit conversion semantics</p>
+<h3 id="jsonconverter-implementation">JsonConverter Implementation<a class="headerlink" href="#jsonconverter-implementation" title="Permanent link">&para;</a></h3>
+<p>All value objects need JSON serialization (REST APIs, config files, SQLite storage). Implement a generic converter:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">using</span><span class="w"> </span><span class="nn">System.Text.Json</span><span class="p">;</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="k">using</span><span class="w"> </span><span class="nn">System.Text.Json.Serialization</span><span class="p">;</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="k">public</span><span class="w"> </span><span class="k">sealed</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">AgentIdJsonConverter</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="n">JsonConverter</span><span class="o">&lt;</span><span class="n">AgentId</span><span class="o">&gt;</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="p">{</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="k">override</span><span class="w"> </span><span class="n">AgentId</span><span class="w"> </span><span class="nf">Read</span><span class="p">(</span><span class="k">ref</span><span class="w"> </span><span class="n">Utf8JsonReader</span><span class="w"> </span><span class="n">reader</span><span class="p">,</span><span class="w"> </span><span class="n">Type</span><span class="w"> </span><span class="n">typeToConvert</span><span class="p">,</span><span class="w"> </span><span class="n">JsonSerializerOptions</span><span class="w"> </span><span class="n">options</span><span class="p">)</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">        </span><span class="kt">var</span><span class="w"> </span><span class="k">value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">reader</span><span class="p">.</span><span class="n">GetString</span><span class="p">();</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="k">value</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="k">null</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="k">throw</span><span class="w"> </span><span class="k">new</span><span class="w"> </span><span class="n">JsonException</span><span class="p">(</span><span class="s">&quot;AgentId cannot be null&quot;</span><span class="p">)</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="n">AgentId</span><span class="p">.</span><span class="n">From</span><span class="p">(</span><span class="k">value</span><span class="p">);</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="k">override</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="nf">Write</span><span class="p">(</span><span class="n">Utf8JsonWriter</span><span class="w"> </span><span class="n">writer</span><span class="p">,</span><span class="w"> </span><span class="n">AgentId</span><span class="w"> </span><span class="k">value</span><span class="p">,</span><span class="w"> </span><span class="n">JsonSerializerOptions</span><span class="w"> </span><span class="n">options</span><span class="p">)</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">        </span><span class="n">writer</span><span class="p">.</span><span class="n">WriteStringValue</span><span class="p">(</span><span class="k">value</span><span class="p">.</span><span class="n">Value</span><span class="p">);</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>Pattern notes:</strong>
+- Converters must be registered in <code>JsonSerializerOptions</code> or marked with <code>[JsonConverter]</code> on the type
+- Read() should call the value object's <code>From()</code> factory to enforce validation during deserialization
+- Write() simply outputs the string value
+- The converter handles the round-trip: string ↔ JSON ↔ value object</p>
+<h3 id="conversion-semantics">Conversion Semantics<a class="headerlink" href="#conversion-semantics" title="Permanent link">&para;</a></h3>
+<p><strong>Implicit Conversion</strong> (use during migration phase):
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1">// Old code: AgentId as string</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kt">string</span><span class="w"> </span><span class="n">agentId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;my-agent&quot;</span><span class="p">;</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1">// With implicit operator:</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">AgentId</span><span class="w"> </span><span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">new</span><span class="w"> </span><span class="n">AgentId</span><span class="p">(</span><span class="n">agentId</span><span class="p">);</span><span class="w">  </span><span class="c1">// Compiles without change</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="c1">// Reverse:</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="kt">string</span><span class="w"> </span><span class="n">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">id</span><span class="p">;</span><span class="w">  </span><span class="c1">// Implicit to string, returns &quot;my-agent&quot;</span>
+</code></pre></div></p>
+<p>When to use implicit:
+- Existing tests use string patterns (<code>AgentId = "test-agent"</code>)
+- APIs still accept string parameters
+- Allows ~2,000 tests to compile without changes
+- Gradually migrate to explicit conversion over phases</p>
+<p><strong>Explicit Conversion</strong> (use for new code):
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1">// New code: type-safe from the start</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kt">var</span><span class="w"> </span><span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">AgentId</span><span class="p">)</span><span class="s">&quot;my-agent&quot;</span><span class="p">;</span><span class="w">  </span><span class="c1">// Requires explicit cast, more visible</span>
+</code></pre></div></p>
+<p>When to use explicit:
+- New code paths should declare intent explicitly
+- Prevents accidental string → value object conversions
+- Makes call sites easier to audit in code review</p>
+<h3 id="dos-and-donts">Dos and Don'ts<a class="headerlink" href="#dos-and-donts" title="Permanent link">&para;</a></h3>
+<p>✅ <strong>DO:</strong>
+- Validate in the <code>From()</code> factory method, not in the constructor
+- Use <code>readonly record struct</code> for value objects (stack allocation, immutability)
+- Implement comparison operators (<code>IComparable&lt;T&gt;</code>) for identifiers
+- Return the same immutable instance from conversion operators
+- Round-trip serialize → deserialize and verify the result equals the original</p>
+<p>❌ <strong>DON'T:</strong>
+- Add business logic to value objects (they're data carriers with validation, not entities)
+- Use mutable collections inside value objects
+- Implement <code>SetValue()</code> or other mutators
+- Forget to implement <code>IEquatable&lt;T&gt;</code> if you override <code>Equals()</code>
+- Omit <code>[JsonConverter]</code> attributes; JSON will fail to round-trip</p>
+<hr />
+<h2 id="3-smart-enum-pattern">3. Smart Enum Pattern<a class="headerlink" href="#3-smart-enum-pattern" title="Permanent link">&para;</a></h2>
+<h3 id="when-to-use-smart-enums">When to Use Smart Enums<a class="headerlink" href="#when-to-use-smart-enums" title="Permanent link">&para;</a></h3>
+<p>Use a smart enum when:
+- The value is a <strong>discriminator</strong> with known variants (but might be extended)
+- The value needs <strong>serialization</strong> (JSON, config files)
+- The value might be extended by <strong>plugins or extensions</strong> without modifying core code
+- The value has <strong>semantic meaning</strong> (not just any string)</p>
+<p><strong>Smart enum candidates:</strong>
+- <strong>MessageRole</strong> — User, Assistant, System, Tool (+ extensions can add custom roles)
+- <strong>SessionStatus</strong> — Active, Suspended, Sealed (+ lifecycle variants)
+- <strong>SessionType</strong> — UserAgent, WorkerAgent, SystemAgent (+ custom archetypes)
+- <strong>ExecutionStrategy</strong> — Sequential, Parallel, PriorityQueue (+ domain-specific strategies)</p>
+<h3 id="code-pattern_1">Code Pattern<a class="headerlink" href="#code-pattern_1" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">using</span><span class="w"> </span><span class="nn">System.Collections.Concurrent</span><span class="p">;</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="k">using</span><span class="w"> </span><span class="nn">System.Text.Json.Serialization</span><span class="p">;</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="na">[JsonConverter(typeof(MessageRoleJsonConverter))]</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="k">public</span><span class="w"> </span><span class="k">sealed</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">MessageRole</span><span class="w"> </span><span class="p">:</span><span class="w"> </span><span class="n">IEquatable</span><span class="o">&lt;</span><span class="n">MessageRole</span><span class="o">&gt;</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="p">{</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">    </span><span class="c1">// Static instances for known values</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="k">static</span><span class="w"> </span><span class="k">readonly</span><span class="w"> </span><span class="n">MessageRole</span><span class="w"> </span><span class="n">User</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">new</span><span class="p">(</span><span class="s">&quot;user&quot;</span><span class="p">);</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="k">static</span><span class="w"> </span><span class="k">readonly</span><span class="w"> </span><span class="n">MessageRole</span><span class="w"> </span><span class="n">Assistant</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">new</span><span class="p">(</span><span class="s">&quot;assistant&quot;</span><span class="p">);</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="k">static</span><span class="w"> </span><span class="k">readonly</span><span class="w"> </span><span class="n">MessageRole</span><span class="w"> </span><span class="n">System</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">new</span><span class="p">(</span><span class="s">&quot;system&quot;</span><span class="p">);</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="k">static</span><span class="w"> </span><span class="k">readonly</span><span class="w"> </span><span class="n">MessageRole</span><span class="w"> </span><span class="n">Tool</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">new</span><span class="p">(</span><span class="s">&quot;tool&quot;</span><span class="p">);</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">    </span><span class="c1">// Registry for extensibility: maps string → instance (case-insensitive)</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="w">    </span><span class="k">private</span><span class="w"> </span><span class="k">static</span><span class="w"> </span><span class="k">readonly</span><span class="w"> </span><span class="n">ConcurrentDictionary</span><span class="o">&lt;</span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="n">MessageRole</span><span class="o">&gt;</span><span class="w"> </span><span class="n">_registry</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="w">        </span><span class="k">new</span><span class="p">(</span><span class="n">StringComparer</span><span class="p">.</span><span class="n">OrdinalIgnoreCase</span><span class="p">);</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="n">Value</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">get</span><span class="p">;</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="w">    </span><span class="c1">// Private constructor — only called during static initialization and FromString()</span>
+<a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a><span class="w">    </span><span class="k">private</span><span class="w"> </span><span class="nf">MessageRole</span><span class="p">(</span><span class="kt">string</span><span class="w"> </span><span class="k">value</span><span class="p">)</span>
+<a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a><span class="w">        </span><span class="n">Value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">value</span><span class="p">;</span>
+<a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a><span class="w">        </span><span class="c1">// Register this instance so FromString() can retrieve it</span>
+<a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a><span class="w">        </span><span class="n">_registry</span><span class="p">.</span><span class="n">TryAdd</span><span class="p">(</span><span class="k">value</span><span class="p">,</span><span class="w"> </span><span class="k">this</span><span class="p">);</span>
+<a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a>
+<a id="__codelineno-4-27" name="__codelineno-4-27" href="#__codelineno-4-27"></a><span class="w">    </span><span class="c1">// Factory method: returns existing instance if found, creates new one if not</span>
+<a id="__codelineno-4-28" name="__codelineno-4-28" href="#__codelineno-4-28"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="k">static</span><span class="w"> </span><span class="n">MessageRole</span><span class="w"> </span><span class="nf">FromString</span><span class="p">(</span><span class="kt">string</span><span class="w"> </span><span class="k">value</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span>
+<a id="__codelineno-4-29" name="__codelineno-4-29" href="#__codelineno-4-29"></a><span class="w">        </span><span class="n">_registry</span><span class="p">.</span><span class="n">GetOrAdd</span><span class="p">(</span>
+<a id="__codelineno-4-30" name="__codelineno-4-30" href="#__codelineno-4-30"></a><span class="w">            </span><span class="k">value</span><span class="p">.</span><span class="n">Trim</span><span class="p">().</span><span class="n">ToLowerInvariant</span><span class="p">(),</span><span class="w"> </span>
+<a id="__codelineno-4-31" name="__codelineno-4-31" href="#__codelineno-4-31"></a><span class="w">            </span><span class="n">v</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="k">new</span><span class="w"> </span><span class="n">MessageRole</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
+<a id="__codelineno-4-32" name="__codelineno-4-32" href="#__codelineno-4-32"></a><span class="w">        </span><span class="p">);</span>
+<a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a>
+<a id="__codelineno-4-34" name="__codelineno-4-34" href="#__codelineno-4-34"></a><span class="w">    </span><span class="c1">// Implicit operator for backward compatibility with string API</span>
+<a id="__codelineno-4-35" name="__codelineno-4-35" href="#__codelineno-4-35"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="k">static</span><span class="w"> </span><span class="k">implicit</span><span class="w"> </span><span class="k">operator</span><span class="w"> </span><span class="nf">string</span><span class="p">(</span><span class="n">MessageRole</span><span class="w"> </span><span class="n">role</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">role</span><span class="p">.</span><span class="n">Value</span><span class="p">;</span>
+<a id="__codelineno-4-36" name="__codelineno-4-36" href="#__codelineno-4-36"></a>
+<a id="__codelineno-4-37" name="__codelineno-4-37" href="#__codelineno-4-37"></a><span class="w">    </span><span class="c1">// Equality comparison (used by == operator and collections)</span>
+<a id="__codelineno-4-38" name="__codelineno-4-38" href="#__codelineno-4-38"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="nf">Equals</span><span class="p">(</span><span class="n">MessageRole</span><span class="o">?</span><span class="w"> </span><span class="n">other</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">other</span><span class="w"> </span><span class="k">is</span><span class="w"> </span><span class="k">not</span><span class="w"> </span><span class="k">null</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">Value</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">other</span><span class="p">.</span><span class="n">Value</span><span class="p">;</span>
+<a id="__codelineno-4-39" name="__codelineno-4-39" href="#__codelineno-4-39"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="k">override</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="nf">Equals</span><span class="p">(</span><span class="kt">object?</span><span class="w"> </span><span class="n">obj</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">obj</span><span class="w"> </span><span class="k">is</span><span class="w"> </span><span class="n">MessageRole</span><span class="w"> </span><span class="n">other</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">Equals</span><span class="p">(</span><span class="n">other</span><span class="p">);</span>
+<a id="__codelineno-4-40" name="__codelineno-4-40" href="#__codelineno-4-40"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="k">override</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="nf">GetHashCode</span><span class="p">()</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">Value</span><span class="p">.</span><span class="n">GetHashCode</span><span class="p">();</span>
+<a id="__codelineno-4-41" name="__codelineno-4-41" href="#__codelineno-4-41"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="k">override</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="nf">ToString</span><span class="p">()</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">Value</span><span class="p">;</span>
+<a id="__codelineno-4-42" name="__codelineno-4-42" href="#__codelineno-4-42"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>Key components:</strong>
+- <code>sealed class</code> — Prevents accidental inheritance
+- Static readonly instances — Known variants are singletons
+- <code>ConcurrentDictionary&lt;string, MessageRole&gt;</code> — Thread-safe registry for extensibility
+- <code>FromString()</code> factory — Normalizes input (trim, lowercase) and returns or creates instance
+- <code>IEquatable&lt;T&gt;</code> — Enables equality comparison
+- Implicit <code>operator string</code> — Backward compatibility</p>
+<h3 id="registry-based-extensibility">Registry-Based Extensibility<a class="headerlink" href="#registry-based-extensibility" title="Permanent link">&para;</a></h3>
+<p>The registry pattern allows <strong>plugins and extensions</strong> to register custom values without modifying core code:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1">// Plugin code (separate assembly)</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="k">public</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">MyPluginExtension</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="p">{</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="k">static</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="nf">Initialize</span><span class="p">()</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">        </span><span class="c1">// Register a custom message role at runtime</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">        </span><span class="kt">var</span><span class="w"> </span><span class="n">customRole</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MessageRole</span><span class="p">.</span><span class="n">FromString</span><span class="p">(</span><span class="s">&quot;plugin-role&quot;</span><span class="p">);</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">        </span><span class="c1">// Any future calls to FromString(&quot;plugin-role&quot;) return this same instance</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">        </span><span class="kt">var</span><span class="w"> </span><span class="n">retrieved</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MessageRole</span><span class="p">.</span><span class="n">FromString</span><span class="p">(</span><span class="s">&quot;plugin-role&quot;</span><span class="p">);</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">        </span><span class="n">Assert</span><span class="p">.</span><span class="n">Same</span><span class="p">(</span><span class="n">customRole</span><span class="p">,</span><span class="w"> </span><span class="n">retrieved</span><span class="p">);</span><span class="w">  </span><span class="c1">// Same object reference</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>How it works:</strong>
+1. First call to <code>FromString("plugin-role")</code> → Not in registry → Creates new instance → Stores in <code>_registry</code>
+2. Second call to <code>FromString("plugin-role")</code> → Found in registry → Returns existing instance
+3. Serialization uses the <code>Value</code> string (e.g., <code>"plugin-role"</code>)
+4. No core code changes needed</p>
+<h3 id="thread-safety">Thread Safety<a class="headerlink" href="#thread-safety" title="Permanent link">&para;</a></h3>
+<p>The registry uses <code>ConcurrentDictionary</code> for thread-safe reads and writes:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1">// Thread-safe: two threads calling FromString() simultaneously</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">Parallel</span><span class="p">.</span><span class="n">For</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">100</span><span class="p">,</span><span class="w"> </span><span class="n">_</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">MessageRole</span><span class="p">.</span><span class="n">FromString</span><span class="p">(</span><span class="s">&quot;custom-role&quot;</span><span class="p">));</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="c1">// Result: exactly one instance in the registry, reference equality maintained</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="kt">var</span><span class="w"> </span><span class="n">role1</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MessageRole</span><span class="p">.</span><span class="n">FromString</span><span class="p">(</span><span class="s">&quot;custom-role&quot;</span><span class="p">);</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="kt">var</span><span class="w"> </span><span class="n">role2</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MessageRole</span><span class="p">.</span><span class="n">FromString</span><span class="p">(</span><span class="s">&quot;custom-role&quot;</span><span class="p">);</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="n">Assert</span><span class="p">.</span><span class="n">Same</span><span class="p">(</span><span class="n">role1</span><span class="p">,</span><span class="w"> </span><span class="n">role2</span><span class="p">);</span><span class="w">  </span><span class="c1">// Guaranteed by ConcurrentDictionary</span>
+</code></pre></div>
+<p><strong>Key guarantee:</strong> <code>GetOrAdd()</code> ensures that if two threads race to create the same value, only one instance is stored and both threads get a reference to the same instance.</p>
+<h3 id="extension-registration">Extension Registration<a class="headerlink" href="#extension-registration" title="Permanent link">&para;</a></h3>
+<p>Extensions can register custom values during plugin initialization:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1">// Core code: available to plugins</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="k">public</span><span class="w"> </span><span class="k">static</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="nf">RegisterCustomValue</span><span class="p">(</span><span class="kt">string</span><span class="w"> </span><span class="k">value</span><span class="p">)</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="p">{</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">    </span><span class="n">MessageRole</span><span class="p">.</span><span class="n">FromString</span><span class="p">(</span><span class="k">value</span><span class="p">);</span><span class="w">  </span><span class="c1">// Registers and returns instance</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="p">}</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="c1">// Plugin code (e.g., BotNexus.Plugins.Custom/ExtensionHost.cs)</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="k">public</span><span class="w"> </span><span class="k">static</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="nf">OnLoadPlugin</span><span class="p">()</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="p">{</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="w">    </span><span class="c1">// Register custom execution strategies</span>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="w">    </span><span class="n">ExecutionStrategy</span><span class="p">.</span><span class="n">FromString</span><span class="p">(</span><span class="s">&quot;machine-learning-pipeline&quot;</span><span class="p">);</span>
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="w">    </span><span class="n">ExecutionStrategy</span><span class="p">.</span><span class="n">FromString</span><span class="p">(</span><span class="s">&quot;real-time-reactive&quot;</span><span class="p">);</span>
+<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>
+<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a><span class="w">    </span><span class="c1">// These are now available throughout the application</span>
+<a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a><span class="p">}</span>
+</code></pre></div>
+<hr />
+<h2 id="4-migration-guide">4. Migration Guide<a class="headerlink" href="#4-migration-guide" title="Permanent link">&para;</a></h2>
+<p>Migrating existing code from raw strings to value objects is <strong>non-breaking</strong> if you use implicit conversions. Follow this phase-wise approach:</p>
+<h3 id="step-1-add-new-type-alongside-old">Step 1: Add New Type Alongside Old<a class="headerlink" href="#step-1-add-new-type-alongside-old" title="Permanent link">&para;</a></h3>
+<p>Create the value object in <code>BotNexus.Domain.Primitives</code> without removing the old string usage.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1">// NEW: In BotNexus.Domain.Primitives/AgentId.cs</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="na">[JsonConverter(typeof(AgentIdJsonConverter))]</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="k">public</span><span class="w"> </span><span class="k">readonly</span><span class="w"> </span><span class="k">record</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nf">AgentId</span><span class="p">(</span><span class="kt">string</span><span class="w"> </span><span class="n">Value</span><span class="p">)</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="p">{</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="k">static</span><span class="w"> </span><span class="n">AgentId</span><span class="w"> </span><span class="nf">From</span><span class="p">(</span><span class="kt">string</span><span class="w"> </span><span class="k">value</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">        </span><span class="kt">string</span><span class="p">.</span><span class="n">IsNullOrWhiteSpace</span><span class="p">(</span><span class="k">value</span><span class="p">)</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">            </span><span class="o">?</span><span class="w"> </span><span class="k">throw</span><span class="w"> </span><span class="k">new</span><span class="w"> </span><span class="n">ArgumentException</span><span class="p">(</span><span class="s">&quot;AgentId cannot be empty&quot;</span><span class="p">,</span><span class="w"> </span><span class="k">nameof</span><span class="p">(</span><span class="k">value</span><span class="p">))</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">            </span><span class="p">:</span><span class="w"> </span><span class="k">new</span><span class="p">(</span><span class="k">value</span><span class="p">.</span><span class="n">Trim</span><span class="p">());</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="k">static</span><span class="w"> </span><span class="k">implicit</span><span class="w"> </span><span class="k">operator</span><span class="w"> </span><span class="nf">string</span><span class="p">(</span><span class="n">AgentId</span><span class="w"> </span><span class="n">id</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">id</span><span class="p">.</span><span class="n">Value</span><span class="p">;</span>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="k">static</span><span class="w"> </span><span class="k">explicit</span><span class="w"> </span><span class="k">operator</span><span class="w"> </span><span class="nf">AgentId</span><span class="p">(</span><span class="kt">string</span><span class="w"> </span><span class="k">value</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">From</span><span class="p">(</span><span class="k">value</span><span class="p">);</span>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>
+<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="k">override</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="nf">ToString</span><span class="p">()</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">Value</span><span class="p">;</span>
+<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="p">}</span>
+<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a>
+<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a><span class="c1">// OLD: Still exists in the codebase</span>
+<a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a><span class="k">public</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">Session</span>
+<a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a><span class="p">{</span>
+<a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a><span class="w">    </span><span class="k">public</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="n">AgentId</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">get</span><span class="p">;</span><span class="w"> </span><span class="k">set</span><span class="p">;</span><span class="w"> </span><span class="p">}</span><span class="w">  </span><span class="c1">// Still accepts strings</span>
+<a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>Result:</strong> No breaking changes. Old code continues to work.</p>
+<h3 id="step-2-use-implicit-conversion-for-backward-compatibility">Step 2: Use Implicit Conversion for Backward Compatibility<a class="headerlink" href="#step-2-use-implicit-conversion-for-backward-compatibility" title="Permanent link">&para;</a></h3>
+<p>Existing code that passes strings continues to compile:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1">// Existing test code (unchanged)</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="kt">var</span><span class="w"> </span><span class="n">session</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">new</span><span class="w"> </span><span class="n">Session</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">AgentId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;test-agent&quot;</span><span class="w"> </span><span class="p">};</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="c1">// New code using value objects</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="kt">var</span><span class="w"> </span><span class="n">agentId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">AgentId</span><span class="p">.</span><span class="n">From</span><span class="p">(</span><span class="s">&quot;test-agent&quot;</span><span class="p">);</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="n">session</span><span class="p">.</span><span class="n">AgentId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">agentId</span><span class="p">;</span><span class="w">  </span><span class="c1">// Implicit operator: AgentId → string</span>
+</code></pre></div>
+<h3 id="step-3-update-producers">Step 3: Update Producers<a class="headerlink" href="#step-3-update-producers" title="Permanent link">&para;</a></h3>
+<p>Update code that <strong>creates</strong> or <strong>assigns</strong> values to use the value object type:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1">// OLD: Producer creates a string</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="k">public</span><span class="w"> </span><span class="n">GatewaySession</span><span class="w"> </span><span class="nf">CreateSession</span><span class="p">(</span><span class="kt">string</span><span class="w"> </span><span class="n">agentId</span><span class="p">,</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="n">sessionId</span><span class="p">)</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="p">{</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="k">new</span><span class="w"> </span><span class="n">GatewaySession</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">AgentId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">agentId</span><span class="p">,</span><span class="w"> </span><span class="n">SessionId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sessionId</span><span class="w"> </span><span class="p">};</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="p">}</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="c1">// NEW: Producer creates value objects</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="k">public</span><span class="w"> </span><span class="n">GatewaySession</span><span class="w"> </span><span class="nf">CreateSession</span><span class="p">(</span><span class="n">AgentId</span><span class="w"> </span><span class="n">agentId</span><span class="p">,</span><span class="w"> </span><span class="n">SessionId</span><span class="w"> </span><span class="n">sessionId</span><span class="p">)</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="p">{</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="k">new</span><span class="w"> </span><span class="n">GatewaySession</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">AgentId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">agentId</span><span class="p">.</span><span class="n">Value</span><span class="p">,</span><span class="w"> </span><span class="n">SessionId</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sessionId</span><span class="p">.</span><span class="n">Value</span><span class="w"> </span><span class="p">};</span>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="p">}</span>
+</code></pre></div>
+<h3 id="step-4-update-consumers">Step 4: Update Consumers<a class="headerlink" href="#step-4-update-consumers" title="Permanent link">&para;</a></h3>
+<p>Update code that <strong>reads</strong> or <strong>uses</strong> values to accept value objects:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1">// OLD: Consumer works with strings</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="k">public</span><span class="w"> </span><span class="k">async</span><span class="w"> </span><span class="n">Task</span><span class="w"> </span><span class="nf">ProcessAgent</span><span class="p">(</span><span class="kt">string</span><span class="w"> </span><span class="n">agentId</span><span class="p">)</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="p">{</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">    </span><span class="kt">var</span><span class="w"> </span><span class="n">agent</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="n">_agentRegistry</span><span class="p">.</span><span class="n">GetAsync</span><span class="p">(</span><span class="n">agentId</span><span class="p">);</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">agentId</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">_currentAgent</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="p">}</span><span class="w">  </span><span class="c1">// String comparison</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="p">}</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="c1">// NEW: Consumer works with value objects</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="k">public</span><span class="w"> </span><span class="k">async</span><span class="w"> </span><span class="n">Task</span><span class="w"> </span><span class="nf">ProcessAgent</span><span class="p">(</span><span class="n">AgentId</span><span class="w"> </span><span class="n">agentId</span><span class="p">)</span>
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="p">{</span>
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="w">    </span><span class="kt">var</span><span class="w"> </span><span class="n">agent</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="n">_agentRegistry</span><span class="p">.</span><span class="n">GetAsync</span><span class="p">(</span><span class="n">agentId</span><span class="p">);</span>
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">agentId</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">_currentAgent</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="p">}</span><span class="w">  </span><span class="c1">// Value object comparison</span>
+<a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a><span class="p">}</span>
+</code></pre></div>
+<h3 id="step-5-remove-old-type-deferred">Step 5: Remove Old Type (Deferred)<a class="headerlink" href="#step-5-remove-old-type-deferred" title="Permanent link">&para;</a></h3>
+<p>Only after all consumers and producers are updated:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="c1">// OLD: Remove if no longer used</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="c1">// public class Session { public string AgentId { get; set; } }</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="c1">// NEW: Only this remains</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="k">public</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">Session</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">public</span><span class="w"> </span><span class="n">AgentId</span><span class="w"> </span><span class="n">AgentId</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">get</span><span class="p">;</span><span class="w"> </span><span class="k">set</span><span class="p">;</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p><strong>Timeline:</strong> This happens in <strong>Wave 2-3</strong>, after producers/consumers have migrated. Don't rush it.</p>
+<hr />
+<h2 id="5-type-catalog">5. Type Catalog<a class="headerlink" href="#5-type-catalog" title="Permanent link">&para;</a></h2>
+<p>This table tracks all DDD types being introduced in BotNexus. Follow this roadmap to understand dependencies and sequencing.</p>
+<h3 id="phase-1-domain-foundation-wave-1-implemented">Phase 1: Domain Foundation (Wave 1) — ✅ Implemented<a class="headerlink" href="#phase-1-domain-foundation-wave-1-implemented" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Category</th>
+<th>Pattern</th>
+<th>Status</th>
+<th>Phase Intro</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AgentId</code></td>
+<td>Identity</td>
+<td>Value Object</td>
+<td>✅ Done</td>
+<td>1.1a</td>
+<td>Validates non-empty. Ordinal comparison.</td>
+</tr>
+<tr>
+<td><code>SessionId</code></td>
+<td>Identity</td>
+<td>Value Object</td>
+<td>✅ Done</td>
+<td>1.1a</td>
+<td>Factory methods: <code>Create()</code>, <code>ForSubAgent()</code>, <code>ForCrossAgent()</code>.</td>
+</tr>
+<tr>
+<td><code>ChannelKey</code></td>
+<td>Identity</td>
+<td>Value Object</td>
+<td>✅ Done</td>
+<td>1.1a</td>
+<td>Normalizes at construction (trim + lowercase + alias mapping). Eliminates <code>NormalizeChannelKey()</code> duplication.</td>
+</tr>
+<tr>
+<td><code>ConversationId</code></td>
+<td>Identity</td>
+<td>Value Object</td>
+<td>✅ Done</td>
+<td>1.1a</td>
+<td>Prevents <code>ConversationId</code>/<code>SenderId</code> swap bugs.</td>
+</tr>
+<tr>
+<td><code>SenderId</code></td>
+<td>Identity</td>
+<td>Value Object</td>
+<td>✅ Done</td>
+<td>1.1a</td>
+<td>Prevents <code>ConversationId</code>/<code>SenderId</code> swap bugs.</td>
+</tr>
+<tr>
+<td><code>AgentSessionKey</code></td>
+<td>Composite</td>
+<td>Value Object</td>
+<td>✅ Done</td>
+<td>1.1a</td>
+<td>Composes <code>AgentId</code> + <code>SessionId</code>. Replaces <code>MakeKey()</code> string concat.</td>
+</tr>
+<tr>
+<td><code>ToolName</code></td>
+<td>Identity</td>
+<td>Value Object</td>
+<td>✅ Done</td>
+<td>1.1a</td>
+<td>Case-insensitive equality. Everywhere tool names referenced.</td>
+</tr>
+<tr>
+<td><code>MessageRole</code></td>
+<td>Discriminator</td>
+<td>Smart Enum</td>
+<td>✅ Done</td>
+<td>1.1a</td>
+<td>Known values: User, Assistant, System, Tool. Extensible.</td>
+</tr>
+<tr>
+<td><code>SessionStatus</code></td>
+<td>Discriminator</td>
+<td>Smart Enum</td>
+<td>✅ Done</td>
+<td>1.1a</td>
+<td>Known values: Active, Suspended, Sealed (replaces "Closed").</td>
+</tr>
+<tr>
+<td><code>SessionType</code></td>
+<td>Discriminator</td>
+<td>Smart Enum</td>
+<td>✅ Done</td>
+<td>1.1a</td>
+<td>Known values: UserAgent, AgentSelf, AgentSubAgent, AgentAgent, Soul, Cron. Extensible.</td>
+</tr>
+<tr>
+<td><code>ExecutionStrategy</code></td>
+<td>Discriminator</td>
+<td>Smart Enum</td>
+<td>✅ Done</td>
+<td>1.1a</td>
+<td>Known values: Sequential, Parallel, PriorityQueue. Extensible.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="phase-2-session-model-identity-fixes-wave-2-3-implemented">Phase 2: Session Model + Identity Fixes (Wave 2-3) — ✅ Implemented<a class="headerlink" href="#phase-2-session-model-identity-fixes-wave-2-3-implemented" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Category</th>
+<th>Pattern</th>
+<th>Status</th>
+<th>Phase Intro</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SessionParticipant</code></td>
+<td>Domain Entity</td>
+<td>Record</td>
+<td>✅ Done</td>
+<td>2.0</td>
+<td>Captures <code>ParticipantType</code> (User/Agent), participant ID, optional world ID, optional role. Replaces <code>CallerId</code>-only model.</td>
+</tr>
+<tr>
+<td><code>SubAgentArchetype</code></td>
+<td>Discriminator</td>
+<td>Smart Enum</td>
+<td>✅ Done</td>
+<td>2.0</td>
+<td>Known values: Researcher, Coder, Planner, Reviewer, Writer, General. Extensible.</td>
+</tr>
+<tr>
+<td><code>TriggerType</code></td>
+<td>Discriminator</td>
+<td>Smart Enum</td>
+<td>✅ Done</td>
+<td>2.0</td>
+<td>Known values: Cron, Soul, Heartbeat. Extensible. Now <code>IInternalTrigger</code> interface decouples Cron from <code>IChannelAdapter</code>.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="phase-3-4-advanced-deferred">Phase 3-4: Advanced (Deferred)<a class="headerlink" href="#phase-3-4-advanced-deferred" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Category</th>
+<th>Pattern</th>
+<th>Status</th>
+<th>Phase Intro</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>World</code></td>
+<td>Domain Entity</td>
+<td>Sealed Record</td>
+<td>Deferred</td>
+<td>4</td>
+<td>YAGNI — no consumer. Planned for future phases.</td>
+</tr>
+<tr>
+<td><code>AgentCapabilities</code></td>
+<td>Composite</td>
+<td>Value Object</td>
+<td>Planned</td>
+<td>Future</td>
+<td>Standardizes agent metadata across all discoverers.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="related-documentation">Related Documentation<a class="headerlink" href="#related-documentation" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Design Spec:</strong> <a href="https://github.com/sytone/botnexus/blob/main/docs/planning/ddd-refactoring/design-spec.md">docs/planning/ddd-refactoring/design-spec.md</a> — Full DDD refactoring specification, phase breakdown, and impact analysis</li>
+<li><strong>Research:</strong> <a href="https://github.com/sytone/botnexus/blob/main/docs/planning/ddd-refactoring/research.md">docs/planning/ddd-refactoring/research.md</a> — Primitive obsession analysis, value object ROI, codebase evidence</li>
+<li><strong>Design Review:</strong> <a href="https://github.com/sytone/botnexus/blob/main/.squad/decisions/inbox/leela-ddd-design-review.md">.squad/decisions/inbox/leela-ddd-design-review.md</a> — Architectural decisions (D1-D8), wave plan, risk analysis</li>
+<li><strong>Architecture:</strong> <a href="../../architecture/overview/">docs/architecture/overview.md</a> — System design and module relationships</li>
+<li><strong>Migration Tracking:</strong> <a href="https://github.com/sytone/botnexus/tree/main/docs/planning/ddd-refactoring">docs/planning/ddd-refactoring</a> — Per-phase status and implementation notes</li>
+</ul>
+<hr />
+<h2 id="6-wave-2-3-implementation-summary">6. Wave 2-3 Implementation Summary<a class="headerlink" href="#6-wave-2-3-implementation-summary" title="Permanent link">&para;</a></h2>
+<p><strong>Status:</strong> ✅ Complete (2026-04-12)</p>
+<p>Wave 2-3 delivered the full session model redesign and completed the DDD foundation layer. All 11 Phase 1 value objects and 3 Phase 2-3 smart enums are now implemented and in use across the codebase.</p>
+<h3 id="key-wave-2-3-changes">Key Wave 2-3 Changes<a class="headerlink" href="#key-wave-2-3-changes" title="Permanent link">&para;</a></h3>
+<p><strong>1. SessionStatus Rename: "Closed" → "Sealed"</strong>
+- Changed domain language to reflect semantics: session records are <em>sealed</em> (preserved, complete), not deleted
+- Smart enum now supports: <code>Active</code>, <code>Suspended</code>, <code>Sealed</code>
+- Impact: 47 files updated; migration handled via smart enum string normalization</p>
+<p><strong>2. SessionType Discrimination (Complete)</strong>
+- Implemented all 6 session type variants: <code>UserAgent</code>, <code>AgentSelf</code>, <code>AgentSubAgent</code>, <code>AgentAgent</code>, <code>Soul</code>, <code>Cron</code>
+- <code>IsInteractive</code> computed property: returns <code>true</code> only for <code>UserAgent</code> sessions
+- Enables filtering interactive vs. programmatic sessions at compile time
+- Smart enum allows custom types via <code>FromString()</code> registry</p>
+<p><strong>3. SessionParticipant Model (Backward Compat)</strong>
+- New <code>SessionParticipant</code> record: <code>Type</code> (User/Agent), <code>Id</code>, <code>WorldId</code>, <code>Role</code>
+- Replaces the old "CallerId string" model with structured, extensible approach
+- <code>CallerId</code> property retained on <code>GatewaySession</code> for backward compatibility
+- Participants list now canonical source of truth for session membership</p>
+<p><strong>4. Cron Decoupled from IChannelAdapter</strong>
+- New <code>IInternalTrigger</code> interface isolates non-channel session creation (Cron, SystemTimer, custom)
+- Cron no longer pretends to be a channel; it's now its own trigger system
+- Enables clean separation: channels → user-triggered sessions; triggers → background/automated sessions
+- TriggerType smart enum with extensibility for custom triggers</p>
+<p><strong>5. ChannelKey and MessageRole Value Objects</strong>
+- <code>ChannelKey</code> normalizes at construction (trim, lowercase) — eliminates <code>NormalizeChannelKey()</code> duplication
+- <code>MessageRole</code> smart enum enables extensible message roles (User, Assistant, System, Tool, + custom)
+- Both travel through serialization with validation enforced at deserialization</p>
+<p><strong>6. Typed AgentId and SessionId Across Full Stack</strong>
+- All 27 projects now use <code>AgentId</code> and <code>SessionId</code> value objects instead of strings
+- Compile-time type safety prevents ID swap bugs
+- Session stores, wire protocols, and all APIs updated</p>
+<p><strong>7. Sub-Agent Archetype Identity</strong>
+- Sub-agents now have <code>SubAgentArchetype</code> smart enum (Researcher, Coder, Planner, Reviewer, Writer, General)
+- Enables distinct child agent identities with specialized behavior
+- Archetypes extensible via registry for custom sub-agent types</p>
+<h3 id="migration-pattern-established">Migration Pattern Established<a class="headerlink" href="#migration-pattern-established" title="Permanent link">&para;</a></h3>
+<p>Wave 2-3 validated the DDD migration process:
+1. <strong>Additive approach</strong> — New types alongside old (no breaking changes)
+2. <strong>Implicit conversion</strong> — Existing tests compile without modification
+3. <strong>Incremental migration</strong> — Producers, then consumers, then old types removed
+4. <strong>Extensibility</strong> — Smart enum registry allows plugins to add custom values</p>
+<p>This pattern is now standard for all future DDD work (Phases 3-4).</p>
+<h3 id="impact-metrics">Impact Metrics<a class="headerlink" href="#impact-metrics" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Files Updated</td>
+<td>47</td>
+</tr>
+<tr>
+<td>New Value Objects</td>
+<td>11 (all Phase 1)</td>
+</tr>
+<tr>
+<td>New Smart Enums</td>
+<td>3 (Phase 2-3)</td>
+</tr>
+<tr>
+<td>Backward Compatibility</td>
+<td>100% (implicit conversion)</td>
+</tr>
+<tr>
+<td>Test Coverage</td>
+<td>891 tests passing</td>
+</tr>
+<tr>
+<td>Code Churn</td>
+<td>Minimal (targeted refactoring)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="quick-reference">Quick Reference<a class="headerlink" href="#quick-reference" title="Permanent link">&para;</a></h2>
+<p><strong>When should I use a value object?</strong>
+→ When a string represents a domain concept with validation (AgentId, SessionId, ChannelKey).</p>
+<p><strong>Can I use implicit string conversion in new code?</strong>
+→ No. Use implicit only during migration for backward compatibility. New code should use explicit or direct value object construction.</p>
+<p><strong>What if my value object needs custom equality?</strong>
+→ Override <code>Equals()</code> and <code>GetHashCode()</code>. For enums (smart enums), implement <code>IEquatable&lt;T&gt;</code>.</p>
+<p><strong>How do I extend a smart enum with custom values?</strong>
+→ Call <code>FromString("custom-value")</code> at plugin initialization time. The registry handles storage and retrieval.</p>
+<p><strong>Are value objects thread-safe?</strong>
+→ Yes. <code>readonly record struct</code> is immutable (heap-safe). Smart enums use <code>ConcurrentDictionary</code> (registry-safe).</p>
+<p><strong>How do I serialize value objects?</strong>
+→ Use <code>[JsonConverter(typeof(MyTypeJsonConverter))]</code> on the type. The converter calls <code>From()</code> on deserialization (validation enforced).</p>
+<p><strong>What about backward compatibility?</strong>
+→ Implicit operators preserve backward compatibility during migration. Existing tests compile without changes. Gradually migrate to explicit conversion in new code.</p>
+
+
+
+
+
+
+
+  
+    
+  
+  
+    
+  
+
+
+  <aside class="md-source-file">
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Last update">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="April 16, 2026 05:53:49 UTC">April 16, 2026</span>
+  </span>
+
+    
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Created">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M14.47 15.08 11 13V7h1.5v5.25l3.08 1.83c-.41.28-.79.62-1.11 1m-1.39 4.84c-.36.05-.71.08-1.08.08-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8c0 .37-.03.72-.08 1.08.69.1 1.33.32 1.92.64.1-.56.16-1.13.16-1.72 0-5.5-4.5-10-10-10S2 6.5 2 12s4.47 10 10 10c.59 0 1.16-.06 1.72-.16-.32-.59-.54-1.23-.64-1.92M18 15v3h-3v2h3v3h2v-3h3v-2h-3v-3z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="April 12, 2026 03:20:17 UTC">April 12, 2026</span>
+  </span>
+
+    
+    
+    
+  </aside>
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

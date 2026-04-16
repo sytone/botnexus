@@ -1,0 +1,3886 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for BotNexus — a modular AI agent execution platform">
+      
+      
+        <meta name="author" content="Jon Bullen">
+      
+      
+        <link rel="canonical" href="https://sytone.github.io/botnexus/architecture/domain-model/">
+      
+      
+        <link rel="prev" href="../overview/">
+      
+      
+        <link rel="next" href="../extension-guide/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Domain Model - BotNexus Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#botnexus-domain-model" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="BotNexus Documentation" class="md-header__button md-logo" aria-label="BotNexus Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            BotNexus Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Domain Model
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/sytone/botnexus" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    sytone/botnexus
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../user-guide/getting-started/" class="md-tabs__link">
+          
+  
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../configuration/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../overview/" class="md-tabs__link">
+          
+  
+  
+  Architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../dev-guide/" class="md-tabs__link">
+          
+  
+  
+  Development
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../features/sub-agent-spawning/" class="md-tabs__link">
+          
+  
+  
+  Features
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../extension-development/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Extension Development
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../observability/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Observability
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../skills/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Skills
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../cron-and-scheduling/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Cron & Scheduling
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="BotNexus Documentation" class="md-nav__button md-logo" aria-label="BotNexus Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    BotNexus Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/sytone/botnexus" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    sytone/botnexus
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started-release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install from Release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started-dev/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/extensions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Extensions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../websocket-protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WebSocket Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Domain Model
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Domain Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#domain-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Domain Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Agent">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#descriptor-the-resume" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Descriptor (The Resume)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#instance-the-living-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Instance (The Living Agent)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-relationship-between-descriptor-and-instance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Relationship Between Descriptor and Instance
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#world" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        World
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="World">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#properties-of-a-world" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Properties of a World
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#locations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Locations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shared-vs-isolated-worlds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shared vs. Isolated Worlds
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#agent-execution-strategies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent Execution Strategies
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cross-world-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross-World Access
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#soul" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Soul
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Soul">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-belongs-in-soulmd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Belongs in SOUL.md
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-does-not-belong-in-soulmd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Does NOT Belong in SOUL.md
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#relationship-to-other-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relationship to Other Files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#soul-session" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Soul Session
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Identity
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Identity">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#identitymd-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        IDENTITY.md Fields
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-identity-differs-from-soul" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How Identity Differs from Soul
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bootstrap-ritual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bootstrap Ritual
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#session" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Session">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#session-properties" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session Properties
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#session-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session Lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#session-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session Types
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#session-sealing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session Sealing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#existence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Existence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#agent-communication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent Communication
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Agent Communication">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#agent-to-self-multitasking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent to Self (Multitasking)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#agent-to-generic-sub-agent-disposable-workers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent to Generic Sub-Agent (Disposable Workers)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#agent-to-agent-conversation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent to Agent (Conversation)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cross-world-conversations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross-World Conversations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#communication-pattern-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Communication Pattern Summary
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#channel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Channel
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Channel">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#channel-capabilities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Channel Capabilities
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#channels-vs-internal-triggers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Channels vs. Internal Triggers
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#user" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        User
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="User">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#user-properties" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        User Properties
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#user-interaction-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        User Interaction Model
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tools-skills" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tools &amp; Skills
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tools &amp; Skills">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tools
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#skills" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Skills
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Memory">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#memory-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Types
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#semantic-memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Semantic Memory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memory-and-existence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory and Existence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memory-maintenance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Maintenance
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#domain-relationships" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Domain Relationships
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#glossary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Glossary
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../extension-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Extension Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../system-flows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    System Flows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/agent-execution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Execution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/message-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Message Flow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/llm-request-lifecycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM Request Lifecycle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/prompt-pipeline/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prompt Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/session-stores/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Session Stores
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/workspace-and-memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Workspace and Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/ddd-patterns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DDD Patterns
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/triggers-and-federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Triggers and Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/webui-connection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WebUI Connection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Features
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Features
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/sub-agent-spawning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sub-Agent Spawning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../extension-development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Extension Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../skills/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cron-and-scheduling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cron & Scheduling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#domain-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Domain Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Agent">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#descriptor-the-resume" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Descriptor (The Resume)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#instance-the-living-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Instance (The Living Agent)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-relationship-between-descriptor-and-instance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Relationship Between Descriptor and Instance
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#world" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        World
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="World">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#properties-of-a-world" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Properties of a World
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#locations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Locations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shared-vs-isolated-worlds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shared vs. Isolated Worlds
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#agent-execution-strategies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent Execution Strategies
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cross-world-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross-World Access
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#soul" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Soul
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Soul">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-belongs-in-soulmd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Belongs in SOUL.md
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-does-not-belong-in-soulmd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Does NOT Belong in SOUL.md
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#relationship-to-other-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relationship to Other Files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#soul-session" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Soul Session
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Identity
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Identity">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#identitymd-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        IDENTITY.md Fields
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-identity-differs-from-soul" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How Identity Differs from Soul
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bootstrap-ritual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bootstrap Ritual
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#session" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Session">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#session-properties" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session Properties
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#session-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session Lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#session-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session Types
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#session-sealing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session Sealing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#existence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Existence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#agent-communication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent Communication
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Agent Communication">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#agent-to-self-multitasking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent to Self (Multitasking)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#agent-to-generic-sub-agent-disposable-workers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent to Generic Sub-Agent (Disposable Workers)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#agent-to-agent-conversation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent to Agent (Conversation)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cross-world-conversations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross-World Conversations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#communication-pattern-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Communication Pattern Summary
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#channel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Channel
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Channel">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#channel-capabilities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Channel Capabilities
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#channels-vs-internal-triggers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Channels vs. Internal Triggers
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#user" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        User
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="User">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#user-properties" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        User Properties
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#user-interaction-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        User Interaction Model
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tools-skills" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tools &amp; Skills
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tools &amp; Skills">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tools
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#skills" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Skills
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Memory">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#memory-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Types
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#semantic-memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Semantic Memory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memory-and-existence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory and Existence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memory-maintenance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Maintenance
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#domain-relationships" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Domain Relationships
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#glossary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Glossary
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/sytone/botnexus/edit/main/docs/architecture/domain-model.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="botnexus-domain-model">BotNexus Domain Model<a class="headerlink" href="#botnexus-domain-model" title="Permanent link">&para;</a></h1>
+<p>This document defines the conceptual domain model for the BotNexus platform - every object, relationship, and interaction pattern that governs how agents exist, communicate, and grow. It is the source of truth for what the system <em>means</em>, independent of how any particular layer implements it.</p>
+<p>If you're building or refactoring BotNexus code, this is the map. The codebase is the territory.</p>
+<hr />
+<h2 id="domain-overview">Domain Overview<a class="headerlink" href="#domain-overview" title="Permanent link">&para;</a></h2>
+<p>BotNexus is a multi-agent platform where intelligent agents live, think, communicate, and remember. The domain model is built around these core concepts:</p>
+<table>
+<thead>
+<tr>
+<th>Domain Object</th>
+<th>Human Analogy</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Agent</strong></td>
+<td>A person - their resume (Descriptor) and their living self (Instance)</td>
+</tr>
+<tr>
+<td><strong>World</strong></td>
+<td>The city or environment where the person lives and works</td>
+</tr>
+<tr>
+<td><strong>Soul</strong></td>
+<td>Personality, voice, and values</td>
+</tr>
+<tr>
+<td><strong>Identity</strong></td>
+<td>Name, appearance, and self-concept</td>
+</tr>
+<tr>
+<td><strong>Session</strong></td>
+<td>A conversation, a task, a meeting - a bounded interaction</td>
+</tr>
+<tr>
+<td><strong>Existence</strong></td>
+<td>The totality of a person's experiences and history</td>
+</tr>
+<tr>
+<td><strong>Channel</strong></td>
+<td>A phone, an email client, a chat app - a way to reach the outside world</td>
+</tr>
+<tr>
+<td><strong>User</strong></td>
+<td>A human interacting with an agent</td>
+</tr>
+<tr>
+<td><strong>Memory</strong></td>
+<td>What a person remembers - short-term, long-term, and the ability to recall</td>
+</tr>
+<tr>
+<td><strong>Tools &amp; Skills</strong></td>
+<td>A person's hands and expertise - how they act and what they know</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>+--------------------------------------------------------------+
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>|                           WORLD                              |
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>|                         (Gateway)                            |
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>|                                                              |
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>|  +------------------------------------+   +------------+     |
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>|  |              AGENT                 |   |  Channels  |     |
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>|  |                                    |   | +--------+ |     |
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>|  |  +-----------+  +--------------+   |   | | Signal | |     |
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>|  |  | Descriptor|  |   Instance   |   |   | | Telegr | |     |
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>|  |  |  (config) |  |  (runtime)   |   |&lt;--+ |  TUI   | |     |
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>|  |  +-----------+  +------+-------+   |   | +--------+ |     |
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>|  |                        |           |   +------------+     |
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>|  |  +------+  +--------+  |          |                       |
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>|  |  | Soul |  |Identity|  |          |   +------------+      |
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>|  |  +------+  +--------+  |          |   |   Users    |      |
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>|  |                        |          |&lt;--+            |      |
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>|  |  +---------------------v-------+  |   +------------+      |
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>|  |  |         EXISTENCE           |  |                       |
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>|  |  |  +---------+  +--------+   |  |                        |
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>|  |  |  |Sessions |  | Memory |   |  |                        |
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>|  |  |  +---------+  +--------+   |  |                        |
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>|  |  +-----------------------------+  |                       |
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>|  +------------------------------------+                      |
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>|                                                              |
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>|  +------------------------------------+                      |
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>|  |         Other Agents ...           |                      |
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>|  +------------------------------------+                      |
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>|                                                              |
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>|  +------------------------------------+                      |
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>|  |            Locations               |                      |
+<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>|  |  (file system, APIs, services)     |                      |
+<a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>|  +------------------------------------+                      |
+<a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>+--------------------------------------------------------------+
+<a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>         |                         ^
+<a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>         |    cross-world comms    |
+<a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a>         v                         |
+<a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a>+--------------------------------------------------------------+
+<a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a>|                       ANOTHER WORLD                          |
+<a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a>|                     (Remote Gateway)                         |
+<a id="__codelineno-0-40" name="__codelineno-0-40" href="#__codelineno-0-40"></a>+--------------------------------------------------------------+
+</code></pre></div>
+<hr />
+<h2 id="agent">Agent<a class="headerlink" href="#agent" title="Permanent link">&para;</a></h2>
+<p>An Agent is the central domain object in BotNexus. It represents an intelligent entity that can think, communicate, remember, and act. Agents are the <em>who</em> of the system - everything else exists in service of them.</p>
+<p>An Agent is composed of two facets:</p>
+<h3 id="descriptor-the-resume">Descriptor (The Resume)<a class="headerlink" href="#descriptor-the-resume" title="Permanent link">&para;</a></h3>
+<p>The Descriptor is the static definition of an agent - who it is on paper. It captures everything you'd need to know to <em>configure</em> an agent before it ever wakes up. Properties are grouped into conceptual categories:</p>
+<p><strong>Core Identity</strong>
+- <strong>Agent ID</strong> - unique identifier, the agent's permanent name in the system
+- <strong>Display Name</strong> - human-readable name for UI and multi-agent contexts
+- <strong>Description</strong> - what this agent does and what it's for</p>
+<p><strong>Intelligence</strong>
+- <strong>Model</strong> - the default LLM model the agent thinks with
+- <strong>API Provider</strong> - which inference backend powers this agent
+- <strong>System Prompt</strong> - the foundational instructions that shape the agent's behavior</p>
+<p><strong>Capabilities</strong>
+- <strong>Tool Access</strong> - which tools the agent can use
+- <strong>Allowed Models</strong> - which models the agent is permitted to switch to
+- <strong>Sub-Agent Access</strong> - which other agents this agent can call upon</p>
+<p><strong>Environment</strong>
+- <strong>World Configuration</strong> - how the agent is isolated and where it runs (see <a href="#world">World</a>)
+- <strong>Session Limits</strong> - maximum concurrent sessions
+- <strong>Session Access Level</strong> - what sessions the agent can see beyond its own</p>
+<p><strong>Extensibility</strong>
+- <strong>Memory Configuration</strong> - whether memory is enabled and how it behaves
+- <strong>Extension Configuration</strong> - settings for any extensions the agent uses
+- <strong>Metadata</strong> - extensible bag for tags, ownership, and other properties</p>
+<p>Think of the Descriptor as a job posting: it defines the role, the tools, the access, and the expectations. It exists whether or not the agent is running.</p>
+<h3 id="instance-the-living-agent">Instance (The Living Agent)<a class="headerlink" href="#instance-the-living-agent" title="Permanent link">&para;</a></h3>
+<p>The Instance is the embodiment of the agent being alive - the runtime manifestation that can interact, think, and introspect. When a Descriptor is activated for a specific session, an Instance is born.</p>
+<ul>
+<li><strong>Instance ID</strong> - unique composite of agent + session, identifying this specific incarnation</li>
+<li><strong>Agent ID</strong> - which Descriptor this instance was created from (typed as <code>AgentId</code> value object)</li>
+<li><strong>Session ID</strong> - which session this instance is bound to (typed as <code>SessionId</code> value object)</li>
+<li><strong>Status</strong> - the current runtime state: Starting, Idle, Running, Stopping, Stopped, or Faulted</li>
+<li><strong>Created At</strong> - when this instance came alive</li>
+<li><strong>Last Active At</strong> - when it last processed something</li>
+<li><strong>World Strategy</strong> - which isolation environment this instance runs within</li>
+</ul>
+<p>An agent can have many simultaneous Instances - one for each active session. This is like a person being in multiple conversations at once: same identity, same personality, different contexts.</p>
+<h3 id="the-relationship-between-descriptor-and-instance">The Relationship Between Descriptor and Instance<a class="headerlink" href="#the-relationship-between-descriptor-and-instance" title="Permanent link">&para;</a></h3>
+<p>The Descriptor is the blueprint; the Instance is the building. You can read a Descriptor and understand what an agent <em>would</em> do. You can observe an Instance and see what an agent <em>is</em> doing. Both are facets of the same Agent concept, split for practical reasons: configuration doesn't change at runtime, and runtime state doesn't belong in configuration.</p>
+<hr />
+<h2 id="world">World<a class="headerlink" href="#world" title="Permanent link">&para;</a></h2>
+<p>A World is the environment in which an agent exists - its place of being. Every agent lives in a World, and the World shapes what the agent can see, touch, and reach.</p>
+<p>In concrete terms, a World is the Gateway that hosts the agent. But the concept is richer than "which server am I on" - it encompasses the agent's entire environmental context.</p>
+<h3 id="properties-of-a-world">Properties of a World<a class="headerlink" href="#properties-of-a-world" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Gateway</strong> - the BotNexus Gateway process that manages this World</li>
+<li><strong>Agents</strong> - the set of agents that live in this World (a World may host one agent or many)</li>
+<li><strong>Locations</strong> - the resources accessible from this World (see below)</li>
+<li><strong>Boundaries</strong> - what the World allows and restricts</li>
+</ul>
+<h3 id="locations">Locations<a class="headerlink" href="#locations" title="Permanent link">&para;</a></h3>
+<p>A Location is any resource an agent can access from its World. Locations are a first-class concept because an agent's capabilities are defined not just by its tools, but by what those tools can reach:</p>
+<ul>
+<li><strong>File System Paths</strong> - workspace directories, shared drives, mounted volumes</li>
+<li><strong>APIs and Services</strong> - REST endpoints, MCP servers, databases, cloud services</li>
+<li><strong>Remote Nodes</strong> - satellite processes or services that extend the World's reach (e.g., a coding agent running in a container, a remote tool host)</li>
+</ul>
+<p>Some Locations are inherent to the World (the local file system, the Gateway's own APIs). Others are explicitly granted - an agent might have access to a specific SharePoint site, a particular Azure subscription, or a set of GitHub repositories. The Descriptor's tool access and extension configuration determine which Locations an agent can reach.</p>
+<h3 id="shared-vs-isolated-worlds">Shared vs. Isolated Worlds<a class="headerlink" href="#shared-vs-isolated-worlds" title="Permanent link">&para;</a></h3>
+<p>A World may host a single agent in splendid isolation, or it may be a shared environment where multiple agents coexist:</p>
+<ul>
+<li><strong>Isolated World</strong> - one agent, one Gateway. The agent has full run of the environment. Common for personal assistants or security-sensitive workloads.</li>
+<li><strong>Shared World</strong> - multiple agents on the same Gateway. Agents share the infrastructure but have separate workspaces, sessions, and memory. Communication between co-located agents is local and fast.</li>
+</ul>
+<h3 id="agent-execution-strategies">Agent Execution Strategies<a class="headerlink" href="#agent-execution-strategies" title="Permanent link">&para;</a></h3>
+<p>How an agent runs within its World is determined by its execution strategy (configured via the Descriptor). This controls the isolation boundary between the agent's code and the Gateway process:</p>
+<ul>
+<li><strong>In-Process</strong> - the agent runs directly inside the Gateway process. Fastest, no isolation. The default for simple deployments.</li>
+<li><strong>Sandbox</strong> - the agent runs in a restricted process with limited permissions. A middle ground between speed and safety.</li>
+<li><strong>Container</strong> - the agent runs in a Docker container. Strong isolation, suitable for untrusted or resource-intensive agents.</li>
+<li><strong>Remote</strong> - the agent delegates to a remote service. The Instance is a proxy; the real work happens elsewhere.</li>
+</ul>
+<p>Satellite nodes - remote processes that extend a World's capabilities without being full Worlds themselves - are considered part of the World they serve. A coding agent container spawned by a Gateway is a satellite of that Gateway's World, not a separate World.</p>
+<h3 id="cross-world-access">Cross-World Access<a class="headerlink" href="#cross-world-access" title="Permanent link">&para;</a></h3>
+<p>An agent's World is its home, but some work requires reaching beyond it. If an agent needs to communicate with agents on a different Gateway, or access resources in another World, it needs explicit permission. Cross-world access is never implicit - it is configured, auditable, and has different session semantics than local communication (see <a href="#cross-world-conversations">Cross-World Conversations</a>).</p>
+<hr />
+<h2 id="soul">Soul<a class="headerlink" href="#soul" title="Permanent link">&para;</a></h2>
+<p>The Soul is defined in a <code>SOUL.md</code> file and is where the agent's voice, personality, and stance live. BotNexus injects it into the system prompt for every session, giving it real weight over how the agent communicates. If an agent sounds bland, overly corporate, or lacks character, <code>SOUL.md</code> is the file to fix.</p>
+<h3 id="what-belongs-in-soulmd">What Belongs in SOUL.md<a class="headerlink" href="#what-belongs-in-soulmd" title="Permanent link">&para;</a></h3>
+<p><code>SOUL.md</code> should contain the attributes that change how the agent <em>feels</em> to talk to:</p>
+<ul>
+<li><strong>Tone</strong> - formal, casual, dry, warm, direct</li>
+<li><strong>Opinions</strong> - strong takes rather than hedging with "it depends"</li>
+<li><strong>Brevity</strong> - how concise or verbose the agent should be by default</li>
+<li><strong>Humor</strong> - whether wit is welcome and to what degree</li>
+<li><strong>Boundaries</strong> - what the agent will push back on or refuse</li>
+<li><strong>Bluntness</strong> - default level of directness</li>
+</ul>
+<h3 id="what-does-not-belong-in-soulmd">What Does NOT Belong in SOUL.md<a class="headerlink" href="#what-does-not-belong-in-soulmd" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Life stories or elaborate backstories</li>
+<li>Changelogs or version history</li>
+<li>Security policies or compliance rules</li>
+<li>Long walls of vague vibes with no behavioral effect</li>
+</ul>
+<p>Short beats long. Sharp beats vague. Good rules sound like "have a take", "skip filler", "call out bad ideas early". Bad rules sound like "maintain professionalism at all times" or "ensure a positive and supportive experience" - that's how you get mush.</p>
+<h3 id="relationship-to-other-files">Relationship to Other Files<a class="headerlink" href="#relationship-to-other-files" title="Permanent link">&para;</a></h3>
+<p><code>SOUL.md</code> is purely for voice, stance, and style. Operating rules, tool permissions, and behavioral logic belong in the Agent Descriptor or <code>AGENTS.md</code>. Personality is not permission to be sloppy - if an agent works in shared channels, public replies, or customer surfaces, the tone in <code>SOUL.md</code> still needs to fit the room.</p>
+<h3 id="soul-session">Soul Session<a class="headerlink" href="#soul-session" title="Permanent link">&para;</a></h3>
+<p>Separate from the <code>SOUL.md</code> file, each agent also has a <strong>Soul Session</strong> - a special internal session that is only accessible to the agent itself. It is the agent's private inner space for reflection, learning, and growth. The user cannot see or interact with this session.</p>
+<p>A new Soul Session is created daily and automatically sealed at the end of each day. This gives the agent a daily reflection and learning cycle. The Soul Session is also where the <strong>Heartbeat</strong> runs - driven by the <code>HEARTBEAT.md</code> file, the agent follows its heartbeat instructions to interact with itself, perform maintenance, and proactively reach out to users and other agents in other sessions as needed.</p>
+<p>The Soul Session is not created via a Channel - it is an internal trigger, and like all internally triggered sessions, it is non-interactive. Unlike ad-hoc Agent-Self sessions (see <a href="#agent-to-self-multitasking">Agent to Self</a>), the Soul Session is <em>scheduled</em> - it follows a daily cycle and is driven by the heartbeat, not by a spontaneous decision to multitask.</p>
+<hr />
+<h2 id="identity">Identity<a class="headerlink" href="#identity" title="Permanent link">&para;</a></h2>
+<p>Identity is the agent's self-concept - the answer to "who are you?" It is defined in an <code>IDENTITY.md</code> file at the workspace root and established during the agent's <strong>bootstrap ritual</strong> (its first-run setup). Unlike the Soul, which governs <em>how</em> the agent communicates, Identity governs <em>what</em> the agent is and how it presents itself to the world.</p>
+<h3 id="identitymd-fields">IDENTITY.md Fields<a class="headerlink" href="#identitymd-fields" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Name</strong> - the agent's chosen name, used in channel messages and multi-agent routing</li>
+<li><strong>Archetype</strong> - what kind of entity the agent considers itself (AI assistant, familiar, digital colleague, something weirder). This anchors the agent's self-model and influences how it frames its own capabilities and limitations.</li>
+<li><strong>Vibe</strong> - a short description of the agent's general impression (sharp, warm, chaotic, calm). Overlaps with Soul but serves as a quick identity summary rather than detailed behavioral rules.</li>
+<li>"Vibe is the elevator pitch; Soul is the full playbook."</li>
+<li><strong>Emoji</strong> - a signature emoji used as a visual shorthand across channels and UI surfaces</li>
+<li><strong>Avatar</strong> - a visual representation of the agent (workspace-relative path, URL, or data URI)</li>
+</ul>
+<h3 id="how-identity-differs-from-soul">How Identity Differs from Soul<a class="headerlink" href="#how-identity-differs-from-soul" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>Identity (<code>IDENTITY.md</code>)</th>
+<th>Soul (<code>SOUL.md</code>)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Purpose</td>
+<td>Who the agent <em>is</em></td>
+<td>How the agent <em>communicates</em></td>
+</tr>
+<tr>
+<td>Content</td>
+<td>Name, archetype, emoji, avatar</td>
+<td>Tone, opinions, brevity, humor, boundaries</td>
+</tr>
+<tr>
+<td>Analogy</td>
+<td>A person's name and appearance</td>
+<td>A person's personality and mannerisms</td>
+</tr>
+<tr>
+<td>Scope</td>
+<td>Public-facing metadata + self-concept</td>
+<td>Behavioral rules for conversation</td>
+</tr>
+</tbody>
+</table>
+<h3 id="bootstrap-ritual">Bootstrap Ritual<a class="headerlink" href="#bootstrap-ritual" title="Permanent link">&para;</a></h3>
+<p>Identity is established when an agent first comes online. During the bootstrap ritual, the agent is guided through defining its own identity - picking a name, choosing an emoji, deciding what kind of entity it is. This is a one-time event; after the ritual completes, the <code>IDENTITY.md</code> file persists and is loaded into the system prompt for every session.</p>
+<p>The identity fields also map to the agent's runtime configuration, making them available for multi-agent routing, channel message formatting, and UI rendering. In multi-agent environments, each agent's identity ensures users and other agents can distinguish between them across shared channels.</p>
+<p>Identity and Soul will evolve over time after the initial bootstrap.</p>
+<hr />
+<h2 id="session">Session<a class="headerlink" href="#session" title="Permanent link">&para;</a></h2>
+<p>A Session is a bounded window of interaction. It is the container for a conversation, a task, a piece of focused work, or an internal process. Every time an agent does anything - responds to a user, runs a cron job, reflects in its Soul Session, talks to another agent - it happens within a Session.</p>
+<h3 id="session-properties">Session Properties<a class="headerlink" href="#session-properties" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Session ID</strong> - unique identifier for this session</li>
+<li><strong>Agent ID</strong> - the agent that owns this session (the agent that created it or is primarily bound to it)</li>
+<li><strong>Channel Type</strong> - the external channel that created this session (null for internally triggered sessions)</li>
+<li><strong>Participants</strong> - who is in this session. Participants can be users or agents, identified by their world and agent/user IDs. For user-agent sessions, this includes the user and the agent. For agent-to-agent sessions, this includes both agents with their world context.</li>
+<li><strong>IsInteractive</strong> - whether external participants (users) can inject messages into the session</li>
+<li><strong>Status</strong> - the session's lifecycle state (see below)</li>
+<li><strong>History</strong> - the ordered conversation entries that make up this session's record</li>
+<li><strong>Created At / Updated At</strong> - temporal bookmarks</li>
+<li><strong>Metadata</strong> - extensible properties for session-specific context</li>
+</ul>
+<h3 id="session-lifecycle">Session Lifecycle<a class="headerlink" href="#session-lifecycle" title="Permanent link">&para;</a></h3>
+<p>Sessions move through a clear lifecycle:</p>
+<ul>
+<li><strong>Active</strong> - the session is live and available for new messages. The agent can process interactions and the session accumulates history.</li>
+<li><strong>Suspended</strong> - the session is temporarily paused but may be resumed. This is the state for sessions that aren't currently in use but haven't been concluded - like a conversation you'll come back to after lunch.</li>
+<li><strong>Sealed</strong> - the session is explicitly closed and no more interactions should be added. This is the terminal state. Once sealed, the agent knows to stop contributing to this session and can begin processing its contents for memory and learning. The term "sealed" is deliberate - it implies the session's record is now complete and preserved, like sealing an envelope.</li>
+</ul>
+<p>When the Gateway starts up, any Active or Suspended sessions should be resumed so the agent is ready to respond. The Gateway should never resume a Sealed session.</p>
+<h3 id="session-types">Session Types<a class="headerlink" href="#session-types" title="Permanent link">&para;</a></h3>
+<p>Sessions are distinguished by who created them and who participates:</p>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Created By</th>
+<th>Participants</th>
+<th>Interactive</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>User-Agent</strong></td>
+<td>Channel message</td>
+<td>User + Agent</td>
+<td>Yes</td>
+<td>A human talking to an agent</td>
+</tr>
+<tr>
+<td><strong>Agent-Self</strong></td>
+<td>Agent (internal)</td>
+<td>Agent only</td>
+<td>No</td>
+<td>Ad-hoc multitasking - agent doing focused work</td>
+</tr>
+<tr>
+<td><strong>Agent-Sub-Agent</strong></td>
+<td>Agent (spawn)</td>
+<td>Parent Agent + Worker</td>
+<td>No</td>
+<td>An agent using disposable workers</td>
+</tr>
+<tr>
+<td><strong>Agent-Agent</strong></td>
+<td>Agent (call)</td>
+<td>Two registered agents</td>
+<td>No</td>
+<td>Two agents having a conversation</td>
+</tr>
+<tr>
+<td><strong>Soul Session</strong></td>
+<td>Internal trigger</td>
+<td>Agent only</td>
+<td>No</td>
+<td>Scheduled daily reflection, heartbeat</td>
+</tr>
+<tr>
+<td><strong>Cron Session</strong></td>
+<td>Scheduler</td>
+<td>Agent only</td>
+<td>No</td>
+<td>Scheduled task execution</td>
+</tr>
+</tbody>
+</table>
+<p>All internally triggered sessions (Soul, Cron, Agent-Self, Agent-Sub-Agent, Agent-Agent) are non-interactive - users cannot inject messages into them. The WebUI may allow users to <em>inspect</em> these sessions and read what happened, but never to participate.</p>
+<h3 id="session-sealing">Session Sealing<a class="headerlink" href="#session-sealing" title="Permanent link">&para;</a></h3>
+<p>The <code>/new</code> command is the primary user-facing way to seal a session and start a fresh one. Internally, sessions may also be sealed when:</p>
+<ul>
+<li>A cron job completes its work</li>
+<li>An agent-to-agent conversation achieves its objective</li>
+<li>A sub-agent finishes and reports back</li>
+<li>A Soul Session's daily cycle ends</li>
+<li>A session expires due to retention policy</li>
+</ul>
+<hr />
+<h2 id="existence">Existence<a class="headerlink" href="#existence" title="Permanent link">&para;</a></h2>
+<p>The Existence is the totality of an agent's experience - the collection of every Session it has ever participated in. Just as a human's life is the sum of their conversations, work, reflections, and encounters, an agent's Existence is the sum of its Sessions.</p>
+<p>The Existence serves several purposes:</p>
+<ul>
+<li><strong>Continuity</strong> - the agent can look back at past sessions for context it needs now</li>
+<li><strong>Learning</strong> - by reviewing past interactions, the agent can identify patterns, mistakes, and growth</li>
+<li><strong>Memory Source</strong> - Memory (both Long-Term and Daily) is always a distillation of what happened in Sessions. The Existence is the raw material; Memory is the refined product.</li>
+</ul>
+<p>An agent's Existence includes both sessions it <em>owns</em> (where it is the primary Agent ID) and sessions it <em>participated in</em> (where it appears in the Participants list). This dual-lookup is important for agent-to-agent conversations: the owning agent created the session, but the called agent also has that conversation as part of their experience. For cross-world conversations, each agent has their own session on their side, so both sides of the conversation appear in each agent's Existence.</p>
+<p>An agent can pull information from its Existence at varying levels of granularity. It might scan Memory for a quick answer, or dive back into a specific past session for the full detail of a conversation. This layered access - Memory for breadth, Existence for depth - gives agents a powerful system for remembering and learning over time.</p>
+<p>Every session type becomes part of the agent's Existence - user conversations, cron jobs, soul reflections, sub-agent delegations, and agent-to-agent conversations. They all contribute to the agent's accumulated experience.</p>
+<hr />
+<h2 id="agent-communication">Agent Communication<a class="headerlink" href="#agent-communication" title="Permanent link">&para;</a></h2>
+<p>Agents communicate through four distinct patterns, each with different session semantics, participant models, and use cases. Understanding these patterns is essential - they define how work gets distributed, how information flows between agents, and how the system scales.</p>
+<h3 id="agent-to-self-multitasking">Agent to Self (Multitasking)<a class="headerlink" href="#agent-to-self-multitasking" title="Permanent link">&para;</a></h3>
+<p>An agent spins up a private session to focus on a piece of work while maintaining its main conversation. This is the equivalent of a human multitasking - you're in a meeting, but you're also drafting that email in the background.</p>
+<ul>
+<li><strong>Session type</strong>: Agent-Self</li>
+<li><strong>Participants</strong>: The agent alone</li>
+<li><strong>Interactive</strong>: No</li>
+<li><strong>Lifecycle</strong>: Created when the agent decides to do background work; sealed when the work is complete</li>
+<li><strong>Existence</strong>: Becomes part of the agent's Existence like any other session</li>
+</ul>
+<p>The agent creates these sessions through its own initiative. There is no external caller, no channel, and no user involvement. The agent defines the work, executes it, and consumes the result.</p>
+<p>Unlike the Soul Session (which is <em>scheduled</em> on a daily cycle and driven by the heartbeat), Agent-Self sessions are <em>ad-hoc</em> - the agent decides in the moment that it needs to multitask. Both are agent-alone and non-interactive, but the trigger and purpose differ.</p>
+<h3 id="agent-to-generic-sub-agent-disposable-workers">Agent to Generic Sub-Agent (Disposable Workers)<a class="headerlink" href="#agent-to-generic-sub-agent-disposable-workers" title="Permanent link">&para;</a></h3>
+<p>An agent spawns stateless workers to handle specific tasks. These workers have no soul, no history, and no persistent identity of their own. They are completely disposable - created for a task, given a prompt by the parent, and discarded when done. Think of them as temporary contractors: "go research this", "go write this code", "go summarize that document".</p>
+<ul>
+<li><strong>Session type</strong>: Agent-Sub-Agent</li>
+<li><strong>Participants</strong>: Parent agent + spawned worker</li>
+<li><strong>Interactive</strong>: No</li>
+<li><strong>Lifecycle</strong>: Created by the parent agent via a spawn request; sealed when the worker completes, times out, or is killed</li>
+<li><strong>Identity</strong>: Workers get a generic identity based on their purpose, drawn from standard archetypes: <strong>researcher</strong>, <strong>coder</strong>, <strong>planner</strong>, <strong>reviewer</strong>, <strong>writer</strong>, and others. A worker is <em>not</em> a copy of the parent agent - it has its own archetype-based identity so it can be tracked, audited, and distinguished from the agent that spawned it. This prevents identity confusion and makes it clear in logs and session history who did what.</li>
+<li><strong>Existence</strong>: The worker's session becomes part of the parent agent's Existence. The worker itself has no Existence - it's ephemeral.</li>
+<li><strong>Completion</strong>: When the worker finishes, a completion summary is delivered back to the parent's session as a follow-up message</li>
+</ul>
+<p>Sub-agents are the primary mechanism for delegation. An agent that receives a complex request can break it into pieces, spawn workers for each piece, and synthesize the results. Workers can be limited by turn count, timeout, tool access, and model selection.</p>
+<h3 id="agent-to-agent-conversation">Agent to Agent (Conversation)<a class="headerlink" href="#agent-to-agent-conversation" title="Permanent link">&para;</a></h3>
+<p>An agent calls upon another <em>registered</em> agent - one with its own Descriptor, Soul, Identity, and Existence. This is fundamentally different from spawning a disposable worker. This is two colleagues having a conversation.</p>
+<ul>
+<li><strong>Session type</strong>: Agent-Agent (a <strong>Conversation</strong>)</li>
+<li><strong>Participants</strong>: The initiating agent (acting as the "user" role) and the target agent (acting as the "agent" role) - exactly like a human interacting with an agent. Both agents are listed in the session's Participants with their world and agent IDs.</li>
+<li><strong>Interactive</strong>: No - users cannot inject into agent-to-agent conversations</li>
+<li><strong>Session ownership</strong>: A single session is created, owned by the initiating agent (its Agent ID is on the session). The target agent appears in Participants.</li>
+<li><strong>Lifecycle</strong>: A new session is created for each conversation. Once the objective is met, the session is sealed. If the agents need to talk again later, a <em>new</em> session is created - just as humans have separate conversations over time rather than one infinitely long one.</li>
+<li><strong>Existence</strong>: The conversation session becomes part of <em>both</em> agents' Existence. The owning agent finds it through sessions it owns; the called agent finds it through sessions it participated in.</li>
+<li><strong>Cycle Detection</strong>: The system prevents recursive call chains (Agent A calls Agent B calls Agent A) and enforces maximum call-chain depth</li>
+</ul>
+<p>This pattern enables specialization. An orchestrator agent can call a research agent for deep dives, a code agent for implementation, a compliance agent for reviews - each bringing their own expertise, their own soul, their own perspective. The conversation is richer because both participants are fully realized agents.</p>
+<h3 id="cross-world-conversations">Cross-World Conversations<a class="headerlink" href="#cross-world-conversations" title="Permanent link">&para;</a></h3>
+<p>When agents on different Gateways need to communicate, the pattern extends across World boundaries. The concept is the same - two agents having a conversation - but the mechanics change because Worlds do not share storage.</p>
+<ul>
+<li><strong>Session creation</strong>: Two sessions are created - one on each side. The initiating agent (Agent A) creates a conversation session locally and makes a tool/API call across to the other World. On the receiving side, Agent B starts a session based on the incoming message, processes it through the LLM, and sends the response back. Agent A receives that response and processes it in its own session.</li>
+<li><strong>Cross-World Channel</strong>: Unlike internal triggers (cron, soul, heartbeat), cross-world communication uses a real channel - a <strong>Cross-World Channel</strong> that bridges the two Gateways. This channel handles the message exchange between Worlds, making it a proper external communication method rather than an internal trigger.</li>
+<li><strong>Session ownership</strong>: Each agent owns their session on their side. The conversation content is duplicated across both sessions (though ordering may differ slightly due to the request/response flow).</li>
+<li><strong>Existence</strong>: Both agents have both sides of the conversation in their Existence - each through the session on their side.</li>
+<li><strong>Interactive</strong>: No - cross-world conversations follow the same non-interactive rule as local agent-to-agent conversations</li>
+<li><strong>Permission</strong>: Cross-world communication requires explicit configuration. An agent cannot reach into another World uninvited.</li>
+</ul>
+<p>Cross-world conversations are the mechanism for federation - multiple BotNexus deployments cooperating without merging into a single system. Each World maintains sovereignty over its agents, sessions, and data.</p>
+<h3 id="communication-pattern-summary">Communication Pattern Summary<a class="headerlink" href="#communication-pattern-summary" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>+-------------------------------------------------------------------+
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>|                   Agent Communication Patterns                    |
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>+-------------------------------------------------------------------+
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>|                                                                   |
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>|  1. Agent to Self             2. Agent to Sub-Agent               |
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>|                                                                   |
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>|  +----------+                 +----------+     +---------+        |
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>|  |  Agent   |-----------+    |  Agent   |----&gt;| Worker  |         |
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>|  |  (main)  |  private  |    | (parent) |     |(archtyp)|         |
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>|  +----------+  session  |    +----------+     +---------+         |
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>|                +--------v+        ^  completion  |                |
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>|                | focused |        +--------------+                |
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>|                |  work   |                                        |
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>|                +---------+                                        |
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>|                                                                   |
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>|  3. Agent to Agent            4. Cross-World                      |
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>|                                                                   |
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>|  +----------+                 +---------+      +---------+        |
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>|  | Agent A  |&lt;---------------&gt;| Agent A |      | Agent B |        |
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>|  | (&quot;user&quot;) |  conversation   | World 1 |&lt;----&gt;| World 2 |        |
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>|  +----------+  (one session)  +---------+      +---------+        |
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>|  +----------+                  session A  !=  session B           |
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>|  | Agent B  |                  (cross-world channel)              |
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a>|  |(&quot;agent&quot;) |                  each side owns their session       |
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>|  +----------+                                                     |
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a>|                                                                   |
+<a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a>+-------------------------------------------------------------------+
+</code></pre></div>
+<hr />
+<h2 id="channel">Channel<a class="headerlink" href="#channel" title="Permanent link">&para;</a></h2>
+<p>A Channel is an external communication method - the way an agent talks to and hears from the outside world. Channels are the bridges between agents and their users.</p>
+<h3 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>SignalR</strong> - the built-in real-time web channel</li>
+<li><strong>Telegram</strong> - messaging via Telegram Bot API</li>
+<li><strong>TUI</strong> - terminal-based interactive interface</li>
+<li><strong>Cross-World</strong> - bridges two Gateways for agent-to-agent communication across Worlds</li>
+<li><strong>Discord</strong>, <strong>Slack</strong>, <strong>Signal</strong>, <strong>Email</strong>, <strong>SMS</strong> - future channel adapters</li>
+</ul>
+<p>A single agent may have multiple instances of the same channel type. For example, an agent might have a 1-1 Telegram chat with a user <em>and</em> be in a Telegram group chat - these are two separate channel instances, each with their own session.</p>
+<h3 id="channel-capabilities">Channel Capabilities<a class="headerlink" href="#channel-capabilities" title="Permanent link">&para;</a></h3>
+<p>Channels are not all equal. Each Channel declares what it can do:</p>
+<ul>
+<li><strong>Streaming</strong> - can it render incremental content as the agent thinks, or only complete messages?</li>
+<li><strong>Steering</strong> - can the user inject mid-response to redirect the agent?</li>
+<li><strong>Follow-up</strong> - can the agent append to an existing response?</li>
+<li><strong>Thinking Display</strong> - can the channel render the agent's reasoning process?</li>
+<li><strong>Tool Display</strong> - can the channel show tool call activity?</li>
+</ul>
+<p>These capabilities influence how the agent's output is presented but do not change the agent's behavior or the session model.</p>
+<h3 id="channels-vs-internal-triggers">Channels vs. Internal Triggers<a class="headerlink" href="#channels-vs-internal-triggers" title="Permanent link">&para;</a></h3>
+<p>Channels are distinct from internal triggers. <strong>Cron jobs, Soul Sessions, and Heartbeats are NOT channels</strong> - they are internal processes that create sessions without any external communication.</p>
+<p>Think of it like a human: when you think to yourself or a reminder fires in your head, you're not <em>communicating</em> - you're processing internally. Other people might observe the resulting actions, but there was no conversation. The same applies to agents: a cron job may trigger work that produces visible output, but the trigger itself is not a channel.</p>
+<p>Sessions created by internal triggers are non-interactive. The WebUI allows users to inspect these sessions and see the interactions that took place, but they cannot participate in them.</p>
+<p>Note: the Cross-World Channel <em>is</em> a real channel, not an internal trigger. It represents actual external communication between two separate Gateways, even though no human is directly involved.</p>
+<hr />
+<h2 id="user">User<a class="headerlink" href="#user" title="Permanent link">&para;</a></h2>
+<p>A User is a human who interacts with an Agent. Users are the <em>people</em> in the system - the ones who ask questions, give instructions, review output, and ultimately judge whether the agent is being helpful.</p>
+<h3 id="user-properties">User Properties<a class="headerlink" href="#user-properties" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Identity</strong> - who the user is (name, email, external identifier)</li>
+<li><strong>Channel Presence</strong> - which channels the user communicates through</li>
+<li><strong>Sessions</strong> - the set of sessions the user participates in (across agents and channels)</li>
+</ul>
+<h3 id="user-interaction-model">User Interaction Model<a class="headerlink" href="#user-interaction-model" title="Permanent link">&para;</a></h3>
+<p>A User interacts with agents through Channels. Each channel-agent combination creates a Session where the user and agent converse. A user can:</p>
+<ul>
+<li>Have multiple sessions with the same agent (different conversations, different topics)</li>
+<li>Have sessions with different agents (talking to a personal assistant, then a coding agent)</li>
+<li>See non-interactive sessions in the WebUI (inspecting cron results, soul session activity) without being able to participate in them</li>
+</ul>
+<p>Users are the interactive participants. When a session is marked as interactive, it means a user can contribute to it. When a session is non-interactive, the user is an observer at most.</p>
+<hr />
+<h2 id="tools-skills">Tools &amp; Skills<a class="headerlink" href="#tools-skills" title="Permanent link">&para;</a></h2>
+<p>Tools and Skills define what an agent can <em>do</em> beyond conversation. If the agent's Soul is its voice and its Identity is its face, then Tools are its hands and Skills are its expertise.</p>
+<h3 id="tools">Tools<a class="headerlink" href="#tools" title="Permanent link">&para;</a></h3>
+<p>A Tool is a single, discrete capability - an action the agent can take on the world. Tools are the primitives:</p>
+<ul>
+<li><strong>read</strong> - read a file</li>
+<li><strong>write</strong> - write a file</li>
+<li><strong>exec</strong> - run a command</li>
+<li><strong>search</strong> - search the web</li>
+<li><strong>grep</strong> - search file contents</li>
+<li><strong>memory_search</strong> - query semantic memory</li>
+</ul>
+<p>Tools are simple, composable, and general-purpose. An agent uses tools the way a person uses their hands - to interact with the physical (or digital) world around them.</p>
+<h3 id="skills">Skills<a class="headerlink" href="#skills" title="Permanent link">&para;</a></h3>
+<p>A Skill is a higher-level concept - a collection of domain knowledge <em>and</em> the related tools for working in that domain. If Tools are individual actions, Skills are areas of expertise.</p>
+<p>Think of it like a library:</p>
+<ul>
+<li>A <strong>Skill</strong> is a section of the library (e.g., "Calendar Management", "ADO Work Management", "Personal Knowledge Management")</li>
+<li>The <strong>SKILL.md</strong> file is the index card for that section - it describes what the domain covers, what tools are available, and where to find more detailed information</li>
+<li>The <strong>other files</strong> in the skill are the books on the shelf - reference data, workflows, rules, examples, and domain-specific knowledge</li>
+</ul>
+<p>A Skill combines <em>knowing</em> with <em>doing</em>. The "m365-communication" skill doesn't just give the agent access to email and Teams tools - it provides the knowledge of how to triage an inbox, when to flag vs archive, how to resolve a person's identity from a display name, and what formatting works on which platform.</p>
+<p>Skills are loaded on demand. An agent checks its available skills before acting in a domain, loads the relevant SKILL.md for context, and follows the workflows defined there. This keeps the agent's context lean while giving it deep expertise when needed.</p>
+<hr />
+<h2 id="memory">Memory<a class="headerlink" href="#memory" title="Permanent link">&para;</a></h2>
+<p>Memory is how an agent persists knowledge across sessions. Without Memory, every session would be a blank slate - the agent would have no context, no history, no learning. Memory is what gives agents continuity.</p>
+<h3 id="memory-types">Memory Types<a class="headerlink" href="#memory-types" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Long-Term Memory</strong> - the agent's accumulated knowledge over its entire existence. This is the distilled, curated collection of everything the agent has learned - facts, preferences, lessons, relationships, patterns. Long-term memory is stored in <code>MEMORY.md</code> and is the agent's most important file. It's what a human would call "what I know."</li>
+<li><strong>Daily Memory</strong> - a day's worth of raw notes and observations, stored in <code>memory/YYYY-MM-DD.md</code> files. Daily memory captures what happened today - sessions, decisions, corrections, discoveries. At the end of each day (or periodically), the agent reviews its daily notes and distills the important bits into long-term memory. Daily memory is the journal; long-term memory is the wisdom.</li>
+</ul>
+<h3 id="semantic-memory">Semantic Memory<a class="headerlink" href="#semantic-memory" title="Permanent link">&para;</a></h3>
+<p>Beyond file-based memory, BotNexus supports semantic memory - an indexed, searchable store that the agent can query by meaning rather than file path. Semantic memory enables the agent to recall relevant information even when it doesn't remember exactly where it wrote something down. Configuration includes:</p>
+<ul>
+<li><strong>Indexing</strong> - whether memory content is automatically indexed</li>
+<li><strong>Search</strong> - how many results to return, relevance tuning</li>
+<li><strong>Temporal Decay</strong> - recent memories score higher than old ones, with a configurable half-life</li>
+</ul>
+<h3 id="memory-and-existence">Memory and Existence<a class="headerlink" href="#memory-and-existence" title="Permanent link">&para;</a></h3>
+<p>Memory is always a summation of what happened in Sessions - it's the refined extract of the agent's Existence. An agent can operate at three levels of recall:</p>
+<ol>
+<li><strong>Memory</strong> (fast, summarized) - "I know Jon prefers short responses"</li>
+<li><strong>Semantic Search</strong> (broad, associative) - "What do I know about calendar management?"</li>
+<li><strong>Existence</strong> (deep, detailed) - "What exactly was said in that session last Tuesday?"</li>
+</ol>
+<p>This layered approach - Memory for breadth, Existence for depth - mirrors how humans remember: we have general knowledge, we can search our recollections, and if we really need the details, we can go back to our notes.</p>
+<h3 id="memory-maintenance">Memory Maintenance<a class="headerlink" href="#memory-maintenance" title="Permanent link">&para;</a></h3>
+<p>Memory is updated and managed primarily during Soul Sessions. The agent's daily reflection cycle is when it reviews what happened, decides what matters, and updates its long-term memory accordingly. This is not a passive process - the agent actively curates its own memory, just as a person would review their journal and update their mental model of the world.</p>
+<hr />
+<h2 id="domain-relationships">Domain Relationships<a class="headerlink" href="#domain-relationships" title="Permanent link">&para;</a></h2>
+<p>The following captures how the domain objects relate to one another:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>World (Gateway)
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a> +-- hosts one or more Agents
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a> +-- provides Locations (file system, APIs, services)
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a> +-- manages Channels (external communication adapters)
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a> +-- enforces boundaries (cross-world access requires permission)
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>Agent
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a> +-- defined by a Descriptor (static configuration)
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a> +-- manifested as one or more Instances (runtime, per-session)
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a> +-- has a Soul (voice, personality - SOUL.md)
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a> +-- has an Identity (self-concept - IDENTITY.md)
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a> +-- has an Existence (all sessions - owned + participated)
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a> +-- has Memory (long-term + daily + semantic)
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a> +-- has Tools (individual capabilities) and Skills (domain expertise)
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a> +-- lives in a World
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a> +-- communicates via Channels (external) or internal triggers
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>Session
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a> +-- owned by an Agent (bound via Agent ID)
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a> +-- may be associated with a Channel (user-facing) or not (internal)
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a> +-- has Participants (users and/or agents, with world context)
+<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a> +-- has a lifecycle: Active -&gt; Suspended -&gt; Sealed
+<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a> +-- is interactive or non-interactive (explicit property)
+<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a> +-- accumulates History (conversation entries)
+<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a> +-- becomes part of each participant&#39;s Existence
+<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a>
+<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>Channel
+<a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a> +-- connects Users to Agents (or Agents to Agents across Worlds)
+<a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a> +-- creates interactive Sessions (or non-interactive for cross-world)
+<a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a> +-- declares capabilities (streaming, steering, follow-up, etc.)
+<a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a> +-- is distinct from internal triggers (cron, soul, heartbeat)
+<a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a>
+<a id="__codelineno-2-33" name="__codelineno-2-33" href="#__codelineno-2-33"></a>User
+<a id="__codelineno-2-34" name="__codelineno-2-34" href="#__codelineno-2-34"></a> +-- interacts through Channels
+<a id="__codelineno-2-35" name="__codelineno-2-35" href="#__codelineno-2-35"></a> +-- participates in interactive Sessions
+<a id="__codelineno-2-36" name="__codelineno-2-36" href="#__codelineno-2-36"></a> +-- can inspect (but not participate in) non-interactive Sessions
+<a id="__codelineno-2-37" name="__codelineno-2-37" href="#__codelineno-2-37"></a>
+<a id="__codelineno-2-38" name="__codelineno-2-38" href="#__codelineno-2-38"></a>Tools &amp; Skills
+<a id="__codelineno-2-39" name="__codelineno-2-39" href="#__codelineno-2-39"></a> +-- Tools are individual capabilities (read, write, exec, search)
+<a id="__codelineno-2-40" name="__codelineno-2-40" href="#__codelineno-2-40"></a> +-- Skills are domain expertise (knowledge + related tools)
+<a id="__codelineno-2-41" name="__codelineno-2-41" href="#__codelineno-2-41"></a> +-- Skills are loaded on demand via SKILL.md
+<a id="__codelineno-2-42" name="__codelineno-2-42" href="#__codelineno-2-42"></a> +-- Skills contain reference data, workflows, and domain rules
+<a id="__codelineno-2-43" name="__codelineno-2-43" href="#__codelineno-2-43"></a>
+<a id="__codelineno-2-44" name="__codelineno-2-44" href="#__codelineno-2-44"></a>Memory
+<a id="__codelineno-2-45" name="__codelineno-2-45" href="#__codelineno-2-45"></a> +-- is a distillation of the Agent&#39;s Existence
+<a id="__codelineno-2-46" name="__codelineno-2-46" href="#__codelineno-2-46"></a> +-- has Long-Term (MEMORY.md) and Daily (memory/*.md) layers
+<a id="__codelineno-2-47" name="__codelineno-2-47" href="#__codelineno-2-47"></a> +-- supports semantic search with temporal decay
+<a id="__codelineno-2-48" name="__codelineno-2-48" href="#__codelineno-2-48"></a> +-- is maintained during Soul Sessions
+</code></pre></div>
+<hr />
+<h2 id="glossary">Glossary<a class="headerlink" href="#glossary" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Definition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Agent</strong></td>
+<td>An intelligent entity composed of a Descriptor (config) and Instance(s) (runtime)</td>
+</tr>
+<tr>
+<td><strong>Descriptor</strong></td>
+<td>The static configuration of an agent - its identity, model, tools, and access</td>
+</tr>
+<tr>
+<td><strong>Instance</strong></td>
+<td>A live runtime manifestation of an agent, bound to a specific session</td>
+</tr>
+<tr>
+<td><strong>World</strong></td>
+<td>The environment (Gateway) in which agents exist, including accessible locations</td>
+</tr>
+<tr>
+<td><strong>Location</strong></td>
+<td>A resource accessible from a World - file paths, APIs, remote services</td>
+</tr>
+<tr>
+<td><strong>Soul</strong></td>
+<td>An agent's voice, personality, and behavioral stance (SOUL.md)</td>
+</tr>
+<tr>
+<td><strong>Soul Session</strong></td>
+<td>A scheduled daily private session for agent reflection, heartbeat, and self-maintenance</td>
+</tr>
+<tr>
+<td><strong>Identity</strong></td>
+<td>An agent's self-concept - name, archetype, emoji, avatar (IDENTITY.md)</td>
+</tr>
+<tr>
+<td><strong>Bootstrap Ritual</strong></td>
+<td>The one-time first-run process where an agent establishes its identity</td>
+</tr>
+<tr>
+<td><strong>Session</strong></td>
+<td>A bounded window of interaction between participants</td>
+</tr>
+<tr>
+<td><strong>Sealed</strong></td>
+<td>A session's terminal state - closed, preserved, no further interaction</td>
+</tr>
+<tr>
+<td><strong>Interactive</strong></td>
+<td>A session where external participants (users) can inject messages</td>
+</tr>
+<tr>
+<td><strong>Non-Interactive</strong></td>
+<td>A session where only the agent (or agents) can contribute</td>
+</tr>
+<tr>
+<td><strong>Existence</strong></td>
+<td>The totality of an agent's sessions (owned + participated) - its complete experiential history</td>
+</tr>
+<tr>
+<td><strong>Channel</strong></td>
+<td>An external communication adapter (SignalR, Telegram, TUI, Cross-World, etc.)</td>
+</tr>
+<tr>
+<td><strong>Internal Trigger</strong></td>
+<td>A non-channel event that creates a session (cron, heartbeat, soul cycle)</td>
+</tr>
+<tr>
+<td><strong>Conversation</strong></td>
+<td>An agent-to-agent session where the initiator acts as "user" and the target acts as "agent"</td>
+</tr>
+<tr>
+<td><strong>Sub-Agent</strong></td>
+<td>A stateless, ephemeral worker spawned by a parent agent with an archetype-based identity</td>
+</tr>
+<tr>
+<td><strong>Archetype (Worker)</strong></td>
+<td>A standard worker role (researcher, coder, planner, reviewer, writer) assigned to sub-agents</td>
+</tr>
+<tr>
+<td><strong>Cross-World</strong></td>
+<td>Communication between agents on different Gateways via a cross-world channel</td>
+</tr>
+<tr>
+<td><strong>Satellite</strong></td>
+<td>A remote process that extends a World's capabilities without being a separate World</td>
+</tr>
+<tr>
+<td><strong>Tool</strong></td>
+<td>A single discrete capability an agent can use to act on the world (read, write, exec, etc.)</td>
+</tr>
+<tr>
+<td><strong>Skill</strong></td>
+<td>A domain of expertise combining knowledge files and related tools, loaded on demand</td>
+</tr>
+<tr>
+<td><strong>Memory</strong></td>
+<td>The agent's persistent knowledge - long-term (curated) and daily (raw)</td>
+</tr>
+<tr>
+<td><strong>Semantic Memory</strong></td>
+<td>Indexed, searchable memory that supports recall by meaning with temporal decay</td>
+</tr>
+<tr>
+<td><strong>Heartbeat</strong></td>
+<td>A periodic internal trigger that drives proactive agent behavior via HEARTBEAT.md</td>
+</tr>
+<tr>
+<td><strong>Participants</strong></td>
+<td>The users and/or agents in a session, identified by world and agent/user IDs</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+  
+    
+  
+  
+    
+  
+
+
+  <aside class="md-source-file">
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Last update">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="April 16, 2026 05:53:49 UTC">April 16, 2026</span>
+  </span>
+
+    
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Created">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M14.47 15.08 11 13V7h1.5v5.25l3.08 1.83c-.41.28-.79.62-1.11 1m-1.39 4.84c-.36.05-.71.08-1.08.08-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8c0 .37-.03.72-.08 1.08.69.1 1.33.32 1.92.64.1-.56.16-1.13.16-1.72 0-5.5-4.5-10-10-10S2 6.5 2 12s4.47 10 10 10c.59 0 1.16-.06 1.72-.16-.32-.59-.54-1.23-.64-1.92M18 15v3h-3v2h3v3h2v-3h3v-2h-3v-3z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="April 14, 2026 17:57:14 UTC">April 14, 2026</span>
+  </span>
+
+    
+    
+    
+  </aside>
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

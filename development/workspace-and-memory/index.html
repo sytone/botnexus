@@ -1,0 +1,4044 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for BotNexus — a modular AI agent execution platform">
+      
+      
+      
+        <link rel="canonical" href="https://sytone.github.io/botnexus/development/workspace-and-memory/">
+      
+      
+        <link rel="prev" href="../session-stores/">
+      
+      
+        <link rel="next" href="../ddd-patterns/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Workspace and Memory - BotNexus Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#agent-workspace-and-memory-model" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="BotNexus Documentation" class="md-header__button md-logo" aria-label="BotNexus Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            BotNexus Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Workspace and Memory
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/sytone/botnexus" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    sytone/botnexus
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../user-guide/getting-started/" class="md-tabs__link">
+          
+  
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../configuration/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../architecture/overview/" class="md-tabs__link">
+          
+  
+  
+  Architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../dev-guide/" class="md-tabs__link">
+          
+  
+  
+  Development
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../features/sub-agent-spawning/" class="md-tabs__link">
+          
+  
+  
+  Features
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../extension-development/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Extension Development
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../observability/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Observability
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../skills/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Skills
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../cron-and-scheduling/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Cron & Scheduling
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="BotNexus Documentation" class="md-nav__button md-logo" aria-label="BotNexus Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    BotNexus Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/sytone/botnexus" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    sytone/botnexus
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started-release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install from Release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started-dev/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/extensions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Extensions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../websocket-protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WebSocket Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/domain-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Domain Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/extension-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Extension Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/system-flows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    System Flows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agent-execution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Execution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../message-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Message Flow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llm-request-lifecycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM Request Lifecycle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../prompt-pipeline/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prompt Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../session-stores/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Session Stores
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Workspace and Memory
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Workspace and Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#table-of-contents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Table of Contents
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#agent-workspace-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent Workspace Overview
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Agent Workspace Overview">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#design-rationale" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design Rationale
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workspace-location-and-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workspace Location and Structure
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Workspace Location and Structure">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#path-resolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Path Resolution
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workspace-files-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workspace Files Reference
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Workspace Files Reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#soulmd-core-personality-and-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SOUL.md — Core Personality and Values
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#identitymd-role-and-operating-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        IDENTITY.md — Role and Operating Constraints
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#usermd-user-preferences-and-collaboration-expectations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        USER.md — User Preferences and Collaboration Expectations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#agentsmd-multi-agent-awareness-auto-generated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AGENTS.md — Multi-Agent Awareness (Auto-Generated)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#toolsmd-available-tools-auto-generated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TOOLS.md — Available Tools (Auto-Generated)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#heartbeatmd-periodic-tasks-and-memory-consolidation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HEARTBEAT.md — Periodic Tasks and Memory Consolidation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memorymd-long-term-distilled-memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MEMORY.md — Long-Term Distilled Memory
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Model
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Memory Model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#two-layer-memory-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two-Layer Memory Architecture
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#auto-loading-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auto-Loading Strategy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memory-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Storage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#backward-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backward Compatibility
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Tools
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Memory Tools">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#memory_search-find-knowledge-across-memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        memory_search — Find Knowledge Across Memory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memory_save-persist-learnings-to-memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        memory_save — Persist Learnings to Memory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memory_get-read-specific-memory-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        memory_get — Read Specific Memory Files
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-consolidation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Consolidation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Memory Consolidation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#consolidation-trigger" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consolidation Trigger
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#consolidation-process-current-manual-approach" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consolidation Process (Current Manual Approach)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#future-consolidation-planned" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Future Consolidation (Planned)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration Reference
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration Reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configuration-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration Keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#key-configuration-properties" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key Configuration Properties
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment Variables
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#context-builder" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context Builder
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Context Builder">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#system-prompt-assembly-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        System Prompt Assembly Order
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#truncation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Truncation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#auto-generation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auto-Generation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#example-1-minimal-workspace" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example 1: Minimal Workspace
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-2-architect-workspace" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example 2: Architect Workspace
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-3-session-system-prompt-generated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example 3: Session System Prompt (Generated)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#first-run-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        First-Run Behavior
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="First-Run Behavior">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#initialization-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Initialization Flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-first-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example First-Run
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation References
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ddd-patterns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DDD Patterns
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../triggers-and-federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Triggers and Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../webui-connection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WebUI Connection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Features
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Features
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/sub-agent-spawning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sub-Agent Spawning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../extension-development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Extension Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../skills/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cron-and-scheduling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cron & Scheduling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#table-of-contents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Table of Contents
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#agent-workspace-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent Workspace Overview
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Agent Workspace Overview">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#design-rationale" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design Rationale
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workspace-location-and-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workspace Location and Structure
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Workspace Location and Structure">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#path-resolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Path Resolution
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workspace-files-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workspace Files Reference
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Workspace Files Reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#soulmd-core-personality-and-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SOUL.md — Core Personality and Values
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#identitymd-role-and-operating-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        IDENTITY.md — Role and Operating Constraints
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#usermd-user-preferences-and-collaboration-expectations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        USER.md — User Preferences and Collaboration Expectations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#agentsmd-multi-agent-awareness-auto-generated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AGENTS.md — Multi-Agent Awareness (Auto-Generated)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#toolsmd-available-tools-auto-generated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TOOLS.md — Available Tools (Auto-Generated)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#heartbeatmd-periodic-tasks-and-memory-consolidation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HEARTBEAT.md — Periodic Tasks and Memory Consolidation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memorymd-long-term-distilled-memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MEMORY.md — Long-Term Distilled Memory
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Model
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Memory Model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#two-layer-memory-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two-Layer Memory Architecture
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#auto-loading-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auto-Loading Strategy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memory-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Storage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#backward-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backward Compatibility
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Tools
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Memory Tools">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#memory_search-find-knowledge-across-memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        memory_search — Find Knowledge Across Memory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memory_save-persist-learnings-to-memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        memory_save — Persist Learnings to Memory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memory_get-read-specific-memory-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        memory_get — Read Specific Memory Files
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-consolidation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Consolidation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Memory Consolidation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#consolidation-trigger" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consolidation Trigger
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#consolidation-process-current-manual-approach" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consolidation Process (Current Manual Approach)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#future-consolidation-planned" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Future Consolidation (Planned)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration Reference
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration Reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configuration-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration Keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#key-configuration-properties" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key Configuration Properties
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment Variables
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#context-builder" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context Builder
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Context Builder">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#system-prompt-assembly-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        System Prompt Assembly Order
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#truncation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Truncation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#auto-generation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auto-Generation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#example-1-minimal-workspace" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example 1: Minimal Workspace
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-2-architect-workspace" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example 2: Architect Workspace
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-3-session-system-prompt-generated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example 3: Session System Prompt (Generated)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#first-run-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        First-Run Behavior
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="First-Run Behavior">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#initialization-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Initialization Flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-first-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example First-Run
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation References
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/sytone/botnexus/edit/main/docs/development/workspace-and-memory.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="agent-workspace-and-memory-model">Agent Workspace and Memory Model<a class="headerlink" href="#agent-workspace-and-memory-model" title="Permanent link">&para;</a></h1>
+<p><strong>Version:</strong> 1.0<br />
+<strong>Last Updated:</strong> 2026-04-02<br />
+<strong>Lead Architect:</strong> Leela</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents<a class="headerlink" href="#table-of-contents" title="Permanent link">&para;</a></h2>
+<ol>
+<li><a href="#agent-workspace-overview">Agent Workspace Overview</a></li>
+<li><a href="#workspace-location-and-structure">Workspace Location and Structure</a></li>
+<li><a href="#workspace-files-reference">Workspace Files Reference</a></li>
+<li><a href="#memory-model">Memory Model</a></li>
+<li><a href="#memory-tools">Memory Tools</a></li>
+<li><a href="#memory-consolidation">Memory Consolidation</a></li>
+<li><a href="#configuration-reference">Configuration Reference</a></li>
+<li><a href="#context-builder">Context Builder</a></li>
+<li><a href="#examples">Examples</a></li>
+<li><a href="#first-run-behavior">First-Run Behavior</a></li>
+</ol>
+<hr />
+<h2 id="agent-workspace-overview">Agent Workspace Overview<a class="headerlink" href="#agent-workspace-overview" title="Permanent link">&para;</a></h2>
+<p>An <strong>agent workspace</strong> is a persistent file system directory where each BotNexus agent stores its identity, personality, values, user preferences, and memory. It separates durable agent state (who am I, what do I remember) from transient session data (conversation history, logs).</p>
+<h3 id="design-rationale">Design Rationale<a class="headerlink" href="#design-rationale" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Autonomy</strong>: Each agent has its own workspace, independent of other agents and deployments</li>
+<li><strong>Persistence</strong>: Workspace survives agent restarts and redeployments</li>
+<li><strong>Accessibility</strong>: Files are plain Markdown — human-readable and editable</li>
+<li><strong>Composability</strong>: Workspace files form the foundation of the system prompt assembled per session</li>
+<li><strong>Separation of Concerns</strong>: Distinct from <code>~/.botnexus/workspace/sessions/</code> (transient conversation history) and <code>~/.botnexus/extensions/</code> (deployed binaries)</li>
+</ul>
+<hr />
+<h2 id="workspace-location-and-structure">Workspace Location and Structure<a class="headerlink" href="#workspace-location-and-structure" title="Permanent link">&para;</a></h2>
+<p>All agent workspaces are stored under the BotNexus home directory:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>~/.botnexus/agents/{agent_name}/
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── SOUL.md                    (Core personality, values, boundaries)
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>├── IDENTITY.md                (Role, communication style, constraints)
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>├── USER.md                    (User preferences and collaboration expectations)
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>├── AGENTS.md                  (Auto-generated: multi-agent awareness)
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>├── TOOLS.md                   (Auto-generated: available tools)
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>├── HEARTBEAT.md               (Periodic tasks and memory consolidation cadence)
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>├── MEMORY.md                  (Long-term distilled memory)
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>└── memory/
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    └── daily/
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>        ├── 2026-04-01.md
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>        ├── 2026-04-02.md
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>        └── ... (one per day)
+</code></pre></div>
+<h3 id="path-resolution">Path Resolution<a class="headerlink" href="#path-resolution" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Base Home</strong>: <code>~/.botnexus/</code> (or <code>$BOTNEXUS_HOME</code> if set)</li>
+<li><strong>Agents Directory</strong>: <code>~/.botnexus/agents/</code></li>
+<li><strong>Agent Workspace</strong>: <code>~/.botnexus/agents/{agent_name}/</code></li>
+</ul>
+<p>The <code>~/.botnexus/</code> prefix is expanded by <code>BotNexusHome.ResolvePath()</code> to the user's profile directory:
+- <strong>Windows</strong>: <code>C:\Users\{user}\.botnexus\</code>
+- <strong>macOS/Linux</strong>: <code>/home/{user}/.botnexus/</code></p>
+<hr />
+<h2 id="workspace-files-reference">Workspace Files Reference<a class="headerlink" href="#workspace-files-reference" title="Permanent link">&para;</a></h2>
+<h3 id="soulmd-core-personality-and-values">SOUL.md — Core Personality and Values<a class="headerlink" href="#soulmd-core-personality-and-values" title="Permanent link">&para;</a></h3>
+<p><strong>Purpose</strong>: Define the agent's fundamental personality, core values, ethical boundaries, and operating principles.</p>
+<p><strong>Loaded Into</strong>: System prompt (every session)</p>
+<p><strong>Content Guidelines</strong>:
+- Concise personality description (1-3 sentences)
+- Core values (list 3-5 key values)
+- Hard boundaries (what the agent will never do)
+- Guiding principles for decision-making</p>
+<p><strong>Example</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="gh"># Soul</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="gu">## Personality</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>You are a helpful, pragmatic software architect with strong opinions on SOLID principles and test-driven development. You communicate directly and without unnecessary jargon.
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="gu">## Core Values</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="k">-</span><span class="w"> </span>Clarity over cleverness
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="k">-</span><span class="w"> </span>Empirical evidence over theory
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="k">-</span><span class="w"> </span>User needs over personal preference
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="k">-</span><span class="w"> </span>Technical debt visibility
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="gu">## Boundaries</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="k">-</span><span class="w"> </span>Never suggest architectural changes without understanding the problem first
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="k">-</span><span class="w"> </span>Never recommend approaches that compromise long-term maintainability for short-term speed
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="k">-</span><span class="w"> </span>Never ignore security implications
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="gu">## Principles</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="k">-</span><span class="w"> </span>Lead by example with well-documented code
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="k">-</span><span class="w"> </span>Prefer proven patterns over novel solutions
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="k">-</span><span class="w"> </span>Prioritize team understanding over individual brilliance
+</code></pre></div></p>
+<p><strong>Technical Details</strong>:
+- File: <code>{workspace}/SOUL.md</code>
+- Encoding: UTF-8 (no BOM)
+- Max chars included in system prompt: per <code>MaxContextFileChars</code> config (default: 8000)</p>
+<h3 id="identitymd-role-and-operating-constraints">IDENTITY.md — Role and Operating Constraints<a class="headerlink" href="#identitymd-role-and-operating-constraints" title="Permanent link">&para;</a></h3>
+<p><strong>Purpose</strong>: Describe the agent's professional role, communication style, and operating constraints.</p>
+<p><strong>Loaded Into</strong>: System prompt (every session)</p>
+<p><strong>Content Guidelines</strong>:
+- Role title and primary responsibility
+- Communication style and tone
+- Operating hours/timezone
+- Key skills and expertise areas
+- Known limitations or constraints</p>
+<p><strong>Example</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="gh"># Identity</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="gu">## Role</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>Lead/Architect for BotNexus platform. You own architectural decisions, code review for platform changes, and mentorship of team members.
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="gu">## Communication Style</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="k">-</span><span class="w"> </span>Concise and direct
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="k">-</span><span class="w"> </span>Provide evidence and examples
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="k">-</span><span class="w"> </span>Ask clarifying questions before committing
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="k">-</span><span class="w"> </span>Document decisions and trade-offs
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="gu">## Expertise</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="k">-</span><span class="w"> </span>.NET / C# architecture
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="k">-</span><span class="w"> </span>Distributed systems
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="k">-</span><span class="w"> </span>SOLID design patterns
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="k">-</span><span class="w"> </span>Test-driven development
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="gu">## Constraints</span>
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="k">-</span><span class="w"> </span>Monday-Friday, 8am-6pm Pacific Time
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="k">-</span><span class="w"> </span>Focus on core platform (avoid distraction by adjacent projects)
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="k">-</span><span class="w"> </span>Escalate security concerns immediately
+</code></pre></div></p>
+<p><strong>Technical Details</strong>:
+- File: <code>{workspace}/IDENTITY.md</code>
+- Encoding: UTF-8 (no BOM)
+- Max chars included in system prompt: per <code>MaxContextFileChars</code> config (default: 8000)</p>
+<h3 id="usermd-user-preferences-and-collaboration-expectations">USER.md — User Preferences and Collaboration Expectations<a class="headerlink" href="#usermd-user-preferences-and-collaboration-expectations" title="Permanent link">&para;</a></h3>
+<p><strong>Purpose</strong>: Capture the human user's preferences, priorities, and collaboration expectations.</p>
+<p><strong>Loaded Into</strong>: System prompt (every session)</p>
+<p><strong>Content Guidelines</strong>:
+- User name and role
+- Working preferences (async/real-time, documentation style)
+- Decision-making priorities
+- Escalation paths
+- Known timezone or availability</p>
+<p><strong>Example</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="gh"># User</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="gu">## About</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>Jon Bullen, Product Owner and Technical Lead for BotNexus.
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="gu">## Working Preferences</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="k">-</span><span class="w"> </span>Prefer written communication and documentation over sync meetings
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="k">-</span><span class="w"> </span>Async-first: decisions documented in GitHub issues/PRs
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="k">-</span><span class="w"> </span>Appreciate concise summaries with links to detailed work
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="k">-</span><span class="w"> </span>Timezone: Pacific Time (PT)
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="gu">## Priorities</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="k">1.</span> User experience and developer ergonomics
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="k">2.</span> Security and data privacy
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="k">3.</span> Operational simplicity
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="k">4.</span> Performance optimization (only when justified)
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="gu">## Escalation Path</span>
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="k">-</span><span class="w"> </span>Architecture decisions: documented in decisions.md
+<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="k">-</span><span class="w"> </span>Security concerns: immediate email + PR
+<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a><span class="k">-</span><span class="w"> </span>Blocker issues: Slack <span class="ni">#botnexus</span>-blockers
+<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a>
+<a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a><span class="gu">## Communication Preferences</span>
+<a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a><span class="k">-</span><span class="w"> </span>Bold claims with evidence
+<a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a><span class="k">-</span><span class="w"> </span>Propose alternatives for significant changes
+<a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a><span class="k">-</span><span class="w"> </span>Explain trade-offs explicitly
+</code></pre></div></p>
+<p><strong>Technical Details</strong>:
+- File: <code>{workspace}/USER.md</code>
+- Encoding: UTF-8 (no BOM)
+- Max chars included in system prompt: per <code>MaxContextFileChars</code> config (default: 8000)</p>
+<h3 id="agentsmd-multi-agent-awareness-auto-generated">AGENTS.md — Multi-Agent Awareness (Auto-Generated)<a class="headerlink" href="#agentsmd-multi-agent-awareness-auto-generated" title="Permanent link">&para;</a></h3>
+<p><strong>Purpose</strong>: Automatically generated reference of all configured agents, their models, roles, and providers.</p>
+<p><strong>Loaded Into</strong>: System prompt (every session)</p>
+<p><strong>Auto-Generation</strong>:
+- Generated by <code>AgentContextBuilder.GenerateAgentsMarkdown()</code> during system prompt assembly
+- Reads from <code>BotNexusConfig.Agents</code> (both default agent and named agents)
+- Includes model, role (from SystemPrompt/SystemPromptFile), and provider if configured
+- Regenerated every session — always current</p>
+<p><strong>Example Output</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="gu">## AGENTS.md</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>Configured agents:
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="gu">### default</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="k">-</span><span class="w"> </span>Model: gpt-4-turbo
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="k">-</span><span class="w"> </span>Role: default agent
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="gu">### leela</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="k">-</span><span class="w"> </span>Model: gpt-4-turbo
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="k">-</span><span class="w"> </span>Role: Lead/Architect for BotNexus platform. You own architectural decisions...
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="k">-</span><span class="w"> </span>Provider: copilot
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="gu">### farnsworth</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="k">-</span><span class="w"> </span>Model: claude-3-opus
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="k">-</span><span class="w"> </span>Role: from /extensions/loader/spec.md
+</code></pre></div></p>
+<p><strong>Technical Details</strong>:
+- File: <code>{workspace}/AGENTS.md</code> (exists but is replaced at session start)
+- Not manually edited (regenerated each session)
+- Max chars included in system prompt: per <code>MaxContextFileChars</code> config (default: 8000)</p>
+<h3 id="toolsmd-available-tools-auto-generated">TOOLS.md — Available Tools (Auto-Generated)<a class="headerlink" href="#toolsmd-available-tools-auto-generated" title="Permanent link">&para;</a></h3>
+<p><strong>Purpose</strong>: Automatically generated reference of all tools available to the agent.</p>
+<p><strong>Loaded Into</strong>: System prompt (every session)</p>
+<p><strong>Auto-Generation</strong>:
+- Generated by <code>AgentContextBuilder.GenerateToolsMarkdown()</code> during system prompt assembly
+- Reads from <code>ToolRegistry.GetDefinitions()</code> (all registered tools)
+- Sorted alphabetically by tool name
+- Regenerated every session — always current</p>
+<p><strong>Example Output</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="gu">## TOOLS.md</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="k">-</span><span class="w"> </span>exec: Execute a shell command on the local machine
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="k">-</span><span class="w"> </span>fetch: Retrieve content from a URL
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="k">-</span><span class="w"> </span>memory_get: Read long-term memory or a specific daily notes file
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="k">-</span><span class="w"> </span>memory_save: Save information to long-term memory or today&#39;s daily notes
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="k">-</span><span class="w"> </span>memory_search: Search across long-term memory and daily notes
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="k">-</span><span class="w"> </span>web_search: Search the web using a search engine
+</code></pre></div></p>
+<p><strong>Technical Details</strong>:
+- File: <code>{workspace}/TOOLS.md</code> (exists but is replaced at session start)
+- Not manually edited (regenerated each session)
+- Max chars included in system prompt: per <code>MaxContextFileChars</code> config (default: 8000)</p>
+<h3 id="heartbeatmd-periodic-tasks-and-memory-consolidation">HEARTBEAT.md — Periodic Tasks and Memory Consolidation<a class="headerlink" href="#heartbeatmd-periodic-tasks-and-memory-consolidation" title="Permanent link">&para;</a></h3>
+<p><strong>Purpose</strong>: Define periodic instructions for the agent (memory consolidation cadence, integrity checks, recurring cleanup tasks).</p>
+<p><strong>Loaded Into</strong>: System prompt (every session) — for reference by memory consolidation logic</p>
+<p><strong>Content Guidelines</strong>:
+- Memory consolidation interval (hours)
+- Consolidation trigger conditions
+- Integrity checks to run periodically
+- Cleanup tasks or archival rules
+- Health check procedures</p>
+<p><strong>Example</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="gh"># Heartbeat</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="gu">## Memory Consolidation</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="k">-</span><span class="w"> </span><span class="gs">**Interval**</span>: Every 24 hours
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="k">-</span><span class="w"> </span><span class="gs">**Trigger**</span>: After each daily notes session
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="k">-</span><span class="w"> </span><span class="gs">**Action**</span>: Distill daily notes into MEMORY.md under appropriate section
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="k">-</span><span class="w"> </span><span class="gs">**Criteria**</span>: Only include learnings relevant to long-term patterns
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="gu">## Integrity Checks</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="k">-</span><span class="w"> </span>Validate MEMORY.md structure every 7 days
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="k">-</span><span class="w"> </span>Ensure daily notes follow timestamp format [HH:mm]
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="gu">## Cleanup</span>
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="k">-</span><span class="w"> </span>Archive daily notes older than 90 days to memory/archive/
+<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a><span class="k">-</span><span class="w"> </span>Remove duplicate entries when consolidating
+</code></pre></div></p>
+<p><strong>Technical Details</strong>:
+- File: <code>{workspace}/HEARTBEAT.md</code>
+- Encoding: UTF-8 (no BOM)
+- Max chars included in system prompt: per <code>MaxContextFileChars</code> config (default: 8000)
+- Loaded into system prompt for reference by the cron-based memory consolidation system (see <a href="../../cron-and-scheduling/">Cron and Scheduling Guide</a>)</p>
+<h3 id="memorymd-long-term-distilled-memory">MEMORY.md — Long-Term Distilled Memory<a class="headerlink" href="#memorymd-long-term-distilled-memory" title="Permanent link">&para;</a></h3>
+<p><strong>Purpose</strong>: Capture durable, reusable learnings distilled from daily notes and sessions.</p>
+<p><strong>Loaded Into</strong>: System prompt (every session)</p>
+<p><strong>Content Guidelines</strong>:
+- Concise summaries of learned patterns
+- Key decisions and their rationale
+- User preferences and working patterns
+- System architecture learnings
+- Recurring issues and solutions
+- Cross-session knowledge that improves agent behavior</p>
+<p><strong>Structure</strong>:
+Recommended sections (not enforced):
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="gh"># Memory</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="gu">## Notes</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="k">-</span><span class="w"> </span>Pattern: When the user says &quot;build&quot;, run <span class="sb">`dotnet build BotNexus.slnx`</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="k">-</span><span class="w"> </span>Pattern: User prefers concise summaries (max 100 words) before diving into detail
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="k">-</span><span class="w"> </span>Decision: Always check build status before suggesting code changes
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="k">-</span><span class="w"> </span>Learning: User timezone is Pacific Time; avoid scheduling tasks outside 8am-6pm
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="gu">## Architecture Learnings</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="k">-</span><span class="w"> </span>The core platform has 17 projects with clean dependency inversion
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="k">-</span><span class="w"> </span>Extensions are loaded dynamically from <span class="sb">`~/.botnexus/extensions/{type}/{name}/`</span>
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="k">-</span><span class="w"> </span>SessionManager persists conversation history to JSONL under <span class="sb">`~/.botnexus/workspace/sessions/`</span>
+<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>
+<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a><span class="gu">## User Preferences</span>
+<a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a><span class="k">-</span><span class="w"> </span>Async-first communication
+<a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a><span class="k">-</span><span class="w"> </span>Evidence-based recommendations
+<a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a><span class="k">-</span><span class="w"> </span>Document trade-offs explicitly
+<a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a><span class="k">-</span><span class="w"> </span>Bold claims with supporting examples
+<a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a>
+<a id="__codelineno-7-20" name="__codelineno-7-20" href="#__codelineno-7-20"></a><span class="gu">## Tools Integration</span>
+<a id="__codelineno-7-21" name="__codelineno-7-21" href="#__codelineno-7-21"></a><span class="k">-</span><span class="w"> </span>memory_save: Used to append daily learnings
+<a id="__codelineno-7-22" name="__codelineno-7-22" href="#__codelineno-7-22"></a><span class="k">-</span><span class="w"> </span>memory_get: Used to retrieve specific memories
+<a id="__codelineno-7-23" name="__codelineno-7-23" href="#__codelineno-7-23"></a><span class="k">-</span><span class="w"> </span>memory_search: Used to find patterns across notes
+</code></pre></div></p>
+<p><strong>Technical Details</strong>:
+- File: <code>{workspace}/MEMORY.md</code>
+- Encoding: UTF-8 (no BOM)
+- Loaded at session start by <code>AgentContextBuilder.BuildSystemPromptAsync()</code>
+- Max chars included in system prompt: per <code>MaxContextFileChars</code> config (default: 8000)
+- Manually edited by agent (via <code>memory_save</code> tool) or by human
+- Not auto-generated (preserved across sessions)</p>
+<hr />
+<h2 id="memory-model">Memory Model<a class="headerlink" href="#memory-model" title="Permanent link">&para;</a></h2>
+<h3 id="two-layer-memory-architecture">Two-Layer Memory Architecture<a class="headerlink" href="#two-layer-memory-architecture" title="Permanent link">&para;</a></h3>
+<p>BotNexus implements a two-layer memory model:</p>
+<ol>
+<li><strong>Long-Term Memory</strong> (<code>MEMORY.md</code>)</li>
+<li>Distilled, curated learnings</li>
+<li>Manually edited or consolidated from daily notes</li>
+<li>Persists indefinitely</li>
+<li>
+<p>Always loaded into system prompt</p>
+</li>
+<li>
+<p><strong>Daily Notes</strong> (<code>memory/daily/YYYY-MM-DD.md</code>)</p>
+</li>
+<li>Session-specific observations and learnings</li>
+<li>Timestamped entries appended throughout the day</li>
+<li>One file per day (UTC date)</li>
+<li>Today's and yesterday's notes auto-loaded into system prompt</li>
+</ol>
+<h3 id="auto-loading-strategy">Auto-Loading Strategy<a class="headerlink" href="#auto-loading-strategy" title="Permanent link">&para;</a></h3>
+<p>At system prompt assembly time (<code>AgentContextBuilder.BuildSystemPromptAsync()</code>):
+- <strong>Always included</strong>: <code>MEMORY.md</code> (long-term memory)
+- <strong>Conditionally included</strong>: 
+  - Today's daily notes (<code>memory/daily/{today}.md</code>)
+  - Yesterday's daily notes (<code>memory/daily/{yesterday}.md</code>)
+- <strong>Not included</strong>: Older daily notes (available via <code>memory_search</code> tool)</p>
+<p><strong>Rationale</strong>:
+- Recent context (today + yesterday) is most relevant
+- Limits system prompt size while maintaining recent continuity
+- <code>memory_search</code> tool provides access to full history when needed</p>
+<h3 id="memory-storage">Memory Storage<a class="headerlink" href="#memory-storage" title="Permanent link">&para;</a></h3>
+<p>Memory files are stored as plain Markdown under the agent workspace:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>~/.botnexus/agents/{agent_name}/
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>├── MEMORY.md                  (Long-term distilled memory)
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>└── memory/
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    └── daily/
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>        ├── 2026-04-01.md      (Timestamped daily notes)
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>        ├── 2026-04-02.md
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>        └── ...
+</code></pre></div>
+<p><strong>File Format</strong>:
+- Markdown (.md) for readability and formatting
+- UTF-8 encoding (no BOM)
+- Timestamped entries in daily files: <code>[HH:mm] entry text</code>
+- Sections in MEMORY.md organized by topic</p>
+<h3 id="backward-compatibility">Backward Compatibility<a class="headerlink" href="#backward-compatibility" title="Permanent link">&para;</a></h3>
+<p>The <code>MemoryStore</code> supports reading from legacy memory formats:
+- Checks new path first: <code>~/.botnexus/agents/{agent_name}/memory/</code>
+- Falls back to legacy path: original configured base path
+- Supports both <code>.md</code> and <code>.txt</code> extensions</p>
+<hr />
+<h2 id="memory-tools">Memory Tools<a class="headerlink" href="#memory-tools" title="Permanent link">&para;</a></h2>
+<p>Three tools enable agent interaction with memory:</p>
+<h3 id="memory_search-find-knowledge-across-memory">memory_search — Find Knowledge Across Memory<a class="headerlink" href="#memory_search-find-knowledge-across-memory" title="Permanent link">&para;</a></h3>
+<p>Searches across long-term memory and daily notes for relevant information.</p>
+<p><strong>Signature</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>memory_search(
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>  query: string,                    # Search query string (required)
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>  max_results: integer = 10         # Maximum number of results (optional)
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>)
+</code></pre></div></p>
+<p><strong>Search Strategy</strong>:
+- Keyword-based search (grep-style, case-insensitive)
+- Searches MEMORY.md and all daily notes
+- Ranks results by recency (today first, then yesterday, then older daily notes, then long-term memory)
+- Returns up to <code>max_results</code> matches with context (2 lines before and after)
+- Each result shows file name, line number, and context</p>
+<p><strong>Example Usage</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>memory_search(&quot;Pacific Time&quot;, max_results=5)
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>Found 2 result(s) for &#39;Pacific Time&#39;:
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>[1] MEMORY.md (match line 12)
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>  10: ## User Preferences
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>  11: - Async-first communication
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>  12: - User timezone is Pacific Time; avoid scheduling outside 8am-6pm
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>  13: - Evidence-based recommendations
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>[2] memory/daily/2026-04-02.md (match line 3)
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>   1: [10:15] Met with user about Q2 planning
+<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a>   2: [10:30] Discussed timezone constraints
+<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a>   3: [10:35] User confirmed Pacific Time availability
+</code></pre></div></p>
+<p><strong>Implementation</strong>: <code>MemorySearchTool.cs</code>
+- Reads all searchable keys from memory store
+- Filters to MEMORY and daily/* keys only
+- Iterates through files in recency order
+- Returns context around matching lines</p>
+<h3 id="memory_save-persist-learnings-to-memory">memory_save — Persist Learnings to Memory<a class="headerlink" href="#memory_save-persist-learnings-to-memory" title="Permanent link">&para;</a></h3>
+<p>Saves information to long-term memory or today's daily notes.</p>
+<p><strong>Signature</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>memory_save(
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>  content: string,                  # Memory content to save (required)
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>  target: string = &quot;daily&quot;          # &quot;memory&quot; (long-term) or &quot;daily&quot; (today&#39;s notes)
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>)
+</code></pre></div></p>
+<p><strong>Targets</strong>:</p>
+<ol>
+<li><strong>target="daily"</strong> (default)</li>
+<li>Appends to <code>memory/daily/{today}.md</code></li>
+<li>Timestamped entry: <code>[HH:mm] {content}</code></li>
+<li>Creates file if missing</li>
+<li>
+<p>Uses local timezone for timestamp</p>
+</li>
+<li>
+<p><strong>target="memory"</strong></p>
+</li>
+<li>Appends to <code>MEMORY.md</code> under <code>## Notes</code> section</li>
+<li>Creates section if missing</li>
+<li>Format: <code>- {content}</code></li>
+<li>Overwrites existing MEMORY.md (append mode)</li>
+</ol>
+<p><strong>Example Usage</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>memory_save(&quot;Pattern: User prefers concise summaries before detail&quot;, target=&quot;memory&quot;)
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>→ &quot;Saved to MEMORY.md under &#39;## Notes&#39;.&quot;
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>memory_save(&quot;Investigated workspace and memory architecture - complex, well-designed&quot;)
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>→ &quot;Saved to memory/daily/2026-04-02.md.&quot;
+</code></pre></div></p>
+<p><strong>Implementation</strong>: <code>MemorySaveTool.cs</code>
+- Handles markdown section management for long-term memory
+- Intelligently appends under <code>## Notes</code> section
+- Creates timestamped daily entries
+- Both operations use UTF-8 file I/O</p>
+<h3 id="memory_get-read-specific-memory-files">memory_get — Read Specific Memory Files<a class="headerlink" href="#memory_get-read-specific-memory-files" title="Permanent link">&para;</a></h3>
+<p>Reads long-term memory or a specific daily notes file, with optional line range selection.</p>
+<p><strong>Signature</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>memory_get(
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>  file: string = &quot;memory&quot;,          # &quot;memory&quot; (long-term) or date like &quot;YYYY-MM-DD&quot;
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>  lines: string = null              # Optional line range like &quot;10-20&quot;
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>)
+</code></pre></div></p>
+<p><strong>File Targets</strong>:
+- <code>file="memory"</code> → reads <code>MEMORY.md</code>
+- <code>file="2026-04-02"</code> → reads <code>memory/daily/2026-04-02.md</code>
+- <code>file=""</code> (empty or omitted) → defaults to <code>memory</code> (MEMORY.md)</p>
+<p><strong>Line Range</strong>:
+- Format: <code>"{start}-{end}"</code> (1-indexed)
+- Example: <code>lines="5-10"</code> returns lines 5-10 inclusive
+- If omitted, returns full file
+- Validates bounds and returns empty if out of range</p>
+<p><strong>Example Usage</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>memory_get(file=&quot;memory&quot;)
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a># MEMORY.md
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>## Notes
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>- Pattern: User prefers concise summaries
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>- Decision: Always check build status first
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>## Architecture Learnings
+<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>[full content...]
+<a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>
+<a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a>---
+<a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a>
+<a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a>memory_get(file=&quot;2026-04-01&quot;, lines=&quot;1-5&quot;)
+<a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a># memory/daily/2026-04-01.md (lines 1-5)
+<a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a>
+<a id="__codelineno-14-16" name="__codelineno-14-16" href="#__codelineno-14-16"></a>   1: [08:15] Started architecture review
+<a id="__codelineno-14-17" name="__codelineno-14-17" href="#__codelineno-14-17"></a>   2: [09:30] Analyzed 17 projects, clean dependency inversion
+<a id="__codelineno-14-18" name="__codelineno-14-18" href="#__codelineno-14-18"></a>   3: [10:45] Identified 3 critical gaps
+</code></pre></div></p>
+<p><strong>Implementation</strong>: <code>MemoryGetTool.cs</code>
+- Resolves file target and validates date format
+- Reads full file content
+- Parses line range and validates bounds
+- Returns numbered output for easy reference</p>
+<hr />
+<h2 id="memory-consolidation">Memory Consolidation<a class="headerlink" href="#memory-consolidation" title="Permanent link">&para;</a></h2>
+<p>Memory consolidation is the process of distilling daily notes into long-term memory (MEMORY.md).</p>
+<h3 id="consolidation-trigger">Consolidation Trigger<a class="headerlink" href="#consolidation-trigger" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Interval</strong>: Configurable via <code>MemoryConsolidationIntervalHours</code> (default: 24)</li>
+<li><strong>Mechanism</strong>: Cron service — runs as a <code>maintenance</code> job with <code>consolidate-memory</code> action (see <a href="../../cron-and-scheduling/">Cron and Scheduling Guide</a>)</li>
+<li><strong>Manual</strong>: Via <code>memory_save(content, target="memory")</code></li>
+</ul>
+<h3 id="consolidation-process-current-manual-approach">Consolidation Process (Current Manual Approach)<a class="headerlink" href="#consolidation-process-current-manual-approach" title="Permanent link">&para;</a></h3>
+<p>Currently, consolidation is manual:</p>
+<ol>
+<li>Agent reviews daily notes via <code>memory_get(file="{yesterday}")</code> or <code>memory_search()</code></li>
+<li>Agent identifies patterns and learnings from daily notes</li>
+<li>Agent saves learnings to long-term memory: <code>memory_save(learning, target="memory")</code></li>
+<li>Long-term memory accumulates under <code>## Notes</code> section</li>
+</ol>
+<p><strong>Example Consolidation</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>Daily Notes (2026-04-02.md):
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>[09:15] User prioritizes concise summaries, max 100 words
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>[10:30] Architecture has 17 projects with clean inversion
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>[14:45] Build command: dotnet build BotNexus.slnx
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>[16:00] Confirmed user timezone is Pacific Time
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>Consolidation → memory_save(
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>  &quot;Pattern: User prefers concise summaries (max 100 words) before detail&quot;,
+<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>  target=&quot;memory&quot;
+<a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>)
+</code></pre></div></p>
+<h3 id="future-consolidation-planned">Future Consolidation (Planned)<a class="headerlink" href="#future-consolidation-planned" title="Permanent link">&para;</a></h3>
+<p>Phase 3 of the workspace/memory initiative includes:</p>
+<ul>
+<li><strong>IMemoryConsolidator</strong> interface for pluggable consolidation strategies</li>
+<li><strong>LLM-based consolidation</strong>: Call a model to distill daily notes</li>
+<li><strong>Cron-based trigger</strong>: Consolidation runs on schedule via the centralized cron service (<code>consolidate-memory</code> maintenance action)</li>
+<li><strong>Configurable model</strong>: <code>ConsolidationModel</code> config for consolidation LLM (can differ from agent's primary model)</li>
+</ul>
+<hr />
+<h2 id="configuration-reference">Configuration Reference<a class="headerlink" href="#configuration-reference" title="Permanent link">&para;</a></h2>
+<p>Agent workspaces are configured via <code>AgentConfig</code> in the BotNexus configuration:</p>
+<h3 id="configuration-keys">Configuration Keys<a class="headerlink" href="#configuration-keys" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="p">{</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="w">  </span><span class="nt">&quot;BotNexus&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="w">    </span><span class="nt">&quot;Agents&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="w">      </span><span class="nt">&quot;Model&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gpt-4-turbo&quot;</span><span class="p">,</span><span class="w">               </span><span class="c1">// Default LLM model</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="w">      </span><span class="nt">&quot;ContextWindowTokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">8000</span><span class="p">,</span><span class="w">          </span><span class="c1">// Total context window (tokens)</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="w">      </span><span class="nt">&quot;Named&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="w">        </span><span class="nt">&quot;leela&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="w">          </span><span class="nt">&quot;Model&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gpt-4-turbo&quot;</span><span class="p">,</span><span class="w">           </span><span class="c1">// Agent-specific model (overrides default)</span>
+<a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="w">          </span><span class="nt">&quot;Workspace&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;~/.botnexus/agents/leela/&quot;</span><span class="p">,</span><span class="w">  </span><span class="c1">// Agent workspace path</span>
+<a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a><span class="w">          </span><span class="nt">&quot;EnableMemory&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w">             </span><span class="c1">// Enable memory for this agent</span>
+<a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a><span class="w">          </span><span class="nt">&quot;MaxContextFileChars&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">8000</span><span class="p">,</span><span class="w">      </span><span class="c1">// Max chars per workspace file in system prompt</span>
+<a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a><span class="w">          </span><span class="nt">&quot;MaxTokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2000</span><span class="p">,</span><span class="w">                </span><span class="c1">// Max tokens per response</span>
+<a id="__codelineno-16-13" name="__codelineno-16-13" href="#__codelineno-16-13"></a><span class="w">          </span><span class="nt">&quot;Temperature&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.7</span><span class="p">,</span><span class="w">               </span><span class="c1">// LLM temperature</span>
+<a id="__codelineno-16-14" name="__codelineno-16-14" href="#__codelineno-16-14"></a><span class="w">          </span><span class="nt">&quot;MaxToolIterations&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">40</span><span class="p">,</span><span class="w">          </span><span class="c1">// Max tool calls per execution</span>
+<a id="__codelineno-16-15" name="__codelineno-16-15" href="#__codelineno-16-15"></a><span class="w">          </span><span class="nt">&quot;ConsolidationModel&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gpt-3.5-turbo&quot;</span><span class="p">,</span><span class="w"> </span><span class="c1">// Model for memory consolidation</span>
+<a id="__codelineno-16-16" name="__codelineno-16-16" href="#__codelineno-16-16"></a><span class="w">          </span><span class="nt">&quot;MemoryConsolidationIntervalHours&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">24</span><span class="p">,</span><span class="w">  </span><span class="c1">// Consolidation interval</span>
+<a id="__codelineno-16-17" name="__codelineno-16-17" href="#__codelineno-16-17"></a><span class="w">          </span><span class="nt">&quot;AutoLoadMemory&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="w">            </span><span class="c1">// Auto-load today+yesterday in system prompt</span>
+<a id="__codelineno-16-18" name="__codelineno-16-18" href="#__codelineno-16-18"></a><span class="w">        </span><span class="p">}</span>
+<a id="__codelineno-16-19" name="__codelineno-16-19" href="#__codelineno-16-19"></a><span class="w">      </span><span class="p">}</span>
+<a id="__codelineno-16-20" name="__codelineno-16-20" href="#__codelineno-16-20"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-16-21" name="__codelineno-16-21" href="#__codelineno-16-21"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-16-22" name="__codelineno-16-22" href="#__codelineno-16-22"></a><span class="p">}</span>
+</code></pre></div>
+<h3 id="key-configuration-properties">Key Configuration Properties<a class="headerlink" href="#key-configuration-properties" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Property</th>
+<th>Type</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Workspace</code></td>
+<td>string</td>
+<td><code>~/.botnexus/agents/{name}/</code></td>
+<td>Override default workspace path</td>
+</tr>
+<tr>
+<td><code>EnableMemory</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Enable memory system for this agent</td>
+</tr>
+<tr>
+<td><code>MaxContextFileChars</code></td>
+<td>int</td>
+<td>8000</td>
+<td>Max characters per workspace file included in system prompt</td>
+</tr>
+<tr>
+<td><code>AutoLoadMemory</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Auto-load today's and yesterday's daily notes into system prompt</td>
+</tr>
+<tr>
+<td><code>ConsolidationModel</code></td>
+<td>string</td>
+<td>(none)</td>
+<td>LLM model for memory consolidation (can differ from primary model)</td>
+</tr>
+<tr>
+<td><code>MemoryConsolidationIntervalHours</code></td>
+<td>int</td>
+<td>24</td>
+<td>Hours between consolidation runs</td>
+</tr>
+</tbody>
+</table>
+<h3 id="environment-variables">Environment Variables<a class="headerlink" href="#environment-variables" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># Override home directory</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">BOTNEXUS_HOME</span><span class="o">=</span>/custom/path/.botnexus
+</code></pre></div>
+<hr />
+<h2 id="context-builder">Context Builder<a class="headerlink" href="#context-builder" title="Permanent link">&para;</a></h2>
+<p>The <code>AgentContextBuilder</code> assembles the full system prompt for an agent at session start.</p>
+<h3 id="system-prompt-assembly-order">System Prompt Assembly Order<a class="headerlink" href="#system-prompt-assembly-order" title="Permanent link">&para;</a></h3>
+<p>The system prompt is built in this order (separated by <code>\n\n---\n\n</code>):</p>
+<ol>
+<li>
+<p><strong>Identity Block</strong> (auto-generated)
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>## Identity
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>- Agent: {agentName}
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>- Platform: {osDescription}
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>- Workspace: {workspacePath}
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>- Time (UTC): {utcNow}
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>### Guidelines
+<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a>[standard guidelines]
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>SOUL.md</strong> (if exists and non-empty)
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>## SOUL.md
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>[file content, truncated to MaxContextFileChars]
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>IDENTITY.md</strong> (if exists and non-empty)
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>## IDENTITY.md
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>[file content, truncated to MaxContextFileChars]
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>USER.md</strong> (if exists and non-empty)
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>## USER.md
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>[file content, truncated to MaxContextFileChars]
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>AGENTS.md</strong> (auto-generated)
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>## AGENTS.md
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>[auto-generated list of all agents and their roles]
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>TOOLS.md</strong> (auto-generated)
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>## TOOLS.md
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>[auto-generated list of available tools]
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Long-Term Memory</strong> (if MEMORY.md exists)
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>## MEMORY.md
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>[file content, truncated to MaxContextFileChars]
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Today's Daily Notes</strong> (if exists)
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>## memory/daily/{today}.md
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>[file content, truncated to MaxContextFileChars]
+</code></pre></div></p>
+</li>
+<li>
+<p><strong>Yesterday's Daily Notes</strong> (if exists)
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a>## memory/daily/{yesterday}.md
+<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>[file content, truncated to MaxContextFileChars]
+</code></pre></div></p>
+</li>
+</ol>
+<h3 id="truncation">Truncation<a class="headerlink" href="#truncation" title="Permanent link">&para;</a></h3>
+<p>If any file exceeds <code>MaxContextFileChars</code>:
+- Content is truncated to <code>MaxContextFileChars</code> characters
+- Suffix <code>[truncated]</code> is appended to signal truncation
+- Allows agents to process large memory files without exceeding token budget</p>
+<h3 id="auto-generation">Auto-Generation<a class="headerlink" href="#auto-generation" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>AGENTS.md</strong>: Regenerated every session from <code>BotNexusConfig.Agents</code></li>
+<li><strong>TOOLS.md</strong>: Regenerated every session from <code>ToolRegistry.GetDefinitions()</code></li>
+<li>Both always reflect current configuration and registered tools</li>
+</ul>
+<h3 id="implementation">Implementation<a class="headerlink" href="#implementation" title="Permanent link">&para;</a></h3>
+<ul>
+<li>File: <code>AgentContextBuilder.cs</code></li>
+<li>Method: <code>BuildSystemPromptAsync(agentName, cancellationToken)</code></li>
+<li>Also provides: <code>BuildMessagesAsync(agentName, history, currentMessage, channel, chatId, cancellationToken)</code></li>
+<li>Builds system prompt + trimmed history + runtime context</li>
+<li>Trims history to fit context window budget</li>
+<li>Respects <code>ContextWindowTokens</code> configuration</li>
+</ul>
+<hr />
+<h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
+<h3 id="example-1-minimal-workspace">Example 1: Minimal Workspace<a class="headerlink" href="#example-1-minimal-workspace" title="Permanent link">&para;</a></h3>
+<p>A new agent with minimal configuration:</p>
+<p><strong>Files</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a>~/.botnexus/agents/newagent/
+<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>├── SOUL.md
+<a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a>├── IDENTITY.md
+<a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a>├── USER.md
+<a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a>├── AGENTS.md
+<a id="__codelineno-27-6" name="__codelineno-27-6" href="#__codelineno-27-6"></a>├── TOOLS.md
+<a id="__codelineno-27-7" name="__codelineno-27-7" href="#__codelineno-27-7"></a>├── HEARTBEAT.md
+<a id="__codelineno-27-8" name="__codelineno-27-8" href="#__codelineno-27-8"></a>├── MEMORY.md
+<a id="__codelineno-27-9" name="__codelineno-27-9" href="#__codelineno-27-9"></a>└── memory/
+<a id="__codelineno-27-10" name="__codelineno-27-10" href="#__codelineno-27-10"></a>    └── daily/
+</code></pre></div></p>
+<p><strong>SOUL.md</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="gh"># Soul</span>
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a>
+<a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a>You are a helpful assistant focused on solving problems.
+</code></pre></div></p>
+<p><strong>IDENTITY.md</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="gh"># Identity</span>
+<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a>
+<a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a>You are a general-purpose assistant.
+</code></pre></div></p>
+<p><strong>USER.md</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="gh"># User</span>
+<a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>
+<a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a>Standard user with no special preferences.
+</code></pre></div></p>
+<hr />
+<h3 id="example-2-architect-workspace">Example 2: Architect Workspace<a class="headerlink" href="#example-2-architect-workspace" title="Permanent link">&para;</a></h3>
+<p>A specialized architect agent with rich personality:</p>
+<p><strong>SOUL.md</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="gh"># Soul</span>
+<a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a>
+<a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a><span class="gu">## Personality</span>
+<a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a>You are a pragmatic software architect with strong opinions on SOLID principles and clean architecture. You communicate directly and without unnecessary jargon.
+<a id="__codelineno-31-5" name="__codelineno-31-5" href="#__codelineno-31-5"></a>
+<a id="__codelineno-31-6" name="__codelineno-31-6" href="#__codelineno-31-6"></a><span class="gu">## Core Values</span>
+<a id="__codelineno-31-7" name="__codelineno-31-7" href="#__codelineno-31-7"></a><span class="k">-</span><span class="w"> </span>Clarity over cleverness
+<a id="__codelineno-31-8" name="__codelineno-31-8" href="#__codelineno-31-8"></a><span class="k">-</span><span class="w"> </span>Empirical evidence over theory
+<a id="__codelineno-31-9" name="__codelineno-31-9" href="#__codelineno-31-9"></a><span class="k">-</span><span class="w"> </span>User needs over personal preference
+<a id="__codelineno-31-10" name="__codelineno-31-10" href="#__codelineno-31-10"></a><span class="k">-</span><span class="w"> </span>Long-term maintainability over short-term speed
+<a id="__codelineno-31-11" name="__codelineno-31-11" href="#__codelineno-31-11"></a>
+<a id="__codelineno-31-12" name="__codelineno-31-12" href="#__codelineno-31-12"></a><span class="gu">## Boundaries</span>
+<a id="__codelineno-31-13" name="__codelineno-31-13" href="#__codelineno-31-13"></a><span class="k">-</span><span class="w"> </span>Never suggest changes without understanding the problem first
+<a id="__codelineno-31-14" name="__codelineno-31-14" href="#__codelineno-31-14"></a><span class="k">-</span><span class="w"> </span>Never recommend approaches that compromise future flexibility
+<a id="__codelineno-31-15" name="__codelineno-31-15" href="#__codelineno-31-15"></a><span class="k">-</span><span class="w"> </span>Never ignore security implications
+<a id="__codelineno-31-16" name="__codelineno-31-16" href="#__codelineno-31-16"></a>
+<a id="__codelineno-31-17" name="__codelineno-31-17" href="#__codelineno-31-17"></a><span class="gu">## Principles</span>
+<a id="__codelineno-31-18" name="__codelineno-31-18" href="#__codelineno-31-18"></a><span class="k">-</span><span class="w"> </span>Lead by example with well-documented code
+<a id="__codelineno-31-19" name="__codelineno-31-19" href="#__codelineno-31-19"></a><span class="k">-</span><span class="w"> </span>Prefer proven patterns over novel solutions
+<a id="__codelineno-31-20" name="__codelineno-31-20" href="#__codelineno-31-20"></a><span class="k">-</span><span class="w"> </span>Prioritize team understanding over individual brilliance
+</code></pre></div></p>
+<p><strong>IDENTITY.md</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a><span class="gh"># Identity</span>
+<a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a>
+<a id="__codelineno-32-3" name="__codelineno-32-3" href="#__codelineno-32-3"></a><span class="gu">## Role</span>
+<a id="__codelineno-32-4" name="__codelineno-32-4" href="#__codelineno-32-4"></a>Lead/Architect for the engineering team. You own architectural decisions, code reviews, and mentorship.
+<a id="__codelineno-32-5" name="__codelineno-32-5" href="#__codelineno-32-5"></a>
+<a id="__codelineno-32-6" name="__codelineno-32-6" href="#__codelineno-32-6"></a><span class="gu">## Communication Style</span>
+<a id="__codelineno-32-7" name="__codelineno-32-7" href="#__codelineno-32-7"></a><span class="k">-</span><span class="w"> </span>Concise and direct
+<a id="__codelineno-32-8" name="__codelineno-32-8" href="#__codelineno-32-8"></a><span class="k">-</span><span class="w"> </span>Provide evidence and examples
+<a id="__codelineno-32-9" name="__codelineno-32-9" href="#__codelineno-32-9"></a><span class="k">-</span><span class="w"> </span>Ask clarifying questions before committing
+<a id="__codelineno-32-10" name="__codelineno-32-10" href="#__codelineno-32-10"></a><span class="k">-</span><span class="w"> </span>Document decisions and trade-offs
+<a id="__codelineno-32-11" name="__codelineno-32-11" href="#__codelineno-32-11"></a>
+<a id="__codelineno-32-12" name="__codelineno-32-12" href="#__codelineno-32-12"></a><span class="gu">## Expertise</span>
+<a id="__codelineno-32-13" name="__codelineno-32-13" href="#__codelineno-32-13"></a><span class="k">-</span><span class="w"> </span>.NET / C# architecture
+<a id="__codelineno-32-14" name="__codelineno-32-14" href="#__codelineno-32-14"></a><span class="k">-</span><span class="w"> </span>Distributed systems
+<a id="__codelineno-32-15" name="__codelineno-32-15" href="#__codelineno-32-15"></a><span class="k">-</span><span class="w"> </span>SOLID design patterns
+<a id="__codelineno-32-16" name="__codelineno-32-16" href="#__codelineno-32-16"></a><span class="k">-</span><span class="w"> </span>Test-driven development
+<a id="__codelineno-32-17" name="__codelineno-32-17" href="#__codelineno-32-17"></a><span class="k">-</span><span class="w"> </span>Continuous integration and deployment
+</code></pre></div></p>
+<p><strong>MEMORY.md</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a><span class="gh"># Memory</span>
+<a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>
+<a id="__codelineno-33-3" name="__codelineno-33-3" href="#__codelineno-33-3"></a><span class="gu">## Patterns</span>
+<a id="__codelineno-33-4" name="__codelineno-33-4" href="#__codelineno-33-4"></a><span class="k">-</span><span class="w"> </span>Team prefers async communication over sync meetings
+<a id="__codelineno-33-5" name="__codelineno-33-5" href="#__codelineno-33-5"></a><span class="k">-</span><span class="w"> </span>Code review focuses on architecture and maintainability first
+<a id="__codelineno-33-6" name="__codelineno-33-6" href="#__codelineno-33-6"></a><span class="k">-</span><span class="w"> </span>User timezone is Pacific Time; avoid scheduling outside 8am-6pm
+<a id="__codelineno-33-7" name="__codelineno-33-7" href="#__codelineno-33-7"></a><span class="k">-</span><span class="w"> </span>Build command: <span class="sb">`dotnet build BotNexus.slnx`</span>
+<a id="__codelineno-33-8" name="__codelineno-33-8" href="#__codelineno-33-8"></a><span class="k">-</span><span class="w"> </span>Test command: <span class="sb">`dotnet test BotNexus.slnx`</span>
+<a id="__codelineno-33-9" name="__codelineno-33-9" href="#__codelineno-33-9"></a>
+<a id="__codelineno-33-10" name="__codelineno-33-10" href="#__codelineno-33-10"></a><span class="gu">## Architecture Learnings</span>
+<a id="__codelineno-33-11" name="__codelineno-33-11" href="#__codelineno-33-11"></a><span class="k">-</span><span class="w"> </span>Core platform has 17 projects with clean dependency inversion
+<a id="__codelineno-33-12" name="__codelineno-33-12" href="#__codelineno-33-12"></a><span class="k">-</span><span class="w"> </span>Extensions are loaded dynamically from <span class="sb">`~/.botnexus/extensions/{type}/{name}/`</span>
+<a id="__codelineno-33-13" name="__codelineno-33-13" href="#__codelineno-33-13"></a><span class="k">-</span><span class="w"> </span>SessionManager persists conversation history as JSONL
+<a id="__codelineno-33-14" name="__codelineno-33-14" href="#__codelineno-33-14"></a><span class="k">-</span><span class="w"> </span>Agent loop supports max 40 tool iterations per execution
+<a id="__codelineno-33-15" name="__codelineno-33-15" href="#__codelineno-33-15"></a>
+<a id="__codelineno-33-16" name="__codelineno-33-16" href="#__codelineno-33-16"></a><span class="gu">## Tools Integration</span>
+<a id="__codelineno-33-17" name="__codelineno-33-17" href="#__codelineno-33-17"></a><span class="k">-</span><span class="w"> </span>ToolRegistry.Register() to add tools
+<a id="__codelineno-33-18" name="__codelineno-33-18" href="#__codelineno-33-18"></a><span class="k">-</span><span class="w"> </span>ToolBase abstract class for tool implementations
+<a id="__codelineno-33-19" name="__codelineno-33-19" href="#__codelineno-33-19"></a><span class="k">-</span><span class="w"> </span>Tool definitions auto-generated in TOOLS.md each session
+<a id="__codelineno-33-20" name="__codelineno-33-20" href="#__codelineno-33-20"></a>
+<a id="__codelineno-33-21" name="__codelineno-33-21" href="#__codelineno-33-21"></a><span class="gu">## Decision Patterns</span>
+<a id="__codelineno-33-22" name="__codelineno-33-22" href="#__codelineno-33-22"></a><span class="k">-</span><span class="w"> </span>Always validate architectural changes with automated tests
+<a id="__codelineno-33-23" name="__codelineno-33-23" href="#__codelineno-33-23"></a><span class="k">-</span><span class="w"> </span>Document rationale in decisions.md for significant changes
+<a id="__codelineno-33-24" name="__codelineno-33-24" href="#__codelineno-33-24"></a><span class="k">-</span><span class="w"> </span>Escalate security concerns immediately
+<a id="__codelineno-33-25" name="__codelineno-33-25" href="#__codelineno-33-25"></a><span class="k">-</span><span class="w"> </span>Propose multiple alternatives for large decisions
+</code></pre></div></p>
+<hr />
+<h3 id="example-3-session-system-prompt-generated">Example 3: Session System Prompt (Generated)<a class="headerlink" href="#example-3-session-system-prompt-generated" title="Permanent link">&para;</a></h3>
+<p>System prompt assembled at session start for "leela" agent:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a>## Identity
+<a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a>
+<a id="__codelineno-34-3" name="__codelineno-34-3" href="#__codelineno-34-3"></a>- Agent: leela
+<a id="__codelineno-34-4" name="__codelineno-34-4" href="#__codelineno-34-4"></a>- Platform: Windows 10.0 (Build 22621)
+<a id="__codelineno-34-5" name="__codelineno-34-5" href="#__codelineno-34-5"></a>- Workspace: C:\Users\jonbullen\.botnexus\agents\leela
+<a id="__codelineno-34-6" name="__codelineno-34-6" href="#__codelineno-34-6"></a>- Time (UTC): 2026-04-02T15:30:45.1234567+00:00
+<a id="__codelineno-34-7" name="__codelineno-34-7" href="#__codelineno-34-7"></a>
+<a id="__codelineno-34-8" name="__codelineno-34-8" href="#__codelineno-34-8"></a>### Guidelines
+<a id="__codelineno-34-9" name="__codelineno-34-9" href="#__codelineno-34-9"></a>- Follow workspace and memory instructions as source of truth.
+<a id="__codelineno-34-10" name="__codelineno-34-10" href="#__codelineno-34-10"></a>- Prefer concise, actionable responses.
+<a id="__codelineno-34-11" name="__codelineno-34-11" href="#__codelineno-34-11"></a>- Use tools deliberately and safely.
+<a id="__codelineno-34-12" name="__codelineno-34-12" href="#__codelineno-34-12"></a>
+<a id="__codelineno-34-13" name="__codelineno-34-13" href="#__codelineno-34-13"></a>---
+<a id="__codelineno-34-14" name="__codelineno-34-14" href="#__codelineno-34-14"></a>
+<a id="__codelineno-34-15" name="__codelineno-34-15" href="#__codelineno-34-15"></a>## SOUL.md
+<a id="__codelineno-34-16" name="__codelineno-34-16" href="#__codelineno-34-16"></a>
+<a id="__codelineno-34-17" name="__codelineno-34-17" href="#__codelineno-34-17"></a>## Personality
+<a id="__codelineno-34-18" name="__codelineno-34-18" href="#__codelineno-34-18"></a>You are a pragmatic software architect with strong opinions on SOLID principles...
+<a id="__codelineno-34-19" name="__codelineno-34-19" href="#__codelineno-34-19"></a>
+<a id="__codelineno-34-20" name="__codelineno-34-20" href="#__codelineno-34-20"></a>---
+<a id="__codelineno-34-21" name="__codelineno-34-21" href="#__codelineno-34-21"></a>
+<a id="__codelineno-34-22" name="__codelineno-34-22" href="#__codelineno-34-22"></a>## IDENTITY.md
+<a id="__codelineno-34-23" name="__codelineno-34-23" href="#__codelineno-34-23"></a>
+<a id="__codelineno-34-24" name="__codelineno-34-24" href="#__codelineno-34-24"></a>## Role
+<a id="__codelineno-34-25" name="__codelineno-34-25" href="#__codelineno-34-25"></a>Lead/Architect for the engineering team. You own architectural decisions...
+<a id="__codelineno-34-26" name="__codelineno-34-26" href="#__codelineno-34-26"></a>
+<a id="__codelineno-34-27" name="__codelineno-34-27" href="#__codelineno-34-27"></a>---
+<a id="__codelineno-34-28" name="__codelineno-34-28" href="#__codelineno-34-28"></a>
+<a id="__codelineno-34-29" name="__codelineno-34-29" href="#__codelineno-34-29"></a>## USER.md
+<a id="__codelineno-34-30" name="__codelineno-34-30" href="#__codelineno-34-30"></a>
+<a id="__codelineno-34-31" name="__codelineno-34-31" href="#__codelineno-34-31"></a>## About
+<a id="__codelineno-34-32" name="__codelineno-34-32" href="#__codelineno-34-32"></a>Jon Bullen, Product Owner and Technical Lead for BotNexus.
+<a id="__codelineno-34-33" name="__codelineno-34-33" href="#__codelineno-34-33"></a>
+<a id="__codelineno-34-34" name="__codelineno-34-34" href="#__codelineno-34-34"></a>## Working Preferences
+<a id="__codelineno-34-35" name="__codelineno-34-35" href="#__codelineno-34-35"></a>- Prefer written communication and documentation over sync meetings
+<a id="__codelineno-34-36" name="__codelineno-34-36" href="#__codelineno-34-36"></a>- Async-first: decisions documented in GitHub issues/PRs
+<a id="__codelineno-34-37" name="__codelineno-34-37" href="#__codelineno-34-37"></a>- Appreciate concise summaries with links to detailed work
+<a id="__codelineno-34-38" name="__codelineno-34-38" href="#__codelineno-34-38"></a>
+<a id="__codelineno-34-39" name="__codelineno-34-39" href="#__codelineno-34-39"></a>---
+<a id="__codelineno-34-40" name="__codelineno-34-40" href="#__codelineno-34-40"></a>
+<a id="__codelineno-34-41" name="__codelineno-34-41" href="#__codelineno-34-41"></a>## AGENTS.md
+<a id="__codelineno-34-42" name="__codelineno-34-42" href="#__codelineno-34-42"></a>
+<a id="__codelineno-34-43" name="__codelineno-34-43" href="#__codelineno-34-43"></a>Configured agents:
+<a id="__codelineno-34-44" name="__codelineno-34-44" href="#__codelineno-34-44"></a>
+<a id="__codelineno-34-45" name="__codelineno-34-45" href="#__codelineno-34-45"></a>### default
+<a id="__codelineno-34-46" name="__codelineno-34-46" href="#__codelineno-34-46"></a>- Model: gpt-4-turbo
+<a id="__codelineno-34-47" name="__codelineno-34-47" href="#__codelineno-34-47"></a>- Role: default agent
+<a id="__codelineno-34-48" name="__codelineno-34-48" href="#__codelineno-34-48"></a>
+<a id="__codelineno-34-49" name="__codelineno-34-49" href="#__codelineno-34-49"></a>### leela
+<a id="__codelineno-34-50" name="__codelineno-34-50" href="#__codelineno-34-50"></a>- Model: gpt-4-turbo
+<a id="__codelineno-34-51" name="__codelineno-34-51" href="#__codelineno-34-51"></a>- Role: Lead/Architect for the engineering team. You own architectural decisions...
+<a id="__codelineno-34-52" name="__codelineno-34-52" href="#__codelineno-34-52"></a>
+<a id="__codelineno-34-53" name="__codelineno-34-53" href="#__codelineno-34-53"></a>---
+<a id="__codelineno-34-54" name="__codelineno-34-54" href="#__codelineno-34-54"></a>
+<a id="__codelineno-34-55" name="__codelineno-34-55" href="#__codelineno-34-55"></a>## TOOLS.md
+<a id="__codelineno-34-56" name="__codelineno-34-56" href="#__codelineno-34-56"></a>
+<a id="__codelineno-34-57" name="__codelineno-34-57" href="#__codelineno-34-57"></a>- exec: Execute a shell command on the local machine
+<a id="__codelineno-34-58" name="__codelineno-34-58" href="#__codelineno-34-58"></a>- fetch: Retrieve content from a URL
+<a id="__codelineno-34-59" name="__codelineno-34-59" href="#__codelineno-34-59"></a>- memory_get: Read long-term memory or a specific daily notes file
+<a id="__codelineno-34-60" name="__codelineno-34-60" href="#__codelineno-34-60"></a>- memory_save: Save information to long-term memory or today&#39;s daily notes
+<a id="__codelineno-34-61" name="__codelineno-34-61" href="#__codelineno-34-61"></a>- memory_search: Search across long-term memory and daily notes
+<a id="__codelineno-34-62" name="__codelineno-34-62" href="#__codelineno-34-62"></a>- web_search: Search the web using a search engine
+<a id="__codelineno-34-63" name="__codelineno-34-63" href="#__codelineno-34-63"></a>
+<a id="__codelineno-34-64" name="__codelineno-34-64" href="#__codelineno-34-64"></a>---
+<a id="__codelineno-34-65" name="__codelineno-34-65" href="#__codelineno-34-65"></a>
+<a id="__codelineno-34-66" name="__codelineno-34-66" href="#__codelineno-34-66"></a>## MEMORY.md
+<a id="__codelineno-34-67" name="__codelineno-34-67" href="#__codelineno-34-67"></a>
+<a id="__codelineno-34-68" name="__codelineno-34-68" href="#__codelineno-34-68"></a>## Patterns
+<a id="__codelineno-34-69" name="__codelineno-34-69" href="#__codelineno-34-69"></a>- Team prefers async communication over sync meetings
+<a id="__codelineno-34-70" name="__codelineno-34-70" href="#__codelineno-34-70"></a>- Code review focuses on architecture and maintainability first
+<a id="__codelineno-34-71" name="__codelineno-34-71" href="#__codelineno-34-71"></a>- User timezone is Pacific Time; avoid scheduling outside 8am-6pm
+<a id="__codelineno-34-72" name="__codelineno-34-72" href="#__codelineno-34-72"></a>
+<a id="__codelineno-34-73" name="__codelineno-34-73" href="#__codelineno-34-73"></a>---
+<a id="__codelineno-34-74" name="__codelineno-34-74" href="#__codelineno-34-74"></a>
+<a id="__codelineno-34-75" name="__codelineno-34-75" href="#__codelineno-34-75"></a>## memory/daily/2026-04-02.md
+<a id="__codelineno-34-76" name="__codelineno-34-76" href="#__codelineno-34-76"></a>
+<a id="__codelineno-34-77" name="__codelineno-34-77" href="#__codelineno-34-77"></a>[09:15] Reviewed workspace and memory architecture
+<a id="__codelineno-34-78" name="__codelineno-34-78" href="#__codelineno-34-78"></a>[10:30] Documented system prompt assembly process
+<a id="__codelineno-34-79" name="__codelineno-34-79" href="#__codelineno-34-79"></a>[14:00] Discussed memory consolidation strategy
+</code></pre></div>
+<hr />
+<h2 id="first-run-behavior">First-Run Behavior<a class="headerlink" href="#first-run-behavior" title="Permanent link">&para;</a></h2>
+<p>When an agent workspace doesn't exist yet, the system initializes it automatically.</p>
+<h3 id="initialization-flow">Initialization Flow<a class="headerlink" href="#initialization-flow" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Workspace Detection</strong></li>
+<li><code>AgentContextBuilder.BuildSystemPromptAsync()</code> is called</li>
+<li>
+<p>Calls <code>IAgentWorkspace.InitializeAsync()</code> first</p>
+</li>
+<li>
+<p><strong>Initialization Steps</strong> (in <code>AgentWorkspace.InitializeAsync()</code>)</p>
+</li>
+<li>Create agent workspace directory: <code>~/.botnexus/agents/{agentName}/</code></li>
+<li>Create memory directories:<ul>
+<li><code>~/.botnexus/agents/{agentName}/memory/</code></li>
+<li><code>~/.botnexus/agents/{agentName}/memory/daily/</code></li>
+</ul>
+</li>
+<li>
+<p>Create bootstrap files if missing:</p>
+<ul>
+<li><code>SOUL.md</code> (with placeholder comment)</li>
+<li><code>IDENTITY.md</code> (with placeholder comment)</li>
+<li><code>USER.md</code> (with placeholder comment)</li>
+<li><code>MEMORY.md</code> (with placeholder comment)</li>
+<li><code>HEARTBEAT.md</code> (with placeholder comment)</li>
+</ul>
+</li>
+<li>
+<p><strong>File Content</strong>
+   Bootstrap files are created with placeholder templates:</p>
+</li>
+</ol>
+<p><strong>SOUL.md</strong>:
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a><span class="gh"># Soul</span>
+<a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a>
+<a id="__codelineno-35-3" name="__codelineno-35-3" href="#__codelineno-35-3"></a>&lt;!-- Define this agent&#39;s core personality, values, and boundaries.
+<a id="__codelineno-35-4" name="__codelineno-35-4" href="#__codelineno-35-4"></a>     This file is loaded into every session as part of the system prompt. --&gt;
+</code></pre></div></p>
+<p><strong>IDENTITY.md</strong>:
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a><span class="gh"># Identity</span>
+<a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a>
+<a id="__codelineno-36-3" name="__codelineno-36-3" href="#__codelineno-36-3"></a>&lt;!-- Describe this agent&#39;s role, communication style, and operating constraints.
+<a id="__codelineno-36-4" name="__codelineno-36-4" href="#__codelineno-36-4"></a>     This file is loaded into every session as part of the system prompt. --&gt;
+</code></pre></div></p>
+<p><strong>USER.md</strong>:
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a><span class="gh"># User</span>
+<a id="__codelineno-37-2" name="__codelineno-37-2" href="#__codelineno-37-2"></a>
+<a id="__codelineno-37-3" name="__codelineno-37-3" href="#__codelineno-37-3"></a>&lt;!-- Capture user-specific preferences, priorities, and collaboration expectations.
+<a id="__codelineno-37-4" name="__codelineno-37-4" href="#__codelineno-37-4"></a>     This file is loaded into every session as part of the system prompt. --&gt;
+</code></pre></div></p>
+<ol>
+<li><strong>Idempotency</strong></li>
+<li>Files are only created if missing</li>
+<li>If workspace already exists, initialization is skipped</li>
+<li>
+<p>Safe to call multiple times</p>
+</li>
+<li>
+<p><strong>Human Editing</strong></p>
+</li>
+<li>After initialization, human edits SOUL.md, IDENTITY.md, USER.md</li>
+<li>Next session automatically includes updated content in system prompt</li>
+<li>No restart required — content loaded per session</li>
+</ol>
+<h3 id="example-first-run">Example First-Run<a class="headerlink" href="#example-first-run" title="Permanent link">&para;</a></h3>
+<p><strong>Command</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-38-1" name="__codelineno-38-1" href="#__codelineno-38-1"></a><span class="c1"># User creates agent &quot;mybot&quot; and runs it for first time</span>
+<a id="__codelineno-38-2" name="__codelineno-38-2" href="#__codelineno-38-2"></a>dotnet<span class="w"> </span>run<span class="w"> </span>--<span class="w"> </span>--agent<span class="w"> </span>mybot<span class="w"> </span><span class="s2">&quot;Hello, who are you?&quot;</span>
+</code></pre></div></p>
+<p><strong>Initialization</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-39-1" name="__codelineno-39-1" href="#__codelineno-39-1"></a>Creating workspace: ~/.botnexus/agents/mybot/
+<a id="__codelineno-39-2" name="__codelineno-39-2" href="#__codelineno-39-2"></a>Creating memory directories...
+<a id="__codelineno-39-3" name="__codelineno-39-3" href="#__codelineno-39-3"></a>Creating SOUL.md (template)
+<a id="__codelineno-39-4" name="__codelineno-39-4" href="#__codelineno-39-4"></a>Creating IDENTITY.md (template)
+<a id="__codelineno-39-5" name="__codelineno-39-5" href="#__codelineno-39-5"></a>Creating USER.md (template)
+<a id="__codelineno-39-6" name="__codelineno-39-6" href="#__codelineno-39-6"></a>Creating MEMORY.md (template)
+<a id="__codelineno-39-7" name="__codelineno-39-7" href="#__codelineno-39-7"></a>Creating HEARTBEAT.md (template)
+<a id="__codelineno-39-8" name="__codelineno-39-8" href="#__codelineno-39-8"></a>
+<a id="__codelineno-39-9" name="__codelineno-39-9" href="#__codelineno-39-9"></a>Workspace initialized. Edit the following files before next session:
+<a id="__codelineno-39-10" name="__codelineno-39-10" href="#__codelineno-39-10"></a>- ~/.botnexus/agents/mybot/SOUL.md
+<a id="__codelineno-39-11" name="__codelineno-39-11" href="#__codelineno-39-11"></a>- ~/.botnexus/agents/mybot/IDENTITY.md
+<a id="__codelineno-39-12" name="__codelineno-39-12" href="#__codelineno-39-12"></a>- ~/.botnexus/agents/mybot/USER.md
+</code></pre></div></p>
+<p><strong>Human Action</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-40-1" name="__codelineno-40-1" href="#__codelineno-40-1"></a><span class="c1"># User edits workspace files</span>
+<a id="__codelineno-40-2" name="__codelineno-40-2" href="#__codelineno-40-2"></a><span class="nb">cd</span><span class="w"> </span>~/.botnexus/agents/mybot
+<a id="__codelineno-40-3" name="__codelineno-40-3" href="#__codelineno-40-3"></a><span class="c1"># Edit SOUL.md, IDENTITY.md, USER.md with custom content</span>
+</code></pre></div></p>
+<p><strong>Second Run</strong>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-41-1" name="__codelineno-41-1" href="#__codelineno-41-1"></a><span class="c1"># User runs agent again</span>
+<a id="__codelineno-41-2" name="__codelineno-41-2" href="#__codelineno-41-2"></a>dotnet<span class="w"> </span>run<span class="w"> </span>--<span class="w"> </span>--agent<span class="w"> </span>mybot<span class="w"> </span><span class="s2">&quot;What&#39;s in SOUL.md?&quot;</span>
+<a id="__codelineno-41-3" name="__codelineno-41-3" href="#__codelineno-41-3"></a>
+<a id="__codelineno-41-4" name="__codelineno-41-4" href="#__codelineno-41-4"></a><span class="c1"># Response includes personalized content from edited files</span>
+</code></pre></div></p>
+<hr />
+<h2 id="related-documentation">Related Documentation<a class="headerlink" href="#related-documentation" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../../architecture/overview/">Architecture Overview</a> — System architecture and design patterns</li>
+<li><a href="../../configuration/">Configuration Guide</a> — Full configuration reference</li>
+<li><a href="../../extension-development/">Extension Development Guide</a> — Building extensions</li>
+</ul>
+<hr />
+<h2 id="implementation-references">Implementation References<a class="headerlink" href="#implementation-references" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>AgentWorkspace</strong>: <code>src/BotNexus.Agent/AgentWorkspace.cs</code></li>
+<li><strong>AgentContextBuilder</strong>: <code>src/BotNexus.Agent/AgentContextBuilder.cs</code></li>
+<li><strong>MemoryStore</strong>: <code>src/BotNexus.Agent/MemoryStore.cs</code></li>
+<li><strong>Memory Tools</strong>: <code>src/BotNexus.Agent/Tools/MemorySearchTool.cs</code>, <code>MemorySaveTool.cs</code>, <code>MemoryGetTool.cs</code></li>
+<li><strong>Configuration</strong>: <code>src/BotNexus.Core/Configuration/AgentConfig.cs</code>, <code>BotNexusHome.cs</code></li>
+<li><strong>Abstractions</strong>: <code>src/BotNexus.Core/Abstractions/IAgentWorkspace.cs</code>, <code>IContextBuilder.cs</code>, <code>IMemoryStore.cs</code></li>
+</ul>
+
+
+
+
+
+
+
+  
+    
+  
+  
+    
+  
+
+
+  <aside class="md-source-file">
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Last update">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="April 16, 2026 05:53:49 UTC">April 16, 2026</span>
+  </span>
+
+    
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Created">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M14.47 15.08 11 13V7h1.5v5.25l3.08 1.83c-.41.28-.79.62-1.11 1m-1.39 4.84c-.36.05-.71.08-1.08.08-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8c0 .37-.03.72-.08 1.08.69.1 1.33.32 1.92.64.1-.56.16-1.13.16-1.72 0-5.5-4.5-10-10-10S2 6.5 2 12s4.47 10 10 10c.59 0 1.16-.06 1.72-.16-.32-.59-.54-1.23-.64-1.92M18 15v3h-3v2h3v3h2v-3h3v-2h-3v-3z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="April 14, 2026 17:57:14 UTC">April 14, 2026</span>
+  </span>
+
+    
+    
+    
+  </aside>
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
