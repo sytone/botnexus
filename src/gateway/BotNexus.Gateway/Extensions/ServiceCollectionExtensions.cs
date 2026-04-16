@@ -49,7 +49,27 @@ public static class ServiceCollectionExtensions
             return [];
 
         var extensionsPath = ResolveExtensionsPath(platformConfig, extensionsConfig, fileSystem);
-        var discovered = await loader.DiscoverAsync(extensionsPath, ct);
+        var allDiscovered = await loader.DiscoverAsync(extensionsPath, ct);
+
+        // Deduplicate by extension ID — if multiple directories contain the same ID,
+        // keep the first one discovered and warn about duplicates.
+        var seen = new Dictionary<string, ExtensionInfo>(StringComparer.OrdinalIgnoreCase);
+        List<ExtensionInfo> discovered = [];
+        var deduplicationLogger = loggerFactory?.CreateLogger("BotNexus.Gateway.Extensions");
+        foreach (var ext in allDiscovered)
+        {
+            if (seen.TryGetValue(ext.Manifest.Id, out var existing))
+            {
+                deduplicationLogger?.LogWarning(
+                    "Duplicate extension '{ExtensionId}' found at '{DuplicatePath}' (already loaded from '{OriginalPath}'). Skipping duplicate.",
+                    ext.Manifest.Id, ext.DirectoryPath, existing.DirectoryPath);
+            }
+            else
+            {
+                seen[ext.Manifest.Id] = ext;
+                discovered.Add(ext);
+            }
+        }
 
         IReadOnlyList<ExtensionInfo> ordered;
         try
