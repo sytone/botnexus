@@ -1,6 +1,7 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
@@ -56,6 +57,7 @@ public sealed class SubAgentArchetypeIdentityTests
             supervisor.Object,
             registry.Object,
             Mock.Of<IActivityBroadcaster>(),
+            Mock.Of<IChannelDispatcher>(),
             Options.Create(new GatewayOptions()),
             NullLogger<DefaultSubAgentManager>.Instance);
 
@@ -112,6 +114,7 @@ public sealed class SubAgentArchetypeIdentityTests
             supervisor.Object,
             registry.Object,
             Mock.Of<IActivityBroadcaster>(),
+            Mock.Of<IChannelDispatcher>(),
             Options.Create(new GatewayOptions()),
             NullLogger<DefaultSubAgentManager>.Instance);
 

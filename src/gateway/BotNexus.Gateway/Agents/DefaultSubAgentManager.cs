@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Activity;
+using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Diagnostics;
 using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -17,6 +19,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     private readonly IAgentSupervisor _supervisor;
     private readonly IAgentRegistry _registry;
     private readonly IActivityBroadcaster _activity;
+    private readonly IChannelDispatcher _dispatcher;
     private readonly IOptions<GatewayOptions> _options;
     private readonly ILogger<DefaultSubAgentManager> _logger;
     private readonly ConcurrentDictionary<string, SubAgentInfo> _subAgents = new(StringComparer.OrdinalIgnoreCase);
@@ -29,12 +32,14 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         IAgentSupervisor supervisor,
         IAgentRegistry registry,
         IActivityBroadcaster activity,
+        IChannelDispatcher dispatcher,
         IOptions<GatewayOptions> options,
         ILogger<DefaultSubAgentManager> logger)
     {
         _supervisor = supervisor;
         _registry = registry;
         _activity = activity;
+        _dispatcher = dispatcher;
         _options = options;
         _logger = logger;
     }
@@ -267,7 +272,38 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         try
         {
             var parentHandle = await _supervisor.GetOrCreateAsync(parentAgentId, updated.ParentSessionId, ct);
-            await parentHandle.FollowUpAsync(followUp, ct);
+            if (parentHandle.IsRunning)
+            {
+                await parentHandle.FollowUpAsync(followUp, ct);
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "Waking idle parent agent '{ParentAgentId}' session '{ParentSessionId}' after sub-agent '{SubAgentId}' completion.",
+                    parentAgentId,
+                    updated.ParentSessionId,
+                    subAgentId);
+
+                GatewayTelemetry.SubAgentParentWakeups.Add(1,
+                    new KeyValuePair<string, object?>("botnexus.parent.agent.id", parentAgentId),
+                    new KeyValuePair<string, object?>("botnexus.parent.session.id", updated.ParentSessionId),
+                    new KeyValuePair<string, object?>("botnexus.subagent.id", subAgentId));
+
+                await _dispatcher.DispatchAsync(new InboundMessage
+                {
+                    ChannelType = ChannelKey.From("internal"),
+                    SenderId = $"subagent:{subAgentId}",
+                    ConversationId = updated.ParentSessionId,
+                    SessionId = updated.ParentSessionId,
+                    TargetAgentId = parentAgentId,
+                    Content = followUp,
+                    Metadata = new Dictionary<string, object?>
+                    {
+                        ["messageType"] = "subagent-completion",
+                        ["subAgentId"] = subAgentId
+                    }
+                }, ct);
+            }
         }
         catch (Exception ex)
         {

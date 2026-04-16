@@ -47,4 +47,8 @@ public static class GatewayTelemetry
         "botnexus.gateway.media_handler_errors",
         unit: "{error}",
         description: "Media handler processing errors.");
+
+    public static readonly Counter<long> SubAgentParentWakeups = Meter.CreateCounter<long>(
+        "botnexus.gateway.subagent.parent_wakeups",
+        description: "Number of times an idle parent agent was woken by sub-agent completion.");
 }

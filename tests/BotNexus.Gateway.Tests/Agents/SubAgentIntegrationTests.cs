@@ -4,6 +4,7 @@ using BotNexus.AgentCore.Tools;
 using BotNexus.AgentCore.Types;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Activity;
+using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Agents;
@@ -116,6 +117,7 @@ public sealed class SubAgentIntegrationTests
             supervisor,
             registry,
             new Mock<IActivityBroadcaster>().Object,
+            new Mock<IChannelDispatcher>().Object,
             Options.Create(options ?? new GatewayOptions()),
             NullLogger<DefaultSubAgentManager>.Instance);
 
