@@ -3,7 +3,7 @@ id: bug-steering-delivery-latency
 title: Steering Messages Delivered Late to Agent
 type: bug
 priority: high
-status: draft
+status: done
 created: 2026-04-10
 updated: 2026-04-10
 author: nova
@@ -15,7 +15,7 @@ tags: [steering, gateway, latency, subagent]
 
 Type: Bug
 Priority: High (steering is useless if delayed)
-Status: Draft
+Status: Done
 Author: Nova (via Jon)
 
 ## Overview
