@@ -356,7 +356,8 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
             if (contract == typeof(IChannelAdapter) || 
                 contract == typeof(IIsolationStrategy) ||
                 contract == typeof(IAgentTool) ||
-                contract == typeof(ICommandContributor))
+                contract == typeof(ICommandContributor) ||
+                contract == typeof(IMediaHandler))
             {
                 _services.AddSingleton(contract, implementation);
             }

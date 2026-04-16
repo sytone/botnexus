@@ -15,4 +15,8 @@
     <PackageReference Include="Whisper.net" Version="1.8.0" />
     <PackageReference Include="Whisper.net.Runtime" Version="1.8.0" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="botnexus-extension.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
