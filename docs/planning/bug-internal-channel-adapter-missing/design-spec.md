@@ -1,7 +1,7 @@
 ---
 type: bug
 priority: critical
-status: in-progress
+status: delivered
 created: 2026-07-16
 title: "Internal Channel Adapter Missing — Sub-Agent Completions and Cross-Agent Messages Silently Drop"
 ---
