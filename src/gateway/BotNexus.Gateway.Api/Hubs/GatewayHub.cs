@@ -185,6 +185,55 @@ public sealed class GatewayHub : Hub
         };
     }
 
+    /// <summary>
+    /// Sends a message with media content parts to an agent.
+    /// </summary>
+    /// <param name="agentId">The target agent.</param>
+    /// <param name="channelType">The channel type.</param>
+    /// <param name="content">Text content of the message.</param>
+    /// <param name="contentParts">Media content parts (base64-encoded binary data).</param>
+    /// <returns>The send message result including session info.</returns>
+    public async Task<object> SendMessageWithMedia(
+        AgentId agentId,
+        ChannelKey channelType,
+        string content,
+        IReadOnlyList<MediaContentPartDto> contentParts)
+    {
+        var typedAgentId = NormalizeAgentId(agentId);
+        var typedChannelType = NormalizeChannelKey(channelType);
+        ArgumentException.ThrowIfNullOrWhiteSpace(content);
+
+        var session = await ResolveOrCreateSessionAsync(typedAgentId, typedChannelType);
+        await SubscribeInternalAsync(session.SessionId);
+
+        _logger.LogInformation(
+            "Hub SendMessageWithMedia: agent={AgentId} channel={ChannelType} session={SessionId} parts={PartCount}",
+            typedAgentId, typedChannelType, session.SessionId, contentParts.Count);
+
+        var parts = contentParts.Select(ConvertToDomainContentPart).ToList();
+
+        await _dispatcher.DispatchAsync(
+            new InboundMessage
+            {
+                ChannelType = ChannelKey.From("signalr"),
+                SenderId = Context.ConnectionId,
+                ConversationId = session.SessionId.Value,
+                SessionId = session.SessionId.Value,
+                TargetAgentId = typedAgentId.Value,
+                Content = content,
+                ContentParts = parts,
+                Metadata = new Dictionary<string, object?> { ["messageType"] = "message-with-media" }
+            },
+            CancellationToken.None);
+
+        return new
+        {
+            sessionId = session.SessionId.Value,
+            agentId = session.AgentId.Value,
+            channelType = session.ChannelType?.Value
+        };
+    }
+
     private Task DispatchMessageAsync(AgentId typedAgentId, SessionId typedSessionId, string content, string messageType)
         => _dispatcher.DispatchAsync(
             new InboundMessage
@@ -198,6 +247,22 @@ public sealed class GatewayHub : Hub
                 Metadata = new Dictionary<string, object?> { ["messageType"] = messageType }
             },
             CancellationToken.None);
+
+    private static MessageContentPart ConvertToDomainContentPart(MediaContentPartDto dto)
+    {
+        if (dto.Text is not null)
+            return new TextContentPart { MimeType = dto.MimeType, Text = dto.Text };
+
+        if (dto.Base64Data is not null)
+            return new BinaryContentPart
+            {
+                MimeType = dto.MimeType,
+                Data = Convert.FromBase64String(dto.Base64Data),
+                FileName = dto.FileName
+            };
+
+        throw new ArgumentException("MediaContentPartDto must have either Text or Base64Data");
+    }
 
     /// <summary>
     /// Executes steer.

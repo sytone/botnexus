@@ -1,5 +1,7 @@
 <Solution>
-  <Folder Name="/extensions/" />
+  <Folder Name="/extensions/">
+    <Project Path="extensions/BotNexus.Extensions.AudioTranscription/BotNexus.Extensions.AudioTranscription.csproj" />
+  </Folder>
   <Folder Name="/extensions/skills/">
     <Project Path="extensions/skills/BotNexus.Extensions.Skills/BotNexus.Extensions.Skills.csproj" />
   </Folder>
