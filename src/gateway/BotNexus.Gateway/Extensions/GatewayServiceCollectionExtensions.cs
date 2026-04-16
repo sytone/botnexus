@@ -21,6 +21,7 @@ using BotNexus.Gateway.Routing;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Security;
 using BotNexus.Gateway.Federation;
+using BotNexus.Gateway.Channels;
 using BotNexus.Channels.Core;
 using BotNexus.Extensions.Skills;
 using BotNexus.Memory;
@@ -124,6 +125,8 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IConfigPathResolver, ConfigPathResolver>();
         services.TryAddSingleton<IChannelManager, ChannelManager>();
         services.TryAddSingleton<ISessionStore, InMemorySessionStore>();
+        services.AddSingleton<InternalChannelAdapter>();
+        services.AddSingleton<IChannelAdapter>(serviceProvider => serviceProvider.GetRequiredService<InternalChannelAdapter>());
         services.AddSingleton<ISessionCompactor, LlmSessionCompactor>();
         services.AddSingleton<IMediaPipeline, MediaPipeline>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICommandContributor, BuiltInCommandContributor>());
