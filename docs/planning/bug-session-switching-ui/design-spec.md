@@ -31,6 +31,16 @@ The **confirmed root cause** (2026-04-10) is the client-side race in `openAgentT
 
 **Action**: Address send-side race condition and add tests per the expanded testing plan.
 
+### New symptom: Cross-agent receive bleed (2026-04-15)
+
+**Observed by Jon:** Switched to Aurum, sent a message, got a response. Switched back to Nova, continued chatting. Aurum's response ("[[reply_to_current]] I can't access it yet...") appeared in Nova's chat canvas.
+
+**Investigation:** Nova's session store (`f2add6ff...`) does NOT contain Aurum's message. Aurum's session (`8031c4d6...`) correctly contains it. **This is purely a WebUI rendering issue** -- the backend sessions are isolated.
+
+**Root cause hypothesis:** `SubscribeAll()` subscribes the client to ALL session groups. When Aurum's stream events arrive, they're rendered into whichever chat container is currently visible (Nova's) instead of being routed to Aurum's container. The `28a0329` fix may not cover the case where the user actively switches agents mid-stream -- the `routeEvent()` function may be checking against the wrong `activeViewId` when the switch happens between Aurum responding and the events arriving.
+
+**This means `28a0329` did NOT fully fix Pattern A.** The receive-side bleed still occurs when switching between agents while one is actively responding.
+
 # Design Spec: Session Switching Broken During Active Agent Work
 
 ## Overview

@@ -19,6 +19,18 @@ ai-policy: minimal    # minimal | collaborative | open
 
 **If a doc has `owner: human` and `ai-policy: minimal`, do not rewrite or remove it during cleanup tasks.** This convention exists because a previous cleanup accidentally removed a human-authored document.
 
+## Planning Docs
+
+Design specs and bug specs live in `docs/planning/`. Each item is a folder containing `design-spec.md` and optionally `research.md`.
+
+**Archival convention:**
+- Active items: `docs/planning/<item-name>/`
+- Archived items: `docs/planning/archived/<item-name>/`
+- When a topic is done: update `status: done` in the spec's YAML frontmatter, then move the whole folder to `archived/` as-is -- no renaming
+- The canonical archive folder is `archived/` (not `archive/`)
+- **Master index:** `docs/planning/INDEX.md` lists all specs (active + archived) with status and summary
+- **Lifecycle skill:** See `.github/skills/planning-management/SKILL.md` for the full spec template, lifecycle, and workflows
+
 ## Test Enforcement
 
 **All tests must pass before any task is considered complete.** No exceptions.

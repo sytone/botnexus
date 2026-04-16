@@ -45,6 +45,9 @@ The proposed `SessionLifecycleService` is the missing orchestration layer that t
 - Sub-agent conversation history is not persisted
 - The seal endpoint (Wave 1-3 feature) has nothing to seal
 - Sub-agent sessions don't survive gateway restarts
+- WebUI sub-agent activity banner is ephemeral (SignalR events only) -- lost on page refresh
+- No way to click into a sub-agent conversation from the chat canvas
+- Wave 1-3 sidebar/read-only-view/seal code exists but has nothing to render (no persisted sessions)
 
 ## Root Cause: No Unified Session Lifecycle
 
