@@ -92,7 +92,9 @@ public sealed class PlatformConfigAgentSource(
                 SessionAccessLevel = agentConfig.SessionAccess?.Level ?? "own",
                 SessionAllowedAgents = agentConfig.SessionAccess?.AllowedAgents?.ToArray() ?? [],
                 FileAccess = MapFileAccessPolicy(agentConfig.FileAccess, platformConfig.Gateway?.FileAccess),
-                ExtensionConfig = agentConfig.Extensions ?? new Dictionary<string, JsonElement>()
+                ExtensionConfig = ExtensionConfigMerger.Merge(
+                    platformConfig.Gateway?.Extensions?.Defaults,
+                    agentConfig.Extensions)
             };
 
             var validationErrors = AgentDescriptorValidator.Validate(descriptor);

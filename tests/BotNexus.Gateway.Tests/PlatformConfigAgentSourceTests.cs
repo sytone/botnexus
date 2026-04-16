@@ -23,6 +23,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using System.IO.Abstractions;
+using System.Text.Json.Nodes;
 
 namespace BotNexus.Gateway.Tests;
 
@@ -132,6 +133,77 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
 
         descriptor.SystemPromptFile.Should().Be(@"prompts\missing.txt");
         descriptor.SystemPromptFiles.Should().Equal([@"prompts\missing.txt"]);
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithWorldDefaults_MergesIntoAgentExtensionConfig()
+    {
+        var config = JsonSerializer.Deserialize<PlatformConfig>(
+            """
+            {
+              "Gateway": {
+                "Extensions": {
+                  "Defaults": {
+                    "ext": { "a": 1 }
+                  }
+                }
+              },
+              "Agents": {
+                "assistant": {
+                  "Provider": "copilot",
+                  "Model": "gpt-4.1",
+                  "Enabled": true
+                }
+              }
+            }
+            """)!;
+
+        var source = new PlatformConfigAgentSource(
+            Options.Create(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>());
+
+        var descriptor = (await source.LoadAsync()).Should().ContainSingle().Subject;
+
+        descriptor.ExtensionConfig.Should().ContainKey("ext");
+        AssertJsonEquals(descriptor.ExtensionConfig["ext"], """{"a":1}""");
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithWorldDefaultsAndAgentOverrides_DeepMerges()
+    {
+        var config = JsonSerializer.Deserialize<PlatformConfig>(
+            """
+            {
+              "Gateway": {
+                "Extensions": {
+                  "Defaults": {
+                    "ext": { "a": 1, "b": 2 }
+                  }
+                }
+              },
+              "Agents": {
+                "assistant": {
+                  "Provider": "copilot",
+                  "Model": "gpt-4.1",
+                  "Enabled": true,
+                  "Extensions": {
+                    "ext": { "b": 3, "c": 4 }
+                  }
+                }
+              }
+            }
+            """)!;
+
+        var source = new PlatformConfigAgentSource(
+            Options.Create(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>());
+
+        var descriptor = (await source.LoadAsync()).Should().ContainSingle().Subject;
+
+        descriptor.ExtensionConfig.Should().ContainKey("ext");
+        AssertJsonEquals(descriptor.ExtensionConfig["ext"], """{"a":1,"b":3,"c":4}""");
     }
 
     [Fact]
@@ -456,6 +528,13 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         authPathField.Should().NotBeNull();
         authPathField!.SetValue(authManager, Path.Combine(_configDirectory, "auth.json"));
         return authManager;
+    }
+
+    private static void AssertJsonEquals(JsonElement actual, string expectedJson)
+    {
+        var actualNode = JsonNode.Parse(actual.GetRawText());
+        var expectedNode = JsonNode.Parse(expectedJson);
+        JsonNode.DeepEquals(actualNode, expectedNode).Should().BeTrue();
     }
 
     private sealed class ListLogger<T> : ILogger<T>

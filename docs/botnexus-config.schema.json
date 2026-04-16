@@ -365,6 +365,13 @@
         },
         "enabled": {
           "type": "boolean"
+        },
+        "defaults": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "additionalProperties": {}
         }
       }
     },

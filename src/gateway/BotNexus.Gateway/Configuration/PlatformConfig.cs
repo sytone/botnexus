@@ -266,6 +266,12 @@ public sealed class ExtensionsConfig
     /// Enables or disables dynamic extension loading.
     /// </summary>
     public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// World-level default extension configuration, keyed by extension ID.
+    /// Deep-merged with agent-level overrides to produce effective config per agent.
+    /// </summary>
+    public Dictionary<string, JsonElement>? Defaults { get; set; }
 }
 
 /// <summary>Agent definition in platform config.</summary>

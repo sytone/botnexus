@@ -10,11 +10,12 @@
 6. [Dependency Injection Patterns](#dependency-injection-patterns)
 7. [Extension Metadata with BotNexusExtensionAttribute](#extension-metadata-with-botnexusextensionattribute)
 8. [Accessing Configuration](#accessing-configuration)
-9. [OAuth Providers](#oauth-providers)
-10. [Webhook Handlers](#webhook-handlers)
-11. [Testing Extensions in Isolation](#testing-extensions-in-isolation)
-12. [Build Pipeline & Output](#build-pipeline--output)
-13. [Troubleshooting](#troubleshooting)
+9. [World-Level Extension Defaults](#world-level-extension-defaults)
+10. [OAuth Providers](#oauth-providers)
+11. [Webhook Handlers](#webhook-handlers)
+12. [Testing Extensions in Isolation](#testing-extensions-in-isolation)
+13. [Build Pipeline & Output](#build-pipeline--output)
+14. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -1051,6 +1052,105 @@ public sealed class MyTool
     }
 }
 ```
+
+---
+
+## World-Level Extension Defaults
+
+To avoid repeating extension configuration across multiple agents, operators can define shared extension defaults at the gateway level. This is particularly useful when many agents need identical extension settings.
+
+### Configuration Structure
+
+Extension defaults are defined in the `gateway.extensions.defaults` section of `config.json`:
+
+```json
+{
+  "gateway": {
+    "extensions": {
+      "defaults": {
+        "botnexus-skills": { "enabled": true, "maxLoadedSkills": 20 },
+        "botnexus-exec": { "enabled": true }
+      }
+    }
+  },
+  "agents": {
+    "nova": {
+      "extensions": {
+        "botnexus-skills": { "maxLoadedSkills": 30 }
+      }
+    },
+    "assistant": {}
+  }
+}
+```
+
+### Before and After Example
+
+**Before (duplicated per agent):**
+```json
+{
+  "agents": {
+    "nova": {
+      "extensions": {
+        "botnexus-skills": { "enabled": true, "maxLoadedSkills": 20 },
+        "botnexus-exec": { "enabled": true }
+      }
+    },
+    "assistant": {
+      "extensions": {
+        "botnexus-skills": { "enabled": true, "maxLoadedSkills": 20 },
+        "botnexus-exec": { "enabled": true }
+      }
+    }
+  }
+}
+```
+
+**After (DRY with world defaults):**
+```json
+{
+  "gateway": {
+    "extensions": {
+      "defaults": {
+        "botnexus-skills": { "enabled": true, "maxLoadedSkills": 20 },
+        "botnexus-exec": { "enabled": true }
+      }
+    }
+  },
+  "agents": {
+    "nova": {
+      "extensions": {
+        "botnexus-skills": { "maxLoadedSkills": 30 }
+      }
+    },
+    "assistant": {}
+  }
+}
+```
+
+### Merge Semantics
+
+When an agent's extension configuration is merged with world defaults:
+
+- **Objects merge recursively** — Keys from both default and agent are combined, with agent values taking precedence on conflicts
+- **Scalars and arrays are replaced wholesale** — If an agent provides a scalar or array value, it completely replaces the default (no partial merging)
+- **Missing agent config inherits defaults** — Agents without an `extensions` block receive all world defaults unchanged
+- **Explicit disabling** — An agent can disable a world-default extension by setting `"enabled": false`
+- **Null overrides** — An explicit `null` from an agent removes a value from the merged result
+
+### Merge Examples
+
+| World Default | Agent Override | Effective Config |
+|---|---|---|
+| `{ "a": 1, "b": 2 }` | `{ "b": 3, "c": 4 }` | `{ "a": 1, "b": 3, "c": 4 }` |
+| `{ "a": 1 }` | (absent) | `{ "a": 1 }` |
+| (absent) | `{ "b": 2 }` | `{ "b": 2 }` |
+| `{ "nested": { "x": 1 } }` | `{ "nested": { "y": 2 } }` | `{ "nested": { "x": 1, "y": 2 } }` |
+| `[1, 2]` | `[3, 4]` | `[3, 4]` (arrays replace) |
+
+### Backward Compatibility
+
+Existing configurations without a `gateway.extensions.defaults` section continue to work unchanged. World-level defaults are entirely optional and do not affect deployments that don't use them.
 
 ---
 
