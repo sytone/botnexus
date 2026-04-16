@@ -5,6 +5,7 @@ using BotNexus.Channels.Core;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Media;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -45,6 +46,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
     private readonly ISessionCompactor _compactor;
     private readonly IOptions<CompactionOptions> _compactionOptions;
     private readonly ILogger<GatewayHost> _logger;
+    private readonly IMediaPipeline? _mediaPipeline;
     private readonly SessionLifecycleEvents? _sessionLifecycleEvents;
     private readonly ConcurrentDictionary<string, SessionQueueState> _sessionQueues = new(StringComparer.OrdinalIgnoreCase);
 
@@ -58,7 +60,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         IOptions<CompactionOptions> compactionOptions,
         ILogger<GatewayHost> logger,
         int sessionQueueCapacity = DefaultSessionQueueCapacity,
-        SessionLifecycleEvents? sessionLifecycleEvents = null)
+        SessionLifecycleEvents? sessionLifecycleEvents = null,
+        IMediaPipeline? mediaPipeline = null)
     {
         _supervisor = supervisor;
         _router = router;
@@ -68,6 +71,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         _compactor = compactor;
         _compactionOptions = compactionOptions;
         _logger = logger;
+        _mediaPipeline = mediaPipeline;
         _sessionLifecycleEvents = sessionLifecycleEvents;
         SessionQueueCapacity = Math.Max(sessionQueueCapacity, 1);
     }
@@ -294,7 +298,27 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 }
             }
 
-            session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = message.Content });
+            IReadOnlyList<MessageContentPart>? originalParts = message.ContentParts;
+            IReadOnlyList<MessageContentPart>? processedParts = null;
+
+            if (originalParts is { Count: > 0 } && _mediaPipeline is not null)
+            {
+                var mediaContext = new MediaProcessingContext
+                {
+                    SessionId = sessionId,
+                    ChannelType = message.ChannelType,
+                    CancellationToken = cancellationToken
+                };
+                processedParts = await _mediaPipeline.ProcessAsync(originalParts, mediaContext);
+            }
+
+            session.AddEntry(new SessionEntry
+            {
+                Role = MessageRole.User,
+                Content = message.Content,
+                OriginalContentParts = originalParts,
+                ProcessedContentParts = processedParts
+            });
             if (_compactor.ShouldCompact(session.Session, _compactionOptions.Value))
             {
                 _logger.LogInformation("Auto-compacting session {SessionId}", sessionId);
@@ -511,7 +535,27 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
 
         // Record steering message in session history
         var session = await _sessions.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From(agentId), cancellationToken);
-        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = message.Content });
+        IReadOnlyList<MessageContentPart>? originalParts = message.ContentParts;
+        IReadOnlyList<MessageContentPart>? processedParts = null;
+
+        if (originalParts is { Count: > 0 } && _mediaPipeline is not null)
+        {
+            var mediaContext = new MediaProcessingContext
+            {
+                SessionId = sessionId,
+                ChannelType = message.ChannelType,
+                CancellationToken = cancellationToken
+            };
+            processedParts = await _mediaPipeline.ProcessAsync(originalParts, mediaContext);
+        }
+
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.User,
+            Content = message.Content,
+            OriginalContentParts = originalParts,
+            ProcessedContentParts = processedParts
+        });
         await _sessions.SaveAsync(session, cancellationToken);
 
         await handle.SteerAsync(message.Content, cancellationToken);

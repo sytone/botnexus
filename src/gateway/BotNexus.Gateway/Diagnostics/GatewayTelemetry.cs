@@ -32,4 +32,19 @@ public static class GatewayTelemetry
         "botnexus.gateway.provider.latency",
         unit: "ms",
         description: "Provider-facing latency observed while executing agent prompts.");
+
+    public static readonly Counter<long> MediaPartsProcessed = Meter.CreateCounter<long>(
+        "botnexus.gateway.media_parts_processed",
+        unit: "{part}",
+        description: "Media content parts processed by the media pipeline.");
+
+    public static readonly Counter<long> MediaPartsTransformed = Meter.CreateCounter<long>(
+        "botnexus.gateway.media_parts_transformed",
+        unit: "{part}",
+        description: "Media content parts transformed by media handlers.");
+
+    public static readonly Counter<long> MediaHandlerErrors = Meter.CreateCounter<long>(
+        "botnexus.gateway.media_handler_errors",
+        unit: "{error}",
+        description: "Media handler processing errors.");
 }
