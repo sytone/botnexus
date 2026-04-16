@@ -116,3 +116,36 @@
 ## Learnings
 - 2026-04-14: For BotNexus.Probe, comprehensive parser coverage works best with real temp files and explicit newline/case/filter edge-case assertions across Serilog and JSONL readers.
 - 2026-04-14: Probe currently keeps OTLP and CLI parsing logic in non-public methods; reflection-based tests provide reliable coverage without changing production API shape.
+
+
+## 2026-04-15 — Extension-Contributed Commands Test Coverage, Wave 1 (Tester)
+
+**Status:** ✅ Complete  
+**Test Results:** 10/10 passing
+
+**Context:** Wave 1 test coverage for Extension-Contributed Commands feature. Comprehensive unit tests for command contracts and registry.
+
+**Test Coverage (10 tests):**
+
+### CommandRegistry Tests (6)
+1. Constructor registers all ICommandContributor instances from DI
+2. Dispatch routes correctly to contributor based on command name
+3. Argument parsing splits input into command + args
+4. Duplicate command name detection and collision handling
+5. Null input and empty contributor registry edge cases
+6. Error handling propagates execution exceptions
+
+### Command Model Tests (4)
+1. CommandDescriptor serialization round-trip (JSON)
+2. CommandResult with error flag and metadata preservation
+3. CommandExecutionContext cancellation token flow
+4. Sub-command nesting and descriptor composition
+
+**Results:**
+✅ All 10 tests passing
+✅ 100% coverage of new public APIs
+✅ Edge case validation (null handlers, empty commands, concurrent access)
+✅ No build warnings
+
+**Cross-Reference:** Design decisions documented in leela-extension-commands-design-review.md
+

@@ -2011,3 +2011,20 @@ Agent creation form in WebUI was sending incorrect property names to AgentDescri
 **Impact:** Agent creation form now functional. Unblocks Phase 12 Wave 1 continuation (channels panel, extensions panel, model selector).
 
 **Status:** ✅ Complete
+
+---
+
+## Phase 12 Wave 1 — Probe SQLite Integration & Extension-Contributed Commands
+
+**2026-04-15 — Merged from inbox (2 decisions)**
+
+### 1. Farnsworth Decision — Probe SQLite Session Source
+
+
+
+---
+
+### 2. Leela Decision — Extension-Contributed Commands Design Review
+
+
+

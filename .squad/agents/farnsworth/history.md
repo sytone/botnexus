@@ -73,3 +73,38 @@
 - 2026-04-14: Added Probe dual-mode entrypoint (serve + CLI) with command handlers for logs/sessions/session/correlate/files/gateway/traces/trace, JSON/text output modes, and explicit no-results exit code semantics for automation.
 - 2026-04-14: Added read-only SQLite session DB ingestion to BotNexus.Probe with shared-connection SessionDbReader (busy retry + query-only pragmas), API/CLI preference for sqlite with transparent JSONL fallback, and session counts/search/history endpoints over sqlite metadata.
 - 2026-04-14: Updated Probe sessions web UI to consume rich sqlite payloads (agent/channel/type/status filters, metadata-rich detail cards, tool/compaction history badges) while remaining compatible with legacy JSONL response shapes.
+
+
+## 2026-04-15 — Extension-Contributed Commands Implementation, Wave 1 (Platform Dev)
+
+**Status:** ✅ Complete  
+**Build:** Green (0 errors)
+
+**Context:** Wave 1 implementation of Extension-Contributed Commands feature. Created core contracts and command registry enabling extensions to register user-facing slash commands.
+
+**Deliverables:**
+
+### Contracts (BotNexus.Gateway.Contracts)
+- ICommandContributor interface with ExecuteAsync(CommandExecutionContext) method
+- CommandDescriptor record (name, description, category, clientSideOnly, subCommands) — serializable for API
+- CommandResult record (title, body, isError, metadata)
+- CommandExecutionContext record (input, agentId, sessionId, cancellationToken)
+
+### Gateway Commands
+- CommandRegistry class aggregating all ICommandContributor instances from DI
+- Dispatch logic: input → command name → contributor → result
+- Collision detection and error handling
+- Integration with AssemblyLoadContextExtensionLoader via DiscoverableServiceContracts
+- BuiltInCommandContributor for platform commands (/help, /status, /agents, /new)
+
+### DI Integration
+- Registration in Program.cs ServiceCollection
+- Singleton registration for CommandRegistry
+- Built-in contributor registered as ICommandContributor instance
+
+**Build Status:**
+✅ All assemblies compile without errors or warnings
+✅ 10 unit tests passing (registration, dispatch, parsing, duplicates, error handling)
+
+**Next Wave:** Wave 2 — WebUI command palette integration
+

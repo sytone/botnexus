@@ -255,3 +255,90 @@ Created `docs/development/ddd-patterns.md` — comprehensive developer reference
 - Developer migration guide extended for incremental adoption patterns
 - Architecture diagrams updated with cross-store consistency validation flow
 - Two conventional commits capturing Waves 2-3 architecture changes
+
+## 2026-04-[DATE] — Commands API Documentation (Wave 1)
+
+**Status:** ✅ COMPLETE  
+**Deliverable:** API reference documentation for Commands endpoints
+
+**Content Added to docs/api-reference.md:**
+
+1. **Table of Contents Update**
+   - Added new section 8: [Commands](#commands)
+   - Renumbered subsequent sections (Session Management → 9, System & Status → 10, Error Handling → 11)
+
+2. **Commands Section (new)**
+   - Introduction explaining backend-driven command architecture and client surface integration
+   - Two main endpoints fully documented:
+
+3. **GET /api/commands**
+   - Purpose: Discover available commands for palette/autocomplete
+   - Response schema with CommandDescriptor fields (name, description, category, clientSideOnly, subCommands)
+   - Example response showing mixed built-in (/help, /agents, /reset) + extension commands (/skills)
+   - Sub-command structure (list, info, add, remove, reload for /skills)
+   - Response field reference with detailed descriptions
+   - Implementation notes (client vs backend execution, collision handling, registration via ICommandContributor)
+
+4. **POST /api/commands/execute**
+   - Purpose: Execute slash commands with arguments and context
+   - Request schema (input, agentId, sessionId fields)
+   - Three example scenarios:
+     - Basic /skills list execution with populated result
+     - /skills info <name> showing metadata + source + size
+     - Error case (/skills add nonexistent-skill) demonstrating error response format
+   - Response schema (title, body, isError fields)
+   - Error handling semantics (HTTP 200 with isError=true for command logic errors, HTTP 4xx for malformed requests)
+   - Implementation notes covering built-in vs extension commands, agent-awareness, sub-command parsing
+
+**Format Alignment:**
+- Matched existing endpoint sections: Endpoint header, Description, Request/Response examples, Field Descriptions, Error Responses, Notes
+- Followed response JSON style from other endpoints
+- HTTP header conventions (X-Api-Key, Content-Type)
+- Error response table format
+
+**Design Alignment:**
+- Documentation reflects design-spec.md architecture (backend-driven commands, extension discovery via ICommandContributor)
+- /skills command examples derived from design-spec Phase 3 reference implementation
+- CommandDescriptor and CommandResult response schemas match interface definitions from design spec
+- Client-side only flag explanation aligns with /reset and /new use case distinction
+
+
+## 2026-04-15 — Extension-Contributed Commands Documentation, Wave 1 (Documentation)
+
+**Status:** ✅ Complete  
+**Deliverable:** API reference documentation for Commands endpoints
+
+**Context:** Wave 1 documentation for Extension-Contributed Commands feature. Added API endpoint documentation to docs/api-reference.md.
+
+**Content Added to docs/api-reference.md:**
+
+### Commands Section (New)
+- Table of contents entry + section 8: Commands
+- Renumbered subsequent sections (Session Management → 9, System → 10, Error Handling → 11)
+- Introduction explaining backend-driven command architecture and client surface integration
+
+### GET /api/commands (Command Discovery)
+- Purpose: Discover available commands for palette/autocomplete
+- Response schema with CommandDescriptor fields (name, description, category, clientSideOnly, subCommands)
+- Example response with mixed built-in (/help, /agents, /reset) + extension commands (/skills)
+- Sub-command structure documentation
+- Response field reference with detailed descriptions
+- Implementation notes (client vs backend execution, collision handling, ICommandContributor registration)
+
+### POST /api/commands/execute (Command Execution)
+- Purpose: Execute slash commands with arguments and context
+- Request schema (input, agentId, sessionId fields)
+- Three example scenarios:
+  - Basic /skills list execution with result
+  - /skills info <name> showing metadata/source/size
+  - Error case (/skills add nonexistent-skill)
+- Response schema (title, body, isError fields)
+- Error handling semantics (HTTP 200 with isError flag for command logic errors vs 4xx for malformed)
+- Implementation notes covering built-in vs extension commands, agent-awareness, sub-command parsing
+
+**Format Alignment:**
+✅ Matched existing endpoint section format
+✅ Followed response JSON style conventions
+✅ HTTP header and error response table format
+✅ Reflects design-spec.md architecture
+

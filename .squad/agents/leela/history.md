@@ -7,7 +7,7 @@
 
 ## Core Context
 
-**Phases 1-7A Complete. Full Design Review Complete.** Build green (0 errors), 276 tests passing (up from 264), Full Review grade A-. Core systems operational:
+**Phases 1-7A Complete. Full Design Review Complete. Phase 12 Extension-Commands Design Review Complete (Grade: B+).** Build green (0 errors), 276 tests passing (up from 264), Full Review grade A-. Core systems operational:
 - Agent registry, supervisor, cross-agent calling with recursion guard + depth limits + timeout
 - WebSocket (with reconnect replay + sequence IDs), TUI (with steering), Telegram channel adapters
 - File and in-memory session stores (configurable via platform config)
@@ -448,3 +448,36 @@ Comprehensive DDD refactoring spec proposing 9 phases to align codebase with dom
 4. **NormalizeChannelKey exists in 5 locations** (3 stores + ChannelHistoryController + PlaywrightFixture tests). A ChannelKey value object eliminates all of them.
 5. **Sub-agent identity theft** — DefaultSubAgentManager.cs line 64: `childAgentId = request.ParentAgentId`. Makes parent and child indistinguishable in logs, audit, and session queries.
 6. **Only 1 record struct exists in codebase** (ConfigPathResolver). Value objects will introduce a new pattern — needs team documentation.
+
+
+## 2026-04-15 — Extension-Contributed Commands Design Review (Wave 1)
+
+**Status:** ✅ Complete  
+**Grade:** B+
+
+**Context:** Design review ceremony for Extension-Contributed Commands feature — backend-driven command registry enabling extensions to contribute slash commands (e.g., /skills) to WebUI palette without modifying core code.
+
+**Key Decisions Finalized:**
+1. Split CommandDefinition → CommandDescriptor (serializable data) + ICommandContributor.ExecuteAsync() (handler)
+2. Integrate ICommandContributor into AssemblyLoadContextExtensionLoader.DiscoverableServiceContracts for auto-discovery
+3. CommandRegistry in BotNexus.Gateway.Commands aggregates DI instances
+4. Built-in commands implement BuiltInCommandContributor : ICommandContributor (dogfoods extension model)
+5. Add ResolveTool(string) to IAgentHandleInspector for session-aware commands like /skills add
+6. Scope: Phases 1-3 + Skills; defer TUI (Phase 4), Hub (Phase 5)
+
+**8 Gaps Identified, 3 Must-Fix:**
+- CommandDefinition non-serializable ✅
+- Extension loader integration ✅
+- Command-result formatting ✅
+
+**Wave Structure:**
+- Wave 1 (Farnsworth/Hermes/Kif): Contracts, CommandRegistry, DI setup, 10 unit tests, API docs
+- Wave 2: WebUI command palette integration
+- Wave 3: Skills /skills command implementation
+- Wave 4: TUI integration
+
+**Deliverables:**
+- Approved design-review.md + decision inbox entry
+- Orchestration logs for all agents
+- Session log completed
+
