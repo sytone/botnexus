@@ -1279,6 +1279,49 @@ body {
 .agent-config-header h2 { margin: 0; font-size: 1.2rem; }
 .agent-config-header-actions { display: flex; gap: 8px; }
 .agent-config-body { padding: 24px; overflow-y: auto; max-height: calc(100vh - 70px); }
+
+/* === Audio Recording === */
+#record-btn {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1.2em;
+    padding: 4px 8px;
+    flex-shrink: 0;
+    transition: background 0.2s;
+}
+#record-btn:hover { background: rgba(255,255,255,0.1); }
+#record-btn.recording {
+    animation: pulse-recording 1s infinite;
+    border-color: var(--error);
+}
+@keyframes pulse-recording {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+.audio-pending-indicator {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 0.85em;
+    margin-bottom: 4px;
+    display: none;
+    align-items: center;
+    gap: 4px;
+}
+.audio-pending-indicator .btn-clear-audio {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    margin-left: 8px;
+    font-size: 0.9em;
+}
+.audio-pending-indicator .btn-clear-audio:hover {
+    color: var(--error);
+}
 .config-section { margin-bottom: 24px; }
 .config-section h3 { font-size: 1rem; margin: 0 0 12px; color: var(--text-primary); border-bottom: 1px solid var(--border); padding-bottom: 6px; }
 .config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }

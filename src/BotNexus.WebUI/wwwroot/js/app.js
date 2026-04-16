@@ -28,7 +28,7 @@ import {
     toggleToolVisibility, toggleThinkingVisibility, syncTogglesFromActiveStore,
     openToolModal, closeToolModal, handleModelChange,
     appendSystemMessage, initSubAgentPanel, openAgentTimeline,
-    loadCommands
+    loadCommands, initAudioRecording
 } from './chat.js';
 import {
     getLastContext,
@@ -330,6 +330,7 @@ function init() {
         onHubReconnected(loadCommands);
         loadCommands();
         initSubAgentPanel();
+        initAudioRecording();
         initVersionCheck();
         initUptime();
         setSidebarCollapsedState(getSidebarCollapsed());

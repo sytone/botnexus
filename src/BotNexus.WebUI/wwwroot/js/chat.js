@@ -18,6 +18,7 @@ import { hubInvoke, getConnection } from './hub.js';
 import { loadSessions, trackActivity, updateSidebarBadge } from './sidebar.js';
 import { activeSubAgents } from './events.js';
 import { getShowTools, setShowTools, getShowThinking, setShowThinking, setLastContext } from './storage.js';
+import { isAudioRecordingSupported, startRecording, stopRecording, isRecording, cancelRecording } from './audio.js';
 
 // ── Module state ────────────────────────────────────────────────────
 
@@ -38,6 +39,7 @@ export function syncTogglesFromActiveStore() {
     if (dom.toggleThinking) dom.toggleThinking.checked = showThinking;
 }
 let sendModeFollowUp = false;
+let pendingAudio = null;
 let messageQueueCount = 0;
 let pendingQueuedMessages = [];
 let commandPaletteIndex = -1;
@@ -177,7 +179,8 @@ export function updateSendButtonState() {
     dom.btnSend.classList.remove('btn-steer', 'btn-followup');
     dom.btnSend.textContent = 'Send';
     dom.chatInput.placeholder = 'Type a message... (Enter to send, Shift+Enter for newline)';
-    dom.btnSend.disabled = !hasText || !dom.chatView || dom.chatView.classList.contains('hidden');
+    const hasAudio = !!pendingAudio;
+    dom.btnSend.disabled = (!hasText && !hasAudio) || !dom.chatView || dom.chatView.classList.contains('hidden');
     dom.btnSendMode.classList.add('hidden');
     sendModeFollowUp = false;
 }
@@ -998,7 +1001,7 @@ export async function sendMessage() {
     const activeSessionId = channelManager.activeViewId;
     if (!activeAgentId) return;
     const text = dom.chatInput.value.trim();
-    if (!text) return;
+    if (!text && !pendingAudio) return;
 
     if (text.startsWith('/')) {
         const cmd = text.split(/\s/)[0].toLowerCase();
@@ -1040,17 +1043,27 @@ export async function sendMessage() {
         return;
     }
 
-    appendChatMessage('user', text);
-    trackActivity('message', activeAgentId, text.substring(0, 60));
+    appendChatMessage('user', text || '🎤 Audio message');
+    trackActivity('message', activeAgentId, (text || '🎤 Audio').substring(0, 60));
     setSendingState(true);
     if (activeSessionId) getStreamState(activeSessionId).isStreaming = true;
     startResponseTimeout();
 
+    // Capture and clear pending audio before async work
+    const audioToSend = pendingAudio;
+    pendingAudio = null;
+    clearAudioPendingIndicator();
+
     try {
         const channelType = toHubChannelType(activeCtx?.channelType || getCurrentChannelType() || 'Web Chat');
-        serverLog('info', 'SendMessage request', { agentId: activeAgentId, channelType, sessionId: activeSessionId, textLength: text.length });
-        const result = await hubInvoke('SendMessage', activeAgentId, channelType, text);
-        serverLog('info', 'SendMessage response', { agentId: result?.agentId || activeAgentId, sessionId: result?.sessionId, channelType: result?.channelType || channelType });
+        let result;
+        if (audioToSend) {
+            result = await sendMessageWithAudio(activeAgentId, channelType, text, audioToSend);
+        } else {
+            serverLog('info', 'SendMessage request', { agentId: activeAgentId, channelType, sessionId: activeSessionId, textLength: text.length });
+            result = await hubInvoke('SendMessage', activeAgentId, channelType, text);
+            serverLog('info', 'SendMessage response', { agentId: result?.agentId || activeAgentId, sessionId: result?.sessionId, channelType: result?.channelType || channelType });
+        }
         if (result?.sessionId) {
             const sessionChannelType = result.channelType || channelType;
             const ctx = channelManager.getOrCreate(result.agentId || activeAgentId, sessionChannelType);
@@ -1086,6 +1099,111 @@ export async function abortRequest() {
     resetQueue();
     updateSendButtonState();
     appendSystemMessage('Request aborted.');
+}
+
+// ── Audio recording integration ─────────────────────────────────────
+
+/**
+ * Send a message with attached audio content via SendMessageWithMedia hub method.
+ * @param {string} agentId - The active agent ID
+ * @param {string} channelType - The hub channel type
+ * @param {string} text - The text message (may be empty)
+ * @param {{base64: string, mimeType: string, durationMs: number, sizeBytes: number}} audio - The audio data
+ */
+async function sendMessageWithAudio(agentId, channelType, text, audio) {
+    const activeSessionId = getCurrentSessionId();
+    const contentParts = [
+        { mimeType: audio.mimeType, base64Data: audio.base64 }
+    ];
+
+    serverLog('info', 'SendMessageWithMedia request', {
+        agentId, channelType,
+        sessionId: activeSessionId, textLength: text.length,
+        audioDurationMs: audio.durationMs, audioSizeBytes: audio.sizeBytes
+    });
+
+    const result = await hubInvoke('SendMessageWithMedia', agentId, channelType, text, contentParts);
+
+    serverLog('info', 'SendMessageWithMedia response', {
+        agentId: result?.agentId || agentId,
+        sessionId: result?.sessionId
+    });
+
+    return result;
+}
+
+function showAudioPendingIndicator(durationMs) {
+    let indicator = document.getElementById('audio-pending');
+    if (!indicator) {
+        indicator = document.createElement('div');
+        indicator.id = 'audio-pending';
+        indicator.className = 'audio-pending-indicator';
+        const inputArea = document.getElementById('chat-input')?.closest('.chat-input-area');
+        if (inputArea) inputArea.prepend(indicator);
+    }
+    const secs = (durationMs / 1000).toFixed(1);
+    indicator.innerHTML = `🎤 Audio attached (${secs}s) <button class="btn-clear-audio" title="Remove audio">✕</button>`;
+    indicator.style.display = 'block';
+
+    // Wire the clear button
+    const clearBtn = indicator.querySelector('.btn-clear-audio');
+    if (clearBtn) {
+        clearBtn.addEventListener('click', () => {
+            pendingAudio = null;
+            clearAudioPendingIndicator();
+            updateSendButtonState();
+        });
+    }
+}
+
+function clearAudioPendingIndicator() {
+    const indicator = document.getElementById('audio-pending');
+    if (indicator) {
+        indicator.style.display = 'none';
+        indicator.innerHTML = '';
+    }
+}
+
+export function initAudioRecording() {
+    const recordBtn = document.getElementById('record-btn');
+    if (!recordBtn || !isAudioRecordingSupported()) return;
+
+    recordBtn.style.display = '';
+    let recordingTimer = null;
+
+    recordBtn.addEventListener('click', async () => {
+        if (isRecording()) {
+            // Stop recording
+            clearInterval(recordingTimer);
+            recordBtn.textContent = '🎤';
+            recordBtn.classList.remove('recording');
+            recordBtn.title = 'Record audio';
+
+            try {
+                pendingAudio = await stopRecording();
+                showAudioPendingIndicator(pendingAudio.durationMs);
+                updateSendButtonState();
+            } catch (err) {
+                debugLog('audio', 'Stop failed', err);
+            }
+        } else {
+            // Start recording
+            try {
+                await startRecording();
+                recordBtn.textContent = '🔴';
+                recordBtn.classList.add('recording');
+
+                let seconds = 0;
+                recordBtn.title = 'Recording... 0s';
+                recordingTimer = setInterval(() => {
+                    seconds++;
+                    recordBtn.title = `Recording... ${seconds}s`;
+                }, 1000);
+            } catch (err) {
+                debugLog('audio', 'Start failed', err);
+            }
+        }
+    });
 }
 
 export function startNewChat() {
