@@ -3,7 +3,7 @@ id: feature-user-documentation
 title: "User Documentation — Getting Started, Guides, and Tutorials"
 type: feature
 priority: high
-status: in-progress
+status: delivered
 created: 2025-07-23
 updated: 2026-04-16
 author: nova
