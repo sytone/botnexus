@@ -163,6 +163,7 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<IHostedService>(serviceProvider =>
             serviceProvider.GetRequiredService<SessionWarmupService>());
         services.AddHostedService<SessionCleanupService>();
+        services.AddHostedService<MemoryIndexer>();
 
         // Default agent configuration from BotNexusHome (~/.botnexus/agents/)
         // This ensures agents created via the API are always persisted to disk.
