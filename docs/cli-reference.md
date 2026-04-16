@@ -60,7 +60,7 @@ botnexus validate
 
 Expected output (success):
 
-```
+```text
 Configuration is valid.
 ```
 
@@ -112,7 +112,7 @@ botnexus init
 
 Expected output:
 
-```
+```text
 Initialized BotNexus home at: C:\Users\<YourName>\AppData\Local\BotNexus
 Created config: C:\Users\<YourName>\AppData\Local\BotNexus\config.json
 Next steps:
@@ -162,7 +162,7 @@ botnexus agent list
 
 Expected output:
 
-```
+```text
 Agents:
   assistant  provider=copilot  model=gpt-4.1  enabled=true
   coder      provider=openai           model=gpt-4    enabled=true
@@ -175,7 +175,7 @@ Agents:
 botnexus agent list --verbose
 ```
 
-```
+```text
 Agents:
   assistant  provider=copilot  model=gpt-4.1  enabled=true
 Loaded from: C:\Users\<YourName>\AppData\Local\BotNexus\config.json
@@ -218,7 +218,7 @@ botnexus agent add coder
 
 Output:
 
-```
+```text
 Added agent 'coder'.
 ```
 
@@ -274,7 +274,7 @@ botnexus agent remove experimental
 
 Output:
 
-```
+```text
 Removed agent 'experimental'.
 ```
 
@@ -286,7 +286,7 @@ botnexus agent remove assistant
 
 Output (warning):
 
-```
+```text
 Warning: removing default agent 'assistant'. Update gateway.defaultAgentId if needed.
 Removed agent 'assistant'.
 ```
@@ -325,7 +325,7 @@ botnexus config get gateway.listenUrl
 
 Output:
 
-```
+```text
 http://localhost:5005
 ```
 
@@ -337,7 +337,7 @@ botnexus config get agents.assistant.model
 
 Output:
 
-```
+```text
 gpt-4.1
 ```
 
@@ -349,7 +349,7 @@ botnexus config get gateway.defaultAgentId
 
 Output:
 
-```
+```text
 assistant
 ```
 
@@ -388,7 +388,7 @@ botnexus config set gateway.defaultAgentId coder
 
 Output:
 
-```
+```text
 Set gateway.defaultAgentId = coder
 ```
 
@@ -400,7 +400,7 @@ botnexus config set gateway.listenUrl http://localhost:8080
 
 Output:
 
-```
+```text
 Set gateway.listenUrl = http://localhost:8080
 ```
 
@@ -412,7 +412,7 @@ botnexus config set agents.coder.enabled true
 
 Output:
 
-```
+```text
 Set agents.coder.enabled = true
 ```
 
@@ -424,7 +424,7 @@ botnexus config set agents.reviewer.enabled false
 
 Output:
 
-```
+```text
 Set agents.reviewer.enabled = false
 ```
 
@@ -457,7 +457,7 @@ botnexus config schema
 
 Output:
 
-```
+```text
 Generated schema: docs\botnexus-config.schema.json
 ```
 

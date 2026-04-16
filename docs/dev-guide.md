@@ -65,7 +65,7 @@ The Gateway starts at `http://localhost:5005` with the WebUI served at the root 
 
 The recommended edit → build → test → run cycle:
 
-```
+```text
 ┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐
 │  Edit    │ ──► │  Build   │ ──► │  Test    │ ──► │  Run     │
 │  Code    │     │  Solution│     │  Gateway │     │  Gateway │
@@ -174,7 +174,7 @@ Full build → test → run cycle for rapid development.
 
 **Output:**
 
-```
+```text
 🔧 Building full solution...
 ✅ Build succeeded
 🧪 Running Gateway tests...
@@ -226,7 +226,7 @@ Installs a Git pre-commit hook for the repository. Run once after cloning.
 
 BotNexus stores its configuration at `~/.botnexus/config.json`. On first run, the `BotNexusHome.Initialize()` method creates the directory structure:
 
-```
+```text
 ~/.botnexus/
 ├── config.json          # Primary configuration file
 ├── extensions/          # Dynamic extension assemblies
@@ -701,7 +701,7 @@ dotnet build path\to\MyExtension.csproj
 
 4. Copy the output to the extensions directory:
 
-```
+```text
 ~/.botnexus/extensions/
 ├── providers/    # Provider extension DLLs
 ├── channels/     # Channel adapter DLLs
@@ -803,7 +803,7 @@ dotnet test tests\BotNexus.Gateway.Tests --verbosity normal
 
 Verify extension assemblies are in the correct subdirectories:
 
-```
+```text
 ~/.botnexus/extensions/
 ├── providers/    # Provider DLLs
 ├── channels/     # Channel adapter DLLs

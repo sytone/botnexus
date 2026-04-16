@@ -1433,7 +1433,7 @@ Configuration is stored in `~/.botnexus/config.json`:
 - **Model Logging:** The actual model used (resolved from config or provider default) is logged per provider call
 
 Example log output:
-```
+```text
 [Information] Calling provider OpenAiProvider for agent my-agent, model=gpt-4o, contextWindowTokens=128000
 [Information] Provider OpenAiProvider responded in 1234ms
 [Warning] OAuth token saved for provider 'copilot' at ~/.botnexus/tokens/copilot.json. Expires at 2026-02-15T10:30:00Z
@@ -1523,7 +1523,7 @@ When an agent repeatedly calls the same tool with identical arguments:
 
 **Example:**
 
-```
+```text
 Iteration 0: search_files("") → executes (count: 1)
 Iteration 1: search_files("") → executes (count: 2)
 Iteration 2: search_files("") → BLOCKED (count: 2 >= MaxRepeatedToolCalls: 2)
@@ -1546,7 +1546,7 @@ For detailed configuration guidance, see [Configuration Guide § Agent Iteration
 Real-time streaming connection for interacting with agents.
 
 **Connection URL:**
-```
+```text
 ws://localhost:5005/ws?agent={agentId}&session={sessionId}
 ```
 
@@ -1644,7 +1644,7 @@ ws://localhost:5005/ws?agent={agentId}&session={sessionId}
 
 #### WebSocket Message Flow
 
-```
+```text
 Client                          Server
   │                               │
   │──── { type: "message" } ─────►│
@@ -1670,7 +1670,7 @@ When a client disconnects unexpectedly, missed events can be replayed:
 4. Server replays all buffered events with `sequenceId > lastSeqId` (up to `ReplayWindowSize`, default 1000).
 5. Server sends: `{ "type": "reconnect_ack", "sessionKey": "...", "replayed": N, "lastSeqId": ... }`.
 
-```
+```text
 Client                          Server
   │  (connection dropped)         │
   │                               │
@@ -1694,7 +1694,7 @@ Client                          Server
 Real-time stream of gateway activity events for monitoring.
 
 **Connection URL:**
-```
+```text
 ws://localhost:5005/ws/activity?agent={agentFilter}
 ```
 

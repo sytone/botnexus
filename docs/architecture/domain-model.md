@@ -32,7 +32,7 @@ BotNexus is a multi-agent platform where intelligent agents live, think, communi
 | **Memory**        | What a person remembers - short-term, long-term, and the ability to recall |
 | **Tools & Skills**| A person's hands and expertise - how they act and what they know |
 
-```
+```text
 +--------------------------------------------------------------+
 |                           WORLD                              |
 |                         (Gateway)                            |
@@ -383,7 +383,7 @@ Cross-world conversations are the mechanism for federation - multiple BotNexus d
 
 ### Communication Pattern Summary
 
-```
+```text
 +-------------------------------------------------------------------+
 |                   Agent Communication Patterns                    |
 +-------------------------------------------------------------------+
@@ -545,7 +545,7 @@ Memory is updated and managed primarily during Soul Sessions. The agent's daily 
 
 The following captures how the domain objects relate to one another:
 
-```
+```text
 World (Gateway)
  +-- hosts one or more Agents
  +-- provides Locations (file system, APIs, services)

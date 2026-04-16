@@ -10,7 +10,7 @@ BotNexus manages the statefulness on the gateway side: it maintains an in-memory
 
 ## The Request Flow
 
-```
+```text
 User Message (e.g., SignalR)
     │
     ▼
@@ -108,7 +108,7 @@ The provider receives this as a single self-contained request. It has no knowled
 
 The `AgentLoopRunner` is the core orchestration loop. It runs until the LLM stops requesting tool calls:
 
-```
+```text
 while (hasMoreToolCalls || pendingSteeringMessages):
     1. Drain any steering messages (injected mid-turn)
     2. Optionally run TransformContext (compaction-aware trimming)
@@ -148,7 +148,7 @@ When the estimated token count exceeds a threshold (default: 60% of context wind
 3. **Replaces** the old entries with a single system message containing the summary
 4. Subsequent LLM calls send: system prompt + compaction summary + recent messages
 
-```
+```text
 Before compaction:
   [system prompt] + [msg1] + [msg2] + ... + [msg47] + [msg48]  → ~90K tokens
 

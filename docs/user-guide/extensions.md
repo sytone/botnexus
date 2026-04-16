@@ -366,14 +366,14 @@ npm install -g @modelcontextprotocol/server-github
 
 With `toolPrefix: true`, tools are prefixed with server ID:
 
-```
+```text
 filesystem → filesystem_read, filesystem_write
 github → github_create_issue, github_search_repos
 ```
 
 With `toolPrefix: false`, tools use original names (risk of conflicts):
 
-```
+```text
 filesystem → read, write
 github → create_issue, search_repos
 ```
@@ -464,7 +464,7 @@ BotNexus scans these directories and makes skills available via the `skill` tool
 Agents with the `skill` tool can load skills on demand:
 
 **1. Agent invokes skill:**
-```
+```text
 Agent: I need guidance on the git workflow.
 [Uses skill tool to load "git-workflow"]
 Agent: Based on the git-workflow skill, here's how to proceed...
@@ -517,7 +517,7 @@ Per-agent skill settings:
 ### Skill Structure
 
 **Minimal skill:**
-```markdown
+````markdown
 # Skill: Tool Usage
 
 Always use the `grep` tool for code search, not `read_file` + manual parsing.
@@ -533,7 +533,7 @@ read_file src/index.js → manually search for "calculate"
 ```
 
 **Structured skill:**
-```markdown
+````markdown
 # Skill: API Design Patterns
 
 ## REST Conventions
@@ -594,7 +594,7 @@ Response: 200 OK
   "updatedAt": "2025-06-12T10:05:00Z"
 }
 ```
-```
+````
 
 ### Skill Best Practices
 
@@ -672,7 +672,7 @@ BotNexus discovers extensions from:
 2. **Custom path** via `gateway.extensions.path` in config
 
 **Directory structure:**
-```
+```text
 ~/.botnexus/extensions/
 ├── my-tool/
 │   ├── botnexus-extension.json

@@ -6,7 +6,7 @@
 
 ## Overview
 
-This directory contains detailed documentation for developers working on or extending BotNexus. For high-level architecture, see [`../architecture/`](../architecture/).
+This directory contains detailed documentation for developers working on or extending BotNexus. For high-level architecture, see [`../architecture/overview.md`](../architecture/overview.md).
 
 ---
 
@@ -39,7 +39,7 @@ This directory contains detailed documentation for developers working on or exte
 
 ## Related Documentation
 
-- **[../architecture/](../architecture/)** — High-level architecture reference
+- **[../architecture/overview.md](../architecture/overview.md)** — High-level architecture reference
 - **[../api-reference.md](../api-reference.md)** — REST API and SignalR hub documentation
 - **[../extension-development.md](../extension-development.md)** — Building custom tools, channels, providers
 - **[../dev-guide.md](../dev-guide.md)** — Building and debugging BotNexus

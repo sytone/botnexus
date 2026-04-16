@@ -14,7 +14,7 @@ The WebUI is a **channel-centric, multi-session interface** that connects to the
 
 ## Architecture Diagram
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                         Browser                             │
 │  ┌───────────────────────────────────────────────────────┐  │

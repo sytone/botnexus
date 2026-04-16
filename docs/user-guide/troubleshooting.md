@@ -21,7 +21,7 @@ This guide helps you diagnose and resolve common issues with BotNexus.
 ### Error: SDK Not Found
 
 **Symptom:**
-```
+```text
 error : The SDK 'Microsoft.NET.Sdk' specified could not be found.
 ```
 
@@ -38,7 +38,7 @@ error : The SDK 'Microsoft.NET.Sdk' specified could not be found.
 ### Error: Package Restore Failed
 
 **Symptom:**
-```
+```text
 error NU1301: Unable to load the service index for source https://api.nuget.org/v3/index.json
 ```
 
@@ -59,7 +59,7 @@ error NU1301: Unable to load the service index for source https://api.nuget.org/
 ### Error: Missing Project Reference
 
 **Symptom:**
-```
+```text
 error CS0246: The type or namespace name 'BotNexus' could not be found
 ```
 
@@ -79,7 +79,7 @@ error CS0246: The type or namespace name 'BotNexus' could not be found
 ### Error: Compilation Failed
 
 **Symptom:**
-```
+```text
 error CS1061: 'Type' does not contain a definition for 'Property'
 ```
 
@@ -103,7 +103,7 @@ error CS1061: 'Type' does not contain a definition for 'Property'
 ### Error: Gateway Won't Start
 
 **Symptom:**
-```
+```text
 Application startup exception
 Unhandled exception. System.IO.FileNotFoundException: Could not load file or assembly
 ```
@@ -129,7 +129,7 @@ Unhandled exception. System.IO.FileNotFoundException: Could not load file or ass
 ### Error: Port Already in Use
 
 **Symptom:**
-```
+```text
 System.IO.IOException: Failed to bind to address http://127.0.0.1:5005
 Error: address already in use
 ```
@@ -164,7 +164,7 @@ lsof -ti :5005 | xargs kill -9
 ### Error: Configuration File Not Found
 
 **Symptom:**
-```
+```text
 warn: BotNexus.Gateway.Configuration[0]
       Configuration file not found at ~/.botnexus/config.json
 ```
@@ -189,7 +189,7 @@ EOF
 ### Error: Invalid JSON in config.json
 
 **Symptom:**
-```
+```text
 error: BotNexus.Gateway.Configuration[0]
       Failed to parse configuration file: Unexpected character encountered while parsing value
 ```
@@ -329,7 +329,7 @@ tail -f ~/.botnexus/logs/gateway.log | grep -i error
 ### GitHub Copilot OAuth Failed
 
 **Symptom:**
-```
+```text
 error: BotNexus.Providers.Copilot[0]
       OAuth authentication failed: invalid_grant
 ```
@@ -349,7 +349,7 @@ error: BotNexus.Providers.Copilot[0]
 ### Anthropic API Key Invalid
 
 **Symptom:**
-```
+```text
 error: BotNexus.Providers.Anthropic[0]
       API request failed: 401 Unauthorized
 ```
@@ -381,7 +381,7 @@ error: BotNexus.Providers.Anthropic[0]
 ### OpenAI Rate Limit Exceeded
 
 **Symptom:**
-```
+```text
 error: BotNexus.Providers.OpenAI[0]
       API request failed: 429 Too Many Requests
 ```
@@ -508,7 +508,7 @@ tail -f ~/.botnexus/logs/gateway.log
 ### Tool Not Found
 
 **Symptom:**
-```
+```text
 error: Tool 'web_search' not found
 ```
 
@@ -543,7 +543,7 @@ ls -la ~/.botnexus/extensions/
 ### Tool Execution Timeout
 
 **Symptom:**
-```
+```text
 error: Tool execution timed out after 60 seconds
 ```
 
@@ -574,7 +574,7 @@ error: Tool execution timed out after 60 seconds
 ### Tool Returns Error
 
 **Symptom:**
-```
+```text
 error: Tool 'read_file' failed: File not found
 ```
 
@@ -599,7 +599,7 @@ tail -f ~/.botnexus/logs/gateway.log | grep -i tool
 ### Extension Not Loaded
 
 **Symptom:**
-```
+```text
 warn: BotNexus.Gateway[0]
       Extension 'my-extension' not found
 ```
@@ -630,7 +630,7 @@ Check `.csproj`:
 ### Extension Assembly Load Failed
 
 **Symptom:**
-```
+```text
 error: BotNexus.Gateway[0]
       Failed to load extension assembly: Could not load file or assembly
 ```
@@ -776,13 +776,13 @@ tail -f ~/.botnexus/logs/gateway.log | grep -i mcp
 ### Log Locations
 
 **Gateway logs:**
-```
+```text
 ~/.botnexus/logs/gateway.log
 ~/.botnexus/logs/gateway-YYYYMMDD.log
 ```
 
 **Session logs:**
-```
+```text
 ~/.botnexus/workspace/sessions/<agentId>/<sessionId>.jsonl
 ```
 

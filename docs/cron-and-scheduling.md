@@ -40,7 +40,7 @@ BotNexus provides a **centralized cron service** (`ICronService`) that schedules
 
 ### Architecture
 
-```
+```text
 ┌──────────────────────┐
 │   CronService        │
 │  (Background Svc)    │
@@ -260,7 +260,7 @@ BotNexus uses the **Cronos** library, which supports:
 
 ### Standard 5-Field Format
 
-```
+```text
 ┌───────────── Minute (0 - 59)
 │ ┌───────────── Hour (0 - 23)
 │ │ ┌───────────── Day of Month (1 - 31)
@@ -273,7 +273,7 @@ BotNexus uses the **Cronos** library, which supports:
 
 ### 6-Field Format (with Seconds)
 
-```
+```text
 ┌───────────── Second (0 - 59)
 │ ┌───────────── Minute (0 - 59)
 │ │ ┌───────────── Hour (0 - 23)
@@ -416,7 +416,7 @@ Checks the entry assembly version and returns the version number. External updat
 ```
 
 **Output:**
-```
+```text
 [check-updates] BotNexus is running version 1.0.0.0. External update feed integration is pending.
 ```
 
@@ -438,7 +438,7 @@ Executes all registered `HealthCheck` services and summarizes their status.
 ```
 
 **Output:**
-```
+```text
 [health-audit] Overall status: Healthy. Checks: database: Healthy, services: Healthy, memory: Healthy
 ```
 
@@ -460,7 +460,7 @@ Reports all loaded extensions, organized by service type.
 ```
 
 **Output:**
-```
+```text
 [extension-scan] Registered extension services: 5
 - IChannel: discord, slack, telegram
 - ISystemAction: health-audit, check-updates
@@ -495,7 +495,7 @@ Processes each agent's memory directory and combines daily entries into a consol
 ```
 
 **Output:**
-```
+```text
 analyst: success=true, files=5, entries=120
 planner: success=true, files=3, entries=87
 writer: success=false, files=0, entries=0
@@ -533,7 +533,7 @@ Iterates all stored sessions and deletes those whose last activity is older than
 ```
 
 **Output:**
-```
+```text
 Deleted 42 sessions older than 30 days.
 ```
 
@@ -570,7 +570,7 @@ Moves old log files to an `archive/` subdirectory within the logs path.
 ```
 
 **Output:**
-```
+```text
 Archived 8 log files older than 30 days.
 ```
 
@@ -611,7 +611,7 @@ Lists all registered cron job names.
 ```
 
 **Response:**
-```
+```text
 morning-briefing
 weekly-health-check
 nightly-consolidation
@@ -634,7 +634,7 @@ Removes a cron job by name.
 ```
 
 **Response:**
-```
+```text
 Cron job 'morning-briefing' removed
 ```
 
@@ -669,7 +669,7 @@ Schedules a new agent job.
 ```
 
 **Response:**
-```
+```text
 Agent cron job 'dynamic-report' scheduled with expression '*/30 * * * *'
 ```
 
@@ -808,7 +808,7 @@ The legacy `HeartbeatService` and `AgentConfig.CronJobs` have been replaced by t
 
 `CronJobFactory` automatically migrates legacy `AgentConfig.CronJobs` entries to the centralized `Cron.Jobs` section on startup. A warning is logged:
 
-```
+```text
 AgentConfig.CronJobs is deprecated. Migrate to Cron.Jobs in config.json.
 ```
 
@@ -827,7 +827,7 @@ The `CronService` logs at the following levels:
 - **Error**: Job execution failure, execution pipeline failure
 
 **Example log entries:**
-```
+```text
 [Information] Registered cron job 'morning-briefing' (type=Agent, schedule='0 9 * * *')
 [Information] Cron service started with tick interval 10s
 [Information] Cron job 'morning-briefing' completed in 1234ms
@@ -1014,7 +1014,7 @@ Consolidate memory and clean up old sessions every night.
 An agent uses the `cron` tool to schedule a new job dynamically.
 
 **Agent Prompt:**
-```
+```text
 You are an on-call scheduler. When requested, schedule a status-check job that runs every 15 minutes 
 for the next 4 hours. Use the cron tool to schedule it.
 ```
@@ -1038,7 +1038,7 @@ for the next 4 hours. Use the cron tool to schedule it.
 ```
 
 **Response:**
-```
+```text
 Agent cron job 'incident-status-check' scheduled with expression '*/15 * * * *'
 ```
 
@@ -1057,7 +1057,7 @@ Agent cron job 'incident-status-check' scheduled with expression '*/15 * * * *'
 
 ## Architecture Diagram
 
-```
+```text
 ┌────────────────────────────────────────────────────────────────┐
 │                        CronService (IHostedService)            │
 │  - Registers jobs at startup (CronJobFactory)                  │
@@ -1127,7 +1127,7 @@ Agent cron job 'incident-status-check' scheduled with expression '*/15 * * * *'
 ## See Also
 
 - [Configuration Guide](./configuration.md) — Full configuration reference
-- [Architecture Overview](./architecture.md) — System architecture and component interactions
+- [Architecture Overview](./architecture/overview.md) — System architecture and component interactions
 - [Extension Development](./extension-development.md) — Creating custom system actions and channels
-- [Workspace and Memory](./workspace-and-memory.md) — Agent memory consolidation details
+- [Workspace and Memory](./development/workspace-and-memory.md) — Agent memory consolidation details
 

@@ -462,11 +462,11 @@ This table tracks all DDD types being introduced in BotNexus. Follow this roadma
 
 ## Related Documentation
 
-- **Design Spec:** [docs/planning/ddd-refactoring/design-spec.md](../planning/ddd-refactoring/design-spec.md) — Full DDD refactoring specification, phase breakdown, and impact analysis
-- **Research:** [docs/planning/ddd-refactoring/research.md](../planning/ddd-refactoring/research.md) — Primitive obsession analysis, value object ROI, codebase evidence
-- **Design Review:** [.squad/decisions/inbox/leela-ddd-design-review.md](../../.squad/decisions/inbox/leela-ddd-design-review.md) — Architectural decisions (D1-D8), wave plan, risk analysis
-- **Architecture:** [docs/architecture/](../architecture/) — System design and module relationships
-- **Migration Tracking:** [docs/planning/ddd-refactoring/](../planning/ddd-refactoring/) — Per-phase status and implementation notes
+- **Design Spec:** [docs/planning/ddd-refactoring/design-spec.md](https://github.com/sytone/botnexus/blob/main/docs/planning/ddd-refactoring/design-spec.md) — Full DDD refactoring specification, phase breakdown, and impact analysis
+- **Research:** [docs/planning/ddd-refactoring/research.md](https://github.com/sytone/botnexus/blob/main/docs/planning/ddd-refactoring/research.md) — Primitive obsession analysis, value object ROI, codebase evidence
+- **Design Review:** [.squad/decisions/inbox/leela-ddd-design-review.md](https://github.com/sytone/botnexus/blob/main/.squad/decisions/inbox/leela-ddd-design-review.md) — Architectural decisions (D1-D8), wave plan, risk analysis
+- **Architecture:** [docs/architecture/overview.md](../architecture/overview.md) — System design and module relationships
+- **Migration Tracking:** [docs/planning/ddd-refactoring](https://github.com/sytone/botnexus/tree/main/docs/planning/ddd-refactoring) — Per-phase status and implementation notes
 
 ---
 

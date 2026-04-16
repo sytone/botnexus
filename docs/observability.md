@@ -56,7 +56,7 @@ Each ActivitySource produces spans tagged with semantic attributes (see [Span At
 
 A message arriving via WebSocket produces:
 
-```
+```text
 gateway.dispatch (GatewayDiagnostics)
   ├─ http.server.request (AspNetCore instrumentation)
   ├─ gateway.route (DefaultMessageRouter)
@@ -71,7 +71,7 @@ gateway.dispatch (GatewayDiagnostics)
 
 Messages flow through the platform with tracing enabled at each layer:
 
-```
+```text
 ┌──────────────────────┐
 │  Channel Inbound     │  [botnexus.channel.type = websocket]
 │  WebSocket message   │
@@ -353,7 +353,7 @@ public async Task MyOperationAsync(string agentId, string sessionId)
 
 Follow this pattern:
 
-```
+```text
 {layer}.{component}[.{operation}]
 ```
 
@@ -476,4 +476,4 @@ logger.LogInformation("Processing started");  // This log is correlated with the
 - [OpenTelemetry .NET Documentation](https://opentelemetry.io/docs/instrumentation/net/)
 - [Serilog Documentation](https://github.com/serilog/serilog/wiki)
 - [Jaeger Getting Started](https://www.jaegertracing.io/docs/getting-started/)
-- [BotNexus Architecture](/docs/architecture/overview.md)
+- [BotNexus Architecture](architecture/overview.md)

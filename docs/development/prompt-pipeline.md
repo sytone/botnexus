@@ -14,7 +14,7 @@ BotNexus uses a **pipeline-based prompt builder** (`PromptPipeline`) that compos
 
 ## Architecture
 
-```
+```text
 IPromptSection[] → PromptPipeline → Order & Compose → System Prompt String
      ↑
 IPromptContributor[]
@@ -245,7 +245,7 @@ Your workspace directory is `/home/user/projects/my-project`.
 │   └── main.test.ts
 ├── package.json
 └── README.md
-```
+```text
 ```
 
 ### Tools Section (Order: 300)
@@ -411,7 +411,7 @@ const string SystemPromptCacheBoundary = "\n<!-- BOTNEXUS_CACHE_BOUNDARY -->\n";
 
 **Placement Strategy:**
 
-```
+```text
 [Stable content - rarely changes]
 <!-- BOTNEXUS_CACHE_BOUNDARY -->
 [Dynamic content - changes frequently]

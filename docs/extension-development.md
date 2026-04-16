@@ -43,7 +43,7 @@ The extension system is built on **dynamic assembly loading** with folder conven
 
 ### Project Layout
 
-```
+```text
 extensions/
 ├── channels/
 │   ├── discord/

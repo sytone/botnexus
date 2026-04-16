@@ -24,7 +24,7 @@ BotNexus is a **domain-driven, multi-agent execution platform** for building AI 
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                         World                                    │
 │  The runtime context — defines resources, agents, boundaries     │
@@ -110,7 +110,7 @@ Shared vocabulary (referenced by everything above):
 
 ### Dependency Flow
 
-```
+```text
 Independent libraries (no BotNexus knowledge):
 ┌──────────────┐    ┌─────────────────────────────────┐
 │  AgentCore   │    │  Providers.Core                  │

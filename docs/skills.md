@@ -117,7 +117,7 @@ The agent loads the entire body when it activates a skill. For large skills, mov
 
 A skill is a directory containing a `SKILL.md` and optional supporting files, per the [Agent Skills spec](https://agentskills.io/specification):
 
-```
+```text
 my-skill/
 ├── SKILL.md          # Required — metadata + instructions
 ├── scripts/          # Optional — executable code agents can run
@@ -133,7 +133,7 @@ Executable code that agents can run. Scripts should be self-contained, include h
 
 Additional documentation loaded when needed. Keep individual files focused — agents load these on demand, so smaller files mean less context usage.
 
-```
+```text
 references/
 ├── REFERENCE.md      # Detailed technical reference
 ├── api-patterns.md   # API-specific guidance
@@ -154,7 +154,7 @@ BotNexus discovers skills from three locations, scanned in priority order:
 
 Available to all agents. Stored in `~/.botnexus/skills/`.
 
-```
+```text
 ~/.botnexus/skills/
 ├── git-workflow/SKILL.md
 ├── testing-standards/SKILL.md
@@ -167,7 +167,7 @@ Use global skills for team-wide standards, shared conventions, and reusable best
 
 Available only to a specific agent. Stored in `~/.botnexus/agents/{agent-id}/skills/`.
 
-```
+```text
 ~/.botnexus/agents/code-reviewer/skills/
 ├── review-criteria/SKILL.md
 └── approval-process/SKILL.md
@@ -179,7 +179,7 @@ Use per-agent skills for role-specific knowledge, custom methodologies, and doma
 
 Scoped to a project workspace. Stored in `{workspace}/skills/`.
 
-```
+```text
 my-project/skills/
 ├── project-conventions/SKILL.md
 └── deploy-process/SKILL.md
@@ -249,7 +249,7 @@ A skill is only loaded if it is in `autoLoad` or explicitly loaded by the agent 
 
 The full pipeline from disk to agent prompt:
 
-```
+```text
 ┌─────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────────┐
 │  Discovery   │ →  │  Validation   │ →  │  Resolver     │ →  │ Prompt injection  │
 │ 3-path scan  │    │ name, desc,   │    │ allow/deny,   │    │ active + available │
@@ -294,7 +294,7 @@ The resolver produces three lists: **loaded**, **available** (eligible but not l
 
 `SkillPromptBuilder` generates a prompt section wrapped in sentinel markers:
 
-```
+```text
 <!-- SKILLS_CONTEXT -->
 ## Active Skills
 The following skills are loaded and active:
@@ -322,7 +322,7 @@ Agents interact with skills through the `skills` tool, which supports two action
 
 The agent calls the `skills` tool with `action: "list"` to see what's available:
 
-```
+```text
 Agent: I need to check what skills are available.
 
 → Tool call: skills { "action": "list" }
@@ -341,7 +341,7 @@ Use `skills` tool with action `load` and the skill name to activate.
 
 The agent calls the `skills` tool with `action: "load"` and `skillName` to activate a skill:
 
-```
+```text
 Agent: I need testing guidance for this PR.
 
 → Tool call: skills { "action": "load", "skillName": "testing-standards" }
@@ -404,7 +404,7 @@ See [the API reference](references/api-patterns.md) for detailed endpoint docume
 
 Split large skills into a concise SKILL.md (overview + key instructions) and reference files (detailed lookups, tables, examples):
 
-```
+```text
 my-skill/
 ├── SKILL.md                    # ~200 lines: overview + core instructions
 └── references/
@@ -427,7 +427,7 @@ A production-ready skill with frontmatter, content, and a references directory.
 
 ### Directory layout
 
-```
+```text
 ~/.botnexus/agents/code-reviewer/skills/review-standards/
 ├── SKILL.md
 └── references/
@@ -501,4 +501,4 @@ See [detailed checklist](references/checklist-details.md) for expanded criteria.
 
 - [Agent Skills specification](https://agentskills.io/specification) — the open standard for SKILL.md format
 - [Configuration guide](configuration.md) — full `config.json` reference including agent settings
-- [Architecture overview](architecture.md) — how skills fit into the BotNexus pipeline
+- [Architecture overview](architecture/overview.md) — how skills fit into the BotNexus pipeline

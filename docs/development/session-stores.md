@@ -109,7 +109,7 @@ See [InMemorySessionStore.cs](../../src/gateway/BotNexus.Gateway.Sessions/InMemo
 
 **Storage Layout:**
 
-```
+```text
 ~/.botnexus/sessions/
 ├── {sessionId}.json
 ├── {sessionId}.json

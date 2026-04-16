@@ -822,7 +822,7 @@ BotNexus monitors `config.json` for changes and applies most updates without req
 - ⚠️ **Gateway settings** — Require restart (listen URL, session store type)
 
 Watch the logs for reload events:
-```
+```text
 info: BotNexus.Gateway.Configuration[0]
       Configuration file changed, reloading...
 info: BotNexus.Gateway[0]

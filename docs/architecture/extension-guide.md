@@ -470,4 +470,4 @@ BotNexus extension points:
 **For detailed examples:**
 
 - **[Extension Development Guide](../extension-development.md)** — Full walkthroughs
-- **[Development Guide](../development/extensions.md)** — Code-level implementation
+- **[Development Guide](../dev-guide.md)** — Code-level implementation

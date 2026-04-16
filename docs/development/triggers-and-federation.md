@@ -40,7 +40,7 @@ See [CronChannelAdapter.cs](../../src/gateway/BotNexus.Gateway.Api/Hubs/CronChan
 
 **Execution Flow:**
 
-```
+```text
 CronScheduler → CronTrigger → CreateSession → Agent Execution → Session Saved
 ```
 
@@ -155,7 +155,7 @@ public record SoulAgentConfig
 
 **Soul Session Lifecycle:**
 
-```
+```text
 Day 1 (2024-01-15):
   - Session: soul:personal-assistant:2024-01-15
   - Status: Active

@@ -33,7 +33,7 @@
 
 **Dependency Flow:**
 
-```
+```text
 Independent libraries (no BotNexus knowledge):
   AgentCore    Providers.Core → Providers.{Anthropic,OpenAI,...}
 
@@ -424,4 +424,4 @@ These principles form the foundation of BotNexus's architecture:
 
 - **[Domain Model](domain-model.md)** — Domain rules enforcing these principles
 - **[System Flows](system-flows.md)** — Principles in action
-- **[Development Guide](../development/principles.md)** — Code-level principle application
+- **[Development Guide](../dev-guide.md)** — Code-level principle application

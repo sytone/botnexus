@@ -18,7 +18,7 @@ BotNexus uses a **channel-based routing architecture** where messages flow throu
 
 ### 1. Client Connection (WebUI Example)
 
-```
+```text
 User → SignalR Client → GatewayHub.SubscribeAll()
 ```
 
@@ -36,7 +36,7 @@ User → SignalR Client → GatewayHub.SubscribeAll()
 
 ### 2. Sending a Message
 
-```
+```text
 Client → SendMessage(agentId, channelType, content) → Auto-Session → Dispatch
 ```
 
@@ -67,7 +67,7 @@ await DispatchMessageAsync(agentId, session.SessionId, content, "message");
 
 ### 3. Message Dispatch
 
-```
+```text
 IChannelDispatcher.DispatchAsync(InboundMessage)
 ```
 
@@ -91,7 +91,7 @@ IChannelDispatcher.DispatchAsync(InboundMessage)
 
 ### 4. Agent Resolution
 
-```
+```text
 IMessageRouter.ResolveAsync(InboundMessage) → AgentId[]
 ```
 
@@ -109,7 +109,7 @@ IMessageRouter.ResolveAsync(InboundMessage) → AgentId[]
 
 ### 5. Agent Execution
 
-```
+```text
 IAgentSupervisor.GetOrCreateAsync(agentId, sessionId) → IAgentHandle
 ```
 
@@ -136,7 +136,7 @@ IAgentSupervisor.GetOrCreateAsync(agentId, sessionId) → IAgentHandle
 
 ### 6. Agent Prompt and Tool Execution
 
-```
+```text
 IAgentHandle.PromptAsync(message) → AgentLoopRunner → Tool Execution → Response
 ```
 
@@ -169,7 +169,7 @@ IAgentHandle.PromptAsync(message) → AgentLoopRunner → Tool Execution → Res
 
 ### 7. Response Streaming
 
-```
+```text
 AgentLoopRunner → AgentEvent → IChannelAdapter.SendStreamEventAsync()
 ```
 
@@ -201,7 +201,7 @@ AgentLoopRunner → AgentEvent → IChannelAdapter.SendStreamEventAsync()
 
 ### 8. Session Group Broadcast
 
-```
+```text
 SignalR Group: session:{sessionId} → All Subscribed Clients
 ```
 
@@ -221,7 +221,7 @@ SignalR Group: session:{sessionId} → All Subscribed Clients
 
 ### Session States
 
-```
+```text
 Active → Suspended → Sealed
 ```
 

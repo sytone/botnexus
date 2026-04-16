@@ -10,7 +10,7 @@
 
 **Flow:**
 
-```
+```text
 Channel → ChannelDispatcher → MessageRouter → AgentSupervisor → AgentHandle → AgentLoopRunner → LlmClient → Provider
 ```
 
@@ -28,7 +28,7 @@ Channel → ChannelDispatcher → MessageRouter → AgentSupervisor → AgentHan
 
 **Diagram:**
 
-```
+```text
 ┌─────────┐    ┌─────────────┐    ┌────────────┐    ┌────────────┐    ┌──────────┐
 │ Channel │───▶│  Dispatcher │───▶│   Router   │───▶│ Supervisor │───▶│  Handle  │
 │ Adapter │◀───│             │◀───│            │◀───│            │◀───│          │
@@ -49,7 +49,7 @@ Channel → ChannelDispatcher → MessageRouter → AgentSupervisor → AgentHan
 
 **Flow:**
 
-```
+```text
 Supervisor → Check Cache → Isolation Strategy → Create Agent → Wrap in Handle → Cache and Return
 ```
 
@@ -75,7 +75,7 @@ Supervisor → Check Cache → Isolation Strategy → Create Agent → Wrap in H
 
 **Diagram:**
 
-```
+```text
 Supervisor
   │
   ├─ Cache Hit? ──Yes──▶ Return Cached Handle
@@ -100,7 +100,7 @@ Supervisor
 
 **Flow:**
 
-```
+```text
 Loop: Drain Steering → Convert Context → Call LLM → Accumulate Response → Execute Tools? → Repeat
 ```
 
@@ -119,7 +119,7 @@ Loop: Drain Steering → Convert Context → Call LLM → Accumulate Response �
 
 **Diagram:**
 
-```
+```text
 ┌──────────────────────────────────────────────────┐
 │                                                  │
 │  1. Drain Steering Messages                     │
@@ -174,7 +174,7 @@ Loop: Drain Steering → Convert Context → Call LLM → Accumulate Response �
 
 **Diagram:**
 
-```
+```text
 SendMessage(agentId, channelType, content)
   │
   ├─ Existing Active Session? ──Yes──▶ Use It
@@ -201,7 +201,7 @@ SendMessage(agentId, channelType, content)
 
 **Flow:**
 
-```
+```text
 AgentHandle → ChannelAdapter.SendAsync(OutboundMessage) → SignalR Group Broadcast → All Subscribed Clients
 ```
 
@@ -224,7 +224,7 @@ AgentHandle → ChannelAdapter.SendAsync(OutboundMessage) → SignalR Group Broa
 
 **Diagram:**
 
-```
+```text
 AgentLoopRunner
   │ (emits AgentEvent)
   ▼
@@ -305,7 +305,7 @@ SignalR Hub → Clients.Group("session:{sessionId}")
 
 **Diagram:**
 
-```
+```text
 Agent A (caller)
   │
   └─ agent_converse(agentId: "B", message: "...")
@@ -347,7 +347,7 @@ Agent A (caller)
 
 **Flow:**
 
-```
+```text
 Sections + Contributors → Order by Priority → Compose → System Prompt
 ```
 
@@ -395,5 +395,5 @@ These flows demonstrate BotNexus's layered architecture in action:
 
 **For implementation:**
 
-- **[Development Guide](../development/flows.md)** — Code-level flow walkthroughs
+- **[Development Guide](../development/message-flow.md)** — Code-level flow walkthroughs
 - **[API Reference](../api-reference.md)** — Endpoint and method documentation

@@ -36,7 +36,7 @@ dotnet build BotNexus.slnx
 
 Expected output (last lines):
 
-```
+```text
 Build succeeded.
     0 Warning(s)
     0 Error(s)
@@ -75,7 +75,7 @@ This builds the solution, runs all Gateway tests, and then starts the Gateway. I
 
 The Gateway will be ready when you see output like:
 
-```
+```text
 🚀 Starting Gateway API
    URL:        http://localhost:5005
 ```
@@ -96,7 +96,7 @@ dotnet run --project src\gateway\BotNexus.Cli -- init
 
 This creates the directory structure:
 
-```
+```text
 ~/.botnexus/
 ├── config.json           # Platform configuration
 ├── auth.json             # Provider credentials (OAuth tokens)
@@ -198,7 +198,7 @@ Edit `~/.botnexus/config.json` to add the Copilot provider:
 
 When you first send a message to the agent, you'll see:
 
-```
+```text
 Go to https://github.com/login/device and enter code: ABCD-1234
 ```
 
@@ -217,7 +217,7 @@ The token is cached and refreshed automatically.
 
 BotNexus creates workspace files for each agent in `~/.botnexus/agents/{agent-name}/`:
 
-```
+```text
 ~/.botnexus/agents/assistant/
 ├── SOUL.md           # Core personality and values
 ├── IDENTITY.md       # Role, style, and constraints
@@ -253,13 +253,13 @@ Changes take effect on your **next message** — no restart required.
 
 Open your browser to:
 
-```
+```text
 http://localhost:5005/
 ```
 
 Or directly to the WebUI:
 
-```
+```text
 http://localhost:5005
 ```
 
@@ -430,4 +430,4 @@ Then reinitialize by running the Gateway again.
 
 ---
 
-*For released versions, see [Getting Started (Release)](getting-started-release.md). For more information, see [README](../README.md).*
+*For released versions, see [Getting Started (Release)](getting-started-release.md). For more information, see [README](https://github.com/sytone/botnexus/blob/main/README.md).*

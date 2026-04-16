@@ -53,7 +53,7 @@ This command:
 
 **What gets created:**
 
-```
+```text
 ~/.botnexus/
 ├── config.json              # Your configuration
 ├── extensions/
@@ -74,7 +74,7 @@ botnexus status
 
 Expected output:
 
-```
+```text
 Version:        0.1.0
 Health:         Healthy
 Gateway:        Not running
@@ -93,7 +93,7 @@ botnexus start
 
 This runs the gateway in the background. You should see:
 
-```
+```text
 info: BotNexus[0] BotNexus home: C:\Users\you\.botnexus
 info: Microsoft.Hosting.Lifetime[14] Now listening on: http://0.0.0.0:18790
 ```
@@ -155,7 +155,7 @@ The config is loaded automatically — no restart required.
 
 When BotNexus first needs to call the Copilot API, you'll see:
 
-```
+```text
 info: BotNexus.Providers.Copilot.GitHubDeviceCodeFlow[0]
       Go to https://github.com/login/device and enter code: ABCD-1234
 ```
@@ -209,7 +209,7 @@ Edit `~/.botnexus/config.json`:
 
 The configuration is loaded automatically. BotNexus creates a workspace directory for your agent:
 
-```
+```text
 ~/.botnexus/agents/assistant/
 ├── SOUL.md           # Core personality and values
 ├── IDENTITY.md       # Role, style, and constraints
@@ -264,7 +264,7 @@ The **WebUI** is the easiest way to chat with your agents.
 
 Open your browser to:
 
-```
+```text
 http://localhost:18790/
 ```
 
@@ -309,7 +309,7 @@ Click any session in the sidebar to reload it and continue.
 
 The **Extensions** panel shows all loaded components:
 
-```
+```text
 ✅ 4 loaded
 ❌ 0 failed
 📡 1 channel
@@ -443,9 +443,9 @@ botnexus backup restore <backup-name>
 
 ## 10. Next Steps
 
-- **[Using Channels](channels.md)** — Connect your agents to Telegram, Discord, Slack, or your own interfaces
+- **[Using Channels](user-guide/extensions.md)** — Connect your agents to Telegram, Discord, Slack, or your own interfaces
 - **[Configuring Cron Jobs](cron-and-scheduling.md)** — Automate recurring tasks
-- **[Workspace & Memory](architecture/workspace-and-memory.md)** — Deep dive into agent personality files
+- **[Workspace & Memory](development/workspace-and-memory.md)** — Deep dive into agent personality files
 - **[Configuration Guide](configuration.md)** — Full reference for every config option
 - **[Architecture Overview](architecture/overview.md)** — Understand how BotNexus works
 

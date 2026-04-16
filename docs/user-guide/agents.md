@@ -119,7 +119,7 @@ You are a helpful personal assistant. Your role is to:
 
 BotNexus automatically detects the config change (hot reload). Verify in the logs:
 
-```
+```text
 info: BotNexus.Gateway.Configuration[0]
       Configuration file changed, reloading...
 info: BotNexus.Gateway[0]
@@ -370,7 +370,7 @@ System prompts define agent behavior. BotNexus supports a structured approach:
 
 ### File Structure
 
-```
+```text
 ~/.botnexus/agents/<agentId>/
 ├── SOUL.md          # Personality, values, tone
 ├── IDENTITY.md      # Role, expertise, boundaries
@@ -610,7 +610,7 @@ Session history is preserved in `~/.botnexus/workspace/sessions/`.
 ### 1. System Prompt Organization
 
 **Structure prompts hierarchically:**
-```
+```text
 SOUL.md        # Personality (rarely changes)
 IDENTITY.md    # Role and expertise (occasionally updates)
 TOOLS.md       # Tool guidelines (updates with new tools)
@@ -757,5 +757,5 @@ curl http://localhost:5005/api/tools
 
 For more advanced scenarios, see:
 - [Architecture: Agent Execution](../architecture/overview.md#agent-execution)
-- [Workspace & Memory](../architecture/workspace-and-memory.md)
+- [Workspace & Memory](../development/workspace-and-memory.md)
 - [Multi-Agent Patterns](../features/sub-agent-spawning.md)

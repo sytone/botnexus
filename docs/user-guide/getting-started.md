@@ -46,7 +46,7 @@ This will:
 - Copy WebUI assets to the Gateway output directory
 
 **Expected output:**
-```
+```text
 Build succeeded.
     0 Warning(s)
     0 Error(s)
@@ -79,7 +79,7 @@ dotnet run --project src/gateway/BotNexus.Gateway.Api
 ```
 
 **Expected output:**
-```
+```text
 info: BotNexus.Gateway[0]
       Starting BotNexus Gateway...
 info: Microsoft.Hosting.Lifetime[14]
@@ -140,7 +140,7 @@ On first run, BotNexus creates a home directory at `~/.botnexus/` with a default
 
 ### Home Directory Structure
 
-```
+```text
 ~/.botnexus/
 ├── config.json          # Main configuration (agents, providers, channels)
 ├── extensions/          # Extension binaries (auto-populated)
@@ -240,7 +240,7 @@ Add an agent to `config.json`:
 BotNexus supports **hot reload** — changes to `config.json` are applied automatically without restarting the Gateway.
 
 Watch the logs for:
-```
+```text
 info: BotNexus.Gateway.Configuration[0]
       Configuration file changed, reloading...
 info: BotNexus.Gateway[0]

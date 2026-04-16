@@ -81,7 +81,7 @@ Sub-agent spawning extends the existing BotNexus session infrastructure. Sub-age
 
 ### Parent–Child Session Model
 
-```
+```text
 Parent Session (agent: nova, model: claude-opus-4.6)
   │
   ├── Sub-Agent Session (model: gpt-4.1)
@@ -297,7 +297,7 @@ When a sub-agent finishes its work, results are automatically delivered to the p
 4. **Parent wakes** — If the parent is idle (waiting for user input), the follow-up triggers a new agent run. If the parent is mid-run, it processes the result between turns via the existing `PendingMessageQueue`.
 5. **Parent processes** — The parent agent sees a message like:
 
-```
+```text
 [Sub-agent "research-compaction" completed]
 <summary text from sub-agent's final response>
 ```

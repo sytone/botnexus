@@ -39,7 +39,7 @@ An **agent workspace** is a persistent file system directory where each BotNexus
 
 All agent workspaces are stored under the BotNexus home directory:
 
-```
+```text
 ~/.botnexus/agents/{agent_name}/
 ├── SOUL.md                    (Core personality, values, boundaries)
 ├── IDENTITY.md                (Role, communication style, constraints)
@@ -303,7 +303,7 @@ Configured agents:
 - File: `{workspace}/HEARTBEAT.md`
 - Encoding: UTF-8 (no BOM)
 - Max chars included in system prompt: per `MaxContextFileChars` config (default: 8000)
-- Loaded into system prompt for reference by the cron-based memory consolidation system (see [Cron and Scheduling Guide](./cron-and-scheduling.md))
+- Loaded into system prompt for reference by the cron-based memory consolidation system (see [Cron and Scheduling Guide](../cron-and-scheduling.md))
 
 ### MEMORY.md — Long-Term Distilled Memory
 
@@ -393,7 +393,7 @@ At system prompt assembly time (`AgentContextBuilder.BuildSystemPromptAsync()`):
 
 Memory files are stored as plain Markdown under the agent workspace:
 
-```
+```text
 ~/.botnexus/agents/{agent_name}/
 ├── MEMORY.md                  (Long-term distilled memory)
 └── memory/
@@ -427,7 +427,7 @@ Three tools enable agent interaction with memory:
 Searches across long-term memory and daily notes for relevant information.
 
 **Signature**:
-```
+```text
 memory_search(
   query: string,                    # Search query string (required)
   max_results: integer = 10         # Maximum number of results (optional)
@@ -442,7 +442,7 @@ memory_search(
 - Each result shows file name, line number, and context
 
 **Example Usage**:
-```
+```text
 memory_search("Pacific Time", max_results=5)
 
 Found 2 result(s) for 'Pacific Time':
@@ -470,7 +470,7 @@ Found 2 result(s) for 'Pacific Time':
 Saves information to long-term memory or today's daily notes.
 
 **Signature**:
-```
+```text
 memory_save(
   content: string,                  # Memory content to save (required)
   target: string = "daily"          # "memory" (long-term) or "daily" (today's notes)
@@ -492,7 +492,7 @@ memory_save(
    - Overwrites existing MEMORY.md (append mode)
 
 **Example Usage**:
-```
+```text
 memory_save("Pattern: User prefers concise summaries before detail", target="memory")
 → "Saved to MEMORY.md under '## Notes'."
 
@@ -511,7 +511,7 @@ memory_save("Investigated workspace and memory architecture - complex, well-desi
 Reads long-term memory or a specific daily notes file, with optional line range selection.
 
 **Signature**:
-```
+```text
 memory_get(
   file: string = "memory",          # "memory" (long-term) or date like "YYYY-MM-DD"
   lines: string = null              # Optional line range like "10-20"
@@ -530,7 +530,7 @@ memory_get(
 - Validates bounds and returns empty if out of range
 
 **Example Usage**:
-```
+```text
 memory_get(file="memory")
 # MEMORY.md
 
@@ -566,7 +566,7 @@ Memory consolidation is the process of distilling daily notes into long-term mem
 ### Consolidation Trigger
 
 - **Interval**: Configurable via `MemoryConsolidationIntervalHours` (default: 24)
-- **Mechanism**: Cron service — runs as a `maintenance` job with `consolidate-memory` action (see [Cron and Scheduling Guide](./cron-and-scheduling.md))
+- **Mechanism**: Cron service — runs as a `maintenance` job with `consolidate-memory` action (see [Cron and Scheduling Guide](../cron-and-scheduling.md))
 - **Manual**: Via `memory_save(content, target="memory")`
 
 ### Consolidation Process (Current Manual Approach)
@@ -579,7 +579,7 @@ Currently, consolidation is manual:
 4. Long-term memory accumulates under `## Notes` section
 
 **Example Consolidation**:
-```
+```text
 Daily Notes (2026-04-02.md):
 [09:15] User prioritizes concise summaries, max 100 words
 [10:30] Architecture has 17 projects with clean inversion
@@ -753,7 +753,7 @@ If any file exceeds `MaxContextFileChars`:
 A new agent with minimal configuration:
 
 **Files**:
-```
+```text
 ~/.botnexus/agents/newagent/
 ├── SOUL.md
 ├── IDENTITY.md
@@ -873,7 +873,7 @@ Lead/Architect for the engineering team. You own architectural decisions, code r
 
 System prompt assembled at session start for "leela" agent:
 
-```
+```text
 ## Identity
 
 - Agent: leela
@@ -1028,7 +1028,7 @@ dotnet run -- --agent mybot "Hello, who are you?"
 ```
 
 **Initialization**:
-```
+```text
 Creating workspace: ~/.botnexus/agents/mybot/
 Creating memory directories...
 Creating SOUL.md (template)
@@ -1062,9 +1062,9 @@ dotnet run -- --agent mybot "What's in SOUL.md?"
 
 ## Related Documentation
 
-- [Architecture Overview](./architecture.md) — System architecture and design patterns
-- [Configuration Guide](./configuration.md) — Full configuration reference
-- [Extension Development Guide](./extension-development.md) — Building extensions
+- [Architecture Overview](../architecture/overview.md) — System architecture and design patterns
+- [Configuration Guide](../configuration.md) — Full configuration reference
+- [Extension Development Guide](../extension-development.md) — Building extensions
 
 ---
 

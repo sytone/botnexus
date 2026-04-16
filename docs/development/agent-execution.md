@@ -279,7 +279,7 @@ AgentStreamEvent ConvertToGatewayEvent(AgentEvent coreEvent)
 
 The `AgentLoopRunner` implements the agent-tool execution cycle:
 
-```
+```text
 1. Drain pending steering messages
 2. Convert agent messages to LLM context
 3. Call LlmClient.StreamAsync()

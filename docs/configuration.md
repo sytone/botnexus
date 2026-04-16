@@ -92,7 +92,7 @@ BotNexus follows a **defaults → overrides** pattern:
 4. **Named agent overrides** — Per-agent customization in `Agents.Named` dict
 
 **Example:**
-```
+```text
 Global Model (config.json) = "gpt-4o"
   ↓
 Agent "planner" override (Agents.Named.planner.Model) = "gpt-4-turbo"
@@ -113,7 +113,7 @@ BotNexus loads user configuration from:
 
 On startup, BotNexus creates this structure if it does not already exist:
 
-```
+```text
 ~/.botnexus/
 ├── config.json
 ├── extensions/
@@ -281,7 +281,7 @@ Each agent's tool calling loop is bounded by two configurable limits to prevent 
 
 When an agent calls `search_files("")` three times without changing arguments:
 
-```
+```text
 Iteration 0: search_files("") → executes (count: 1)
 Iteration 1: search_files("") → executes (count: 2)
 Iteration 2: search_files("") → blocked! count: 2 >= MaxRepeatedToolCalls: 2
@@ -451,7 +451,7 @@ The Copilot provider exposes **26 registered models** organized by API format:
 
 The Copilot API requires specific headers that are automatically applied:
 
-```
+```text
 User-Agent: GitHubCopilotChat/0.35.0
 Editor-Version: vscode/1.107.0
 Editor-Plugin-Version: copilot-chat/0.35.0
@@ -656,7 +656,7 @@ WebSocket gateway server settings.
 
 **API Key Authentication:**
 If `ApiKey` is set, clients must include it in WebSocket headers or REST requests:
-```
+```text
 Authorization: Bearer YOUR-GATEWAY-KEY
 ```
 
@@ -970,7 +970,7 @@ Extensions are dynamically loaded from the `extensions/` directory. Each extensi
 
 ### Folder Structure
 
-```
+```text
 extensions/
 ├── providers/
 │   ├── copilot/              # BotNexus.Providers.Copilot.dll
@@ -1042,7 +1042,7 @@ Extensions access their config from the DI container or from the main `BotNexusC
 
 Any configuration value can be overridden via environment variables using the standard .NET Configuration pattern:
 
-```
+```text
 BotNexus__<Path>__<To>__<Property>=value
 ```
 
@@ -1112,14 +1112,14 @@ For production Gateway deployments, always set `Gateway.ApiKey`:
 ```
 
 Clients must provide this key:
-```
+```text
 Authorization: Bearer random-secret-key
 ```
 
 ### 3. OAuth Token Storage
 
 OAuth tokens are stored encrypted (on supported platforms) at:
-```
+```text
 ~/.botnexus/tokens/{provider-name}.json
 ```
 
@@ -1400,8 +1400,8 @@ export BotNexus__Gateway__ApiKey="$(openssl rand -hex 32)"
 
 ## See Also
 
-- [BotNexus README](../README.md) — Project overview
-- [Architecture Guide](./architecture.md) — System design and component overview
+- [BotNexus README](https://github.com/sytone/botnexus/blob/main/README.md) — Project overview
+- [Architecture Guide](./architecture/overview.md) — System design and component overview
 - [Cron and Scheduling Guide](./cron-and-scheduling.md) — Scheduled jobs and automation
-- [API Reference](./) — Gateway WebSocket and REST API docs
+- [API Reference](./api-reference.md) — Gateway WebSocket and REST API docs
 - [Extension Development](./extension-development.md) — Building custom channels, providers, and tools
