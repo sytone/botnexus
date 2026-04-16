@@ -30,6 +30,8 @@ using System.Runtime.CompilerServices;
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.SessionReplayBuffer))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.SessionStatus))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.SoulAgentConfig))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.HeartbeatAgentConfig))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.QuietHoursConfig))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.SubAgentInfo))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.SubAgentStatus))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.SubAgentSpawnRequest))]

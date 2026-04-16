@@ -309,6 +309,8 @@ public sealed class AgentDefinitionConfig
     public MemoryAgentConfig? Memory { get; set; }
     /// <summary>Soul session lifecycle configuration for this agent.</summary>
     public SoulAgentConfig? Soul { get; set; }
+    /// <summary>Heartbeat polling configuration.</summary>
+    public HeartbeatAgentConfig? Heartbeat { get; set; }
     /// <summary>Session access configuration for this agent's session tool.</summary>
     public SessionAccessConfig? SessionAccess { get; set; }
     /// <summary>File access policy for this agent's file tools.</summary>

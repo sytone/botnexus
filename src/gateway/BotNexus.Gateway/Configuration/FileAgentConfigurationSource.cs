@@ -158,6 +158,7 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
             Metadata = ConvertObject(config.Metadata),
             IsolationOptions = ConvertObject(config.IsolationOptions),
             Soul = CloneSoulConfig(config.Soul),
+            Heartbeat = CloneHeartbeatConfig(config.Heartbeat),
             FileAccess = MapFileAccessPolicy(config.FileAccess)
         };
     }
@@ -174,6 +175,28 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
             DayBoundary = soulConfig.DayBoundary,
             ReflectionOnSeal = soulConfig.ReflectionOnSeal,
             ReflectionPrompt = soulConfig.ReflectionPrompt
+        };
+    }
+
+    private static HeartbeatAgentConfig? CloneHeartbeatConfig(HeartbeatAgentConfig? heartbeatConfig)
+    {
+        if (heartbeatConfig is null)
+            return null;
+
+        return new HeartbeatAgentConfig
+        {
+            Enabled = heartbeatConfig.Enabled,
+            IntervalMinutes = heartbeatConfig.IntervalMinutes,
+            Prompt = heartbeatConfig.Prompt,
+            QuietHours = heartbeatConfig.QuietHours is null
+                ? null
+                : new QuietHoursConfig
+                {
+                    Enabled = heartbeatConfig.QuietHours.Enabled,
+                    Start = heartbeatConfig.QuietHours.Start,
+                    End = heartbeatConfig.QuietHours.End,
+                    Timezone = heartbeatConfig.QuietHours.Timezone
+                }
         };
     }
 
@@ -347,6 +370,8 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
         public JsonElement? IsolationOptions { get; init; }
 
         public SoulAgentConfig? Soul { get; init; }
+
+        public HeartbeatAgentConfig? Heartbeat { get; init; }
 
         public IReadOnlyList<string>? SubAgents { get; init; }
 

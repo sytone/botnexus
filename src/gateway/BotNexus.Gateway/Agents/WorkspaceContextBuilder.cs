@@ -55,6 +55,9 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
                 Model = descriptor.ModelId,
                 Channel = "signalr"
             },
+            HeartbeatPrompt = descriptor.Heartbeat?.Enabled == true
+                ? descriptor.Heartbeat.Prompt ?? "Read HEARTBEAT.md if it exists and execute any pending tasks. If nothing needs attention, reply HEARTBEAT_OK."
+                : null,
             PromptMode = PromptMode.Full
         });
 

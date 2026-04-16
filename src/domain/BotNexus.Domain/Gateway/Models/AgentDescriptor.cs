@@ -92,6 +92,9 @@ public sealed record AgentDescriptor
     /// <summary>Soul session lifecycle configuration for this agent. Null means soul sessions are disabled.</summary>
     public SoulAgentConfig? Soul { get; init; }
 
+    /// <summary>Heartbeat polling configuration for this agent. Null means heartbeat is disabled.</summary>
+    public HeartbeatAgentConfig? Heartbeat { get; init; }
+
     /// <summary>Session access level for this agent's session tool. Defaults to "own".</summary>
     public string SessionAccessLevel { get; init; } = "own";
 

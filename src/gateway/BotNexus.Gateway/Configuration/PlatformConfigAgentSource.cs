@@ -89,6 +89,7 @@ public sealed class PlatformConfigAgentSource(
                 IsolationOptions = ConvertObject(agentConfig.IsolationOptions),
                 Memory = CloneMemoryConfig(agentConfig.Memory),
                 Soul = CloneSoulConfig(agentConfig.Soul),
+                Heartbeat = CloneHeartbeatConfig(agentConfig.Heartbeat),
                 SessionAccessLevel = agentConfig.SessionAccess?.Level ?? "own",
                 SessionAllowedAgents = agentConfig.SessionAccess?.AllowedAgents?.ToArray() ?? [],
                 FileAccess = MapFileAccessPolicy(agentConfig.FileAccess, platformConfig.Gateway?.FileAccess),
@@ -161,6 +162,28 @@ public sealed class PlatformConfigAgentSource(
             DayBoundary = soulConfig.DayBoundary,
             ReflectionOnSeal = soulConfig.ReflectionOnSeal,
             ReflectionPrompt = soulConfig.ReflectionPrompt
+        };
+    }
+
+    private static HeartbeatAgentConfig? CloneHeartbeatConfig(HeartbeatAgentConfig? heartbeatConfig)
+    {
+        if (heartbeatConfig is null)
+            return null;
+
+        return new HeartbeatAgentConfig
+        {
+            Enabled = heartbeatConfig.Enabled,
+            IntervalMinutes = heartbeatConfig.IntervalMinutes,
+            Prompt = heartbeatConfig.Prompt,
+            QuietHours = heartbeatConfig.QuietHours is null
+                ? null
+                : new QuietHoursConfig
+                {
+                    Enabled = heartbeatConfig.QuietHours.Enabled,
+                    Start = heartbeatConfig.QuietHours.Start,
+                    End = heartbeatConfig.QuietHours.End,
+                    Timezone = heartbeatConfig.QuietHours.Timezone
+                }
         };
     }
 
