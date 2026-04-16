@@ -1,0 +1,124 @@
+site_name: BotNexus Documentation
+site_description: Documentation for BotNexus — a modular AI agent execution platform
+site_url: https://sytone.github.io/botnexus/
+repo_url: https://github.com/sytone/botnexus
+repo_name: sytone/botnexus
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+
+plugins:
+  - search
+  - tags
+  - git-revision-date-localized:
+      enable_creation_date: true
+      enable_git_follow: false
+      fallback_to_build_date: true
+
+exclude_docs: |
+  /planning/
+  /planning/**
+  /training/
+  /training/**
+  /archive/
+  /archive/**
+  /archived/
+  /archived/**
+  /sample-config.json
+  /botnexus-config.schema.json
+
+validation:
+  links:
+    not_found: ignore
+    anchors: ignore
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Overview: getting-started.md
+      - Install from Release: getting-started-release.md
+      - Developer Setup: getting-started-dev.md
+  - User Guide:
+      - Getting Started: user-guide/getting-started.md
+      - Agents: user-guide/agents.md
+      - Configuration: user-guide/configuration.md
+      - Extensions: user-guide/extensions.md
+      - Troubleshooting: user-guide/troubleshooting.md
+  - Reference:
+      - Configuration: configuration.md
+      - CLI Reference: cli-reference.md
+      - API Reference: api-reference.md
+      - WebSocket Protocol: websocket-protocol.md
+  - Architecture:
+      - Overview: architecture/overview.md
+      - Domain Model: architecture/domain-model.md
+      - Extension Guide: architecture/extension-guide.md
+      - Principles: architecture/principles.md
+      - System Flows: architecture/system-flows.md
+  - Development:
+      - Developer Guide: dev-guide.md
+      - Overview: development/README.md
+      - Agent Execution: development/agent-execution.md
+      - Message Flow: development/message-flow.md
+      - LLM Request Lifecycle: development/llm-request-lifecycle.md
+      - Prompt Pipeline: development/prompt-pipeline.md
+      - Session Stores: development/session-stores.md
+      - Workspace and Memory: development/workspace-and-memory.md
+      - DDD Patterns: development/ddd-patterns.md
+      - Triggers and Federation: development/triggers-and-federation.md
+      - WebUI Connection: development/webui-connection.md
+  - Features:
+      - Sub-Agent Spawning: features/sub-agent-spawning.md
+  - Extension Development: extension-development.md
+  - Observability: observability.md
+  - Skills: skills.md
+  - Cron & Scheduling: cron-and-scheduling.md
