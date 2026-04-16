@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://sytone.github.io/botnexus/architecture/principles/">
+        <link rel="canonical" href="https://sytone.github.io/botnexus/tutorials/first-agent/">
       
       
-        <link rel="prev" href="../extension-guide/">
+        <link rel="prev" href="../../getting-started-dev/">
       
       
-        <link rel="next" href="../system-flows/">
+        <link rel="next" href="../../user-guide/getting-started/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Principles - BotNexus Documentation</title>
+        <title>Your First AI Agent - BotNexus Documentation</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#architectural-principles" class="md-skip">
+        <a href="#your-first-ai-agent" class="md-skip">
           Skip to content
         </a>
       
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Principles
+              Your First AI Agent
             
           </span>
         </div>
@@ -262,11 +262,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../../tutorials/first-agent/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="./" class="md-tabs__link">
           
   
   
@@ -322,13 +324,11 @@
   
   
   
-    
-  
   
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../overview/" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../architecture/overview/" class="md-tabs__link">
           
   
   
@@ -677,28 +677,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
-        
-          
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
             
   
   
@@ -716,7 +719,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -731,10 +734,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../tutorials/first-agent/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Your First AI Agent
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -750,6 +780,136 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-youll-build" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What you'll build
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1) Prerequisites
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-clone-and-build-botnexus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2) Clone and build BotNexus
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-configure-a-provider" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3) Configure a provider
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-create-your-first-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4) Create your first agent
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-add-a-system-prompt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5) Add a system prompt
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-run-the-gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6) Run the gateway
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-chat-with-your-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7) Chat with your agent
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-customize-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8) Customize behavior
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-next-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9) Next steps
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1140,31 +1300,28 @@
       
   
   
-    
   
   
-  
     
     
     
     
-      
-        
-        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
         
           
-          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
             
   
   
@@ -1182,7 +1339,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1200,7 +1357,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../overview/" class="md-nav__link">
+      <a href="../../architecture/overview/" class="md-nav__link">
         
   
   
@@ -1228,7 +1385,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../domain-model/" class="md-nav__link">
+      <a href="../../architecture/domain-model/" class="md-nav__link">
         
   
   
@@ -1256,7 +1413,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../extension-guide/" class="md-nav__link">
+      <a href="../../architecture/extension-guide/" class="md-nav__link">
         
   
   
@@ -1281,37 +1438,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Principles
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../architecture/principles/" class="md-nav__link">
         
   
   
@@ -1327,291 +1457,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#core-principles" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Core Principles
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Core Principles">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-domain-driven-design-ddd" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Domain-Driven Design (DDD)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-clean-architecture-dependency-inversion" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Clean Architecture (Dependency Inversion)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-single-responsibility-principle-srp" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Single Responsibility Principle (SRP)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#4-openclosed-principle-ocp" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. Open/Closed Principle (OCP)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#5-liskov-substitution-principle-lsp" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5. Liskov Substitution Principle (LSP)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#6-interface-segregation-principle-isp" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        6. Interface Segregation Principle (ISP)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#7-stream-first-design" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        7. Stream-First Design
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#8-extension-first-architecture" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        8. Extension-First Architecture
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#9-additive-migration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        9. Additive Migration
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#10-location-based-resource-management" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        10. Location-Based Resource Management
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#11-per-channel-containers-webui" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        11. Per-Channel Containers (WebUI)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#12-session-as-conversation-unit" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        12. Session as Conversation Unit
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#13-workspace-scoped-agent-isolation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        13. Workspace-Scoped Agent Isolation
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#14-hook-based-extension" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        14. Hook-Based Extension
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#15-fail-gracefully" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        15. Fail Gracefully
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#architectural-decisions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Architectural Decisions
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Architectural Decisions">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#adr-001-statelessllm-apis" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        ADR-001: StatelessLLM APIs
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#adr-002-subscribe-all-model-webui" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        ADR-002: Subscribe-All Model (WebUI)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#adr-003-gateway-replaces-codingagent" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        ADR-003: Gateway Replaces CodingAgent
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#adr-004-per-session-agent-instances" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        ADR-004: Per-Session Agent Instances
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#adr-005-inprocess-default-isolation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        ADR-005: InProcess Default Isolation
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Summary
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1624,7 +1469,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../system-flows/" class="md-nav__link">
+      <a href="../../architecture/system-flows/" class="md-nav__link">
         
   
   
@@ -2245,264 +2090,109 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#core-principles" class="md-nav__link">
+  <a href="#what-youll-build" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Core Principles
+        What you'll build
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Core Principles">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-domain-driven-design-ddd" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Domain-Driven Design (DDD)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-clean-architecture-dependency-inversion" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Clean Architecture (Dependency Inversion)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-single-responsibility-principle-srp" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Single Responsibility Principle (SRP)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#4-openclosed-principle-ocp" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. Open/Closed Principle (OCP)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#5-liskov-substitution-principle-lsp" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5. Liskov Substitution Principle (LSP)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#6-interface-segregation-principle-isp" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        6. Interface Segregation Principle (ISP)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#7-stream-first-design" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        7. Stream-First Design
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#8-extension-first-architecture" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        8. Extension-First Architecture
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#9-additive-migration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        9. Additive Migration
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#10-location-based-resource-management" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        10. Location-Based Resource Management
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#11-per-channel-containers-webui" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        11. Per-Channel Containers (WebUI)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#12-session-as-conversation-unit" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        12. Session as Conversation Unit
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#13-workspace-scoped-agent-isolation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        13. Workspace-Scoped Agent Isolation
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#14-hook-based-extension" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        14. Hook-Based Extension
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#15-fail-gracefully" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        15. Fail Gracefully
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#architectural-decisions" class="md-nav__link">
+  <a href="#1-prerequisites" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Architectural Decisions
+        1) Prerequisites
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Architectural Decisions">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#adr-001-statelessllm-apis" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        ADR-001: StatelessLLM APIs
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#adr-002-subscribe-all-model-webui" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        ADR-002: Subscribe-All Model (WebUI)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#adr-003-gateway-replaces-codingagent" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        ADR-003: Gateway Replaces CodingAgent
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#adr-004-per-session-agent-instances" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        ADR-004: Per-Session Agent Instances
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#adr-005-inprocess-default-isolation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        ADR-005: InProcess Default Isolation
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
+  <a href="#2-clone-and-build-botnexus" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Summary
+        2) Clone and build BotNexus
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-configure-a-provider" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3) Configure a provider
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-create-your-first-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4) Create your first agent
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-add-a-system-prompt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5) Add a system prompt
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-run-the-gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6) Run the gateway
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-chat-with-your-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7) Chat with your agent
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-customize-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8) Customize behavior
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-next-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9) Next steps
       
     </span>
   </a>
@@ -2526,7 +2216,7 @@
 
 
   
-    <a href="https://github.com/sytone/botnexus/edit/main/docs/architecture/principles.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/sytone/botnexus/edit/main/docs/tutorials/first-agent.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -2534,418 +2224,180 @@
   
 
 
-<h1 id="architectural-principles">Architectural Principles<a class="headerlink" href="#architectural-principles" title="Permanent link">&para;</a></h1>
-<p><strong>Purpose:</strong> Design principles and architectural decisions that guide BotNexus development.</p>
-<hr />
-<h2 id="core-principles">Core Principles<a class="headerlink" href="#core-principles" title="Permanent link">&para;</a></h2>
-<h3 id="1-domain-driven-design-ddd">1. Domain-Driven Design (DDD)<a class="headerlink" href="#1-domain-driven-design-ddd" title="Permanent link">&para;</a></h3>
-<p><strong>Principle:</strong> Core domain primitives are framework-agnostic and dependency-free.</p>
-<p><strong>Application:</strong></p>
+<h1 id="your-first-ai-agent">Your First AI Agent<a class="headerlink" href="#your-first-ai-agent" title="Permanent link">&para;</a></h1>
+<p>Build and chat with a custom BotNexus agent in about 15 minutes.</p>
+<p>By the end of this tutorial, you will:</p>
 <ul>
-<li><code>BotNexus.Domain</code> has zero dependencies</li>
-<li>Strongly-typed IDs (<code>AgentId</code>, <code>SessionId</code>, <code>ChannelKey</code>) prevent type confusion</li>
-<li>Smart enums (<code>SessionType</code>, <code>SessionStatus</code>) encode domain rules</li>
-<li>Value objects are immutable records with structural equality</li>
-<li>Domain events communicate state changes</li>
+<li>run BotNexus locally</li>
+<li>configure one AI provider</li>
+<li>create your first agent</li>
+<li>chat with it in the Web UI</li>
+<li>customize its behavior with a system prompt</li>
 </ul>
-<p><strong>Benefits:</strong></p>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>This is a <strong>hands-on tutorial</strong>. Copy and run each step in order.</p>
+</div>
+<h2 id="what-youll-build">What you'll build<a class="headerlink" href="#what-youll-build" title="Permanent link">&para;</a></h2>
+<p>You will create an agent named <strong>My First Agent</strong> that:</p>
 <ul>
-<li>Domain logic portable across platforms</li>
-<li>Easy to test (no infrastructure dependencies)</li>
-<li>Clear ubiquitous language</li>
-<li>Domain rules enforced at compile time</li>
+<li>uses OpenAI <code>gpt-4.1</code></li>
+<li>responds with a friendly, concise style</li>
+<li>runs in the BotNexus Web UI</li>
 </ul>
 <hr />
-<h3 id="2-clean-architecture-dependency-inversion">2. Clean Architecture (Dependency Inversion)<a class="headerlink" href="#2-clean-architecture-dependency-inversion" title="Permanent link">&para;</a></h3>
-<p><strong>Principle:</strong> Dependencies flow inward. High-level modules depend on abstractions, not concrete implementations.</p>
-<p><strong>Dependency Flow:</strong></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Independent libraries (no BotNexus knowledge):
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  AgentCore    Providers.Core → Providers.{Anthropic,OpenAI,...}
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>BotNexus platform:
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>  Domain (no deps) ← Gateway.Contracts, Prompts, Sessions.Common ← Gateway ← Presentation
+<h2 id="1-prerequisites">1) Prerequisites<a class="headerlink" href="#1-prerequisites" title="Permanent link">&para;</a></h2>
+<p>Make sure you have:</p>
+<ol>
+<li><strong>.NET 10 SDK</strong></li>
+<li><strong>git</strong></li>
+<li><strong>One API key</strong> from a supported provider (OpenAI or Anthropic)</li>
+</ol>
+<p>Check your tools:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>dotnet<span class="w"> </span>--version
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>git<span class="w"> </span>--version
 </code></pre></div>
-<p>AgentCore and Providers are <strong>independent libraries</strong> — they have no knowledge of BotNexus or its Domain. The Gateway bridges between them, mapping BotNexus domain types to the generic types AgentCore and Providers expect.</p>
-<p><strong>Application:</strong></p>
+<p>You should see version output for both commands.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Keep API keys private. Never commit them to source control.</p>
+</div>
+<hr />
+<h2 id="2-clone-and-build-botnexus">2) Clone and build BotNexus<a class="headerlink" href="#2-clone-and-build-botnexus" title="Permanent link">&para;</a></h2>
+<p>Clone the repository:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/sytone/botnexus.git
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nb">cd</span><span class="w"> </span>botnexus
+</code></pre></div>
+<p>Build the solution:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>dotnet<span class="w"> </span>build<span class="w"> </span>BotNexus.slnx
+</code></pre></div>
+<p>You should see output ending with something like:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Build succeeded.
+</code></pre></div>
+<p>If build fails, resolve that first before continuing.</p>
+<hr />
+<h2 id="3-configure-a-provider">3) Configure a provider<a class="headerlink" href="#3-configure-a-provider" title="Permanent link">&para;</a></h2>
+<p>BotNexus reads configuration from <code>~/.botnexus/config.json</code>.</p>
 <ul>
-<li>Gateway depends on <code>ISessionStore</code>, not <code>SqliteSessionStore</code></li>
-<li>AgentCore depends on <code>IAgentTool</code>, not specific tool implementations</li>
-<li>Providers depend on their own <code>LlmModel</code> type, not BotNexus domain types</li>
-<li>Presentation depends on Gateway contracts (<code>IAgentSupervisor</code>), not implementations</li>
+<li>Windows: <code>C:\Users\&lt;your-user&gt;\.botnexus\config.json</code></li>
+<li>macOS/Linux: <code>~/.botnexus/config.json</code></li>
 </ul>
-<p><strong>Benefits:</strong></p>
+<p>Create or edit that file and add this minimal OpenAI provider config:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">{</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">&quot;version&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">&quot;providers&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="nt">&quot;openai&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">      </span><span class="nt">&quot;apiKey&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;your-api-key-here&quot;</span><span class="p">,</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">      </span><span class="nt">&quot;defaultModel&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gpt-4.1&quot;</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="p">}</span>
+</code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>Replace <code>"your-api-key-here"</code> with your real OpenAI API key.</p>
+</div>
+<hr />
+<h2 id="4-create-your-first-agent">4) Create your first agent<a class="headerlink" href="#4-create-your-first-agent" title="Permanent link">&para;</a></h2>
+<p>In the <strong>same</strong> <code>~/.botnexus/config.json</code>, add an <code>agents</code> section alongside the providers:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">&quot;version&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">&quot;providers&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="nt">&quot;openai&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span><span class="nt">&quot;apiKey&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;your-api-key-here&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">      </span><span class="nt">&quot;defaultModel&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gpt-4.1&quot;</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">  </span><span class="nt">&quot;agents&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">    </span><span class="nt">&quot;my-first-agent&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">      </span><span class="nt">&quot;displayName&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;My First Agent&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="w">      </span><span class="nt">&quot;provider&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;openai&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="w">      </span><span class="nt">&quot;model&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gpt-4.1&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="w">      </span><span class="nt">&quot;enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a><span class="p">}</span>
+</code></pre></div>
+<p>That's a complete minimal configuration. BotNexus will load the agent on startup.</p>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>See the <a href="../../configuration/">Configuration Reference</a> for all available agent options including tools, sub-agents, and isolation strategies.</p>
+</div>
+<hr />
+<h2 id="5-add-a-system-prompt">5) Add a system prompt<a class="headerlink" href="#5-add-a-system-prompt" title="Permanent link">&para;</a></h2>
+<p>Create a system prompt file for your agent. By default, BotNexus looks for prompt files in the agent's directory:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>~/.botnexus/agents/my-first-agent/system-prompt.md
+</code></pre></div>
+<p>Create that file with your agent's personality:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>You are a helpful AI assistant named Botty.
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>You are friendly, concise, and always try to help.
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>When asked a question, give a clear and direct answer.
+</code></pre></div>
+<p>Then reference it in your config by adding <code>systemPromptFile</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">&quot;my-first-agent&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">&quot;displayName&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;My First Agent&quot;</span><span class="p">,</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span><span class="nt">&quot;provider&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;openai&quot;</span><span class="p">,</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span><span class="nt">&quot;model&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gpt-4.1&quot;</span><span class="p">,</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">  </span><span class="nt">&quot;systemPromptFile&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;system-prompt.md&quot;</span><span class="p">,</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">  </span><span class="nt">&quot;enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="p">}</span>
+</code></pre></div>
+<hr />
+<h2 id="6-run-the-gateway">6) Run the gateway<a class="headerlink" href="#6-run-the-gateway" title="Permanent link">&para;</a></h2>
+<p>From the repository root, start the API gateway:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>dotnet<span class="w"> </span>run<span class="w"> </span>--project<span class="w"> </span>src/gateway/BotNexus.Gateway.Api
+</code></pre></div>
+<p>When startup completes, open:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>http://localhost:5005
+</code></pre></div>
+<p>You should see the BotNexus Web UI load in your browser.</p>
+<hr />
+<h2 id="7-chat-with-your-agent">7) Chat with your agent<a class="headerlink" href="#7-chat-with-your-agent" title="Permanent link">&para;</a></h2>
+<p>In the Web UI:</p>
+<ol>
+<li>Select <strong>My First Agent</strong> (or <code>my-first-agent</code>)</li>
+<li>Send a message like:</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>Hi Botty! Give me 3 tips for learning BotNexus quickly.
+</code></pre></div>
+<p>You should see a friendly, concise response generated by your agent.</p>
+<p>If you get an auth/provider error, recheck:</p>
 <ul>
-<li>Swap implementations without changing business logic</li>
-<li>Test with mocks/fakes easily</li>
-<li>Add new providers/channels/tools without modifying core</li>
+<li>provider name (<code>openai</code>) matches a key in <code>providers</code></li>
+<li>model name (<code>gpt-4.1</code>) is valid for your provider</li>
+<li>API key is correct</li>
 </ul>
 <hr />
-<h3 id="3-single-responsibility-principle-srp">3. Single Responsibility Principle (SRP)<a class="headerlink" href="#3-single-responsibility-principle-srp" title="Permanent link">&para;</a></h3>
-<p><strong>Principle:</strong> Each component has one reason to change.</p>
-<p><strong>Application:</strong></p>
-<table>
-<thead>
-<tr>
-<th>Component</th>
-<th>Responsibility</th>
-<th>Does Not Handle</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>IAgentRegistry</code></td>
-<td>Agent metadata lookup</td>
-<td>Agent execution</td>
-</tr>
-<tr>
-<td><code>IAgentSupervisor</code></td>
-<td>Instance lifecycle</td>
-<td>Message routing</td>
-</tr>
-<tr>
-<td><code>IMessageRouter</code></td>
-<td>Target agent resolution</td>
-<td>Agent execution</td>
-</tr>
-<tr>
-<td><code>ISessionStore</code></td>
-<td>Session persistence</td>
-<td>Session logic</td>
-</tr>
-<tr>
-<td><code>AgentLoopRunner</code></td>
-<td>LLM ↔ tool orchestration</td>
-<td>Tool implementation</td>
-</tr>
-<tr>
-<td><code>IChannelAdapter</code></td>
-<td>Channel-specific I/O</td>
-<td>Business logic</td>
-</tr>
-</tbody>
-</table>
-<p><strong>Benefits:</strong></p>
-<ul>
-<li>Easy to reason about</li>
-<li>Changes localized to one component</li>
-<li>Clear testing boundaries</li>
-</ul>
+<h2 id="8-customize-behavior">8) Customize behavior<a class="headerlink" href="#8-customize-behavior" title="Permanent link">&para;</a></h2>
+<p>Now change your agent's personality by editing the system prompt file.</p>
+<p>For example, update <code>~/.botnexus/agents/my-first-agent/system-prompt.md</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>You are Botty, a practical mentor.
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>Respond with numbered steps and short explanations.
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>Keep answers under 100 words when possible.
+</code></pre></div>
+<p>Then:</p>
+<ol>
+<li>Stop the running gateway (<code>Ctrl+C</code>)</li>
+<li>Restart it with the same command:</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>dotnet<span class="w"> </span>run<span class="w"> </span>--project<span class="w"> </span>src/gateway/BotNexus.Gateway.Api
+</code></pre></div>
+<p>Send the same chat message again.</p>
+<p>You should notice a different response style that matches your new prompt.</p>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>System prompts are the fastest way to shape agent behavior without writing code.</p>
+</div>
+<p>As a next step, you can add tools to your agent so it can do more than just chat.</p>
 <hr />
-<h3 id="4-openclosed-principle-ocp">4. Open/Closed Principle (OCP)<a class="headerlink" href="#4-openclosed-principle-ocp" title="Permanent link">&para;</a></h3>
-<p><strong>Principle:</strong> Open for extension, closed for modification.</p>
-<p><strong>Application:</strong></p>
+<h2 id="9-next-steps">9) Next steps<a class="headerlink" href="#9-next-steps" title="Permanent link">&para;</a></h2>
+<p>Continue with:</p>
 <ul>
-<li>Add tools via <code>IAgentTool</code> interface (no AgentCore changes)</li>
-<li>Add channels via <code>IChannelAdapter</code> interface (no Gateway changes)</li>
-<li>Add hooks via <code>IHookHandler</code> interface (no execution changes)</li>
-<li>Add prompt sections via <code>IPromptSection</code> interface (no builder changes)</li>
-<li>Add isolation strategies via <code>IIsolationStrategy</code> interface (no supervisor changes)</li>
+<li><a href="../../user-guide/getting-started/">User Guide</a> — deeper walkthrough of all features</li>
+<li><a href="../../configuration/">Configuration Reference</a> — every config option explained</li>
+<li><a href="../../extension-development/">Extension Development</a> — build custom tools and providers</li>
 </ul>
-<p><strong>Benefits:</strong></p>
-<ul>
-<li>Core code stable</li>
-<li>Extensions don't risk breaking existing functionality</li>
-<li>Third-party plugins possible</li>
-</ul>
-<hr />
-<h3 id="5-liskov-substitution-principle-lsp">5. Liskov Substitution Principle (LSP)<a class="headerlink" href="#5-liskov-substitution-principle-lsp" title="Permanent link">&para;</a></h3>
-<p><strong>Principle:</strong> All implementations of an interface are interchangeable.</p>
-<p><strong>Application:</strong></p>
-<ul>
-<li>Any <code>IApiProvider</code> can handle model calls (Anthropic, OpenAI, Copilot)</li>
-<li>Any <code>IChannelAdapter</code> can dispatch messages (SignalR, Telegram, TUI)</li>
-<li>Any <code>IIsolationStrategy</code> can create agents (InProcess, Container, Remote)</li>
-<li>Any <code>ISessionStore</code> can persist sessions (File, SQLite, InMemory)</li>
-</ul>
-<p><strong>Benefits:</strong></p>
-<ul>
-<li>Predictable behavior</li>
-<li>Easy to swap implementations</li>
-<li>Configuration-driven decisions (no code changes)</li>
-</ul>
-<hr />
-<h3 id="6-interface-segregation-principle-isp">6. Interface Segregation Principle (ISP)<a class="headerlink" href="#6-interface-segregation-principle-isp" title="Permanent link">&para;</a></h3>
-<p><strong>Principle:</strong> Clients should not depend on interfaces they don't use.</p>
-<p><strong>Application:</strong></p>
-<ul>
-<li><code>IAgentTool</code> has only <code>Name</code>, <code>Definition</code>, <code>ExecuteAsync</code> (no lifecycle methods)</li>
-<li><code>IHookHandler</code> has only <code>BeforeAsync</code>, <code>AfterAsync</code> (no state management)</li>
-<li><code>IPromptSection</code> has only <code>Order</code>, <code>ShouldInclude</code>, <code>Build</code> (no pipeline logic)</li>
-<li><code>IChannelAdapter</code> has focused methods for send/receive (no business logic)</li>
-</ul>
-<p><strong>Benefits:</strong></p>
-<ul>
-<li>Small, focused interfaces</li>
-<li>Easy to implement</li>
-<li>Less coupling</li>
-</ul>
-<hr />
-<h3 id="7-stream-first-design">7. Stream-First Design<a class="headerlink" href="#7-stream-first-design" title="Permanent link">&para;</a></h3>
-<p><strong>Principle:</strong> All LLM interactions stream events. One-shot responses are built on streaming, not vice versa.</p>
-<p><strong>Application:</strong></p>
-<ul>
-<li><code>LlmClient.StreamAsync()</code> returns <code>LlmStream</code> (async channel)</li>
-<li><code>StreamAccumulator</code> converts stream to events and final message</li>
-<li>All channel adapters support streaming (even if buffered for non-streaming channels)</li>
-<li>Clients receive real-time deltas for long responses</li>
-</ul>
-<p><strong>Benefits:</strong></p>
-<ul>
-<li>Responsive UX (user sees tokens as they arrive)</li>
-<li>Interruptible (cancel in-flight requests)</li>
-<li>Uniform abstraction (streaming is the primitive)</li>
-</ul>
-<hr />
-<h3 id="8-extension-first-architecture">8. Extension-First Architecture<a class="headerlink" href="#8-extension-first-architecture" title="Permanent link">&para;</a></h3>
-<p><strong>Principle:</strong> New capabilities added via plugins, not code changes.</p>
-<p><strong>Application:</strong></p>
-<ul>
-<li>MCP servers configured in <code>platform-config.json</code>, auto-loaded</li>
-<li>Skills discovered from markdown files</li>
-<li>Custom tools registered via <code>IToolRegistry</code></li>
-<li>Hooks registered via DI container</li>
-<li>Channels registered via DI container</li>
-</ul>
-<p><strong>Benefits:</strong></p>
-<ul>
-<li>Platform code stays lean</li>
-<li>Community can extend without forking</li>
-<li>Configuration drives behavior</li>
-</ul>
-<hr />
-<h3 id="9-additive-migration">9. Additive Migration<a class="headerlink" href="#9-additive-migration" title="Permanent link">&para;</a></h3>
-<p><strong>Principle:</strong> When evolving APIs, add new patterns alongside old ones. Deprecate gradually.</p>
-<p><strong>Application:</strong></p>
-<ul>
-<li><code>SubscribeAll()</code> + <code>SendMessage()</code> added as the primary API surface</li>
-<li>Legacy APIs (where applicable) marked <code>[Obsolete]</code> with guidance</li>
-<li>Old and new models coexist for backwards compatibility</li>
-<li>Remove deprecated APIs only in major version bumps</li>
-</ul>
-<p><strong>Benefits:</strong></p>
-<ul>
-<li>Smooth upgrades</li>
-<li>No breaking changes in minor versions</li>
-<li>Time for users to migrate</li>
-</ul>
-<hr />
-<h3 id="10-location-based-resource-management">10. Location-Based Resource Management<a class="headerlink" href="#10-location-based-resource-management" title="Permanent link">&para;</a></h3>
-<p><strong>Principle:</strong> Resources scoped by Location tuple: <code>(WorldId?, AgentId, SessionId?)</code>.</p>
-<p><strong>Application:</strong></p>
-<table>
-<thead>
-<tr>
-<th>Resource</th>
-<th>Scope</th>
-<th>Path Pattern</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Workspace</td>
-<td>Per-agent</td>
-<td><code>~/.botnexus/workspaces/{agentId}/</code></td>
-</tr>
-<tr>
-<td>Session</td>
-<td>Per (agent, session)</td>
-<td><code>~/.botnexus/sessions/{sessionId}.jsonl</code></td>
-</tr>
-<tr>
-<td>Memory</td>
-<td>Per agent or session</td>
-<td><code>~/.botnexus/memory/{agentId}/{sessionId?}/</code></td>
-</tr>
-<tr>
-<td>Logs</td>
-<td>Per agent/session/world</td>
-<td><code>~/.botnexus/logs/{agentId}/{sessionId?}/</code></td>
-</tr>
-</tbody>
-</table>
-<p><strong>Benefits:</strong></p>
-<ul>
-<li>Clear ownership boundaries</li>
-<li>Prevents resource leakage across agents/sessions</li>
-<li>Predictable cleanup (delete agent → delete workspace)</li>
-</ul>
-<hr />
-<h3 id="11-per-channel-containers-webui">11. Per-Channel Containers (WebUI)<a class="headerlink" href="#11-per-channel-containers-webui" title="Permanent link">&para;</a></h3>
-<p><strong>Principle:</strong> Each (agent, channel) pair gets its own permanent DOM container. WebUI uses subscribe-all for multi-session UI.</p>
-<p><strong>Application:</strong></p>
-<ul>
-<li>WebUI subscribes to all sessions upfront (<code>SubscribeAll()</code>)</li>
-<li>Each agent+channel gets its own permanent DOM container — no DOM swapping</li>
-<li>Events route to the correct container by <code>sessionId</code></li>
-<li>Other channels (Telegram, TUI) manage their own session lifecycle</li>
-</ul>
-<p><strong>Benefits:</strong></p>
-<ul>
-<li>WebUI supports multi-session without manual join/leave</li>
-<li>No DOM content loss when switching between sessions</li>
-<li>Real-time updates across all sessions simultaneously</li>
-<li>Future: multi-client collaboration (multiple users in same session)</li>
-</ul>
-<hr />
-<h3 id="12-session-as-conversation-unit">12. Session as Conversation Unit<a class="headerlink" href="#12-session-as-conversation-unit" title="Permanent link">&para;</a></h3>
-<p><strong>Principle:</strong> Sessions are the unit of conversation state. Each (agent, session) pair gets isolated instance.</p>
-<p><strong>Application:</strong></p>
-<ul>
-<li><code>IAgentSupervisor</code> keys on <code>(AgentId, SessionId)</code></li>
-<li>Each instance has independent message timeline</li>
-<li>Session stores persist full conversation history</li>
-<li>Session sealing prevents further writes</li>
-</ul>
-<p><strong>Benefits:</strong></p>
-<ul>
-<li>Concurrent conversations with same agent</li>
-<li>Clean state boundaries</li>
-<li>Independent lifecycle per conversation</li>
-</ul>
-<hr />
-<h3 id="13-workspace-scoped-agent-isolation">13. Workspace-Scoped Agent Isolation<a class="headerlink" href="#13-workspace-scoped-agent-isolation" title="Permanent link">&para;</a></h3>
-<p><strong>Principle:</strong> Agents operate in isolated workspace directories. File tools cannot escape workspace without explicit permission.</p>
-<p><strong>Application:</strong></p>
-<ul>
-<li>Each agent gets workspace: <code>~/.botnexus/workspaces/{agentId}/</code></li>
-<li>File tools (read, write, edit) resolve paths relative to workspace</li>
-<li><code>IPathValidator</code> enforces <code>FileAccessPolicy</code></li>
-<li><code>AllowWorkspaceEscape = false</code> (default) blocks <code>../</code> traversal</li>
-</ul>
-<p><strong>Benefits:</strong></p>
-<ul>
-<li>Security: agents can't access each other's files</li>
-<li>Simplicity: agent sees workspace as root</li>
-<li>Multi-tenancy: safe to run untrusted agents</li>
-</ul>
-<hr />
-<h3 id="14-hook-based-extension">14. Hook-Based Extension<a class="headerlink" href="#14-hook-based-extension" title="Permanent link">&para;</a></h3>
-<p><strong>Principle:</strong> Extend behavior via hooks, not inheritance.</p>
-<p><strong>Application:</strong></p>
-<ul>
-<li><code>BeforeToolCall</code> / <code>AfterToolCall</code> delegates intercept tool execution</li>
-<li>Hooks can:</li>
-<li>Block tools (path validation)</li>
-<li>Transform arguments (sanitization)</li>
-<li>Transform results (redaction)</li>
-<li>Audit (logging, telemetry)</li>
-<li>Multiple hooks compose (chain-of-responsibility pattern)</li>
-</ul>
-<p><strong>Benefits:</strong></p>
-<ul>
-<li>No subclassing required</li>
-<li>Compose multiple concerns (validation + audit + rate limit)</li>
-<li>Cross-cutting concerns separated from business logic</li>
-</ul>
-<hr />
-<h3 id="15-fail-gracefully">15. Fail Gracefully<a class="headerlink" href="#15-fail-gracefully" title="Permanent link">&para;</a></h3>
-<p><strong>Principle:</strong> Errors should not crash the platform. Extensions that fail should log and continue.</p>
-<p><strong>Application:</strong></p>
-<ul>
-<li>Extension load failures logged, not thrown</li>
-<li>Tool execution failures returned as <code>AgentToolResult</code> with error</li>
-<li>LLM call failures logged, optionally retried</li>
-<li>Context overflow detected and handled via compaction</li>
-</ul>
-<p><strong>Benefits:</strong></p>
-<ul>
-<li>Resilient to bad extensions</li>
-<li>LLM can reason about tool errors</li>
-<li>Automatic recovery from transient failures</li>
-</ul>
-<hr />
-<h2 id="architectural-decisions">Architectural Decisions<a class="headerlink" href="#architectural-decisions" title="Permanent link">&para;</a></h2>
-<h3 id="adr-001-statelessllm-apis">ADR-001: StatelessLLM APIs<a class="headerlink" href="#adr-001-statelessllm-apis" title="Permanent link">&para;</a></h3>
-<p><strong>Decision:</strong> Treat all LLM providers as completely stateless. Send full context every call.</p>
-<p><strong>Rationale:</strong></p>
-<ul>
-<li>OpenAI, Anthropic, Copilot APIs have zero conversation memory</li>
-<li>Every request must include system prompt + full message history + tools</li>
-<li>Statefulness managed gateway-side (in-memory timeline + session store)</li>
-</ul>
-<p><strong>Implications:</strong></p>
-<ul>
-<li>Context grows with every turn → need compaction</li>
-<li>Early messages sent repeatedly → use prompt caching</li>
-<li>Tool-heavy turns expensive → multiple full-context calls</li>
-</ul>
-<hr />
-<h3 id="adr-002-subscribe-all-model-webui">ADR-002: Subscribe-All Model (WebUI)<a class="headerlink" href="#adr-002-subscribe-all-model-webui" title="Permanent link">&para;</a></h3>
-<p><strong>Decision:</strong> WebUI subscribes to all sessions upfront, switches client-side.</p>
-<p><strong>Rationale:</strong></p>
-<ul>
-<li>Simpler client code (no manual join/leave)</li>
-<li>Supports multi-session UI (tabs, split view)</li>
-<li>Enables real-time updates across all sessions</li>
-</ul>
-<p><strong>Implications:</strong></p>
-<ul>
-<li>SignalR group management in hub</li>
-<li>Client-side session filtering</li>
-<li>Future: multi-client collaboration</li>
-</ul>
-<hr />
-<h3 id="adr-003-gateway-replaces-codingagent">ADR-003: Gateway Replaces CodingAgent<a class="headerlink" href="#adr-003-gateway-replaces-codingagent" title="Permanent link">&para;</a></h3>
-<p><strong>Decision:</strong> Gateway is the primary orchestrator. CodingAgent is a legacy CLI wrapper.</p>
-<p><strong>Rationale:</strong></p>
-<ul>
-<li>Gateway supports multiple agents, channels, sessions</li>
-<li>CodingAgent single-agent, single-session model too limited</li>
-<li>Gateway enables WebUI, Telegram, federation, etc.</li>
-</ul>
-<p><strong>Implications:</strong></p>
-<ul>
-<li>CodingAgent deprecated (but still functional)</li>
-<li>New features go in Gateway</li>
-<li>Migration path: CodingAgent → Gateway agent</li>
-</ul>
-<hr />
-<h3 id="adr-004-per-session-agent-instances">ADR-004: Per-Session Agent Instances<a class="headerlink" href="#adr-004-per-session-agent-instances" title="Permanent link">&para;</a></h3>
-<p><strong>Decision:</strong> Each (agent, session) pair gets its own <code>Agent</code> instance.</p>
-<p><strong>Rationale:</strong></p>
-<ul>
-<li>Session isolation: independent state per conversation</li>
-<li>Concurrency: multiple users can talk to same agent simultaneously</li>
-<li>Clean lifecycle: dispose instance when session ends</li>
-</ul>
-<p><strong>Implications:</strong></p>
-<ul>
-<li>Higher memory usage (one instance per session)</li>
-<li>Startup cost amortized across session lifetime</li>
-<li>Concurrency limits via <code>MaxConcurrentSessions</code></li>
-</ul>
-<hr />
-<h3 id="adr-005-inprocess-default-isolation">ADR-005: InProcess Default Isolation<a class="headerlink" href="#adr-005-inprocess-default-isolation" title="Permanent link">&para;</a></h3>
-<p><strong>Decision:</strong> Default isolation strategy is in-process (shared memory).</p>
-<p><strong>Rationale:</strong></p>
-<ul>
-<li>Fastest (&lt;10ms startup)</li>
-<li>Simplest deployment (no Docker, no network)</li>
-<li>Suitable for trusted agents</li>
-</ul>
-<p><strong>Implications:</strong></p>
-<ul>
-<li>Security: agents share memory (not suitable for untrusted code)</li>
-<li>Scaling: limited by single-process resources</li>
-<li>Future: container/remote isolation for multi-tenancy</li>
-</ul>
-<hr />
-<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>These principles form the foundation of BotNexus's architecture:</p>
-<ul>
-<li><strong>DDD + Clean Architecture</strong>: Clean separation of concerns</li>
-<li><strong>SOLID</strong>: Extension via interfaces, not inheritance</li>
-<li><strong>Stream-First</strong>: Real-time UX</li>
-<li><strong>Location-Based Resources</strong>: Clear ownership boundaries</li>
-<li><strong>Session Isolation</strong>: Independent conversation state</li>
-<li><strong>Fail Gracefully</strong>: Resilient to failures</li>
-</ul>
-<p><strong>For implementation:</strong></p>
-<ul>
-<li><strong><a href="../domain-model/">Domain Model</a></strong> — Domain rules enforcing these principles</li>
-<li><strong><a href="../system-flows/">System Flows</a></strong> — Principles in action</li>
-<li><strong><a href="../../dev-guide/">Development Guide</a></strong> — Code-level principle application</li>
-</ul>
+<p>You now have a working BotNexus agent and a repeatable workflow for creating more.</p>
 
 
 
@@ -2968,7 +2420,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="April 16, 2026 05:53:49 UTC">April 16, 2026</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="April 16, 2026 06:12:30 UTC">April 16, 2026</span>
   </span>
 
     
@@ -2978,7 +2430,7 @@
     <span class="md-icon" title="Created">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M14.47 15.08 11 13V7h1.5v5.25l3.08 1.83c-.41.28-.79.62-1.11 1m-1.39 4.84c-.36.05-.71.08-1.08.08-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8c0 .37-.03.72-.08 1.08.69.1 1.33.32 1.92.64.1-.56.16-1.13.16-1.72 0-5.5-4.5-10-10-10S2 6.5 2 12s4.47 10 10 10c.59 0 1.16-.06 1.72-.16-.32-.59-.54-1.23-.64-1.92M18 15v3h-3v2h3v3h2v-3h3v-2h-3v-3z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="April 14, 2026 17:57:14 UTC">April 14, 2026</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="April 16, 2026 06:03:41 UTC">April 16, 2026</span>
   </span>
 
     
