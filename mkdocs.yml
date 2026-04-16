@@ -7,6 +7,9 @@ edit_uri: edit/main/docs/
 
 theme:
   name: material
+  custom_dir: docs/overrides
+  icon:
+    logo: material/robot-happy-outline
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -33,6 +36,11 @@ theme:
     - search.highlight
     - content.code.copy
     - content.action.edit
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/sytone/botnexus
 
 plugins:
   - search
@@ -87,6 +95,8 @@ nav:
       - Overview: getting-started.md
       - Install from Release: getting-started-release.md
       - Developer Setup: getting-started-dev.md
+  - Tutorials:
+      - Your First AI Agent: tutorials/first-agent.md
   - User Guide:
       - Getting Started: user-guide/getting-started.md
       - Agents: user-guide/agents.md
