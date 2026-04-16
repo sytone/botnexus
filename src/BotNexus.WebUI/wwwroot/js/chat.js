@@ -62,6 +62,7 @@ function getActiveMessagesEl() {
 
 export function onMessageStart(ctx, evt, sid) {
     markResponseReceived();
+    hideTranscriptionIndicator(ctx?.messagesEl);
     removeStreamingIndicator(ctx);
     showStreamingIndicator(sid, ctx);
     showProcessingStatus('Agent is responding...', '🤖', sid);
@@ -75,6 +76,7 @@ export function onMessageStart(ctx, evt, sid) {
 
 export function onContentDelta(ctx, text) {
     markResponseReceived();
+    hideTranscriptionIndicator(ctx?.messagesEl);
     removeStreamingIndicator(ctx);
     appendDelta(text, ctx.messagesEl);
     if (ctx.key === channelManager.activeKey) scrollToBottom(false, ctx.messagesEl);
@@ -1043,16 +1045,22 @@ export async function sendMessage() {
         return;
     }
 
-    appendChatMessage('user', text || '🎤 Audio message');
-    trackActivity('message', activeAgentId, (text || '🎤 Audio').substring(0, 60));
-    setSendingState(true);
-    if (activeSessionId) getStreamState(activeSessionId).isStreaming = true;
-    startResponseTimeout();
-
     // Capture and clear pending audio before async work
     const audioToSend = pendingAudio;
     pendingAudio = null;
     clearAudioPendingIndicator();
+
+    // Render user message — with inline audio player when audio is attached
+    if (audioToSend) {
+        appendChatMessageWithAudio(text, audioToSend);
+        showTranscriptionIndicator();
+    } else {
+        appendChatMessage('user', text);
+    }
+    trackActivity('message', activeAgentId, (text || '🎤 Audio').substring(0, 60));
+    setSendingState(true);
+    if (activeSessionId) getStreamState(activeSessionId).isStreaming = true;
+    startResponseTimeout();
 
     try {
         const channelType = toHubChannelType(activeCtx?.channelType || getCurrentChannelType() || 'Web Chat');
@@ -1162,6 +1170,64 @@ function clearAudioPendingIndicator() {
         indicator.style.display = 'none';
         indicator.innerHTML = '';
     }
+}
+
+/**
+ * Render a user message bubble that contains an inline audio player.
+ * @param {string} text - The user's text (may be empty for voice-only messages)
+ * @param {{base64: string, mimeType: string, durationMs: number}} audio - Recorded audio data
+ */
+function appendChatMessageWithAudio(text, audio) {
+    const el = getActiveMessagesEl();
+    if (!el) return;
+    const div = document.createElement('div');
+    div.className = 'message user';
+    const timeStr = formatTime(new Date().toISOString());
+    const secs = (audio.durationMs / 1000).toFixed(1);
+
+    div.innerHTML = `
+        <div class="msg-header">
+            <span class="msg-role">USER</span>
+            <span class="msg-time">${timeStr}</span>
+            <button class="btn-copy-msg" title="Copy message" aria-label="Copy message">📋</button>
+        </div>
+        <div class="msg-content">
+            ${text ? `<p>${escapeHtml(text)}</p>` : ''}
+            <div class="audio-message">
+                <audio controls src="data:${escapeHtml(audio.mimeType)};base64,${audio.base64}"></audio>
+                <span class="audio-meta">🎤 ${secs}s</span>
+            </div>
+        </div>
+    `;
+    div.dataset.rawContent = text || '🎤 Audio message';
+    el.appendChild(div);
+    const activeEl = getActiveMessagesEl();
+    if (el === activeEl) scrollToBottom(false, activeEl);
+}
+
+/**
+ * Show a "Transcribing audio..." indicator in the chat area.
+ * Appears as a temporary assistant-side message; auto-cleared on first ContentDelta.
+ */
+function showTranscriptionIndicator() {
+    const el = getActiveMessagesEl();
+    if (!el) return;
+    // Don't duplicate
+    if (el.querySelector('.transcription-indicator')) return;
+    const div = document.createElement('div');
+    div.className = 'transcription-indicator';
+    div.innerHTML = '🎤 Transcribing audio...';
+    el.appendChild(div);
+    scrollToBottom(false, el);
+}
+
+/**
+ * Remove the transcription indicator if present.
+ */
+function hideTranscriptionIndicator(targetEl) {
+    const el = targetEl || getActiveMessagesEl();
+    if (!el) return;
+    el.querySelectorAll('.transcription-indicator').forEach(ind => ind.remove());
 }
 
 export function initAudioRecording() {

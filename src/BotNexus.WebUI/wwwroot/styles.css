@@ -1322,6 +1322,36 @@ body {
 .audio-pending-indicator .btn-clear-audio:hover {
     color: var(--error);
 }
+
+/* Audio message playback */
+.audio-message {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+}
+.audio-message audio {
+    max-width: 250px;
+    height: 32px;
+}
+.audio-meta {
+    font-size: 0.8em;
+    opacity: 0.7;
+}
+
+/* Transcription progress indicator */
+.transcription-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    font-size: 0.9em;
+    opacity: 0.8;
+    color: var(--text-secondary);
+    align-self: flex-start;
+    animation: pulse-recording 1.5s infinite;
+}
+
 .config-section { margin-bottom: 24px; }
 .config-section h3 { font-size: 1rem; margin: 0 0 12px; color: var(--text-primary); border-bottom: 1px solid var(--border); padding-bottom: 6px; }
 .config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
