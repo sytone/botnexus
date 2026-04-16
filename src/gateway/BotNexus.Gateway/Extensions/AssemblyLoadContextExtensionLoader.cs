@@ -36,7 +36,8 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
         typeof(IAgentSupervisor),
         typeof(IAgentCommunicator),
         typeof(IActivityBroadcaster),
-        typeof(IAgentTool)
+        typeof(IAgentTool),
+        typeof(ICommandContributor)
     ];
 
     private readonly IServiceCollection _services;
@@ -248,6 +249,7 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
             "agent-communicator",
             "activity-broadcaster",
             "tool",
+            "command",
             "hook-handler"
         };
 
@@ -325,7 +327,8 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
 
             if (contract == typeof(IChannelAdapter) || 
                 contract == typeof(IIsolationStrategy) ||
-                contract == typeof(IAgentTool))
+                contract == typeof(IAgentTool) ||
+                contract == typeof(ICommandContributor))
             {
                 _services.AddSingleton(contract, implementation);
             }
