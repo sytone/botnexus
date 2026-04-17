@@ -21,7 +21,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     private readonly IAgentRegistry _registry;
     private readonly IActivityBroadcaster _activity;
     private readonly IChannelDispatcher _dispatcher;
-    private readonly IOptions<GatewayOptions> _options;
+    private readonly IOptionsMonitor<GatewayOptions> _options;
     private readonly ILogger<DefaultSubAgentManager> _logger;
     private readonly ConcurrentDictionary<string, SubAgentInfo> _subAgents = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<SessionId, ConcurrentBag<string>> _parentChildren = [];
@@ -35,7 +35,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         IAgentRegistry registry,
         IActivityBroadcaster activity,
         IChannelDispatcher dispatcher,
-        IOptions<GatewayOptions> options,
+        IOptionsMonitor<GatewayOptions> options,
         ILogger<DefaultSubAgentManager> logger)
     {
         _supervisor = supervisor;
@@ -54,7 +54,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         var parentDescriptor = _registry.Get(request.ParentAgentId)
             ?? throw new KeyNotFoundException($"Parent agent '{request.ParentAgentId}' is not registered.");
 
-        var maxConcurrent = _options.Value.SubAgents.MaxConcurrentPerSession;
+        var maxConcurrent = _options.CurrentValue.SubAgents.MaxConcurrentPerSession;
         if (maxConcurrent > 0)
         {
             var activeCount = _subAgents.Values.Count(info =>
@@ -83,9 +83,9 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
         var handle = await _supervisor.GetOrCreateAsync(childAgentId, childSessionId, ct);
 
-        var configuredDefaultModel = string.IsNullOrWhiteSpace(_options.Value.SubAgents.DefaultModel)
+        var configuredDefaultModel = string.IsNullOrWhiteSpace(_options.CurrentValue.SubAgents.DefaultModel)
             ? null
-            : _options.Value.SubAgents.DefaultModel;
+            : _options.CurrentValue.SubAgents.DefaultModel;
 
         var info = new SubAgentInfo
         {
@@ -110,7 +110,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
         var timeoutSeconds = request.TimeoutSeconds > 0
             ? request.TimeoutSeconds
-            : _options.Value.SubAgents.DefaultTimeoutSeconds;
+            : _options.CurrentValue.SubAgents.DefaultTimeoutSeconds;
         if (timeoutSeconds <= 0)
             timeoutSeconds = 1;
 

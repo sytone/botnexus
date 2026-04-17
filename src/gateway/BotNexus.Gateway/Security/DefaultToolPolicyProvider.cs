@@ -31,14 +31,14 @@ public sealed class DefaultToolPolicyProvider : IToolPolicyProvider
 
     private readonly ConcurrentDictionary<string, byte> _mcpServerIds = new(StringComparer.OrdinalIgnoreCase);
 
-    private readonly PlatformConfig _config;
+    private readonly IOptionsMonitor<PlatformConfig> _config;
     private readonly ILogger<DefaultToolPolicyProvider> _logger;
 
     public DefaultToolPolicyProvider(
-        IOptions<PlatformConfig> config,
+        IOptionsMonitor<PlatformConfig> config,
         ILogger<DefaultToolPolicyProvider> logger)
     {
-        _config = config.Value;
+        _config = config;
         _logger = logger;
     }
 
@@ -154,7 +154,8 @@ public sealed class DefaultToolPolicyProvider : IToolPolicyProvider
 
     private ToolPolicyConfig? GetAgentToolPolicy(string agentId)
     {
-        if (_config.Agents is null || !_config.Agents.TryGetValue(agentId, out var agentConfig))
+        var config = _config.CurrentValue;
+        if (config.Agents is null || !config.Agents.TryGetValue(agentId, out var agentConfig))
             return null;
 
         return agentConfig.ToolPolicy;

@@ -371,7 +371,7 @@ public sealed class SignalRHubTests
         var hub = CreateHub(
             sessions: sessions.Object,
             compactor: compactor.Object,
-            compactionOptions: Options.Create(new CompactionOptions()));
+            compactionOptions: new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()));
 
         var result = await hub.CompactSession("agent-a", "session-1");
 
@@ -404,7 +404,7 @@ public sealed class SignalRHubTests
         IAgentSupervisor? supervisor = null,
         ISessionCompactor? compactor = null,
         ISessionWarmupService? warmup = null,
-        IOptions<CompactionOptions>? compactionOptions = null,
+        IOptionsMonitor<CompactionOptions>? compactionOptions = null,
         string connectionId = "conn-test")
     {
         var hub = new GatewayHub(
@@ -415,7 +415,7 @@ public sealed class SignalRHubTests
             activity ?? Mock.Of<IActivityBroadcaster>(),
             compactor ?? Mock.Of<ISessionCompactor>(),
             warmup ?? Mock.Of<ISessionWarmupService>(),
-            compactionOptions ?? Options.Create(new CompactionOptions()),
+            compactionOptions ?? new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
             NullLogger<GatewayHub>.Instance)
         {
             Clients = clients ?? Mock.Of<IHubCallerClients>(),

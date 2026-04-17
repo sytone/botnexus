@@ -14,12 +14,12 @@ namespace BotNexus.Gateway.Configuration;
 /// Loads agent descriptors from <see cref="PlatformConfig"/> agent definitions.
 /// </summary>
 public sealed class PlatformConfigAgentSource(
-    IOptions<PlatformConfig> configOptions,
+    IOptionsMonitor<PlatformConfig> configOptions,
     string configDirectory,
     ILogger<PlatformConfigAgentSource> logger,
     ILocationResolver? locationResolver = null) : IAgentConfigurationSource
 {
-    private readonly IOptions<PlatformConfig> _configOptions = configOptions;
+    private readonly IOptionsMonitor<PlatformConfig> _configOptions = configOptions;
     private readonly string _configDirectory = Path.GetFullPath(configDirectory);
     private readonly ILogger<PlatformConfigAgentSource> _logger = logger;
     private readonly ILocationResolver? _locationResolver = locationResolver;
@@ -27,7 +27,7 @@ public sealed class PlatformConfigAgentSource(
     /// <inheritdoc />
     public Task<IReadOnlyList<AgentDescriptor>> LoadAsync(CancellationToken cancellationToken = default)
     {
-        return Task.FromResult(LoadFromConfig(_configOptions.Value, cancellationToken));
+        return Task.FromResult(LoadFromConfig(_configOptions.CurrentValue, cancellationToken));
     }
 
     /// <inheritdoc />

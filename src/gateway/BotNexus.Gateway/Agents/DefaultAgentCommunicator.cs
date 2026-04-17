@@ -18,7 +18,7 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
     private readonly IAgentRegistry _registry;
     private readonly IAgentSupervisor _supervisor;
     private readonly ILogger<DefaultAgentCommunicator> _logger;
-    private readonly IOptions<GatewayOptions> _options;
+    private readonly IOptionsMonitor<GatewayOptions> _options;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DefaultAgentCommunicator"/> class.
@@ -29,7 +29,7 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
     public DefaultAgentCommunicator(
         IAgentRegistry registry,
         IAgentSupervisor supervisor,
-        IOptions<GatewayOptions> options,
+        IOptionsMonitor<GatewayOptions> options,
         ILogger<DefaultAgentCommunicator> logger)
     {
         _registry = registry;
@@ -42,7 +42,7 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
         IAgentRegistry registry,
         IAgentSupervisor supervisor,
         ILogger<DefaultAgentCommunicator> logger)
-        : this(registry, supervisor, Options.Create(new GatewayOptions()), logger)
+        : this(registry, supervisor, new StaticOptionsMonitor<GatewayOptions>(new GatewayOptions()), logger)
     {
     }
 
@@ -62,7 +62,7 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
         string message,
         CancellationToken cancellationToken = default)
     {
-        using var callScope = EnterCallChain(parentAgentId, childAgentId, _options.Value.MaxCallChainDepth);
+        using var callScope = EnterCallChain(parentAgentId, childAgentId, _options.CurrentValue.MaxCallChainDepth);
         using var activity = AgentDiagnostics.Source.StartActivity("agent.cross_call", ActivityKind.Internal);
         activity?.SetTag("botnexus.agent.id", parentAgentId);
         activity?.SetTag("botnexus.agent.target_id", childAgentId);
@@ -111,7 +111,7 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
         string message,
         CancellationToken cancellationToken = default)
     {
-        using var callScope = EnterCallChain(sourceAgentId, targetAgentId, _options.Value.MaxCallChainDepth);
+        using var callScope = EnterCallChain(sourceAgentId, targetAgentId, _options.CurrentValue.MaxCallChainDepth);
         using var activity = AgentDiagnostics.Source.StartActivity("agent.cross_call", ActivityKind.Internal);
         activity?.SetTag("botnexus.agent.id", sourceAgentId);
         activity?.SetTag("botnexus.agent.target_id", targetAgentId);
@@ -203,7 +203,7 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
         AgentId targetAgentId,
         CancellationToken cancellationToken)
     {
-        var timeoutSeconds = _options.Value.CrossAgentTimeoutSeconds;
+        var timeoutSeconds = _options.CurrentValue.CrossAgentTimeoutSeconds;
         if (timeoutSeconds <= 0)
             throw new ArgumentOutOfRangeException(nameof(GatewayOptions.CrossAgentTimeoutSeconds), "Cross-agent timeout must be greater than zero seconds.");
 
@@ -228,5 +228,14 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
         {
             ResetPath(path, entryCount);
         }
+    }
+
+    private sealed class StaticOptionsMonitor<TOptions>(TOptions currentValue) : IOptionsMonitor<TOptions>
+    {
+        public TOptions CurrentValue { get; } = currentValue;
+
+        public TOptions Get(string? name) => CurrentValue;
+
+        public IDisposable? OnChange(Action<TOptions, string?> listener) => null;
     }
 }

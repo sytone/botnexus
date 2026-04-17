@@ -142,7 +142,7 @@ public sealed class SubAgentCompletionWakeUpTests
             registry.Object,
             Mock.Of<IActivityBroadcaster>(),
             dispatcher.Object,
-            Options.Create(new GatewayOptions()),
+            new TestOptionsMonitor<GatewayOptions>(new GatewayOptions()),
             NullLogger<DefaultSubAgentManager>.Instance);
     }
 

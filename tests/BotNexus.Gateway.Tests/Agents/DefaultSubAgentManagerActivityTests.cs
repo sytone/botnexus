@@ -107,7 +107,7 @@ public sealed class DefaultSubAgentManagerActivityTests
             registry.Object,
             activityBroadcaster,
             Mock.Of<IChannelDispatcher>(),
-            Options.Create(new GatewayOptions()),
+            new TestOptionsMonitor<GatewayOptions>(new GatewayOptions()),
             NullLogger<DefaultSubAgentManager>.Instance);
     }
 

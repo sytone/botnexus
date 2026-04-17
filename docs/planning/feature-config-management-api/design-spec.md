@@ -3,7 +3,7 @@ id: feature-config-management-api
 title: "Configuration Management API — Full Config CRUD via Gateway REST + Dynamic Reload"
 type: feature
 priority: high
-status: draft
+status: in-progress
 created: 2026-04-16
 tags: [configuration, api, hot-reload, extensions, dynamic]
 ---

@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Security;
 
@@ -22,7 +23,9 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     private const string ApiKeyHeader = "X-Api-Key";
     private const string BearerPrefix = "Bearer ";
 
-    private readonly IReadOnlyDictionary<string, GatewayCallerIdentity> _identitiesByApiKey;
+    private readonly Lock _sync = new();
+    private IReadOnlyDictionary<string, GatewayCallerIdentity> _identitiesByApiKey;
+    private readonly IOptionsMonitor<PlatformConfig>? _platformConfig;
     private readonly ILogger<ApiKeyGatewayAuthHandler> _logger;
 
     /// <summary>
@@ -42,6 +45,7 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     public ApiKeyGatewayAuthHandler(string? apiKey, ILogger<ApiKeyGatewayAuthHandler> logger)
     {
         _logger = logger;
+        _platformConfig = null;
         _identitiesByApiKey = BuildIdentityMap(apiKey, apiKeys: null);
     }
 
@@ -54,7 +58,25 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     {
         ArgumentNullException.ThrowIfNull(platformConfig);
         _logger = logger;
+        _platformConfig = null;
         _identitiesByApiKey = BuildIdentityMap(platformConfig.ApiKey, platformConfig.Gateway?.ApiKeys);
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ApiKeyGatewayAuthHandler"/> class.
+    /// </summary>
+    /// <param name="platformConfig">Platform config monitor.</param>
+    /// <param name="logger">Logger instance.</param>
+    public ApiKeyGatewayAuthHandler(
+        IOptionsMonitor<PlatformConfig> platformConfig,
+        ILogger<ApiKeyGatewayAuthHandler> logger)
+    {
+        ArgumentNullException.ThrowIfNull(platformConfig);
+        _logger = logger;
+        _platformConfig = platformConfig;
+        _identitiesByApiKey = BuildIdentityMap(
+            platformConfig.CurrentValue.ApiKey,
+            platformConfig.CurrentValue.Gateway?.ApiKeys);
     }
 
     /// <inheritdoc />
@@ -66,8 +88,9 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var identitiesByApiKey = GetIdentityMap();
 
-        if (_identitiesByApiKey.Count == 0)
+        if (identitiesByApiKey.Count == 0)
         {
             _logger.LogDebug("Gateway auth is running in development mode: no API key configured.");
             return Task.FromResult(GatewayAuthResult.Success(new GatewayCallerIdentity
@@ -84,7 +107,7 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
         if (presentedKey is null)
             return Task.FromResult(GatewayAuthResult.Failure("Missing API key. Provide X-Api-Key or Authorization: Bearer <key>."));
 
-        if (!_identitiesByApiKey.TryGetValue(presentedKey, out var identity))
+        if (!identitiesByApiKey.TryGetValue(presentedKey, out var identity))
             return Task.FromResult(GatewayAuthResult.Failure("Invalid API key."));
 
         return Task.FromResult(GatewayAuthResult.Success(identity));
@@ -135,6 +158,21 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
         }
 
         return map;
+    }
+
+    private IReadOnlyDictionary<string, GatewayCallerIdentity> GetIdentityMap()
+    {
+        if (_platformConfig is null)
+            return _identitiesByApiKey;
+
+        var currentConfig = _platformConfig.CurrentValue;
+        var rebuilt = BuildIdentityMap(currentConfig.ApiKey, currentConfig.Gateway?.ApiKeys);
+
+        lock (_sync)
+        {
+            _identitiesByApiKey = rebuilt;
+            return _identitiesByApiKey;
+        }
     }
 
     private static string? ExtractApiKey(IReadOnlyDictionary<string, string> headers)

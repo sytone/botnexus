@@ -44,7 +44,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
     private readonly IActivityBroadcaster _activity;
     private readonly IChannelManager _channelManager;
     private readonly ISessionCompactor _compactor;
-    private readonly IOptions<CompactionOptions> _compactionOptions;
+    private readonly IOptionsMonitor<CompactionOptions> _compactionOptions;
     private readonly ILogger<GatewayHost> _logger;
     private readonly IMediaPipeline? _mediaPipeline;
     private readonly SessionLifecycleEvents? _sessionLifecycleEvents;
@@ -57,7 +57,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         IActivityBroadcaster activity,
         IChannelManager channelManager,
         ISessionCompactor compactor,
-        IOptions<CompactionOptions> compactionOptions,
+        IOptionsMonitor<CompactionOptions> compactionOptions,
         ILogger<GatewayHost> logger,
         int sessionQueueCapacity = DefaultSessionQueueCapacity,
         SessionLifecycleEvents? sessionLifecycleEvents = null,
@@ -319,12 +319,12 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 OriginalContentParts = originalParts,
                 ProcessedContentParts = processedParts
             });
-            if (_compactor.ShouldCompact(session.Session, _compactionOptions.Value))
+            if (_compactor.ShouldCompact(session.Session, _compactionOptions.CurrentValue))
             {
                 _logger.LogInformation("Auto-compacting session {SessionId}", sessionId);
                 try
                 {
-                    var result = await _compactor.CompactAsync(session.Session, _compactionOptions.Value, cancellationToken);
+                    var result = await _compactor.CompactAsync(session.Session, _compactionOptions.CurrentValue, cancellationToken);
                     await _sessions.SaveAsync(session, cancellationToken);
                     _logger.LogInformation(
                         "Session {SessionId} compacted: {Summarized} entries summarized, {Preserved} preserved",
@@ -574,7 +574,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         string sessionId,
         CancellationToken cancellationToken)
     {
-        var result = await _compactor.CompactAsync(session.Session, _compactionOptions.Value, cancellationToken);
+        var result = await _compactor.CompactAsync(session.Session, _compactionOptions.CurrentValue, cancellationToken);
         await _sessions.SaveAsync(session, cancellationToken);
 
         var feedback = $"Session compacted: {result.EntriesSummarized} entries summarized, {result.EntriesPreserved} preserved.";

@@ -17,7 +17,7 @@ public sealed class McpSecurityTests
     {
         config ??= new PlatformConfig();
         return new DefaultToolPolicyProvider(
-            Options.Create(config),
+            new StaticOptionsMonitor<PlatformConfig>(config),
             NullLogger<DefaultToolPolicyProvider>.Instance);
     }
 
@@ -281,5 +281,14 @@ public sealed class McpSecurityTests
         provider.RegisterMcpServerId("github");
 
         provider.McpServerIds.Should().HaveCount(1);
+    }
+
+    private sealed class StaticOptionsMonitor<TOptions>(TOptions currentValue) : IOptionsMonitor<TOptions>
+    {
+        public TOptions CurrentValue { get; } = currentValue;
+
+        public TOptions Get(string? name) => CurrentValue;
+
+        public IDisposable? OnChange(Action<TOptions, string?> listener) => null;
     }
 }

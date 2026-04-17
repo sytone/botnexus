@@ -188,7 +188,7 @@ public sealed class DefaultAgentCommunicatorTests
         communicator = new DefaultAgentCommunicator(
             registry.Object,
             supervisor.Object,
-            Options.Create(new GatewayOptions { MaxCallChainDepth = 1 }),
+            new TestOptionsMonitor<GatewayOptions>(new GatewayOptions { MaxCallChainDepth = 1 }),
             NullLogger<DefaultAgentCommunicator>.Instance);
 
         var act = () => communicator.CallCrossAgentAsync("agent-a", string.Empty, "agent-b", "hello");
@@ -219,7 +219,7 @@ public sealed class DefaultAgentCommunicatorTests
         communicator = new DefaultAgentCommunicator(
             registry.Object,
             supervisor.Object,
-            Options.Create(new GatewayOptions { MaxCallChainDepth = 2 }),
+            new TestOptionsMonitor<GatewayOptions>(new GatewayOptions { MaxCallChainDepth = 2 }),
             NullLogger<DefaultAgentCommunicator>.Instance);
 
         var result = await communicator.CallCrossAgentAsync("agent-a", string.Empty, "agent-b", "hello");
@@ -249,7 +249,7 @@ public sealed class DefaultAgentCommunicatorTests
         communicator = new DefaultAgentCommunicator(
             registry.Object,
             supervisor.Object,
-            Options.Create(new GatewayOptions { MaxCallChainDepth = 1 }),
+            new TestOptionsMonitor<GatewayOptions>(new GatewayOptions { MaxCallChainDepth = 1 }),
             NullLogger<DefaultAgentCommunicator>.Instance);
 
         var overDepth = () => communicator.CallCrossAgentAsync("agent-a", string.Empty, "agent-b", "first");
@@ -280,7 +280,7 @@ public sealed class DefaultAgentCommunicatorTests
         var communicator = new DefaultAgentCommunicator(
             registry.Object,
             supervisor.Object,
-            Options.Create(new GatewayOptions { CrossAgentTimeoutSeconds = 1 }),
+            new TestOptionsMonitor<GatewayOptions>(new GatewayOptions { CrossAgentTimeoutSeconds = 1 }),
             NullLogger<DefaultAgentCommunicator>.Instance);
 
         var act = () => communicator.CallCrossAgentAsync("source-agent", string.Empty, "target-agent", "hello");
@@ -306,7 +306,7 @@ public sealed class DefaultAgentCommunicatorTests
         var communicator = new DefaultAgentCommunicator(
             registry.Object,
             supervisor.Object,
-            Options.Create(new GatewayOptions { CrossAgentTimeoutSeconds = 5 }),
+            new TestOptionsMonitor<GatewayOptions>(new GatewayOptions { CrossAgentTimeoutSeconds = 5 }),
             NullLogger<DefaultAgentCommunicator>.Instance);
 
         var response = await communicator.CallCrossAgentAsync("source-agent", string.Empty, "target-agent", "hello");
@@ -345,7 +345,7 @@ public sealed class DefaultAgentCommunicatorTests
         var communicator = new DefaultAgentCommunicator(
             registry.Object,
             supervisor.Object,
-            Options.Create(new GatewayOptions { CrossAgentTimeoutSeconds = 30 }),
+            new TestOptionsMonitor<GatewayOptions>(new GatewayOptions { CrossAgentTimeoutSeconds = 30 }),
             NullLogger<DefaultAgentCommunicator>.Instance);
 
         using var cts = new CancellationTokenSource();

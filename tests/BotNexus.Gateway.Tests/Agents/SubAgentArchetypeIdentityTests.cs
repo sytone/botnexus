@@ -58,7 +58,7 @@ public sealed class SubAgentArchetypeIdentityTests
             registry.Object,
             Mock.Of<IActivityBroadcaster>(),
             Mock.Of<IChannelDispatcher>(),
-            Options.Create(new GatewayOptions()),
+            new TestOptionsMonitor<GatewayOptions>(new GatewayOptions()),
             NullLogger<DefaultSubAgentManager>.Instance);
 
         var info = await manager.SpawnAsync(new SubAgentSpawnRequest
@@ -117,7 +117,7 @@ public sealed class SubAgentArchetypeIdentityTests
             registry.Object,
             Mock.Of<IActivityBroadcaster>(),
             Mock.Of<IChannelDispatcher>(),
-            Options.Create(new GatewayOptions()),
+            new TestOptionsMonitor<GatewayOptions>(new GatewayOptions()),
             NullLogger<DefaultSubAgentManager>.Instance);
 
         var info = await manager.SpawnAsync(new SubAgentSpawnRequest

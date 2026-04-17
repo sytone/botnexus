@@ -30,7 +30,7 @@ public sealed class GatewayHub : Hub
     private readonly IActivityBroadcaster _activity;
     private readonly ISessionCompactor _compactor;
     private readonly ISessionWarmupService _warmup;
-    private readonly IOptions<CompactionOptions> _compactionOptions;
+    private readonly IOptionsMonitor<CompactionOptions> _compactionOptions;
     private readonly ILogger<GatewayHub> _logger;
 
     public GatewayHub(
@@ -41,7 +41,7 @@ public sealed class GatewayHub : Hub
         IActivityBroadcaster activity,
         ISessionCompactor compactor,
         ISessionWarmupService warmup,
-        IOptions<CompactionOptions> compactionOptions,
+        IOptionsMonitor<CompactionOptions> compactionOptions,
         ILogger<GatewayHub> logger)
     {
         _supervisor = supervisor;
@@ -409,7 +409,7 @@ public sealed class GatewayHub : Hub
 
         var requestServices = Context.GetHttpContext()?.RequestServices;
         var compactor = requestServices?.GetService<ISessionCompactor>() ?? _compactor;
-        var options = requestServices?.GetService<IOptions<CompactionOptions>>()?.Value ?? _compactionOptions.Value;
+        var options = requestServices?.GetService<IOptionsMonitor<CompactionOptions>>()?.CurrentValue ?? _compactionOptions.CurrentValue;
 
         var result = await compactor.CompactAsync(session.Session, options, CancellationToken.None);
         await _sessions.SaveAsync(session, CancellationToken.None);

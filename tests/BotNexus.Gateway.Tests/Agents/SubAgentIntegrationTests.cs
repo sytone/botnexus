@@ -118,7 +118,7 @@ public sealed class SubAgentIntegrationTests
             registry,
             new Mock<IActivityBroadcaster>().Object,
             new Mock<IChannelDispatcher>().Object,
-            Options.Create(options ?? new GatewayOptions()),
+            new TestOptionsMonitor<GatewayOptions>(options ?? new GatewayOptions()),
             NullLogger<DefaultSubAgentManager>.Instance);
 
     private static SubAgentSpawnRequest CreateSpawnRequest()

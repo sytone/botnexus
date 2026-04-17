@@ -752,7 +752,7 @@ public sealed class GatewayHostTests
             new RecordingActivityBroadcaster(),
             manager.Object,
             Mock.Of<ISessionCompactor>(),
-            Options.Create(new CompactionOptions()),
+            new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
             NullLogger<GatewayHost>.Instance);
 
         await host.StartAsync(CancellationToken.None);
@@ -807,7 +807,7 @@ public sealed class GatewayHostTests
         IChannelManager channelManager,
         int sessionQueueCapacity = 64,
         ISessionCompactor? compactor = null,
-        IOptions<CompactionOptions>? compactionOptions = null)
+        IOptionsMonitor<CompactionOptions>? compactionOptions = null)
         => new(
             supervisor,
             router,
@@ -815,7 +815,7 @@ public sealed class GatewayHostTests
             activity,
             channelManager,
             compactor ?? Mock.Of<ISessionCompactor>(),
-            compactionOptions ?? Options.Create(new CompactionOptions()),
+            compactionOptions ?? new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
             NullLogger<GatewayHost>.Instance,
             sessionQueueCapacity);
 

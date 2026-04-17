@@ -83,7 +83,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         };
 
         var source = new PlatformConfigAgentSource(
-            Options.Create(config),
+            new TestOptionsMonitor<PlatformConfig>(config),
             _configDirectory,
             new ListLogger<PlatformConfigAgentSource>());
 
@@ -127,7 +127,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
             }
         };
 
-        var source = new PlatformConfigAgentSource(Options.Create(config), _configDirectory, new ListLogger<PlatformConfigAgentSource>());
+        var source = new PlatformConfigAgentSource(new TestOptionsMonitor<PlatformConfig>(config), _configDirectory, new ListLogger<PlatformConfigAgentSource>());
 
         var descriptor = (await source.LoadAsync()).Should().ContainSingle().Subject;
 
@@ -159,7 +159,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
             """)!;
 
         var source = new PlatformConfigAgentSource(
-            Options.Create(config),
+            new TestOptionsMonitor<PlatformConfig>(config),
             _configDirectory,
             new ListLogger<PlatformConfigAgentSource>());
 
@@ -196,7 +196,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
             """)!;
 
         var source = new PlatformConfigAgentSource(
-            Options.Create(config),
+            new TestOptionsMonitor<PlatformConfig>(config),
             _configDirectory,
             new ListLogger<PlatformConfigAgentSource>());
 
@@ -227,7 +227,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
             }
         };
 
-        var source = new PlatformConfigAgentSource(Options.Create(config), _configDirectory, new ListLogger<PlatformConfigAgentSource>());
+        var source = new PlatformConfigAgentSource(new TestOptionsMonitor<PlatformConfig>(config), _configDirectory, new ListLogger<PlatformConfigAgentSource>());
 
         var descriptor = (await source.LoadAsync()).Should().ContainSingle().Subject;
 
@@ -257,7 +257,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         };
 
         var source = new PlatformConfigAgentSource(
-            Options.Create(config),
+            new TestOptionsMonitor<PlatformConfig>(config),
             _configDirectory,
             new ListLogger<PlatformConfigAgentSource>(),
             new StubLocationResolver(new Dictionary<string, string>
@@ -291,7 +291,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         };
 
         var source = new PlatformConfigAgentSource(
-            Options.Create(config),
+            new TestOptionsMonitor<PlatformConfig>(config),
             _configDirectory,
             new ListLogger<PlatformConfigAgentSource>(),
             new StubLocationResolver(new Dictionary<string, string>
@@ -326,7 +326,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         };
 
         var source = new PlatformConfigAgentSource(
-            Options.Create(config),
+            new TestOptionsMonitor<PlatformConfig>(config),
             _configDirectory,
             logger,
             new StubLocationResolver(new Dictionary<string, string>()));
@@ -362,7 +362,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         };
 
         var source = new PlatformConfigAgentSource(
-            Options.Create(config),
+            new TestOptionsMonitor<PlatformConfig>(config),
             _configDirectory,
             new ListLogger<PlatformConfigAgentSource>(),
             new StubLocationResolver(new Dictionary<string, string>
@@ -386,7 +386,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
     public async Task PlatformConfigAgentSource_LoadsAgents_ThatInProcessIsolationCanCreate()
     {
         var source = new PlatformConfigAgentSource(
-            Options.Create(new PlatformConfig
+            new TestOptionsMonitor<PlatformConfig>(new PlatformConfig
             {
                 Agents = new Dictionary<string, AgentDefinitionConfig>
                 {
@@ -440,7 +440,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
     public async Task PlatformConfigAgentSource_FileAccessPolicy_FlowsToPathValidator()
     {
         var source = new PlatformConfigAgentSource(
-            Options.Create(new PlatformConfig
+            new TestOptionsMonitor<PlatformConfig>(new PlatformConfig
             {
                 Agents = new Dictionary<string, AgentDefinitionConfig>
                 {
@@ -506,7 +506,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
     public void Watch_ReturnsSubscription()
     {
         var source = new PlatformConfigAgentSource(
-            Options.Create(new PlatformConfig()),
+            new TestOptionsMonitor<PlatformConfig>(new PlatformConfig()),
             _configDirectory,
             new ListLogger<PlatformConfigAgentSource>());
 

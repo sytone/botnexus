@@ -200,7 +200,7 @@ public sealed class CopilotIntegrationTests
                 activity,
                 channels.Object,
                 Mock.Of<ISessionCompactor>(),
-                Options.Create(new CompactionOptions()),
+            new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
                 NullLogger<GatewayHost>.Instance),
             channel,
             sessions,

@@ -173,7 +173,7 @@ public sealed class StreamingPipelineTests
             activity,
             channelManager.Object,
             Mock.Of<ISessionCompactor>(),
-            Options.Create(new CompactionOptions()),
+            new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
             NullLogger<GatewayHost>.Instance);
     }
 
@@ -233,6 +233,5 @@ public sealed class StreamingPipelineTests
         }
     }
 }
-
 
 

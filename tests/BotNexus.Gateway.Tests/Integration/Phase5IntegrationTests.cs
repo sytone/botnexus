@@ -170,7 +170,7 @@ public sealed class Phase5IntegrationTests
             activity,
             manager.Object,
             Mock.Of<ISessionCompactor>(),
-            Options.Create(new CompactionOptions()),
+                new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
             NullLogger<GatewayHost>.Instance);
 
         await host.DispatchAsync(new InboundMessage

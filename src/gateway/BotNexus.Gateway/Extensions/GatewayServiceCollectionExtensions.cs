@@ -75,7 +75,7 @@ public static class GatewayServiceCollectionExtensions
             var compactionSection = config.GetSection("gateway:compaction");
             if (compactionSection.Exists())
             {
-                services.AddSingleton<IOptions<CompactionOptions>>(_ => Options.Create(new CompactionOptions
+                var configuredCompaction = new CompactionOptions
                 {
                     PreservedTurns = ParseInt(compactionSection["preservedTurns"], new CompactionOptions().PreservedTurns),
                     MaxSummaryChars = ParseInt(compactionSection["maxSummaryChars"], new CompactionOptions().MaxSummaryChars),
@@ -83,7 +83,10 @@ public static class GatewayServiceCollectionExtensions
                     ContextWindowTokens = ParseInt(compactionSection["contextWindowTokens"], new CompactionOptions().ContextWindowTokens),
                     SummarizationModel = ParseString(compactionSection["summarizationModel"], new CompactionOptions().SummarizationModel),
                     SummarizationProvider = ParseString(compactionSection["summarizationProvider"], new CompactionOptions().SummarizationProvider)
-                }));
+                };
+                services.AddSingleton<IOptions<CompactionOptions>>(_ => Options.Create(configuredCompaction));
+                services.Replace(ServiceDescriptor.Singleton<IOptionsMonitor<CompactionOptions>>(
+                    _ => new StaticOptionsMonitor<CompactionOptions>(configuredCompaction)));
             }
         }
 
@@ -214,18 +217,26 @@ public static class GatewayServiceCollectionExtensions
         PlatformConfigLoader.EnsureConfigDirectory(configDirectory, fileSystem);
         var config = PlatformConfigLoader.Load(resolvedConfigPath, fileSystem: fileSystem);
         services.AddOptions<PlatformConfig>()
-            .Configure(options => ApplyPlatformConfig(options, config));
+            .Configure(options =>
+            {
+                var freshConfig = PlatformConfigLoader.Load(resolvedConfigPath, fileSystem: fileSystem);
+                ApplyPlatformConfig(options, freshConfig);
+            });
+        services.AddSingleton<IOptionsChangeTokenSource<PlatformConfig>>(
+            new PlatformConfigChangeTokenSource(resolvedConfigPath, fileSystem));
+        // Start file watcher for dynamic config reload
+        _ = PlatformConfigLoader.Watch(resolvedConfigPath, fileSystem: fileSystem);
         services.Replace(ServiceDescriptor.Singleton(serviceProvider =>
-            serviceProvider.GetRequiredService<IOptions<PlatformConfig>>().Value));
+            serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue));
         services.TryAddSingleton<GatewayAuthManager>();
         services.TryAddSingleton<ILocationResolver>(serviceProvider =>
             new DefaultLocationResolver(
-                serviceProvider.GetRequiredService<IOptions<PlatformConfig>>().Value,
+                serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue,
                 serviceProvider.GetService<IAgentRegistry>(),
                 serviceProvider.GetServices<IIsolationStrategy>()));
         services.Replace(ServiceDescriptor.Singleton<IGatewayAuthHandler>(serviceProvider =>
             new ApiKeyGatewayAuthHandler(
-                serviceProvider.GetRequiredService<IOptions<PlatformConfig>>().Value,
+                serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>(),
                 serviceProvider.GetRequiredService<ILogger<ApiKeyGatewayAuthHandler>>())));
 
         var defaultAgentId = config.Gateway?.DefaultAgentId;
@@ -236,6 +247,8 @@ public static class GatewayServiceCollectionExtensions
         if (config.Gateway?.Compaction is { } compaction)
         {
             services.AddSingleton<IOptions<CompactionOptions>>(_ => Options.Create(compaction));
+            services.Replace(ServiceDescriptor.Singleton<IOptionsMonitor<CompactionOptions>>(
+                _ => new StaticOptionsMonitor<CompactionOptions>(compaction)));
         }
 
         ConfigureSessionStore(services, config, configDirectory);
@@ -250,7 +263,7 @@ public static class GatewayServiceCollectionExtensions
 
         services.AddSingleton<IAgentConfigurationSource>(serviceProvider =>
             new PlatformConfigAgentSource(
-                serviceProvider.GetRequiredService<IOptions<PlatformConfig>>(),
+                serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>(),
                 configDirectory,
                 serviceProvider.GetRequiredService<ILogger<PlatformConfigAgentSource>>(),
                 serviceProvider.GetRequiredService<ILocationResolver>()));
@@ -259,6 +272,7 @@ public static class GatewayServiceCollectionExtensions
             var home = serviceProvider.GetRequiredService<BotNexusHome>();
             return new PlatformConfigAgentWriter(resolvedConfigPath, home, serviceProvider.GetRequiredService<IFileSystem>());
         }));
+        services.AddSingleton(new PlatformConfigWriter(resolvedConfigPath, fileSystem));
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
 
         return services;
@@ -289,6 +303,15 @@ public static class GatewayServiceCollectionExtensions
 
     private static string? ParseString(string? value, string? defaultValue)
         => string.IsNullOrWhiteSpace(value) ? defaultValue : value;
+
+    private sealed class StaticOptionsMonitor<TOptions>(TOptions currentValue) : IOptionsMonitor<TOptions>
+    {
+        public TOptions CurrentValue { get; } = currentValue;
+
+        public TOptions Get(string? name) => CurrentValue;
+
+        public IDisposable? OnChange(Action<TOptions, string?> listener) => null;
+    }
 
     private static void ConfigureSessionStore(IServiceCollection services, PlatformConfig config, string configDirectory)
     {

@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Configuration;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using System.Text.Json.Nodes;
 
 namespace BotNexus.Gateway.Api.Controllers;
 
@@ -14,6 +15,86 @@ namespace BotNexus.Gateway.Api.Controllers;
 [Route("api/config")]
 public sealed class ConfigController : ControllerBase
 {
+    /// <summary>
+    /// Get the full platform configuration (secrets redacted).
+    /// </summary>
+    [HttpGet]
+    public async Task<ActionResult<JsonObject>> GetConfig(
+        [FromServices] PlatformConfigWriter writer,
+        CancellationToken ct)
+    {
+        var config = await writer.ReadAsync(ct);
+        RedactSecrets(config);
+        return Ok(config);
+    }
+
+    /// <summary>
+    /// Get a specific config section.
+    /// </summary>
+    [HttpGet("{section}")]
+    public async Task<ActionResult<JsonNode?>> GetSection(
+        string section,
+        [FromServices] PlatformConfigWriter writer,
+        CancellationToken ct)
+    {
+        var config = await writer.ReadAsync(ct);
+        if (!config.ContainsKey(section))
+            return NotFound();
+
+        var sectionNode = config[section]?.DeepClone();
+        if (section.Equals("providers", StringComparison.OrdinalIgnoreCase) && sectionNode is JsonObject providers)
+            RedactProviderSecrets(providers);
+
+        return Ok(sectionNode);
+    }
+
+    /// <summary>
+    /// Update a config section.
+    /// </summary>
+    [HttpPut("{section}")]
+    public async Task<ActionResult> UpdateSection(
+        string section,
+        [FromBody] JsonNode value,
+        [FromServices] PlatformConfigWriter writer,
+        CancellationToken ct)
+    {
+        // Prevent updating agents via this endpoint (use /api/agents instead)
+        if (section.Equals("agents", StringComparison.OrdinalIgnoreCase))
+            return BadRequest("Use /api/agents for agent management.");
+
+        await writer.UpdateSectionAsync(section, value, ct);
+        return Ok(new { message = $"Section '{section}' updated. Changes will be applied automatically." });
+    }
+
+    /// <summary>
+    /// Update a specific entry within a config section (e.g., a single provider).
+    /// </summary>
+    [HttpPut("{section}/{key}")]
+    public async Task<ActionResult> UpdateSectionEntry(
+        string section,
+        string key,
+        [FromBody] JsonNode value,
+        [FromServices] PlatformConfigWriter writer,
+        CancellationToken ct)
+    {
+        await writer.UpdateSectionEntryAsync(section, key, value, ct);
+        return Ok(new { message = $"Entry '{key}' in section '{section}' updated." });
+    }
+
+    /// <summary>
+    /// Delete an entry from a config section.
+    /// </summary>
+    [HttpDelete("{section}/{key}")]
+    public async Task<ActionResult> DeleteSectionEntry(
+        string section,
+        string key,
+        [FromServices] PlatformConfigWriter writer,
+        CancellationToken ct)
+    {
+        await writer.RemoveSectionEntryAsync(section, key, ct);
+        return Ok(new { message = $"Entry '{key}' removed from section '{section}'." });
+    }
+
     /// <summary>
     /// Validates the platform configuration file and returns any errors.
     /// </summary>
@@ -54,6 +135,23 @@ public sealed class ConfigController : ControllerBase
                 .OrderBy(error => error, StringComparer.Ordinal)
                 .ToArray();
             return Ok(new ConfigValidationResponse(false, resolvedPath, [], errors));
+        }
+    }
+
+    private static void RedactSecrets(JsonObject config)
+    {
+        if (config["providers"] is JsonObject providers)
+            RedactProviderSecrets(providers);
+        if (config["apiKey"] is JsonValue)
+            config["apiKey"] = "***";
+    }
+
+    private static void RedactProviderSecrets(JsonObject providers)
+    {
+        foreach (var (_, providerNode) in providers)
+        {
+            if (providerNode is JsonObject provider && provider.ContainsKey("apiKey"))
+                provider["apiKey"] = "***";
         }
     }
 }
