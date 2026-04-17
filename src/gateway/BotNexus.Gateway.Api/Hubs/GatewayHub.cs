@@ -176,7 +176,7 @@ public sealed class GatewayHub : Hub
             typedAgentId, typedChannelType, session.SessionId, Context.ConnectionId, content.Length > 50 ? content[..50] + "..." : content);
 
         _ = SafeDispatchAsync(
-            () => DispatchMessageAsync(typedAgentId, session.SessionId, content, "message"),
+            () => DispatchMessageAsync(typedAgentId, session.SessionId, content, "message", Context.ConnectionId),
             typedAgentId,
             session.SessionId);
 
@@ -213,6 +213,7 @@ public sealed class GatewayHub : Hub
             "Hub SendMessageWithMedia: agent={AgentId} channel={ChannelType} session={SessionId} parts={PartCount}",
             typedAgentId, typedChannelType, session.SessionId, contentParts.Count);
 
+        var connectionId = Context.ConnectionId;
         var parts = contentParts.Select(ConvertToDomainContentPart).ToList();
 
         _ = SafeDispatchAsync(
@@ -220,7 +221,7 @@ public sealed class GatewayHub : Hub
                 new InboundMessage
                 {
                     ChannelType = ChannelKey.From("signalr"),
-                    SenderId = Context.ConnectionId,
+                    SenderId = connectionId,
                     ConversationId = session.SessionId.Value,
                     SessionId = session.SessionId.Value,
                     TargetAgentId = typedAgentId.Value,
@@ -240,12 +241,12 @@ public sealed class GatewayHub : Hub
         };
     }
 
-    private Task DispatchMessageAsync(AgentId typedAgentId, SessionId typedSessionId, string content, string messageType)
+    private Task DispatchMessageAsync(AgentId typedAgentId, SessionId typedSessionId, string content, string messageType, string senderId)
         => _dispatcher.DispatchAsync(
             new InboundMessage
             {
                 ChannelType = ChannelKey.From("signalr"),
-                SenderId = Context.ConnectionId,
+                SenderId = senderId,
                 ConversationId = typedSessionId.Value,
                 SessionId = typedSessionId.Value,
                 TargetAgentId = typedAgentId.Value,
@@ -318,13 +319,14 @@ public sealed class GatewayHub : Hub
     {
         var typedAgentId = NormalizeAgentId(agentId);
         var typedSessionId = NormalizeSessionId(sessionId);
+        var connectionId = Context.ConnectionId;
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
         _ = SafeDispatchAsync(
             () => _dispatcher.DispatchAsync(
                 new InboundMessage
                 {
                     ChannelType = ChannelKey.From("signalr"),
-                    SenderId = Context.ConnectionId,
+                    SenderId = connectionId,
                     ConversationId = typedSessionId.Value,
                     SessionId = typedSessionId.Value,
                     TargetAgentId = typedAgentId.Value,
@@ -352,9 +354,10 @@ public sealed class GatewayHub : Hub
     {
         var typedAgentId = NormalizeAgentId(agentId);
         var typedSessionId = NormalizeSessionId(sessionId);
+        var connectionId = Context.ConnectionId;
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
         _ = SafeDispatchAsync(
-            () => DispatchMessageAsync(typedAgentId, typedSessionId, content, "message"),
+            () => DispatchMessageAsync(typedAgentId, typedSessionId, content, "message", connectionId),
             typedAgentId,
             typedSessionId);
         return Task.CompletedTask;
