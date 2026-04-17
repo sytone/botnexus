@@ -173,11 +173,12 @@ public sealed class GatewayHub : Hub
         var session = await ResolveOrCreateSessionAsync(typedAgentId, typedChannelType);
         await SubscribeInternalAsync(session.SessionId);
 
+        var connectionId = Context.ConnectionId;
         _logger.LogInformation("Hub SendMessage: agent={AgentId} channel={ChannelType} session={SessionId} connection={ConnectionId} content={Content}",
-            typedAgentId, typedChannelType, session.SessionId, Context.ConnectionId, content.Length > 50 ? content[..50] + "..." : content);
+            typedAgentId, typedChannelType, session.SessionId, connectionId, content.Length > 50 ? content[..50] + "..." : content);
 
         _ = SafeDispatchAsync(
-            () => DispatchMessageAsync(typedAgentId, session.SessionId, content, "message", Context.ConnectionId),
+            () => DispatchMessageAsync(typedAgentId, session.SessionId, content, "message", connectionId),
             typedAgentId,
             session.SessionId);
 

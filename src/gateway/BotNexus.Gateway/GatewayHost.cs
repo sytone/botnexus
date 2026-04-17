@@ -365,8 +365,14 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                             IncludeErrorsInHistory: true,
                             OnEventAsync: (evt, ct) =>
                             {
+                                // Enrich with agentId so the client can route events
+                                // even before session registration completes.
+                                var enriched = evt.AgentId is null
+                                    ? evt with { AgentId = Domain.Primitives.AgentId.From(agentId) }
+                                    : evt;
+
                                 if (channel is IStreamEventChannelAdapter streamEventChannel)
-                                    return new ValueTask(streamEventChannel.SendStreamEventAsync(message.ConversationId, evt, ct));
+                                    return new ValueTask(streamEventChannel.SendStreamEventAsync(message.ConversationId, enriched, ct));
 
                                 if (evt.Type == AgentStreamEventType.ContentDelta && evt.ContentDelta is not null)
                                     return new ValueTask(channel.SendStreamDeltaAsync(message.ConversationId, evt.ContentDelta, ct));

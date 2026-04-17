@@ -146,21 +146,25 @@ export class ChannelManager {
     routeEvent(evt) {
         const sessionId = evt?.sessionId;
         if (!sessionId) {
-            console.warn('routeEvent: event missing sessionId, dropping', evt);
+            console.warn('[routeEvent] event missing sessionId, dropping', evt?.type, evt);
             return { ctx: null, isActive: false };
         }
 
         // Try session index first
         let ctx = this.#sessionIndex.get(sessionId);
         if (!ctx) {
-            const agentId = evt?.agentId || evt?.targetAgentId || this.#selectedAgentId;
-            const channelType = evt?.channelType || this.active?.channelType;
-            if (agentId && channelType) {
+            // Prefer agentId from the event payload (set by server) over the
+            // currently selected agent. Falling back to #selectedAgentId would
+            // misroute events when the user has switched tabs.
+            const agentId = evt?.agentId || evt?.targetAgentId;
+            const channelType = evt?.channelType || 'web';
+            if (agentId) {
                 ctx = this.getOrCreate(agentId, channelType);
                 this.registerSession(sessionId, ctx);
+                console.debug(`[routeEvent] auto-registered session ${sessionId.substring(0, 8)}… → ${ctx.key}`);
             } else {
-                console.warn('routeEvent: unknown session and no agent context to create one', sessionId, evt);
-                serverLog('warn', 'routeEvent dropped — unknown session', { sessionId, eventType: evt?.type });
+                console.warn(`[routeEvent] unknown session ${sessionId.substring(0, 8)}… — no agentId in event, dropping`, evt?.type);
+                serverLog('warn', 'routeEvent dropped — unknown session, no agentId', { sessionId, eventType: evt?.type });
                 return { ctx: null, isActive: false };
             }
         }

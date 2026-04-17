@@ -90,6 +90,9 @@ public sealed record AgentStreamEvent
     /// <summary>Session identifier for client-side routing verification.</summary>
     public SessionId? SessionId { get; init; }
 
+    /// <summary>Agent identifier for client-side routing when session is not yet registered.</summary>
+    public AgentId? AgentId { get; init; }
+
     /// <summary>When this event was emitted.</summary>
     public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
 }
