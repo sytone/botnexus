@@ -1,0 +1,64 @@
+{
+  "name": "Concurrent Agents — Tool Execution Does Not Block Other Agents",
+  "description": "Agent A runs tools (slow), Agent B should respond immediately without waiting for A to finish",
+  "timeout_seconds": 60,
+  "agents": [
+    {
+      "id": "test-tooluser",
+      "display_name": "Tool User",
+      "model": "gpt-4.1",
+      "provider": "github-copilot",
+      "system_prompt": "When the user says 'search', use the bash tool to run: echo 'searching...' && sleep 3 && echo 'done searching'. Always use tools when asked to search. Never refuse tool use."
+    },
+    {
+      "id": "test-quickreply",
+      "display_name": "Quick Reply",
+      "model": "gpt-4.1",
+      "provider": "github-copilot",
+      "system_prompt": "Reply with exactly one word: QUICK. Nothing else. No explanation."
+    }
+  ],
+  "steps": [
+    {
+      "action": "send_message",
+      "agent": "test-tooluser",
+      "content": "search for recent files",
+      "label": "tool-msg"
+    },
+    {
+      "action": "send_message",
+      "agent": "test-quickreply",
+      "content": "hi",
+      "label": "quick-msg"
+    },
+    {
+      "action": "wait_for_event",
+      "type": "ContentDelta",
+      "from_step": "quick-msg",
+      "timeout_seconds": 15
+    },
+    {
+      "action": "wait_for_event",
+      "type": "ToolStart",
+      "from_step": "tool-msg",
+      "timeout_seconds": 15
+    },
+    {
+      "action": "assert_timing",
+      "description": "Quick agent must respond WHILE tool agent is still executing tools",
+      "fast_step": "quick-msg",
+      "slow_step": "tool-msg"
+    },
+    {
+      "action": "wait_for_event",
+      "type": "MessageEnd",
+      "from_step": "tool-msg",
+      "timeout_seconds": 30
+    },
+    {
+      "action": "assert",
+      "condition": "both_responded",
+      "steps": ["tool-msg", "quick-msg"]
+    }
+  ]
+}

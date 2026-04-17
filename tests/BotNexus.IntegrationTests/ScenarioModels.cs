@@ -47,6 +47,11 @@ public class ScenarioStep
     public int ExpectedStatus { get; set; } = 200;
     [JsonPropertyName("expected_contains")]
     public string? ExpectedContains { get; set; }
+    [JsonPropertyName("fast_step")]
+    public string? FastStep { get; set; }
+    [JsonPropertyName("slow_step")]
+    public string? SlowStep { get; set; }
+    public string? Description { get; set; }
 }
 
 public class EventWait

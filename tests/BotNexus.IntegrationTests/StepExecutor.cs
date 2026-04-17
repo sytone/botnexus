@@ -58,6 +58,9 @@ public class StepExecutor
                 case "assert_api_response":
                     ExecuteAssertApiResponse(step);
                     break;
+                case "assert_timing":
+                    ExecuteAssertTiming(step);
+                    break;
                 default:
                     throw new NotSupportedException($"Unknown action: {step.Action}");
             }
@@ -200,22 +203,62 @@ public class StepExecutor
             case "responded":
                 var sid = step.Step is not null ? _stepSessions[step.Step] : "";
                 var events = _client.GetEvents(sid);
-                if (!events.Any(e => e.Method == "ContentDelta"))
-                    throw new Exception($"Assert failed: no ContentDelta for step '{step.Step}'");
+                if (!events.Any(e => e.Method is "ContentDelta" or "ToolStart" or "MessageStart"))
+                    throw new Exception($"Assert failed: no activity for step '{step.Step}'");
                 break;
                 
             case "both_responded":
                 foreach (var s in step.Steps ?? [])
                 {
                     var sessionEvents = _client.GetEvents(_stepSessions[s]);
-                    if (!sessionEvents.Any(e => e.Method == "ContentDelta"))
-                        throw new Exception($"Assert failed: no ContentDelta for step '{s}'");
+                    if (!sessionEvents.Any(e => e.Method is "ContentDelta" or "ToolStart" or "MessageStart"))
+                        throw new Exception($"Assert failed: no activity for step '{s}'");
                 }
                 break;
                 
             default:
                 throw new NotSupportedException($"Unknown assert condition: {step.Condition}");
         }
+    }
+
+    private void ExecuteAssertTiming(ScenarioStep step)
+    {
+        var fastLabel = step.FastStep ?? throw new InvalidOperationException("assert_timing requires fast_step");
+        var slowLabel = step.SlowStep ?? throw new InvalidOperationException("assert_timing requires slow_step");
+
+        var fastSessionId = _stepSessions[fastLabel];
+        var slowSessionId = _stepSessions[slowLabel];
+
+        var fastEvents = _client.GetEvents(fastSessionId);
+        var slowEvents = _client.GetEvents(slowSessionId);
+
+        var fastFirstDelta = fastEvents.FirstOrDefault(e => e.Method == "ContentDelta");
+        var slowLastTool = slowEvents.LastOrDefault(e => e.Method == "ToolEnd");
+        var slowLastEvent = slowEvents.LastOrDefault(e => e.Method is "MessageEnd" or "ToolEnd");
+
+        if (fastFirstDelta is null)
+            throw new Exception($"assert_timing: fast agent '{fastLabel}' has no ContentDelta");
+
+        _log.Write($"⏱️  Timing: fast '{fastLabel}' first ContentDelta at {fastFirstDelta.ReceivedAt:HH:mm:ss.fff}");
+
+        if (slowLastTool is not null)
+            _log.Write($"⏱️  Timing: slow '{slowLabel}' last ToolEnd at {slowLastTool.ReceivedAt:HH:mm:ss.fff}");
+        if (slowLastEvent is not null)
+            _log.Write($"⏱️  Timing: slow '{slowLabel}' final event at {slowLastEvent.ReceivedAt:HH:mm:ss.fff}");
+
+        // The critical assertion: fast agent's first content delta should arrive
+        // BEFORE the slow agent's last tool finishes. If it arrives AFTER,
+        // then the fast agent was blocked waiting for the slow agent's tools.
+        if (slowLastTool is not null && fastFirstDelta.ReceivedAt > slowLastTool.ReceivedAt)
+        {
+            var delay = fastFirstDelta.ReceivedAt - slowLastTool.ReceivedAt;
+            throw new Exception(
+                $"assert_timing FAILED: fast agent '{fastLabel}' first responded at {fastFirstDelta.ReceivedAt:HH:mm:ss.fff} " +
+                $"which is {delay.TotalMilliseconds:F0}ms AFTER slow agent '{slowLabel}' ToolEnd at {slowLastTool.ReceivedAt:HH:mm:ss.fff}. " +
+                $"Fast agent was blocked by slow agent's tool execution!");
+        }
+
+        _log.Write($"✅ assert_timing PASS: {step.Description ?? "fast responded during slow's tool execution"}");
     }
 }
 

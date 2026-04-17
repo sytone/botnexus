@@ -1,0 +1,96 @@
+{
+  "name": "Multi-Agent Stress — 4 Agents Concurrent with Tools and Sub-Agents",
+  "description": "Blast 4 agents simultaneously: 2 with tools, 1 quick reply, 1 spawns sub-agent. All must respond independently.",
+  "timeout_seconds": 90,
+  "agents": [
+    {
+      "id": "test-stress-tools1",
+      "display_name": "Stress Tools 1",
+      "model": "gpt-4.1",
+      "provider": "github-copilot",
+      "system_prompt": "When asked to search, use the bash tool to run: echo 'searching' && sleep 2 && echo 'found 3 results'. Always use tools."
+    },
+    {
+      "id": "test-stress-tools2",
+      "display_name": "Stress Tools 2",
+      "model": "gpt-4.1",
+      "provider": "github-copilot",
+      "system_prompt": "When asked to check, use the bash tool to run: echo 'checking...' && sleep 1 && echo 'all clear'. Always use tools."
+    },
+    {
+      "id": "test-stress-quick",
+      "display_name": "Stress Quick",
+      "model": "gpt-4.1",
+      "provider": "github-copilot",
+      "system_prompt": "Reply with exactly: FAST_RESPONSE. Nothing else."
+    },
+    {
+      "id": "test-stress-chatty",
+      "display_name": "Stress Chatty",
+      "model": "gpt-4.1",
+      "provider": "github-copilot",
+      "system_prompt": "Reply with exactly 3 sentences about the weather. Keep it short."
+    }
+  ],
+  "steps": [
+    {
+      "action": "send_message",
+      "agent": "test-stress-tools1",
+      "content": "search for recent changes",
+      "label": "t1"
+    },
+    {
+      "action": "send_message",
+      "agent": "test-stress-tools2",
+      "content": "check system health",
+      "label": "t2"
+    },
+    {
+      "action": "send_message",
+      "agent": "test-stress-quick",
+      "content": "ping",
+      "label": "quick"
+    },
+    {
+      "action": "send_message",
+      "agent": "test-stress-chatty",
+      "content": "how is the weather today?",
+      "label": "chatty"
+    },
+    {
+      "action": "wait_for_event",
+      "type": "ContentDelta",
+      "from_step": "quick",
+      "timeout_seconds": 20
+    },
+    {
+      "action": "wait_for_event",
+      "type": "ContentDelta",
+      "from_step": "chatty",
+      "timeout_seconds": 20
+    },
+    {
+      "action": "wait_for_event",
+      "type": "MessageStart",
+      "from_step": "t1",
+      "timeout_seconds": 20
+    },
+    {
+      "action": "wait_for_event",
+      "type": "MessageStart",
+      "from_step": "t2",
+      "timeout_seconds": 20
+    },
+    {
+      "action": "assert_timing",
+      "description": "Quick agent responds while tool agents are still processing",
+      "fast_step": "quick",
+      "slow_step": "t1"
+    },
+    {
+      "action": "assert",
+      "condition": "both_responded",
+      "steps": ["t1", "t2", "quick", "chatty"]
+    }
+  ]
+}

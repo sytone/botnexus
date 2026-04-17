@@ -9,8 +9,9 @@ public class ScenarioRunner
 {
     public async Task<int> RunAllAsync(string scenarioDir, string? filter = null)
     {
-        var logPath = Path.Combine(AppContext.BaseDirectory, "integration-test.log");
-        using var log = new TestLogger(logPath);
+        var logDir = Path.Combine(AppContext.BaseDirectory, "logs",
+            $"run-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}");
+        using var log = new TestLogger(logDir);
 
         var scenarios = LoadScenarios(scenarioDir, filter);
         log.Write($"Found {scenarios.Count} scenario(s)");
@@ -57,7 +58,7 @@ public class ScenarioRunner
         Console.WriteLine();
         Console.WriteLine($"Results: {passed} passed, {failed} failed");
         log.Write($"Results: {passed} passed, {failed} failed");
-        Console.WriteLine($"Log: {logPath}");
+        Console.WriteLine($"Logs: {logDir}");
         return failed > 0 ? 1 : 0;
     }
 

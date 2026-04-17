@@ -1,26 +1,41 @@
 namespace BotNexus.IntegrationTests;
 
 /// <summary>
-/// Dual-output logger: writes to both console and a log file for post-run analysis.
+/// Dual-output logger: writes to console + a per-scenario log file.
 /// </summary>
 public sealed class TestLogger : IDisposable
 {
-    private readonly StreamWriter _fileWriter;
+    private readonly string _logDir;
+    private readonly StreamWriter _summaryWriter;
+    private StreamWriter? _scenarioWriter;
     private readonly object _lock = new();
-    private readonly string _logPath;
 
-    public TestLogger(string logPath)
+    public TestLogger(string logDir)
     {
-        _logPath = logPath;
-        var dir = Path.GetDirectoryName(logPath);
-        if (!string.IsNullOrEmpty(dir))
-            Directory.CreateDirectory(dir);
-        _fileWriter = new StreamWriter(logPath, append: false) { AutoFlush = true };
+        _logDir = logDir;
+        Directory.CreateDirectory(logDir);
 
+        var summaryPath = Path.Combine(logDir, "summary.log");
+        _summaryWriter = new StreamWriter(summaryPath, append: false) { AutoFlush = true };
         Write($"=== BotNexus Integration Test Log — {DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm:ss} UTC ===");
     }
 
-    public string LogPath => _logPath;
+    public string LogDir => _logDir;
+
+    /// <summary>
+    /// Start a new per-scenario log file.
+    /// </summary>
+    public void StartScenario(string scenarioName)
+    {
+        lock (_lock)
+        {
+            _scenarioWriter?.Dispose();
+            var safeName = string.Join("_", scenarioName.Split(Path.GetInvalidFileNameChars()));
+            var path = Path.Combine(_logDir, $"{safeName}.log");
+            _scenarioWriter = new StreamWriter(path, append: false) { AutoFlush = true };
+            _scenarioWriter.WriteLine($"=== {scenarioName} — {DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm:ss} UTC ===");
+        }
+    }
 
     public void Write(string message)
     {
@@ -28,7 +43,8 @@ public sealed class TestLogger : IDisposable
         lock (_lock)
         {
             Console.WriteLine($"    {line}");
-            _fileWriter.WriteLine(line);
+            _summaryWriter.WriteLine(line);
+            _scenarioWriter?.WriteLine(line);
         }
     }
 
@@ -39,8 +55,9 @@ public sealed class TestLogger : IDisposable
         {
             var header = $"\n{separator}\n▶ {scenarioName}\n{separator}";
             Console.Write(header);
-            _fileWriter.Write(header);
+            _summaryWriter.Write(header);
         }
+        StartScenario(scenarioName);
     }
 
     public void WriteResult(string scenarioName, bool passed, string? error = null)
@@ -52,22 +69,29 @@ public sealed class TestLogger : IDisposable
                 Console.ForegroundColor = ConsoleColor.Green;
                 Console.WriteLine(" PASS");
                 Console.ResetColor();
-                _fileWriter.WriteLine($" PASS");
+                _summaryWriter.WriteLine($" PASS");
+                _scenarioWriter?.WriteLine($"RESULT: PASS");
             }
             else
             {
                 Console.ForegroundColor = ConsoleColor.Red;
                 Console.WriteLine(" FAIL");
                 Console.ResetColor();
-                _fileWriter.WriteLine($" FAIL");
+                _summaryWriter.WriteLine($" FAIL");
+                _scenarioWriter?.WriteLine($"RESULT: FAIL");
                 if (error is not null)
                 {
                     Console.WriteLine($"    ❌ {error}");
-                    _fileWriter.WriteLine($"    ❌ {error}");
+                    _summaryWriter.WriteLine($"    ❌ {error}");
+                    _scenarioWriter?.WriteLine($"ERROR: {error}");
                 }
             }
         }
     }
 
-    public void Dispose() => _fileWriter.Dispose();
+    public void Dispose()
+    {
+        _scenarioWriter?.Dispose();
+        _summaryWriter.Dispose();
+    }
 }
