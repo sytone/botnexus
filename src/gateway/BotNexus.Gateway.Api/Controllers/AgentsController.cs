@@ -209,11 +209,10 @@ public sealed class AgentsController : ControllerBase
     /// Debug: lists the tools available to a running agent instance.
     /// </summary>
     [HttpGet("{agentId}/sessions/{sessionId}/tools")]
-    public ActionResult GetInstanceTools(string agentId, string sessionId,
-        [FromServices] IAgentHandleInspector? inspector = null)
+    public ActionResult GetInstanceTools(string agentId, string sessionId)
     {
-        if (inspector is null) return NotFound("No handle inspector registered.");
-        var handle = inspector.GetHandle(AgentId.From(agentId), SessionId.From(sessionId));
+        var supervisorImpl = _supervisor as BotNexus.Gateway.Agents.DefaultAgentSupervisor;
+        var handle = supervisorImpl?.GetHandle(AgentId.From(agentId), SessionId.From(sessionId));
         if (handle is null) return NotFound("No active handle for this agent/session.");
 
         // Try known tool names to build a list
@@ -225,14 +224,20 @@ public sealed class AgentsController : ControllerBase
             "web_fetch", "web_search", "ping"
         };
 
-        var foundTools = knownToolNames
-            .Where(name => inspector.ResolveTool(AgentId.From(agentId), SessionId.From(sessionId), name) is not null)
-            .ToList();
+        // If the handle implements IAgentHandleInspector, use it for tool resolution
+        var inspector = handle as IAgentHandleInspector;
+        var foundTools = inspector is not null
+            ? knownToolNames
+                .Where(name => inspector.ResolveTool(AgentId.From(agentId), SessionId.From(sessionId), name) is not null)
+                .ToList()
+            : [];
 
         return Ok(new
         {
             agentId,
             sessionId,
+            handleType = handle.GetType().Name,
+            isRunning = handle.IsRunning,
             toolCount = foundTools.Count,
             tools = foundTools
         });
