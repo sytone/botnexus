@@ -114,8 +114,15 @@ public sealed class WhisperTranscriptionHandler : IMediaHandler, IAsyncDisposabl
 
     public ValueTask DisposeAsync()
     {
-        _concurrencyGate.Dispose();
-        _factory?.Dispose();
+        try
+        {
+            _concurrencyGate.Dispose();
+            _factory?.Dispose();
+        }
+        catch
+        {
+            // Best-effort cleanup — Whisper.net assembly may not be loaded
+        }
         return ValueTask.CompletedTask;
     }
 }
