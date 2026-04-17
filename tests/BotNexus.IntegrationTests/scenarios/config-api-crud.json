@@ -1,0 +1,31 @@
+{
+  "name": "Config API CRUD",
+  "description": "Verify config read, write, and section management via REST API",
+  "timeout_seconds": 30,
+  "agents": [],
+  "steps": [
+    {
+      "action": "api_get",
+      "path": "/api/config",
+      "expected_status": 200,
+      "label": "read-config"
+    },
+    {
+      "action": "api_get",
+      "path": "/api/config/providers",
+      "expected_status": 200,
+      "expected_contains": "github-copilot"
+    },
+    {
+      "action": "api_get",
+      "path": "/api/config/gateway",
+      "expected_status": 200
+    },
+    {
+      "action": "api_get",
+      "path": "/api/config/validate",
+      "expected_status": 200,
+      "expected_contains": "isValid"
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace BotNexus.IntegrationTests;
@@ -38,6 +39,14 @@ public class ScenarioStep
     public List<EventWait>? Events { get; set; }
     [JsonPropertyName("timeout_seconds")]
     public int TimeoutSeconds { get; set; } = 15;
+    [JsonPropertyName("path")]
+    public string? Path { get; set; }
+    [JsonPropertyName("body")]
+    public JsonElement? Body { get; set; }
+    [JsonPropertyName("expected_status")]
+    public int ExpectedStatus { get; set; } = 200;
+    [JsonPropertyName("expected_contains")]
+    public string? ExpectedContains { get; set; }
 }
 
 public class EventWait

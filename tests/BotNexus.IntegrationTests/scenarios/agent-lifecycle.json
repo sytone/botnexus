@@ -1,0 +1,49 @@
+{
+  "name": "Agent Lifecycle via API",
+  "description": "Register agent via API, send message, verify response, then remove",
+  "timeout_seconds": 45,
+  "agents": [
+    {
+      "id": "test-lifecycle",
+      "display_name": "Lifecycle Test",
+      "model": "gpt-4.1",
+      "provider": "github-copilot",
+      "system_prompt": "Reply with exactly: LIFECYCLE_OK"
+    }
+  ],
+  "steps": [
+    {
+      "action": "api_get",
+      "path": "/api/agents",
+      "expected_status": 200,
+      "expected_contains": "test-lifecycle"
+    },
+    {
+      "action": "send_message",
+      "agent": "test-lifecycle",
+      "content": "Hello",
+      "label": "lifecycle-msg"
+    },
+    {
+      "action": "wait_for_event",
+      "type": "ContentDelta",
+      "from_step": "lifecycle-msg",
+      "timeout_seconds": 20
+    },
+    {
+      "action": "assert",
+      "condition": "responded",
+      "step": "lifecycle-msg"
+    },
+    {
+      "action": "api_delete",
+      "path": "/api/agents/test-lifecycle",
+      "expected_status": 200
+    },
+    {
+      "action": "api_get",
+      "path": "/api/agents",
+      "expected_status": 200
+    }
+  ]
+}

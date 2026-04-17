@@ -1,0 +1,37 @@
+{
+  "name": "Dynamic Config Reload",
+  "description": "Update config via API and verify changes are reflected",
+  "timeout_seconds": 20,
+  "agents": [],
+  "steps": [
+    {
+      "action": "api_get",
+      "path": "/api/config/gateway",
+      "expected_status": 200,
+      "label": "original-gateway"
+    },
+    {
+      "action": "api_put",
+      "path": "/api/config/gateway",
+      "body": {
+        "defaultAgentId": "test-dynamic-agent",
+        "cors": {
+          "origins": [
+            "*"
+          ]
+        }
+      },
+      "expected_status": 200
+    },
+    {
+      "action": "delay",
+      "timeout_seconds": 2
+    },
+    {
+      "action": "api_get",
+      "path": "/api/config/gateway",
+      "expected_status": 200,
+      "expected_contains": "test-dynamic-agent"
+    }
+  ]
+}

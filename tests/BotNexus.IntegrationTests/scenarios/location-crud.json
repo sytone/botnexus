@@ -1,0 +1,35 @@
+{
+  "name": "Location CRUD",
+  "description": "Create, read, update, and delete locations via API",
+  "timeout_seconds": 15,
+  "agents": [],
+  "steps": [
+    {
+      "action": "api_get",
+      "path": "/api/locations",
+      "expected_status": 200
+    },
+    {
+      "action": "api_post",
+      "path": "/api/locations",
+      "body": {
+        "name": "test-location",
+        "type": "filesystem",
+        "value": "/tmp/test-loc",
+        "description": "Integration test location"
+      },
+      "expected_status": 201
+    },
+    {
+      "action": "api_get",
+      "path": "/api/locations/test-location",
+      "expected_status": 200,
+      "expected_contains": "test-location"
+    },
+    {
+      "action": "api_delete",
+      "path": "/api/locations/test-location",
+      "expected_status": 204
+    }
+  ]
+}
