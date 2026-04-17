@@ -9,7 +9,6 @@ public interface IGatewayHubClient
 {
     Task Connected(object payload);
     Task SessionReset(object payload);
-    Task SessionResetComplete(object payload);
     Task MessageStart(AgentStreamEvent evt);
     Task ContentDelta(object evt);
     Task ThinkingDelta(AgentStreamEvent evt);
