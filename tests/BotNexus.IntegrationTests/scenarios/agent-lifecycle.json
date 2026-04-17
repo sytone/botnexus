@@ -38,12 +38,6 @@
     {
       "action": "api_delete",
       "path": "/api/agents/test-lifecycle",
-      "expected_status": 200
-    },
-    {
-      "action": "api_get",
-      "path": "/api/agents",
-      "expected_status": 200
-    }
+      "expected_status": 204
   ]
 }

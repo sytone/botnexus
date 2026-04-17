@@ -59,6 +59,16 @@ dotnet build BotNexus.slnx --nologo --tl:off
 
 Build the full solution before running tests to avoid stale assembly issues (e.g., CLI integration tests depend on `BotNexus.Cli.dll` being built).
 
+## Code Practices
+
+### No `[Obsolete]` Attributes
+
+**Never mark code as `[Obsolete]`.** This codebase has no external consumers — delete dead code instead of deprecating it. If a method, class, or interface is no longer needed, remove it and update all call sites in the same commit.
+
+### No Dead Code
+
+Remove unused methods, classes, and parameters rather than commenting them out or leaving them for "future use." If something isn't called, it shouldn't exist.
+
 ## Configuration
 
 The BotNexus development configuration file is located at:
