@@ -63,23 +63,22 @@ public sealed class HttpSseMcpTransport : IMcpTransport
         using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         connectCts.CancelAfter(_connectTimeout);
 
-        var request = CreateRequest(HttpMethod.Get);
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+        // Try Streamable HTTP first (POST-based, no initial SSE stream needed).
+        // Fall back to legacy SSE (GET-based) if POST returns 405 Method Not Allowed.
+        try
+        {
+            await ConnectStreamableHttpAsync(connectCts.Token).ConfigureAwait(false);
+            _connected = true;
+            return;
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.MethodNotAllowed)
+        {
+            // 405 = server doesn't accept POST for connect, try legacy GET-based SSE
+        }
 
         try
         {
-            var response = await _httpClient.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                connectCts.Token).ConfigureAwait(false);
-
-            response.EnsureSuccessStatusCode();
-            CaptureSessionId(response);
-
-            _sseCts = new CancellationTokenSource();
-            _sseTask = Task.Run(
-                () => SseReadLoopAsync(response, _sseCts.Token),
-                CancellationToken.None);
+            await ConnectLegacySseAsync(connectCts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
@@ -88,6 +87,60 @@ public sealed class HttpSseMcpTransport : IMcpTransport
         }
 
         _connected = true;
+    }
+
+    /// <summary>
+    /// Streamable HTTP: send an initialize POST. The server handles everything via POST
+    /// responses (JSON or SSE). No persistent SSE listener needed on connect.
+    /// </summary>
+    private async Task ConnectStreamableHttpAsync(CancellationToken ct)
+    {
+        // For Streamable HTTP, we just verify the endpoint accepts POST.
+        // The actual initialize handshake happens in McpClient.InitializeAsync via SendAsync.
+        // We send a lightweight POST to verify connectivity and capture the session ID.
+        var request = CreateRequest(HttpMethod.Post);
+        request.Content = JsonContent.Create(
+            new { jsonrpc = "2.0", method = "ping", id = 0 },
+            options: new JsonSerializerOptions());
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+
+        var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct)
+            .ConfigureAwait(false);
+
+        // Some servers return 200 with a JSON-RPC error for unknown methods — that's fine,
+        // it proves the endpoint is alive and accepts POST.
+        if (response.IsSuccessStatusCode)
+        {
+            CaptureSessionId(response);
+            // Consume the response body to release the connection
+            await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            return;
+        }
+
+        response.EnsureSuccessStatusCode(); // throws for non-405 errors
+    }
+
+    /// <summary>
+    /// Legacy SSE: send a GET to establish a persistent SSE event stream.
+    /// </summary>
+    private async Task ConnectLegacySseAsync(CancellationToken ct)
+    {
+        var request = CreateRequest(HttpMethod.Get);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+
+        var response = await _httpClient.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            ct).ConfigureAwait(false);
+
+        response.EnsureSuccessStatusCode();
+        CaptureSessionId(response);
+
+        _sseCts = new CancellationTokenSource();
+        _sseTask = Task.Run(
+            () => SseReadLoopAsync(response, _sseCts.Token),
+            CancellationToken.None);
     }
 
     /// <inheritdoc />
