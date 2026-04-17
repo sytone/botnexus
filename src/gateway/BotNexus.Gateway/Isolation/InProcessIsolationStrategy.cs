@@ -342,7 +342,10 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             mcpInvokeTool,
             tools);
 
-        _logger.LogDebug("Created in-process agent handle for '{AgentId}' session '{SessionId}'", descriptor.AgentId, context.SessionId);
+        _logger.LogWarning(
+            "Created agent handle for '{AgentId}' session '{SessionId}' with {ToolCount} tools: {ToolNames}",
+            descriptor.AgentId, context.SessionId, tools.Count,
+            string.Join(", ", tools.Select(t => t.Name)));
 
         // Start MCP servers in background — tools become available progressively
         if (mcpManager is not null && mcpConfig is { Servers.Count: > 0 })
