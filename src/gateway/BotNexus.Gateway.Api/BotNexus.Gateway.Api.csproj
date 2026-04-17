@@ -54,16 +54,17 @@
   </Target>
 
   <!-- Copy Blazor WASM client to wwwroot/blazor/ so it's served at /blazor/ -->
-  <Target Name="CopyBlazorClient" AfterTargets="Build" DependsOnTargets="ResolveProjectReferences">
-    <PropertyGroup>
-      <BlazorClientRoot>$(MSBuildProjectDirectory)\..\..\channels\BotNexus.Channels.SignalR.BlazorClient\</BlazorClientRoot>
-    </PropertyGroup>
+  <!-- Uses publish output because Blazor SDK processes index.html (fingerprints) during publish -->
+  <Target Name="PublishBlazorClient" AfterTargets="Build">
+    <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)\..\..\channels\BotNexus.Channels.SignalR.BlazorClient\BotNexus.Channels.SignalR.BlazorClient.csproj&quot; -c $(Configuration) -o &quot;$(OutputPath)blazor-publish&quot; --nologo -v:q" />
+  </Target>
+
+  <Target Name="CopyBlazorClient" AfterTargets="PublishBlazorClient">
     <ItemGroup>
-      <BlazorWwwroot Include="$(BlazorClientRoot)wwwroot\**" />
-      <BlazorFramework Include="$(BlazorClientRoot)bin\$(Configuration)\net10.0\wwwroot\**" />
+      <BlazorPublishFiles Include="$(OutputPath)blazor-publish\wwwroot\**" />
     </ItemGroup>
-    <Copy SourceFiles="@(BlazorWwwroot)" DestinationFolder="$(OutputPath)wwwroot\blazor\%(RecursiveDir)" SkipUnchangedFiles="true" />
-    <Copy SourceFiles="@(BlazorFramework)" DestinationFolder="$(OutputPath)wwwroot\blazor\%(RecursiveDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(BlazorPublishFiles)" DestinationFolder="$(OutputPath)wwwroot\blazor\%(RecursiveDir)" SkipUnchangedFiles="true" />
+    <RemoveDir Directories="$(OutputPath)blazor-publish" />
   </Target>
 
 </Project>
