@@ -1,5 +1,4 @@
 using BotNexus.Gateway.Api.Extensions;
-using BotNexus.Channels.SignalR;
 using BotNexus.Gateway.Api;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
@@ -213,7 +212,6 @@ app.UseSwaggerUI();
 AssemblyLoadContextExtensionLoader.MapExtensionEndpoints(app);
 
 app.MapControllers();
-app.MapHub<GatewayHub>("/hub/gateway");
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 app.MapGet("/api/version", () =>
 {
