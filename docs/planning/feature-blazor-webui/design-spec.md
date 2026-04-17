@@ -11,7 +11,7 @@ tags: [webui, blazor, wasm, spa, signalr, testing, architecture]
 
 # Feature: Blazor WebUI — Replace Plain JS with Blazor WASM SPA
 
-**Status:** delivered (Phase 1)
+**Status:** delivered (Phases 1-3 complete, Phase 4 partial — see Delivery Notes)
 **Priority:** high (active initiative per Jon's direction)
 **Created:** 2026-04-17
 **Updated:** 2026-07-19
@@ -389,20 +389,60 @@ This pattern generalizes to any future extension that needs to serve UI, APIs, o
 
 ### Phase 1 — Delivered
 
-**Delivered:** 2026-07-20
+**Commits:** `5c454b72`, `064c460a`, `c11da069`, `e1b1555a`, `34ada503`
 
-Phase 1 (Extract SignalR Channel + Extend Extension Loader) has been delivered across 3 commits:
+1. **Extension loader infrastructure** — `IEndpointContributor` and `IApiContributor` interfaces, `DiscoverableServiceContracts` updated, `MapExtensionEndpoints()` post-build pipeline, manifest schema for `endpoint-contributor` and `api-contributor`.
+2. **`BotNexus.Channels.SignalR` project** — `GatewayHub`, `SignalRChannelAdapter`, `SubAgentSignalRBridge`, `MediaContentPartDto`, `IGatewayHubClient`, `SignalREndpointContributor`. Triggers relocated to `Gateway.Api/Triggers/`.
+3. **Typed hub contracts** — `Hub<IGatewayHubClient>` refactor, 11 named record DTOs replace anonymous objects (`HubContracts.cs`).
+4. **Gateway decoupling** — Gateway.Api has zero SignalR references. Extension deploys to `~/.botnexus/extensions/signalr/` via MSBuild target. Extension loader discovers and loads it dynamically.
+5. **Non-collectible ALC** — Extensions declaring `endpoint-contributor` load with `isCollectible: false` (SignalR's `Hub<T>` uses `Reflection.Emit`).
 
-**What was delivered:**
+### Phase 2 — Delivered
 
-1. **Extension loader infrastructure** — `IEndpointContributor` and `IApiContributor` interfaces in `Gateway.Abstractions`, `DiscoverableServiceContracts` updated, `MapExtensionEndpoints()` post-build pipeline in the extension loader, manifest schema support for `endpoint-contributor` and `api-contributor` extension types.
+**Commits:** `de0fa0cb`, `1c6bd9a8`
 
-2. **`BotNexus.Channels.SignalR` project** — New project under `src/channels/` containing `GatewayHub`, `SignalRChannelAdapter`, `SubAgentSignalRBridge`, `MediaContentPartDto`, `IGatewayHubClient`, and `SignalREndpointContributor`. `CronTrigger` and `SoulTrigger` relocated to `Gateway.Api/Triggers/` (no longer mixed in with SignalR code). Extension manifest (`botnexus-extension.json`) declares `["channel", "endpoint-contributor"]`.
+1. **`BotNexus.Channels.SignalR.BlazorClient`** — Blazor WASM project with `GatewayHubConnection` service (typed wrapper, C# events for all 13 hub methods, 7 client→server invocations).
+2. **Minimal UI** — `Home.razor` page with agent list, `ChatPanel.razor` with streaming chat.
+3. **Hosted at `/blazor/`** — `SignalREndpointContributor` serves WASM files via inline middleware. Blazor published output bundled alongside extension DLL.
+4. **Client-side DTOs** — Separate `HubContracts.cs` matching JSON wire format (can't share server assembly due to ASP.NET FrameworkReference incompatibility with WASM).
 
-3. **Gateway decoupling** — Removed hardcoded `MapHub<GatewayHub>()` from `Program.cs`. `SignalREndpointContributor` registered in DI and invoked by the extension loader. All SignalR-specific code removed from Gateway.Api startup path.
+### Phase 3 — Delivered
 
-**What remains (Phases 2–4):**
+**Commit:** `1d6371d9`
 
-- **Phase 2:** Minimal Blazor WASM app (`BotNexus.Channels.SignalR.BlazorClient`) — typed hub connection, basic chat UI, bUnit tests
-- **Phase 3:** Multi-agent concurrent sessions, per-session state management, sidebar, session switching
-- **Phase 4:** Full feature parity with JS WebUI — audio, scrollback, agent config, dark theme, keyboard shortcuts
+1. **`AgentSessionManager`** — Routes all SignalR events by `sessionId` → correct agent state. Manages concurrent streaming, unread tracking.
+2. **`AgentSessionState`** — Per-agent state: messages, stream buffer, unread count, session/channel tracking. `ChatMessage` record with tool metadata.
+3. **Tabbed agent UI** — All agent panels stay in DOM (show/hide via CSS). Unread badges, streaming dots. Instant switching with no re-fetch.
+4. **`ConnectionStatus.razor`** — Hub connection indicator.
+
+### Phase 4 — Delivered (partial)
+
+**Commit:** `acc3918f`
+
+1. ✅ **Markdown rendering** — `marked.js` + `DOMPurify` via JS interop.
+2. ✅ **Tool execution display** — Collapsible details with ⏳/✅/❌ icons and duration.
+3. ✅ **Session management** — Reset with confirmation dialog, session ID display.
+4. ✅ **History loading** — Fetches from REST API on first agent visit.
+5. ✅ **Reconnection handling** — Re-subscribe + history reload for interrupted agents.
+6. ✅ **Keyboard shortcuts** — Enter=send, Shift+Enter=newline, Escape=abort.
+7. ✅ **Steer/abort controls** — Visible during streaming.
+8. ✅ **Dark theme + responsive CSS** — Scrollbar styling, responsive breakpoints.
+
+**Still pending (Phase 4):**
+- ⬜ Audio recording (MediaRecorder JS interop)
+- ⬜ Agent configuration sidebar
+- ⬜ Sub-agent lifecycle panel
+- ⬜ Full syntax highlighting (code blocks have monospace styling only)
+- ⬜ bUnit component tests
+
+### Bug fixes during delivery
+
+| Commit | Fix |
+|--------|-----|
+| `b0e30a77` | `SessionStatus` enum → `[JsonStringEnumConverter]` for SignalR |
+| `34a48a9e` | `AgentStreamEventType` enum → `[JsonStringEnumConverter]` for SignalR |
+| `603242ed` | `ContentDelta` handler: `ContentDeltaPayload` → `AgentStreamEvent` |
+| `b97f11de` | Blazor static file serving via inline middleware (endpoint routing bypassed `UseStaticFiles`) |
+| `f4dd0457` | Non-collectible ALC for endpoint extensions + `ContinueOnError` on deploy target |
+| `fd48a53b` | Use publish output for WASM hosting (fingerprint placeholders) |
+| `159a0f73` | Gateway.Api fully decoupled — test factories use `AddSignalRChannelForTests()` helper |
