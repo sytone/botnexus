@@ -32,6 +32,7 @@
     <ProjectReference Include="..\..\cron\BotNexus.Cron\BotNexus.Cron.csproj" />
     <ProjectReference Include="..\..\channels\BotNexus.Channels.Core\BotNexus.Channels.Core.csproj" />
     <ProjectReference Include="..\..\channels\BotNexus.Channels.SignalR\BotNexus.Channels.SignalR.csproj" />
+    <ProjectReference Include="..\..\channels\BotNexus.Channels.SignalR.BlazorClient\BotNexus.Channels.SignalR.BlazorClient.csproj" />
     <ProjectReference Include="..\..\providers\BotNexus.Providers.Anthropic\BotNexus.Providers.Anthropic.csproj" />
     <ProjectReference Include="..\..\providers\BotNexus.Providers.OpenAI\BotNexus.Providers.OpenAI.csproj" />
     <ProjectReference Include="..\..\providers\BotNexus.Providers.OpenAICompat\BotNexus.Providers.OpenAICompat.csproj" />
@@ -50,6 +51,19 @@
       <WebUIPublishFiles Include="$(MSBuildProjectDirectory)\..\..\BotNexus.WebUI\wwwroot\**" />
     </ItemGroup>
     <Copy SourceFiles="@(WebUIPublishFiles)" DestinationFolder="$(PublishDir)wwwroot\%(RecursiveDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- Copy Blazor WASM client to wwwroot/blazor/ so it's served at /blazor/ -->
+  <Target Name="CopyBlazorClient" AfterTargets="Build" DependsOnTargets="ResolveProjectReferences">
+    <PropertyGroup>
+      <BlazorClientRoot>$(MSBuildProjectDirectory)\..\..\channels\BotNexus.Channels.SignalR.BlazorClient\</BlazorClientRoot>
+    </PropertyGroup>
+    <ItemGroup>
+      <BlazorWwwroot Include="$(BlazorClientRoot)wwwroot\**" />
+      <BlazorFramework Include="$(BlazorClientRoot)bin\$(Configuration)\net10.0\wwwroot\**" />
+    </ItemGroup>
+    <Copy SourceFiles="@(BlazorWwwroot)" DestinationFolder="$(OutputPath)wwwroot\blazor\%(RecursiveDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(BlazorFramework)" DestinationFolder="$(OutputPath)wwwroot\blazor\%(RecursiveDir)" SkipUnchangedFiles="true" />
   </Target>
 
 </Project>
