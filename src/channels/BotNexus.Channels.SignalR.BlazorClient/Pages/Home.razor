@@ -78,9 +78,9 @@
         InvokeAsync(StateHasChanged);
     }
 
-    private void SelectAgent(string agentId)
+    private async Task SelectAgent(string agentId)
     {
-        Manager.SetActiveAgent(agentId);
+        await Manager.SetActiveAgentAsync(agentId);
     }
 
     public void Dispose()

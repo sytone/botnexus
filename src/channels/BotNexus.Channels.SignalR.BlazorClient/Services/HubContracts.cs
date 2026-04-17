@@ -109,3 +109,21 @@ public sealed record CompactSessionResult(
     [property: JsonPropertyName("preserved")] int Preserved,
     [property: JsonPropertyName("tokensBefore")] int TokensBefore,
     [property: JsonPropertyName("tokensAfter")] int TokensAfter);
+
+// ── Client-side history DTOs (matches ChannelHistoryController response) ─────
+
+/// <summary>Response from the channel history REST API.</summary>
+public sealed record HistoryResponse(
+    [property: JsonPropertyName("messages")] IReadOnlyList<HistoryMessage> Messages,
+    [property: JsonPropertyName("nextCursor")] string? NextCursor,
+    [property: JsonPropertyName("hasMore")] bool HasMore);
+
+/// <summary>A single message in the history response.</summary>
+public sealed record HistoryMessage(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("sessionId")] string SessionId,
+    [property: JsonPropertyName("role")] string Role,
+    [property: JsonPropertyName("content")] string Content,
+    [property: JsonPropertyName("timestamp")] DateTimeOffset Timestamp,
+    [property: JsonPropertyName("toolName")] string? ToolName = null,
+    [property: JsonPropertyName("toolCallId")] string? ToolCallId = null);

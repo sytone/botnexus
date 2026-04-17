@@ -1,0 +1,46 @@
+@inject IJSRuntime JS
+
+<div class="session-controls">
+    @if (State.SessionId is not null)
+    {
+        <span class="session-id" title="@State.SessionId">
+            📋 @State.SessionId[..Math.Min(8, State.SessionId.Length)]…
+        </span>
+        <button class="reset-btn" @onclick="ConfirmReset" title="Reset session">
+            🔄 Reset
+        </button>
+    }
+</div>
+
+@if (_showConfirm)
+{
+    <div class="reset-confirm-overlay" @onclick="CancelReset">
+        <div class="reset-confirm-dialog" @onclick:stopPropagation="true">
+            <p>Reset session for <strong>@State.DisplayName</strong>?</p>
+            <p class="text-muted">This will clear all messages and start a new session.</p>
+            <div class="reset-confirm-actions">
+                <button class="cancel-btn" @onclick="CancelReset">Cancel</button>
+                <button class="confirm-btn" @onclick="DoReset">Reset</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public AgentSessionState State { get; set; } = default!;
+
+    [Parameter, EditorRequired]
+    public AgentSessionManager Manager { get; set; } = default!;
+
+    private bool _showConfirm;
+
+    private void ConfirmReset() => _showConfirm = true;
+    private void CancelReset() => _showConfirm = false;
+
+    private async Task DoReset()
+    {
+        _showConfirm = false;
+        await Manager.ResetSessionAsync(State.AgentId);
+    }
+}

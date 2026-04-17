@@ -2,28 +2,78 @@
 
 <div class="chat-panel">
     <header class="chat-header">
-        <h3>@State.DisplayName</h3>
-        <span class="agent-id-label">@State.AgentId</span>
-        @if (State.IsStreaming)
-        {
-            <span class="streaming-badge">Streaming…</span>
-        }
+        <div class="chat-header-left">
+            <h3>@State.DisplayName</h3>
+            <span class="agent-id-label">@State.AgentId</span>
+            @if (State.IsStreaming)
+            {
+                <span class="streaming-badge">Streaming…</span>
+            }
+        </div>
+        <SessionControls State="@State" Manager="@Manager" />
     </header>
 
     <div class="messages-container" @ref="_messagesContainer">
-        @foreach (var msg in State.Messages)
+        @if (State.IsLoadingHistory)
         {
-            <div class="message @msg.CssClass">
-                <div class="message-role">@msg.Role</div>
-                <div class="message-content">@msg.Content</div>
-                @if (msg.ToolName is not null)
-                {
-                    <div class="message-tool">🔧 @msg.ToolName</div>
-                }
+            <div class="history-loading">
+                <div class="loading-spinner small"></div>
+                <span>Loading history…</span>
             </div>
         }
 
-        @if (State.IsStreaming)
+        @foreach (var msg in State.Messages)
+        {
+            @if (msg.IsToolCall)
+            {
+                <div class="message tool @(msg.ToolIsError == true ? "tool-error" : "")">
+                    <div class="tool-header" @onclick="() => ToggleToolDetails(msg.Id)">
+                        <span class="tool-icon">@(msg.ToolResult is null ? "⏳" : (msg.ToolIsError == true ? "❌" : "✅"))</span>
+                        <span class="tool-name">@msg.ToolName</span>
+                        @if (msg.ToolDuration is not null)
+                        {
+                            <span class="tool-duration">@FormatDuration(msg.ToolDuration.Value)</span>
+                        }
+                        <span class="tool-expand">@(_expandedTools.Contains(msg.Id) ? "▾" : "▸")</span>
+                    </div>
+                    @if (_expandedTools.Contains(msg.Id))
+                    {
+                        <div class="tool-details">
+                            @if (msg.ToolArgs is not null)
+                            {
+                                <div class="tool-section">
+                                    <span class="tool-section-label">Arguments</span>
+                                    <pre class="tool-content">@msg.ToolArgs</pre>
+                                </div>
+                            }
+                            @if (msg.ToolResult is not null)
+                            {
+                                <div class="tool-section">
+                                    <span class="tool-section-label">Result</span>
+                                    <pre class="tool-content">@msg.ToolResult</pre>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="message @msg.CssClass">
+                    <div class="message-role">@msg.Role</div>
+                    @if (msg.Role == "Assistant" && _markdownCache.TryGetValue(msg.Id, out var rendered))
+                    {
+                        <div class="msg-content">@((MarkupString)rendered)</div>
+                    }
+                    else
+                    {
+                        <div class="message-content">@msg.Content</div>
+                    }
+                </div>
+            }
+        }
+
+        @if (State.IsStreaming && !string.IsNullOrEmpty(State.CurrentStreamBuffer))
         {
             <div class="message assistant streaming">
                 <div class="message-role">Assistant</div>
@@ -35,16 +85,34 @@
 
     <div class="chat-input-area">
         <textarea class="chat-input"
+                  @ref="_inputElement"
                   @bind="_inputText"
                   @bind:event="oninput"
                   @onkeydown="HandleKeyDown"
-                  placeholder="Type a message…"
-                  disabled="@(!State.IsConnected || State.IsStreaming)" />
-        <button class="send-btn"
-                @onclick="SendMessage"
-                disabled="@(!State.IsConnected || State.IsStreaming || string.IsNullOrWhiteSpace(_inputText))">
-            Send
-        </button>
+                  placeholder="@InputPlaceholder"
+                  disabled="@(!State.IsConnected)" />
+        @if (State.IsStreaming)
+        {
+            <button class="steer-btn"
+                    @onclick="SteerAgent"
+                    disabled="@(string.IsNullOrWhiteSpace(_inputText))"
+                    title="Redirect the agent's response (Shift+Enter for newline)">
+                🔀 Steer
+            </button>
+            <button class="abort-btn"
+                    @onclick="AbortAgent"
+                    title="Stop the agent (Escape)">
+                ⏹ Stop
+            </button>
+        }
+        else
+        {
+            <button class="send-btn"
+                    @onclick="SendMessage"
+                    disabled="@(!State.IsConnected || string.IsNullOrWhiteSpace(_inputText))">
+                Send
+            </button>
+        }
     </div>
 </div>
 
@@ -59,13 +127,63 @@
 
     private string _inputText = "";
     private ElementReference _messagesContainer;
+    private ElementReference _inputElement;
+    private bool _enterPreventionBound;
+
+    // ── Markdown rendering cache ──────────────────────────────────────────
+
+    private readonly Dictionary<string, string> _markdownCache = new();
+
+    // ── Tool details expansion ────────────────────────────────────────────
+
+    private readonly HashSet<string> _expandedTools = new();
+
+    private void ToggleToolDetails(string messageId)
+    {
+        if (!_expandedTools.Remove(messageId))
+            _expandedTools.Add(messageId);
+    }
+
+    private static string FormatDuration(TimeSpan d) => d.TotalSeconds < 1
+        ? $"{d.TotalMilliseconds:0}ms"
+        : $"{d.TotalSeconds:0.0}s";
+
+    private string InputPlaceholder => State.IsStreaming
+        ? "Type to steer the response…"
+        : "Type a message… (Shift+Enter for newline)";
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        // Auto-scroll to bottom only when user is near the bottom (preserves scroll-up reading)
         try
         {
+            // Bind JS-side Enter-key prevention once
+            if (!_enterPreventionBound)
+            {
+                await JS.InvokeVoidAsync("chatScroll.preventEnterSubmit", _inputElement);
+                _enterPreventionBound = true;
+            }
+
+            // Auto-scroll to bottom (preserves scroll-up reading)
             await JS.InvokeVoidAsync("chatScroll.scrollToBottom", _messagesContainer);
+
+            // Render markdown for any un-rendered assistant messages
+            var needsRender = false;
+            foreach (var msg in State.Messages)
+            {
+                if (msg.Role == "Assistant" && !_markdownCache.ContainsKey(msg.Id))
+                {
+                    var html = await JS.InvokeAsync<string>("BotNexus.renderMarkdown", msg.Content);
+                    _markdownCache[msg.Id] = html;
+                    needsRender = true;
+                }
+            }
+
+            if (needsRender)
+            {
+                StateHasChanged();
+            }
         }
         catch (JSDisconnectedException)
         {
@@ -73,11 +191,20 @@
         }
     }
 
+    // ── Input handling ────────────────────────────────────────────────────
+
     private async Task HandleKeyDown(KeyboardEventArgs e)
     {
         if (e is { Key: "Enter", ShiftKey: false })
         {
-            await SendMessage();
+            if (State.IsStreaming)
+                await SteerAgent();
+            else
+                await SendMessage();
+        }
+        else if (e is { Key: "Escape" } && State.IsStreaming)
+        {
+            await AbortAgent();
         }
     }
 
@@ -89,5 +216,20 @@
 
         _inputText = "";
         await Manager.SendMessageAsync(State.AgentId, text);
+    }
+
+    private async Task SteerAgent()
+    {
+        var text = _inputText?.Trim();
+        if (string.IsNullOrEmpty(text) || !State.IsConnected)
+            return;
+
+        _inputText = "";
+        await Manager.SteerAsync(State.AgentId, text);
+    }
+
+    private async Task AbortAgent()
+    {
+        await Manager.AbortAsync(State.AgentId);
     }
 }

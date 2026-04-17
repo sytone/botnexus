@@ -1,4 +1,4 @@
-// BotNexus Blazor Client — Chat scroll helpers
+// BotNexus Blazor Client — Chat scroll & input helpers
 window.chatScroll = {
     /**
      * Scrolls to bottom only if the user is already near the bottom (within threshold).
@@ -17,5 +17,20 @@ window.chatScroll = {
     forceScrollToBottom: function (element) {
         if (!element) return;
         element.scrollTop = element.scrollHeight;
+    },
+
+    /**
+     * Prevents the default Enter key behaviour (newline insertion) on a textarea
+     * so that Blazor's onkeydown handler can send the message without a stray newline.
+     * Shift+Enter still inserts a newline normally.
+     */
+    preventEnterSubmit: function (element) {
+        if (!element || element._preventEnterBound) return;
+        element.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+            }
+        });
+        element._preventEnterBound = true;
     }
 };

@@ -57,6 +57,9 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     /// <summary>Raised when the connection is lost and automatic reconnect starts.</summary>
     public event Action? OnReconnecting;
 
+    /// <summary>Raised when automatic reconnect succeeds and the connection is restored.</summary>
+    public event Action? OnReconnected;
+
     /// <summary>Raised when the connection is closed (after reconnect exhaustion or explicit stop).</summary>
     public event Action? OnDisconnected;
 
@@ -101,6 +104,7 @@ public sealed class GatewayHubConnection : IAsyncDisposable
         _connection.On<SubAgentEventPayload>("SubAgentKilled", p => OnSubAgentKilled?.Invoke(p));
 
         _connection.Reconnecting += _ => { OnReconnecting?.Invoke(); return Task.CompletedTask; };
+        _connection.Reconnected += _ => { OnReconnected?.Invoke(); return Task.CompletedTask; };
         _connection.Closed += _ => { OnDisconnected?.Invoke(); return Task.CompletedTask; };
 
         await _connection.StartAsync();
