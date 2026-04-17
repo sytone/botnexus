@@ -1,0 +1,57 @@
+{
+  "name": "Context Diagnostics API",
+  "description": "Send a message to establish a session, then query context diagnostics endpoints",
+  "timeout_seconds": 45,
+  "agents": [
+    {
+      "id": "test-context",
+      "display_name": "Context Test",
+      "model": "gpt-4.1",
+      "provider": "github-copilot",
+      "system_prompt": "Reply with exactly: CONTEXT_OK"
+    }
+  ],
+  "steps": [
+    {
+      "action": "send_message",
+      "agent": "test-context",
+      "content": "Hello",
+      "label": "ctx-msg"
+    },
+    {
+      "action": "wait_for_event",
+      "type": "StreamEnd",
+      "from_step": "ctx-msg",
+      "timeout_seconds": 20
+    },
+    {
+      "action": "api_get",
+      "path": "/api/agents/test-context/sessions/{{session:ctx-msg}}/context",
+      "expected_status": 200,
+      "expected_contains": "totalEstimatedTokens"
+    },
+    {
+      "action": "api_get",
+      "path": "/api/agents/test-context/sessions/{{session:ctx-msg}}/context/tools",
+      "expected_status": 200,
+      "expected_contains": "toolCount"
+    },
+    {
+      "action": "api_get",
+      "path": "/api/agents/test-context/sessions/{{session:ctx-msg}}/context/system-prompt",
+      "expected_status": 200,
+      "expected_contains": "CONTEXT_OK"
+    },
+    {
+      "action": "api_post",
+      "path": "/api/agents/test-context/sessions/{{session:ctx-msg}}/context/export",
+      "expected_status": 200,
+      "expected_contains": "exported"
+    },
+    {
+      "action": "api_delete",
+      "path": "/api/agents/test-context",
+      "expected_status": 204
+    }
+  ]
+}

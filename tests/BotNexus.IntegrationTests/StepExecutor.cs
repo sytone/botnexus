@@ -92,9 +92,16 @@ public class StepExecutor
         _log.Write($"↺ Reset session for {agentId}");
     }
 
+    private string ResolvePath(string path)
+    {
+        foreach (var (label, sessionId) in _stepSessions)
+            path = path.Replace($"{{{{session:{label}}}}}", sessionId);
+        return path;
+    }
+
     private async Task ExecuteApiGetAsync(ScenarioStep step, CancellationToken ct)
     {
-        var path = step.Path ?? throw new InvalidOperationException("api_get requires path");
+        var path = ResolvePath(step.Path ?? throw new InvalidOperationException("api_get requires path"));
         var response = await _httpClient.GetAsync(path, ct);
         _lastApiResponse = await response.Content.ReadAsStringAsync(ct);
         _log.Write($"GET {path} → {(int)response.StatusCode}");
@@ -105,7 +112,7 @@ public class StepExecutor
 
     private async Task ExecuteApiPutAsync(ScenarioStep step, CancellationToken ct)
     {
-        var path = step.Path ?? throw new InvalidOperationException("api_put requires path");
+        var path = ResolvePath(step.Path ?? throw new InvalidOperationException("api_put requires path"));
         var body = step.Body?.GetRawText() ?? "{}";
         var content = new StringContent(body, Encoding.UTF8, "application/json");
         var response = await _httpClient.PutAsync(path, content, ct);
@@ -118,7 +125,7 @@ public class StepExecutor
 
     private async Task ExecuteApiPostAsync(ScenarioStep step, CancellationToken ct)
     {
-        var path = step.Path ?? throw new InvalidOperationException("api_post requires path");
+        var path = ResolvePath(step.Path ?? throw new InvalidOperationException("api_post requires path"));
         var body = step.Body?.GetRawText() ?? "{}";
         var content = new StringContent(body, Encoding.UTF8, "application/json");
         var response = await _httpClient.PostAsync(path, content, ct);
@@ -131,7 +138,7 @@ public class StepExecutor
 
     private async Task ExecuteApiDeleteAsync(ScenarioStep step, CancellationToken ct)
     {
-        var path = step.Path ?? throw new InvalidOperationException("api_delete requires path");
+        var path = ResolvePath(step.Path ?? throw new InvalidOperationException("api_delete requires path"));
         var response = await _httpClient.DeleteAsync(path, ct);
         _lastApiResponse = await response.Content.ReadAsStringAsync(ct);
         _log.Write($"DELETE {path} → {(int)response.StatusCode}");
