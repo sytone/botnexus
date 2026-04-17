@@ -35,7 +35,7 @@ public static class AgentRegistrar
             apiProvider = agent.Provider,
             isolationStrategy = "in-process",
             systemPrompt = agent.SystemPrompt,
-            extensionConfig
+            extensionConfig = extensionConfig ?? new Dictionary<string, object>()
         };
 
         var response = await client.PostAsJsonAsync("/api/agents", descriptor, ct);

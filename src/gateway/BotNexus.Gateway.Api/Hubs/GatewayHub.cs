@@ -9,6 +9,7 @@ using ParticipantType = BotNexus.Domain.Primitives.ParticipantType;
 using SessionId = BotNexus.Domain.Primitives.SessionId;
 using SessionParticipant = BotNexus.Domain.Primitives.SessionParticipant;
 using SessionType = BotNexus.Domain.Primitives.SessionType;
+using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -539,6 +540,7 @@ public sealed class GatewayHub : Hub
         var summaries = await _warmup.GetAvailableSessionsAsync(agentId.Value, Context.ConnectionAborted);
         var existing = summaries
             .Where(summary => ChannelMatches(summary.ChannelType, channelType))
+            .Where(summary => summary.Status != GatewaySessionStatus.Sealed)
             .OrderByDescending(summary => summary.UpdatedAt)
             .FirstOrDefault();
 
@@ -546,7 +548,7 @@ public sealed class GatewayHub : Hub
         var session = await _sessions.GetOrCreateAsync(sessionId, agentId, Context.ConnectionAborted);
 
         var needsSave = false;
-        if (session.Status is SessionStatus.Expired or SessionStatus.Sealed)
+        if (session.Status == SessionStatus.Expired)
         {
             session.Status = SessionStatus.Active;
             session.ExpiresAt = null;

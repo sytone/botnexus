@@ -1,0 +1,40 @@
+{
+  "name": "Nova Tool Execution Test",
+  "description": "Send a message to a test agent asking it to run ls, verify ToolStart and ToolEnd arrive",
+  "timeout_seconds": 30,
+  "agents": [
+    {
+      "id": "test-toolcheck",
+      "display_name": "Tool Check",
+      "model": "gpt-4.1",
+      "provider": "github-copilot",
+      "system_prompt": "You have tools. When the user says 'ls', use the ls tool to list files in the current directory. Always use tools when asked."
+    }
+  ],
+  "steps": [
+    {
+      "action": "send_message",
+      "agent": "test-toolcheck",
+      "content": "ls",
+      "label": "ls-msg"
+    },
+    {
+      "action": "wait_for_event",
+      "type": "ToolStart",
+      "from_step": "ls-msg",
+      "timeout_seconds": 20
+    },
+    {
+      "action": "wait_for_event",
+      "type": "ToolEnd",
+      "from_step": "ls-msg",
+      "timeout_seconds": 15
+    },
+    {
+      "action": "wait_for_event",
+      "type": "ContentDelta",
+      "from_step": "ls-msg",
+      "timeout_seconds": 15
+    }
+  ]
+}
