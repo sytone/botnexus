@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text.Json.Serialization;
 using BotNexus.Domain.Primitives;
 
 namespace BotNexus.Gateway.Abstractions.Models;
@@ -100,6 +101,7 @@ public sealed record AgentStreamEvent
 /// <summary>
 /// Types of streaming events from an agent.
 /// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum AgentStreamEventType
 {
     /// <summary>Agent has started processing.</summary>
