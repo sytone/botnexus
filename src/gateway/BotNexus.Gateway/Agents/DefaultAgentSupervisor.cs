@@ -143,6 +143,9 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
     }
 
     /// <inheritdoc />
+    public ContextDiagnostics? GetContextDiagnostics() => null;
+
+    /// <inheritdoc />
     public IReadOnlyList<AgentInstance> GetAllInstances()
     {
         lock (_sync) return _instances.Values.Select(e => e.Instance).ToList();

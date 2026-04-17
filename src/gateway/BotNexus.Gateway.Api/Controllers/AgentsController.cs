@@ -1,5 +1,6 @@
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Configuration;
 using BotNexus.Domain.Primitives;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -205,41 +206,90 @@ public sealed class AgentsController : ControllerBase
         return NoContent();
     }
 
-    /// <summary>
-    /// Debug: lists the tools available to a running agent instance.
-    /// </summary>
-    [HttpGet("{agentId}/sessions/{sessionId}/tools")]
-    public ActionResult GetInstanceTools(string agentId, string sessionId)
+    /// <summary>Context summary for a running agent session.</summary>
+    [HttpGet("{agentId}/sessions/{sessionId}/context")]
+    public ActionResult GetContext(string agentId, string sessionId)
     {
-        var supervisorImpl = _supervisor as BotNexus.Gateway.Agents.DefaultAgentSupervisor;
-        var handle = supervisorImpl?.GetHandle(AgentId.From(agentId), SessionId.From(sessionId));
-        if (handle is null) return NotFound("No active handle for this agent/session.");
+        var handle = GetAgentHandle(agentId, sessionId);
+        if (handle is null) return NotFound("No active handle.");
 
-        // Try known tool names to build a list
-        var knownToolNames = new[] {
-            "read", "write", "edit", "bash", "ls", "grep", "glob",
-            "exec", "process", "cron", "session", "delay", "file_watcher",
-            "spawn_subagent", "list_subagents", "manage_subagent",
-            "agent_converse", "skill", "memory_search", "memory_get",
-            "web_fetch", "web_search", "ping"
-        };
+        var diag = (handle as IAgentHandleInspector)?.GetContextDiagnostics();
+        if (diag is null) return NotFound("Handle does not support diagnostics.");
 
-        // If the handle implements IAgentHandleInspector, use it for tool resolution
-        var inspector = handle as IAgentHandleInspector;
-        var foundTools = inspector is not null
-            ? knownToolNames
-                .Where(name => inspector.ResolveTool(AgentId.From(agentId), SessionId.From(sessionId), name) is not null)
-                .ToList()
-            : [];
-
+        const int contextWindowTokens = 128000;
         return Ok(new
         {
             agentId,
             sessionId,
-            handleType = handle.GetType().Name,
-            isRunning = handle.IsRunning,
-            toolCount = foundTools.Count,
-            tools = foundTools
+            totalEstimatedTokens = diag.TotalEstimatedTokens,
+            contextWindowTokens,
+            usagePercent = Math.Round((double)diag.TotalEstimatedTokens / contextWindowTokens * 100, 1),
+            sections = new
+            {
+                systemPrompt = new { tokens = diag.SystemPromptTokens, chars = diag.SystemPromptChars },
+                toolDefinitions = new { tokens = diag.ToolDefinitionTokens, toolCount = diag.ToolCount },
+                conversationHistory = new { tokens = diag.HistoryTokens, entryCount = diag.HistoryEntryCount }
+            }
         });
+    }
+
+    /// <summary>Full system prompt for a running agent session.</summary>
+    [HttpGet("{agentId}/sessions/{sessionId}/context/system-prompt")]
+    public ActionResult GetSystemPrompt(string agentId, string sessionId)
+    {
+        var handle = GetAgentHandle(agentId, sessionId);
+        if (handle is null) return NotFound("No active handle.");
+
+        var diag = (handle as IAgentHandleInspector)?.GetContextDiagnostics();
+        if (diag is null) return NotFound("Handle does not support diagnostics.");
+
+        return Ok(new
+        {
+            systemPrompt = diag.SystemPrompt,
+            chars = diag.SystemPromptChars,
+            estimatedTokens = diag.SystemPromptTokens
+        });
+    }
+
+    /// <summary>Tool definitions for a running agent session.</summary>
+    [HttpGet("{agentId}/sessions/{sessionId}/context/tools")]
+    public ActionResult GetTools(string agentId, string sessionId)
+    {
+        var handle = GetAgentHandle(agentId, sessionId);
+        if (handle is null) return NotFound("No active handle.");
+
+        var diag = (handle as IAgentHandleInspector)?.GetContextDiagnostics();
+        if (diag is null) return NotFound("Handle does not support diagnostics.");
+
+        return Ok(new { toolCount = diag.ToolCount, tools = diag.Tools });
+    }
+
+    /// <summary>Export full context to logs directory.</summary>
+    [HttpPost("{agentId}/sessions/{sessionId}/context/export")]
+    public ActionResult ExportContext(string agentId, string sessionId)
+    {
+        var handle = GetAgentHandle(agentId, sessionId);
+        if (handle is null) return NotFound("No active handle.");
+
+        var diag = (handle as IAgentHandleInspector)?.GetContextDiagnostics();
+        if (diag is null) return NotFound("Handle does not support diagnostics.");
+
+        var logDir = Path.Combine(BotNexusHome.ResolveHomePath(), "logs");
+        Directory.CreateDirectory(logDir);
+
+        var fileName = $"context-export-{agentId}-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}.json";
+        var filePath = Path.Combine(logDir, fileName);
+
+        System.IO.File.WriteAllText(
+            filePath,
+            System.Text.Json.JsonSerializer.Serialize(diag, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+
+        return Ok(new { exported = filePath });
+    }
+
+    private IAgentHandle? GetAgentHandle(string agentId, string sessionId)
+    {
+        var supervisorImpl = _supervisor as BotNexus.Gateway.Agents.DefaultAgentSupervisor;
+        return supervisorImpl?.GetHandle(AgentId.From(agentId), SessionId.From(sessionId));
     }
 }

@@ -577,6 +577,49 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     }
 
     /// <inheritdoc />
+    public ContextDiagnostics? GetContextDiagnostics()
+    {
+        var state = _agent.State;
+        var systemPromptChars = state.SystemPrompt?.Length ?? 0;
+        var toolDefinitions = state.Tools
+            .Select(static t => new ToolDiagInfo(
+                t.Name,
+                t.Definition.Description,
+                t.Definition.Parameters.GetRawText().Length))
+            .ToList();
+        var historyEntries = state.Messages.Count;
+        var historyChars = state.Messages.Sum(static message => message switch
+        {
+            AgentCoreUserMessage user => user.Content?.Length ?? 0,
+            AssistantAgentMessage assistant => assistant.Content?.Length ?? 0,
+            SystemAgentMessage system => system.Content?.Length ?? 0,
+            ToolResultAgentMessage tool => tool.Result.Content.Sum(static c => c.Value?.Length ?? 0),
+            SubAgentCompletionMessage subAgent => subAgent.Content?.Length ?? 0,
+            _ => 0
+        });
+
+        var totalChars = systemPromptChars
+            + toolDefinitions.Sum(static t => t.SchemaChars + t.Name.Length + (t.Description?.Length ?? 0))
+            + historyChars;
+        var estimatedTokens = totalChars / 4;
+
+        return new ContextDiagnostics
+        {
+            SystemPromptChars = systemPromptChars,
+            SystemPromptTokens = systemPromptChars / 4,
+            ToolCount = state.Tools.Count,
+            ToolDefinitionChars = toolDefinitions.Sum(static t => t.SchemaChars),
+            ToolDefinitionTokens = toolDefinitions.Sum(static t => t.SchemaChars) / 4,
+            Tools = toolDefinitions,
+            HistoryEntryCount = historyEntries,
+            HistoryChars = historyChars,
+            HistoryTokens = historyChars / 4,
+            TotalEstimatedTokens = estimatedTokens,
+            SystemPrompt = state.SystemPrompt
+        };
+    }
+
+    /// <inheritdoc />
     public async Task<AgentResponse> PromptAsync(string message, CancellationToken cancellationToken = default)
     {
         using var activity = AgentDiagnostics.Source.StartActivity("agent.prompt", ActivityKind.Internal);

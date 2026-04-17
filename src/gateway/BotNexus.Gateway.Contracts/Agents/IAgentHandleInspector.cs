@@ -17,4 +17,9 @@ public interface IAgentHandleInspector
     /// Resolves a tool by name from an active agent/session handle, or <c>null</c> when unavailable.
     /// </summary>
     IAgentTool? ResolveTool(AgentId agentId, SessionId sessionId, string toolName);
+
+    /// <summary>
+    /// Gets context diagnostics for an active agent/session handle, or <c>null</c> when unavailable.
+    /// </summary>
+    ContextDiagnostics? GetContextDiagnostics();
 }

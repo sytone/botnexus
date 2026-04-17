@@ -3,7 +3,7 @@ id: feature-context-diagnostics
 title: "Context Diagnostics — /context command + debug API"
 type: feature
 priority: critical
-status: draft
+status: in-progress
 created: 2026-04-17
 tags: [diagnostics, context, debugging, tools, system-prompt]
 ---
