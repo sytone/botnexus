@@ -17,6 +17,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.IO.Abstractions;
+using BotNexus.Gateway.Tests.Helpers;
 
 namespace BotNexus.Gateway.Tests.Integration;
 
@@ -374,6 +375,8 @@ public sealed class SessionResumeIntegrationTests : IDisposable
                         .ToList();
                     foreach (var descriptor in hostedServices)
                         services.Remove(descriptor);
+
+                    services.AddSignalRChannelForTests();
 
                     services.RemoveAll<ISessionStore>();
                     services.AddSingleton<ISessionStore>(sp =>

@@ -10,6 +10,7 @@ using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Api;
 using BotNexus.Channels.SignalR;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Tests.Helpers;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Connections;
@@ -228,6 +229,8 @@ public sealed class SessionSwitchingTests : IAsyncDisposable
                         .ToList();
                     foreach (var descriptor in hostedServices)
                         services.Remove(descriptor);
+
+                    services.AddSignalRChannelForTests();
 
                     services.RemoveAll<IAgentConfigurationWriter>();
                     services.AddSingleton<IAgentConfigurationWriter, NoOpAgentConfigurationWriter>();

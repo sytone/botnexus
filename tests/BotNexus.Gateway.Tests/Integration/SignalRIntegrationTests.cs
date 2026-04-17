@@ -12,6 +12,7 @@ using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Api;
 using BotNexus.Channels.SignalR;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Tests.Helpers;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Connections;
@@ -915,6 +916,8 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
 
                     services.RemoveAll<IAgentConfigurationWriter>();
                     services.AddSingleton<IAgentConfigurationWriter, NoOpAgentConfigurationWriter>();
+
+                    services.AddSignalRChannelForTests();
 
                     configureServices?.Invoke(services);
                 });

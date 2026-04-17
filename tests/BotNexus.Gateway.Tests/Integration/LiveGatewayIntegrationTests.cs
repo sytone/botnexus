@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using BotNexus.Gateway.Tests.Helpers;
 
 namespace BotNexus.Gateway.Tests.Integration;
 
@@ -103,6 +104,8 @@ public sealed class LiveGatewayIntegrationTests
 
                     foreach (var descriptor in hostedServicesToRemove)
                         services.Remove(descriptor);
+
+                    services.AddSignalRChannelForTests();
                 });
 
                 builder.ConfigureTestServices(services =>
