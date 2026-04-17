@@ -1,0 +1,180 @@
+@implements IDisposable
+
+<div class="chat-panel">
+    <header class="chat-header">
+        <h3>@AgentDisplayName</h3>
+        <span class="agent-id-label">@AgentId</span>
+    </header>
+
+    <div class="messages-container">
+        @foreach (var msg in _messages)
+        {
+            <div class="message @msg.CssClass">
+                <div class="message-role">@msg.Role</div>
+                <div class="message-content">@msg.Content</div>
+                @if (msg.ToolName is not null)
+                {
+                    <div class="message-tool">🔧 @msg.ToolName</div>
+                }
+            </div>
+        }
+
+        @if (_isStreaming)
+        {
+            <div class="message assistant streaming">
+                <div class="message-role">Assistant</div>
+                <div class="message-content">@_streamBuffer</div>
+                <span class="streaming-indicator">●</span>
+            </div>
+        }
+    </div>
+
+    <div class="chat-input-area">
+        <textarea class="chat-input"
+                  @bind="_inputText"
+                  @bind:event="oninput"
+                  @onkeydown="HandleKeyDown"
+                  placeholder="Type a message…"
+                  disabled="@(!Hub.IsConnected || _isStreaming)" />
+        <button class="send-btn"
+                @onclick="SendMessage"
+                disabled="@(!Hub.IsConnected || _isStreaming || string.IsNullOrWhiteSpace(_inputText))">
+            Send
+        </button>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public string AgentId { get; set; } = default!;
+
+    [Parameter, EditorRequired]
+    public string AgentDisplayName { get; set; } = default!;
+
+    [Parameter, EditorRequired]
+    public GatewayHubConnection Hub { get; set; } = default!;
+
+    private sealed class ChatMessage
+    {
+        public string Role { get; init; } = "";
+        public string Content { get; set; } = "";
+        public string? ToolName { get; init; }
+        public string CssClass => Role.ToLowerInvariant();
+    }
+
+    private readonly List<ChatMessage> _messages = [];
+    private string _inputText = "";
+    private string _streamBuffer = "";
+    private bool _isStreaming;
+    private string? _currentSessionId;
+
+    protected override void OnInitialized()
+    {
+        Hub.OnMessageStart += HandleMessageStart;
+        Hub.OnContentDelta += HandleContentDelta;
+        Hub.OnToolStart += HandleToolStart;
+        Hub.OnToolEnd += HandleToolEnd;
+        Hub.OnMessageEnd += HandleMessageEnd;
+        Hub.OnError += HandleError;
+    }
+
+    private void HandleMessageStart(AgentStreamEvent evt)
+    {
+        _isStreaming = true;
+        _streamBuffer = "";
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void HandleContentDelta(ContentDeltaPayload payload)
+    {
+        // Only show deltas for our session (if we know it), otherwise show all
+        if (_currentSessionId is not null && payload.SessionId != _currentSessionId)
+            return;
+
+        _streamBuffer += payload.ContentDelta ?? "";
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void HandleToolStart(AgentStreamEvent evt)
+    {
+        _messages.Add(new ChatMessage
+        {
+            Role = "Tool",
+            Content = $"Calling {evt.ToolName}…",
+            ToolName = evt.ToolName
+        });
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void HandleToolEnd(AgentStreamEvent evt)
+    {
+        var display = evt.ToolIsError == true
+            ? $"❌ {evt.ToolName} failed"
+            : $"✅ {evt.ToolName} completed";
+        _messages.Add(new ChatMessage { Role = "Tool", Content = display, ToolName = evt.ToolName });
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void HandleMessageEnd(AgentStreamEvent evt)
+    {
+        if (!string.IsNullOrEmpty(_streamBuffer))
+        {
+            _messages.Add(new ChatMessage { Role = "Assistant", Content = _streamBuffer });
+        }
+        _streamBuffer = "";
+        _isStreaming = false;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void HandleError(AgentStreamEvent evt)
+    {
+        _messages.Add(new ChatMessage
+        {
+            Role = "Error",
+            Content = evt.ErrorMessage ?? "An unknown error occurred."
+        });
+        _isStreaming = false;
+        _streamBuffer = "";
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e is { Key: "Enter", ShiftKey: false })
+        {
+            await SendMessage();
+        }
+    }
+
+    private async Task SendMessage()
+    {
+        var text = _inputText?.Trim();
+        if (string.IsNullOrEmpty(text) || !Hub.IsConnected)
+            return;
+
+        _inputText = "";
+        _messages.Add(new ChatMessage { Role = "User", Content = text });
+
+        try
+        {
+            var result = await Hub.SendMessageAsync(AgentId, "signalr", text);
+            _currentSessionId = result.SessionId;
+        }
+        catch (Exception ex)
+        {
+            _messages.Add(new ChatMessage { Role = "Error", Content = $"Send failed: {ex.Message}" });
+        }
+
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        Hub.OnMessageStart -= HandleMessageStart;
+        Hub.OnContentDelta -= HandleContentDelta;
+        Hub.OnToolStart -= HandleToolStart;
+        Hub.OnToolEnd -= HandleToolEnd;
+        Hub.OnMessageEnd -= HandleMessageEnd;
+        Hub.OnError -= HandleError;
+    }
+}

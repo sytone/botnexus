@@ -1,0 +1,120 @@
+@page "/"
+@inject GatewayHubConnection Hub
+@inject NavigationManager Nav
+@implements IDisposable
+
+<PageTitle>BotNexus</PageTitle>
+
+<div class="main-grid">
+    @* ── Agent sidebar ─────────────────────────────────────── *@
+    <nav class="agent-list">
+        <h3>Agents</h3>
+        <div class="connection-status @ConnectionCssClass">
+            @ConnectionLabel
+        </div>
+
+        @if (_agents.Count == 0 && Hub.IsConnected)
+        {
+            <p class="text-muted">No agents available.</p>
+        }
+
+        @foreach (var agent in _agents)
+        {
+            <button class="agent-btn @(agent.AgentId == _selectedAgentId ? "selected" : "")"
+                    @onclick="() => SelectAgent(agent)">
+                <span class="agent-name">@agent.DisplayName</span>
+                <span class="agent-id">@agent.AgentId</span>
+            </button>
+        }
+    </nav>
+
+    @* ── Chat area ─────────────────────────────────────────── *@
+    <section class="chat-area">
+        @if (_selectedAgentId is null)
+        {
+            <div class="empty-state">
+                <p>Select an agent to start chatting.</p>
+            </div>
+        }
+        else
+        {
+            <ChatPanel AgentId="@_selectedAgentId"
+                       AgentDisplayName="@_selectedAgentName"
+                       Hub="@Hub" />
+        }
+    </section>
+</div>
+
+@code {
+    private readonly List<AgentSummary> _agents = [];
+    private string? _selectedAgentId;
+    private string? _selectedAgentName;
+
+    private string ConnectionCssClass => Hub.State switch
+    {
+        Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connected => "status-connected",
+        Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connecting => "status-connecting",
+        Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Reconnecting => "status-reconnecting",
+        _ => "status-disconnected"
+    };
+
+    private string ConnectionLabel => Hub.State switch
+    {
+        Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connected => "● Connected",
+        Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connecting => "◌ Connecting…",
+        Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Reconnecting => "◌ Reconnecting…",
+        _ => "○ Disconnected"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        Hub.OnConnected += HandleConnected;
+        Hub.OnReconnecting += HandleReconnecting;
+        Hub.OnDisconnected += HandleDisconnected;
+
+        try
+        {
+            // Derive the hub URL from the current origin.
+            // The Blazor app is served at /blazor/, hub is at /hub/gateway.
+            var baseUri = new Uri(Nav.BaseUri);
+            var hubUrl = new Uri(baseUri, "/hub/gateway").ToString();
+
+            await Hub.ConnectAsync(hubUrl);
+            await Hub.SubscribeAllAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Hub connection failed: {ex.Message}");
+        }
+    }
+
+    private void HandleConnected(ConnectedPayload payload)
+    {
+        _agents.Clear();
+        _agents.AddRange(payload.Agents);
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void HandleReconnecting()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void HandleDisconnected()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void SelectAgent(AgentSummary agent)
+    {
+        _selectedAgentId = agent.AgentId;
+        _selectedAgentName = agent.DisplayName;
+    }
+
+    public void Dispose()
+    {
+        Hub.OnConnected -= HandleConnected;
+        Hub.OnReconnecting -= HandleReconnecting;
+        Hub.OnDisconnected -= HandleDisconnected;
+    }
+}

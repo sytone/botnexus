@@ -30,6 +30,7 @@
   <Folder Name="/src/channels/">
     <Project Path="src/channels/BotNexus.Channels.Core/BotNexus.Channels.Core.csproj" />
     <Project Path="src/channels/BotNexus.Channels.SignalR/BotNexus.Channels.SignalR.csproj" />
+    <Project Path="src/channels/BotNexus.Channels.SignalR.BlazorClient/BotNexus.Channels.SignalR.BlazorClient.csproj" />
     <Project Path="src/channels/BotNexus.Channels.Telegram/BotNexus.Channels.Telegram.csproj" />
     <Project Path="src/channels/BotNexus.Channels.Tui/BotNexus.Channels.Tui.csproj" />
   </Folder>
