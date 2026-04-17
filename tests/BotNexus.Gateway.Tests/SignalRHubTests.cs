@@ -20,11 +20,11 @@ public sealed class SignalRHubTests
     [Fact]
     public async Task GatewayHub_OnConnected_SendsConnectionInfo()
     {
-        var caller = new Mock<ISingleClientProxy>();
-        caller.Setup(proxy => proxy.SendCoreAsync(It.IsAny<string>(), It.IsAny<object?[]>(), It.IsAny<CancellationToken>()))
+        var caller = new Mock<IGatewayHubClient>();
+        caller.Setup(proxy => proxy.Connected(It.IsAny<ConnectedPayload>()))
             .Returns(Task.CompletedTask);
 
-        var clients = new Mock<IHubCallerClients>();
+        var clients = new Mock<IHubCallerClients<IGatewayHubClient>>();
         clients.SetupGet(value => value.Caller).Returns(caller.Object);
 
         var registry = new Mock<IAgentRegistry>();
@@ -50,10 +50,8 @@ public sealed class SignalRHubTests
 
         await hub.OnConnectedAsync();
 
-        caller.Verify(proxy => proxy.SendCoreAsync(
-                "Connected",
-                It.Is<object?[]>(args => HasPropertyValue(args, "connectionId", "conn-1")),
-                It.IsAny<CancellationToken>()),
+        caller.Verify(proxy => proxy.Connected(
+                It.Is<ConnectedPayload>(p => p.ConnectionId == "conn-1")),
             Times.Once);
         activity.Verify(value => value.PublishAsync(
                 It.Is<GatewayActivity>(a =>
@@ -101,7 +99,7 @@ public sealed class SignalRHubTests
         dispatcher.Verify(value => value.DispatchAsync(
             It.Is<InboundMessage>(m => m.SessionId == "s1" && m.TargetAgentId == "agent-a" && m.Content == "hello"),
             CancellationToken.None), Times.Once);
-        HasPropertyValue([result], "sessionId", "s1").Should().BeTrue();
+        result.SessionId.Should().Be("s1");
     }
 
     [Fact]
@@ -144,7 +142,7 @@ public sealed class SignalRHubTests
         dispatched.Should().NotBeNull();
         dispatched!.TargetAgentId.Should().Be("agent-a");
         dispatched.Content.Should().Be("hello");
-        GetPropertyValue<string>(result, "sessionId").Should().NotBeNullOrWhiteSpace();
+        result.SessionId.Should().NotBeNullOrWhiteSpace();
     }
 
     [Fact]
@@ -214,7 +212,7 @@ public sealed class SignalRHubTests
 
         var result = await hub.SendMessage("agent-a", "telegram", "hello-telegram");
 
-        GetPropertyValue<string>(result, "sessionId").Should().Be("telegram-session");
+        result.SessionId.Should().Be("telegram-session");
         dispatcher.Verify(value => value.DispatchAsync(
                 It.Is<InboundMessage>(m =>
                     m.SessionId == "telegram-session" &&
@@ -253,9 +251,9 @@ public sealed class SignalRHubTests
 
         var result = await hub.SendMessage("agent-a", "telegram", "needs-new-session");
 
-        var createdSessionId = GetPropertyValue<string>(result, "sessionId");
+        var createdSessionId = result.SessionId;
         createdSessionId.Should().NotBeNullOrWhiteSpace();
-        GetPropertyValue<string>(result, "channelType").Should().Be("telegram");
+        result.ChannelType.Should().Be("telegram");
         capturedSession.Should().NotBeNull();
         capturedSession!.ChannelType.Should().Be(ChannelKey.From("telegram"));
         dispatcher.Verify(value => value.DispatchAsync(
@@ -329,10 +327,10 @@ public sealed class SignalRHubTests
     [Fact]
     public async Task ResetSession_ArchivesInsteadOfDeleting()
     {
-        var caller = new Mock<ISingleClientProxy>();
-        caller.Setup(proxy => proxy.SendCoreAsync(It.IsAny<string>(), It.IsAny<object?[]>(), It.IsAny<CancellationToken>()))
+        var caller = new Mock<IGatewayHubClient>();
+        caller.Setup(proxy => proxy.SessionReset(It.IsAny<SessionResetPayload>()))
             .Returns(Task.CompletedTask);
-        var clients = new Mock<IHubCallerClients>();
+        var clients = new Mock<IHubCallerClients<IGatewayHubClient>>();
         clients.SetupGet(value => value.Caller).Returns(caller.Object);
 
         var sessions = new Mock<ISessionStore>();
@@ -375,10 +373,10 @@ public sealed class SignalRHubTests
 
         var result = await hub.CompactSession("agent-a", "session-1");
 
-        GetPropertyValue<int>(result, "summarized").Should().Be(5);
-        GetPropertyValue<int>(result, "preserved").Should().Be(3);
-        GetPropertyValue<int>(result, "tokensBefore").Should().Be(2000);
-        GetPropertyValue<int>(result, "tokensAfter").Should().Be(800);
+        result.Summarized.Should().Be(5);
+        result.Preserved.Should().Be(3);
+        result.TokensBefore.Should().Be(2000);
+        result.TokensAfter.Should().Be(800);
     }
 
     [Fact]
@@ -395,7 +393,7 @@ public sealed class SignalRHubTests
     }
 
     private static GatewayHub CreateHub(
-        IHubCallerClients? clients = null,
+        IHubCallerClients<IGatewayHubClient>? clients = null,
         IGroupManager? groups = null,
         ISessionStore? sessions = null,
         IChannelDispatcher? dispatcher = null,
@@ -418,34 +416,12 @@ public sealed class SignalRHubTests
             compactionOptions ?? new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
             NullLogger<GatewayHub>.Instance)
         {
-            Clients = clients ?? Mock.Of<IHubCallerClients>(),
+            Clients = clients ?? Mock.Of<IHubCallerClients<IGatewayHubClient>>(),
             Groups = groups ?? Mock.Of<IGroupManager>(),
             Context = new TestHubCallerContext(connectionId)
         };
 
         return hub;
-    }
-
-    private static bool HasPropertyValue(object?[] args, string propertyName, string expectedValue)
-    {
-        args.Should().NotBeEmpty();
-        var payload = args[0];
-        payload.Should().NotBeNull();
-
-        var property = payload!.GetType().GetProperty(propertyName);
-        property.Should().NotBeNull();
-
-        return string.Equals(property!.GetValue(payload)?.ToString(), expectedValue, StringComparison.Ordinal);
-    }
-
-    private static T GetPropertyValue<T>(object payload, string propertyName)
-    {
-        var property = payload.GetType().GetProperty(propertyName);
-        property.Should().NotBeNull();
-
-        var value = property!.GetValue(payload);
-        value.Should().NotBeNull();
-        return (T)value!;
     }
 
     private sealed class TestHubCallerContext(string connectionId) : HubCallerContext

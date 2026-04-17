@@ -23,7 +23,7 @@ namespace BotNexus.Channels.SignalR;
 /// SignalR hub for real-time agent communication. Replaces the raw WebSocket infrastructure.
 /// Clients join session groups and receive streaming output for all active sessions simultaneously.
 /// </summary>
-public sealed class GatewayHub : Hub
+public sealed class GatewayHub : Hub<IGatewayHubClient>
 {
     private readonly IAgentSupervisor _supervisor;
     private readonly IAgentRegistry _registry;
@@ -61,7 +61,7 @@ public sealed class GatewayHub : Hub
     /// Executes subscribe all.
     /// </summary>
     /// <returns>The subscribe all result.</returns>
-    public async Task<object> SubscribeAll()
+    public async Task<SubscribeAllResult> SubscribeAll()
     {
         var sessions = await _warmup.GetAvailableSessionsAsync(Context.ConnectionAborted);
 
@@ -78,7 +78,7 @@ public sealed class GatewayHub : Hub
             Context.ConnectionId,
             sessions.Count);
 
-        return new { sessions };
+        return new SubscribeAllResult(sessions);
     }
 
     /// <summary>
@@ -88,7 +88,7 @@ public sealed class GatewayHub : Hub
     /// <param name="sessionId">The session id.</param>
     /// <returns>The join session result.</returns>
     [Obsolete("JoinSession is deprecated. Use SubscribeAll and SendMessage(agentId, channelType, content).")]
-    public async Task<object> JoinSession(string agentId, string? sessionId)
+    public async Task<JoinSessionResult> JoinSession(string agentId, string? sessionId)
     {
         var typedAgentId = ParseAgentId(agentId);
         var typedSessionId = string.IsNullOrWhiteSpace(sessionId)
@@ -132,18 +132,16 @@ public sealed class GatewayHub : Hub
             await _sessions.SaveAsync(session, Context.ConnectionAborted);
         }
 
-        return new
-        {
-            sessionId = session.SessionId.Value,
-            agentId = session.AgentId.Value,
-            connectionId = Context.ConnectionId,
-            messageCount = session.History.Count,
-            isResumed = session.History.Count > 0,
-            status = session.Status.ToString(),
-            channelType = session.ChannelType,
-            createdAt = session.CreatedAt,
-            updatedAt = session.UpdatedAt
-        };
+        return new JoinSessionResult(
+            session.SessionId.Value,
+            session.AgentId.Value,
+            Context.ConnectionId,
+            session.History.Count,
+            session.History.Count > 0,
+            session.Status.ToString(),
+            session.ChannelType?.Value,
+            session.CreatedAt,
+            session.UpdatedAt);
     }
 
     /// <summary>
@@ -165,7 +163,7 @@ public sealed class GatewayHub : Hub
     /// <param name="channelType">The channel type.</param>
     /// <param name="content">The content.</param>
     /// <returns>The send message result.</returns>
-    public async Task<object> SendMessage(AgentId agentId, ChannelKey channelType, string content)
+    public async Task<SendMessageResult> SendMessage(AgentId agentId, ChannelKey channelType, string content)
     {
         var typedAgentId = NormalizeAgentId(agentId);
         var typedChannelType = NormalizeChannelKey(channelType);
@@ -183,12 +181,10 @@ public sealed class GatewayHub : Hub
             typedAgentId,
             session.SessionId);
 
-        return new
-        {
-            sessionId = session.SessionId.Value,
-            agentId = session.AgentId.Value,
-            channelType = session.ChannelType?.Value
-        };
+        return new SendMessageResult(
+            session.SessionId.Value,
+            session.AgentId.Value,
+            session.ChannelType?.Value);
     }
 
     /// <summary>
@@ -199,7 +195,7 @@ public sealed class GatewayHub : Hub
     /// <param name="content">Text content of the message.</param>
     /// <param name="contentParts">Media content parts (base64-encoded binary data).</param>
     /// <returns>The send message result including session info.</returns>
-    public async Task<object> SendMessageWithMedia(
+    public async Task<SendMessageResult> SendMessageWithMedia(
         AgentId agentId,
         ChannelKey channelType,
         string content,
@@ -236,12 +232,10 @@ public sealed class GatewayHub : Hub
             typedAgentId,
             session.SessionId);
 
-        return new
-        {
-            sessionId = session.SessionId.Value,
-            agentId = session.AgentId.Value,
-            channelType = session.ChannelType?.Value
-        };
+        return new SendMessageResult(
+            session.SessionId.Value,
+            session.AgentId.Value,
+            session.ChannelType?.Value);
     }
 
     private Task DispatchMessageAsync(AgentId typedAgentId, SessionId typedSessionId, string content, string messageType, string senderId)
@@ -396,7 +390,7 @@ public sealed class GatewayHub : Hub
         var typedSessionId = NormalizeSessionId(sessionId);
         await _supervisor.StopAsync(typedAgentId, typedSessionId, CancellationToken.None);
         await _sessions.ArchiveAsync(typedSessionId, CancellationToken.None);
-        await Clients.Caller.SendAsync("SessionReset", new { agentId = typedAgentId.Value, sessionId = typedSessionId.Value });
+        await Clients.Caller.SessionReset(new SessionResetPayload(typedAgentId.Value, typedSessionId.Value));
     }
 
     /// <summary>
@@ -405,7 +399,7 @@ public sealed class GatewayHub : Hub
     /// <param name="agentId">The agent id.</param>
     /// <param name="sessionId">The session id.</param>
     /// <returns>The compact session result.</returns>
-    public async Task<object> CompactSession(AgentId agentId, SessionId sessionId)
+    public async Task<CompactSessionResult> CompactSession(AgentId agentId, SessionId sessionId)
     {
         _ = NormalizeAgentId(agentId);
         var typedSessionId = NormalizeSessionId(sessionId);
@@ -420,13 +414,11 @@ public sealed class GatewayHub : Hub
         var result = await compactor.CompactAsync(session.Session, options, CancellationToken.None);
         await _sessions.SaveAsync(session, CancellationToken.None);
 
-        return new
-        {
-            summarized = result.EntriesSummarized,
-            preserved = result.EntriesPreserved,
-            tokensBefore = result.TokensBefore,
-            tokensAfter = result.TokensAfter
-        };
+        return new CompactSessionResult(
+            result.EntriesSummarized,
+            result.EntriesPreserved,
+            result.TokensBefore,
+            result.TokensAfter);
     }
 
     /// <summary>
@@ -455,13 +447,11 @@ public sealed class GatewayHub : Hub
         _logger.LogInformation("Hub OnConnected: connection={ConnectionId} clientVersion={ClientVersion}",
             Context.ConnectionId, clientVersion);
 
-        await Clients.Caller.SendAsync("Connected", new
-        {
-            connectionId = Context.ConnectionId,
-            agents = _registry.GetAll().Select(a => new { a.AgentId, a.DisplayName }),
-            serverVersion = typeof(GatewayHub).Assembly.GetName().Version?.ToString() ?? "dev",
-            capabilities = new { multiSession = true }
-        });
+        await Clients.Caller.Connected(new ConnectedPayload(
+            Context.ConnectionId,
+            _registry.GetAll().Select(a => new AgentSummary(a.AgentId.Value, a.DisplayName)),
+            typeof(GatewayHub).Assembly.GetName().Version?.ToString() ?? "dev",
+            new HubCapabilities(MultiSession: true)));
 
         await _activity.PublishAsync(
             new GatewayActivity

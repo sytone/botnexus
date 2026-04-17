@@ -13,7 +13,7 @@ namespace BotNexus.Channels.SignalR;
 /// </summary>
 public sealed class SubAgentSignalRBridge(
     IActivityBroadcaster activity,
-    IHubContext<GatewayHub> hubContext,
+    IHubContext<GatewayHub, IGatewayHubClient> hubContext,
     ILogger<SubAgentSignalRBridge> logger) : BackgroundService
 {
     private static readonly HashSet<GatewayActivityType> SubAgentEventTypes =
@@ -23,14 +23,6 @@ public sealed class SubAgentSignalRBridge(
         GatewayActivityType.SubAgentFailed,
         GatewayActivityType.SubAgentKilled
     ];
-
-    private static readonly Dictionary<GatewayActivityType, string> HubMethodMap = new()
-    {
-        [GatewayActivityType.SubAgentSpawned] = "SubAgentSpawned",
-        [GatewayActivityType.SubAgentCompleted] = "SubAgentCompleted",
-        [GatewayActivityType.SubAgentFailed] = "SubAgentFailed",
-        [GatewayActivityType.SubAgentKilled] = "SubAgentKilled"
-    };
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -66,9 +58,6 @@ public sealed class SubAgentSignalRBridge(
         if (string.IsNullOrWhiteSpace(evt.SessionId))
             return;
 
-        if (!HubMethodMap.TryGetValue(evt.Type, out var method))
-            return;
-
         // Extract SubAgentInfo from the activity data
         SubAgentInfo? subAgent = null;
         if (evt.Data?.TryGetValue("subAgent", out var subAgentObj) == true && subAgentObj is SubAgentInfo info)
@@ -83,25 +72,38 @@ public sealed class SubAgentSignalRBridge(
         var parentSessionId = evt.SessionId;
         var group = $"session:{parentSessionId}";
 
-        var payload = new
+        var payload = new SubAgentEventPayload(
+            parentSessionId,
+            subAgent.SubAgentId,
+            subAgent.Name,
+            subAgent.Task,
+            subAgent.Model,
+            subAgent.Archetype.Value,
+            subAgent.Status.ToString(),
+            subAgent.StartedAt,
+            subAgent.CompletedAt,
+            subAgent.TurnsUsed,
+            subAgent.ResultSummary,
+            subAgent.Status == SubAgentStatus.TimedOut);
+
+        logger.LogDebug("Forwarding {EventType} for sub-agent '{SubAgentId}' to group '{Group}'.",
+            evt.Type, subAgent.SubAgentId, group);
+
+        var client = hubContext.Clients.Group(group);
+        switch (evt.Type)
         {
-            sessionId = parentSessionId,
-            subAgentId = subAgent.SubAgentId,
-            name = subAgent.Name,
-            task = subAgent.Task,
-            model = subAgent.Model,
-            archetype = subAgent.Archetype.Value,
-            status = subAgent.Status.ToString(),
-            startedAt = subAgent.StartedAt,
-            completedAt = subAgent.CompletedAt,
-            turnsUsed = subAgent.TurnsUsed,
-            resultSummary = subAgent.ResultSummary,
-            timedOut = subAgent.Status == SubAgentStatus.TimedOut
-        };
-
-        logger.LogDebug("Forwarding {Method} for sub-agent '{SubAgentId}' to group '{Group}'.",
-            method, subAgent.SubAgentId, group);
-
-        await hubContext.Clients.Group(group).SendAsync(method, payload, ct).ConfigureAwait(false);
+            case GatewayActivityType.SubAgentSpawned:
+                await client.SubAgentSpawned(payload).ConfigureAwait(false);
+                break;
+            case GatewayActivityType.SubAgentCompleted:
+                await client.SubAgentCompleted(payload).ConfigureAwait(false);
+                break;
+            case GatewayActivityType.SubAgentFailed:
+                await client.SubAgentFailed(payload).ConfigureAwait(false);
+                break;
+            case GatewayActivityType.SubAgentKilled:
+                await client.SubAgentKilled(payload).ConfigureAwait(false);
+                break;
+        }
     }
 }

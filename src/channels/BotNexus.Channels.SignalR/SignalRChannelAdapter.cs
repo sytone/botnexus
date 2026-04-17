@@ -12,10 +12,10 @@ namespace BotNexus.Channels.SignalR;
 /// <summary>
 /// SignalR-based channel adapter. Sends agent output to session groups via IHubContext.
 /// </summary>
-public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger, IHubContext<GatewayHub> hubContext)
+public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger, IHubContext<GatewayHub, IGatewayHubClient> hubContext)
     : ChannelAdapterBase(logger), IStreamEventChannelAdapter
 {
-    private readonly IHubContext<GatewayHub> _hubContext = hubContext;
+    private readonly IHubContext<GatewayHub, IGatewayHubClient> _hubContext = hubContext;
 
     public override ChannelKey ChannelType => ChannelKey.From("signalr");
     public override string DisplayName => "Web Chat";
@@ -41,7 +41,7 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
     {
         var normalizedSessionId = NormalizeSessionId(message.SessionId ?? message.ConversationId);
         return _hubContext.Clients.Group(GetSessionGroup(normalizedSessionId))
-            .SendAsync("ContentDelta", new { sessionId = normalizedSessionId, contentDelta = message.Content }, cancellationToken);
+            .ContentDelta(new ContentDeltaPayload(normalizedSessionId, message.Content));
     }
 
     /// <summary>
@@ -55,7 +55,7 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
     {
         var normalizedSessionId = NormalizeSessionId(conversationId);
         return _hubContext.Clients.Group(GetSessionGroup(normalizedSessionId))
-            .SendAsync("ContentDelta", new { sessionId = normalizedSessionId, contentDelta = delta }, cancellationToken);
+            .ContentDelta(new ContentDeltaPayload(normalizedSessionId, delta));
     }
 
     /// <summary>
@@ -69,22 +69,22 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
     {
         var normalizedSessionId = NormalizeSessionId(conversationId);
         var typedSessionId = SessionId.From(normalizedSessionId);
-        var method = streamEvent.Type switch
-        {
-            AgentStreamEventType.MessageStart => "MessageStart",
-            AgentStreamEventType.ThinkingDelta => "ThinkingDelta",
-            AgentStreamEventType.ContentDelta => "ContentDelta",
-            AgentStreamEventType.ToolStart => "ToolStart",
-            AgentStreamEventType.ToolEnd => "ToolEnd",
-            AgentStreamEventType.MessageEnd => "MessageEnd",
-            AgentStreamEventType.Error => "Error",
-            _ => "Unknown"
-        };
 
-        logger.LogInformation("SignalR → group session:{SessionId} method {Method}", normalizedSessionId, method);
+        logger.LogInformation("SignalR → group session:{SessionId} method {Method}", normalizedSessionId, streamEvent.Type);
         var enrichedEvent = streamEvent with { SessionId = typedSessionId };
-        return _hubContext.Clients.Group(GetSessionGroup(normalizedSessionId))
-            .SendAsync(method, enrichedEvent, cancellationToken);
+        var client = _hubContext.Clients.Group(GetSessionGroup(normalizedSessionId));
+
+        return streamEvent.Type switch
+        {
+            AgentStreamEventType.MessageStart => client.MessageStart(enrichedEvent),
+            AgentStreamEventType.ThinkingDelta => client.ThinkingDelta(enrichedEvent),
+            AgentStreamEventType.ContentDelta => client.ContentDelta(enrichedEvent),
+            AgentStreamEventType.ToolStart => client.ToolStart(enrichedEvent),
+            AgentStreamEventType.ToolEnd => client.ToolEnd(enrichedEvent),
+            AgentStreamEventType.MessageEnd => client.MessageEnd(enrichedEvent),
+            AgentStreamEventType.Error => client.Error(enrichedEvent),
+            _ => Task.CompletedTask
+        };
     }
 
     private static string GetSessionGroup(string sessionId) => $"session:{sessionId}";

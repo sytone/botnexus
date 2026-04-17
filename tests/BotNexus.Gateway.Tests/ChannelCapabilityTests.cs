@@ -43,7 +43,7 @@ public sealed class ChannelCapabilityTests
     {
         var adapter = new SignalRChannelAdapter(
             NullLogger<SignalRChannelAdapter>.Instance,
-            Mock.Of<IHubContext<GatewayHub>>());
+            Mock.Of<IHubContext<GatewayHub, IGatewayHubClient>>());
 
         adapter.SupportsStreaming.Should().BeTrue();
         adapter.SupportsSteering.Should().BeTrue();
