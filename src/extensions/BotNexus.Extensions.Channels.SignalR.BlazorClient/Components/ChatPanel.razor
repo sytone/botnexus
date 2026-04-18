@@ -169,6 +169,7 @@
         : "Type a message… (Shift+Enter for newline)";
 
     private bool _forceScrollNext;
+    private bool _wasActive;
 
     // ── Lifecycle ─────────────────────────────────────────────────────────
 
@@ -183,7 +184,13 @@
                 _enterPreventionBound = true;
             }
 
-            // Force-scroll on first render, after sending, or after history load.
+            // Detect when this panel just became visible (agent selected)
+            var isActive = State.AgentId == Manager.ActiveAgentId;
+            if (isActive && !_wasActive)
+                _forceScrollNext = true;
+            _wasActive = isActive;
+
+            // Force-scroll on first render, after sending, or on session switch.
             // Otherwise smart-scroll (only if near bottom).
             if (firstRender || _forceScrollNext)
             {
