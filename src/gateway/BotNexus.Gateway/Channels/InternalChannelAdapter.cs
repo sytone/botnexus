@@ -1,4 +1,4 @@
-using BotNexus.Channels.Core;
+using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>BotNexus.Extensions.Channels.Tui</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
+    <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
+    <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Channels\BotNexus.Gateway.Channels.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0-preview.3.25171.5" />
+  </ItemGroup>
+</Project>

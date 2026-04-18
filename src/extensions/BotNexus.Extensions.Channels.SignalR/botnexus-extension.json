@@ -1,0 +1,7 @@
+{
+  "id": "botnexus-signalr",
+  "name": "SignalR Channel",
+  "version": "1.0.0",
+  "entryAssembly": "BotNexus.Extensions.Channels.SignalR.dll",
+  "extensionTypes": ["channel", "endpoint-contributor"]
+}

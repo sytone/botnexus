@@ -8,7 +8,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Api;
-using BotNexus.Channels.SignalR;
+using BotNexus.Extensions.Channels.SignalR;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Tests.Helpers;
 using FluentAssertions;

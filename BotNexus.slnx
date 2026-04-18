@@ -7,6 +7,10 @@
     <Project Path="src/extensions/BotNexus.Extensions.WebTools/BotNexus.Extensions.WebTools.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.ProcessTool/BotNexus.Extensions.ProcessTool.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.ExecTool/BotNexus.Extensions.ExecTool.csproj" />
+    <Project Path="src/extensions/BotNexus.Extensions.Channels.SignalR/BotNexus.Extensions.Channels.SignalR.csproj" />
+    <Project Path="src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/BotNexus.Extensions.Channels.SignalR.BlazorClient.csproj" />
+    <Project Path="src/extensions/BotNexus.Extensions.Channels.Telegram/BotNexus.Extensions.Channels.Telegram.csproj" />
+    <Project Path="src/extensions/BotNexus.Extensions.Channels.Tui/BotNexus.Extensions.Channels.Tui.csproj" />
   </Folder>
   <Folder Name="/src/" />
   <Folder Name="/src/agent/">
@@ -27,13 +31,7 @@
     <Project Path="src/gateway/BotNexus.Gateway/BotNexus.Gateway.csproj" />
     <Project Path="src/gateway/BotNexus.Gateway.Api/BotNexus.Gateway.Api.csproj" />
     <Project Path="src/gateway/BotNexus.Gateway.Sessions/BotNexus.Gateway.Sessions.csproj" />
-  </Folder>
-  <Folder Name="/src/channels/">
-    <Project Path="src/channels/BotNexus.Channels.Core/BotNexus.Channels.Core.csproj" />
-    <Project Path="src/channels/BotNexus.Channels.SignalR/BotNexus.Channels.SignalR.csproj" />
-    <Project Path="src/channels/BotNexus.Channels.SignalR.BlazorClient/BotNexus.Channels.SignalR.BlazorClient.csproj" />
-    <Project Path="src/channels/BotNexus.Channels.Telegram/BotNexus.Channels.Telegram.csproj" />
-    <Project Path="src/channels/BotNexus.Channels.Tui/BotNexus.Channels.Tui.csproj" />
+    <Project Path="src/gateway/BotNexus.Gateway.Channels/BotNexus.Gateway.Channels.csproj" />
   </Folder>
   <Folder Name="/src/coding-agent/">
     <Project Path="src/coding-agent/BotNexus.CodingAgent/BotNexus.CodingAgent.csproj" />

@@ -20,7 +20,7 @@
     <ProjectReference Include="..\..\tools\BotNexus.Tools\BotNexus.Tools.csproj" />
     <ProjectReference Include="..\..\tools\BotNexus.Memory\BotNexus.Memory.csproj" />
     <ProjectReference Include="..\..\cron\BotNexus.Cron\BotNexus.Cron.csproj" />
-    <ProjectReference Include="..\..\channels\BotNexus.Channels.Core\BotNexus.Channels.Core.csproj" />
+    <ProjectReference Include="..\BotNexus.Gateway.Channels\BotNexus.Gateway.Channels.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Core\BotNexus.Agent.Core.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Copilot\BotNexus.Agent.Providers.Copilot.csproj" />

@@ -1,6 +1,6 @@
 using BotNexus.Domain.Conversations;
 using BotNexus.Domain.Primitives;
-using BotNexus.Channels.Core;
+using BotNexus.Gateway.Channels;
 using System.Net;
 using System.Net.Http.Json;
 using BotNexus.Gateway.Abstractions.Agents;

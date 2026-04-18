@@ -22,7 +22,7 @@ using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Security;
 using BotNexus.Gateway.Federation;
 using BotNexus.Gateway.Channels;
-using BotNexus.Channels.Core;
+using BotNexus.Gateway.Channels;
 using BotNexus.Extensions.Skills;
 using BotNexus.Memory;
 using Microsoft.Extensions.Configuration;

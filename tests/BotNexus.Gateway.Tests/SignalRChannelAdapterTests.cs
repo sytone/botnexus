@@ -1,4 +1,4 @@
-using BotNexus.Channels.SignalR;
+using BotNexus.Extensions.Channels.SignalR;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Domain.Primitives;
 using Microsoft.AspNetCore.SignalR;

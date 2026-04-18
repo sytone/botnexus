@@ -1,4 +1,4 @@
-using BotNexus.Channels.Tui;
+using BotNexus.Extensions.Channels.Tui;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using FluentAssertions;

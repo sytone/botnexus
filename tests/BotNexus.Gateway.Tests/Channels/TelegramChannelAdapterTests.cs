@@ -1,7 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
-using BotNexus.Channels.Telegram;
+using BotNexus.Extensions.Channels.Telegram;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using FluentAssertions;

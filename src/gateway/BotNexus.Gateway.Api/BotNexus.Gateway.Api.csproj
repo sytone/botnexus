@@ -30,7 +30,7 @@
     <ProjectReference Include="..\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway\BotNexus.Gateway.csproj" />
     <ProjectReference Include="..\..\cron\BotNexus.Cron\BotNexus.Cron.csproj" />
-    <ProjectReference Include="..\..\channels\BotNexus.Channels.Core\BotNexus.Channels.Core.csproj" />
+    <ProjectReference Include="..\BotNexus.Gateway.Channels\BotNexus.Gateway.Channels.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Anthropic\BotNexus.Agent.Providers.Anthropic.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.OpenAI\BotNexus.Agent.Providers.OpenAI.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.OpenAICompat\BotNexus.Agent.Providers.OpenAICompat.csproj" />

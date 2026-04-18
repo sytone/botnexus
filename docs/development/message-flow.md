@@ -250,7 +250,7 @@ Sessions are discriminated by `SessionType`:
 
 Finds an existing active UserAgent session for the agent+channel pair, or creates a new one with auto-generated SessionId. Sets session type, channel, and adds the caller as a User participant.
 
-See [GatewayHub.cs](../../src/channels/BotNexus.Channels.SignalR/GatewayHub.cs)
+See [GatewayHub.cs](../../src/extensions/BotNexus.Extensions.Channels.SignalR/GatewayHub.cs)
 
 ### Session Participants
 

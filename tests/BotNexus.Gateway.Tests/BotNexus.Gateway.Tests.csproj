@@ -26,10 +26,10 @@
     <ProjectReference Include="..\..\src\gateway\BotNexus.Gateway\BotNexus.Gateway.csproj" />
     <ProjectReference Include="..\..\src\gateway\BotNexus.Gateway.Sessions\BotNexus.Gateway.Sessions.csproj" />
     <ProjectReference Include="..\..\src\gateway\BotNexus.Gateway.Api\BotNexus.Gateway.Api.csproj" />
-    <ProjectReference Include="..\..\src\channels\BotNexus.Channels.SignalR\BotNexus.Channels.SignalR.csproj" />
-    <ProjectReference Include="..\..\src\channels\BotNexus.Channels.Core\BotNexus.Channels.Core.csproj" />
-    <ProjectReference Include="..\..\src\channels\BotNexus.Channels.Tui\BotNexus.Channels.Tui.csproj" />
-    <ProjectReference Include="..\..\src\channels\BotNexus.Channels.Telegram\BotNexus.Channels.Telegram.csproj" />
+    <ProjectReference Include="..\..\src\extensions\BotNexus.Extensions.Channels.SignalR\BotNexus.Extensions.Channels.SignalR.csproj" />
+    <ProjectReference Include="..\..\src\gateway\BotNexus.Gateway.Channels\BotNexus.Gateway.Channels.csproj" />
+    <ProjectReference Include="..\..\src\extensions\BotNexus.Extensions.Channels.Tui\BotNexus.Extensions.Channels.Tui.csproj" />
+    <ProjectReference Include="..\..\src\extensions\BotNexus.Extensions.Channels.Telegram\BotNexus.Extensions.Channels.Telegram.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

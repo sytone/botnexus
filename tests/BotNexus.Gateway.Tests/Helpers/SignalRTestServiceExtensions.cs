@@ -1,4 +1,4 @@
-using BotNexus.Channels.SignalR;
+using BotNexus.Extensions.Channels.SignalR;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Extensions;
 using Microsoft.Extensions.DependencyInjection;

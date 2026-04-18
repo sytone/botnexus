@@ -1,9 +1,9 @@
-using BotNexus.Channels.Core;
-using BotNexus.Channels.Telegram;
-using BotNexus.Channels.Tui;
+using BotNexus.Gateway.Channels;
+using BotNexus.Extensions.Channels.Telegram;
+using BotNexus.Extensions.Channels.Tui;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
-using BotNexus.Channels.SignalR;
+using BotNexus.Extensions.Channels.SignalR;
 using FluentAssertions;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging.Abstractions;

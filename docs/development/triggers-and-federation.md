@@ -333,7 +333,7 @@ See [AgentConversationService.cs](../../src/gateway/BotNexus.Gateway/Agents/Agen
 
 Sends HTTP POST to `{endpoint}/api/federation/relay` with a `CrossWorldRelayRequest` body and optional `X-Cross-World-Key` authentication header.
 
-See [CrossWorldChannelAdapter.cs](../../src/channels/BotNexus.Channels.Core/CrossWorldChannelAdapter.cs) for the full implementation.
+See [CrossWorldChannelAdapter.cs](../../src/gateway/BotNexus.Gateway.Channels/CrossWorldChannelAdapter.cs) for the full implementation.
 
 **Relay Endpoint (Target World):**
 

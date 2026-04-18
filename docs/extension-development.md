@@ -290,7 +290,7 @@ public sealed class DiscordExtensionRegistrar : IExtensionRegistrar
 
 ```bash
 # Build the extension
-dotnet build src/channels/BotNexus.Channels.Discord
+dotnet build src/extensions/BotNexus.Extensions.Channels.Discord
 
 # Binaries automatically appear in:
 # extensions/channels/discord/
@@ -1498,7 +1498,7 @@ When you build an extension project:
 Example:
 ```bash
 # Build discord extension
-dotnet build src/channels/BotNexus.Channels.Discord
+dotnet build src/extensions/BotNexus.Extensions.Channels.Discord
 
 # Output appears in:
 # extensions/channels/discord/

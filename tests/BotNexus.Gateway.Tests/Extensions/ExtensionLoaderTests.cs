@@ -169,16 +169,16 @@ public sealed class ExtensionLoaderTests : IDisposable
 
     private static string ResolveTelegramAssemblyPath()
     {
-        var localCopy = Path.Combine(AppContext.BaseDirectory, "BotNexus.Channels.Telegram.dll");
+        var localCopy = Path.Combine(AppContext.BaseDirectory, "BotNexus.Extensions.Channels.Telegram.dll");
         if (File.Exists(localCopy))
             return localCopy;
 
         var root = FindRepositoryRoot();
-        var fallback = Path.Combine(root, "src", "channels", "BotNexus.Channels.Telegram", "bin", "Debug", "net10.0", "BotNexus.Channels.Telegram.dll");
+        var fallback = Path.Combine(root, "src", "extensions", "BotNexus.Extensions.Channels.Telegram", "bin", "Debug", "net10.0", "BotNexus.Extensions.Channels.Telegram.dll");
         if (File.Exists(fallback))
             return fallback;
 
-        throw new FileNotFoundException("Unable to locate BotNexus.Channels.Telegram.dll for extension loader tests.");
+        throw new FileNotFoundException("Unable to locate BotNexus.Extensions.Channels.Telegram.dll for extension loader tests.");
     }
 
     private static string FindRepositoryRoot()

@@ -150,13 +150,13 @@ Resolves or creates a session for the agent+channel pair, subscribes the caller 
 public async Task<object> SendMessage(AgentId agentId, ChannelKey channelType, string content)
 ```
 
-See [GatewayHub.cs](../../src/channels/BotNexus.Channels.SignalR/GatewayHub.cs)
+See [GatewayHub.cs](../../src/extensions/BotNexus.Extensions.Channels.SignalR/GatewayHub.cs)
 
 **Auto-Session Logic:**
 
 Finds an existing active UserAgent session for the agent+channel pair, or creates a new one with auto-generated SessionId and UserAgent type.
 
-See [GatewayHub.cs](../../src/channels/BotNexus.Channels.SignalR/GatewayHub.cs)
+See [GatewayHub.cs](../../src/extensions/BotNexus.Extensions.Channels.SignalR/GatewayHub.cs)
 
 **Key Insight:**
 
@@ -184,7 +184,7 @@ See [events.js](../../src/BotNexus.WebUI/wwwroot/js/events.js)
 
 Maps `AgentStreamEventType` to SignalR method name, enriches the event with `SessionId`, and broadcasts to the session group via `IHubContext`.
 
-See [SignalRChannelAdapter.cs](../../src/channels/BotNexus.Channels.SignalR/SignalRChannelAdapter.cs)
+See [SignalRChannelAdapter.cs](../../src/extensions/BotNexus.Extensions.Channels.SignalR/SignalRChannelAdapter.cs)
 
 ## Multi-Session Management
 
