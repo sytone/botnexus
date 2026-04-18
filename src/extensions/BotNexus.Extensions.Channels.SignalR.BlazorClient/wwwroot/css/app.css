@@ -378,12 +378,24 @@ html, body, #app {
     position: relative;
 }
 
+.message-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 0.25rem;
+}
+
 .message-role {
     font-size: 0.7rem;
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--text-muted);
-    margin-bottom: 0.25rem;
+}
+
+.message-time {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    opacity: 0.7;
 }
 
 .message-content {

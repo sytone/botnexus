@@ -60,7 +60,10 @@
             else
             {
                 <div class="message @msg.CssClass">
-                    <div class="message-role">@msg.Role</div>
+                    <div class="message-header">
+                        <span class="message-role">@msg.Role</span>
+                        <span class="message-time">@FormatTimestamp(msg.Timestamp)</span>
+                    </div>
                     @if (msg.Role == "Assistant" && _markdownCache.TryGetValue(msg.Id, out var rendered))
                     {
                         <div class="msg-content">@((MarkupString)rendered)</div>
@@ -76,7 +79,10 @@
         @if (State.IsStreaming && !string.IsNullOrEmpty(State.CurrentStreamBuffer))
         {
             <div class="message assistant streaming">
-                <div class="message-role">Assistant</div>
+                <div class="message-header">
+                    <span class="message-role">Assistant</span>
+                    <span class="message-time">now</span>
+                </div>
                 <div class="message-content">@State.CurrentStreamBuffer</div>
                 <span class="streaming-indicator">●</span>
             </div>
@@ -147,6 +153,16 @@
     private static string FormatDuration(TimeSpan d) => d.TotalSeconds < 1
         ? $"{d.TotalMilliseconds:0}ms"
         : $"{d.TotalSeconds:0.0}s";
+
+    private static string FormatTimestamp(DateTimeOffset ts)
+    {
+        var local = ts.ToLocalTime();
+        var now = DateTimeOffset.Now;
+        // Today: just time. Older: date + time.
+        return local.Date == now.Date
+            ? local.ToString("h:mm tt")
+            : local.ToString("MMM d, h:mm tt");
+    }
 
     private string InputPlaceholder => State.IsStreaming
         ? "Type to steer the response…"
