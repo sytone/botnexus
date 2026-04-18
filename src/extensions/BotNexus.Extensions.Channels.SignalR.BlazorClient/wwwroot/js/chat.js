@@ -13,10 +13,13 @@ window.chatScroll = {
         }
     },
 
-    /** Force-scrolls to bottom regardless of current position. */
+    /** Force-scrolls to bottom regardless of current position. Defers to next frame
+     *  so the element is visible (hidden panels have scrollHeight=0). */
     forceScrollToBottom: function (element) {
         if (!element) return;
-        element.scrollTop = element.scrollHeight;
+        requestAnimationFrame(function () {
+            element.scrollTop = element.scrollHeight;
+        });
     },
 
     /**
