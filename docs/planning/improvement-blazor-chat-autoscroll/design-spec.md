@@ -3,7 +3,7 @@ id: improvement-blazor-chat-autoscroll
 title: "Blazor Chat Canvas Auto-Scroll to Bottom"
 type: improvement
 priority: medium
-status: draft
+status: delivered
 created: 2026-04-17
 tags: [blazor, webui, ux, chat]
 ---

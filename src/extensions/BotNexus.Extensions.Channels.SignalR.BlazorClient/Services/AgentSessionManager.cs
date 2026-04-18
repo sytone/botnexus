@@ -203,8 +203,8 @@ public sealed class AgentSessionManager : IDisposable
             if (response?.Messages is { Count: > 0 })
             {
                 state.Messages.Clear();
-                // API returns messages in reverse chronological order — reverse to chronological
-                foreach (var msg in response.Messages.Reverse())
+                // API returns messages in chronological order (oldest first)
+                foreach (var msg in response.Messages)
                 {
                     state.Messages.Add(new ChatMessage(
                         MapRole(msg.Role),

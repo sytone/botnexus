@@ -168,6 +168,8 @@
         ? "Type to steer the response…"
         : "Type a message… (Shift+Enter for newline)";
 
+    private bool _forceScrollNext;
+
     // ── Lifecycle ─────────────────────────────────────────────────────────
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -181,8 +183,17 @@
                 _enterPreventionBound = true;
             }
 
-            // Auto-scroll to bottom (preserves scroll-up reading)
-            await JS.InvokeVoidAsync("chatScroll.scrollToBottom", _messagesContainer);
+            // Force-scroll on first render, after sending, or after history load.
+            // Otherwise smart-scroll (only if near bottom).
+            if (firstRender || _forceScrollNext)
+            {
+                _forceScrollNext = false;
+                await JS.InvokeVoidAsync("chatScroll.forceScrollToBottom", _messagesContainer);
+            }
+            else
+            {
+                await JS.InvokeVoidAsync("chatScroll.scrollToBottom", _messagesContainer);
+            }
 
             // Render markdown for any un-rendered assistant messages
             var needsRender = false;
@@ -231,6 +242,7 @@
             return;
 
         _inputText = "";
+        _forceScrollNext = true;
         await Manager.SendMessageAsync(State.AgentId, text);
     }
 
