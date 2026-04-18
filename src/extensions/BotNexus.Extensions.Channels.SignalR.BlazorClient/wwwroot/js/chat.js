@@ -23,14 +23,17 @@ window.chatScroll = {
     },
 
     /** Finds the currently visible chat panel and scrolls it to the bottom.
-     *  Used after session switching — defers to allow DOM visibility. */
+     *  Uses setTimeout to ensure Blazor has finished its DOM update cycle. */
     scrollActiveToBottom: function () {
-        requestAnimationFrame(function () {
+        setTimeout(function () {
             var active = document.querySelector('.chat-panel-wrapper.active .messages-container');
             if (active) {
+                console.log('[scroll] scrollActiveToBottom: found container, scrollHeight=' + active.scrollHeight + ' clientHeight=' + active.clientHeight);
                 active.scrollTop = active.scrollHeight;
+            } else {
+                console.warn('[scroll] scrollActiveToBottom: no active .messages-container found');
             }
-        });
+        }, 100);
     },
 
     /**
