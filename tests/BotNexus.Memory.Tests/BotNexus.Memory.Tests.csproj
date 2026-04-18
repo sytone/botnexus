@@ -25,7 +25,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\tools\BotNexus.Memory\BotNexus.Memory.csproj" />
+    <ProjectReference Include="..\..\src\common\BotNexus.Memory\BotNexus.Memory.csproj" />
     <ProjectReference Include="..\..\src\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\..\src\gateway\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
   </ItemGroup>

@@ -22,7 +22,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\cron\BotNexus.Cron\BotNexus.Cron.csproj" />
+    <ProjectReference Include="..\..\src\common\BotNexus.Cron\BotNexus.Cron.csproj" />
     <ProjectReference Include="..\..\src\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\..\src\gateway\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
   </ItemGroup>

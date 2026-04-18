@@ -7,7 +7,7 @@
     <RootNamespace>BotNexus.CodingAgent</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\src\tools\BotNexus.Tools\BotNexus.Tools.csproj" />
+    <ProjectReference Include="..\..\src\common\BotNexus.Tools\BotNexus.Tools.csproj" />
     <ProjectReference Include="..\..\src\agent\BotNexus.Agent.Core\BotNexus.Agent.Core.csproj" />
     <ProjectReference Include="..\..\src\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\..\src\domain\BotNexus.Sessions.Common\BotNexus.Sessions.Common.csproj" />

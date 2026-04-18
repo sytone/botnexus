@@ -21,8 +21,10 @@
     <Project Path="src/agent/BotNexus.Agent.Providers.OpenAICompat/BotNexus.Agent.Providers.OpenAICompat.csproj" />
     <Project Path="src/agent/BotNexus.Agent.Providers.Copilot/BotNexus.Agent.Providers.Copilot.csproj" />
   </Folder>
-  <Folder Name="/src/cron/">
-    <Project Path="src/cron/BotNexus.Cron/BotNexus.Cron.csproj" />
+  <Folder Name="/src/common/">
+    <Project Path="src/common/BotNexus.Cron/BotNexus.Cron.csproj" />
+    <Project Path="src/common/BotNexus.Memory/BotNexus.Memory.csproj" />
+    <Project Path="src/common/BotNexus.Tools/BotNexus.Tools.csproj" />
   </Folder>
   <Folder Name="/src/gateway/">
     <Project Path="src/gateway/BotNexus.Cli/BotNexus.Cli.csproj" />
@@ -42,10 +44,6 @@
   </Folder>
   <Folder Name="/src/prompts/">
     <Project Path="src/prompts/BotNexus.Prompts/BotNexus.Prompts.csproj" />
-  </Folder>
-  <Folder Name="/src/tools/">
-    <Project Path="src/tools/BotNexus.Memory/BotNexus.Memory.csproj" />
-    <Project Path="src/tools/BotNexus.Tools/BotNexus.Tools.csproj" />
   </Folder>
 
   <Folder Name="/tests/">
