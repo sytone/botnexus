@@ -9,7 +9,7 @@ Supporting analysis for the [design spec](design-spec.md). Contains the codebase
 ### Solution layout (25 projects + 18 test projects)
 
 **Core:**
-- `BotNexus.AgentCore` - agent loop runner, tool execution, message conversion, streaming
+- `BotNexus.Agent.Core` - agent loop runner, tool execution, message conversion, streaming
 - `BotNexus.Gateway.Abstractions` - shared contracts (models, interfaces, hooks, security)
 - `BotNexus.Gateway` - gateway implementation (agents, routing, sessions, config, isolation, tools)
 - `BotNexus.Gateway.Api` - ASP.NET API layer (controllers, hubs, middleware)
@@ -21,11 +21,11 @@ Supporting analysis for the [design spec](design-spec.md). Contains the codebase
 - `BotNexus.Channels.Tui` - terminal UI adapter
 
 **Providers:**
-- `BotNexus.Providers.Core` - LLM abstraction (models, streaming, context)
-- `BotNexus.Providers.Anthropic` - Claude provider
-- `BotNexus.Providers.Copilot` - GitHub Copilot provider
-- `BotNexus.Providers.OpenAI` - OpenAI completions + responses
-- `BotNexus.Providers.OpenAICompat` - generic OpenAI-compatible endpoints
+- `BotNexus.Agent.Providers.Core` - LLM abstraction (models, streaming, context)
+- `BotNexus.Agent.Providers.Anthropic` - Claude provider
+- `BotNexus.Agent.Providers.Copilot` - GitHub Copilot provider
+- `BotNexus.Agent.Providers.OpenAI` - OpenAI completions + responses
+- `BotNexus.Agent.Providers.OpenAICompat` - generic OpenAI-compatible endpoints
 
 **Tools:**
 - `BotNexus.Tools` - core file/shell tools (read, write, edit, grep, glob, ls, shell)
@@ -141,7 +141,7 @@ Heavy duplication - every setting exists at root level AND under `Gateway` with 
 
 ## Duplication & Refactor Opportunities
 
-**Key constraint**: BotNexus.Gateway must NEVER depend on BotNexus.CodingAgent. They are peer products. When deduplicating shared logic, extract it DOWN into common libraries (BotNexus.Domain, BotNexus.AgentCore, BotNexus.Providers.Core, etc.) that both can reference.
+**Key constraint**: BotNexus.Gateway must NEVER depend on BotNexus.CodingAgent. They are peer products. When deduplicating shared logic, extract it DOWN into common libraries (BotNexus.Domain, BotNexus.Agent.Core, BotNexus.Agent.Providers.Core, etc.) that both can reference.
 
 ### 1. Duplicate SystemPromptBuilder (HIGH)
 

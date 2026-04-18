@@ -1,7 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway;
 using BotNexus.Gateway.Abstractions.Activity;

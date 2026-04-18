@@ -567,7 +567,7 @@ session.AddEntry(new SessionEntry(
 ### 🔴 P0 — Must Fix Immediately (Blocking All Tool Use)
 
 #### 1. Add Tools to Anthropic API Request
-**File:** `src/BotNexus.Providers.Anthropic/AnthropicProvider.cs`  
+**File:** `src/BotNexus.Agent.Providers.Anthropic/AnthropicProvider.cs`  
 **Method:** `BuildRequestBody`  
 **Issue:** Tools array never sent to Anthropic  
 **Fix:**
@@ -608,7 +608,7 @@ private Dictionary<string, object?> BuildRequestBody(ChatRequest request, bool s
 ---
 
 #### 2. Implement Non-Streaming Tool Call Parsing
-**File:** `src/BotNexus.Providers.Anthropic/AnthropicProvider.cs`  
+**File:** `src/BotNexus.Agent.Providers.Anthropic/AnthropicProvider.cs`  
 **Method:** `ChatCoreAsync`  
 **Issue:** Hardcoded `null` for ToolCalls, only parses first text block  
 **Fix:**
@@ -678,7 +678,7 @@ protected override async Task<LlmResponse> ChatCoreAsync(ChatRequest request, Ca
 ---
 
 #### 3. Implement Streaming Tool Call Parsing
-**File:** `src/BotNexus.Providers.Anthropic/AnthropicProvider.cs`  
+**File:** `src/BotNexus.Agent.Providers.Anthropic/AnthropicProvider.cs`  
 **Method:** `ChatStreamAsync`  
 **Issue:** Only parses text deltas, ignores tool_use events  
 **Fix:**
@@ -828,7 +828,7 @@ public override async IAsyncEnumerable<StreamingChatChunk> ChatStreamAsync(
 ### 🟡 P1 — Should Fix Soon (Quality & Robustness)
 
 #### 4. Fix Tool Result Content Format
-**File:** `src/BotNexus.Providers.Anthropic/AnthropicProvider.cs`  
+**File:** `src/BotNexus.Agent.Providers.Anthropic/AnthropicProvider.cs`  
 **Method:** `BuildRequestBody`  
 **Issue:** Tool result content should be array of blocks, not plain string  
 **Fix:**
@@ -968,7 +968,7 @@ if (!hasToolCalls)
 
 ### Code Changes
 
-**File:** `src/BotNexus.Providers.Anthropic/AnthropicProvider.cs`
+**File:** `src/BotNexus.Agent.Providers.Anthropic/AnthropicProvider.cs`
 
 **Changes:**
 1. ✅ `BuildRequestBody`: Added tools array serialization to API request

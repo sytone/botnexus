@@ -330,7 +330,7 @@ tail -f ~/.botnexus/logs/gateway.log | grep -i error
 
 **Symptom:**
 ```text
-error: BotNexus.Providers.Copilot[0]
+error: BotNexus.Agent.Providers.Copilot[0]
       OAuth authentication failed: invalid_grant
 ```
 
@@ -350,7 +350,7 @@ error: BotNexus.Providers.Copilot[0]
 
 **Symptom:**
 ```text
-error: BotNexus.Providers.Anthropic[0]
+error: BotNexus.Agent.Providers.Anthropic[0]
       API request failed: 401 Unauthorized
 ```
 
@@ -382,7 +382,7 @@ error: BotNexus.Providers.Anthropic[0]
 
 **Symptom:**
 ```text
-error: BotNexus.Providers.OpenAI[0]
+error: BotNexus.Agent.Providers.OpenAI[0]
       API request failed: 429 Too Many Requests
 ```
 

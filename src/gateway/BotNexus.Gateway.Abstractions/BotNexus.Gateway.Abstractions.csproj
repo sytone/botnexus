@@ -13,7 +13,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\agent\BotNexus.AgentCore\BotNexus.AgentCore.csproj" />
+    <ProjectReference Include="..\..\agent\BotNexus.Agent.Core\BotNexus.Agent.Core.csproj" />
     <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
   </ItemGroup>

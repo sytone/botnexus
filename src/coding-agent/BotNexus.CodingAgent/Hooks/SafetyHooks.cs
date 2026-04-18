@@ -1,5 +1,5 @@
 using System.Text.Json;
-using BotNexus.AgentCore.Hooks;
+using BotNexus.Agent.Core.Hooks;
 using BotNexus.Tools.Utils;
 
 namespace BotNexus.CodingAgent.Hooks;

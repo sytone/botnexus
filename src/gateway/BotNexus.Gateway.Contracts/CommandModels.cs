@@ -1,4 +1,4 @@
-using BotNexus.AgentCore.Tools;
+using BotNexus.Agent.Core.Tools;
 
 namespace BotNexus.Gateway.Abstractions.Extensions;
 

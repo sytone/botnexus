@@ -1,12 +1,12 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Linq;
-using BotNexus.AgentCore.Tools;
-using BotNexus.AgentCore;
-using BotNexus.AgentCore.Configuration;
-using BotNexus.AgentCore.Diagnostics;
-using BotNexus.AgentCore.Hooks;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core.Tools;
+using BotNexus.Agent.Core;
+using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.Diagnostics;
+using BotNexus.Agent.Core.Hooks;
+using BotNexus.Agent.Core.Types;
 using BotNexus.Cron;
 using BotNexus.Cron.Tools;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -20,8 +20,8 @@ using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Security;
 using BotNexus.Gateway.Tools;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Extensions.Skills;
 using BotNexus.Extensions.Mcp;
 using BotNexus.Extensions.McpInvoke;
@@ -31,7 +31,7 @@ using BotNexus.Memory.Tools;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using AgentCoreUserMessage = BotNexus.AgentCore.Types.UserMessage;
+using AgentCoreUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 using GatewayBeforeToolCallResult = BotNexus.Gateway.Abstractions.Hooks.BeforeToolCallResult;
 using GatewayAfterToolCallResult = BotNexus.Gateway.Abstractions.Hooks.AfterToolCallResult;
 
@@ -39,7 +39,7 @@ namespace BotNexus.Gateway.Isolation;
 
 /// <summary>
 /// In-process isolation strategy — runs agents directly in the Gateway process
-/// by wrapping <see cref="BotNexus.AgentCore.Agent"/>.
+/// by wrapping <see cref="BotNexus.Agent.Core.Agent"/>.
 /// </summary>
 /// <remarks>
 /// This is the default and fastest strategy. No process or container boundaries.
@@ -267,7 +267,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 var denied = results.FirstOrDefault(r => r.Denied);
                 if (denied is not null)
                 {
-                    return new AgentCore.Hooks.BeforeToolCallResult(
+                    return new BotNexus.Agent.Core.Hooks.BeforeToolCallResult(
                         Block: true,
                         Reason: denied.DenyReason);
                 }
@@ -332,7 +332,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             FollowUpMode: QueueMode.All,
             SessionId: context.SessionId);
 
-        var agent = new Agent(options);
+        var agent = new BotNexus.Agent.Core.Agent(options);
         IAgentHandle handle = new InProcessAgentHandle(
             agent,
             descriptor.AgentId,
@@ -362,7 +362,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
     /// failed server does not block other servers from providing their tools.
     /// </summary>
     private async Task StartMcpServersInBackgroundAsync(
-        Agent agent,
+        BotNexus.Agent.Core.Agent agent,
         McpServerManager mcpManager,
         McpExtensionConfig mcpConfig,
         AgentId agentId,
@@ -381,7 +381,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
     }
 
     private async Task StartSingleMcpServerAsync(
-        Agent agent,
+        BotNexus.Agent.Core.Agent agent,
         McpServerManager mcpManager,
         McpExtensionConfig mcpConfig,
         string serverId,
@@ -510,11 +510,11 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 }
 
 /// <summary>
-/// Agent handle that wraps an in-process <see cref="BotNexus.AgentCore.Agent"/> instance.
+/// Agent handle that wraps an in-process <see cref="BotNexus.Agent.Core.Agent"/> instance.
 /// </summary>
 internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAgentHandleInspector
 {
-    private readonly Agent _agent;
+    private readonly BotNexus.Agent.Core.Agent _agent;
     private readonly ILogger _logger;
     private readonly McpServerManager? _mcpManager;
     private readonly McpInvokeTool? _mcpInvokeTool;
@@ -522,7 +522,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     private readonly IReadOnlyDictionary<string, IAgentTool> _toolsByName;
 
     public InProcessAgentHandle(
-        Agent agent,
+        BotNexus.Agent.Core.Agent agent,
         AgentId agentId,
         SessionId sessionId,
         ILogger logger,

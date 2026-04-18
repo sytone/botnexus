@@ -92,8 +92,8 @@ Shared vocabulary (referenced by everything above):
 | Project | Role | What It Is |
 |---------|------|------------|
 | | **Independent Libraries (no BotNexus dependency)** | |
-| **BotNexus.AgentCore** | Agent execution library | Agent loop runner, tool execution engine, hooks. Generic — usable outside BotNexus. |
-| **BotNexus.Providers.Core** | LLM client library | LLM client abstraction, streaming, model registry. Generic — usable outside BotNexus. |
+| **BotNexus.Agent.Core** | Agent execution library | Agent loop runner, tool execution engine, hooks. Generic — usable outside BotNexus. |
+| **BotNexus.Agent.Providers.Core** | LLM client library | LLM client abstraction, streaming, model registry. Generic — usable outside BotNexus. |
 | **BotNexus.Providers.{Anthropic,OpenAI,Copilot}** | LLM provider implementations | Provider-specific LLM implementations. Depend only on Providers.Core. |
 | **BotNexus.Tools** | File tool library | read, write, edit, grep, glob, ls. Generic — usable outside BotNexus. |
 | | **BotNexus Platform** | |

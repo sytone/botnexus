@@ -1,4 +1,4 @@
-using BotNexus.AgentCore.Tools;
+using BotNexus.Agent.Core.Tools;
 using BotNexus.Extensions.Mcp.Transport;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;

@@ -382,7 +382,7 @@ Extract an abstract `SessionStoreBase` with shared creation and query filter log
 
 `OpenAICompletionsProvider` (1291 lines) and `OpenAICompatProvider` (652 lines) share significant streaming/parsing logic for the OpenAI chat completions format. `NormalizeToolCallId` is duplicated across OpenAI and Anthropic providers with different max lengths.
 
-- Extract common completions streaming/parsing into a shared `OpenAIStreamProcessor` class in `BotNexus.Providers.Core`
+- Extract common completions streaming/parsing into a shared `OpenAIStreamProcessor` class in `BotNexus.Agent.Providers.Core`
 - `NormalizeToolCallId` becomes a method on a `ToolCallId` value object or a scoped extension method - not a static utility
 - Compat provider delegates response parsing to shared code, only overrides auth/endpoint
 

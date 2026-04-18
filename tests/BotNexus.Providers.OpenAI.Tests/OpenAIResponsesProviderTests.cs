@@ -1,4 +1,4 @@
-using BotNexus.Providers.OpenAI;
+using BotNexus.Agent.Providers.OpenAI;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -84,7 +84,7 @@ public class OpenAIResponsesProviderTests
         var stream = provider.Stream(model, context, new OpenAIResponsesOptions
         {
             ApiKey = "test-key",
-            CacheRetention = BotNexus.Providers.Core.Models.CacheRetention.Long,
+            CacheRetention = BotNexus.Agent.Providers.Core.Models.CacheRetention.Long,
             SessionId = "session-123"
         });
         _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
@@ -103,10 +103,10 @@ public class OpenAIResponsesProviderTests
         var model = TestHelpers.MakeModel(id: "gpt-5.1", api: "openai-responses", provider: "openai", reasoning: true);
         var context = TestHelpers.MakeContext();
 
-        var stream = provider.StreamSimple(model, context, new BotNexus.Providers.Core.SimpleStreamOptions
+        var stream = provider.StreamSimple(model, context, new BotNexus.Agent.Providers.Core.SimpleStreamOptions
         {
             ApiKey = "test-key",
-            Reasoning = BotNexus.Providers.Core.Models.ThinkingLevel.ExtraHigh
+            Reasoning = BotNexus.Agent.Providers.Core.Models.ThinkingLevel.ExtraHigh
         });
         _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
 
@@ -142,17 +142,17 @@ public class OpenAIResponsesProviderTests
             new HttpClient(handler), NullLogger<OpenAIResponsesProvider>.Instance);
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var model = TestHelpers.MakeModel(id: "gpt-5.4", api: "openai-responses", reasoning: true);
-        var context = new BotNexus.Providers.Core.Models.Context(
+        var context = new BotNexus.Agent.Providers.Core.Models.Context(
             "system",
             [
-                new BotNexus.Providers.Core.Models.UserMessage(new BotNexus.Providers.Core.Models.UserMessageContent("hello"), timestamp),
-                new BotNexus.Providers.Core.Models.AssistantMessage(
-                    Content: [new BotNexus.Providers.Core.Models.TextContent("hi")],
+                new BotNexus.Agent.Providers.Core.Models.UserMessage(new BotNexus.Agent.Providers.Core.Models.UserMessageContent("hello"), timestamp),
+                new BotNexus.Agent.Providers.Core.Models.AssistantMessage(
+                    Content: [new BotNexus.Agent.Providers.Core.Models.TextContent("hi")],
                     Api: model.Api,
                     Provider: model.Provider,
                     ModelId: model.Id,
-                    Usage: BotNexus.Providers.Core.Models.Usage.Empty(),
-                    StopReason: BotNexus.Providers.Core.Models.StopReason.Stop,
+                    Usage: BotNexus.Agent.Providers.Core.Models.Usage.Empty(),
+                    StopReason: BotNexus.Agent.Providers.Core.Models.StopReason.Stop,
                     ErrorMessage: null,
                     ResponseId: "resp_prev",
                     Timestamp: timestamp)

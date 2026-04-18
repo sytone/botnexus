@@ -1,12 +1,12 @@
-using BotNexus.AgentCore.Configuration;
-using BotNexus.AgentCore.Types;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.Core.Registry;
+using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
 
 namespace BotNexus.AgentCore.Tests.TestUtils;
 
-using AgentUserMessage = BotNexus.AgentCore.Types.UserMessage;
+using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 
 internal static class TestHelpers
 {
@@ -103,7 +103,7 @@ internal static class TestHelpers
             switch (message)
             {
                 case AgentUserMessage userMessage:
-                    providerMessages.Add(new BotNexus.Providers.Core.Models.UserMessage(new UserMessageContent(userMessage.Content), timestamp));
+                    providerMessages.Add(new BotNexus.Agent.Providers.Core.Models.UserMessage(new UserMessageContent(userMessage.Content), timestamp));
                     break;
                 case ToolResultAgentMessage toolResult:
                     providerMessages.Add(new ToolResultMessage(

@@ -14,8 +14,10 @@ public sealed class ToolPolicyTests
     private static DefaultToolPolicyProvider CreateProvider(PlatformConfig? config = null)
     {
         config ??= new PlatformConfig();
+        var monitor = new Moq.Mock<IOptionsMonitor<PlatformConfig>>();
+        monitor.Setup(m => m.CurrentValue).Returns(config);
         return new DefaultToolPolicyProvider(
-            Options.Create(config),
+            monitor.Object,
             NullLogger<DefaultToolPolicyProvider>.Instance);
     }
 

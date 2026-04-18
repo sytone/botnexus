@@ -1,8 +1,8 @@
 # Agent event system
 
-> **Audience:** Developers building agents on `BotNexus.AgentCore` who need to understand the lifecycle, events, hooks, and message queues.
+> **Audience:** Developers building agents on `BotNexus.Agent.Core` who need to understand the lifecycle, events, hooks, and message queues.
 > **Prerequisites:** C#/.NET, async/await, familiarity with [provider system](01-providers.md).
-> **Source code:** `src/agent/BotNexus.AgentCore/`
+> **Source code:** `src/agent/BotNexus.Agent.Core/`
 
 ## What you'll learn
 

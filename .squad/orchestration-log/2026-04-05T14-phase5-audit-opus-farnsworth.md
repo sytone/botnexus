@@ -19,7 +19,7 @@
 ## Implementation Notes
 
 ### P-C1 (ToolCallValidator)
-- **File:** New `src/providers/BotNexus.Providers.Core/Validation/ToolCallValidator.cs`
+- **File:** New `src/agent/BotNexus.Agent.Providers.Core/Validation/ToolCallValidator.cs`
 - **Signature:**
   ```csharp
   public static (bool IsValid, string[] Errors) Validate(
@@ -33,7 +33,7 @@
 - **Test:** Unit tests verify required field validation, type mismatch rejection, valid arg passing
 
 ### P-M2 (ShortHash)
-- **File:** New `src/providers/BotNexus.Providers.Core/Utils/ShortHash.cs`
+- **File:** New `src/agent/BotNexus.Agent.Providers.Core/Utils/ShortHash.cs`
 - **Signature:**
   ```csharp
   public static string Generate(string input);
@@ -43,7 +43,7 @@
 - **Test:** Unit tests verify deterministic output, 9-char length, alphanumeric-only
 
 ### P-C3 (MessageTransformer Normalizer)
-- **File:** `src/providers/BotNexus.Providers.Core/Conversion/MessageTransformer.cs`
+- **File:** `src/agent/BotNexus.Agent.Providers.Core/Conversion/MessageTransformer.cs`
 - **Breaking change:** Update normalizer callback signature
   ```csharp
   // Old: Func<string, string>?

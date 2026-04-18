@@ -1,7 +1,7 @@
 using System.Diagnostics;
-using BotNexus.AgentCore.Diagnostics;
+using BotNexus.Agent.Core.Diagnostics;
 using BotNexus.Gateway.Diagnostics;
-using BotNexus.Providers.Core.Diagnostics;
+using BotNexus.Agent.Providers.Core.Diagnostics;
 using FluentAssertions;
 
 namespace BotNexus.Gateway.Tests;

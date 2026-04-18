@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core.Types;
 using BotNexus.Extensions.ProcessTool;
 using FluentAssertions;
 

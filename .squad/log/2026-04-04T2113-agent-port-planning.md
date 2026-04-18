@@ -7,11 +7,11 @@
 
 ## What Happened
 
-Leela created a detailed 4-sprint implementation plan for porting `@mariozechner/pi-agent-core` (TypeScript) into BotNexus as `BotNexus.AgentCore` (C#/.NET).
+Leela created a detailed 4-sprint implementation plan for porting `@mariozechner/pi-agent-core` (TypeScript) into BotNexus as `BotNexus.Agent.Core` (C#/.NET).
 
 ## Key Decisions
 
-1. **Project structure:** `src/agent/BotNexus.AgentCore/` (follows `src/providers/` convention)
+1. **Project structure:** `src/agent/BotNexus.Agent.Core/` (follows `src/providers/` convention)
 2. **Minimal dependencies:** Only `BotNexus.Providers.Base` and transitively `BotNexus.Core`
 3. **Event model:** `ChannelReader<AgentEvent>` with record-type hierarchy
 4. **Cancellation:** `CancellationToken` replaces pi-mono `AbortSignal`

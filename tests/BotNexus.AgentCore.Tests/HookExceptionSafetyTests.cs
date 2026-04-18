@@ -1,6 +1,6 @@
-using BotNexus.AgentCore.Configuration;
+using BotNexus.Agent.Core.Configuration;
 using BotNexus.AgentCore.Tests.TestUtils;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core.Types;
 using FluentAssertions;
 
 namespace BotNexus.AgentCore.Tests;
@@ -23,7 +23,7 @@ public sealed class HookExceptionSafetyTests
             {
                 BeforeToolCall = (_, _) => throw new InvalidOperationException("before hook exploded")
             };
-        var agent = new Agent(options);
+        var agent = new BotNexus.Agent.Core.Agent(options);
 
         var result = await agent.PromptAsync("calculate 1+1");
 
@@ -45,7 +45,7 @@ public sealed class HookExceptionSafetyTests
             {
                 AfterToolCall = (_, _) => throw new InvalidOperationException("after hook exploded")
             };
-        var agent = new Agent(options);
+        var agent = new BotNexus.Agent.Core.Agent(options);
 
         var result = await agent.PromptAsync("calculate 1+1");
 
@@ -60,7 +60,7 @@ public sealed class HookExceptionSafetyTests
             HookApi,
             simpleStreamFactory: (_, context, _) =>
             {
-                var hasToolResult = context.Messages.OfType<BotNexus.Providers.Core.Models.ToolResultMessage>().Any();
+                var hasToolResult = context.Messages.OfType<BotNexus.Agent.Providers.Core.Models.ToolResultMessage>().Any();
                 if (hasToolResult)
                 {
                     return TestStreamFactory.CreateTextResponse("done");

@@ -1,5 +1,5 @@
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.Core.Registry;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
 using FluentAssertions;
 
 namespace BotNexus.Providers.Core.Tests.Registry;

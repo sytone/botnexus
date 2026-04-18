@@ -10,9 +10,9 @@ internal sealed class ExtensionAssemblyLoadContext : AssemblyLoadContext
     // Assemblies that must come from the host to preserve type identity.
     private static readonly HashSet<string> HostAssemblies = new(StringComparer.OrdinalIgnoreCase)
     {
-        "BotNexus.AgentCore",
+        "BotNexus.Agent.Core",
         "BotNexus.Domain",
-        "BotNexus.Providers.Core",
+        "BotNexus.Agent.Providers.Core",
         "BotNexus.Gateway.Abstractions",
         "BotNexus.Gateway.Contracts",
         "Microsoft.Extensions.DependencyInjection.Abstractions",

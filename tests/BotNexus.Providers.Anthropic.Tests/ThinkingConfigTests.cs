@@ -1,5 +1,5 @@
-using BotNexus.Providers.Anthropic;
-using BotNexus.Providers.Core.Models;
+using BotNexus.Agent.Providers.Anthropic;
+using BotNexus.Agent.Providers.Core.Models;
 using FluentAssertions;
 
 namespace BotNexus.Providers.Anthropic.Tests;

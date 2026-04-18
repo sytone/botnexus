@@ -298,7 +298,7 @@ The following 16 findings have been **FIXED** in commits 92f655c through 405d7d8
 | **Area** | Providers — Streaming |
 | **Status** | **✅ FIXED in 92f655c** — `Push()` now sets `_done = true` and calls `_channel.Writer.TryComplete()` after writing a `DoneEvent` or `ErrorEvent`, preventing consumer hangs. |
 | **pi-mono Ref** | `packages/ai/src/utils/event-stream.ts:EventStream.[Symbol.asyncIterator]` |
-| **BotNexus Ref** | `BotNexus.Providers.Core/Streaming/LlmStream.cs:27-48` |
+| **BotNexus Ref** | `BotNexus.Agent.Providers.Core/Streaming/LlmStream.cs:27-48` |
 | **Details** | In TS, the async iterator self-terminates after yielding all queued events when `this.done` is set. In C#, `ReadAllAsync` only exits when `_channel.Writer.TryComplete()` is called inside `End()`. If a provider pushes a DoneEvent/ErrorEvent but forgets to call `End()`, the C# consumer hangs forever. Fix: auto-complete the channel inside `Push` when a terminal event is received. |
 | **Effort** | Small |
 
@@ -1684,7 +1684,7 @@ The following 16 findings have been **FIXED** in commits 92f655c through 405d7d8
 | **Severity** | Enhancement |
 | **Area** | Providers — OpenAICompat |
 | **pi-mono Ref** | N/A |
-| **BotNexus Ref** | `BotNexus.Providers.OpenAICompat/*` |
+| **BotNexus Ref** | `BotNexus.Agent.Providers.OpenAICompat/*` |
 | **Details** | Valid addition for local model servers. Needs edge-case handling from openai-completions.ts compat profiles. |
 | **Effort** | N/A |
 

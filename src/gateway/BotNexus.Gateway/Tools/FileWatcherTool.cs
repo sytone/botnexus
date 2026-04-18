@@ -1,10 +1,10 @@
 using System.Diagnostics;
 using System.Text.Json;
-using BotNexus.AgentCore.Tools;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core.Tools;
+using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Abstractions.Security;
-using BotNexus.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Models;
 using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Tools;

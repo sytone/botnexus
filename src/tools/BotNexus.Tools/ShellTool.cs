@@ -2,9 +2,9 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
-using BotNexus.AgentCore.Tools;
-using BotNexus.AgentCore.Types;
-using BotNexus.Providers.Core.Models;
+using BotNexus.Agent.Core.Tools;
+using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core.Models;
 
 namespace BotNexus.Tools;
 

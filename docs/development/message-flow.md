@@ -129,7 +129,7 @@ IAgentSupervisor.GetOrCreateAsync(agentId, sessionId) → IAgentHandle
 4. Cache instance and return handle
 
 **Isolation Strategies:**
-- **InProcess** (default): Wraps `BotNexus.AgentCore.Agent` directly
+- **InProcess** (default): Wraps `BotNexus.Agent.Core.Agent` directly
 - **Container**: Spawns agent in isolated container
 - **Remote**: Connects to remote agent endpoint
 - **Sandbox**: Runs agent in sandboxed process
@@ -146,7 +146,7 @@ IAgentHandle.PromptAsync(message) → AgentLoopRunner → Tool Execution → Res
    - Builds system prompt via `IContextBuilder`
    - Creates workspace path via `IAgentWorkspaceManager`
    - Instantiates tools via `IAgentToolFactory`
-   - Creates `BotNexus.AgentCore.Agent` instance
+   - Creates `BotNexus.Agent.Core.Agent` instance
    - Wraps in `InProcessAgentHandle`
 
 2. `IAgentHandle.PromptAsync(message)`:

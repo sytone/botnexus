@@ -7,14 +7,12 @@
   </Folder>
   <Folder Name="/src/" />
   <Folder Name="/src/agent/">
-    <Project Path="src/agent/BotNexus.AgentCore/BotNexus.AgentCore.csproj" />
-  </Folder>
-  <Folder Name="/src/providers/">
-    <Project Path="src/providers/BotNexus.Providers.Core/BotNexus.Providers.Core.csproj" />
-    <Project Path="src/providers/BotNexus.Providers.Anthropic/BotNexus.Providers.Anthropic.csproj" />
-    <Project Path="src/providers/BotNexus.Providers.OpenAI/BotNexus.Providers.OpenAI.csproj" />
-    <Project Path="src/providers/BotNexus.Providers.OpenAICompat/BotNexus.Providers.OpenAICompat.csproj" />
-    <Project Path="src/providers/BotNexus.Providers.Copilot/BotNexus.Providers.Copilot.csproj" />
+    <Project Path="src/agent/BotNexus.Agent.Core/BotNexus.Agent.Core.csproj" />
+    <Project Path="src/agent/BotNexus.Agent.Providers.Core/BotNexus.Agent.Providers.Core.csproj" />
+    <Project Path="src/agent/BotNexus.Agent.Providers.Anthropic/BotNexus.Agent.Providers.Anthropic.csproj" />
+    <Project Path="src/agent/BotNexus.Agent.Providers.OpenAI/BotNexus.Agent.Providers.OpenAI.csproj" />
+    <Project Path="src/agent/BotNexus.Agent.Providers.OpenAICompat/BotNexus.Agent.Providers.OpenAICompat.csproj" />
+    <Project Path="src/agent/BotNexus.Agent.Providers.Copilot/BotNexus.Agent.Providers.Copilot.csproj" />
   </Folder>
   <Folder Name="/src/cron/">
     <Project Path="src/cron/BotNexus.Cron/BotNexus.Cron.csproj" />

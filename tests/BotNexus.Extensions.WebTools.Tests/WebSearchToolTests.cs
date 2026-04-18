@@ -1,5 +1,5 @@
 using System.Reflection;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core.Types;
 using BotNexus.Extensions.WebTools.Search;
 using BotNexus.Extensions.WebTools.Tests.Helpers;
 using FluentAssertions;

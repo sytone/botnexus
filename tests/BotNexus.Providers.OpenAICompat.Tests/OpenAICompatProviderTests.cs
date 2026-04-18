@@ -1,9 +1,9 @@
 using FluentAssertions;
-using BotNexus.Providers.OpenAICompat;
+using BotNexus.Agent.Providers.OpenAICompat;
 using System.Reflection;
 using System.Text.Json.Nodes;
-using BotNexus.Providers.Core.Compatibility;
-using BotNexus.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Compatibility;
+using BotNexus.Agent.Providers.Core.Models;
 
 namespace BotNexus.Providers.OpenAICompat.Tests;
 

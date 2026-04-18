@@ -46,7 +46,7 @@
 - **Test:** Unit test: parent walk, git root boundary, budget enforcement
 
 ### AC-M1 (Per-Retry Transform)
-- **File:** `src/agent/BotNexus.AgentCore/Loop/AgentLoopRunner.cs`
+- **File:** `src/agent/BotNexus.Agent.Core/Loop/AgentLoopRunner.cs`
 - **Change:** Move `TransformContext` + `ContextConverter.ToProviderContext` inside retry loop
 - **Rationale:** Transform must see fresh overflow state on each attempt
 - **Test:** Unit test verifies transform re-runs after compaction

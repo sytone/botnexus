@@ -60,7 +60,7 @@ BotNexus is a **domain-driven, multi-agent execution platform** for building AI 
                      │
 ┌────────────────────▼────────────────────────────────────────┐
 │                    AgentCore Layer                           │
-│  BotNexus.AgentCore                                         │
+│  BotNexus.Agent.Core                                         │
 │  - Agent loop runner                                        │
 │  - Tool execution engine                                    │
 │  - Stream accumulation                                      │
@@ -69,7 +69,7 @@ BotNexus is a **domain-driven, multi-agent execution platform** for building AI 
                      │
 ┌────────────────────▼────────────────────────────────────────┐
 │                    Provider Layer                            │
-│  BotNexus.Providers.Core, Anthropic, OpenAI, etc.          │
+│  BotNexus.Agent.Providers.Core, Anthropic, OpenAI, etc.          │
 │  - LLM client abstraction                                   │
 │  - Model registry                                           │
 │  - Streaming protocol                                       │
@@ -113,7 +113,7 @@ BotNexus is a **domain-driven, multi-agent execution platform** for building AI 
 
 ### Provider Layer
 
-**BotNexus.Providers.Core:**
+**BotNexus.Agent.Providers.Core:**
 - Message models (UserMessage, AssistantMessage, ToolResultMessage)
 - Streaming protocol (LlmStream, AssistantMessageEvent)
 - LlmClient and model registry
@@ -126,7 +126,7 @@ BotNexus is a **domain-driven, multi-agent execution platform** for building AI 
 
 ### AgentCore Layer
 
-**BotNexus.AgentCore:**
+**BotNexus.Agent.Core:**
 - Agent class (stateful execution wrapper)
 - AgentLoopRunner (LLM ↔ tool execution cycle)
 - StreamAccumulator (event → message conversion)

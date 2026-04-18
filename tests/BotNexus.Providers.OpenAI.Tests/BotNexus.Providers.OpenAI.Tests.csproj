@@ -21,8 +21,8 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\BotNexus.Providers.Conformance.Tests\BotNexus.Providers.Conformance.Tests.csproj" />
-    <ProjectReference Include="..\..\src\providers\BotNexus.Providers.Core\BotNexus.Providers.Core.csproj" />
-    <ProjectReference Include="..\..\src\providers\BotNexus.Providers.OpenAI\BotNexus.Providers.OpenAI.csproj" />
+    <ProjectReference Include="..\..\src\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
+    <ProjectReference Include="..\..\src\agent\BotNexus.Agent.Providers.OpenAI\BotNexus.Agent.Providers.OpenAI.csproj" />
   </ItemGroup>
 
   <ItemGroup>

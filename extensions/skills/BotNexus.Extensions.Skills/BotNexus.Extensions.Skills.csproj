@@ -1,9 +1,9 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
-    <ProjectReference Include="..\..\..\src\providers\BotNexus.Providers.Core\BotNexus.Providers.Core.csproj" />
+    <ProjectReference Include="..\..\..\src\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

@@ -1,7 +1,7 @@
 using System.IO.Abstractions;
 using System.Reflection;
 using System.Runtime.Loader;
-using BotNexus.AgentCore.Tools;
+using BotNexus.Agent.Core.Tools;
 
 namespace BotNexus.CodingAgent.Extensions;
 

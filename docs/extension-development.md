@@ -54,7 +54,7 @@ extensions/
 │   └── telegram/
 ├── providers/
 │   ├── openai/
-│   │   ├── BotNexus.Providers.OpenAI.dll
+│   │   ├── BotNexus.Agent.Providers.OpenAI.dll
 │   │   ├── OpenAI.dll
 │   │   └── ...dependencies
 │   ├── copilot/
@@ -325,7 +325,7 @@ using Microsoft.Extensions.Logging;
 using OpenAI;
 using OpenAI.Chat;
 
-namespace BotNexus.Providers.OpenAI;
+namespace BotNexus.Agent.Providers.OpenAI;
 
 /// <summary>
 /// OpenAI-compatible LLM provider.
@@ -501,7 +501,7 @@ public sealed class OpenAiProvider : LlmProviderBase
 ### Step 2: Define Provider Configuration
 
 ```csharp
-namespace BotNexus.Providers.OpenAI;
+namespace BotNexus.Agent.Providers.OpenAI;
 
 public class OpenAiProviderConfig
 {
@@ -522,7 +522,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
-namespace BotNexus.Providers.OpenAI;
+namespace BotNexus.Agent.Providers.OpenAI;
 
 public sealed class OpenAiExtensionRegistrar : IExtensionRegistrar
 {
@@ -1188,7 +1188,7 @@ public record OAuthToken(string AccessToken, DateTime ExpiresAt, string? Refresh
 using BotNexus.Core.Abstractions;
 using Microsoft.Extensions.Logging;
 
-namespace BotNexus.Providers.Copilot;
+namespace BotNexus.Agent.Providers.Copilot;
 
 public sealed class CopilotOAuthProvider : IOAuthProvider
 {
@@ -1269,7 +1269,7 @@ using BotNexus.Core.Abstractions;
 using BotNexus.Core.Configuration;
 using System.Text.Json;
 
-namespace BotNexus.Providers.Copilot;
+namespace BotNexus.Agent.Providers.Copilot;
 
 public sealed class FileOAuthTokenStore : IOAuthTokenStore
 {

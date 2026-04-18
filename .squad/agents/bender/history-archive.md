@@ -275,8 +275,8 @@ Build is clean, tests pass. ProviderRegistry exists but is unused — evaluate i
 - `AgentLoop` now accepts optional additional tools (`IEnumerable<ITool>`) and merges them into the runtime `ToolRegistry`, enabling built-in and dynamically-loaded tools to coexist in invocation flow.
 ### 2026-04-04 — New Anthropic Messages API Provider (IApiProvider)
 
-- Built `src/providers/BotNexus.Providers.Anthropic/` implementing `IApiProvider` from `BotNexus.Providers.Core` — the new-architecture provider layer ported from pi-mono's `providers/anthropic.ts`.
-- Assembly named `BotNexus.Providers.Anthropic.Messages` to coexist alongside the old extension-style `src/BotNexus.Providers.Anthropic/` without conflict.
+- Built `src/agent/BotNexus.Agent.Providers.Anthropic/` implementing `IApiProvider` from `BotNexus.Agent.Providers.Core` — the new-architecture provider layer ported from pi-mono's `providers/anthropic.ts`.
+- Assembly named `BotNexus.Agent.Providers.Anthropic.Messages` to coexist alongside the old extension-style `src/BotNexus.Agent.Providers.Anthropic/` without conflict.
 - Full SSE streaming: message_start, content_block_start/delta/stop, message_delta, message_stop — mapped to Core's `AssistantMessageEvent` protocol (Start, TextDelta, ThinkingDelta, ToolCallDelta, Done, Error).
 - Three auth modes: API key (`x-api-key`), OAuth (`sk-ant-oat` prefix → Bearer + claude-code beta), Copilot (Bearer, no fine-grained-tool-streaming beta).
 - Thinking support: adaptive (`opus-4`/`sonnet-4` → effort levels) and budget-based (older models → `budget_tokens`). Temperature auto-excluded when thinking enabled.
@@ -660,7 +660,7 @@ _logger.LogInformation("Agent {AgentName} configured with model={ConfiguredModel
 **Status:** ✅ Complete  
 **Requested by:** Jon Bullen
 
-**What:** Created `BotNexus.Providers.OpenAICompat` under `src/providers/`. Standalone provider for OpenAI-compatible inference servers (Ollama, vLLM, LM Studio, SGLang, Cerebras, xAI, DeepSeek, Groq).
+**What:** Created `BotNexus.Agent.Providers.OpenAICompat` under `src/providers/`. Standalone provider for OpenAI-compatible inference servers (Ollama, vLLM, LM Studio, SGLang, Cerebras, xAI, DeepSeek, Groq).
 
 ---
 
@@ -700,7 +700,7 @@ _logger.LogInformation("Agent {AgentName} configured with model={ConfiguredModel
 - Fixed WebSocket runtime wiring by registering `IChannelAdapter` to resolve the existing `WebSocketChannelAdapter` singleton; this removed the "no dispatcher is registered" warning and restored inbound dispatch + streamed events.
 - Hardened `POST /api/chat` validation and error mapping: empty messages now return `400`, unknown agents return `404` instead of unhandled `500`.
 - Session persistence and continuity validated: repeated prompts in `live-test-1` retained context and `/api/sessions/live-test-1/history` showed the full transcript.
-- `BotNexus.Providers.OpenAICompat.csproj` — NET 10.0, references Core only, no external SDK
+- `BotNexus.Agent.Providers.OpenAICompat.csproj` — NET 10.0, references Core only, no external SDK
 - `OpenAICompatProvider.cs` — `IApiProvider` impl (api="openai-compat"), raw HttpClient SSE streaming, compat-aware request/response
 - `OpenAICompatOptions.cs` — extends `StreamOptions` with `ToolChoice` and `ReasoningEffort`
 - `CompatDetector.cs` — auto-detect compat settings from model provider/baseUrl (8 known servers + conservative default)

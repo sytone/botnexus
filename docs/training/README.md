@@ -68,13 +68,13 @@ These standalone documents cover specific topics in depth with full code example
 ```
 src/
 ├── providers/
-│   ├── BotNexus.Providers.Core/       # Models, streaming, registry
-│   ├── BotNexus.Providers.Anthropic/  # Anthropic Claude provider
-│   ├── BotNexus.Providers.OpenAI/     # OpenAI provider
-│   ├── BotNexus.Providers.Copilot/    # GitHub Copilot provider (static utility)
-│   └── BotNexus.Providers.OpenAICompat/ # OpenAI-compatible endpoints
+│   ├── BotNexus.Agent.Providers.Core/       # Models, streaming, registry
+│   ├── BotNexus.Agent.Providers.Anthropic/  # Anthropic Claude provider
+│   ├── BotNexus.Agent.Providers.OpenAI/     # OpenAI provider
+│   ├── BotNexus.Agent.Providers.Copilot/    # GitHub Copilot provider (static utility)
+│   └── BotNexus.Agent.Providers.OpenAICompat/ # OpenAI-compatible endpoints
 ├── agent/
-│   └── BotNexus.AgentCore/            # Agent loop, tools, hooks, state
+│   └── BotNexus.Agent.Core/            # Agent loop, tools, hooks, state
 └── coding-agent/
     └── BotNexus.CodingAgent/          # Coding agent factory, tools, sessions
 ```

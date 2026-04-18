@@ -7,12 +7,12 @@
 
 ---
 
-## Task 1: Scaffold BotNexus.AgentCore
+## Task 1: Scaffold BotNexus.Agent.Core
 
 **Outcome:** SUCCESS — 6 commits for types/scaffold
 
 **Work:**
-- Created `src/agent/BotNexus.AgentCore/` project scaffolding
+- Created `src/agent/BotNexus.Agent.Core/` project scaffolding
 - Implemented foundation types under `src/agent/`:
   - Message types
   - Tool call abstractions
@@ -29,7 +29,7 @@
 
 ## Task 2: Fix Project References
 
-**Outcome:** SUCCESS — all references use `src/providers/BotNexus.Providers.Core`
+**Outcome:** SUCCESS — all references use `src/agent/BotNexus.Agent.Providers.Core`
 
 **Work:**
 - Fixed all csproj project references

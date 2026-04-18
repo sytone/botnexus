@@ -23,14 +23,14 @@ Tools are C# classes that agents can invoke. BotNexus discovers tools automatica
 ```bash
 dotnet new classlib -n BotNexus.Extensions.MyTool
 cd BotNexus.Extensions.MyTool
-dotnet add package BotNexus.AgentCore
+dotnet add package BotNexus.Agent.Core
 ```
 
 **2. Implement `IAgentTool`:**
 
 ```csharp
-using BotNexus.AgentCore.Contracts;
-using BotNexus.AgentCore.Contracts.Models;
+using BotNexus.Agent.Core.Contracts;
+using BotNexus.Agent.Core.Contracts.Models;
 using System.ComponentModel;
 using System.Text.Json.Serialization;
 

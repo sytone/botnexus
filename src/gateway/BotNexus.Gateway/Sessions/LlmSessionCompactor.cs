@@ -2,8 +2,8 @@ using System.Text;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Domain.Primitives;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Sessions;

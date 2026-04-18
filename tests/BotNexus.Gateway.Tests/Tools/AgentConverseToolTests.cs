@@ -1,5 +1,5 @@
-using BotNexus.AgentCore.Tools;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core.Tools;
+using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Conversations;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -95,5 +95,5 @@ public sealed class AgentConverseToolTests
     }
 
     private static string ReadText(AgentToolResult result)
-        => result.Content.Single(item => item.Type == BotNexus.AgentCore.Types.AgentToolContentType.Text).Value;
+        => result.Content.Single(item => item.Type == BotNexus.Agent.Core.Types.AgentToolContentType.Text).Value;
 }

@@ -1,14 +1,14 @@
-using BotNexus.AgentCore.Configuration;
-using BotNexus.AgentCore.Loop;
+using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.Loop;
 using BotNexus.AgentCore.Tests.TestUtils;
-using BotNexus.AgentCore.Types;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Models;
+using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
 using FluentAssertions;
 
 namespace BotNexus.AgentCore.Tests.Loop;
 
-using AgentUserMessage = BotNexus.AgentCore.Types.UserMessage;
+using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 
 public class AgentLoopRunnerTests
 {
@@ -77,7 +77,7 @@ public class AgentLoopRunnerTests
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         return messages
             .OfType<AgentUserMessage>()
-            .Select(message => (Message)new BotNexus.Providers.Core.Models.UserMessage(new UserMessageContent(message.Content), timestamp))
+            .Select(message => (Message)new BotNexus.Agent.Providers.Core.Models.UserMessage(new UserMessageContent(message.Content), timestamp))
             .ToList();
     }
 

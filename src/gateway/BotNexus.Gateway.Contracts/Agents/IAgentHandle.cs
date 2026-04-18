@@ -1,5 +1,5 @@
 using BotNexus.Gateway.Abstractions.Models;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
 
 namespace BotNexus.Gateway.Abstractions.Agents;
@@ -15,7 +15,7 @@ namespace BotNexus.Gateway.Abstractions.Agents;
 /// interface, making the isolation strategy transparent to routing and API layers.
 /// </para>
 /// <para>
-/// For in-process isolation, this wraps a <c>BotNexus.AgentCore.Agent</c> directly.
+/// For in-process isolation, this wraps a <c>BotNexus.Agent.Core.Agent</c> directly.
 /// For container or remote isolation, this would be a gRPC/HTTP proxy.
 /// </para>
 /// </remarks>

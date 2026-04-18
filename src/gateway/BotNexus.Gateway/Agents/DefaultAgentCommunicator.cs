@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using BotNexus.AgentCore.Diagnostics;
+using BotNexus.Agent.Core.Diagnostics;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
@@ -23,8 +23,8 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
     /// <summary>
     /// Initializes a new instance of the <see cref="DefaultAgentCommunicator"/> class.
     /// </summary>
-    /// <param name="registry">Agent registry used to validate cross-agent targets.</param>
-    /// <param name="supervisor">Agent supervisor used to get or create child agent handles.</param>
+    /// <param name="registry">BotNexus.Agent.Core.Agent registry used to validate cross-agent targets.</param>
+    /// <param name="supervisor">BotNexus.Agent.Core.Agent supervisor used to get or create child agent handles.</param>
     /// <param name="logger">Logger instance.</param>
     public DefaultAgentCommunicator(
         IAgentRegistry registry,

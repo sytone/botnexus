@@ -1,9 +1,9 @@
 using System.Text.Json;
-using BotNexus.AgentCore;
-using BotNexus.AgentCore.Configuration;
-using BotNexus.AgentCore.Hooks;
-using BotNexus.AgentCore.Tools;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core;
+using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.Hooks;
+using BotNexus.Agent.Core.Tools;
+using BotNexus.Agent.Core.Types;
 using BotNexus.CodingAgent.Auth;
 using BotNexus.CodingAgent.Extensions;
 using BotNexus.CodingAgent.Hooks;
@@ -11,16 +11,16 @@ using BotNexus.CodingAgent.Session;
 using BotNexus.CodingAgent.Utils;
 using BotNexus.Tools;
 using BotNexus.Tools.Utils;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.Core.Registry;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
 using System.IO.Abstractions;
 
 namespace BotNexus.CodingAgent;
 
 public static class CodingAgent
 {
-    public static async Task<Agent> CreateAsync(
+    public static async Task<BotNexus.Agent.Core.Agent> CreateAsync(
         CodingAgentConfig config,
         string workingDirectory,
         AuthManager authManager,
@@ -110,12 +110,12 @@ public static class CodingAgent
             FollowUpMode: QueueMode.OneAtATime,
             SessionId: null);
 
-        var agent = new Agent(options);
+        var agent = new BotNexus.Agent.Core.Agent(options);
         WireSessionAutoPersistence(agent, sessionManager, session);
         return agent;
     }
 
-    private static void WireSessionAutoPersistence(Agent agent, SessionManager? sessionManager, SessionInfo? session)
+    private static void WireSessionAutoPersistence(BotNexus.Agent.Core.Agent agent, SessionManager? sessionManager, SessionInfo? session)
     {
         if (sessionManager is null || session is null)
         {

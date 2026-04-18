@@ -1,5 +1,5 @@
 using System.Text.Json;
-using BotNexus.Providers.Core.Validation;
+using BotNexus.Agent.Providers.Core.Validation;
 using FluentAssertions;
 
 namespace BotNexus.Providers.Core.Tests.Validation;

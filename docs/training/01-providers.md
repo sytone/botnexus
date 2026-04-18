@@ -1,6 +1,6 @@
 # Provider system
 
-The provider system is the communication layer between BotNexus and LLM APIs. It defines how models are registered, how API keys are resolved, how requests are routed to the correct provider implementation, and how streaming responses flow back to the caller. This document is the single reference for everything in the `BotNexus.Providers.Core` namespace and the built-in provider packages.
+The provider system is the communication layer between BotNexus and LLM APIs. It defines how models are registered, how API keys are resolved, how requests are routed to the correct provider implementation, and how streaming responses flow back to the caller. This document is the single reference for everything in the `BotNexus.Agent.Providers.Core` namespace and the built-in provider packages.
 
 > If you have read the [architecture overview](../architecture/overview.md), you already know that
 > the provider layer sits between the agent loop and the outside world. This document
@@ -953,7 +953,7 @@ public enum StopReason
 `ToolCallValidator` validates tool call arguments against the tool's JSON Schema parameter definition before dispatch.
 
 ```csharp
-using BotNexus.Providers.Core.Validation;
+using BotNexus.Agent.Providers.Core.Validation;
 
 public static (bool IsValid, string[] Errors) Validate(
     JsonElement arguments,
@@ -1012,7 +1012,7 @@ Errors are plain-English strings suitable for returning to the LLM:
 `ShortHash` generates deterministic, cross-provider tool call ID hashes.
 
 ```csharp
-using BotNexus.Providers.Core.Utilities;
+using BotNexus.Agent.Providers.Core.Utilities;
 
 public static string Generate(string input)
 ```

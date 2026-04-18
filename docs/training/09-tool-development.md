@@ -52,9 +52,9 @@ public interface IAgentTool
 Start with the simplest possible tool — echo back the user's message:
 
 ```csharp
-using BotNexus.AgentCore.Tools;
-using BotNexus.AgentCore.Types;
-using BotNexus.Providers.Core.Models;
+using BotNexus.Agent.Core.Tools;
+using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core.Models;
 using System.Text.Json;
 
 public sealed class EchoTool : IAgentTool
@@ -406,7 +406,7 @@ When a tool is called, here's what happens:
 ## Registering tools with the agent
 
 ```csharp
-using BotNexus.AgentCore;
+using BotNexus.Agent.Core;
 
 var agent = new Agent(agentOptions);
 
@@ -563,4 +563,4 @@ public async Task<AgentToolResult> ExecuteAsync(
 - **[Coding Agent — Built-in Tools](03-coding-agent.md#built-in-tools)** — Examples: ReadTool, ListDirectoryTool, WriteTool, EditTool, ShellTool, GrepTool, GlobTool
 - **[Building Your Own Agent](04-building-your-own.md)** — Register and use tools in your agent
 - **[ReadTool.cs source](../src/coding-agent/BotNexus.CodingAgent/Tools/ReadTool.cs)** — Reference implementation
-- **[IAgentTool interface source](../src/agent/BotNexus.AgentCore/Tools/IAgentTool.cs)** — Complete interface definition
+- **[IAgentTool interface source](../src/agent/BotNexus.Agent.Core/Tools/IAgentTool.cs)** — Complete interface definition

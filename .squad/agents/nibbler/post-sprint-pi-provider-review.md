@@ -205,8 +205,8 @@ docs/integration-verification-provider-architecture.md:163:
 
 **Files Reviewed:**
 - `docs/configuration.md` (lines 42-410)
-- `src/BotNexus.Providers.Copilot/CopilotConfig.cs`
-- `src/BotNexus.Providers.Copilot/CopilotProvider.cs` (constructor)
+- `src/BotNexus.Agent.Providers.Copilot/CopilotConfig.cs`
+- `src/BotNexus.Agent.Providers.Copilot/CopilotProvider.cs` (constructor)
 
 **Findings:**
 - ✅ Configuration docs show correct JSON structure for Copilot provider:

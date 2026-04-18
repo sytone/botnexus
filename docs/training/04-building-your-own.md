@@ -44,10 +44,10 @@ BotNexus ships with four provider implementations:
 
 | Provider | Project | API identifier | Auth |
 |----------|---------|----------------|------|
-| **GitHub Copilot** | `BotNexus.Providers.Copilot` | Routed via OpenAI/Anthropic | OAuth (default) |
-| **OpenAI** | `BotNexus.Providers.OpenAI` | `openai-completions` | API key |
-| **Anthropic** | `BotNexus.Providers.Anthropic` | `anthropic-messages` | API key |
-| **OpenAI-Compatible** | `BotNexus.Providers.OpenAICompat` | `openai-completions` | API key |
+| **GitHub Copilot** | `BotNexus.Agent.Providers.Copilot` | Routed via OpenAI/Anthropic | OAuth (default) |
+| **OpenAI** | `BotNexus.Agent.Providers.OpenAI` | `openai-completions` | API key |
+| **Anthropic** | `BotNexus.Agent.Providers.Anthropic` | `anthropic-messages` | API key |
+| **OpenAI-Compatible** | `BotNexus.Agent.Providers.OpenAICompat` | `openai-completions` | API key |
 
 See [Provider system](01-providers.md) for the full streaming protocol reference.
 
@@ -56,9 +56,9 @@ See [Provider system](01-providers.md) for the full streaming protocol reference
 All registries are **instance-based** — create them, register providers, and wire into `LlmClient`:
 
 ```csharp
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.Core.Registry;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
 
 // 1. Create instance-based registries
 var apiProviderRegistry = new ApiProviderRegistry();
@@ -142,7 +142,7 @@ For a full provider tutorial, see [Step 10: Adding a new LLM provider](#step-10-
 
 ## Step 2: Define custom tools
 
-Each tool implements `IAgentTool` (defined in `BotNexus.AgentCore.Tools`). The interface has seven members:
+Each tool implements `IAgentTool` (defined in `BotNexus.Agent.Core.Tools`). The interface has seven members:
 
 | Member | Purpose |
 |--------|---------|
@@ -158,10 +158,10 @@ Here's a complete example — a weather lookup tool:
 
 ```csharp
 using System.Text.Json;
-using BotNexus.AgentCore.Tools;
-using BotNexus.AgentCore.Types;
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.Core.Validation;  // Phase 5: validation
+using BotNexus.Agent.Core.Tools;
+using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Validation;  // Phase 5: validation
 
 public sealed class WeatherTool : IAgentTool
 {
@@ -263,13 +263,13 @@ public sealed class WeatherTool : IAgentTool
 `AgentOptions` is the single record that wires everything together. Here's a complete example showing every parameter:
 
 ```csharp
-using BotNexus.AgentCore;
-using BotNexus.AgentCore.Configuration;
-using BotNexus.AgentCore.Hooks;
-using BotNexus.AgentCore.Types;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.Core.Registry;
+using BotNexus.Agent.Core;
+using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.Hooks;
+using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
 
 // ── Tools ────────────────────────────────────────────────
 var tools = new List<IAgentTool>
@@ -773,7 +773,7 @@ This section is a full tutorial for implementing a provider from scratch. If you
 ```bash
 dotnet new classlib -n BotNexus.Providers.MyLLM
 cd BotNexus.Providers.MyLLM
-dotnet add reference ../BotNexus.Providers.Core/BotNexus.Providers.Core.csproj
+dotnet add reference ../BotNexus.Agent.Providers.Core/BotNexus.Agent.Providers.Core.csproj
 ```
 
 ### 10.2: Implement IApiProvider
@@ -795,10 +795,10 @@ Full implementation skeleton:
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.Core.Registry;
-using BotNexus.Providers.Core.Streaming;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
+using BotNexus.Agent.Providers.Core.Streaming;
 
 namespace BotNexus.Providers.MyLLM;
 
@@ -1402,15 +1402,15 @@ BeforeToolCallDelegate safetyHook = async (context, ct) =>
 ### Full wiring
 
 ```csharp
-using BotNexus.AgentCore;
-using BotNexus.AgentCore.Configuration;
-using BotNexus.AgentCore.Hooks;
-using BotNexus.AgentCore.Loop;
-using BotNexus.AgentCore.Tools;
-using BotNexus.AgentCore.Types;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.Core.Registry;
+using BotNexus.Agent.Core;
+using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.Hooks;
+using BotNexus.Agent.Core.Loop;
+using BotNexus.Agent.Core.Tools;
+using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
 
 var projectRoot = @"C:\projects\myapp";
 

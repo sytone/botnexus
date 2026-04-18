@@ -1,11 +1,11 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using BotNexus.AgentCore.Tools;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core.Tools;
+using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Tools.Utils;
-using BotNexus.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Models;
 using Microsoft.Extensions.FileSystemGlobbing;
 using System.IO.Abstractions;
 

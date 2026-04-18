@@ -1,10 +1,10 @@
 using System.Text.Json;
-using BotNexus.AgentCore.Configuration;
-using BotNexus.AgentCore.Loop;
-using BotNexus.AgentCore.Tools;
+using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.Loop;
+using BotNexus.Agent.Core.Tools;
 using BotNexus.AgentCore.Tests.TestUtils;
-using BotNexus.AgentCore.Types;
-using BotNexus.Providers.Core.Models;
+using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core.Models;
 using FluentAssertions;
 
 namespace BotNexus.AgentCore.Tests.Loop;

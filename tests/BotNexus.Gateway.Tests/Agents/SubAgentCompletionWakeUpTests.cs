@@ -1,5 +1,5 @@
 using BotNexus.Domain.Primitives;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;

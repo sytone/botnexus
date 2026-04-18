@@ -1,6 +1,7 @@
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.Core.Registry;
-using BotNexus.Providers.Core.Streaming;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
+using BotNexus.Agent.Providers.Core.Streaming;
 using FluentAssertions;
 using Moq;
 

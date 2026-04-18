@@ -1,4 +1,4 @@
-using BotNexus.AgentCore.Tools;
+using BotNexus.Agent.Core.Tools;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Extensions;
 using BotNexus.Gateway.Commands;

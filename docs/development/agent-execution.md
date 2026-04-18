@@ -10,7 +10,7 @@ Agent execution follows a layered approach:
 2. **Agent Supervisor** (`IAgentSupervisor`) → Instance lifecycle management
 3. **Isolation Strategy** (`IIsolationStrategy`) → Agent execution environment
 4. **Agent Handle** (`IAgentHandle`) → Execution interface
-5. **AgentCore** (`BotNexus.AgentCore.Agent`) → Core agent loop
+5. **AgentCore** (`BotNexus.Agent.Core.Agent`) → Core agent loop
 6. **Agent Loop Runner** (`AgentLoopRunner`) → LLM interaction cycle
 
 ## Agent Descriptor Loading
@@ -178,7 +178,7 @@ public record AgentInstance
 
 **Characteristics:**
 - Runs agent in Gateway process
-- Direct `BotNexus.AgentCore.Agent` instantiation
+- Direct `BotNexus.Agent.Core.Agent` instantiation
 - No process/container boundaries
 - Lowest latency (<10ms startup)
 - Shared memory space (trusted agents only)
@@ -246,7 +246,7 @@ public interface IAgentHandle : IAsyncDisposable
 
 ### InProcessAgentHandle
 
-Wraps `BotNexus.AgentCore.Agent` and bridges to Gateway contracts.
+Wraps `BotNexus.Agent.Core.Agent` and bridges to Gateway contracts.
 
 **PromptAsync Implementation:**
 
@@ -291,13 +291,13 @@ The `AgentLoopRunner` implements the agent-tool execution cycle:
 6. Return final response
 ```
 
-See [AgentLoopRunner](../../src/agent/BotNexus.AgentCore/Loop/AgentLoopRunner.cs) for the full implementation.
+See [AgentLoopRunner](../../src/agent/BotNexus.Agent.Core/Loop/AgentLoopRunner.cs) for the full implementation.
 
 ### Tool Execution
 
 The `ToolExecutor` supports two modes: **sequential** (default), which executes tool calls one at a time, and **parallel**, which executes all tool calls concurrently via `Task.WhenAll`. The mode is configured per-agent via `ToolExecutionMode` in the descriptor.
 
-See [ToolExecutor](../../src/agent/BotNexus.AgentCore/Loop/ToolExecutor.cs) for the full implementation.
+See [ToolExecutor](../../src/agent/BotNexus.Agent.Core/Loop/ToolExecutor.cs) for the full implementation.
 
 **Hook Execution:**
 

@@ -1,18 +1,18 @@
 using BotNexus.CodingAgent.Session;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.Core.Registry;
-using BotNexus.Providers.Core.Streaming;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
+using BotNexus.Agent.Providers.Core.Streaming;
 using FluentAssertions;
 using Moq;
-using AgentMessage = BotNexus.AgentCore.Types.AgentMessage;
-using AgentUserMessage = BotNexus.AgentCore.Types.UserMessage;
-using AssistantAgentMessage = BotNexus.AgentCore.Types.AssistantAgentMessage;
-using SystemAgentMessage = BotNexus.AgentCore.Types.SystemAgentMessage;
-using ToolResultAgentMessage = BotNexus.AgentCore.Types.ToolResultAgentMessage;
-using AgentToolResult = BotNexus.AgentCore.Types.AgentToolResult;
-using AgentToolContent = BotNexus.AgentCore.Types.AgentToolContent;
-using AgentToolContentType = BotNexus.AgentCore.Types.AgentToolContentType;
+using AgentMessage = BotNexus.Agent.Core.Types.AgentMessage;
+using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
+using AssistantAgentMessage = BotNexus.Agent.Core.Types.AssistantAgentMessage;
+using SystemAgentMessage = BotNexus.Agent.Core.Types.SystemAgentMessage;
+using ToolResultAgentMessage = BotNexus.Agent.Core.Types.ToolResultAgentMessage;
+using AgentToolResult = BotNexus.Agent.Core.Types.AgentToolResult;
+using AgentToolContent = BotNexus.Agent.Core.Types.AgentToolContent;
+using AgentToolContentType = BotNexus.Agent.Core.Types.AgentToolContentType;
 
 namespace BotNexus.CodingAgent.Tests.Session;
 
@@ -299,7 +299,7 @@ public sealed class SessionCompactorTests
         {
             new AssistantAgentMessage(
                 Content: new string('x', 4000),
-                Usage: new BotNexus.AgentCore.Types.AgentUsage(InputTokens: 7, OutputTokens: 11))
+                Usage: new BotNexus.Agent.Core.Types.AgentUsage(InputTokens: 7, OutputTokens: 11))
         };
 
         compactor.EstimateTokens(messages).Should().Be(18);

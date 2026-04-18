@@ -12,11 +12,11 @@
 - **Notes:** Gate reviews passed all sprints; architecture validated across team
 
 ### Farnsworth (Platform Dev)
-- **Task Sprint 1:** Scaffold src/agent/BotNexus.AgentCore with all types/interfaces
+- **Task Sprint 1:** Scaffold src/agent/BotNexus.Agent.Core with all types/interfaces
 - **Status:** ✓ COMPLETE
 - **Commits:** 6
 - **Deliverables:** Project structure, message types, tool registry, context models
-- **Task Sprint 1 Follow-up:** Fixed all references to use only src/providers/BotNexus.Providers.Core
+- **Task Sprint 1 Follow-up:** Fixed all references to use only src/agent/BotNexus.Agent.Providers.Core
 - **Commits:** 1
 - **Notes:** References constraint enforced; build clean
 

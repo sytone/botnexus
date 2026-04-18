@@ -29,7 +29,7 @@ public sealed class RetryDelayCapTests
             {
                 MaxRetryDelayMs = 100
             };
-        var agent = new Agent(options);
+        var agent = new BotNexus.Agent.Core.Agent(options);
         var stopwatch = Stopwatch.StartNew();
 
         _ = await agent.PromptAsync("retry please");

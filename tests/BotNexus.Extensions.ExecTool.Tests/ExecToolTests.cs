@@ -1,9 +1,9 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core.Types;
 using BotNexus.Extensions.ExecTool;
-using BotNexus.Providers.Core.Utilities;
+using BotNexus.Agent.Providers.Core.Utilities;
 using FluentAssertions;
 using System.IO.Abstractions.TestingHelpers;
 

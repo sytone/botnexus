@@ -1,5 +1,5 @@
 using BotNexus.AgentCore.Tests.TestUtils;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core.Types;
 using FluentAssertions;
 
 namespace BotNexus.AgentCore.Tests;
@@ -18,7 +18,7 @@ public sealed class ListenerExceptionSafetyTests
             {
                 OnDiagnostic = message => diagnostics.Add(message)
             };
-        var agent = new Agent(options);
+        var agent = new BotNexus.Agent.Core.Agent(options);
         using var _ = agent.Subscribe((_, _) => throw new InvalidOperationException("listener exploded"));
 
         var result = await agent.PromptAsync("hello");

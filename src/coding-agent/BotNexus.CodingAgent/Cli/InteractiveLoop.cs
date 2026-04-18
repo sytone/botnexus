@@ -1,12 +1,12 @@
 using System.Text.Json;
-using BotNexus.AgentCore;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core;
+using BotNexus.Agent.Core.Types;
 using BotNexus.CodingAgent.Auth;
 using BotNexus.CodingAgent.Extensions;
 using BotNexus.CodingAgent.Session;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Registry;
-using ThinkingLevel = BotNexus.Providers.Core.Models.ThinkingLevel;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Registry;
+using ThinkingLevel = BotNexus.Agent.Providers.Core.Models.ThinkingLevel;
 
 namespace BotNexus.CodingAgent.Cli;
 
@@ -16,7 +16,7 @@ namespace BotNexus.CodingAgent.Cli;
 public sealed class InteractiveLoop
 {
     public async Task RunAsync(
-        Agent agent,
+        BotNexus.Agent.Core.Agent agent,
         CodingAgentConfig config,
         LlmClient llmClient,
         ModelRegistry modelRegistry,
@@ -150,7 +150,7 @@ public sealed class InteractiveLoop
     }
 
     private static async Task CompactIfNeededAsync(
-        Agent agent,
+        BotNexus.Agent.Core.Agent agent,
         CodingAgentConfig config,
         LlmClient llmClient,
         AuthManager authManager,
@@ -196,7 +196,7 @@ public sealed class InteractiveLoop
     /// </summary>
     private static async Task<SessionInfo?> HandleCommandAsync(
         string input,
-        Agent agent,
+        BotNexus.Agent.Core.Agent agent,
         CodingAgentConfig config,
         ModelRegistry modelRegistry,
         AuthManager authManager,
@@ -332,7 +332,7 @@ public sealed class InteractiveLoop
         return null;
     }
 
-    private static SessionInfo UpdateSessionSnapshot(SessionInfo session, Agent agent)
+    private static SessionInfo UpdateSessionSnapshot(SessionInfo session, BotNexus.Agent.Core.Agent agent)
     {
         return session with
         {
@@ -342,7 +342,7 @@ public sealed class InteractiveLoop
         };
     }
 
-    private static BotNexus.Providers.Core.Models.LlmModel ResolveModel(
+    private static BotNexus.Agent.Providers.Core.Models.LlmModel ResolveModel(
         string provider,
         string modelId,
         int maxContextTokens,
@@ -359,7 +359,7 @@ public sealed class InteractiveLoop
             return existing;
         }
 
-        return new BotNexus.Providers.Core.Models.LlmModel(
+        return new BotNexus.Agent.Providers.Core.Models.LlmModel(
             Id: modelId,
             Name: modelId,
             Api: "openai-completions",
@@ -367,7 +367,7 @@ public sealed class InteractiveLoop
             BaseUrl: "https://api.individual.githubcopilot.com",
             Reasoning: false,
             Input: ["text"],
-            Cost: new BotNexus.Providers.Core.Models.ModelCost(0, 0, 0, 0),
+            Cost: new BotNexus.Agent.Providers.Core.Models.ModelCost(0, 0, 0, 0),
             ContextWindow: maxContextTokens,
             MaxTokens: Math.Min(8192, maxContextTokens),
             Headers: new Dictionary<string, string>

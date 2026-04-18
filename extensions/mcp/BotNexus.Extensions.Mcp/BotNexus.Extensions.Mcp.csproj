@@ -13,10 +13,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\src\agent\BotNexus.AgentCore\BotNexus.AgentCore.csproj" />
+    <ProjectReference Include="..\..\..\src\agent\BotNexus.Agent.Core\BotNexus.Agent.Core.csproj" />
     <ProjectReference Include="..\..\..\src\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
-    <ProjectReference Include="..\..\..\src\providers\BotNexus.Providers.Core\BotNexus.Providers.Core.csproj" />
+    <ProjectReference Include="..\..\..\src\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
   </ItemGroup>
 
   <!-- Copy extension output + manifest to artifacts/extensions/ for dev-time discovery -->

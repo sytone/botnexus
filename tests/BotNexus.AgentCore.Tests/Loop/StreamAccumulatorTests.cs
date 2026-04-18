@@ -1,7 +1,7 @@
-using BotNexus.AgentCore.Loop;
-using BotNexus.AgentCore.Types;
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.Core.Streaming;
+using BotNexus.Agent.Core.Loop;
+using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Streaming;
 using FluentAssertions;
 
 namespace BotNexus.AgentCore.Tests.Loop;
@@ -68,7 +68,7 @@ public class StreamAccumulatorTests
         var start = CreateAssistantMessage("h");
         var partial = CreateAssistantMessage("hello");
         var final = CreateAssistantMessage("hello world");
-        var contextMessages = new List<AgentMessage> { new BotNexus.AgentCore.Types.UserMessage("prompt") };
+        var contextMessages = new List<AgentMessage> { new BotNexus.Agent.Core.Types.UserMessage("prompt") };
 
         stream.Push(new StartEvent(start));
         stream.Push(new TextDeltaEvent(0, "ello", partial));
@@ -122,7 +122,7 @@ public class StreamAccumulatorTests
         var stream = new LlmStream();
         var partialMsg = CreateAssistantMessage("partial content");
         var errorMsg = CreateErrorMessage("connection lost");
-        var contextMessages = new List<AgentMessage> { new BotNexus.AgentCore.Types.UserMessage("prompt") };
+        var contextMessages = new List<AgentMessage> { new BotNexus.Agent.Core.Types.UserMessage("prompt") };
 
         // Stream starts with content, then errors mid-stream
         stream.Push(new StartEvent(partialMsg));
@@ -213,8 +213,8 @@ public class StreamAccumulatorTests
         var final = CreateAssistantMessage("reply");
         var contextMessages = new List<AgentMessage>
         {
-            new BotNexus.AgentCore.Types.UserMessage("msg1"),
-            new BotNexus.AgentCore.Types.UserMessage("msg2")
+            new BotNexus.Agent.Core.Types.UserMessage("msg1"),
+            new BotNexus.Agent.Core.Types.UserMessage("msg2")
         };
 
         stream.Push(new StartEvent(start));

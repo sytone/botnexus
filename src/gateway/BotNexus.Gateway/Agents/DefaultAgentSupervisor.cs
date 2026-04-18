@@ -3,7 +3,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
-using BotNexus.AgentCore.Tools;
+using BotNexus.Agent.Core.Tools;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Diagnostics;
 using Microsoft.Extensions.Logging;

@@ -1,7 +1,7 @@
-using BotNexus.AgentCore.Hooks;
-using BotNexus.AgentCore.Tools;
+using BotNexus.Agent.Core.Hooks;
+using BotNexus.Agent.Core.Tools;
 using BotNexus.CodingAgent.Session;
-using BotNexus.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Models;
 
 namespace BotNexus.CodingAgent.Extensions;
 
@@ -69,7 +69,7 @@ public sealed record ToolResultLifecycleContext(
     string ToolCallId,
     string ToolName,
     IReadOnlyDictionary<string, object?> Arguments,
-    BotNexus.AgentCore.Types.AgentToolResult Result,
+    BotNexus.Agent.Core.Types.AgentToolResult Result,
     bool IsError);
 
 public sealed record SessionLifecycleContext(
@@ -78,8 +78,8 @@ public sealed record SessionLifecycleContext(
     string ModelId);
 
 public sealed record CompactionLifecycleContext(
-    IReadOnlyList<BotNexus.AgentCore.Types.AgentMessage> MessagesToSummarize,
-    IReadOnlyList<BotNexus.AgentCore.Types.AgentMessage> RecentMessages,
+    IReadOnlyList<BotNexus.Agent.Core.Types.AgentMessage> MessagesToSummarize,
+    IReadOnlyList<BotNexus.Agent.Core.Types.AgentMessage> RecentMessages,
     IReadOnlyList<string> ReadFiles,
     IReadOnlyList<string> ModifiedFiles,
     string Summary);

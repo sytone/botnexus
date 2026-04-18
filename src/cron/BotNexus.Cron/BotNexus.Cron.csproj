@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -25,10 +25,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\agent\BotNexus.AgentCore\BotNexus.AgentCore.csproj" />
+    <ProjectReference Include="..\..\agent\BotNexus.Agent.Core\BotNexus.Agent.Core.csproj" />
     <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
-    <ProjectReference Include="..\..\providers\BotNexus.Providers.Core\BotNexus.Providers.Core.csproj" />
+    <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>

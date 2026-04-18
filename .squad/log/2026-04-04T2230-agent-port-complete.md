@@ -6,7 +6,7 @@
 ## Facts
 
 - **20 commits** across 7 team members
-- **27 source files** in src/agent/BotNexus.AgentCore
+- **27 source files** in src/agent/BotNexus.Agent.Core
 - **26 passing tests**
 - Comprehensive README + XML documentation
 - All 4 sprints completed on schedule

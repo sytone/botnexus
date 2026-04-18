@@ -156,7 +156,7 @@ The config is loaded automatically — no restart required.
 When BotNexus first needs to call the Copilot API, you'll see:
 
 ```text
-info: BotNexus.Providers.Copilot.GitHubDeviceCodeFlow[0]
+info: BotNexus.Agent.Providers.Copilot.GitHubDeviceCodeFlow[0]
       Go to https://github.com/login/device and enter code: ABCD-1234
 ```
 

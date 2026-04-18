@@ -1,6 +1,6 @@
 # BotNexus.CodingAgent
 
-Minimal coding agent CLI with read, ls, edit, write, bash, grep, and find tools. Built on BotNexus.AgentCore and BotNexus.Providers.Core.
+Minimal coding agent CLI with read, ls, edit, write, bash, grep, and find tools. Built on BotNexus.Agent.Core and BotNexus.Agent.Providers.Core.
 
 ## Quick Start
 
@@ -47,9 +47,9 @@ $env:COPILOT_GITHUB_TOKEN = "gho_your_token_here"
 $env:GH_TOKEN = "ghp_your_token_here"
 ```
 
-Or authenticate programmatically using `CopilotOAuth` from `BotNexus.Providers.Copilot`:
+Or authenticate programmatically using `CopilotOAuth` from `BotNexus.Agent.Providers.Copilot`:
 ```csharp
-using BotNexus.Providers.Copilot;
+using BotNexus.Agent.Providers.Copilot;
 
 // Device code flow — displays a URL and code for the user to authorize
 var credentials = await CopilotOAuth.LoginAsync(
@@ -372,7 +372,7 @@ Extensions allow you to add custom tools to the coding agent. They are implement
 1. Create a class that implements `IExtension`:
 
 ```csharp
-using BotNexus.AgentCore.Tools;
+using BotNexus.Agent.Core.Tools;
 using BotNexus.CodingAgent.Extensions;
 
 public class MyExtension : IExtension
@@ -392,7 +392,7 @@ public class MyExtension : IExtension
 2. Implement `IAgentTool` for each custom tool:
 
 ```csharp
-using BotNexus.AgentCore.Tools;
+using BotNexus.Agent.Core.Tools;
 using System.Text.Json;
 
 public class MyCustomTool : IAgentTool
@@ -543,9 +543,9 @@ The coding agent is built on three core layers:
 ```
 BotNexus.CodingAgent (CLI)
     ↓
-BotNexus.AgentCore (Agent runtime, tool pipeline, state)
+BotNexus.Agent.Core (Agent runtime, tool pipeline, state)
     ↓
-BotNexus.Providers.Core (LLM abstraction, model registry)
+BotNexus.Agent.Providers.Core (LLM abstraction, model registry)
 ```
 
 ### How CodingAgent Uses AgentCore

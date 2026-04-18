@@ -747,11 +747,11 @@ IReadOnlyList<string> skills = loader.LoadSkills(workingDirectory, config);
 Here's how to create an agent with `CodingAgent.CreateAsync` and a custom extension that provides an additional tool:
 
 ```csharp
-using BotNexus.AgentCore;
+using BotNexus.Agent.Core;
 using BotNexus.CodingAgent;
 using BotNexus.CodingAgent.Auth;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Registry;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Registry;
 
 // 1. Define a custom tool
 public sealed class MetricsTool : IAgentTool

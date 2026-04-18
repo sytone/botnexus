@@ -78,9 +78,9 @@ public sealed class ReadToolTests
         var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "sample.png" });
 
         result.Content.Should().HaveCount(2);
-        result.Content[0].Type.Should().Be(BotNexus.AgentCore.Types.AgentToolContentType.Text);
+        result.Content[0].Type.Should().Be(BotNexus.Agent.Core.Types.AgentToolContentType.Text);
         result.Content[0].Value.Should().Contain("Read image file");
-        result.Content[1].Type.Should().Be(BotNexus.AgentCore.Types.AgentToolContentType.Image);
+        result.Content[1].Type.Should().Be(BotNexus.Agent.Core.Types.AgentToolContentType.Image);
         result.Content[1].Value.Should().Be($"data:image/png;base64,{Convert.ToBase64String(bytes)}");
     }
 

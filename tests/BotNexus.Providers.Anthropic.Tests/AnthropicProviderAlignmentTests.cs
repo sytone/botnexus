@@ -1,9 +1,9 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
-using BotNexus.Providers.Anthropic;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Models;
+using BotNexus.Agent.Providers.Anthropic;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
 using FluentAssertions;
 
 namespace BotNexus.Providers.Anthropic.Tests;

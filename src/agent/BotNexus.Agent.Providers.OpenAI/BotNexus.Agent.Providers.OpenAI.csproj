@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>BotNexus.Agent.Providers.OpenAI</RootNamespace>
+    <AssemblyName>BotNexus.Agent.Providers.OpenAI.Completions</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
+  </ItemGroup>
+
+</Project>

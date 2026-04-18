@@ -1,4 +1,5 @@
-using BotNexus.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
 using FluentAssertions;
 
 namespace BotNexus.Providers.Core.Tests.Models;
@@ -51,7 +52,7 @@ public class ImmutableOptionsTests
         var cts = new CancellationTokenSource();
         var originalHeaders = new Dictionary<string, string> { ["x-one"] = "1" };
         var originalMetadata = new Dictionary<string, object> { ["traceId"] = "abc" };
-        var original = new Core.StreamOptions
+        var original = new BotNexus.Agent.Providers.Core.StreamOptions
         {
             Temperature = 0.7f,
             MaxTokens = 1234,
@@ -86,7 +87,7 @@ public class ImmutableOptionsTests
     [Fact]
     public void StreamOptions_Copies_ShouldNotLeakMutableDictionaryState()
     {
-        var original = new Core.StreamOptions
+        var original = new BotNexus.Agent.Providers.Core.StreamOptions
         {
             Headers = new Dictionary<string, string> { ["x-key"] = "v1" },
             Metadata = new Dictionary<string, object> { ["flag"] = "on" }

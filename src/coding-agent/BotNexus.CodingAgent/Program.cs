@@ -1,14 +1,14 @@
-using BotNexus.AgentCore;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core;
+using BotNexus.Agent.Core.Types;
 using BotNexus.CodingAgent.Auth;
 using BotNexus.CodingAgent.Cli;
 using BotNexus.CodingAgent.Extensions;
 using BotNexus.CodingAgent.Session;
-using BotNexus.Providers.Anthropic;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Registry;
-using BotNexus.Providers.OpenAI;
-using BotNexus.Providers.OpenAICompat;
+using BotNexus.Agent.Providers.Anthropic;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Registry;
+using BotNexus.Agent.Providers.OpenAI;
+using BotNexus.Agent.Providers.OpenAICompat;
 using System.IO.Abstractions;
 
 namespace BotNexus.CodingAgent;
@@ -168,7 +168,7 @@ internal static class Program
     }
 
     private static async Task RunSinglePromptAsync(
-        Agent agent,
+        BotNexus.Agent.Core.Agent agent,
         string prompt,
         OutputFormatter output,
         CodingAgentConfig config,
@@ -203,7 +203,7 @@ internal static class Program
     }
 
     private static async Task CompactIfNeededAsync(
-        Agent agent,
+        BotNexus.Agent.Core.Agent agent,
         CodingAgentConfig config,
         LlmClient llmClient,
         AuthManager authManager,
@@ -267,7 +267,7 @@ internal static class Program
         }
     }
 
-    private static SessionInfo UpdateSessionSnapshot(SessionInfo session, Agent agent)
+    private static SessionInfo UpdateSessionSnapshot(SessionInfo session, BotNexus.Agent.Core.Agent agent)
     {
         return session with
         {

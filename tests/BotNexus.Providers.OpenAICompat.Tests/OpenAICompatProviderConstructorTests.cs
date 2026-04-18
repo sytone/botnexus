@@ -1,8 +1,8 @@
 using System.Net;
 using System.Text;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.OpenAICompat;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.OpenAICompat;
 using FluentAssertions;
 
 namespace BotNexus.Providers.OpenAICompat.Tests;

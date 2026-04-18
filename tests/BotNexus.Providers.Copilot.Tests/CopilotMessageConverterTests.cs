@@ -1,10 +1,10 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using FluentAssertions;
-using BotNexus.Providers.Core.Compatibility;
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.Core.Utilities;
-using BotNexus.Providers.Copilot;
+using BotNexus.Agent.Providers.Core.Compatibility;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Utilities;
+using BotNexus.Agent.Providers.Copilot;
 
 namespace BotNexus.Providers.Copilot.Tests;
 

@@ -1,12 +1,12 @@
-using BotNexus.AgentCore;
-using BotNexus.AgentCore.Configuration;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core;
+using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Isolation;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.Core.Registry;
-using BotNexus.Providers.Core.Streaming;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
+using BotNexus.Agent.Providers.Core.Streaming;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -63,7 +63,7 @@ public sealed class InProcessAgentHandleTests
             .Contain("hello");
     }
 
-    private static (Agent Agent, InProcessAgentHandle Handle) CreateHandle()
+    private static (BotNexus.Agent.Core.Agent Agent, InProcessAgentHandle Handle) CreateHandle()
     {
         var modelRegistry = new ModelRegistry();
         modelRegistry.Register("test-provider", new LlmModel(
@@ -99,7 +99,7 @@ public sealed class InProcessAgentHandleTests
             FollowUpMode: QueueMode.All,
             SessionId: "session-1");
 
-        var agent = new Agent(options);
+        var agent = new BotNexus.Agent.Core.Agent(options);
         var handle = new InProcessAgentHandle(agent, "agent-a", "session-1", NullLogger.Instance);
         return (agent, handle);
     }

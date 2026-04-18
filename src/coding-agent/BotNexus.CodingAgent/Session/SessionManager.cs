@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.IO.Abstractions;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
 using BotNexus.Sessions.Common;
 

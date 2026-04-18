@@ -1,4 +1,4 @@
-using BotNexus.AgentCore.Hooks;
+using BotNexus.Agent.Core.Hooks;
 
 namespace BotNexus.CodingAgent.Extensions;
 
@@ -120,7 +120,7 @@ public sealed class ExtensionRunner(IReadOnlyList<IExtension> extensions)
 
     public async Task<object> OnModelRequestAsync(
         object payload,
-        BotNexus.Providers.Core.Models.LlmModel model,
+        BotNexus.Agent.Providers.Core.Models.LlmModel model,
         CancellationToken cancellationToken = default)
     {
         var currentPayload = payload;

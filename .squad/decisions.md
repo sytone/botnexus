@@ -335,7 +335,7 @@ This plan re-examines all P0/P1/P2 items through the dynamic loading lens, merge
 - Jon's directive makes Copilot provider **P0 — higher priority than all other providers**
 - Copilot uses OpenAI-compatible API (base URL: https://api.githubcopilot.com)
 - Auth via OAuth device code flow, not API key
-- Introduces OAuth abstractions in Core and dedicated BotNexus.Providers.Copilot extension
+- Introduces OAuth abstractions in Core and dedicated BotNexus.Agent.Providers.Copilot extension
 - Provider priority reordered: **Copilot (P0) > OpenAI (P1) > Anthropic (P2)**
 - All work follows conventional commit format (feat/fix/refactor/docs/test/chore)
 
@@ -380,9 +380,9 @@ Key facts:
       telegram/       → BotNexus.Channels.Telegram.dll + dependencies
       slack/          → BotNexus.Channels.Slack.dll + dependencies
     providers/
-      copilot/        → BotNexus.Providers.Copilot.dll + dependencies
-      openai/         → BotNexus.Providers.OpenAI.dll + dependencies
-      anthropic/      → BotNexus.Providers.Anthropic.dll + dependencies
+      copilot/        → BotNexus.Agent.Providers.Copilot.dll + dependencies
+      openai/         → BotNexus.Agent.Providers.OpenAI.dll + dependencies
+      anthropic/      → BotNexus.Agent.Providers.Anthropic.dll + dependencies
     tools/
       github/         → BotNexus.Tools.GitHub.dll + dependencies
 ```
@@ -455,7 +455,7 @@ ExtensionLoader checks Auth field. For "oauth", validates IOAuthProvider is impl
 
 ### Implementation
 
-New project: `BotNexus.Providers.Copilot`  
+New project: `BotNexus.Agent.Providers.Copilot`  
 Implements: `ILlmProvider` (via `LlmProviderBase`) + `IOAuthProvider`  
 HTTP format: OpenAI-compatible chat completions, streaming, tool calling  
 Same request/response DTOs as OpenAI provider
@@ -526,7 +526,7 @@ Each provider adds its own auth mechanism
 
 | ID | Work Item | Owner | Points | Description |
 |---|---|---|---|---|
-| 8 | copilot-provider | Farnsworth | 60 | BotNexus.Providers.Copilot project, OpenAI-compatible HTTP, OAuth device code flow |
+| 8 | copilot-provider | Farnsworth | 60 | BotNexus.Agent.Providers.Copilot project, OpenAI-compatible HTTP, OAuth device code flow |
 | 9 | providers-base-shared | Fry | 40 | Extract HTTP common code (DTOs, streaming, retry) to Providers.Base |
 
 **P1 (2 items):**
@@ -644,7 +644,7 @@ and require target validation through `IAgentRegistry` before supervisor executi
 **Implementation:**
 - `DefaultAgentCommunicator.CallCrossAgentAsync()` validates target against `IAgentRegistry`
 - Local-first only when `targetEndpoint` is empty; non-empty endpoints throw `NotSupportedException` until remote transport implemented
-- Files: `src/BotNexus.AgentCore/Communication/DefaultAgentCommunicator.cs`, `IAgentRegistry` interface
+- Files: `src/BotNexus.Agent.Core/Communication/DefaultAgentCommunicator.cs`, `IAgentRegistry` interface
 
 **Owner Sign-off Required:** Squad should not auto-implement broader cross-agent features without explicit review.
 
@@ -907,7 +907,7 @@ All Phase 1 P0 foundation work delivered:
 
 **Implementation Delivered:**
 
-1. ✅ **BotNexus.Providers.Copilot** extension project
+1. ✅ **BotNexus.Agent.Providers.Copilot** extension project
    - Target: `net10.0`
    - Extension metadata: `providers/copilot`
    - Imports `Extension.targets` for automatic build/publish pipeline
@@ -3378,7 +3378,7 @@ The `scripts/pack.ps1` script packages 9 BotNexus components (Gateway, CLI, 3 pr
 - Root cause: Unknown at the time, suspected ref assembly race condition
 
 **Failed Approach 2 (Bender's second attempt):** "Restore once + publish --no-restore in parallel"
-- Result: `dotnet publish failed for BotNexus.Providers.OpenAI with exit code 1`
+- Result: `dotnet publish failed for BotNexus.Agent.Providers.OpenAI with exit code 1`
 - Root cause: `--no-restore` only skips package restore, NOT building. Multiple parallel publishes still build, causing `obj/` file contention on shared dependencies (BotNexus.Core, BotNexus.Providers.Base, BotNexus.Channels.Base).
 
 ## Decision
@@ -3968,7 +3968,7 @@ This sprint migrates BotNexus from the OpenAI Chat Completions API to the **Open
 
 #### 2.1 Provider Layer Changes
 
-**New Provider:** `BotNexus.Providers.Copilot.CopilotResponsesProvider`
+**New Provider:** `BotNexus.Agent.Providers.Copilot.CopilotResponsesProvider`
 
 ```csharp
 public class CopilotResponsesProvider : LlmProviderBase, IOAuthProvider
@@ -4286,7 +4286,7 @@ Day 4-5: Review & Deployment (Nibbler + Leela)
 #### Tasks
 
 **F1. Create CopilotResponsesProvider** ⏱️ 6-8 hours
-- [ ] Create `BotNexus.Providers.Copilot/CopilotResponsesProvider.cs`
+- [ ] Create `BotNexus.Agent.Providers.Copilot/CopilotResponsesProvider.cs`
 - [ ] Implement OAuth integration (reuse `CopilotOAuthService` from existing provider)
 - [ ] Implement HTTP client for `/v1/responses` endpoint
 - [ ] Build request body converter: `ChatRequest → ResponseInput[]`
@@ -4376,7 +4376,7 @@ Day 4-5: Review & Deployment (Nibbler + Leela)
 ---
 
 **F6. Add DI Registration** ⏱️ 1-2 hours
-- [ ] Create `BotNexus.Providers.Copilot/CopilotResponsesProviderExtensions.cs`
+- [ ] Create `BotNexus.Agent.Providers.Copilot/CopilotResponsesProviderExtensions.cs`
 - [ ] Add `AddCopilotResponsesProvider(this IServiceCollection services)` method
 - [ ] Register `CopilotResponsesProvider` as `ILlmProvider`
 - [ ] Register `IResponsesStreamParser` implementation
@@ -4891,7 +4891,7 @@ graph TD
 
 ### BotNexus Current Implementation
 - `src/BotNexus.Core/Abstractions/ILlmProvider.cs` — Provider interface
-- `src/BotNexus.Providers.Copilot/CopilotProvider.cs` — Chat Completions provider
+- `src/BotNexus.Agent.Providers.Copilot/CopilotProvider.cs` — Chat Completions provider
 - `src/BotNexus.Agent/AgentLoop.cs` — Agent loop (40 iterations, no loop detection)
 - `src/BotNexus.Gateway/GatewayWebSocketHandler.cs` — WebSocket streaming
 
@@ -4919,7 +4919,7 @@ graph TD
 **By:** Jon Bullen (via Copilot)  
 **Status:** Approved
 
-**What:** The agent port project must live under `src/agent/` directory (e.g., `src/agent/BotNexus.AgentCore/`), NOT flat at `src/BotNexus.AgentCore/`. This follows the organizational pattern used by `src/providers/` and `src/channels/`.
+**What:** The agent port project must live under `src/agent/` directory (e.g., `src/agent/BotNexus.Agent.Core/`), NOT flat at `src/BotNexus.Agent.Core/`. This follows the organizational pattern used by `src/providers/` and `src/channels/`.
 
 **Why:** User request — the `src/agent/` directory groups agent-related projects, mirroring the existing `providers` and `channels` folder conventions.
 
@@ -4932,14 +4932,14 @@ graph TD
 **Status:** Proposed  
 **Requested by:** Jon Bullen (via Copilot)
 
-**Summary:** Port the `@mariozechner/pi-agent-core` TypeScript package into a new standalone C#/.NET project: **`BotNexus.AgentCore`**. This is a 4-sprint effort that creates a clean, pi-mono-faithful agent loop engine referencing only `BotNexus.Providers.Base` (and transitively `BotNexus.Core`). It does NOT modify or integrate with the existing `BotNexus.Agent`.
+**Summary:** Port the `@mariozechner/pi-agent-core` TypeScript package into a new standalone C#/.NET project: **`BotNexus.Agent.Core`**. This is a 4-sprint effort that creates a clean, pi-mono-faithful agent loop engine referencing only `BotNexus.Providers.Base` (and transitively `BotNexus.Core`). It does NOT modify or integrate with the existing `BotNexus.Agent`.
 
 **Key Architecture Decisions:**
-- **Location:** `src/agent/BotNexus.AgentCore/` (follows src/providers/ convention)
+- **Location:** `src/agent/BotNexus.Agent.Core/` (follows src/providers/ convention)
 - **Test project:** `tests/BotNexus.AgentCore.Tests/`
 - **Dependency Graph:**
   ```
-  BotNexus.AgentCore
+  BotNexus.Agent.Core
     └── BotNexus.Providers.Base
           └── BotNexus.Core
   ```
@@ -4958,7 +4958,7 @@ graph TD
 ---
 
 
-# Decision: BotNexus.Providers.Core — Standalone Pi-Mono Port
+# Decision: BotNexus.Agent.Providers.Core — Standalone Pi-Mono Port
 
 **By:** Farnsworth (Platform Dev)  
 **Date:** 2026-04-04  
@@ -4971,7 +4971,7 @@ Jon requested a standalone C#/.NET 10 port of the core abstractions from [pi-mon
 
 ## Decision
 
-Created `src/providers/BotNexus.Providers.Core/` as a self-contained class library targeting `net10.0`. Only external dependency: `Microsoft.Extensions.Logging.Abstractions`.
+Created `src/agent/BotNexus.Agent.Providers.Core/` as a self-contained class library targeting `net10.0`. Only external dependency: `Microsoft.Extensions.Logging.Abstractions`.
 
 ## What Was Ported
 
@@ -5019,11 +5019,11 @@ Created `src/providers/BotNexus.Providers.Core/` as a self-contained class libra
 **Author:** Farnsworth (Platform Dev)
 **Date:** 2026-04-04
 **Status:** Implemented
-**Scope:** `src/providers/BotNexus.Providers.OpenAI/`
+**Scope:** `src/agent/BotNexus.Agent.Providers.OpenAI/`
 
 ## Summary
 
-Created the OpenAI Chat Completions API provider under the new `BotNexus.Providers.Core` architecture, porting from pi-mono's `providers/openai-completions.ts`.
+Created the OpenAI Chat Completions API provider under the new `BotNexus.Agent.Providers.Core` architecture, porting from pi-mono's `providers/openai-completions.ts`.
 
 ## Key Decisions
 
@@ -5031,7 +5031,7 @@ Created the OpenAI Chat Completions API provider under the new `BotNexus.Provide
 Used `HttpClient` directly for SSE streaming instead of the official OpenAI .NET SDK. This gives full control over headers, compat settings, thinking format support, and SSE parsing — critical for supporting non-standard endpoints (Cerebras, xAI, DeepSeek, etc.) via `OpenAICompletionsCompat`.
 
 ### 2. Assembly name disambiguation
-Set `<AssemblyName>BotNexus.Providers.OpenAI.Completions</AssemblyName>` to avoid output collision with the old legacy provider at `src/BotNexus.Providers.OpenAI/` which still exists in the solution. Namespace remains `BotNexus.Providers.OpenAI`. Same pattern as the Copilot provider dual.
+Set `<AssemblyName>BotNexus.Agent.Providers.OpenAI.Completions</AssemblyName>` to avoid output collision with the old legacy provider at `src/BotNexus.Agent.Providers.OpenAI/` which still exists in the solution. Namespace remains `BotNexus.Agent.Providers.OpenAI`. Same pattern as the Copilot provider dual.
 
 ### 3. JsonObject/JsonNode for payload building
 Consistent with the Copilot provider — uses `System.Text.Json.Nodes.JsonObject` for dynamic request payload construction. Avoids anonymous type issues with `System.Text.Json` serialization and gives full control over field inclusion/exclusion based on compat settings.
@@ -5044,7 +5044,7 @@ Full compat surface supported: developer role, strict schema mode, max_tokens fi
 
 ## Files Created
 
-- `BotNexus.Providers.OpenAI.csproj` — NET 10.0, references only Core
+- `BotNexus.Agent.Providers.OpenAI.csproj` — NET 10.0, references only Core
 - `OpenAICompletionsOptions.cs` — Extends StreamOptions with ToolChoice, ReasoningEffort
 - `OpenAICompletionsProvider.cs` — Full IApiProvider implementation (~500 lines)
 
@@ -5076,14 +5076,14 @@ This document defines the C#/.NET 10 port of pi-mono's LLM provider abstraction 
 
 ```
 src/providers/
-  BotNexus.Providers.Core/       — Types, interfaces, registries, utilities
-  BotNexus.Providers.Anthropic/  — Anthropic Messages API
-  BotNexus.Providers.OpenAI/     — OpenAI Chat Completions + Responses API
-  BotNexus.Providers.OpenAICompat/ — Ollama, vLLM, LM Studio (OpenAI-compatible)
-  BotNexus.Providers.Copilot/    — GitHub Copilot (OAuth proxy)
+  BotNexus.Agent.Providers.Core/       — Types, interfaces, registries, utilities
+  BotNexus.Agent.Providers.Anthropic/  — Anthropic Messages API
+  BotNexus.Agent.Providers.OpenAI/     — OpenAI Chat Completions + Responses API
+  BotNexus.Agent.Providers.OpenAICompat/ — Ollama, vLLM, LM Studio (OpenAI-compatible)
+  BotNexus.Agent.Providers.Copilot/    — GitHub Copilot (OAuth proxy)
 ```
 
-Each provider project references only `BotNexus.Providers.Core`. No provider references another provider. Assembly-level isolation ensures providers can be loaded/deployed independently.
+Each provider project references only `BotNexus.Agent.Providers.Core`. No provider references another provider. Assembly-level isolation ensures providers can be loaded/deployed independently.
 
 ---
 
@@ -5092,7 +5092,7 @@ Each provider project references only `BotNexus.Providers.Core`. No provider ref
 Pi-mono uses a discriminated union via `type` field. C# uses abstract records with a sealed hierarchy.
 
 ```csharp
-// BotNexus.Providers.Core/Types/ContentBlock.cs
+// BotNexus.Agent.Providers.Core/Types/ContentBlock.cs
 
 public abstract record ContentBlock;
 
@@ -5127,7 +5127,7 @@ public sealed record ToolCallContent(
 ## 3. Type Hierarchy — Messages
 
 ```csharp
-// BotNexus.Providers.Core/Types/Message.cs
+// BotNexus.Agent.Providers.Core/Types/Message.cs
 
 public abstract record Message(long Timestamp);
 
@@ -5705,7 +5705,7 @@ The `normalizeToolCallId` delegate matches pi-mono's callback pattern — each p
 Each provider follows the same template (matching pi-mono's provider files):
 
 ```csharp
-// BotNexus.Providers.Anthropic/AnthropicProvider.cs
+// BotNexus.Agent.Providers.Anthropic/AnthropicProvider.cs
 public sealed class AnthropicProvider : IApiProvider
 {
     public string Api => "anthropic-messages";
@@ -5780,7 +5780,7 @@ public static class CostCalculator
 
 ## 16. Relationship to Existing BotNexus Types
 
-The existing `ILlmProvider`, `LlmResponse`, and `FinishReason` in `BotNexus.Core` are **not replaced** — they remain for the current platform integration. The new `BotNexus.Providers.Core` is a standalone package. When we wire the new provider layer into the platform, we'll add a thin adapter:
+The existing `ILlmProvider`, `LlmResponse`, and `FinishReason` in `BotNexus.Core` are **not replaced** — they remain for the current platform integration. The new `BotNexus.Agent.Providers.Core` is a standalone package. When we wire the new provider layer into the platform, we'll add a thin adapter:
 
 ```csharp
 // Future: bridge new providers into existing agent loop
@@ -5829,18 +5829,18 @@ This preserves backward compatibility while decoupling the new provider layer fr
 - **OAuth:** Deferred. Pi-mono's OAuth system is complex (Anthropic, Google, GitHub, OpenAI Codex). We'll add it when we wire providers into the platform.
 - **Environment API key resolution:** Deferred. Will use `IConfiguration` when integrated.
 - **Code-generated model catalog:** Will do separately once the core types are stable.
-- **OpenAI-compat auto-detection:** Deferred to the `BotNexus.Providers.OpenAICompat` implementation phase.
+- **OpenAI-compat auto-detection:** Deferred to the `BotNexus.Agent.Providers.OpenAICompat` implementation phase.
 
 ---
 
 ## 19. Implementation Order
 
-1. `BotNexus.Providers.Core` — Types, interfaces, `CompletionStream`, registries, `MessageTransformer`
-2. `BotNexus.Providers.Anthropic` — First provider (most complex streaming, good test case)
-3. `BotNexus.Providers.OpenAI` — Second provider (Completions + Responses)
+1. `BotNexus.Agent.Providers.Core` — Types, interfaces, `CompletionStream`, registries, `MessageTransformer`
+2. `BotNexus.Agent.Providers.Anthropic` — First provider (most complex streaming, good test case)
+3. `BotNexus.Agent.Providers.OpenAI` — Second provider (Completions + Responses)
 4. Unit tests for core types and streaming
 5. Integration tests with real API calls
-6. `BotNexus.Providers.Copilot` + `BotNexus.Providers.OpenAICompat`
+6. `BotNexus.Agent.Providers.Copilot` + `BotNexus.Agent.Providers.OpenAICompat`
 7. Bridge adapter to existing `ILlmProvider`
 
 
@@ -5857,7 +5857,7 @@ This preserves backward compatibility while decoupling the new provider layer fr
 **By:** Jon Bullen (via Copilot)  
 **Date:** 2026-04-04T22:35:00Z  
 **Status:** Mandatory  
-**Applies to:** BotNexus.AgentCore port + all future C# projects  
+**Applies to:** BotNexus.Agent.Core port + all future C# projects  
 
 **Context:** pi-mono TypeScript agent package sets documentation standard. C# port must maintain same level of clarity and detail.
 
@@ -5899,7 +5899,7 @@ This preserves backward compatibility while decoupling the new provider layer fr
 
 ### Executive Summary
 
-Port `@mariozechner/pi-coding-agent` to `BotNexus.CodingAgent` — a standalone coding agent CLI built on top of `BotNexus.AgentCore` and `BotNexus.Providers.Core`. The coding agent is the **gateway/runtime** — it consumes AgentCore (Agent class, tool system, event streaming) and Providers.Core (LlmClient, model registry, streaming) as libraries. It does NOT duplicate or modify those layers.
+Port `@mariozechner/pi-coding-agent` to `BotNexus.CodingAgent` — a standalone coding agent CLI built on top of `BotNexus.Agent.Core` and `BotNexus.Agent.Providers.Core`. The coding agent is the **gateway/runtime** — it consumes AgentCore (Agent class, tool system, event streaming) and Providers.Core (LlmClient, model registry, streaming) as libraries. It does NOT duplicate or modify those layers.
 
 ### What Was Built (4 Sprints, 25 Commits)
 
@@ -5949,8 +5949,8 @@ src/coding-agent/BotNexus.CodingAgent/
 
 ```
 BotNexus.CodingAgent
-  ├── BotNexus.AgentCore        (Agent, IAgentTool, events, loop)
-  └── BotNexus.Providers.Core   (LlmClient, model registry, streaming)
+  ├── BotNexus.Agent.Core        (Agent, IAgentTool, events, loop)
+  └── BotNexus.Agent.Providers.Core   (LlmClient, model registry, streaming)
 
 NO references to:
   ✗ BotNexus.Core, BotNexus.Gateway, BotNexus.Session
@@ -6587,7 +6587,7 @@ Recommended next step: address P0 items (compaction + grep tool), then P1 (JSON 
 **Auditor:** Farnsworth (Platform Dev)
 **Date:** 2025-07-15
 **pi-mono commit:** `1a6a58eb05f7256ecf51cce6c2cae2f9e464d712`
-**BotNexus path:** `src/agent/BotNexus.AgentCore/`
+**BotNexus path:** `src/agent/BotNexus.Agent.Core/`
 
 ## Summary
 
@@ -6964,7 +6964,7 @@ interface IAgentTool {
 
 # Providers.Core Alignment Audit
 
-**Audited:** `src/providers/BotNexus.Providers.Core/` vs `@mariozechner/pi-ai` (`packages/ai/src/`)
+**Audited:** `src/agent/BotNexus.Agent.Providers.Core/` vs `@mariozechner/pi-ai` (`packages/ai/src/`)
 **Date:** 2025-07-15
 **Auditor:** Leela (Lead/Architect)
 **pi-mono commit:** `1a6a58eb05f7256ecf51cce6c2cae2f9e464d712`
@@ -7805,7 +7805,7 @@ Discovery order (matching pi-mono):
 
 **Decision:** NO ACTION NEEDED — `MaxRetryDelayMs` already exists in `StreamOptions.cs:39` with default value `60000`.
 
-**Verification:** Confirmed at `src\providers\BotNexus.Providers.Core\StreamOptions.cs` line 39. This was likely fixed during Phase 2 or was in the original port. Mark as resolved in audit tracker.
+**Verification:** Confirmed at `src\agent\BotNexus.Agent.Providers.Core\StreamOptions.cs` line 39. This was likely fixed during Phase 2 or was in the original port. Mark as resolved in audit tracker.
 
 ---
 
@@ -8121,7 +8121,7 @@ The design review document (`leela-design-review-phase4.md`) captured clear deci
 ### ⚠️ Cross-Agent Build Conflicts
 Farnsworth's Anthropic provider refactor (P1 #17 — breaking up the 1,087-line file) temporarily caused compile errors for the Bender-coding track, which depended on types in the same namespace. The refactor changed file boundaries but not public API surface, so the compilation error was transient — but it blocked Bender-coding for a merge cycle.
 
-**Root cause:** Both tracks were working in the same namespace (`BotNexus.Providers.Anthropic`) at the same time. The refactor moved types between files, which is invisible to the compiler but visible to git merge.
+**Root cause:** Both tracks were working in the same namespace (`BotNexus.Agent.Providers.Anthropic`) at the same time. The refactor moved types between files, which is invisible to the compiler but visible to git merge.
 
 **Mitigation:** Sequence structural refactors (file splits, namespace reorganizations) to land *before* behavioral fixes in the same namespace start. This is a scheduling discipline, not a tooling fix.
 
@@ -8246,7 +8246,7 @@ Phase 4 adds 7 architecture decisions (P0-1 through P0-7). Running total:
 
 Full audit comparing pi-mono TypeScript against BotNexus C# port across three areas:
 - **providers/ai** → BotNexus.Providers.* (63% complete)
-- **agent/agent** → BotNexus.AgentCore (85-90% complete)
+- **agent/agent** → BotNexus.Agent.Core (85-90% complete)
 - **coding-agent** → BotNexus.CodingAgent (core tools ported, gaps remain)
 
 This document records design decisions, corrects audit misreadings, and assigns prioritized work.
@@ -10093,10 +10093,10 @@ ExtensionResponse:
 - Add regression test per provider
 
 **Files Likely Affected:**
-- src/providers/BotNexus.Providers.Anthropic/AnthropicProvider.cs
-- src/providers/BotNexus.Providers.OpenAI/OpenAIProvider.cs
-- src/providers/BotNexus.Providers.OpenAICompat/OpenAICompatProvider.cs
-- src/providers/BotNexus.Providers.Copilot/CopilotProvider.cs
+- src/agent/BotNexus.Agent.Providers.Anthropic/AnthropicProvider.cs
+- src/agent/BotNexus.Agent.Providers.OpenAI/OpenAIProvider.cs
+- src/agent/BotNexus.Agent.Providers.OpenAICompat/OpenAICompatProvider.cs
+- src/agent/BotNexus.Agent.Providers.Copilot/CopilotProvider.cs
 
 ---
 
@@ -12029,7 +12029,7 @@ public sealed class TestMcpServer
 - [MCP Specification](https://modelcontextprotocol.io/specification/latest)
 - [MCP Architecture Concepts](https://modelcontextprotocol.io/docs/concepts/architecture)
 - [BotNexus Extension Loader](src/gateway/BotNexus.Gateway/Extensions/AssemblyLoadContextExtensionLoader.cs)
-- [IAgentTool Interface](src/agent/BotNexus.AgentCore/Tools/IAgentTool.cs)
+- [IAgentTool Interface](src/agent/BotNexus.Agent.Core/Tools/IAgentTool.cs)
 - [OpenClaw MCP Implementation](reference — TypeScript implementation for patterns)
 
 # Memory System Feature Spec — Architectural Review & Implementation Plan
@@ -12200,7 +12200,7 @@ src/tools/BotNexus.Memory/
     └── MemoryServiceCollectionExtensions.cs
 ```
 
-Dependencies: `BotNexus.AgentCore` (for `IAgentTool`), `Microsoft.Data.Sqlite`, `BotNexus.Gateway.Abstractions` (for `ISessionStore`, `GatewaySession`).
+Dependencies: `BotNexus.Agent.Core` (for `IAgentTool`), `Microsoft.Data.Sqlite`, `BotNexus.Gateway.Abstractions` (for `ISessionStore`, `GatewaySession`).
 
 ### 2.4 Config Schema Mapping
 
@@ -12407,7 +12407,7 @@ temporal_decay_factor = exp(-ln(2) / halfLifeDays * ageDays)
 - `src/tools/BotNexus.Memory/Embedding/OllamaEmbeddingProvider.cs`
 - `src/tools/BotNexus.Memory/Embedding/OpenAICompatEmbeddingProvider.cs`
 
-**Integration with `BotNexus.Providers.Core`** for auth reuse where possible.
+**Integration with `BotNexus.Agent.Providers.Core`** for auth reuse where possible.
 
 #### Task 3.2: Hybrid Search (BM25 + Vector)
 **Agent:** Farnsworth  
@@ -12742,7 +12742,7 @@ public sealed record AgentDescriptor
 
 ### Layer 1: Platform Config → Active Providers + Allowed Models
 
-**Location:** New `ProviderModelFilter` service (in `BotNexus.Providers.Core` or `BotNexus.Gateway`)
+**Location:** New `ProviderModelFilter` service (in `BotNexus.Agent.Providers.Core` or `BotNexus.Gateway`)
 
 **Logic:**
 1. After `BuiltInModels.RegisterAll()` populates the full model registry, a new filtering step applies the platform config.
@@ -12818,7 +12818,7 @@ if (agent.AllowedModelIds is not empty):
 | Filter approach | **Wrapper/decorator**, not mutation | Don't modify `ModelRegistry` contents. Introduce `IModelFilter` that wraps it. Full registry stays available for admin/diagnostics. |
 | `AllowedModelIds` empty on agent | **Unrestricted** (inherits provider's full list) | Consistent with `models` on provider. Empty = "all available." |
 | Config version | **Bump to v2** when provider filtering ships | The `version` field exists for this purpose. v1 configs work unchanged. v2 adds the new fields. |
-| Where `IModelFilter` lives | **`BotNexus.Providers.Core`** | It's a provider-concern abstraction. Controllers and agents depend on it via interface. |
+| Where `IModelFilter` lives | **`BotNexus.Agent.Providers.Core`** | It's a provider-concern abstraction. Controllers and agents depend on it via interface. |
 
 ---
 
@@ -12907,7 +12907,7 @@ Add to `AgentDescriptorValidator.Validate()`:
 **Owner:** Farnsworth  
 **Depends on:** Phase A.
 
-1. Create `IModelFilter` interface in `BotNexus.Providers.Core`.
+1. Create `IModelFilter` interface in `BotNexus.Agent.Providers.Core`.
 2. Create `PlatformConfigModelFilter : IModelFilter` that wraps `ModelRegistry` + reads `PlatformConfig`.
 3. Register `IModelFilter` in DI (`Program.cs`).
 4. Update `ProvidersController` to inject `IModelFilter` instead of `ModelRegistry`.
@@ -13783,12 +13783,12 @@ Wave 1 requested independent cleanup for provider streaming duplication (Phase 9
 ## Decisions
 
 1. **Shared provider stream processor in Providers.Core**
-   - Created `OpenAIStreamProcessor` under `BotNexus.Providers.Core.Streaming`.
+   - Created `OpenAIStreamProcessor` under `BotNexus.Agent.Providers.Core.Streaming`.
    - Both `OpenAICompletionsProvider` and `OpenAICompatProvider` now delegate SSE stream parsing and chunk assembly to this shared processor.
    - Provider-specific behavior remains at provider boundary via delegates (usage mapping, stop-reason mapping, provider error extraction/emission).
 
 2. **Tool-call ID normalization moved to scoped extension**
-   - Added `ToolCallIdExtensions.NormalizeToolCallId(int)` in `BotNexus.Providers.Core.Utilities`.
+   - Added `ToolCallIdExtensions.NormalizeToolCallId(int)` in `BotNexus.Agent.Providers.Core.Utilities`.
    - Replaced duplicated regex-based sanitization/truncation logic at provider call sites.
 
 3. **Tool normalization dedup + PathUtils quick wins**
@@ -13797,10 +13797,10 @@ Wave 1 requested independent cleanup for provider streaming duplication (Phase 9
 
 ## Validation
 
-- `dotnet build src\providers\BotNexus.Providers.Core\BotNexus.Providers.Core.csproj` ✅
-- `dotnet build src\providers\BotNexus.Providers.OpenAI\BotNexus.Providers.OpenAI.csproj` ✅
-- `dotnet build src\providers\BotNexus.Providers.OpenAICompat\BotNexus.Providers.OpenAICompat.csproj` ✅
-- `dotnet build src\providers\BotNexus.Providers.Anthropic\BotNexus.Providers.Anthropic.csproj` ✅
+- `dotnet build src\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj` ✅
+- `dotnet build src\agent\BotNexus.Agent.Providers.OpenAI\BotNexus.Agent.Providers.OpenAI.csproj` ✅
+- `dotnet build src\agent\BotNexus.Agent.Providers.OpenAICompat\BotNexus.Agent.Providers.OpenAICompat.csproj` ✅
+- `dotnet build src\agent\BotNexus.Agent.Providers.Anthropic\BotNexus.Agent.Providers.Anthropic.csproj` ✅
 - `dotnet build src\tools\BotNexus.Tools\BotNexus.Tools.csproj` ✅
 - `dotnet build BotNexus.slnx` ❌ (fails due pre-existing unrelated gateway/webui test/config drift in working tree)
 

@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -24,7 +24,7 @@ using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 namespace BotNexus.Gateway.Tests.Integration;
 
 /// <summary>
-/// Integration tests that exercise the full SignalR → Gateway → Agent pipeline
+/// Integration tests that exercise the full SignalR → Gateway → BotNexus.Agent.Core.Agent pipeline
 /// to verify multi-agent concurrency works correctly and agents don't block each other.
 /// </summary>
 [Trait("Category", "Integration")]

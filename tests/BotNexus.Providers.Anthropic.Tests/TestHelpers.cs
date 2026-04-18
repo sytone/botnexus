@@ -1,4 +1,4 @@
-using BotNexus.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Models;
 
 namespace BotNexus.Providers.Anthropic.Tests;
 

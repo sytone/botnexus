@@ -1,5 +1,5 @@
 using System.Reflection;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Abstractions.Extensions;
 using BotNexus.Gateway.Abstractions.Models;
 using FluentAssertions;

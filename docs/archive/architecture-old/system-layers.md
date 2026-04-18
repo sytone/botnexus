@@ -30,7 +30,7 @@ Data flows left-to-right on each request: the user's prompt passes through `Codi
 
 BotNexus separates concerns into three distinct layers. Each layer depends only on the one below it.
 
-### Layer 1: Providers (`BotNexus.Providers.Core` + implementations)
+### Layer 1: Providers (`BotNexus.Agent.Providers.Core` + implementations)
 
 The foundation. Handles raw communication with LLM APIs.
 
@@ -47,7 +47,7 @@ Each provider implementation (Anthropic, OpenAI, OpenAICompat) translates the co
 
 > **Deep dive:** [Provider system](01-providers.md)
 
-### Layer 2: Agent core (`BotNexus.AgentCore`)
+### Layer 2: Agent core (`BotNexus.Agent.Core`)
 
 The engine. Implements the agent loop — the cycle of sending context to an LLM, parsing the response, executing tools, and repeating.
 
@@ -88,26 +88,26 @@ The application. Wires everything together into a coding assistant with file too
 Dependencies flow in one direction — down. The provider layer knows nothing about agents. The agent core knows nothing about coding tools or sessions.
 
 ```
-BotNexus.Providers.Core             ◀── No dependencies (foundation)
+BotNexus.Agent.Providers.Core             ◀── No dependencies (foundation)
     │
-    ├── BotNexus.Providers.Anthropic    ◀── Depends on Core
-    ├── BotNexus.Providers.OpenAI       ◀── Depends on Core
-    ├── BotNexus.Providers.Copilot      ◀── Depends on Core
-    └── BotNexus.Providers.OpenAICompat ◀── Depends on Core
+    ├── BotNexus.Agent.Providers.Anthropic    ◀── Depends on Core
+    ├── BotNexus.Agent.Providers.OpenAI       ◀── Depends on Core
+    ├── BotNexus.Agent.Providers.Copilot      ◀── Depends on Core
+    └── BotNexus.Agent.Providers.OpenAICompat ◀── Depends on Core
     │
-BotNexus.AgentCore                  ◀── Depends on Providers.Core
+BotNexus.Agent.Core                  ◀── Depends on Providers.Core
     │
 BotNexus.CodingAgent                ◀── Depends on AgentCore + Providers.Core
 ```
 
-> **Key takeaway:** Because dependencies are one-directional, you can use `BotNexus.AgentCore` to build any kind of agent — not just a coding agent. You can also swap provider implementations without touching the agent or coding-agent layers.
+> **Key takeaway:** Because dependencies are one-directional, you can use `BotNexus.Agent.Core` to build any kind of agent — not just a coding agent. You can also swap provider implementations without touching the agent or coding-agent layers.
 
 ## Project structure map
 
-### `BotNexus.Providers.Core`
+### `BotNexus.Agent.Providers.Core`
 
 ```
-BotNexus.Providers.Core/
+BotNexus.Agent.Providers.Core/
 ├── Registry/
 │   ├── IApiProvider.cs            # Provider interface contract
 │   ├── ApiProviderRegistry.cs     # Thread-safe provider registry
@@ -135,10 +135,10 @@ BotNexus.Providers.Core/
     └── ContextOverflowDetector.cs # Regex-based context overflow detection
 ```
 
-### `BotNexus.AgentCore`
+### `BotNexus.Agent.Core`
 
 ```
-BotNexus.AgentCore/
+BotNexus.Agent.Core/
 ├── Agent.cs                       # Main agent class: state, lifecycle, events
 ├── PendingMessageQueue.cs         # Thread-safe steering/follow-up queues
 ├── Configuration/

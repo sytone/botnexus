@@ -1,10 +1,10 @@
 using System.Text;
 using System.Text.RegularExpressions;
-using BotNexus.AgentCore.Types;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Models;
-using AgentUserMessage = BotNexus.AgentCore.Types.UserMessage;
-using ProviderUserMessage = BotNexus.Providers.Core.Models.UserMessage;
+using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
+using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
+using ProviderUserMessage = BotNexus.Agent.Providers.Core.Models.UserMessage;
 
 namespace BotNexus.CodingAgent.Session;
 

@@ -973,9 +973,9 @@ Extensions are dynamically loaded from the `extensions/` directory. Each extensi
 ```text
 extensions/
 ├── providers/
-│   ├── copilot/              # BotNexus.Providers.Copilot.dll
-│   ├── openai/               # BotNexus.Providers.OpenAI.dll
-│   ├── anthropic/            # BotNexus.Providers.Anthropic.dll
+│   ├── copilot/              # BotNexus.Agent.Providers.Copilot.dll
+│   ├── openai/               # BotNexus.Agent.Providers.OpenAI.dll
+│   ├── anthropic/            # BotNexus.Agent.Providers.Anthropic.dll
 │   └── azure-openai/         # Custom provider
 ├── channels/
 │   ├── telegram/             # BotNexus.Channels.Telegram.dll

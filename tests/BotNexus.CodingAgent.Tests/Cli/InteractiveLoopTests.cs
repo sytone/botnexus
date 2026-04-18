@@ -1,17 +1,17 @@
 using System.Reflection;
 using System.Text.Json;
-using BotNexus.AgentCore;
-using BotNexus.AgentCore.Configuration;
-using BotNexus.AgentCore.Tools;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core;
+using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.Tools;
+using BotNexus.Agent.Core.Types;
 using BotNexus.CodingAgent.Auth;
 using BotNexus.CodingAgent.Cli;
 using BotNexus.CodingAgent.Extensions;
 using BotNexus.CodingAgent.Session;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.Core.Registry;
-using BotNexus.Providers.Core.Streaming;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
+using BotNexus.Agent.Providers.Core.Streaming;
 using FluentAssertions;
 
 namespace BotNexus.CodingAgent.Tests.Cli;
@@ -228,7 +228,7 @@ public sealed class InteractiveLoopTests : IDisposable
         }
     }
 
-    private Agent CreateAgent()
+    private BotNexus.Agent.Core.Agent CreateAgent()
     {
         var model = new LlmModel(
             Id: "gpt-4.1",
@@ -261,7 +261,7 @@ public sealed class InteractiveLoopTests : IDisposable
             FollowUpMode: QueueMode.OneAtATime,
             SessionId: null);
 
-        return new Agent(options);
+        return new BotNexus.Agent.Core.Agent(options);
     }
 
     private LlmClient CreateLlmClient(IApiProvider provider)
@@ -271,7 +271,7 @@ public sealed class InteractiveLoopTests : IDisposable
         return new LlmClient(registry, _modelRegistry);
     }
 
-    private Agent CreateRuntimeAgent(LlmClient llmClient, IReadOnlyList<IAgentTool>? tools = null)
+    private BotNexus.Agent.Core.Agent CreateRuntimeAgent(LlmClient llmClient, IReadOnlyList<IAgentTool>? tools = null)
     {
         var model = new LlmModel(
             Id: "test-model",
@@ -303,10 +303,10 @@ public sealed class InteractiveLoopTests : IDisposable
             FollowUpMode: QueueMode.OneAtATime,
             SessionId: null);
 
-        return new Agent(options);
+        return new BotNexus.Agent.Core.Agent(options);
     }
 
-    private async Task<SessionInfo?> InvokeHandleCommandAsync(string command, Agent agent, SessionInfo session)
+    private async Task<SessionInfo?> InvokeHandleCommandAsync(string command, BotNexus.Agent.Core.Agent agent, SessionInfo session)
     {
         var method = typeof(InteractiveLoop).GetMethod("HandleCommandAsync", BindingFlags.NonPublic | BindingFlags.Static);
         method.Should().NotBeNull();

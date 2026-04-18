@@ -1,5 +1,5 @@
 using BotNexus.Gateway.Abstractions.Models;
-using BotNexus.Providers.Core.Registry;
+using BotNexus.Agent.Providers.Core.Registry;
 using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Configuration;

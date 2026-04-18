@@ -1,9 +1,9 @@
 using System.Net;
 using System.Text;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.Core.Streaming;
-using BotNexus.Providers.OpenAI;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Streaming;
+using BotNexus.Agent.Providers.OpenAI;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 

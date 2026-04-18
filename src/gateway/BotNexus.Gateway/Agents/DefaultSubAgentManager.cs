@@ -5,7 +5,7 @@ using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Diagnostics;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;

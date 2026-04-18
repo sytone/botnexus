@@ -2,7 +2,7 @@ using System.Reflection;
 using System.Runtime.Loader;
 using System.Text.Json;
 using System.IO.Abstractions;
-using BotNexus.AgentCore.Tools;
+using BotNexus.Agent.Core.Tools;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;

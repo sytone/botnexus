@@ -1,4 +1,4 @@
-using BotNexus.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Models;
 using FluentAssertions;
 
 namespace BotNexus.Providers.Core.Tests.Models;

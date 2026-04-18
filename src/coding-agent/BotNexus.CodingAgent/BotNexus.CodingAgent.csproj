@@ -8,14 +8,14 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\tools\BotNexus.Tools\BotNexus.Tools.csproj" />
-    <ProjectReference Include="..\..\agent\BotNexus.AgentCore\BotNexus.AgentCore.csproj" />
+    <ProjectReference Include="..\..\agent\BotNexus.Agent.Core\BotNexus.Agent.Core.csproj" />
     <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\..\domain\BotNexus.Sessions.Common\BotNexus.Sessions.Common.csproj" />
-    <ProjectReference Include="..\..\providers\BotNexus.Providers.Core\BotNexus.Providers.Core.csproj" />
-    <ProjectReference Include="..\..\providers\BotNexus.Providers.Copilot\BotNexus.Providers.Copilot.csproj" />
-    <ProjectReference Include="..\..\providers\BotNexus.Providers.Anthropic\BotNexus.Providers.Anthropic.csproj" />
-    <ProjectReference Include="..\..\providers\BotNexus.Providers.OpenAI\BotNexus.Providers.OpenAI.csproj" />
-    <ProjectReference Include="..\..\providers\BotNexus.Providers.OpenAICompat\BotNexus.Providers.OpenAICompat.csproj" />
+    <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
+    <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Copilot\BotNexus.Agent.Providers.Copilot.csproj" />
+    <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Anthropic\BotNexus.Agent.Providers.Anthropic.csproj" />
+    <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.OpenAI\BotNexus.Agent.Providers.OpenAI.csproj" />
+    <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.OpenAICompat\BotNexus.Agent.Providers.OpenAICompat.csproj" />
     <ProjectReference Include="..\..\prompts\BotNexus.Prompts\BotNexus.Prompts.csproj" />
   </ItemGroup>
   <ItemGroup>

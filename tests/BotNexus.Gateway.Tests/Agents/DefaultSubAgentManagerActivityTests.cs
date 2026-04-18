@@ -3,7 +3,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Configuration;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;

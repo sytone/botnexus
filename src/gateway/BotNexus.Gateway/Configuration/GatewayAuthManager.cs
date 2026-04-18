@@ -1,8 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.IO.Abstractions;
-using BotNexus.Providers.Copilot;
-using BotNexus.Providers.Core;
+using BotNexus.Agent.Providers.Copilot;
+using BotNexus.Agent.Providers.Core;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Configuration;

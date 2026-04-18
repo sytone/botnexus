@@ -37,7 +37,7 @@ Port Audit Phase 4 (completed with 17 commits) brings refactoring, stability imp
 **Phase 4:** Split into four focused components:
 
 ```
-BotNexus.Providers.Anthropic/
+BotNexus.Agent.Providers.Anthropic/
 ├── AnthropicProvider.cs          # Orchestrator (~310 lines)
 ├── AnthropicRequestBuilder.cs    # Request → JSON (~160 lines)
 ├── AnthropicMessageConverter.cs  # Messages → Anthropic format (~390 lines)
@@ -869,7 +869,7 @@ When running from `services/api/src/`, discovery finds:
 **New in Phase 5:** Pre-dispatch validation of tool call arguments against JSON Schema.
 
 ```csharp
-using BotNexus.Providers.Core.Validation;
+using BotNexus.Agent.Providers.Core.Validation;
 
 public static (bool IsValid, string[] Errors) Validate(
     JsonElement arguments,
@@ -933,7 +933,7 @@ if (!isValid)
 **New in Phase 5:** Deterministic hashing for tool call ID normalization.
 
 ```csharp
-using BotNexus.Providers.Core.Utilities;
+using BotNexus.Agent.Providers.Core.Utilities;
 
 public static string Generate(string input)
 ```

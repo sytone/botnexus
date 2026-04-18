@@ -1,5 +1,5 @@
 using System.Text.Json;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core.Types;
 using BotNexus.CodingAgent.Session;
 using FluentAssertions;
 using System.IO.Abstractions.TestingHelpers;

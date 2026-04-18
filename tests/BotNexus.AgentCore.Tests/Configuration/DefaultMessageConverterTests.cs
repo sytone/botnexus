@@ -1,14 +1,14 @@
-using BotNexus.AgentCore.Configuration;
-using BotNexus.AgentCore.Types;
-using BotNexus.Providers.Core.Models;
+using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core.Models;
 using FluentAssertions;
 
 namespace BotNexus.AgentCore.Tests.Configuration;
 
-using AgentUserMessage = BotNexus.AgentCore.Types.UserMessage;
-using ProviderUserMessage = BotNexus.Providers.Core.Models.UserMessage;
-using ProviderAssistantMessage = BotNexus.Providers.Core.Models.AssistantMessage;
-using ProviderToolResultMessage = BotNexus.Providers.Core.Models.ToolResultMessage;
+using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
+using ProviderUserMessage = BotNexus.Agent.Providers.Core.Models.UserMessage;
+using ProviderAssistantMessage = BotNexus.Agent.Providers.Core.Models.AssistantMessage;
+using ProviderToolResultMessage = BotNexus.Agent.Providers.Core.Models.ToolResultMessage;
 
 public class DefaultMessageConverterTests
 {

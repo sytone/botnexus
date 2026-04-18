@@ -1,8 +1,8 @@
-using BotNexus.AgentCore.Hooks;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core.Hooks;
+using BotNexus.Agent.Core.Types;
 using BotNexus.CodingAgent;
 using BotNexus.CodingAgent.Hooks;
-using BotNexus.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Models;
 using FluentAssertions;
 
 namespace BotNexus.CodingAgent.Tests.Hooks;

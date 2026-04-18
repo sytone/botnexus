@@ -88,8 +88,8 @@ This hybrid approach gives us auto-generated API reference with the polished MkD
 | `BotNexus.Gateway.Contracts` | `IAgentTool`, `ICommandContributor`, `IChannelAdapter`, `CommandDescriptor`, etc. | High — extension devs need this |
 | `BotNexus.Gateway.Abstractions` | `IAgentSupervisor`, `ISessionStore`, `IMessageRouter`, etc. | High — architecture consumers |
 | `BotNexus.Domain` | Domain primitives: `AgentId`, `SessionId`, `ChannelKey`, etc. | Medium |
-| `BotNexus.AgentCore` | Agent execution: `AgentMessage`, `LlmClient`, tool infrastructure | Medium |
-| `BotNexus.Providers.Core` | Provider contracts | Low (internal) |
+| `BotNexus.Agent.Core` | Agent execution: `AgentMessage`, `LlmClient`, tool infrastructure | Medium |
+| `BotNexus.Agent.Providers.Core` | Provider contracts | Low (internal) |
 
 **DocFX metadata extraction + Markdown conversion:**
 ```json

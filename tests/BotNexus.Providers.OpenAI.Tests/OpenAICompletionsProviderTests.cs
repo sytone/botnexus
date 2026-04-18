@@ -3,9 +3,9 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using BotNexus.Providers.Core.Compatibility;
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.OpenAI;
+using BotNexus.Agent.Providers.Core.Compatibility;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.OpenAI;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 

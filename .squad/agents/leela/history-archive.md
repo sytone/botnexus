@@ -1085,8 +1085,8 @@ eloadOnChange: true + ConfigReloadOrchestrator hosted service using IOptionsMoni
 
 **Key Files Modified:**
 - `src/BotNexus.Core/Models/ToolDefinition.cs` — Added Items parameter to ToolParameterSchema
-- `src/BotNexus.Providers.Copilot/CopilotProvider.cs` — BuildParameterSchema now includes items for arrays
-- `src/BotNexus.Providers.OpenAI/OpenAiProvider.cs` — BuildParameterSchema now includes items for arrays
+- `src/BotNexus.Agent.Providers.Copilot/CopilotProvider.cs` — BuildParameterSchema now includes items for arrays
+- `src/BotNexus.Agent.Providers.OpenAI/OpenAiProvider.cs` — BuildParameterSchema now includes items for arrays
 - `src/BotNexus.Agent/Tools/CronTool.cs` — output_channels now specifies Items type
 
 **Testing:**
@@ -1203,7 +1203,7 @@ eloadOnChange: true + ConfigReloadOrchestrator hosted service using IOptionsMoni
 - **proxy.ts**: Browser-specific proxy streaming — not applicable to C#/.NET server-side. Excluded from port scope.
 
 ### Key Architectural Decisions for the Port
-- **Project name:** `BotNexus.AgentCore` — mirrors pi-agent-core naming
+- **Project name:** `BotNexus.Agent.Core` — mirrors pi-agent-core naming
 - **Dependency boundary:** Only `BotNexus.Providers.Base` (→ Core). Zero coupling to existing `BotNexus.Agent`
 - **EventStream:** `ChannelReader<AgentEvent>` via `System.Threading.Channels` — idiomatic C# async streaming
 - **Events:** Record hierarchy with abstract base + 10 subtypes, pattern-matchable
@@ -1214,7 +1214,7 @@ eloadOnChange: true + ConfigReloadOrchestrator hosted service using IOptionsMoni
 
 ### Key File Paths
 - Plan document: `.squad/decisions/inbox/leela-agent-port-plan.md`
-- Target project: `src/BotNexus.AgentCore/`
+- Target project: `src/BotNexus.Agent.Core/`
 - Target test project: `tests/BotNexus.AgentCore.Tests/`
 - Existing agent (DO NOT MODIFY): `src/BotNexus.Agent/`
 - Existing Core types to reuse: `ChatMessage`, `ChatRequest`, `ToolDefinition`, `ToolCallRequest`, `StreamingChatChunk`, `LlmResponse`, `ILlmProvider`, `ModelDefinition`
@@ -1581,7 +1581,7 @@ Jon reported that Nova agent says "Let me check if there's anything in the confi
 **Enhanced Logging Added:**
 - CopilotProvider logs tool counts and names at INFO level
 - Request/response payloads at DEBUG level
-- BotNexus.Providers.Copilot set to Debug in appsettings.Development.json
+- BotNexus.Agent.Providers.Copilot set to Debug in appsettings.Development.json
 
 **Research Completed:**
 - Analyzed Pi agent (badlogic/pi-mono) multi-turn implementation
@@ -1597,7 +1597,7 @@ Jon reported that Nova agent says "Let me check if there's anything in the confi
 
 **Files Changed:**
 - src/BotNexus.Gateway/GatewayWebSocketHandler.cs — Query param routing
-- src/BotNexus.Providers.Copilot/CopilotProvider.cs — Enhanced logging
+- src/BotNexus.Agent.Providers.Copilot/CopilotProvider.cs — Enhanced logging
 - src/BotNexus.Gateway/appsettings.Development.json — Debug logging
 - .squad/agents/leela/multi-turn-investigation.md — Detailed analysis
 

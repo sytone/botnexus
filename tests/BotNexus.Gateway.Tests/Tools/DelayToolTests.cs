@@ -1,6 +1,6 @@
 using System.Diagnostics;
-using BotNexus.AgentCore.Tools;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core.Tools;
+using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Tools;
 using FluentAssertions;

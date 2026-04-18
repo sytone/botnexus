@@ -647,12 +647,12 @@ await agent.PromptAsync("Start fresh with a new approach.");
 
 ```csharp
 using System.Text.Json;
-using BotNexus.AgentCore;
-using BotNexus.AgentCore.Configuration;
-using BotNexus.AgentCore.Tools;
-using BotNexus.AgentCore.Types;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Models;
+using BotNexus.Agent.Core;
+using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.Tools;
+using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
 
 // 1. Define a custom tool
 public class CalculatorTool : IAgentTool
@@ -759,7 +759,7 @@ var messages = await agent.PromptAsync("What is 15 * 28 + 73?");
 
 ## Delegate signatures reference
 
-All delegate types are defined in `BotNexus.AgentCore.Configuration.Delegates`:
+All delegate types are defined in `BotNexus.Agent.Core.Configuration.Delegates`:
 
 ```csharp
 // Convert agent messages to provider-level messages.

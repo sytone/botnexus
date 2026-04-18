@@ -1,7 +1,7 @@
 using System.Reflection;
-using BotNexus.AgentCore;
-using BotNexus.AgentCore.Tools;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core;
+using BotNexus.Agent.Core.Tools;
+using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Channels;
@@ -13,9 +13,9 @@ using BotNexus.Gateway.Isolation;
 using BotNexus.Gateway.Tools;
 using BotNexus.Memory;
 using BotNexus.Memory.Models;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.Core.Registry;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -213,7 +213,7 @@ public sealed class SubAgentIntegrationTests
         var agentField = handle.GetType().GetField("_agent", BindingFlags.Instance | BindingFlags.NonPublic);
         agentField.Should().NotBeNull();
 
-        var agent = agentField!.GetValue(handle) as Agent;
+        var agent = agentField!.GetValue(handle) as BotNexus.Agent.Core.Agent;
         agent.Should().NotBeNull();
 
         return [.. agent!.State.Tools.Select(tool => tool.Name)];

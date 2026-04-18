@@ -1,6 +1,6 @@
-using BotNexus.AgentCore.Tools;
-using BotNexus.AgentCore.Types;
-using BotNexus.AgentCore;
+using BotNexus.Agent.Core.Tools;
+using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Core;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
@@ -12,15 +12,15 @@ using BotNexus.Gateway.Tools;
 using BotNexus.Memory;
 using BotNexus.Memory.Models;
 using BotNexus.Tools;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.Core.Registry;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.IO.Abstractions;
 using System.Reflection;
-using AgentCoreUserMessage = BotNexus.AgentCore.Types.UserMessage;
+using AgentCoreUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 
 namespace BotNexus.Gateway.Tests;
 
@@ -198,7 +198,7 @@ public sealed class InProcessIsolationStrategyTests
     {
         var agentField = handle.GetType().GetField("_agent", BindingFlags.Instance | BindingFlags.NonPublic);
         agentField.Should().NotBeNull();
-        var agent = agentField!.GetValue(handle) as Agent;
+        var agent = agentField!.GetValue(handle) as BotNexus.Agent.Core.Agent;
         agent.Should().NotBeNull();
         return agent!.State.Messages;
     }

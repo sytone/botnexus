@@ -370,5 +370,5 @@ A: This is expected behavior. Some models (e.g., Claude) don't support ExtraHigh
 - **[Provider System](01-providers.md)** — How providers handle streaming options
 - **[Agent Core](02-agent-core.md)** — How thinking levels flow through the agent loop
 - **[Coding Agent](03-coding-agent.md)** — How thinking integrates with built-in tools
-- **[SimpleStreamOptions.cs](../src/providers/BotNexus.Providers.Core/StreamOptions.cs)** — Source implementation
-- **[SimpleOptionsHelper.cs](../src/providers/BotNexus.Providers.Core/Utilities/SimpleOptionsHelper.cs)** — Budget calculation source
+- **[SimpleStreamOptions.cs](../src/agent/BotNexus.Agent.Providers.Core/StreamOptions.cs)** — Source implementation
+- **[SimpleOptionsHelper.cs](../src/agent/BotNexus.Agent.Providers.Core/Utilities/SimpleOptionsHelper.cs)** — Budget calculation source

@@ -1,8 +1,8 @@
-# Port Audit: pi-mono agent → BotNexus.AgentCore
+# Port Audit: pi-mono agent → BotNexus.Agent.Core
 
 **Date:** 2025-07-22
 **Source:** `pi-mono/packages/agent/src/` (TypeScript, 1,864 LOC across 5 files)
-**Target:** `BotNexus.AgentCore/` (C#, ~2,529 LOC across 29 files)
+**Target:** `BotNexus.Agent.Core/` (C#, ~2,529 LOC across 29 files)
 
 ---
 
@@ -75,7 +75,7 @@ both runtimes must produce identical results.
 
 | # | Category | Severity | Finding | TS Reference | C# Reference | Recommended Fix |
 |---|----------|----------|---------|-------------|--------------|-----------------|
-| 20 | **MISSING** | Ma | **Proxy stream function not ported.** TS has `streamProxy()` — a stream function routing LLM calls through a server with SSE, bandwidth-optimized events, and client-side partial reconstruction. C# has no equivalent. | `proxy.ts:1-341` | — | Implement if proxy architecture is needed. Could be a separate `BotNexus.AgentCore.Proxy` package or an `LlmClient` implementation. |
+| 20 | **MISSING** | Ma | **Proxy stream function not ported.** TS has `streamProxy()` — a stream function routing LLM calls through a server with SSE, bandwidth-optimized events, and client-side partial reconstruction. C# has no equivalent. | `proxy.ts:1-341` | — | Implement if proxy architecture is needed. Could be a separate `BotNexus.Agent.Core.Proxy` package or an `LlmClient` implementation. |
 
 ### 2.5 Tool Execution
 

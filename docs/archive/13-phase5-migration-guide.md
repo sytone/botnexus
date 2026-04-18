@@ -54,7 +54,7 @@ If you don't provide a normalizer (pass `null`), no change is required — tool 
 **New in Phase 5:** Validate tool call arguments before dispatch.
 
 ```csharp
-using BotNexus.Providers.Core.Validation;
+using BotNexus.Agent.Providers.Core.Validation;
 
 var arguments = JsonDocument.Parse("""{"command": "ls -la"}""").RootElement;
 var schema = tool.Definition.ParameterSchema;
@@ -79,7 +79,7 @@ else
 **New in Phase 5:** Deterministic, cross-provider tool call ID hashing.
 
 ```csharp
-using BotNexus.Providers.Core.Utilities;
+using BotNexus.Agent.Providers.Core.Utilities;
 
 var normalizedId = ShortHash.Generate(callId);
 // Output: stable lowercase base-36 string (e.g., "a1b2c3d4")

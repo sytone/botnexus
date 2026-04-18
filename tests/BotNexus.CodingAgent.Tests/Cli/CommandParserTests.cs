@@ -1,5 +1,5 @@
 using BotNexus.CodingAgent.Cli;
-using BotNexus.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Models;
 using FluentAssertions;
 
 namespace BotNexus.CodingAgent.Tests.Cli;

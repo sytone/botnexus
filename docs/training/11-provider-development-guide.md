@@ -24,10 +24,10 @@ A provider is a thin HTTP adapter. At minimum, it must:
 Here's the minimum scaffold:
 
 ```csharp
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.Core.Registry;
-using BotNexus.Providers.Core.Streaming;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
+using BotNexus.Agent.Providers.Core.Streaming;
 
 namespace BotNexus.Providers.MyProvider;
 

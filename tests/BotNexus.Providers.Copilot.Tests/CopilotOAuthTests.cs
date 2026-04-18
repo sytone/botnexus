@@ -1,5 +1,5 @@
 using FluentAssertions;
-using BotNexus.Providers.Copilot;
+using BotNexus.Agent.Providers.Copilot;
 
 namespace BotNexus.Providers.Copilot.Tests;
 

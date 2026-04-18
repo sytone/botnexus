@@ -25,7 +25,7 @@ public sealed class SkillToolTests
         return dict;
     }
 
-    private static string ResultText(AgentCore.Types.AgentToolResult result)
+    private static string ResultText(BotNexus.Agent.Core.Types.AgentToolResult result)
         => string.Join("", result.Content.Select(c => c.Value));
 
     // ──────────────────────────── list ────────────────────────────

@@ -1,6 +1,6 @@
 using BotNexus.Gateway.Configuration;
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.Core.Registry;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
 using FluentAssertions;
 using Microsoft.Extensions.Options;
 using Moq;

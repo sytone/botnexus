@@ -170,7 +170,7 @@ Before passing arguments to `PrepareArgumentsAsync`, convert `List<object?>` val
 ### Option A (recommended)
 | File | Change |
 |------|--------|
-| `src/providers/BotNexus.Providers.Core/Utilities/StreamingJsonParser.cs` | `ConvertElement` returns `element.Clone()` for arrays instead of `List<object?>` |
+| `src/agent/BotNexus.Agent.Providers.Core/Utilities/StreamingJsonParser.cs` | `ConvertElement` returns `element.Clone()` for arrays instead of `List<object?>` |
 
 ### Option B (if A is rejected)
 | File | Change |

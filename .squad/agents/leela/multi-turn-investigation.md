@@ -59,7 +59,7 @@
 5. **Added enhanced logging:**
    - CopilotProvider now logs tool counts and names at INFO level
    - Request/response payloads logged at DEBUG level
-   - Set `BotNexus.Providers.Copilot` to Debug level in appsettings
+   - Set `BotNexus.Agent.Providers.Copilot` to Debug level in appsettings
 
 ---
 
@@ -107,7 +107,7 @@ Pi uses:
 - `Q:\repos\botnexus\src\BotNexus.Agent\AgentLoop.cs:122-140`
 
 **Copilot provider tool serialization:**
-- `Q:\repos\botnexus\src\BotNexus.Providers.Copilot\CopilotProvider.cs:424-430`
+- `Q:\repos\botnexus\src\BotNexus.Agent.Providers.Copilot\CopilotProvider.cs:424-430`
 
 **WebSocket routing fix:**
 - `Q:\repos\botnexus\src\BotNexus.Gateway\GatewayWebSocketHandler.cs:49-77, 112-135, 208-236`

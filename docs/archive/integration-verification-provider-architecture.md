@@ -95,7 +95,7 @@ Resolution order:
 Once resolved, provider handles model-to-handler routing internally.
 
 ### ✅ 6. CopilotProvider Routing
-**File:** `src/BotNexus.Providers.Copilot/CopilotProvider.cs`
+**File:** `src/BotNexus.Agent.Providers.Copilot/CopilotProvider.cs`
 
 **Handler Selection Logic** (lines 176-206):
 ```csharp

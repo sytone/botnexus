@@ -1,4 +1,4 @@
-using BotNexus.AgentCore.Tools;
+using BotNexus.Agent.Core.Tools;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Hooks;
 using BotNexus.Gateway.Abstractions.Models;
@@ -10,9 +10,9 @@ using BotNexus.Gateway.Isolation;
 using BotNexus.Gateway.Tools;
 using BotNexus.Memory;
 using BotNexus.Memory.Models;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.Core.Registry;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Tools;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;

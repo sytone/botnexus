@@ -1,4 +1,4 @@
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core.Types;
 using BotNexus.Memory.Tests.TestInfrastructure;
 using BotNexus.Memory.Tools;
 using FluentAssertions;

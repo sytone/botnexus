@@ -1,14 +1,14 @@
-using BotNexus.AgentCore.Configuration;
-using BotNexus.AgentCore.Loop;
+using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.Loop;
 using BotNexus.AgentCore.Tests.TestUtils;
-using BotNexus.AgentCore.Types;
-using BotNexus.Providers.Core;
-using BotNexus.Providers.Core.Models;
+using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
 using FluentAssertions;
 
 namespace BotNexus.AgentCore.Tests.Loop;
 
-using AgentUserMessage = BotNexus.AgentCore.Types.UserMessage;
+using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 
 /// <summary>
 /// Tests for retry, overflow compaction, and transient error handling in AgentLoopRunner.
@@ -230,7 +230,7 @@ public class AgentLoopRunnerEdgeCaseTests
             LlmClient: TestHelpers.CreateLlmClient(),
             ConvertToLlm: (messages, _) => Task.FromResult<IReadOnlyList<Message>>(
                 messages.OfType<AgentUserMessage>()
-                    .Select(m => (Message)new BotNexus.Providers.Core.Models.UserMessage(
+                    .Select(m => (Message)new BotNexus.Agent.Providers.Core.Models.UserMessage(
                         new UserMessageContent(m.Content),
                         DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
                     .ToList()),
@@ -246,7 +246,7 @@ public class AgentLoopRunnerEdgeCaseTests
     }
 
     private static IDisposable RegisterProvider(string apiId,
-        Func<LlmModel, Context, SimpleStreamOptions?, Providers.Core.Streaming.LlmStream> factory)
+        Func<LlmModel, Context, SimpleStreamOptions?, BotNexus.Agent.Providers.Core.Streaming.LlmStream> factory)
     {
         var provider = new TestApiProvider(apiId, simpleStreamFactory: factory);
         return TestHelpers.RegisterProvider(provider);

@@ -1,8 +1,8 @@
 using System.Text.Json;
 using BotNexus.Providers.Conformance.Tests;
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.Core.Registry;
-using BotNexus.Providers.OpenAI;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
+using BotNexus.Agent.Providers.OpenAI;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BotNexus.Providers.OpenAI.Tests;

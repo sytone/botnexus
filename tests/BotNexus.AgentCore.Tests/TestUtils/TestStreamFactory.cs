@@ -1,5 +1,5 @@
-using BotNexus.Providers.Core.Models;
-using BotNexus.Providers.Core.Streaming;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Streaming;
 
 namespace BotNexus.AgentCore.Tests.TestUtils;
 

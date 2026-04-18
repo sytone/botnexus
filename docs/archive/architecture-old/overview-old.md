@@ -314,13 +314,13 @@ extensions/
 │       └── dependencies/
 ├── providers/
 │   ├── copilot/
-│   │   ├── BotNexus.Providers.Copilot.dll
+│   │   ├── BotNexus.Agent.Providers.Copilot.dll
 │   │   └── dependencies/
 │   ├── openai/
-│   │   ├── BotNexus.Providers.OpenAI.dll
+│   │   ├── BotNexus.Agent.Providers.OpenAI.dll
 │   │   └── dependencies/
 │   └── anthropic/
-│       ├── BotNexus.Providers.Anthropic.dll
+│       ├── BotNexus.Agent.Providers.Anthropic.dll
 │       └── dependencies/
 └── tools/
     ├── github/
@@ -807,7 +807,7 @@ public interface ILlmProvider
 
 ### Copilot Provider: Model-Aware Routing
 
-**File:** `BotNexus.Providers.Copilot/CopilotProvider.cs`
+**File:** `BotNexus.Agent.Providers.Copilot/CopilotProvider.cs`
 
 The Copilot provider implements request routing based on model definition:
 
@@ -975,7 +975,7 @@ public record ToolCallRequest(
 
 ### Copilot Provider: GitHub Responses API
 
-**File:** `BotNexus.Providers.Copilot/CopilotProvider.cs`
+**File:** `BotNexus.Agent.Providers.Copilot/CopilotProvider.cs`
 
 GitHub Copilot uses event-driven SSE (Server-Sent Events) streaming via the GitHub Responses API.
 
@@ -1071,7 +1071,7 @@ public override async Task<LlmResponse> ChatAsync(ChatRequest request)
 
 **Critical Feature:** Copilot proxies requests to both OpenAI and Claude backends. Each returns tool call arguments in a different format, and both must normalize to `Dictionary<string, object?>`.
 
-**File:** `BotNexus.Providers.Copilot/CopilotProvider.cs` (Lines 556-632)
+**File:** `BotNexus.Agent.Providers.Copilot/CopilotProvider.cs` (Lines 556-632)
 
 ```csharp
 private IReadOnlyList<ToolCallRequest> ParseToolCalls(JsonElement toolCallsElement)

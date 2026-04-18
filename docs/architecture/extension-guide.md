@@ -6,7 +6,7 @@
 
 ## Adding a Tool
 
-**Interface:** `IAgentTool` (from `BotNexus.AgentCore`)
+**Interface:** `IAgentTool` (from `BotNexus.Agent.Core`)
 
 **Steps:**
 
@@ -178,7 +178,7 @@ services.AddSingleton<IChannelAdapter, SlackChannelAdapter>();
 
 ## Adding a Provider
 
-**Interface:** `IApiProvider` (from `BotNexus.Providers.Core`)
+**Interface:** `IApiProvider` (from `BotNexus.Agent.Providers.Core`)
 
 **Steps:**
 
@@ -276,7 +276,7 @@ ModelRegistry.Register(geminiModel);
 
 ## Adding a Hook
 
-**Interface:** `IHookHandler` (from `BotNexus.AgentCore`)
+**Interface:** `IHookHandler` (from `BotNexus.Agent.Core`)
 
 **Steps:**
 

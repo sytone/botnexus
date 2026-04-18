@@ -1,15 +1,15 @@
 using System.Text.Json;
-using BotNexus.AgentCore.Loop;
-using BotNexus.AgentCore.Tools;
-using BotNexus.AgentCore.Types;
+using BotNexus.Agent.Core.Loop;
+using BotNexus.Agent.Core.Tools;
+using BotNexus.Agent.Core.Types;
 using BotNexus.AgentCore.Tests.TestUtils;
-using BotNexus.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Models;
 using FluentAssertions;
 
 namespace BotNexus.AgentCore.Tests.Loop;
 
-using AgentUserMessage = BotNexus.AgentCore.Types.UserMessage;
-using ProviderUserMessage = BotNexus.Providers.Core.Models.UserMessage;
+using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
+using ProviderUserMessage = BotNexus.Agent.Providers.Core.Models.UserMessage;
 
 public class ContextConverterTests
 {

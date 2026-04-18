@@ -14,7 +14,7 @@
 - BotNexus.Core — core abstractions and interfaces
 - BotNexus.Session — session management
 - BotNexus.Command — command system
-- BotNexus.Providers.Base, BotNexus.Providers.Anthropic, BotNexus.Providers.OpenAI — LLM providers
+- BotNexus.Providers.Base, BotNexus.Agent.Providers.Anthropic, BotNexus.Agent.Providers.OpenAI — LLM providers
 - BotNexus.Api — API layer
 
 ## How I Work
