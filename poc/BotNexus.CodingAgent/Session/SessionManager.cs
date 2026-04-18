@@ -3,7 +3,7 @@ using System.Text.Json;
 using System.IO.Abstractions;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
-using BotNexus.Sessions.Common;
+using BotNexus.Gateway.Sessions;
 
 namespace BotNexus.CodingAgent.Session;
 

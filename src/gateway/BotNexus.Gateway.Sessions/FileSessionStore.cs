@@ -8,7 +8,6 @@ using SessionType = BotNexus.Domain.Primitives.SessionType;
 using SessionParticipant = BotNexus.Domain.Primitives.SessionParticipant;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
-using BotNexus.Sessions.Common;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Sessions;

@@ -10,7 +10,7 @@
     <ProjectReference Include="..\..\src\common\BotNexus.Tools\BotNexus.Tools.csproj" />
     <ProjectReference Include="..\..\src\agent\BotNexus.Agent.Core\BotNexus.Agent.Core.csproj" />
     <ProjectReference Include="..\..\src\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
-    <ProjectReference Include="..\..\src\domain\BotNexus.Sessions.Common\BotNexus.Sessions.Common.csproj" />
+    <ProjectReference Include="..\..\src\gateway\BotNexus.Gateway.Sessions\BotNexus.Gateway.Sessions.csproj" />
     <ProjectReference Include="..\..\src\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
     <ProjectReference Include="..\..\src\agent\BotNexus.Agent.Providers.Copilot\BotNexus.Agent.Providers.Copilot.csproj" />
     <ProjectReference Include="..\..\src\agent\BotNexus.Agent.Providers.Anthropic\BotNexus.Agent.Providers.Anthropic.csproj" />

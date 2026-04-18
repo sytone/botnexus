@@ -4,7 +4,7 @@
 
 ## Overview
 
-This package provides two implementations of `ISessionStore` (defined in `BotNexus.Gateway.Abstractions`): a durable file-backed store using JSONL with JSON metadata sidecars, and a fast in-memory store for development and testing. Both are thread-safe. The file store delegates JSONL, sidecar metadata, and compaction primitives to `BotNexus.Sessions.Common`.
+This package provides two implementations of `ISessionStore` (defined in `BotNexus.Gateway.Abstractions`): a durable file-backed store using JSONL with JSON metadata sidecars, and a fast in-memory store for development and testing. Both are thread-safe. JSONL, sidecar metadata, and compaction primitives are included in this package.
 
 ## Key Types
 
@@ -105,7 +105,6 @@ services.AddSingleton<ISessionStore, RedisSessionStore>();
 - **Target framework:** `net10.0`
 - **Project references:**
   - `BotNexus.Gateway.Abstractions` — `ISessionStore`, `GatewaySession`, `SessionEntry`
-  - `BotNexus.Sessions.Common` — shared JSONL, metadata sidecar, and compaction primitives
 - **NuGet packages:**
   - `Microsoft.Extensions.Logging.Abstractions` — `ILogger<T>` for `FileSessionStore`
 

@@ -1,4 +1,4 @@
-namespace BotNexus.Sessions.Common;
+namespace BotNexus.Gateway.Sessions;
 
 /// <summary>
 /// Represents session file names.

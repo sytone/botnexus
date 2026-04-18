@@ -41,7 +41,6 @@
   </Folder>
   <Folder Name="/src/domain/">
     <Project Path="src/domain/BotNexus.Domain/BotNexus.Domain.csproj" />
-    <Project Path="src/domain/BotNexus.Sessions.Common/BotNexus.Sessions.Common.csproj" />
   </Folder>
 
   <Folder Name="/tests/">

@@ -1,6 +1,6 @@
 using BotNexus.Gateway.Abstractions.Models;
 
-namespace BotNexus.Sessions.Common;
+namespace BotNexus.Gateway.Sessions;
 
 /// <summary>
 /// Represents session compaction.

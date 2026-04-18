@@ -1,7 +1,7 @@
 using System.IO.Abstractions;
 using System.Text.Json;
 
-namespace BotNexus.Sessions.Common;
+namespace BotNexus.Gateway.Sessions;
 
 /// <summary>
 /// Represents session metadata sidecar.

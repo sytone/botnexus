@@ -1,11 +1,11 @@
 using System.Text.Json;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Domain.Primitives;
-using BotNexus.Sessions.Common;
+using BotNexus.Gateway.Sessions;
 using FluentAssertions;
 using System.IO.Abstractions.TestingHelpers;
 
-namespace BotNexus.Sessions.Common.Tests;
+namespace BotNexus.Gateway.Sessions.Tests;
 
 public sealed class SessionPrimitivesTests
 {
