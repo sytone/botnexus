@@ -27,14 +27,14 @@ foreach ($proj in $projects) {
     $projDir = $proj.DirectoryName
     $projName = $proj.BaseName
 
-    # Get extension ID from manifest (authoritative) or derive from project name
+    # Only deploy extensions that have a manifest — projects without one
+    # (e.g., BlazorClient bundled inside SignalR, stub channels) are not standalone extensions.
     $manifest = Join-Path $projDir "botnexus-extension.json"
-    if (Test-Path $manifest) {
-        $extId = (Get-Content $manifest -Raw | ConvertFrom-Json).id
-    } else {
-        $shortName = $projName -replace '^BotNexus\.Extensions\.', ''
-        $extId = "botnexus-" + ($shortName -creplace '(?<=[a-z])(?=[A-Z])', '-').ToLowerInvariant()
+    if (-not (Test-Path $manifest)) {
+        Write-Host "⏭ Skipped $projName (no manifest)"
+        continue
     }
+    $extId = (Get-Content $manifest -Raw | ConvertFrom-Json).id
 
     # Find build output
     $srcDir = Join-Path $projDir "bin" $Configuration
