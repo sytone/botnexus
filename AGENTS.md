@@ -73,6 +73,28 @@ Build the full solution before running tests to avoid stale assembly issues (e.g
 
 Remove unused methods, classes, and parameters rather than commenting them out or leaving them for "future use." If something isn't called, it shouldn't exist.
 
+## Commits
+
+Use [Conventional Commits](https://www.conventionalcommits.org/) for all commit messages.
+
+### Rules
+
+1. **Format:** `<type>(<scope>): <short summary>`
+2. **Types:** `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `ci`, `perf`, `build`
+3. **Scope:** Use the area of the codebase affected (e.g., `cli`, `gateway`, `scripts`, `domain`, `extensions`).
+4. **Commit in small batches.** Each commit should be a single logical change — one new feature, one refactor, one bug fix. Do not bundle unrelated changes.
+5. **Multi-line body** is encouraged for non-trivial changes. Explain *what* and *why*, not *how*.
+
+### Examples
+
+```
+feat(cli): add serve command with gateway and probe subcommands
+fix(gateway): prevent duplicate session writes on concurrent requests
+refactor(scripts): simplify start-gateway.ps1 to delegate to CLI
+docs(planning): archive completed provider-routing spec
+test(domain): add missing edge case for session expiry
+```
+
 ## Configuration
 
 The BotNexus development configuration file is located at:
