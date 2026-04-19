@@ -20,21 +20,19 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $solutionPath = Join-Path $repoRoot "BotNexus.slnx"
+$cliProject = Join-Path $repoRoot "src\gateway\BotNexus.Cli\BotNexus.Cli.csproj"
 $gatewayTestsPath = Join-Path $repoRoot "tests\BotNexus.Gateway.Tests"
-$gatewayProject = Join-Path $repoRoot "src\gateway\BotNexus.Gateway.Api\BotNexus.Gateway.Api.csproj"
-$startScript = Join-Path $PSScriptRoot "start-gateway.ps1"
-$gatewayUrl = "http://localhost:$Port"
 
 Push-Location $repoRoot
 try {
     if ($SkipBuild) {
-        Write-Host "⏭️  Skipping solution build (-SkipBuild)."
+        Write-Host "⏭️  Skipping build (-SkipBuild)."
     }
     else {
-        Write-Host "🔧 Building full solution..."
-        dotnet build $solutionPath --nologo --tl:off
+        Write-Host "🔧 Building solution via CLI (Release)..."
+        dotnet run --project $cliProject --no-launch-profile -- build --path $repoRoot --verbose
         if ($LASTEXITCODE -ne 0) {
-            throw "Solution build failed."
+            throw "Build failed."
         }
     }
 
@@ -51,17 +49,19 @@ try {
         }
     }
 
-    if ($Watch) {
-        $env:ASPNETCORE_ENVIRONMENT = "Development"
-        $env:ASPNETCORE_URLS = $gatewayUrl
+    Write-Host ""
 
-        Write-Host ""
-        Write-Host "👀 Starting Gateway in watch mode at $gatewayUrl"
-        Write-Host "Open WebUI: $gatewayUrl"
+    if ($Watch) {
+        $gatewayProject = Join-Path $repoRoot "src\gateway\BotNexus.Gateway.Api\BotNexus.Gateway.Api.csproj"
+        $env:ASPNETCORE_ENVIRONMENT = "Development"
+        $env:ASPNETCORE_URLS = "http://localhost:$Port"
+
+        Write-Host "👀 Starting Gateway in watch mode at http://localhost:$Port"
         dotnet watch --project $gatewayProject run --no-launch-profile
     }
     else {
-        & $startScript -Port $Port -SkipBuild
+        Write-Host "🚀 Starting Gateway via CLI at http://localhost:$Port"
+        dotnet run --project $cliProject --no-launch-profile -- serve gateway --path $repoRoot --port $Port
     }
 }
 catch {
