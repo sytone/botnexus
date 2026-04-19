@@ -34,7 +34,6 @@ public sealed class CronTrigger(
     /// <returns>The create session async result.</returns>
     public async Task<SessionId> CreateSessionAsync(AgentId agentId, string prompt, CancellationToken ct = default)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
         ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
 
         var sessionId = SessionId.From($"cron:{DateTimeOffset.UtcNow:yyyyMMddHHmmss}:{Guid.NewGuid():N}");

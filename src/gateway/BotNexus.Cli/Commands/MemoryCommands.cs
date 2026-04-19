@@ -107,7 +107,7 @@ internal sealed class MemoryCommands
 
             AgentId? filter = !string.IsNullOrWhiteSpace(agentFilter)
                 ? AgentId.From(agentFilter)
-                : null;
+                : (AgentId?)null;
 
             try
             {

@@ -47,7 +47,7 @@ public sealed class ChatSendingE2ETests
         var host = await OpenChatAsync();
         await host.Page.FillAsync("#chat-input", "line1");
         await host.Page.PressAsync("#chat-input", "Shift+Enter");
-        await host.Page.TypeAsync("#chat-input", "line2");
+        await host.Page.Locator("#chat-input").PressSequentiallyAsync("line2");
         await Task.Delay(200);
 
         host.Supervisor.Dispatches.Count(d => d.Kind == DispatchKind.Send).Should().Be(0);

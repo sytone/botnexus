@@ -72,7 +72,6 @@ public readonly record struct SessionId(string Value) : IComparable<SessionId>
     /// <returns>The for soul result.</returns>
     public static SessionId ForSoul(AgentId agentId, DateOnly date)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
         return new($"{agentId.Value}::soul::{date:yyyy-MM-dd}");
     }
 

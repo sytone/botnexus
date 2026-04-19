@@ -147,7 +147,7 @@ public sealed class SessionTool(
         IReadOnlyList<Abstractions.Models.GatewaySession> sessions;
 
         if (accessLevel == SessionAccessLevel.All)
-            sessions = await sessionStore.ListAsync(targetAgentId is null ? null : AgentId.From(targetAgentId), ct);
+            sessions = await sessionStore.ListAsync(targetAgentId is null ? (AgentId?)null : AgentId.From(targetAgentId), ct);
         else if (accessLevel == SessionAccessLevel.Allowlist && targetAgentId is not null)
         {
             var typedTargetAgentId = AgentId.From(targetAgentId);
