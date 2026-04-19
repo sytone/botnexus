@@ -3,8 +3,8 @@ using System.Collections.Concurrent;
 namespace BotNexus.Extensions.ProcessTool;
 
 /// <summary>
-/// Static shared registry for background processes. The exec tool registers
-/// processes here; the process tool queries and manages them.
+/// Static shared registry for tracked background processes.
+/// Any tool or extension can register processes here for lifecycle management.
 /// </summary>
 public sealed class ProcessManager
 {

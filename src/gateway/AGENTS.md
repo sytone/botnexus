@@ -25,6 +25,22 @@ Projects in `src/gateway/` may depend on:
 | `BotNexus.Tools` | Core agent tools (workspace, sub-agent, session management) | Agent, Gateway.Contracts, Domain |
 | `BotNexus.Gateway.Prompts` | System prompt building and context file management | Domain only |
 
+## Tool architecture
+
+Three independent tools provide command/process execution:
+
+| Tool | Name | Project | Purpose |
+|------|------|---------|---------|
+| `ShellTool` | `bash` / `shell` | `BotNexus.Tools` (core) | Execute a shell command and return stdout/stderr. Shell selection controlled by `gateway.shellPreference` config. |
+| `ExecTool` | `exec` | `BotNexus.Extensions.ExecTool` (extension) | Execute a command with advanced process control: timeouts, background mode, stdin, env vars. Returns JSON with output, exit code, and PID. |
+| `ProcessTool` | `process` | `BotNexus.Extensions.ProcessTool` (extension) | General-purpose process management: list, inspect, send input, read output, or kill any process by PID. |
+
+**These are independent tools.** ExecTool and ProcessTool are separate extensions — ProcessTool is not coupled to ExecTool. An agent can use the PID returned by ExecTool (or any other PID) with ProcessTool for lifecycle management.
+
+**ShellTool vs ExecTool:**
+- `ShellTool` wraps commands in a shell (`bash -lc` or `pwsh -Command`) — best for quick one-liners.
+- `ExecTool` executes commands directly (array format, no shell interpretation) — best for precise process control, background tasks, and stdin piping.
+
 ## Key architectural rules
 
 - **Gateway.Api has zero extension knowledge.** No references to SignalR, MCP, or any extension project. Extensions are loaded dynamically from `~/.botnexus/extensions/` by the extension loader.

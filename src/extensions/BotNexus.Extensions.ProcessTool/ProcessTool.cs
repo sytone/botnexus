@@ -7,7 +7,7 @@ using BotNexus.Agent.Providers.Core.Models;
 namespace BotNexus.Extensions.ProcessTool;
 
 /// <summary>
-/// Agent tool for managing background processes spawned by the exec tool.
+/// Agent tool for managing background processes by PID.
 /// Supports listing, status checks, output reading, stdin writes, and termination.
 /// </summary>
 public sealed class ProcessTool : IAgentTool
@@ -26,7 +26,7 @@ public sealed class ProcessTool : IAgentTool
 
     public Tool Definition => new(
         Name,
-        "Manage background processes spawned by the exec tool. List, inspect, send input, read output, or kill processes.",
+        "Manage background processes by PID. List, inspect, send input, read output, or kill processes.",
         JsonDocument.Parse("""
             {
               "type": "object",
