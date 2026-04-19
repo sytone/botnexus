@@ -45,7 +45,7 @@ Or pass it as a query parameter:
 GET /api/agents?apiKey=your-api-key-here
 ```
 
-**Exemptions:** `/health` and `/swagger` are exempt from authentication. Static files served from the web root are also exempt.
+**Exemptions:** `/health` and `/swagger` are exempt from authentication. The Blazor WebUI is also exempt when running in development mode.
 
 ### Request & Response Headers
 
@@ -1756,7 +1756,7 @@ ws://localhost:5005/ws/activity?agent={agentFilter}
 
 ## See Also
 
-- [Developer Guide](dev-guide.md) — Local development setup and workflow
+- [Developer Guide](getting-started-dev.md) — Local development setup and workflow
 - [Configuration Guide](configuration.md) — Detailed configuration options
 - [Getting Started](getting-started.md) — Quick start guide
 - [Extension Development](extension-development.md) — Build custom tools and providers

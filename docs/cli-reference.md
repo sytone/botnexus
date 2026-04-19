@@ -763,4 +763,4 @@ All commands return:
 
 - [Configuration Guide](configuration.md) — Complete configuration reference
 - [Getting Started](getting-started.md) — Onboarding guide
-- [Developer Guide](dev-guide.md) — Dev workflow and scripts
+- [Developer Guide](getting-started-dev.md) — Dev workflow and scripts

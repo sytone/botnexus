@@ -28,7 +28,7 @@ dotnet run --project src/gateway/BotNexus.Gateway.Api
 
 === "👨‍💻 Contributing?"
     Build from source, run tests, and contribute.  
-    **[→ Developer Guide](dev-guide.md)**
+    **[→ Developer Guide](getting-started-dev.md)**
 
 ## Key Features
 
@@ -52,4 +52,4 @@ dotnet run --project src/gateway/BotNexus.Gateway.Api
 
 ---
 
-*BotNexus is a .NET 10 project. For source builds, see the [Developer Guide](dev-guide.md).*
+*BotNexus is a .NET 10 project. For source builds, see the [Developer Guide](getting-started-dev.md).*

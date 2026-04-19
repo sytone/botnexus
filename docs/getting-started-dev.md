@@ -1,205 +1,64 @@
-# Getting Started from Source — Developer Setup
+# Developer setup
 
-> For developers building BotNexus from the cloned repository. If you're installing a released version, see [Install from Release](getting-started-release.md) instead.
+The single guide for building, running, and developing BotNexus from source. If you're installing a released version, see [Install from release](getting-started-release.md).
 
 ---
 
 ## Prerequisites
 
-| Requirement | Details |
-|---|---|
-| **.NET 10+ SDK** | [Download](https://dotnet.microsoft.com/download). Verify with `dotnet --version`. You need the SDK, not just the runtime. |
-| **Git** | Any recent version. Verify with `git --version`. |
-| **GitHub account** | Required for the Copilot provider's OAuth flow. You need an active GitHub Copilot subscription. |
-
-Optional but recommended:
-
-- **curl** — for testing API endpoints (built into modern Windows and macOS)
-- A modern browser — for the built-in WebUI (SignalR client)
+| Requirement | Version | Notes |
+|-------------|---------|-------|
+| **.NET SDK** | 10.0+ | Run `dotnet --version` to verify. You need the SDK, not just the runtime. |
+| **PowerShell** | 7.0+ | Windows ships with it. Linux/macOS: `brew install powershell` or your package manager. |
+| **Git** | 2.x+ | Any recent version. |
+| **GitHub Copilot subscription** | — | Required for the default Copilot provider's OAuth flow. |
 
 ---
 
-## 1. Clone and Build
+## 1. Clone, build, and run
 
-Clone the BotNexus repository:
-
-```bash
+```powershell
 git clone https://github.com/sytone/botnexus.git
 cd botnexus
-```
-
-Restore dependencies and build the entire solution in Release configuration:
-
-```bash
-dotnet build BotNexus.slnx -c Release
-```
-
-Or use the CLI to build (once you have a working build):
-
-```powershell
-dotnet run --project src\gateway\BotNexus.Cli -- build --dev
-```
-
-Expected output (last lines):
-
-```text
-Build succeeded.
-    0 Warning(s)
-    0 Error(s)
-```
-
-**Troubleshooting:**
-
-- If you see "SDK version not found", run `dotnet --list-sdks` to verify .NET 10+ is installed
-- If the build fails with "project not found", ensure you're in the repo root directory
-
----
-
-## 2. Run the Gateway
-
-The quickest way to get started is to run the Gateway using the CLI:
-
-```powershell
-dotnet run --project src\gateway\BotNexus.Cli -- serve --dev
-```
-
-This starts the Gateway from your dev clone at `http://localhost:5005` using the Release build. If the process exits, it automatically restarts after 5 seconds (press `q` to quit).
-
-You can also use the script wrapper:
-
-```powershell
-.\scripts\start-gateway.ps1
-```
-
-**To run tests before starting:**
-
-```powershell
 .\scripts\dev-loop.ps1
 ```
 
-This builds the solution, runs all Gateway tests, and then starts the Gateway. If tests fail, the Gateway won't start.
+That's it. `dev-loop.ps1` builds the full solution, runs Gateway tests, and starts the Gateway — stopping at the first failure.
 
-**For watch mode** — auto-rebuilds on source changes:
+The Gateway starts at `http://localhost:5005` with the WebUI at the root URL.
 
-```powershell
-.\scripts\dev-loop.ps1 -Watch
-```
+> **First run?** BotNexus auto-creates `~/.botnexus/` with a default `config.json`. No manual setup needed.
 
-The Gateway will be ready when you see output like:
-
-```text
-🚀 Starting Gateway API
-   URL:        http://localhost:5005
-```
-
----
-
-## 3. Initialize BotNexus Home
-
-The Gateway automatically creates `~/.botnexus/` on first run with default configuration. You can also initialize it manually using the CLI:
+Install the pre-commit hook (once, after cloning):
 
 ```powershell
-# If installed as a .NET tool
-botnexus init
-
-# Or run from source
-dotnet run --project src\gateway\BotNexus.Cli -- init
-```
-
-This creates the directory structure:
-
-```text
-~/.botnexus/
-├── config.json           # Platform configuration
-├── auth.json             # Provider credentials (OAuth tokens)
-├── agents/               # Agent workspace directories
-│   └── assistant/
-│       ├── SOUL.md       # Core personality
-│       ├── IDENTITY.md   # Role and constraints
-│       ├── USER.md       # User preferences
-│       └── MEMORY.md     # Long-term knowledge
-├── sessions/             # Conversation history (JSONL)
-├── tokens/               # OAuth tokens
-├── extensions/           # Extension DLLs (if customized)
-└── logs/                 # Daily log files
-```
-
-Override the location with an environment variable:
-
-```bash
-# Windows (PowerShell)
-$env:BOTNEXUS_HOME = "C:\custom\botnexus"
-
-# macOS/Linux
-export BOTNEXUS_HOME=/custom/botnexus
-```
-
-For more CLI options, see [CLI Reference](cli-reference.md).
-
----
-
-## 4. Run the Gateway in Dev Mode
-
-Start the Gateway from the repository using the CLI:
-
-```powershell
-dotnet run --project src\gateway\BotNexus.Cli -- serve --dev
-```
-
-Or use the script wrapper:
-
-```powershell
-.\scripts\start-gateway.ps1
-```
-
-Or use the full dev loop (build + test + run):
-
-```powershell
-.\scripts\dev-loop.ps1
-```
-
-The Gateway starts at `http://localhost:5005` by default.
-
-**Custom port:**
-
-```powershell
-dotnet run --project src\gateway\BotNexus.Cli -- serve --dev --port 8080
-```
-
-**Watch mode** — auto-recompiles on source changes:
-
-```powershell
-.\scripts\dev-loop.ps1 -Watch
+.\scripts\install-pre-commit-hook.ps1
 ```
 
 ### Verify it's running
 
-Check the health endpoint:
-
 ```powershell
 curl http://localhost:5005/health
-```
-
-Expected response:
-
-```json
-{
-  "status": "ok"
-}
+# Returns: {"status":"ok"}
 ```
 
 ---
 
-## 5. Configure Your First Provider (Copilot)
+## 2. Configure the Copilot provider
 
-Edit `~/.botnexus/config.json` to add the Copilot provider:
+Edit `~/.botnexus/config.json`:
 
 ```json
 {
+  "gateway": {
+    "listenUrl": "http://localhost:5005",
+    "defaultAgentId": "assistant"
+  },
   "providers": {
     "copilot": {
       "apiKey": "auth:copilot",
-      "baseUrl": "https://api.githubcopilot.com"
+      "baseUrl": "https://api.githubcopilot.com",
+      "defaultModel": "gpt-4.1"
     }
   },
   "agents": {
@@ -212,240 +71,303 @@ Edit `~/.botnexus/config.json` to add the Copilot provider:
 }
 ```
 
-### The OAuth device code flow
-
-When you first send a message to the agent, you'll see:
+On your first message to the agent, you'll see:
 
 ```text
 Go to https://github.com/login/device and enter code: ABCD-1234
 ```
 
-**Steps:**
-
-1. Open **https://github.com/login/device** in your browser
-2. Enter the code shown (e.g., `ABCD-1234`)
-3. Click **Authorize** when prompted
-4. BotNexus receives the token and saves it to `~/.botnexus/auth.json`
-
-The token is cached and refreshed automatically.
+Open that URL, enter the code, and authorize. The token is saved to `~/.botnexus/auth.json` and refreshes automatically.
 
 ---
 
-## 6. Customize Your Agent (Optional)
+## 3. Open the WebUI and chat
 
-BotNexus creates workspace files for each agent in `~/.botnexus/agents/{agent-name}/`:
+Open `http://localhost:5005` in your browser. Type a message and press Enter.
 
-```text
-~/.botnexus/agents/assistant/
-├── SOUL.md           # Core personality and values
-├── IDENTITY.md       # Role, style, and constraints
-├── USER.md           # User preferences
-└── MEMORY.md         # Long-term distilled knowledge
-```
+Key features:
 
-**Edit `~/.botnexus/agents/assistant/SOUL.md`:**
-
-```markdown
-# Soul
-
-You are a helpful, thoughtful assistant. You value clarity and precision.
-You admit when you don't know something rather than guessing.
-```
-
-**Edit `~/.botnexus/agents/assistant/IDENTITY.md`:**
-
-```markdown
-# Identity
-
-- Name: Assistant
-- Role: General-purpose AI assistant
-- Style: Conversational but efficient
-- Constraints: Never execute destructive operations without confirmation
-```
-
-Changes take effect on your **next message** — no restart required.
+- **Real-time streaming** — responses appear as they generate
+- **Model selector** — switch models per session
+- **Command palette** — type `/help`, `/reset`, `/status`, or `/models`
+- **Session management** — view, switch, and delete past conversations
 
 ---
 
-## 7. Open the WebUI
+## 4. Development workflow
 
-Open your browser to:
-
-```text
-http://localhost:5005/
-```
-
-Or directly to the WebUI:
-
-```text
-http://localhost:5005
-```
-
-You should see the BotNexus web interface.
-
-### Send Your First Message
-
-1. **Type your message** in the input box (e.g., "Hello! What can you do?")
-2. **Press `Enter` or click Send**
-3. **Watch the agent respond** — responses stream in real-time
-
-The session is created automatically and persists across Gateway restarts.
-
-### Explore the Interface
-
-- **Sessions** — Browse past conversations
-- **API Docs** — View REST API at `/swagger`
-- **Health Check** — Test the gateway at `/health`
-
-### Tips & Tricks
-
-- **Multiple tabs supported** — open multiple browser tabs for parallel conversations
-- **Shift+Enter** to add line breaks without sending
-- **Copy session ID** — URL-safe session identifiers for sharing
-
----
-
-## 8. Dev Workflow: Making Changes
-
-When developing BotNexus, you'll iterate through this cycle:
-
-### A. Changing Gateway Code
-
-1. **Edit your code** in `src/gateway/BotNexus.Gateway.Api/` or `src/gateway/BotNexus.Gateway/`
-2. **Stop the running Gateway** (Ctrl+C)
-3. **Rebuild and run:**
-
-```bash
-.\scripts\start-gateway.ps1
-```
-
-Or with watch mode for continuous rebuilds:
-
-```bash
-.\scripts\dev-loop.ps1 -Watch
-```
-
-### B. Changing Agent Personality
-
-1. **Edit workspace file** (e.g., `~/.botnexus/agents/assistant/SOUL.md`)
-2. **No restart required** — changes take effect on the next message
-3. **Send a new message** to see the updated behavior
-
-### C. Changing Configuration
-
-1. **Edit `~/.botnexus/config.json`**
-2. **Changes hot-reload automatically** within 500ms (except `gateway.listenUrl`, which requires restart)
-3. **Refresh the WebUI** to see the changes
-
----
-
-## 9. Running Tests
-
-Run the full test suite:
-
-```bash
-dotnet test
-```
-
-Run Gateway tests only:
-
-```bash
-dotnet test tests/BotNexus.Gateway.Tests
-```
-
-Verbose output:
-
-```bash
-dotnet test --verbosity detailed
-```
-
-Tests use an isolated `BOTNEXUS_HOME` so they don't interfere with your development environment.
-
----
-
-## 10. Validate Configuration
-
-Validate your `config.json` against the current schema:
+Use `dev-loop.ps1` for the edit → build → test → run cycle:
 
 ```powershell
-curl http://localhost:5005/api/config/validate
+# Build + test + run (the standard workflow)
+.\scripts\dev-loop.ps1
+
+# Watch mode — auto-rebuild on source changes
+.\scripts\dev-loop.ps1 -Watch
+
+# Custom port
+.\scripts\dev-loop.ps1 -Port 9090
 ```
 
-This checks for syntax errors, missing required fields, and invalid provider configurations.
+### What changes need a restart?
 
-### Common Configuration Issues
+| Change type | Restart needed? |
+|---|---|
+| Agent definitions, models, enabled/disabled | No — hot-reloads in ~500ms |
+| Provider settings (API keys, base URLs) | No — hot-reloads |
+| Agent workspace files (`SOUL.md`, `IDENTITY.md`, etc.) | No — takes effect on next message |
+| `gateway.listenUrl` (port binding) | Yes |
+| Extension DLL additions | Yes |
+
+### Running tests
+
+```powershell
+# Full test suite (required before committing)
+dotnet test BotNexus.slnx --nologo --tl:off
+
+# Specific test project
+dotnet test tests\BotNexus.Gateway.Tests
+
+# Specific test by name
+dotnet test BotNexus.slnx --filter "FullyQualifiedName~MyTestName"
+```
+
+All tests must pass before committing. The pre-commit hook enforces this.
+
+---
+
+## 5. Customize your agent
+
+Each agent gets a workspace at `~/.botnexus/agents/{agent-name}/`:
+
+| File | Purpose |
+|------|---------|
+| `SOUL.md` | Core personality and values |
+| `IDENTITY.md` | Role, style, and behavioral constraints |
+| `USER.md` | User preferences |
+| `MEMORY.md` | Long-term distilled knowledge |
+
+Edit these files to shape agent behavior. Changes take effect on the next message — no restart needed.
+
+### Add more agents
+
+Add entries under the `agents` key in `config.json`:
+
+```json
+{
+  "agents": {
+    "assistant": {
+      "provider": "copilot",
+      "model": "gpt-4.1",
+      "enabled": true
+    },
+    "researcher": {
+      "provider": "copilot",
+      "model": "claude-opus-4.6",
+      "enabled": true
+    }
+  }
+}
+```
+
+Set the default agent with `gateway.defaultAgentId`.
+
+---
+
+## Key endpoints
+
+| Path | Purpose |
+|------|---------|
+| `/` | Blazor WebUI (chat, configuration, agent management) |
+| `/health` | Health check (no auth) |
+| `/api/agents` | Agent management |
+| `/api/chat` | Send messages (REST) |
+| `/api/sessions` | Session management |
+| `/api/config/validate` | Config validation |
+| `/hub/gateway` | SignalR streaming hub |
+| `/swagger` | API documentation browser |
+
+---
+
+## Provider reference
+
+### GitHub Copilot (recommended for dev)
+
+Uses OAuth device code flow. 26+ models across Claude, GPT, and Gemini families with automatic API format routing.
+
+```json
+{
+  "providers": {
+    "copilot": {
+      "apiKey": "auth:copilot",
+      "baseUrl": "https://api.githubcopilot.com",
+      "defaultModel": "gpt-4.1"
+    }
+  }
+}
+```
+
+### OpenAI
+
+```json
+{
+  "providers": {
+    "openai": {
+      "apiKey": "sk-...",
+      "baseUrl": "https://api.openai.com/v1",
+      "defaultModel": "gpt-4o"
+    }
+  }
+}
+```
+
+### Anthropic
+
+```json
+{
+  "providers": {
+    "anthropic": {
+      "apiKey": "sk-ant-...",
+      "baseUrl": "https://api.anthropic.com",
+      "defaultModel": "claude-sonnet-4-20250514"
+    }
+  }
+}
+```
+
+### OpenAI-compatible (local models, Azure, etc.)
+
+```json
+{
+  "providers": {
+    "local": {
+      "apiKey": "not-needed",
+      "baseUrl": "http://localhost:11434/v1",
+      "defaultModel": "llama3"
+    }
+  }
+}
+```
+
+---
+
+## Configuration reference
+
+### Home directory
+
+BotNexus stores all user data at `~/.botnexus/`:
+
+```text
+~/.botnexus/
+├── config.json          # Platform configuration
+├── auth.json            # Provider credentials (OAuth tokens)
+├── extensions/          # Dynamic extension assemblies
+├── tokens/              # OAuth token storage
+├── sessions/            # Conversation history (JSONL)
+├── logs/                # Application logs
+└── agents/              # Per-agent workspace directories
+    └── {agent-name}/
+        ├── SOUL.md
+        ├── IDENTITY.md
+        ├── USER.md
+        └── MEMORY.md
+```
+
+Override with `$env:BOTNEXUS_HOME = "C:\custom\path"`.
+
+### Configuration layering
+
+Settings resolve in priority order (highest first):
+
+1. **Environment variables** — `BotNexus__Gateway__ListenUrl`, etc.
+2. **`~/.botnexus/config.json`** — User configuration
+3. **`appsettings.json`** — Project defaults
+4. **Code defaults** — Built-in constants
+
+### Environment variables
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `BOTNEXUS_HOME` | Home directory | `~/.botnexus` |
+| `ASPNETCORE_ENVIRONMENT` | ASP.NET Core environment | `Development` (set by scripts) |
+| `ASPNETCORE_URLS` | HTTP listen URL | `http://localhost:5005` |
+| `BotNexus__ConfigPath` | Explicit config file path | `~/.botnexus/config.json` |
+
+---
+
+## Gateway auth
+
+**Development mode:** When no API keys are configured, all requests are allowed without authentication.
+
+**Production mode:** Add API keys under `gateway.apiKeys` to enable enforcement:
+
+```json
+{
+  "gateway": {
+    "apiKeys": {
+      "my-key": {
+        "apiKey": "sk-my-secret-key",
+        "tenantId": "dev",
+        "callerId": "developer",
+        "displayName": "Dev API Key",
+        "allowedAgents": [],
+        "permissions": ["chat:send", "sessions:read"],
+        "isAdmin": true
+      }
+    }
+  }
+}
+```
+
+Pass the key via `X-Api-Key` header or `?apiKey=` query parameter. The `/health` and `/swagger` endpoints are exempt from auth.
+
+---
+
+## Extension development
+
+BotNexus loads dynamic extensions from `~/.botnexus/extensions/`.
+
+1. Create a class library targeting `net10.0`
+2. Reference `BotNexus.Gateway.Abstractions`
+3. Build and copy the DLL to `~/.botnexus/extensions/{providers|channels|tools}/`
+4. Restart the Gateway
+
+For the full guide with code examples, see [Extension development](extension-development.md).
+
+---
+
+## Scripts reference
+
+All scripts live in `scripts/`.
+
+| Script | Purpose | Key flags |
+|--------|---------|-----------|
+| `dev-loop.ps1` | Build + test + run cycle | `-Watch`, `-Port`, `-SkipBuild`, `-SkipTests` |
+| `start-gateway.ps1` | Build and start the Gateway | `-Port`, `-SkipBuild` |
+| `export-openapi.ps1` | Export OpenAPI spec to `docs/api/openapi.json` | `-Port`, `-OutputPath`, `-SkipBuild` |
+| `install-pre-commit-hook.ps1` | Install Git pre-commit hook (run once) | — |
+
+---
+
+## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
-| "No agents configured" | Add an `agents` section to `config.json` |
-| "Unknown provider" | Ensure the provider name exists in `providers` section |
-| "Invalid JSON" | Check JSON syntax in `~/.botnexus/config.json` |
-| "Port in use" | Use `--port` flag or change `gateway.listenUrl` |
+| `dotnet: command not found` | Install .NET 10+ SDK from https://dotnet.microsoft.com/download |
+| Build fails | `dotnet clean BotNexus.slnx; dotnet build BotNexus.slnx` |
+| Port 5005 already in use | `.\scripts\dev-loop.ps1 -Port 8080` |
+| Config file not found | Run the Gateway once — it auto-creates `~/.botnexus/` |
+| OAuth code expired | Send another message to trigger a fresh device code |
+| WebUI shows "Disconnected" | Restart: `.\scripts\dev-loop.ps1` |
+| Config changes ignored | Most settings hot-reload. `listenUrl` changes require restart. |
+| Tests fail | `dotnet clean BotNexus.slnx; dotnet build BotNexus.slnx --nologo --tl:off; dotnet test BotNexus.slnx --nologo --tl:off` |
 
 ---
 
-## 11. Common Dev Tasks
+## Next steps
 
-### View Gateway logs
-
-```bash
-# Windows (PowerShell)
-Get-Content $env:USERPROFILE\.botnexus\logs\botnexus-*.log -Tail 50
-
-# macOS/Linux
-tail ~/.botnexus/logs/botnexus-*.log
-```
-
-### List registered agents
-
-```bash
-curl http://localhost:5005/api/agents
-```
-
-### Check a specific agent
-
-```bash
-curl http://localhost:5005/api/agents/assistant
-```
-
-### Reset your dev environment
-
-To start fresh (warning: deletes config, agents, and sessions):
-
-```bash
-# Windows (PowerShell)
-Remove-Item $env:USERPROFILE\.botnexus -Recurse -Force
-
-# macOS/Linux
-rm -rf ~/.botnexus
-```
-
-Then reinitialize by running the Gateway again.
-
----
-
-## 12. Troubleshooting
-
-| Symptom | Cause | Fix |
-|---|---|---|
-| `dotnet: command not found` | .NET SDK not installed | Install .NET 10+ from https://dotnet.microsoft.com/download |
-| Build fails | Stale artifacts | `dotnet clean && dotnet build BotNexus.slnx` |
-| Port 5005 already in use | Another process on the port | Use `-Port 8080` or stop the other process |
-| Gateway won't start | Invalid config JSON | Check `~/.botnexus/config.json` syntax; validate via `curl http://localhost:5005/api/config/validate` |
-| WebUI shows "Disconnected" | Gateway crashed or not running | Restart: `.\scripts\start-gateway.ps1` |
-| OAuth code expired | Took too long to authorize | Send another message to trigger a fresh code |
-| Tests fail | Stale build or test isolation | `dotnet clean && dotnet build && dotnet test` |
-| Config changes ignored | Watching limitation | Changes to `gateway.listenUrl` require a restart |
-
----
-
-## Next Steps
-
-- **[Developer Guide](dev-guide.md)** — Quick reference for build, test, and run commands
-- **[Configuration Guide](configuration.md)** — Full reference for config.json options
-- **[Architecture Overview](architecture/overview.md)** — Understand how BotNexus works
-- **[Extension Development](extension-development.md)** — Build custom channels and tools
-
----
-
-*For released versions, see [Getting Started (Release)](getting-started-release.md). For more information, see [README](https://github.com/sytone/botnexus/blob/main/README.md).*
+- **[Configuration guide](configuration.md)** — Full reference for every config option
+- **[Architecture overview](architecture/overview.md)** — How BotNexus works internally
+- **[Extension development](extension-development.md)** — Build custom channels and tools
+- **[CLI reference](cli-reference.md)** — All CLI commands
+- **[API reference](api-reference.md)** — REST API documentation

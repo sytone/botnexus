@@ -4,7 +4,7 @@
 
 ## Overview
 
-This package provides the public HTTP and WebSocket API for the BotNexus Gateway. All REST endpoints (`/api/*`), WebSocket connections (`/ws`), and static content (WebUI) are served here. The package contains no orchestration logic — that is in `BotNexus.Gateway` — it only translates between HTTP/WebSocket and the gateway's internal interfaces.
+This package provides the public HTTP and WebSocket API for the BotNexus Gateway. All REST endpoints (`/api/*`) and WebSocket connections (`/ws`) are served here. The Blazor WebUI (`BotNexus.WebUI`) is hosted as a separate project. This package contains no orchestration logic — that is in `BotNexus.Gateway` — it only translates between HTTP/WebSocket and the gateway's internal interfaces.
 
 ## API Endpoints
 
@@ -100,7 +100,7 @@ Validates all requests using a route-based allowlist. The following paths skip a
 
 - `/health` — Health check endpoint
 - `/swagger/**` — OpenAPI documentation
-- Static files in `wwwroot` — GET/HEAD requests for files that exist in the web root (excludes `/api/**` paths)
+- Blazor WebUI routes — served by the `BotNexus.WebUI` project
 
 All other requests require:
 

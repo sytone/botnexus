@@ -32,19 +32,15 @@ This guide covers:
 
 **Requires:** .NET 10 runtime (not the full SDK)
 
-### 👨‍💻 I Want to Build and Develop BotNexus
+### I want to build and develop BotNexus
 
 You're a **developer** who cloned the repository and wants to build from source.
 
-👉 **[Developer Setup](getting-started-dev.md)**
+👉 **[Developer guide](getting-started-dev.md)**
 
-This guide covers:
-- Cloning the repository and building from source
-- Running the gateway in development mode
-- Configuring providers and agents
-- The dev workflow
+This guide covers everything: clone, build, run, configure, dev workflow, testing, and reference.
 
-**Requires:** .NET 10 SDK, Git, and basic familiarity with command-line tools
+**Requires:** .NET 10 SDK, PowerShell 7+, Git, and a GitHub Copilot subscription
 
 ---
 

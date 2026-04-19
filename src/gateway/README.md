@@ -10,7 +10,7 @@ The Gateway is composed of **5 core projects**:
 |---------|---------|
 | **BotNexus.Gateway.Abstractions** | Interface contracts (IAgentConfigurationSource, IIsolationStrategy, IChannelAdapter, ISessionStore) |
 | **BotNexus.Gateway** | Main host — message routing, agent supervision, hot reload, channel management |
-| **BotNexus.Gateway.Api** | REST API (agents, sessions, chat, config) + WebSocket handler + WebUI static files |
+| **BotNexus.Gateway.Api** | REST API (agents, sessions, chat, config) + WebSocket handler + SignalR hub |
 | **BotNexus.Gateway.Sessions** | Session persistence implementations (InMemory, FileSessionStore) |
 | **BotNexus.Cli** | Command-line interface for Gateway management and interaction |
 
@@ -804,7 +804,7 @@ wscat -c "ws://localhost:5005/ws?agent=test-agent&session=test-session-1"
 
 ### Explore the API
 
-- **WebUI:** `http://localhost:5005` — Real-time chat dashboard
+- **Blazor WebUI:** `http://localhost:5005` — Chat and configuration interface
 - **Swagger:** `http://localhost:5005/swagger` — Interactive API docs
 - **Health:** `http://localhost:5005/health` — Status check (no auth required)
 
@@ -865,12 +865,8 @@ src/gateway/
 │   │   ├── AgentsController.cs
 │   │   ├── SessionsController.cs
 │   │   └── ConfigController.cs
-│   ├── WebSocket/
-│   │   └── GatewayHub.cs              # SignalR hub + session groups
-│   └── wwwroot/
-│       ├── index.html
-│       ├── app.js
-│       └── ...
+│   └── WebSocket/
+│       └── GatewayHub.cs              # SignalR hub + session groups
 ├── BotNexus.Gateway.Sessions/
 │   ├── InMemorySessionStore.cs
 │   ├── FileSessionStore.cs
@@ -894,7 +890,7 @@ src/gateway/
 ### 401 Unauthorized on API calls
 1. Check if API keys are configured in `gateway.apiKeys` — if yes, include `X-Api-Key` header
 2. In dev mode (no keys configured), all requests should pass — verify your config
-3. Endpoints `/health`, `/swagger`, and static files are always exempt
+3. Endpoints `/health`, `/swagger`, and the Blazor WebUI are always exempt
 
 ### 429 Too Many Requests
 1. Agent has reached its `maxConcurrentSessions` limit
@@ -924,7 +920,7 @@ src/gateway/
 
 ## Further Reading
 
-- [Developer Guide](../../docs/dev-guide.md) — Local development setup and workflow
+- [Developer Guide](../../docs/getting-started-dev.md) — Local development setup and workflow
 - [BotNexus Architecture Overview](../../docs/architecture.md)
 - [Configuration Guide](../../docs/configuration.md)
 - [Extension Development](../../docs/extension-development.md)

@@ -103,7 +103,7 @@ Shared vocabulary (referenced by everything above):
 | **BotNexus.Gateway.Contracts** | Platform contracts | Gateway interfaces (ISessionStore, IChannelAdapter, etc.). Depends on Domain. |
 | **BotNexus.Gateway** | Platform core | Supervisor, router, session stores, isolation, config. Composes AgentCore + Providers + Domain. |
 | **BotNexus.Gateway.Api** | Platform host | REST API, SignalR hub, triggers, middleware. Hosts the Gateway. |
-| **BotNexus.WebUI** | Presentation | Static web UI with per-channel containers |
+| **BotNexus.WebUI** | Presentation | Blazor Server app with chat, configuration, and agent management |
 | **BotNexus.Cli** | Presentation | CLI commands, config management, doctor |
 | **BotNexus.Channels.{Telegram,Tui}** | Presentation | External channel adapters |
 | **BotNexus.Extensions.{Mcp,Skills,*}** | Extensions | Dynamically loaded capabilities |

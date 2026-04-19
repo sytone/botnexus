@@ -115,7 +115,7 @@ nav:
       - Principles: architecture/principles.md
       - System Flows: architecture/system-flows.md
   - Development:
-      - Developer Guide: dev-guide.md
+      - Developer Guide: getting-started-dev.md
       - Overview: development/README.md
       - Agent Execution: development/agent-execution.md
       - Message Flow: development/message-flow.md

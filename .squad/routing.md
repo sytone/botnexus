@@ -9,7 +9,7 @@ How to decide who handles what.
 | Architecture & design | Leela | Extension point design, SOLID review, system boundaries, abstraction decisions |
 | Core libraries & abstractions | Farnsworth | BotNexus.Core, BotNexus.Session, BotNexus.Command, BotNexus.Providers.* |
 | Agent execution & channels | Bender | BotNexus.Agent, BotNexus.Channels.*, BotNexus.Gateway, BotNexus.Tools.*, BotNexus.Cron, BotNexus.Heartbeat |
-| WebUI & frontend code | Fry | BotNexus.WebUI, static HTML/CSS/JS, frontend components, WebSocket client |
+| WebUI & frontend code | Fry | BotNexus.Extensions.Channels.SignalR.BlazorClient, Blazor components, Razor pages, SignalR client |
 | Visual design & UX | Amy | UI mockups, component styling, design tokens, user experience, accessibility |
 | Code review | Leela | Review PRs, check SOLID compliance, suggest improvements |
 | Testing | Hermes | Write unit tests, integration tests, E2E tests, verify fixes |

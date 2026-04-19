@@ -7,7 +7,7 @@ A modular, extensible AI agent execution platform built in C#/.NET. BotNexus ena
 | Guide | Audience |
 |-------|----------|
 | **[Getting Started →](docs/getting-started.md)** | First-time users — clone to running in minutes |
-| **[Developer Guide →](docs/dev-guide.md)** | Developers and agents — build, test, run locally |
+| **[Developer Guide →](docs/getting-started-dev.md)** | Developers and agents — build, test, run locally |
 | **[API Reference →](docs/api-reference.md)** | REST and SignalR endpoint documentation |
 | **[Architecture →](docs/architecture/overview.md)** | System design, components, and extension points |
 | **[Observability →](docs/observability.md)** | Distributed tracing, logging, and local Jaeger setup |
@@ -48,7 +48,7 @@ The **BotNexus Gateway** is the central hub for multi-agent orchestration. It pr
 - **Session persistence** — Durable conversation history (JSONL)
 - **Hot reload** — Edit `config.json` and changes apply live (no restart)
 - **Health checks** — Built-in `/health` endpoint for monitoring
-- **WebUI** — Real-time chat dashboard served at the root URL
+- **Blazor WebUI** — Interactive chat and configuration interface
 
 ### Quick Start
 
@@ -67,7 +67,7 @@ dotnet build BotNexus.slnx
 dotnet run --project src/gateway/BotNexus.Gateway.Api
 ```
 
-Open `http://localhost:5005` for the real-time chat dashboard. See the [Developer Guide](docs/dev-guide.md) for the full workflow.
+Open `http://localhost:5005` for the real-time chat dashboard. See the [Developer Guide](docs/getting-started-dev.md) for the full workflow.
 
 ### Configuration
 
@@ -257,10 +257,10 @@ See [Architecture Guide](docs/architecture.md#provider-architecture-pi-style) an
 
 
 - **[Getting Started](docs/getting-started.md)** ← Start here
-- [Developer Guide](docs/dev-guide.md) — Build, test, and run locally
+- [Developer Guide](docs/getting-started-dev.md) — Build, test, and run locally
 - [API Reference](docs/api-reference.md) — REST and SignalR endpoints
 - [Architecture Overview](docs/architecture/overview.md) — System design and components
-- [Developer Guide](docs/dev-guide.md) — Build, test, and deploy with dev-loop script
+- [Developer Guide](docs/getting-started-dev.md) — Build, test, and deploy with dev-loop script
 - [Configuration Guide](docs/configuration.md) — Complete configuration reference
 - [Extension Development](docs/extension-development.md) — Build custom providers, channels, and tools
 - [Workspace & Memory](docs/architecture/workspace-and-memory.md) — Agent workspace and memory system
@@ -282,7 +282,7 @@ src/
 │   └── BotNexus.Agent.Providers.OpenAICompat # OpenAI-compatible provider
 ├── gateway/
 │   ├── BotNexus.Gateway                     # Main host, agent router, hot reload
-│   ├── BotNexus.Gateway.Api                 # REST API, WebUI static files
+│   ├── BotNexus.Gateway.Api                 # REST API, middleware, SignalR hub
 │   ├── BotNexus.Gateway.Abstractions        # Gateway contracts and interfaces
 │   ├── BotNexus.Gateway.Contracts           # Shared DTOs
 │   ├── BotNexus.Gateway.Sessions            # Session persistence

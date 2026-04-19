@@ -908,4 +908,4 @@ If you can't resolve an issue:
 - [Configuration Reference](configuration.md) — Complete config options
 - [API Reference](../api-reference.md) — REST and SignalR endpoints
 - [Observability](../observability.md) — Tracing and monitoring
-- [Developer Guide](../dev-guide.md) — Build and test locally
+- [Developer Guide](../getting-started-dev.md) — Build and test locally

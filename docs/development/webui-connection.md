@@ -1,6 +1,8 @@
-# WebUI Architecture and Connection Flow
+# WebUI architecture and connection flow
 
-This document describes the BotNexus WebUI architecture, including the SignalR connection model, per-channel containers, and multi-session management.
+This document describes the BotNexus WebUI architecture, including the SignalR connection model, multi-session management, and Blazor component structure.
+
+> **Note:** The WebUI is a Blazor Server application at `src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/`. The legacy static JS client at `src/BotNexus.WebUI/` is no longer the primary interface.
 
 ## Overview
 
@@ -178,7 +180,7 @@ Each handler resolves the `SessionStore` via `sessionStoreManager.getOrCreateSto
 | `MessageEnd` | Clears streaming state, finalizes message rendering, removes thinking display |
 | `Error` | Appends error message to DOM, clears streaming state |
 
-See [events.js](../../src/BotNexus.WebUI/wwwroot/js/events.js)
+See [GatewayHubConnection.cs](../../src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Services/GatewayHubConnection.cs) and [ChatPanel.razor](../../src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Components/ChatPanel.razor)
 
 ### Server-Side Broadcasting
 
@@ -190,42 +192,42 @@ See [SignalRChannelAdapter.cs](../../src/extensions/BotNexus.Extensions.Channels
 
 ### SessionStore Class
 
-Per-session client state: tracks `sessionId`, `agentId`, `channelType`, streaming state (`isStreaming`, `activeToolCalls`, `thinkingBuffer`), permanent DOM container reference, and unread count.
+Per-session client state: tracks `sessionId`, `agentId`, `channelType`, streaming state (`isStreaming`, `activeToolCalls`, `thinkingBuffer`), and unread count.
 
-See [session-store.js](../../src/BotNexus.WebUI/wwwroot/js/session-store.js)
+See [AgentSessionState.cs](../../src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Services/AgentSessionState.cs)
 
 ### SessionStoreManager
 
 Key behaviors:
 
-- Manages `Map<sessionId, SessionStore>` with LRU eviction (max 20 stores)
-- `getOrCreateStore(sessionId)` — creates a new `SessionStore` on first access, evicts the oldest entry when over the limit
-- `switchView(sessionId)` — hides the current container, shows the target (no DOM rebuild), resets unread count
+- Manages session state per agent/session pair
+- Creates new session state on first access
+- Switches the active view between sessions
 
-See [session-store.js](../../src/BotNexus.WebUI/wwwroot/js/session-store.js)
+See [AgentSessionManager.cs](../../src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Services/AgentSessionManager.cs)
 
-**Per-Channel Container Strategy:**
+**Session Switching:**
 
-1. **Each session** gets a permanent DOM container created on first event
-2. **Switch Away**: Hide the current container (`display: none`)
-3. **Switch To**: Show the target container — no content rebuild needed
+1. **Each session** maintains its own state via `AgentSessionState`
+2. **Switch Away**: The previous session's content is preserved in memory
+3. **Switch To**: The target session's content renders via Blazor component diffing
 4. **No Server Round-Trip**: Switching is instant, client-side only
-5. **SignalR Events**: Route to the correct container by `sessionId`
+5. **SignalR Events**: Route to the correct session state by `sessionId`
 
 **Benefits:**
 
-- Instant session switching (no network latency, no DOM rebuild)
-- No content loss — containers persist even when not visible
-- Supports multi-session streaming (events always append to the correct container)
-- Simpler than DOM fragment caching — no clone/restore logic
+- Instant session switching (no network latency)
+- No content loss — session state persists in memory
+- Supports multi-session streaming (events always update the correct session state)
+- Blazor handles DOM updates automatically
 
 ## Rendering Pipeline
 
 ### Markdown Rendering
 
-Renders messages using `marked.parse()` for Markdown with `DOMPurify.sanitize()` for XSS protection. Delta updates re-render the full accumulated text to maintain valid Markdown.
+Renders messages using Markdown with sanitization for XSS protection.
 
-See [chat.js](../../src/BotNexus.WebUI/wwwroot/js/chat.js)
+See [ChatPanel.razor](../../src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Components/ChatPanel.razor)
 
 **Sanitization:**
 
@@ -235,21 +237,21 @@ See [chat.js](../../src/BotNexus.WebUI/wwwroot/js/chat.js)
 
 ### Tool Call Rendering
 
-Tool calls rendered as collapsible elements with name, status indicator, arguments (in `<details>`), and result. Status updates from Running → Success/Failed on ToolEnd.
+Tool calls rendered as collapsible elements with name, status indicator, arguments, and result. Status updates from Running → Success/Failed on ToolEnd.
 
-See [chat.js](../../src/BotNexus.WebUI/wwwroot/js/chat.js)
+See [ChatPanel.razor](../../src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Components/ChatPanel.razor)
 
 ### Thinking Display
 
-Thinking deltas accumulated in a temporary `<div>` with the thinking buffer. Removed on MessageEnd.
+Thinking deltas accumulated and displayed during streaming. Removed on MessageEnd.
 
-See [events.js](../../src/BotNexus.WebUI/wwwroot/js/events.js)
+See [ChatPanel.razor](../../src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Components/ChatPanel.razor)
 
 ## Sidebar and Session List
 
 Renders session list sorted by last-viewed time. Each entry shows agent name, channel type, unread badge, and streaming indicator. Clicking switches the active view.
 
-See [sidebar.js](../../src/BotNexus.WebUI/wwwroot/js/sidebar.js)
+See [Home.razor](../../src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Pages/Home.razor)
 
 ## Summary
 
@@ -257,7 +259,7 @@ See [sidebar.js](../../src/BotNexus.WebUI/wwwroot/js/sidebar.js)
 
 1. **Subscribe-All Model**: Single connection subscribes to all sessions upfront
 2. **Auto-Session on Send**: Sessions created implicitly on first message
-3. **Per-Channel Containers**: Each agent+channel gets a permanent DOM container — show/hide, not swap
+3. **Blazor Component Model**: Session state managed in C# services, rendered via Blazor components
 4. **Per-Session Stores**: Independent state management per session
 5. **SignalR Group Broadcast**: Events routed to session groups (`session:{sessionId}`)
 6. **Persistent Containers**: No content loss when switching — containers persist even when hidden

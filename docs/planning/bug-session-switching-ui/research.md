@@ -21,8 +21,8 @@ Client -> Hub.SendMessage(agentId, sessionId, content)
 
 **Implication**: The server cannot have a session routing bug. If the wrong `sessionId` arrives, the client sent it wrong.
 
-### Client-Side (app.js — 3,581 lines, vanilla JS)
-The UI manages session state via module-scoped variables:
+### Client-Side (Blazor WebUI)
+The UI manages session state via `AgentSessionManager` and `AgentSessionState` services:
 
 ```javascript
 let currentSessionId = null;   // line 13
@@ -242,4 +242,4 @@ Capture the intended session at switch time, queue any sends during the gap, rep
 | Channel Adapter | `src/gateway/BotNexus.Gateway.Api/Hubs/SignalRChannelAdapter.cs` | Sends events to session groups |
 | Hub Unit Tests | `tests/BotNexus.Gateway.Tests/SignalRHubTests.cs` | Existing hub unit tests |
 | Integration Tests | `tests/BotNexus.Gateway.Tests/Integration/SignalRIntegrationTests.cs` | Existing SignalR integration tests |
-| WebUI Project | `src/BotNexus.WebUI/BotNexus.WebUI.csproj` | Static files served as embedded resources |
+| WebUI Project | `src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/` | Blazor Server app with chat and configuration |

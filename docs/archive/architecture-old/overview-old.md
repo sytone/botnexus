@@ -2170,7 +2170,7 @@ The architecture supports deploying to `~/.botnexus/` with configurable extensio
 
 ## See Also
 
-- [Developer Guide](dev-guide.md) — Local development setup and workflow
+- [Developer Guide](getting-started-dev.md) — Local development setup and workflow
 - [API Reference](api-reference.md) — REST and WebSocket endpoint documentation
 - [Configuration Guide](configuration.md) — Complete configuration reference
 - [Extension Development](extension-development.md) — Building custom providers, channels, and tools
