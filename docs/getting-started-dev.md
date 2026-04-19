@@ -28,10 +28,16 @@ git clone https://github.com/sytone/botnexus.git
 cd botnexus
 ```
 
-Restore dependencies and build the entire solution:
+Restore dependencies and build the entire solution in Release configuration:
 
 ```bash
-dotnet build BotNexus.slnx
+dotnet build BotNexus.slnx -c Release
+```
+
+Or use the CLI to build (once you have a working build):
+
+```powershell
+dotnet run --project src\gateway\BotNexus.Cli -- build --dev
 ```
 
 Expected output (last lines):
@@ -51,13 +57,19 @@ Build succeeded.
 
 ## 2. Run the Gateway
 
-The quickest way to get started is to run the Gateway directly from the repository:
+The quickest way to get started is to run the Gateway using the CLI:
+
+```powershell
+dotnet run --project src\gateway\BotNexus.Cli -- serve --dev
+```
+
+This starts the Gateway from your dev clone at `http://localhost:5005` using the Release build. If the process exits, it automatically restarts after 5 seconds (press `q` to quit).
+
+You can also use the script wrapper:
 
 ```powershell
 .\scripts\start-gateway.ps1
 ```
-
-This builds and starts the Gateway at `http://localhost:5005`.
 
 **To run tests before starting:**
 
@@ -128,7 +140,13 @@ For more CLI options, see [CLI Reference](cli-reference.md).
 
 ## 4. Run the Gateway in Dev Mode
 
-Start the Gateway directly from the repository:
+Start the Gateway from the repository using the CLI:
+
+```powershell
+dotnet run --project src\gateway\BotNexus.Cli -- serve --dev
+```
+
+Or use the script wrapper:
 
 ```powershell
 .\scripts\start-gateway.ps1
@@ -145,7 +163,7 @@ The Gateway starts at `http://localhost:5005` by default.
 **Custom port:**
 
 ```powershell
-.\scripts\start-gateway.ps1 -Port 8080
+dotnet run --project src\gateway\BotNexus.Cli -- serve --dev --port 8080
 ```
 
 **Watch mode** — auto-recompiles on source changes:

@@ -18,32 +18,47 @@ Optional but recommended:
 
 ---
 
-## 1. Install the CLI Tool
+## 1. Clone and Build
 
-> ⚠️ **Coming soon:** GitHub Releases are not yet set up. For now, you can build and install locally (see [Developer Setup](getting-started-dev.md)). This section will be updated when releases are available.
+BotNexus runs directly from a cloned repository — there is no separate install package.
 
-When GitHub Releases are available, you'll be able to install the BotNexus CLI globally:
+### Prerequisites
 
-```bash
-dotnet tool install --global BotNexus.Cli
+| Requirement | Details |
+|---|---|
+| **.NET 10+ SDK** | [Download](https://dotnet.microsoft.com/download). Verify with `dotnet --version`. |
+| **Git** | Any recent version. Verify with `git --version`. |
+| **GitHub account** | Required for the Copilot provider's OAuth flow. You need an active GitHub Copilot subscription. |
+
+### Clone the repository
+
+```powershell
+dotnet run --project src\gateway\BotNexus.Cli -- install --build
 ```
 
-Verify installation:
+This clones the BotNexus repository to `%USERPROFILE%\botnexus` and builds it in Release configuration.
 
-```bash
-botnexus --version
+To clone to a custom location:
+
+```powershell
+dotnet run --project src\gateway\BotNexus.Cli -- install --path D:\botnexus --build
 ```
 
-You should see the semantic version (e.g., `0.1.0`).
+If you already have a clone, build it directly:
+
+```powershell
+cd %USERPROFILE%\botnexus
+dotnet run --project src\gateway\BotNexus.Cli -- build
+```
 
 ---
 
 ## 2. Initialize BotNexus
 
-Run the interactive setup:
+Run the CLI to set up the home directory:
 
-```bash
-botnexus install
+```powershell
+dotnet run --project src\gateway\BotNexus.Cli -- init
 ```
 
 This command:
@@ -87,42 +102,31 @@ Config:         Valid
 
 The **Gateway** is the core service that manages agents, handles messages, and loads extensions. Start it:
 
-```bash
-botnexus start
+```powershell
+dotnet run --project src\gateway\BotNexus.Cli -- serve
 ```
 
-This runs the gateway in the background. You should see:
-
-```text
-info: BotNexus[0] BotNexus home: C:\Users\you\.botnexus
-info: Microsoft.Hosting.Lifetime[14] Now listening on: http://0.0.0.0:18790
-```
+This runs the gateway at `http://localhost:5005`. If the process exits, it automatically restarts after 5 seconds — press `q` to quit instead.
 
 Check that it's running:
 
 ```bash
-curl http://localhost:18790/health
+curl http://localhost:5005/health
 ```
 
 Expected response:
 
 ```json
 {
-  "status": "Healthy",
-  "checks": {
-    "messageBus": { "status": "Healthy" },
-    "providers": { "status": "Healthy" },
-    "channels": { "status": "Healthy" },
-    "extensionLoader": { "status": "Healthy" }
-  }
+  "status": "ok"
 }
 ```
 
-**Tips:**
+**Custom port:**
 
-- Run in foreground for debugging: `botnexus start --foreground`
-- View logs anytime: `botnexus logs`
-- Stop the gateway: `botnexus stop`
+```powershell
+dotnet run --project src\gateway\BotNexus.Cli -- serve --port 8080
+```
 
 ---
 
