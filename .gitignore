@@ -48,6 +48,15 @@ TestResults/
 # Squad: SubSquad activation file (local to this machine)
 .squad-workstream
 
+# Extension build output
+/extensions/
 .botnexus-agent
 node_modules/
-site/
+
+# BotNexus runtime credentials — never commit auth tokens or API keys
+auth.json
+.botnexus/auth.json
+*.botnexus-auth
+# Local config overrides that may contain secrets
+botnexus.local.json
+config.local.json

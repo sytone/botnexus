@@ -1,0 +1,251 @@
+name: Security Scan
+
+on:
+  schedule:
+    # Run daily at 06:00 UTC
+    - cron: '0 6 * * *'
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  security-events: write
+
+jobs:
+  secret-scan:
+    name: Secret Scanning (TruffleHog)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog — scan for leaked secrets
+        uses: trufflesecurity/trufflehog@v3.88.27
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --only-verified --json
+        continue-on-error: true
+        id: trufflehog
+
+      - name: Upload TruffleHog results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trufflehog-results
+          path: trufflehog-results.json
+          if-no-files-found: ignore
+
+  code-pattern-scan:
+    name: Code Pattern Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan for hardcoded secret patterns
+        id: pattern-scan
+        run: |
+          set +e
+          FINDINGS=()
+
+          # Check for real-looking API key patterns (skip test fixtures and placeholder values)
+          echo "Checking for real-looking API keys..."
+          APIKEY_HITS=$(grep -rn \
+            --include="*.cs" --include="*.json" --include="*.yml" --include="*.yaml" \
+            --include="*.md" --include="*.txt" --include="*.env" \
+            -E "(sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{30,}|gho_[a-zA-Z0-9]{30,}|ghs_[a-zA-Z0-9]{30,}|github_pat_[a-zA-Z0-9_]{30,}|AKIA[A-Z0-9]{16})" \
+            --exclude-dir=".git" --exclude-dir="bin" --exclude-dir="obj" \
+            . 2>/dev/null | \
+            grep -v "test\|Test\|TEST\|example\|Example\|EXAMPLE\|sample\|Sample\|SAMPLE\|mock\|Mock\|MOCK\|placeholder\|Placeholder\|fake\|Fake" || true)
+
+          if [ -n "$APIKEY_HITS" ]; then
+            FINDINGS+=("CRITICAL: Real-looking API keys found:\n$APIKEY_HITS")
+          fi
+
+          # Check Swagger is not unconditionally enabled in production
+          echo "Checking Swagger is guarded by environment check..."
+          SWAGGER_UNGUARDED=$(grep -n "UseSwagger\|UseSwaggerUI" src/gateway/BotNexus.Gateway.Api/Program.cs 2>/dev/null | \
+            grep -v "IsDevelopment\|if.*env\|//\|#" || true)
+
+          # Check if swagger calls are outside an IsDevelopment() block
+          SWAGGER_CONTEXT=$(awk '/UseSwagger/{p=1} p{print NR": "$0; if(/\)/) {p=0}}' src/gateway/BotNexus.Gateway.Api/Program.cs 2>/dev/null | head -20)
+          if grep -q "app\.UseSwagger\|app\.UseSwaggerUI" src/gateway/BotNexus.Gateway.Api/Program.cs 2>/dev/null; then
+            # Check if it's inside an IsDevelopment block
+            if ! awk '/IsDevelopment/{found=1} found && /UseSwagger/{guarded=1} END{exit !guarded}' src/gateway/BotNexus.Gateway.Api/Program.cs 2>/dev/null; then
+              FINDINGS+=("HIGH: Swagger UI is not guarded by IsDevelopment() check in Program.cs — API docs may be exposed in production")
+            fi
+          fi
+
+          # Check AllowedHosts is not wildcard in production config
+          echo "Checking AllowedHosts settings..."
+          WILDCARD_HOSTS=$(grep -n '"AllowedHosts".*"\*"' \
+            src/gateway/BotNexus.Gateway.Api/appsettings.json 2>/dev/null || true)
+          if [ -n "$WILDCARD_HOSTS" ]; then
+            FINDINGS+=("MEDIUM: AllowedHosts is set to wildcard (*) in appsettings.json — consider restricting in production config")
+          fi
+
+          # Check for auth.json files accidentally committed
+          echo "Checking for committed credential files..."
+          CRED_FILES=$(git ls-files | grep -iE "(auth\.json|\.env$|\.env\.[^.]+$|secrets\.json|credentials\.json)" || true)
+          if [ -n "$CRED_FILES" ]; then
+            FINDINGS+=("CRITICAL: Credential or environment files committed to git:\n$CRED_FILES")
+          fi
+
+          # Check for private key material in tracked files
+          echo "Checking for private key material..."
+          PRIVATE_KEY_HITS=$(git ls-files -z | xargs -0 grep -l \
+            "BEGIN RSA PRIVATE KEY\|BEGIN PRIVATE KEY\|BEGIN EC PRIVATE KEY\|BEGIN OPENSSH PRIVATE KEY" \
+            2>/dev/null || true)
+          if [ -n "$PRIVATE_KEY_HITS" ]; then
+            FINDINGS+=("CRITICAL: Private key material found in tracked files:\n$PRIVATE_KEY_HITS")
+          fi
+
+          # Output findings
+          if [ ${#FINDINGS[@]} -gt 0 ]; then
+            echo "has_findings=true" >> "$GITHUB_OUTPUT"
+            REPORT=""
+            for finding in "${FINDINGS[@]}"; do
+              REPORT="${REPORT}\n${finding}"
+            done
+            echo "report<<EOF" >> "$GITHUB_OUTPUT"
+            printf "$REPORT" >> "$GITHUB_OUTPUT"
+            echo "" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            printf "::warning::Security scan found issues:\n$REPORT\n"
+            exit 1
+          else
+            echo "has_findings=false" >> "$GITHUB_OUTPUT"
+            echo "✅ No security pattern issues found."
+          fi
+
+  dependency-audit:
+    name: Dependency Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore NuGet packages
+        run: dotnet restore
+
+      - name: Check for known vulnerable packages
+        id: nuget-audit
+        run: |
+          dotnet list package --vulnerable --include-transitive 2>&1 | tee vuln-report.txt
+          if grep -q "has the following vulnerable packages" vuln-report.txt; then
+            echo "has_vulnerabilities=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Vulnerable NuGet packages detected — review vuln-report.txt"
+          else
+            echo "has_vulnerabilities=false" >> "$GITHUB_OUTPUT"
+            echo "✅ No known vulnerable NuGet packages found."
+          fi
+
+      - name: Upload vulnerability report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-vulnerability-report
+          path: vuln-report.txt
+          if-no-files-found: ignore
+
+  alert-on-findings:
+    name: Create Issue on Findings
+    runs-on: ubuntu-latest
+    needs: [secret-scan, code-pattern-scan, dependency-audit]
+    # Only run on schedule or manual dispatch when findings exist, not on every PR
+    if: |
+      always() &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') &&
+      (needs.secret-scan.result == 'failure' || needs.code-pattern-scan.result == 'failure' || needs.dependency-audit.result == 'failure')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build findings summary
+        id: summary
+        run: |
+          BODY="## 🔐 Daily Security Scan — Findings Detected\n\n"
+          BODY="${BODY}**Scan date:** $(date -u '+%Y-%m-%d %H:%M UTC')\n\n"
+          BODY="${BODY}The daily security scan detected one or more issues that require attention.\n\n"
+          BODY="${BODY}### Job Results\n\n"
+
+          if [ "${{ needs.secret-scan.result }}" == "failure" ]; then
+            BODY="${BODY}- ❌ **Secret Scan (TruffleHog)** — FAILED: Possible leaked credentials detected\n"
+          else
+            BODY="${BODY}- ✅ **Secret Scan (TruffleHog)** — Passed\n"
+          fi
+
+          if [ "${{ needs.code-pattern-scan.result }}" == "failure" ]; then
+            BODY="${BODY}- ❌ **Code Pattern Scan** — FAILED: Security pattern issues found\n"
+          else
+            BODY="${BODY}- ✅ **Code Pattern Scan** — Passed\n"
+          fi
+
+          if [ "${{ needs.dependency-audit.result }}" == "failure" ]; then
+            BODY="${BODY}- ❌ **Dependency Audit** — FAILED: Vulnerable NuGet packages detected\n"
+          else
+            BODY="${BODY}- ✅ **Dependency Audit** — Passed\n"
+          fi
+
+          BODY="${BODY}\n### Next Steps\n\n"
+          BODY="${BODY}1. Review the [workflow run logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details\n"
+          BODY="${BODY}2. Download the scan artifacts from the workflow run\n"
+          BODY="${BODY}3. If a secret was committed, follow the [GitHub guide to remove sensitive data](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository)\n"
+          BODY="${BODY}4. If vulnerable packages were found, update them via \`dotnet add package <name> --version <patched>\`\n\n"
+          BODY="${BODY}> ⚠️ If a real secret was committed to git history, a git history rewrite is required — do NOT simply delete the file.\n"
+
+          echo "body<<EOF" >> "$GITHUB_OUTPUT"
+          printf "$BODY" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Check for existing open security issue
+        id: find-issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['security', 'automated-scan'],
+              state: 'open',
+              per_page: 5
+            });
+            const existing = issues.find(i => i.title.includes('Daily Security Scan'));
+            return existing ? existing.number : null;
+
+      - name: Create or update security issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = `${{ steps.summary.outputs.body }}`;
+            const title = `🔐 Daily Security Scan — Findings on ${new Date().toISOString().slice(0,10)}`;
+            const existingIssueNumber = ${{ steps.find-issue.outputs.result }};
+
+            if (existingIssueNumber) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existingIssueNumber,
+                body: `### 🔄 Updated scan results\n\n${body}`
+              });
+              core.info(`Updated existing security issue #${existingIssueNumber}`);
+            } else {
+              const { data: issue } = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['security', 'automated-scan', 'bug']
+              });
+              core.info(`Created security issue #${issue.number}: ${issue.html_url}`);
+            }
