@@ -211,8 +211,12 @@ app.UseSerilogRequestLogging();
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<GatewayAuthMiddleware>();
 app.UseMiddleware<RateLimitingMiddleware>();
-app.UseSwagger();
-app.UseSwaggerUI();
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
 
 app.MapControllers();
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
