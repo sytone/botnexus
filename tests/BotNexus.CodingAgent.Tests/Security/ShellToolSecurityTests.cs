@@ -129,9 +129,23 @@ public sealed class ShellToolSecurityTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_workingDirectory))
+        if (!Directory.Exists(_workingDirectory))
+            return;
+
+        for (var attempt = 0; attempt < 5; attempt++)
         {
-            Directory.Delete(_workingDirectory, recursive: true);
+            try
+            {
+                Directory.Delete(_workingDirectory, recursive: true);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (attempt == 4)
+                    return; // Best-effort: leave temp dir for OS cleanup.
+
+                Thread.Sleep(500 * (attempt + 1));
+            }
         }
     }
 }

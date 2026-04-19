@@ -24,7 +24,7 @@ public sealed class ResourceLimitTests : IDisposable
     {
         var result = await _shellTool.ExecuteAsync("t1", new Dictionary<string, object?>
         {
-            ["command"] = "python -c \"import time; time.sleep(3)\""
+            ["command"] = "sleep 3"
         });
 
         result.Details.Should().BeOfType<ShellTool.ShellToolDetails>();
@@ -37,7 +37,7 @@ public sealed class ResourceLimitTests : IDisposable
     {
         var result = await _shellTool.ExecuteAsync("t1", new Dictionary<string, object?>
         {
-            ["command"] = "python -c \"while True: pass\""
+            ["command"] = "while true; do :; done"
         });
 
         result.Details.Should().BeOfType<ShellTool.ShellToolDetails>();
@@ -89,9 +89,23 @@ public sealed class ResourceLimitTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_workingDirectory))
+        if (!Directory.Exists(_workingDirectory))
+            return;
+
+        for (var attempt = 0; attempt < 5; attempt++)
         {
-            Directory.Delete(_workingDirectory, recursive: true);
+            try
+            {
+                Directory.Delete(_workingDirectory, recursive: true);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (attempt == 4)
+                    return;
+
+                Thread.Sleep(500 * (attempt + 1));
+            }
         }
     }
 }

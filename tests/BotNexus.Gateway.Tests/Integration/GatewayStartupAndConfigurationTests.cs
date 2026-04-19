@@ -324,8 +324,25 @@ public sealed class GatewayStartupAndConfigurationTests
 
         public void Dispose()
         {
-            if (Directory.Exists(_rootPath))
-                Directory.Delete(_rootPath, recursive: true);
+            if (!Directory.Exists(_rootPath))
+                return;
+
+            // Retry with backoff — the test server's bootstrap log may still be locked.
+            for (var attempt = 0; attempt < 5; attempt++)
+            {
+                try
+                {
+                    Directory.Delete(_rootPath, recursive: true);
+                    return;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    if (attempt == 4)
+                        return; // Best-effort: leave temp dir for OS cleanup.
+
+                    Thread.Sleep(500 * (attempt + 1));
+                }
+            }
         }
     }
 }

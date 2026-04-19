@@ -40,7 +40,7 @@ public sealed class ShellToolTests
     {
         var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
-            ["command"] = "python -c \"import time; time.sleep(2)\"",
+            ["command"] = "sleep 2",
             ["timeout"] = 1
         });
 
@@ -57,7 +57,7 @@ public sealed class ShellToolTests
             "test-call",
             new Dictionary<string, object?>
             {
-                ["command"] = "python -c \"import time; time.sleep(2)\""
+                ["command"] = "sleep 2"
             },
             cancellationSource.Token);
 
@@ -115,7 +115,7 @@ public sealed class ShellToolTests
         var tool = new ShellTool(defaultTimeoutSeconds: 1);
         var result = await tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
-            ["command"] = "python -c \"import time; time.sleep(2)\""
+            ["command"] = "sleep 2"
         });
 
         result.Details.Should().BeOfType<ShellTool.ShellToolDetails>();
@@ -128,7 +128,7 @@ public sealed class ShellToolTests
         var tool = new ShellTool(defaultTimeoutSeconds: 10);
         var result = await tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
-            ["command"] = "python -c \"import time; time.sleep(2)\"",
+            ["command"] = "sleep 2",
             ["timeout"] = 1
         });
 
@@ -142,7 +142,7 @@ public sealed class ShellToolTests
         var tool = new ShellTool(defaultTimeoutSeconds: null);
         var result = await tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
-            ["command"] = "python -c \"import time; time.sleep(1); print('done')\""
+            ["command"] = "sleep 1; echo done"
         });
 
         result.Details.Should().BeOfType<ShellTool.ShellToolDetails>();
@@ -160,7 +160,7 @@ public sealed class ShellToolTests
 
         var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
-            ["command"] = $"python -c \"import os,time,pathlib;pathlib.Path(r'{commandPath}').write_text(str(os.getpid()));time.sleep(30)\""
+            ["command"] = $"echo $$ > '{commandPath}'; sleep 30"
         }, cts.Token);
 
         result.Details.Should().BeOfType<ShellTool.ShellToolDetails>();
@@ -195,7 +195,7 @@ public sealed class ShellToolTests
 
         var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
-            ["command"] = "python -c \"print('done')\""
+            ["command"] = "echo done"
         }, cts.Token);
         cts.Cancel();
 
@@ -294,5 +294,53 @@ public sealed class ShellToolTests
 
         return method!.Invoke(null, [buffer, includeTruncationNotes]) as string
             ?? throw new InvalidOperationException("Failed to invoke ShellTool.BuildOutput.");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithPwshPreference_RunsCommandSuccessfully()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var tool = new ShellTool(shellPreference: ShellPreference.Pwsh);
+        var result = await tool.ExecuteAsync("test-call", new Dictionary<string, object?>
+        {
+            ["command"] = "Write-Output 'hello-pwsh'"
+        });
+
+        result.Content.Should().ContainSingle();
+        result.Content[0].Value.Should().Contain("hello-pwsh");
+        result.Details.As<ShellTool.ShellToolDetails>().ExitCode.Should().Be(0);
+    }
+
+    [Fact]
+    public void ShellPreference_Pwsh_ChangesToolNameOnWindows()
+    {
+        var tool = new ShellTool(shellPreference: ShellPreference.Pwsh);
+
+        if (OperatingSystem.IsWindows())
+        {
+            tool.Name.Should().Be("shell");
+            tool.Label.Should().Contain("PowerShell");
+        }
+        else
+        {
+            // On non-Windows, pwsh preference is ignored — still bash.
+            tool.Name.Should().Be("bash");
+        }
+    }
+
+    [Fact]
+    public void ShellPreference_Auto_KeepsBashName()
+    {
+        var tool = new ShellTool(shellPreference: ShellPreference.Auto);
+        tool.Name.Should().Be("bash");
+    }
+
+    [Fact]
+    public void ShellPreference_Bash_KeepsBashName()
+    {
+        var tool = new ShellTool(shellPreference: ShellPreference.Bash);
+        tool.Name.Should().Be("bash");
     }
 }
