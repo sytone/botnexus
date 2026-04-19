@@ -1,0 +1,64 @@
+@using System.Text.Json.Nodes
+@inject IJSRuntime JS
+
+@* Dictionary section — renders keyed entries with add/delete support *@
+
+@if (!string.IsNullOrEmpty(Title))
+{
+    <div class="pcfg-dict-header">
+        <h4>@Title</h4>
+        <button class="pcfg-add-btn" @onclick="PromptAdd">+ Add</button>
+    </div>
+}
+else
+{
+    <div class="pcfg-dict-header pcfg-dict-header-inline">
+        <button class="pcfg-add-btn" @onclick="PromptAdd">+ Add</button>
+    </div>
+}
+
+@if (Entries.Count == 0)
+{
+    <div class="text-muted" style="font-size: 0.82rem; padding: 0.25rem 0;">No entries configured.</div>
+}
+
+@foreach (var (key, value) in Entries)
+{
+    <div class="pcfg-entry">
+        <div class="pcfg-entry-header">
+            <span class="pcfg-entry-name">@key</span>
+            <button class="pcfg-entry-delete" @onclick="() => HandleDelete(key)" title="Delete">🗑️</button>
+        </div>
+        <div class="pcfg-entry-fields">
+            @if (EntryTemplate is not null)
+            {
+                @EntryTemplate(new DictEntry(key, value))
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public string? Title { get; set; }
+    [Parameter] public string SectionPath { get; set; } = "";
+    [Parameter] public Dictionary<string, JsonObject?> Entries { get; set; } = new();
+    [Parameter] public EventCallback<string> OnAddEntry { get; set; }
+    [Parameter] public EventCallback<string> OnDeleteEntry { get; set; }
+    [Parameter] public RenderFragment<DictEntry>? EntryTemplate { get; set; }
+
+    public sealed record DictEntry(string Key, JsonObject? Value);
+
+    private async Task PromptAdd()
+    {
+        var name = await JS.InvokeAsync<string?>("prompt", $"Enter a name for the new {SectionPath} entry:");
+        if (!string.IsNullOrWhiteSpace(name))
+            await OnAddEntry.InvokeAsync(name.Trim());
+    }
+
+    private async Task HandleDelete(string key)
+    {
+        var confirmed = await JS.InvokeAsync<bool>("confirm", $"Delete \"{key}\" from {SectionPath}?");
+        if (confirmed)
+            await OnDeleteEntry.InvokeAsync(key);
+    }
+}

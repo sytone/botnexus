@@ -1,12 +1,25 @@
 @inherits LayoutComponentBase
+@inject NavigationManager Nav
 
 <div class="app-layout">
     <aside class="sidebar">
         <div class="sidebar-header">
             <h2>🤖 BotNexus</h2>
         </div>
+        <nav class="sidebar-nav">
+            <a href="" class="sidebar-nav-item @NavClass("")">💬 Chat</a>
+            <a href="configuration" class="sidebar-nav-item @NavClass("configuration")">⚙️ Configuration</a>
+        </nav>
         <div class="sidebar-content">
             @Body
         </div>
     </aside>
 </div>
+
+@code {
+    private string NavClass(string page)
+    {
+        var uri = Nav.ToBaseRelativePath(Nav.Uri).TrimEnd('/');
+        return string.Equals(uri, page, StringComparison.OrdinalIgnoreCase) ? "active" : "";
+    }
+}

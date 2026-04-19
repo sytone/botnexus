@@ -1,0 +1,21 @@
+@* Boolean toggle field for config values *@
+
+<div class="pcfg-field">
+    <label>@Label</label>
+    <label class="pcfg-toggle">
+        <input type="checkbox" checked="@Value" @onchange="HandleChange" />
+        <span class="pcfg-toggle-slider"></span>
+    </label>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter] public bool Value { get; set; }
+    [Parameter] public EventCallback<bool> ValueChanged { get; set; }
+
+    private async Task HandleChange(ChangeEventArgs e)
+    {
+        var val = e.Value is bool b ? b : false;
+        await ValueChanged.InvokeAsync(val);
+    }
+}

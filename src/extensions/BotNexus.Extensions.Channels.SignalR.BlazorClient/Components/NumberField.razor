@@ -1,0 +1,21 @@
+@* Numeric input field for config values *@
+
+<div class="pcfg-field">
+    <label>@Label</label>
+    <input type="number" value="@Value" @onchange="HandleChange" />
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter] public int? Value { get; set; }
+    [Parameter] public EventCallback<int?> ValueChanged { get; set; }
+
+    private async Task HandleChange(ChangeEventArgs e)
+    {
+        var val = e.Value?.ToString();
+        if (int.TryParse(val, out var num))
+            await ValueChanged.InvokeAsync(num);
+        else
+            await ValueChanged.InvokeAsync(null);
+    }
+}

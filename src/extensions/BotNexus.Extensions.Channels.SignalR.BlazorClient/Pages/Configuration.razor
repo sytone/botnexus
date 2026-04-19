@@ -1,0 +1,233 @@
+@page "/configuration"
+@inject PlatformConfigService ConfigService
+@inject IJSRuntime JS
+@implements IDisposable
+
+<PageTitle>BotNexus — Configuration</PageTitle>
+
+<div class="platform-config-page">
+    <header class="platform-config-toolbar">
+        <h2>⚙️ Platform Configuration</h2>
+        <div class="platform-config-actions">
+            @if (!string.IsNullOrEmpty(_statusMessage))
+            {
+                <span class="platform-config-status @_statusClass">@_statusMessage</span>
+            }
+            <button class="toolbar-btn" @onclick="Validate" disabled="@_loading">✓ Validate</button>
+            <button class="toolbar-btn" @onclick="LoadConfig" disabled="@_loading">↻ Reload</button>
+            <button class="toolbar-btn primary" @onclick="SaveAll" disabled="@(!_dirty || _saving)">
+                @(_saving ? "Saving…" : "💾 Save Changes")
+            </button>
+        </div>
+    </header>
+
+    @if (_loading)
+    {
+        <div class="config-loading">
+            <div class="loading-spinner small"></div>
+            <span>Loading configuration…</span>
+        </div>
+    }
+    else if (_config is null)
+    {
+        <div class="empty-state">Failed to load configuration.</div>
+    }
+    else
+    {
+        <div class="platform-config-sections">
+            @* ── Version ─────────────────────────────────────────── *@
+            <div class="pcfg-top-field">
+                <label>Config Version</label>
+                <input type="number" value="@GetInt("version")" @onchange="@(e => SetValue("version", e))" />
+            </div>
+
+            @* ── Gateway ─────────────────────────────────────────── *@
+            <ConfigSection Title="🌐 Gateway" Description="Core gateway settings — listen URL, default agent, directories, logging, and server identity." StartExpanded="true">
+                @{ var gw = GetObject("gateway"); }
+                <TextField Label="Listen URL" Value="@GetStr(gw, "listenUrl")" ValueChanged="@(v => SetNested("gateway", "listenUrl", v))" Placeholder="http://localhost:5005" />
+                <TextField Label="Default Agent ID" Value="@GetStr(gw, "defaultAgentId")" ValueChanged="@(v => SetNested("gateway", "defaultAgentId", v))" />
+                <TextField Label="Agents Directory" Value="@GetStr(gw, "agentsDirectory")" ValueChanged="@(v => SetNested("gateway", "agentsDirectory", v))" />
+                <TextField Label="Sessions Directory" Value="@GetStr(gw, "sessionsDirectory")" ValueChanged="@(v => SetNested("gateway", "sessionsDirectory", v))" />
+                <SelectField Label="Log Level" Value="@GetStr(gw, "logLevel")" ValueChanged="@(v => SetNested("gateway", "logLevel", v))"
+                             Options="@(new[] { "Trace", "Debug", "Information", "Warning", "Error", "Critical" })" />
+
+                @* Session Store *@
+                <NestedSection Title="Session Store">
+                    @{ var ss = GetObject(gw, "sessionStore"); }
+                    <TextField Label="Store Type" Value="@GetStr(ss, "type")" ValueChanged="@(v => SetDeep("gateway", "sessionStore", "type", v))" Placeholder="file" />
+                    <TextField Label="File Path" Value="@GetStr(ss, "filePath")" ValueChanged="@(v => SetDeep("gateway", "sessionStore", "filePath", v))" />
+                    <TextField Label="Connection String" Value="@GetStr(ss, "connectionString")" ValueChanged="@(v => SetDeep("gateway", "sessionStore", "connectionString", v))" />
+                </NestedSection>
+
+                @* Compaction *@
+                <NestedSection Title="Compaction">
+                    @{ var comp = GetObject(gw, "compaction"); }
+                    <NumberField Label="Preserved Turns" Value="@GetNullableInt(comp, "preservedTurns")" ValueChanged="@(v => SetDeepNum("gateway", "compaction", "preservedTurns", v))" />
+                    <NumberField Label="Max Summary Chars" Value="@GetNullableInt(comp, "maxSummaryChars")" ValueChanged="@(v => SetDeepNum("gateway", "compaction", "maxSummaryChars", v))" />
+                    <TextField Label="Token Threshold Ratio" Value="@GetStr(comp, "tokenThresholdRatio")" ValueChanged="@(v => SetDeep("gateway", "compaction", "tokenThresholdRatio", v))" />
+                    <NumberField Label="Context Window Tokens" Value="@GetNullableInt(comp, "contextWindowTokens")" ValueChanged="@(v => SetDeepNum("gateway", "compaction", "contextWindowTokens", v))" />
+                    <TextField Label="Summarization Model" Value="@GetStr(comp, "summarizationModel")" ValueChanged="@(v => SetDeep("gateway", "compaction", "summarizationModel", v))" />
+                    <TextField Label="Summarization Provider" Value="@GetStr(comp, "summarizationProvider")" ValueChanged="@(v => SetDeep("gateway", "compaction", "summarizationProvider", v))" />
+                </NestedSection>
+
+                @* CORS *@
+                <NestedSection Title="CORS">
+                    @{ var cors = GetObject(gw, "cors"); }
+                    <ListField Label="Allowed Origins" Items="@GetList(cors, "allowedOrigins")" ItemsChanged="@(v => SetDeepList("gateway", "cors", "allowedOrigins", v))" />
+                </NestedSection>
+
+                @* Rate Limiting *@
+                <NestedSection Title="Rate Limiting">
+                    @{ var rl = GetObject(gw, "rateLimit"); }
+                    <BoolField Label="Enabled" Value="@GetBool(rl, "enabled")" ValueChanged="@(v => SetDeepBool("gateway", "rateLimit", "enabled", v))" />
+                    <NumberField Label="Requests Per Minute" Value="@GetNullableInt(rl, "requestsPerMinute")" ValueChanged="@(v => SetDeepNum("gateway", "rateLimit", "requestsPerMinute", v))" />
+                    <NumberField Label="Window (seconds)" Value="@GetNullableInt(rl, "windowSeconds")" ValueChanged="@(v => SetDeepNum("gateway", "rateLimit", "windowSeconds", v))" />
+                </NestedSection>
+
+                @* Extensions *@
+                <NestedSection Title="Extensions">
+                    @{ var ext = GetObject(gw, "extensions"); }
+                    <TextField Label="Extensions Path" Value="@GetStr(ext, "path")" ValueChanged="@(v => SetDeep("gateway", "extensions", "path", v))" />
+                    <BoolField Label="Enabled" Value="@GetBool(ext, "enabled")" ValueChanged="@(v => SetDeepBool("gateway", "extensions", "enabled", v))" />
+                </NestedSection>
+
+                @* World Identity *@
+                <NestedSection Title="World Identity">
+                    @{ var world = GetObject(gw, "world"); }
+                    <TextField Label="World ID" Value="@GetStr(world, "id")" ValueChanged="@(v => SetDeep("gateway", "world", "id", v))" />
+                    <TextField Label="World Name" Value="@GetStr(world, "name")" ValueChanged="@(v => SetDeep("gateway", "world", "name", v))" />
+                    <TextField Label="Description" Value="@GetStr(world, "description")" ValueChanged="@(v => SetDeep("gateway", "world", "description", v))" />
+                    <TextField Label="Emoji" Value="@GetStr(world, "emoji")" ValueChanged="@(v => SetDeep("gateway", "world", "emoji", v))" Placeholder="🌍" />
+                </NestedSection>
+
+                @* File Access *@
+                <NestedSection Title="File Access Policy">
+                    @{ var fa = GetObject(gw, "fileAccess"); }
+                    <ListField Label="Allowed Read Paths" Items="@GetList(fa, "allowedReadPaths")" ItemsChanged="@(v => SetDeepList("gateway", "fileAccess", "allowedReadPaths", v))" />
+                    <ListField Label="Allowed Write Paths" Items="@GetList(fa, "allowedWritePaths")" ItemsChanged="@(v => SetDeepList("gateway", "fileAccess", "allowedWritePaths", v))" />
+                    <ListField Label="Denied Paths" Items="@GetList(fa, "deniedPaths")" ItemsChanged="@(v => SetDeepList("gateway", "fileAccess", "deniedPaths", v))" />
+                </NestedSection>
+
+                @* API Keys (dictionary) *@
+                <DictionarySection Title="API Keys" SectionPath="gateway.apiKeys" Entries="@GetDict(gw, "apiKeys")"
+                                   OnAddEntry="@((string key) => AddNestedDictEntry("gateway", "apiKeys", key))"
+                                   OnDeleteEntry="@((string key) => DeleteNestedDictEntry("gateway", "apiKeys", key))">
+                    <EntryTemplate Context="entry">
+                        <TextField Label="API Key" Value="@GetStr(entry.Value, "apiKey")" ValueChanged="@(v => SetDictField("gateway", "apiKeys", entry.Key, "apiKey", v))" InputType="password" Placeholder="(redacted — leave blank to keep)" />
+                        <TextField Label="Tenant ID" Value="@GetStr(entry.Value, "tenantId")" ValueChanged="@(v => SetDictField("gateway", "apiKeys", entry.Key, "tenantId", v))" />
+                        <TextField Label="Caller ID" Value="@GetStr(entry.Value, "callerId")" ValueChanged="@(v => SetDictField("gateway", "apiKeys", entry.Key, "callerId", v))" />
+                        <TextField Label="Display Name" Value="@GetStr(entry.Value, "displayName")" ValueChanged="@(v => SetDictField("gateway", "apiKeys", entry.Key, "displayName", v))" />
+                        <ListField Label="Allowed Agents" Items="@GetList(entry.Value, "allowedAgents")" ItemsChanged="@(v => SetDictListField("gateway", "apiKeys", entry.Key, "allowedAgents", v))" />
+                        <ListField Label="Permissions" Items="@GetList(entry.Value, "permissions")" ItemsChanged="@(v => SetDictListField("gateway", "apiKeys", entry.Key, "permissions", v))" />
+                        <BoolField Label="Is Admin" Value="@GetBool(entry.Value, "isAdmin")" ValueChanged="@(v => SetDictBoolField("gateway", "apiKeys", entry.Key, "isAdmin", v))" />
+                    </EntryTemplate>
+                </DictionarySection>
+            </ConfigSection>
+
+            @* ── Providers ───────────────────────────────────────── *@
+            <ConfigSection Title="🔌 Providers" Description="LLM provider connections — API keys, endpoints, and available models.">
+                <DictionarySection Title="" SectionPath="providers" Entries="@GetDict("providers")"
+                                   OnAddEntry="@((string key) => AddTopDictEntry("providers", key))"
+                                   OnDeleteEntry="@((string key) => DeleteTopDictEntry("providers", key))">
+                    <EntryTemplate Context="entry">
+                        <BoolField Label="Enabled" Value="@GetBool(entry.Value, "enabled")" ValueChanged="@(v => SetTopDictBool("providers", entry.Key, "enabled", v))" />
+                        <TextField Label="API Key" Value="@GetStr(entry.Value, "apiKey")" ValueChanged="@(v => SetTopDictField("providers", entry.Key, "apiKey", v))" InputType="password" Placeholder="(redacted — leave blank to keep)" />
+                        <TextField Label="Base URL" Value="@GetStr(entry.Value, "baseUrl")" ValueChanged="@(v => SetTopDictField("providers", entry.Key, "baseUrl", v))" />
+                        <TextField Label="Default Model" Value="@GetStr(entry.Value, "defaultModel")" ValueChanged="@(v => SetTopDictField("providers", entry.Key, "defaultModel", v))" />
+                        <ListField Label="Models" Items="@GetList(entry.Value, "models")" ItemsChanged="@(v => SetTopDictList("providers", entry.Key, "models", v))" />
+                    </EntryTemplate>
+                </DictionarySection>
+            </ConfigSection>
+
+            @* ── Channels ────────────────────────────────────────── *@
+            <ConfigSection Title="📡 Channels" Description="Communication channels — websocket, SignalR, Telegram, Discord, etc.">
+                <DictionarySection Title="" SectionPath="channels" Entries="@GetDict("channels")"
+                                   OnAddEntry="@((string key) => AddTopDictEntry("channels", key))"
+                                   OnDeleteEntry="@((string key) => DeleteTopDictEntry("channels", key))">
+                    <EntryTemplate Context="entry">
+                        <TextField Label="Channel Type" Value="@GetStr(entry.Value, "type")" ValueChanged="@(v => SetTopDictField("channels", entry.Key, "type", v))" />
+                        <BoolField Label="Enabled" Value="@GetBool(entry.Value, "enabled")" ValueChanged="@(v => SetTopDictBool("channels", entry.Key, "enabled", v))" />
+                        @* Render settings sub-object if present *@
+                        @{ var settings = GetObject(entry.Value, "settings"); }
+                        @if (settings is not null && settings.Count > 0)
+                        {
+                            <NestedSection Title="Settings">
+                                @foreach (var (sk, sv) in settings)
+                                {
+                                    <TextField Label="@sk" Value="@(sv?.ToString() ?? "")" ValueChanged="@(v => SetTopDictDeep("channels", entry.Key, "settings", sk, v))" />
+                                }
+                            </NestedSection>
+                        }
+                    </EntryTemplate>
+                </DictionarySection>
+            </ConfigSection>
+
+            @* ── Cron ────────────────────────────────────────────── *@
+            <ConfigSection Title="⏰ Cron" Description="Scheduled job configuration — enable cron, set tick interval, and manage jobs.">
+                @{ var cron = GetObject("cron"); }
+                <BoolField Label="Enabled" Value="@GetBool(cron, "enabled")" ValueChanged="@(v => SetNestedBool("cron", "enabled", v))" />
+                <NumberField Label="Tick Interval (seconds)" Value="@GetNullableInt(cron, "tickIntervalSeconds")" ValueChanged="@(v => SetNestedNum("cron", "tickIntervalSeconds", v))" />
+
+                <DictionarySection Title="Jobs" SectionPath="cron.jobs" Entries="@GetDict(cron, "jobs")"
+                                   OnAddEntry="@((string key) => AddNestedDictEntry("cron", "jobs", key))"
+                                   OnDeleteEntry="@((string key) => DeleteNestedDictEntry("cron", "jobs", key))">
+                    <EntryTemplate Context="entry">
+                        <TextField Label="Job Name" Value="@GetStr(entry.Value, "name")" ValueChanged="@(v => SetCronJobField(entry.Key, "name", v))" />
+                        <TextField Label="Schedule (cron)" Value="@GetStr(entry.Value, "schedule")" ValueChanged="@(v => SetCronJobField(entry.Key, "schedule", v))" />
+                        <SelectField Label="Action Type" Value="@GetStr(entry.Value, "actionType")" ValueChanged="@(v => SetCronJobField(entry.Key, "actionType", v))"
+                                     Options="@(new[] { "agent-chat", "webhook", "shell" })" />
+                        <TextField Label="Agent ID" Value="@GetStr(entry.Value, "agentId")" ValueChanged="@(v => SetCronJobField(entry.Key, "agentId", v))" />
+                        <TextField Label="Message" Value="@GetStr(entry.Value, "message")" ValueChanged="@(v => SetCronJobField(entry.Key, "message", v))" />
+                        <TextField Label="Webhook URL" Value="@GetStr(entry.Value, "webhookUrl")" ValueChanged="@(v => SetCronJobField(entry.Key, "webhookUrl", v))" />
+                        <TextField Label="Shell Command" Value="@GetStr(entry.Value, "shellCommand")" ValueChanged="@(v => SetCronJobField(entry.Key, "shellCommand", v))" />
+                        <BoolField Label="Enabled" Value="@GetBool(entry.Value, "enabled")" ValueChanged="@(v => SetCronJobBool(entry.Key, "enabled", v))" />
+                        <TextField Label="Created By" Value="@GetStr(entry.Value, "createdBy")" ValueChanged="@(v => SetCronJobField(entry.Key, "createdBy", v))" />
+                    </EntryTemplate>
+                </DictionarySection>
+            </ConfigSection>
+
+            @* ── Global API Key ──────────────────────────────────── *@
+            <ConfigSection Title="🔑 Global API Key" Description="A global API key used for platform authentication.">
+                <TextField Label="API Key" Value="@GetStr(_config, "apiKey")" ValueChanged="@(v => { SetValue("apiKey", v); MarkDirty(); })" InputType="password" Placeholder="(redacted — leave blank to keep)" />
+            </ConfigSection>
+        </div>
+    }
+
+    @if (_validationResult is not null)
+    {
+        <div class="validation-overlay" @onclick="@(() => _validationResult = null)">
+            <div class="validation-dialog" @onclick:stopPropagation="true">
+                <h3>@(_validationResult.IsValid ? "✅ Configuration Valid" : "❌ Validation Errors")</h3>
+                @if (_validationResult.ConfigPath is not null)
+                {
+                    <p class="text-muted">Path: @_validationResult.ConfigPath</p>
+                }
+                @if (_validationResult.Errors.Count > 0)
+                {
+                    <div class="validation-list errors">
+                        @foreach (var err in _validationResult.Errors)
+                        {
+                            <div class="validation-item error">❌ @err</div>
+                        }
+                    </div>
+                }
+                @if (_validationResult.Warnings.Count > 0)
+                {
+                    <div class="validation-list warnings">
+                        @foreach (var warn in _validationResult.Warnings)
+                        {
+                            <div class="validation-item warning">⚠️ @warn</div>
+                        }
+                    </div>
+                }
+                @if (_validationResult.IsValid && _validationResult.Warnings.Count == 0)
+                {
+                    <p>No errors or warnings found.</p>
+                }
+                <div class="validation-actions">
+                    <button class="toolbar-btn" @onclick="@(() => _validationResult = null)">Close</button>
+                </div>
+            </div>
+        </div>
+    }
+</div>

@@ -1,0 +1,25 @@
+@* Dropdown select field for config values *@
+
+<div class="pcfg-field">
+    <label>@Label</label>
+    <select value="@Value" @onchange="HandleChange">
+        <option value="">—</option>
+        @foreach (var opt in Options)
+        {
+            <option value="@opt" selected="@(opt == Value)">@opt</option>
+        }
+    </select>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+    [Parameter] public string[] Options { get; set; } = [];
+
+    private async Task HandleChange(ChangeEventArgs e)
+    {
+        var val = e.Value?.ToString();
+        await ValueChanged.InvokeAsync(string.IsNullOrEmpty(val) ? null : val);
+    }
+}

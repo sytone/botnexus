@@ -1,0 +1,53 @@
+@* Editable string list field for config values *@
+
+<div class="pcfg-field pcfg-list-field">
+    <label>@Label</label>
+    <div class="pcfg-list">
+        @for (var i = 0; i < _items.Count; i++)
+        {
+            var index = i;
+            <div class="pcfg-list-item">
+                <input type="text" value="@_items[index]" @onchange="e => UpdateItem(index, e)" />
+                <button class="pcfg-list-remove" @onclick="() => RemoveItem(index)" title="Remove">✕</button>
+            </div>
+        }
+        <button class="pcfg-list-add" @onclick="AddItem">+ Add</button>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter] public List<string> Items { get; set; } = [];
+    [Parameter] public EventCallback<List<string>> ItemsChanged { get; set; }
+
+    private List<string> _items = [];
+
+    protected override void OnParametersSet()
+    {
+        _items = Items.ToList();
+    }
+
+    private async Task UpdateItem(int index, ChangeEventArgs e)
+    {
+        _items[index] = e.Value?.ToString() ?? "";
+        await NotifyChanged();
+    }
+
+    private async Task RemoveItem(int index)
+    {
+        _items.RemoveAt(index);
+        await NotifyChanged();
+    }
+
+    private async Task AddItem()
+    {
+        _items.Add("");
+        await NotifyChanged();
+    }
+
+    private async Task NotifyChanged()
+    {
+        var filtered = _items.Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
+        await ItemsChanged.InvokeAsync(filtered);
+    }
+}

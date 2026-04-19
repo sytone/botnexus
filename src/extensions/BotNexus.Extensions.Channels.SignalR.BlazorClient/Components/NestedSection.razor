@@ -1,0 +1,11 @@
+@* Nested sub-section with left border *@
+
+<div class="pcfg-nested">
+    <h4>@Title</h4>
+    @ChildContent
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

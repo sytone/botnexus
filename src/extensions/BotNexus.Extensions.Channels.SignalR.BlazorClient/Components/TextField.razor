@@ -1,0 +1,20 @@
+@* Text input field for config values *@
+
+<div class="pcfg-field">
+    <label>@Label</label>
+    <input type="@InputType" value="@Value" @onchange="HandleChange" placeholder="@Placeholder" autocomplete="off" />
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+    [Parameter] public string InputType { get; set; } = "text";
+    [Parameter] public string? Placeholder { get; set; }
+
+    private async Task HandleChange(ChangeEventArgs e)
+    {
+        var val = e.Value?.ToString();
+        await ValueChanged.InvokeAsync(string.IsNullOrEmpty(val) ? null : val);
+    }
+}

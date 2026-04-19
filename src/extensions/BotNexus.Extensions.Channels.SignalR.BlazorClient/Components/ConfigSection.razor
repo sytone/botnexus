@@ -1,0 +1,34 @@
+@* Collapsible section card for config groups *@
+
+<div class="pcfg-section">
+    <div class="pcfg-section-header" @onclick="Toggle">
+        <span class="pcfg-collapse-icon">@(_collapsed ? "▸" : "▾")</span>
+        <h3>@Title</h3>
+        @if (!string.IsNullOrEmpty(Description))
+        {
+            <span class="pcfg-section-desc">@Description</span>
+        }
+    </div>
+    @if (!_collapsed)
+    {
+        <div class="pcfg-section-body">
+            @ChildContent
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter] public string? Description { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public bool StartExpanded { get; set; }
+
+    private bool _collapsed;
+
+    protected override void OnInitialized()
+    {
+        _collapsed = !StartExpanded;
+    }
+
+    private void Toggle() => _collapsed = !_collapsed;
+}
