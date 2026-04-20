@@ -64,6 +64,7 @@
     <Project Path="tests/BotNexus.WebUI.Tests/BotNexus.WebUI.Tests.csproj" />
     <Project Path="tests/BotNexus.Prompts.Tests/BotNexus.Prompts.Tests.csproj" />
     <Project Path="tests/BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests/BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests.csproj" />
+    <Project Path="tests/BotNexus.Cli.Tests/BotNexus.Cli.Tests.csproj" />
   </Folder>
   <Project Path="tests/BotNexus.Extensions.ExecTool.Tests/BotNexus.Extensions.ExecTool.Tests.csproj" />
 </Solution>
