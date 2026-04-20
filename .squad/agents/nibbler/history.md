@@ -276,3 +276,51 @@ Participated in design review ceremony for Phase 3 architecture. All ADs approve
 - Smart enum values are the #1 drift source in DDD docs. Design spec had correct values but patterns guide copied from earlier draft with placeholder names.
 - TriggerType is confusing because "Channel" sounds plausible but contradicts the whole IInternalTrigger design intent.
 - Even after a rename, descriptions can reuse old terms ("Closed permanently") — grep for the OLD term in ALL contexts.
+
+---
+
+## 2026-04-20 — feature-blazor-subagent-session-view Consistency Review
+
+**Requested by:** Copilot (Jon Bullen)
+**Sprint:** Read-only sub-agent session viewing in Blazor UI (Waves 1-3)
+
+**Review Scope:**
+1. Code ↔ Comments (XML docs on new properties/methods)
+2. Docs ↔ Code (user guide vs actual implementation)
+3. Code ↔ Code (SessionType constants, CSS class names, IsReadOnly logic)
+4. Test ↔ Code (test assertions vs actual behavior)
+
+**Results:**
+- **2 documentation inconsistencies found** (both P1), **all fixed** in commit
+- **Zero code-level issues found** — implementation clean, tests complete
+
+**P1 Fixes (documentation drift):**
+1. `docs\webui\sub-agent-sessions.md` Session States table: docs claimed 4 status icons (⏳ Running, ✅ Completed, ❌ Failed, 🔪 Killed) but `MainLayout.razor` `SubAgentIcon()` only implements 3 (🔄 Running, ✅ Completed, 🤖 Other). Updated docs to match actual 3-icon implementation with note explaining Failed/Killed use generic icon.
+
+2. `docs\webui\sub-agent-sessions.md` read-only banner label: docs said "This is a read-only sub-agent session" but `ChatPanel.razor` line 38 shows "Read-only — you can observe but not interact". Updated docs to match actual banner text verbatim.
+
+**Verified Consistent (no fix needed):**
+- XML doc comments on `AgentSessionState.SessionType` and `IsReadOnly` accurately describe behavior ✅
+- `IsReadOnly` correctly derives from `SessionType == "agent-subagent"` matching `SessionType.AgentSubAgent` domain constant ✅
+- CSS class names in `ChatPanel.razor` match definitions in `app.css` (`.read-only-banner`, `.read-only-badge`, `.read-only-status`, `.read-only-label`) ✅
+- All 3 test files (`AgentSessionStateTests`, `AgentSessionManagerTests`, `ChatPanelTests`) use correct property/method names and test actual behavior ✅
+- Tests verify `SessionType` default is `"user-agent"`, `IsReadOnly` returns `true` when `SessionType == "agent-subagent"`, case-sensitivity works correctly ✅
+- `ViewSubAgentAsync` XML doc summary matches implementation (creates state, loads history, sets active) ✅
+- User guide correctly describes all P0 features from design spec ✅
+
+**Code Quality Notes:**
+- Implementation matches design spec P0 requirements exactly
+- Test coverage complete: 15 new tests across 3 test files
+- XML doc comments thorough with context (why/when), not just signatures
+- CSS and component integration clean
+- Feature ready for production
+
+**Overall Grade:** Good (minor doc drift, zero code issues)
+
+**Build:** 0 errors, 0 warnings
+
+## Learnings
+
+- Docs-first approach worked well for this feature — docs written alongside implementation kept them mostly aligned
+- Icon set discrepancy shows importance of verifying UI element inventory (don't assume 4 states = 4 icons without checking the code)
+- Banner text verbatim quotes in docs risk going stale — consider "observe-only" paraphrase instead of exact wording

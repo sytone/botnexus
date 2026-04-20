@@ -61,8 +61,8 @@ Sub-agent sessions open in **read-only mode** to prevent accidentally interferin
 
 At the top of the conversation canvas, a **read-only banner** displays:
 - **Sub-agent name** — The name of the sub-agent (e.g., "vectordb-research")
-- **Status** — Current state: Running ⏳, Completed ✅, Failed ❌, or Killed 🔪
-- **Read-only label** — "This is a read-only sub-agent session" to make the mode clear
+- **Status** — Current state: Running ⏳ or Completed ✅
+- **Read-only label** — "Read-only — you can observe but not interact" to make the mode clear
 
 ### Message Input Hidden
 
@@ -85,10 +85,11 @@ Sub-agent sessions display different statuses depending on their current progres
 
 | Icon | Status | Description |
 |------|--------|-------------|
-| ⏳ | Running | Sub-agent is actively processing |
+| 🔄 | Running | Sub-agent is actively processing |
 | ✅ | Completed | Sub-agent finished successfully and delivered results to the parent session |
-| ❌ | Failed | Sub-agent encountered an error or was terminated unexpectedly |
-| 🔪 | Killed | Sub-agent was explicitly terminated by the parent session via `manage_subagent` |
+| 🤖 | Other | Sub-agent in any other state (Failed, Killed, etc.) |
+
+**Note:** The sidebar shows Running and Completed sessions with distinct icons. Sessions in other states (Failed, Killed) display a generic agent icon (🤖) and may be filtered from the session list depending on your configuration.
 
 ## Interacting with Tool Calls
 
