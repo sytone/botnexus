@@ -65,3 +65,4 @@ config.local.json
 # Keep tracked .txt files despite the *.txt rule above
 !requirements.txt
 !tests/**/Snapshots/*.txt
+site/**/*
