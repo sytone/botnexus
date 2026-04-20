@@ -28,6 +28,9 @@ Instead of editing JSON manually, use the `botnexus` CLI to manage configuration
 # Initialize home directory
 botnexus init
 
+# Set up a provider (interactive wizard)
+botnexus provider setup
+
 # List agents
 botnexus agent list
 
@@ -40,6 +43,8 @@ botnexus config set gateway.listenUrl http://localhost:8080
 # Validate
 botnexus validate
 ```
+
+The `botnexus provider setup` wizard walks you through provider selection, authentication (OAuth for Copilot, API key for OpenAI/Anthropic), and default model selection.
 
 See [CLI Reference](cli-reference.md) for all available commands.
 
@@ -63,7 +68,13 @@ On first run, BotNexus creates a minimal default config:
 }
 ```
 
-To add your first provider (e.g., Copilot), add it to the `Providers` section:
+To add your first provider, run the interactive setup wizard:
+
+```powershell
+botnexus provider setup
+```
+
+Or add it manually to the `Providers` section:
 
 ```json
 {

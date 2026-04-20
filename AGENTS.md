@@ -126,6 +126,8 @@ private void IncrementCounter() { ... }
 
 Use [Conventional Commits](https://www.conventionalcommits.org/) for all commit messages.
 
+ALWAYS commit after a related set of changes, do not wait until the end of the session.
+
 ### Rules
 
 1. **Format:** `<type>(<scope>): <short summary>`

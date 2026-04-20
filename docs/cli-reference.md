@@ -2,6 +2,52 @@
 
 The `botnexus` command-line tool provides quick access to configuration and agent management without editing `config.json` manually.
 
+## Setting up the `botnexus` alias
+
+There is no globally installed `botnexus` binary yet. To use the CLI, create a shell alias that runs `dotnet run` against the CLI project and forwards your arguments.
+
+### PowerShell (Windows / cross-platform)
+
+Add this to your PowerShell profile (`$PROFILE`):
+
+```powershell
+function botnexus { dotnet run --project D:\repos\botnexus\src\gateway\BotNexus.Cli -- @args }
+```
+
+> Replace `D:\repos\botnexus` with the path where you cloned the repository.
+
+Reload the profile:
+
+```powershell
+. $PROFILE
+```
+
+### Bash / Zsh (macOS / Linux)
+
+Add this to `~/.bashrc`, `~/.zshrc`, or equivalent:
+
+```bash
+alias botnexus='dotnet run --project ~/repos/botnexus/src/gateway/BotNexus.Cli --'
+```
+
+Reload:
+
+```bash
+source ~/.bashrc   # or source ~/.zshrc
+```
+
+### Verify
+
+```powershell
+botnexus --help
+```
+
+You should see the root command help listing all available subcommands.
+
+> **Tip:** The `--` separator is required so that arguments like `--verbose` are passed to the CLI app and not interpreted by `dotnet run`.
+
+---
+
 ## Table of Contents
 
 1. [Global Options](#global-options)
@@ -16,7 +62,10 @@ The `botnexus` command-line tool provides quick access to configuration and agen
 10. [config get](#config-get) — Read a config value
 11. [config set](#config-set) — Set a config value
 12. [config schema](#config-schema) — Generate JSON schema
-13. [Examples](#examples)
+13. [provider](#provider) — Show or set up providers
+14. [provider setup](#provider-setup) — Interactive provider setup wizard
+15. [provider list](#provider-list) — List configured providers
+16. [Examples](#examples)
 
 ---
 
@@ -80,7 +129,7 @@ If the repository already exists at the target path, the command prints a messag
 
 ## build
 
-Build the BotNexus solution in Release configuration. Always produces a Release build so that output assemblies don't conflict with Debug builds used during local development and testing.
+Build the BotNexus source projects in Release configuration. Test projects are skipped to keep the build fast. Always produces a Release build so that output assemblies don't conflict with Debug builds used during local development and testing.
 
 ### Usage
 
@@ -129,7 +178,7 @@ botnexus build --path D:\repos\botnexus
 
 ## serve
 
-Start a BotNexus service. Defaults to the gateway if no subcommand is specified. The serve command verifies a Release build exists, deploys extensions to `~/.botnexus/extensions/`, checks port availability, and starts the process.
+Start a BotNexus service. Defaults to the gateway if no subcommand is specified. The serve command builds the source projects (Release, skipping tests), deploys extensions to `~/.botnexus/extensions/`, checks port availability, and starts the process.
 
 If the process exits or crashes, serve waits 5 seconds and restarts automatically. Press `q` during the countdown to quit instead.
 
@@ -640,6 +689,141 @@ botnexus config schema --output my-schema.json
 
 ---
 
+## provider
+
+Show provider status or start the setup wizard. When run without a subcommand, shows configured providers if any exist, otherwise launches the setup wizard.
+
+### Usage
+
+```powershell
+botnexus provider [OPTIONS]
+```
+
+### Options
+
+| Option | Description |
+|---|---|
+| `--verbose` | Show full provider configuration JSON. |
+
+### Examples
+
+**Check provider status:**
+
+```powershell
+botnexus provider
+```
+
+If no providers are configured, this automatically starts the setup wizard.
+
+---
+
+## provider setup
+
+Interactive wizard that walks you through adding and authenticating a new LLM provider.
+
+The wizard:
+
+1. Asks which provider to configure (GitHub Copilot, OpenAI, or Anthropic)
+2. Authenticates — OAuth device code flow for Copilot, API key prompt for others
+3. Presents available models and lets you pick a default
+4. Saves the provider to `config.json` (and OAuth tokens to `auth.json`)
+
+### Usage
+
+```powershell
+botnexus provider setup [OPTIONS]
+```
+
+### Options
+
+| Option | Description |
+|---|---|
+| `--verbose` | Show the saved provider configuration in JSON. |
+
+### Examples
+
+**Set up GitHub Copilot (OAuth):**
+
+```powershell
+botnexus provider setup
+```
+
+Example session:
+
+```text
+? Which provider do you want to configure?
+> GitHub Copilot (OAuth — free with GitHub account)
+  OpenAI (API key required)
+  Anthropic (API key required)
+
+Configuring github-copilot...
+
+──────────── GitHub Authorization Required ────────────
+  1. Open: https://github.com/login/device
+  2. Enter code: ABCD-1234
+────────────────────────────────────────────────────────
+
+✓ OAuth credentials saved to auth.json
+
+? Select a default model:
+> gpt-4.1 — GPT-4.1
+  claude-sonnet-4.5 — Claude Sonnet 4.5
+  gpt-5.4 — GPT-5.4
+  ...
+
+Default model: gpt-4.1
+
+✓ Provider github-copilot configured successfully.
+  Config saved to: C:\Users\<YourName>\.botnexus\config.json
+```
+
+**Set up OpenAI (API key):**
+
+```powershell
+botnexus provider setup
+```
+
+Select "OpenAI" and enter your API key when prompted. The key is stored directly in `config.json`.
+
+---
+
+## provider list
+
+List all configured providers in a table.
+
+### Usage
+
+```powershell
+botnexus provider list [OPTIONS]
+```
+
+### Options
+
+| Option | Description |
+|---|---|
+| `--verbose` | Show additional detail. |
+
+### Examples
+
+**List providers:**
+
+```powershell
+botnexus provider list
+```
+
+Example output:
+
+```text
+┌─────────────────┬─────────┬───────┬───────────────┬─────────┐
+│ Provider        │ Enabled │ Auth  │ Default Model │ Base URL│
+├─────────────────┼─────────┼───────┼───────────────┼─────────┤
+│ github-copilot  │ Yes     │ OAuth │ gpt-4.1       │ default │
+│ openai          │ Yes     │ sk-…  │ gpt-4o        │ default │
+└─────────────────┴─────────┴───────┴───────────────┴─────────┘
+```
+
+---
+
 ## Examples
 
 ### Quick Setup Flow
@@ -656,19 +840,25 @@ botnexus install --build
 botnexus init
 ```
 
-**3. List default agents:**
+**3. Set up a provider:**
+
+```powershell
+botnexus provider setup
+```
+
+**4. List default agents:**
 
 ```powershell
 botnexus agent list
 ```
 
-**4. Validate configuration:**
+**5. Validate configuration:**
 
 ```powershell
 botnexus validate
 ```
 
-**5. Start the gateway:**
+**6. Start the gateway:**
 
 ```powershell
 botnexus serve

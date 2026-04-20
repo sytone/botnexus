@@ -23,6 +23,10 @@ This directory contains detailed documentation for developers working on or exte
 - **[webui-connection.md](webui-connection.md)** — SignalR hub, subscribe-all model, multi-session UI
 - **[workspace-and-memory.md](workspace-and-memory.md)** — Workspace isolation, memory management, context files
 
+### CLI
+
+- **[cli-wizard.md](cli-wizard.md)** — Reusable step-based wizard framework for interactive CLI commands
+
 ---
 
 ## For Newcomers
