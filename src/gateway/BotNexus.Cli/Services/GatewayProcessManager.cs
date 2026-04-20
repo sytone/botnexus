@@ -84,7 +84,9 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
             }
             catch
             {
-                // Process no longer exists - clean up stale PID
+                // Process no longer exists (ArgumentException from GetProcessById) - clean up stale PID.
+                // This happens when the gateway crashed without cleaning up its PID file, or when the
+                // system has rebooted since the gateway last ran.
                 _logger.LogDebug("Cleaning up stale PID {Pid}", existingPid.Value);
                 await CleanupPidFileAsync();
             }
@@ -271,7 +273,10 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
                 Message: $"Process {pid.Value} has exited (cleaned stale PID)");
         }
 
-        // Guard against PID recycling: check process name contains "BotNexus" or "dotnet"
+        // Guard against PID recycling: Windows may reuse a PID for an unrelated process after the
+        // original process exits. Without this check, we could incorrectly report "gateway running"
+        // when the PID now belongs to, say, notepad.exe. The gateway runs as "dotnet.exe" hosting
+        // BotNexus.Gateway.Api.dll, so we verify the process name contains "dotnet" or "BotNexus".
         string processName;
         try
         {

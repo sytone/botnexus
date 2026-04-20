@@ -212,4 +212,4 @@ After spawning the process, the CLI should:
 - [x] `botnexus gateway stop` gracefully stops the gateway and cleans up PID file
 - [x] `botnexus gateway restart` works end-to-end
 - [x] Stale PID files are detected and cleaned up
-- [ ] Gateway logs continue writing to `~/.botnexus/logs/` when running detached
+- [x] Gateway logs continue writing to `~/.botnexus/logs/` when running detached
