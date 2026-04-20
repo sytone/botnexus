@@ -346,3 +346,90 @@ The `showStreamingIndicator()` function appended an "Agent is thinking..." div t
 - Correlation is the central concept — every ID is clickable and links to the correlate page
 - Trace waterfall calculates bar positions from nanosecond timestamps relative to trace start
 - Handles both flat span arrays and OTLP ResourceSpans format for trace data
+
+### WebUI Top Banner, Layout Restructure, and Agent Dropdown (2026-04-12)
+
+**Timestamp:** 2026-04-12  
+**Status:** ✅ Complete  
+**Commit:** fc4ab90 — feat(webui): add top banner, two-column layout, and agent session dropdown
+
+**Features Delivered:**
+1. **App Banner** — Full-width header above sidebar+main with BotNexus logo and connection status indicator
+2. **Announcements Bar** — Dismissible announcement items below banner; hidden when empty; uses localStorage for dismissed items
+3. **Layout Restructure** — Body changed to flex-column; banner at top, #app container below takes remaining height
+4. **Agent Dropdown** — Replaced tree-style collapsible agent groups with <select> dropdown for agent selection
+5. **All Sessions View** — Shows ALL non-expired sessions for selected agent (not just latest-per-channel)
+6. **Session Persistence** — Selected agent ID persisted in sessionStorage across soft refreshes
+
+**Files Changed:**
+- `index.html` — Added banner + announcements bar above #app; simplified sessions section with dropdown
+- `styles.css` — Added banner, announcements, and dropdown styles; restructured body layout to flex-column
+- `ui.js` — Added agentSelectorDropdown to dom cache
+- `sidebar.js` — Rewrote loadSessions() to populate dropdown + render all sessions per selected agent; added announcements module
+
+**Patterns Established:**
+- `getSelectedAgentId()` / `setSelectedAgentId()` for sessionStorage persistence
+- `renderSessionsForAgent(agentId)` renders flat list of all active sessions (filters out expired/sealed)
+- `renderAnnouncements(announcements)` manages announcements bar with dismissal via localStorage
+- Connection status moved from sidebar to app banner (single source of truth at top)
+- Sidebar header now only shows world identity (emoji + name)
+
+**Design Notes:**
+- Sub-agent sessions included in the all-sessions list with 🧩 tag indicator
+- Dropdown initialized once with `data-initialized` flag to avoid duplicate event handlers
+- Fingerprint-based rendering still prevents unnecessary list re-renders
+- Announcements expected from `/world` API response as optional array of `{ id, text, type? }` objects
+
+
+## 2026-04-15 — Blazor UI Layout Restructure
+
+**Status:** ✅ Complete  
+**Commit:** 48694d9e  
+
+**Features Delivered:**
+
+1. **MainLayout.razor restructure:**
+   - Full-width banner header (🤖 BotNexus logo + title)
+   - Dismissible announcements bar below banner (UI shell ready; API wire-up pending)
+   - Two-column body: fixed 240px sidebar + flex main canvas
+   - Sidebar owns: connection status, nav links, agent dropdown, session list, restart button
+   - Agent dropdown + session list persist across page navigation
+   - Subscribes to Manager.OnStateChanged for re-render on state updates
+
+2. **Home.razor simplification:**
+   - Removed agent list/sidebar controls (now in MainLayout)
+   - Only renders chat panels (one per agent, show/hide with active/hidden classes)
+   - InitializeAsync still called here (checks Manager.Hub.IsConnected to avoid double-connect)
+   - Empty state message updated to "Select an agent from the sidebar to start chatting"
+
+3. **CSS updates (app.css):**
+   - Added .app-shell, .app-banner, .banner-header, .banner-logo, .banner-title
+   - Added .announcement-bar, .announcement-item, .announcement-content, .announcement-dismiss
+   - Added .app-body, .main-sidebar, .sidebar-connection, .main-canvas
+   - Added .agent-dropdown-container, .agent-dropdown-label, .agent-dropdown-select
+   - Added .agent-session-list, .agent-session-item (active state: order-left: 2px solid var(--accent))
+   - Removed obsolete .app-layout, .sidebar, .sidebar-header, .sidebar-content
+   - Updated .chat-panel-wrapper flex order (hidden/active via display)
+   - Updated .empty-state font-size to 0.95rem
+
+4. **AGENTS.md created:**
+   - Non-obvious layout decisions documented (why agent list is in MainLayout, not Home)
+   - OnStateChanged event pattern for all components that need re-render
+   - "Expired" session filter definition (Killed/Failed sub-agents hidden)
+   - Where InitializeAsync is called and why (Home.razor, not MainLayout)
+   - CSS gotchas (agent dropdown @onchange uses ChangeEventArgs, not @bind with async)
+
+**Pattern Established:**
+- MainLayout as structural shell — owns global UI elements (banner, announcements, sidebar)
+- Page components (Home.razor, Configuration.razor) render in MainLayout's @Body slot
+- Agent selection state persists across all pages via MainLayout sidebar
+- Sub-agents filtered to Running/Completed only (Killed/Failed are "expired")
+
+**Gotchas Discovered:**
+- Agent dropdown <select> uses @onchange with ChangeEventArgs (not @bind with async handler)
+- Empty option value is "", not 
+ull
+- Session ID truncation needs Math.Min(8, sub.SubAgentId.Length) to avoid index errors
+- Restart button catches empty — connection drop is expected behavior
+- GatewayHubConnection.IsConnected is a property (line 69), not a method
+

@@ -163,4 +163,19 @@ Build is clean (0 errors, 2 warnings). All 124 tests pass. Contract layer is sol
 2. Live environment protection (~/.botnexus/ isolation)
 
 **Next Steps:** Production deployment readiness, Sprint 7 planning for P2 items.
+### 2026-04-12 — Top Banner and Agent Dropdown UI Design
 
+**Task:** Designed CSS for top banner (branding + announcements), layout restructure, and agent dropdown pattern.
+
+**Design Decisions:**
+- **Banner:** Two-tier system (header + conditional announcements). Header: gradient background, logo + title, ~48px height. Announcements: left border accent (type-coded colour), dismissible per-item, dark background.
+- **Layout:** Changed #app from flex-row to flex-column. Banner spans full width at top. New .app-body wrapper contains sidebar + main canvas in flex-row.
+- **Agent Dropdown:** Replaced tree-style agent groups with <select> dropdown. Custom-styled with CSS arrow, consistent with existing form inputs. Session list below shows only non-expired sessions for selected agent.
+- **Design Tokens:** All styles use existing CSS variables for consistency (--bg-*, --text-*, --accent, etc.).
+- **Accessibility:** Focus indicators (3px rgba shadow), ARIA labels planned, left border colour coding (WCAG-compliant contrast).
+
+**Key Pattern:** Conditional display — announcement bar hidden when empty (.announcement-bar.has-announcements shows via flex). Keeps banner compact when no announcements exist.
+
+**Deliverable:** Complete CSS written for Fry to implement. Decision doc created at .squad/decisions/inbox/amy-banner-design.md.
+
+**Lesson:** Professional UI in developer tools means clean, functional, and compact. Design system consistency (using existing tokens) prevents visual drift and maintains accessibility guarantees. Conditional visibility patterns save vertical space without sacrificing features.
