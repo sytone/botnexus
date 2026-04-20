@@ -9,27 +9,17 @@ namespace BotNexus.Cli.Commands;
 
 internal sealed class ServeCommand
 {
+    private readonly GatewayCommand _gatewayCommand;
+
+    public ServeCommand(GatewayCommand gatewayCommand)
+    {
+        _gatewayCommand = gatewayCommand;
+    }
+
     public Command Build(Option<bool> verboseOption)
     {
-        var portOption = new Option<int>("--port", () => 5005, "Port to listen on.");
-        var repoOption = new Option<string?>("--path", () => null, "Path to the repository root. Defaults to the current directory.");
-        var devOption = new Option<bool>("--dev", "Serve from a development repo clone instead of the install location.");
-
-        var gatewayCommand = new Command("gateway", "Start the BotNexus Gateway.")
-        {
-            portOption,
-            repoOption,
-            devOption
-        };
-        gatewayCommand.SetHandler(async context =>
-        {
-            var port = context.ParseResult.GetValueForOption(portOption);
-            var path = context.ParseResult.GetValueForOption(repoOption);
-            var dev = context.ParseResult.GetValueForOption(devOption);
-            var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var repoRoot = BuildCommand.ResolveRepoRoot(path, dev);
-            context.ExitCode = await ServeGatewayAsync(repoRoot, port, verbose, context.GetCancellationToken());
-        });
+        // Gateway lifecycle management
+        var gatewayCommand = _gatewayCommand.Build(verboseOption);
 
         var probePortOption = new Option<int>("--port", () => 5050, "Port for the Probe web UI.");
         var probeRepoOption = new Option<string?>("--path", () => null, "Path to the repository root. Defaults to the current directory.");
@@ -202,7 +192,11 @@ internal sealed class ServeCommand
         return process.ExitCode;
     }
 
-    private static void DeployExtensions(string repoRoot, bool verbose)
+    /// <summary>
+    /// Deploys built extensions from the repository to ~/.botnexus/extensions.
+    /// Public to allow GatewayCommand to use it.
+    /// </summary>
+    public static void DeployExtensions(string repoRoot, bool verbose)
     {
         var extensionsRoot = Path.Combine(repoRoot, "src", "extensions");
         if (!Directory.Exists(extensionsRoot))
@@ -311,7 +305,11 @@ internal sealed class ServeCommand
         AnsiConsole.MarkupLine($"[blue][[deploy]][/] [green]{deployed}[/] extension(s) deployed to [dim]{Markup.Escape(destRoot)}[/]");
     }
 
-    private static async Task<bool> WaitForRestartOrQuitAsync(int seconds, CancellationToken cancellationToken)
+    /// <summary>
+    /// Waits for a restart countdown or user quit input.
+    /// Public to allow GatewayCommand to use it for attached mode.
+    /// </summary>
+    public static async Task<bool> WaitForRestartOrQuitAsync(int seconds, CancellationToken cancellationToken)
     {
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine($"[blue][[restart]][/] Gateway will restart in [yellow]{seconds}[/] seconds. Press [yellow]q[/] to quit.");
@@ -346,7 +344,11 @@ internal sealed class ServeCommand
         return true;
     }
 
-    private static bool IsPortAvailable(int port)
+    /// <summary>
+    /// Checks if a TCP port is available for binding.
+    /// Public to allow GatewayCommand to use it.
+    /// </summary>
+    public static bool IsPortAvailable(int port)
     {
         try
         {

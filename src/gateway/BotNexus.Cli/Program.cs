@@ -1,12 +1,17 @@
 using System.CommandLine;
 using BotNexus.Cli.Commands;
+using BotNexus.Cli.Services;
 using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 var verboseOption = new Option<bool>("--verbose", "Show additional command output.");
 
 using var serviceProvider = new ServiceCollection()
+    .AddLogging(builder => builder.AddConsole().SetMinimumLevel(LogLevel.Warning))
+    .AddSingleton<IHealthChecker, HttpHealthChecker>()
+    .AddSingleton<IGatewayProcessManager, GatewayProcessManager>()
     .AddSingleton<IConfigPathResolver, ConfigPathResolver>()
     .AddSingleton<ValidateCommand>()
     .AddSingleton<DoctorCommand>()
@@ -17,6 +22,7 @@ using var serviceProvider = new ServiceCollection()
     .AddSingleton<LocationsCommand>()
     .AddSingleton<InstallCommand>()
     .AddSingleton<BuildCommand>()
+    .AddSingleton<GatewayCommand>()
     .AddSingleton<ServeCommand>()
     .AddSingleton<ProviderCommand>()
     .BuildServiceProvider();

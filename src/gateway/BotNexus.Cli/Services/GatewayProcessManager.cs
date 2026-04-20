@@ -201,7 +201,7 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
                 Success: false,
                 Message: $"Failed to kill gateway process {pid.Value}: {ex.Message}");
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException)
         {
             _logger.LogWarning("Gateway process {Pid} already exited", pid.Value);
             await CleanupPidFileAsync();
