@@ -2260,3 +2260,30 @@ details[open] > .thinking-summary::before {
     font-style: italic;
     align-self: center;
 }
+
+/* ── Read-only sub-agent session banner ─────────────────────────────── */
+
+.read-only-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.read-only-badge {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.read-only-status {
+    color: var(--text-secondary);
+}
+
+.read-only-label {
+    margin-left: auto;
+    font-style: italic;
+}

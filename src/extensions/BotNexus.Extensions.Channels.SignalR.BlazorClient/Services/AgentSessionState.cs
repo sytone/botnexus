@@ -18,6 +18,15 @@ public sealed class AgentSessionState
     /// <summary>Channel type for this session.</summary>
     public string? ChannelType { get; set; }
 
+    /// <summary>Session type — user-agent, agent-subagent, etc. Determines read-only behavior.</summary>
+    public string SessionType { get; set; } = "user-agent";
+
+    /// <summary>
+    /// Whether this session is read-only. True for sub-agent sessions — users can observe
+    /// but cannot send messages.
+    /// </summary>
+    public bool IsReadOnly => SessionType == "agent-subagent";
+
     /// <summary>All messages in this session, in chronological order.</summary>
     public List<ChatMessage> Messages { get; } = [];
 

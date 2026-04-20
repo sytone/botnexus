@@ -275,8 +275,89 @@ public sealed class AgentSessionManager : IDisposable
         }
     }
 
+    /// <summary>
+    /// View a sub-agent session in read-only mode. Creates or activates the sub-agent's session,
+    /// loads its message history, and switches to the sub-agent's chat panel.
+    /// </summary>
+    public async Task ViewSubAgentAsync(SubAgentInfo subAgent)
+    {
+        var subAgentId = subAgent.SubAgentId;
+
+        // Register or reuse the sub-agent's session state
+        if (!_sessions.TryGetValue(subAgentId, out var state))
+        {
+            state = new AgentSessionState
+            {
+                AgentId = subAgentId,
+                DisplayName = subAgent.Name ?? $"Sub-agent {subAgentId[..Math.Min(8, subAgentId.Length)]}",
+                SessionId = subAgentId, // For sub-agents, session ID == sub-agent ID
+                SessionType = "agent-subagent",
+                IsConnected = true
+            };
+            _sessions[subAgentId] = state;
+            _sessionToAgent[subAgentId] = subAgentId;
+        }
+
+        // Switch to the sub-agent's panel
+        await SetActiveAgentAsync(subAgentId);
+
+        // Load history if not already loaded
+        if (!state.HistoryLoaded && !state.IsLoadingHistory && state.Messages.Count == 0)
+        {
+            await LoadSubAgentHistoryAsync(subAgentId);
+        }
+    }
+
+    /// <summary>Load message history for a sub-agent session from the REST API.</summary>
+    private async Task LoadSubAgentHistoryAsync(string subAgentId)
+    {
+        if (!_sessions.TryGetValue(subAgentId, out var state))
+            return;
+        if (state.HistoryLoaded || state.IsLoadingHistory)
+            return;
+
+        state.IsLoadingHistory = true;
+        OnStateChanged?.Invoke();
+
+        try
+        {
+            // Sub-agent sessions use the session ID directly (not agent ID)
+            var url = $"{_apiBaseUrl}sessions/{subAgentId}/history?limit=50";
+            var response = await _http.GetFromJsonAsync<HistoryResponse>(url);
+
+            if (response?.Messages is { Count: > 0 })
+            {
+                state.Messages.Clear();
+                foreach (var msg in response.Messages)
+                {
+                    state.Messages.Add(new ChatMessage(
+                        MapRole(msg.Role),
+                        msg.Content,
+                        msg.Timestamp)
+                    {
+                        ToolName = msg.ToolName,
+                        ToolCallId = msg.ToolCallId,
+                        IsToolCall = msg.ToolName is not null
+                    });
+                }
+            }
+
+            state.HistoryLoaded = true;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Failed to load sub-agent history for {subAgentId}: {ex.Message}");
+            state.HistoryLoaded = true; // Don't retry on failure
+        }
+        finally
+        {
+            state.IsLoadingHistory = false;
+            OnStateChanged?.Invoke();
+        }
+    }
+
     /// <summary>Register a session ID → agent ID mapping.</summary>
-    public void RegisterSession(string agentId, string sessionId, string? channelType = null)
+    public void RegisterSession(string agentId, string sessionId, string? channelType = null, string? sessionType = null)
     {
         _sessionToAgent[sessionId] = agentId;
         if (_sessions.TryGetValue(agentId, out var state))
@@ -284,6 +365,8 @@ public sealed class AgentSessionManager : IDisposable
             state.SessionId = sessionId;
             if (channelType is not null)
                 state.ChannelType = channelType;
+            if (sessionType is not null)
+                state.SessionType = sessionType;
         }
     }
 
@@ -521,6 +604,9 @@ public sealed class AgentSessionManager : IDisposable
             Model = payload.Model,
             Archetype = payload.Archetype
         };
+
+        // Register the sub-agent's session in the session-to-agent mapping
+        _sessionToAgent[payload.SubAgentId] = payload.SubAgentId;
 
         state.Messages.Add(new ChatMessage("System",
             $"🔄 Sub-agent spawned: {payload.Name ?? payload.SubAgentId} — {payload.Task}",

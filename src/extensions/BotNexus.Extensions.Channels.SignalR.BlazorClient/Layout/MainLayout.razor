@@ -72,9 +72,12 @@
                             @foreach (var sub in activeState.SubAgents.Values
                                 .Where(s => s.Status is "Running" or "Completed"))
                             {
-                                <div class="agent-session-item">
+                                <div class="agent-session-item @(IsSubAgentActive(sub) ? "active" : "")"
+                                     @onclick="() => ViewSubAgent(sub)"
+                                     style="cursor: pointer;"
+                                     title="@sub.Task">
                                     <span>@SubAgentIcon(sub.Status)</span>
-                                    <span title="@sub.Task">@(sub.Name ?? sub.SubAgentId[..Math.Min(8, sub.SubAgentId.Length)])</span>
+                                    <span>@(sub.Name ?? sub.SubAgentId[..Math.Min(8, sub.SubAgentId.Length)])</span>
                                     @if (sub.Archetype is not null)
                                     {
                                         <span class="sub-agent-archetype">@sub.Archetype</span>
@@ -154,6 +157,16 @@
         "Completed" => "✅",
         _           => "🤖"
     };
+
+    private async Task ViewSubAgent(SubAgentInfo sub)
+    {
+        await Manager.ViewSubAgentAsync(sub);
+    }
+
+    private bool IsSubAgentActive(SubAgentInfo sub)
+    {
+        return Manager.ActiveAgentId == sub.SubAgentId;
+    }
 
     private void DismissAnnouncement(string id)
     {

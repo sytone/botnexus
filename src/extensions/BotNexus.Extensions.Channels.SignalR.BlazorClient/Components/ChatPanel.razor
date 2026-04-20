@@ -29,6 +29,16 @@
         <SessionControls State="@State" Manager="@Manager" />
     </header>
 
+    @* ── Read-only banner for sub-agent sessions ──────────────────── *@
+    @if (State.IsReadOnly)
+    {
+        <div class="read-only-banner">
+            <span class="read-only-badge">🔍 Sub-agent session</span>
+            <span class="read-only-status">@GetSubAgentStatus()</span>
+            <span class="read-only-label">Read-only — you can observe but not interact</span>
+        </div>
+    }
+
     @* ── Processing status bar ────────────────────────────────────── *@
     @if (State.IsStreaming && State.ProcessingStage is not null)
     {
@@ -158,47 +168,50 @@
     }
 
     <div class="chat-input-area">
-        <textarea class="chat-input"
-                  @ref="_inputElement"
-                  @bind="_inputText"
-                  @bind:event="oninput"
-                  @onkeydown="HandleKeyDown"
-                  placeholder="@InputPlaceholder"
-                  disabled="@(!State.IsConnected)" />
-        @if (_isRecording)
+        @if (!State.IsReadOnly)
         {
-            <button class="recording-btn" @onclick="StopRecording" title="Stop recording">
-                🔴 Stop
-            </button>
-        }
-        else
-        {
-            <button class="mic-btn" @onclick="StartRecording" title="Record audio message"
-                    disabled="@(!State.IsConnected)">
-                🎤
-            </button>
-        }
-        @if (State.IsStreaming)
-        {
-            <button class="steer-btn"
-                    @onclick="SteerAgent"
-                    disabled="@(string.IsNullOrWhiteSpace(_inputText))"
-                    title="Redirect the agent's response (Shift+Enter for newline)">
-                🔀 Steer
-            </button>
-            <button class="abort-btn"
-                    @onclick="AbortAgent"
-                    title="Stop the agent (Escape)">
-                ⏹ Stop
-            </button>
-        }
-        else
-        {
-            <button class="send-btn"
-                    @onclick="SendMessage"
-                    disabled="@(!State.IsConnected || string.IsNullOrWhiteSpace(_inputText))">
-                Send
-            </button>
+            <textarea class="chat-input"
+                      @ref="_inputElement"
+                      @bind="_inputText"
+                      @bind:event="oninput"
+                      @onkeydown="HandleKeyDown"
+                      placeholder="@InputPlaceholder"
+                      disabled="@(!State.IsConnected)" />
+            @if (_isRecording)
+            {
+                <button class="recording-btn" @onclick="StopRecording" title="Stop recording">
+                    🔴 Stop
+                </button>
+            }
+            else
+            {
+                <button class="mic-btn" @onclick="StartRecording" title="Record audio message"
+                        disabled="@(!State.IsConnected)">
+                    🎤
+                </button>
+            }
+            @if (State.IsStreaming)
+            {
+                <button class="steer-btn"
+                        @onclick="SteerAgent"
+                        disabled="@(string.IsNullOrWhiteSpace(_inputText))"
+                        title="Redirect the agent's response (Shift+Enter for newline)">
+                    🔀 Steer
+                </button>
+                <button class="abort-btn"
+                        @onclick="AbortAgent"
+                        title="Stop the agent (Escape)">
+                    ⏹ Stop
+                </button>
+            }
+            else
+            {
+                <button class="send-btn"
+                        @onclick="SendMessage"
+                        disabled="@(!State.IsConnected || string.IsNullOrWhiteSpace(_inputText))">
+                    Send
+                </button>
+            }
         }
     </div>
 </div>
@@ -488,5 +501,10 @@
     private async Task AbortAgent()
     {
         await Manager.AbortAsync(State.AgentId);
+    }
+
+    private string GetSubAgentStatus()
+    {
+        return State.IsStreaming ? "⏳ Running" : "✅ Completed";
     }
 }
