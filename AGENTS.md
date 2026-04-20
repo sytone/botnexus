@@ -59,6 +59,19 @@ dotnet build BotNexus.slnx --nologo --tl:off
 
 Build the full solution before running tests to avoid stale assembly issues (e.g., CLI integration tests depend on `BotNexus.Cli.dll` being built).
 
+## MSBuild Conventions
+
+Common properties and package versions are centralized — **do not duplicate them in individual csproj files.**
+
+- **`Directory.Build.props` (root):** Sets `TargetFramework` (`net10.0`), `ImplicitUsings`, `Nullable`, and version metadata. All projects inherit these automatically.
+- **`tests/Directory.Build.props`:** Chains to the root props and adds test-specific defaults (`IsPackable`, `RunSettingsFilePath`, Shouldly reference). All test projects under `tests/` inherit both.
+- **`Directory.Packages.props` (root):** Central Package Management — all `PackageVersion` entries live here. Individual csproj `PackageReference` elements must **not** include a `Version` attribute.
+
+**When adding a new project:**
+1. Do not add `TargetFramework`, `ImplicitUsings`, or `Nullable` — inherited from root.
+2. Add any new NuGet packages to `Directory.Packages.props` first, then reference without `Version` in the csproj.
+3. Only set properties in the csproj that differ from the defaults (e.g., `OutputType`, `RootNamespace`, `Description`).
+
 ## Code Practices
 
 ### Never Guess Time
