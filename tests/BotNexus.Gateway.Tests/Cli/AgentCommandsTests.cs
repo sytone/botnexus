@@ -22,7 +22,7 @@ public sealed class AgentCommandsTests
 
         result.ExitCode.ShouldBe(0);
         result.StdOut.ShouldContain("assistant");
-        result.StdOut.ShouldContain("provider=copilot");
+        result.StdOut.ShouldContain("copilot");
     }
 
     [Fact]

@@ -20,7 +20,7 @@ public sealed class InitCommandTests
 
         var config = await fixture.LoadConfigAsync();
         config.Agents.ShouldContainKey("assistant");
-        config.Agents!["assistant"].Provider.ShouldBe("copilot");
+        config.Agents!["assistant"].Provider.ShouldBe("github-copilot");
     }
 
     [Fact]

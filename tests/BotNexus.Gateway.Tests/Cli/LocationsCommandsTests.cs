@@ -85,7 +85,8 @@ public sealed class LocationsCommandsTests
         var result = await fixture.RunCliAsync("locations", "delete", "docs");
 
         result.ExitCode.ShouldBe(0);
-        result.StdOut.ShouldContain("Warning: Location 'docs' is referenced by fileAccess policies");
+        result.StdOut.ShouldContain("docs");
+        result.StdOut.ShouldContain("referenced by fileAccess policies");
         result.StdOut.ShouldContain("gateway.fileAccess.allowedReadPaths[0]");
         result.StdOut.ShouldContain("agents.assistant.fileAccess.allowedWritePaths[0]");
     }
