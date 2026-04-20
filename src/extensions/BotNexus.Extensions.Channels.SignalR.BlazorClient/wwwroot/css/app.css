@@ -59,38 +59,180 @@ html, body, #app {
     to { transform: rotate(360deg); }
 }
 
-/* ── App layout ─────────────────────────────────────────────────────── */
+/* ── App Shell (replaces .app-layout) ──────────────────────────────── */
 
-.app-layout {
-    height: 100vh;
+.app-shell {
     display: flex;
+    flex-direction: column;
+    height: 100vh;
     overflow: hidden;
 }
 
-.sidebar {
-    width: 100%;
-    height: 100%;
+/* ── Banner ─────────────────────────────────────────────────────────── */
+
+.app-banner {
+    flex-shrink: 0;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+}
+
+.banner-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 20px;
+    background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-surface) 100%);
+}
+
+.banner-logo {
+    font-size: 1.6rem;
+    line-height: 1;
+}
+
+.banner-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: 0.02em;
+}
+
+/* ── Announcements ──────────────────────────────────────────────────── */
+
+.announcement-bar {
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.announcement-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 20px;
+    background: rgba(255, 255, 255, 0.03);
+    border-left: 3px solid var(--accent);
+    font-size: 0.82rem;
+}
+
+.announcement-item.warning {
+    border-left-color: var(--warning);
+}
+
+.announcement-item.error {
+    border-left-color: var(--error);
+}
+
+.announcement-content {
+    flex: 1;
+    color: var(--text-secondary);
+}
+
+.announcement-dismiss {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+
+.announcement-dismiss:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+}
+
+/* ── App body (two-column) ──────────────────────────────────────────── */
+
+.app-body {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    min-height: 0;
+}
+
+/* ── Main sidebar ───────────────────────────────────────────────────── */
+
+.main-sidebar {
+    width: 240px;
+    min-width: 240px;
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
     overflow: hidden;
 }
 
-.sidebar-header {
-    padding: 1rem;
+.sidebar-connection {
+    padding: 8px 12px 4px;
     border-bottom: 1px solid var(--border);
-    background: var(--bg-secondary);
 }
 
-.sidebar-header h2 {
-    font-size: 1.2rem;
-    font-weight: 600;
-    color: var(--accent);
-    margin: 0;
-}
+/* ── Main canvas ────────────────────────────────────────────────────── */
 
-.sidebar-content {
+.main-canvas {
     flex: 1;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+/* ── Agent dropdown ─────────────────────────────────────────────────── */
+
+.agent-dropdown-container {
+    padding: 10px 12px 8px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.agent-dropdown-label {
+    display: block;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin-bottom: 5px;
+}
+
+.agent-dropdown-select {
+    width: 100%;
+    padding: 6px 10px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.agent-dropdown-select:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+/* ── Session list ───────────────────────────────────────────────────── */
+
+.agent-session-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 8px;
+}
+
+.agent-session-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    border-radius: var(--radius);
+    cursor: default;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.agent-session-item.active {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-left: 2px solid var(--accent);
 }
 
 /* ── Main grid (agent list + chat) ──────────────────────────────────── */
@@ -351,26 +493,20 @@ html, body, #app {
 /* ── Chat panel wrapper (show/hide for instant switching) ──────────── */
 
 .chat-panel-wrapper {
+    display: flex;
     flex-direction: column;
     height: 100%;
-    overflow: hidden;
-}
-
-.chat-panel-wrapper.active {
-    display: flex;
 }
 
 .chat-panel-wrapper.hidden {
     display: none;
 }
 
-/* ── Chat area ──────────────────────────────────────────────────────── */
-
-.chat-area {
+.chat-panel-wrapper.active {
     display: flex;
-    flex-direction: column;
-    overflow: hidden;
 }
+
+/* ── Empty state (Home.razor when no agent selected) ───────────────── */
 
 .empty-state {
     display: flex;
@@ -378,7 +514,7 @@ html, body, #app {
     justify-content: center;
     height: 100%;
     color: var(--text-muted);
-    font-size: 1.1rem;
+    font-size: 0.95rem;
 }
 
 /* ── Chat panel ─────────────────────────────────────────────────────── */

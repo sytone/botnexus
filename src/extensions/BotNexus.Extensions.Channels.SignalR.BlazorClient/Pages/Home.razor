@@ -1,187 +1,45 @@
 @page "/"
 @inject AgentSessionManager Manager
 @inject NavigationManager Nav
-@inject IJSRuntime JS
 @implements IDisposable
 
 <PageTitle>BotNexus</PageTitle>
 
-<div class="main-grid">
-    @* ── Agent sidebar — collapsible tree ─────────────────── *@
-    <nav class="agent-list">
-        <h3>Agents</h3>
-        <ConnectionStatus Hub="@Manager.Hub" />
+@if (Manager.ActiveAgentId is null)
+{
+    <div class="empty-state">
+        <p>Select an agent from the sidebar to start chatting.</p>
+    </div>
+}
 
-        @if (Manager.Sessions.Count == 0 && Manager.Hub.IsConnected)
-        {
-            <p class="text-muted">No agents available.</p>
-        }
-
-        @foreach (var (agentId, state) in Manager.Sessions)
-        {
-            var isExpanded = _expandedAgents.Contains(agentId);
-            var isActive = agentId == Manager.ActiveAgentId;
-
-            <div class="agent-node @(isActive ? "active" : "")">
-                <div class="agent-node-header" @onclick="() => ToggleAgent(agentId)">
-                    <span class="agent-expand">@(isExpanded ? "▾" : "▸")</span>
-                    <span class="agent-name">@state.DisplayName</span>
-                    <div class="agent-node-badges">
-                        @if (state.UnreadCount > 0)
-                        {
-                            <span class="unread-badge">@state.UnreadCount</span>
-                        }
-                        @if (state.IsStreaming)
-                        {
-                            <span class="agent-streaming-dot" title="Streaming…">●</span>
-                        }
-                    </div>
-                </div>
-
-                @if (isExpanded)
-                {
-                    <div class="agent-children">
-                        @* Primary channel *@
-                        <button class="channel-item @(isActive ? "selected" : "")"
-                                @onclick="() => SelectAgent(agentId)">
-                            <span class="channel-icon">💬</span>
-                            <span>@(state.ChannelType ?? "signalr")</span>
-                            @if (state.SessionId is not null)
-                            {
-                                <span class="session-id-mini clickable"
-                                      @onclick="() => CopySessionId(state.SessionId)"
-                                      @onclick:stopPropagation="true"
-                                      title="Click to copy session ID">
-                                    @state.SessionId[..Math.Min(8, state.SessionId.Length)]…
-                                </span>
-                            }
-                        </button>
-
-                        @* Sub-agents under this agent *@
-                        @foreach (var sub in state.SubAgents.Values)
-                        {
-                            <div class="channel-item sub-agent">
-                                <span class="channel-icon">@SubAgentStatusIcon(sub.Status)</span>
-                                <span class="sub-agent-name" title="@sub.Task">@(sub.Name ?? sub.SubAgentId)</span>
-                                @if (sub.Archetype is not null)
-                                {
-                                    <span class="sub-agent-archetype">@sub.Archetype</span>
-                                }
-                            </div>
-                        }
-                    </div>
-                }
-            </div>
-        }
-
-        <div class="sidebar-footer">
-            <button class="restart-btn" @onclick="RestartGateway" disabled="@_restarting">
-                @if (_restarting)
-                {
-                    <span>Restarting…</span>
-                }
-                else
-                {
-                    <span>🔄 Restart Gateway</span>
-                }
-            </button>
-        </div>
-    </nav>
-
-    @* ── Chat area — one panel per agent, show/hide for instant switching ── *@
-    <section class="chat-area">
-        @if (Manager.ActiveAgentId is null)
-        {
-            <div class="empty-state">
-                <p>Select an agent to start chatting.</p>
-            </div>
-        }
-
-        @foreach (var (agentId, state) in Manager.Sessions)
-        {
-            <div class="chat-panel-wrapper @(agentId == Manager.ActiveAgentId ? "active" : "hidden")">
-                <ChatPanel State="@state" Manager="@Manager" />
-            </div>
-        }
-    </section>
-</div>
+@foreach (var (agentId, state) in Manager.Sessions)
+{
+    <div class="chat-panel-wrapper @(agentId == Manager.ActiveAgentId ? "active" : "hidden")">
+        <ChatPanel State="@state" Manager="@Manager" />
+    </div>
+}
 
 @code {
     protected override async Task OnInitializedAsync()
     {
         Manager.OnStateChanged += HandleStateChanged;
 
-        try
+        if (!Manager.Hub.IsConnected)
         {
-            var baseUri = new Uri(Nav.BaseUri);
-            var hubUrl = new Uri(baseUri, "/hub/gateway").ToString();
-            await Manager.InitializeAsync(hubUrl);
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"Hub connection failed: {ex.Message}");
-        }
-    }
-
-    private void HandleStateChanged()
-    {
-        InvokeAsync(StateHasChanged);
-    }
-
-    private bool _restarting;
-    private readonly HashSet<string> _expandedAgents = new();
-
-    private async Task SelectAgent(string agentId)
-    {
-        // Auto-expand when selected
-        _expandedAgents.Add(agentId);
-        await Manager.SetActiveAgentAsync(agentId);
-        // Scroll the newly-visible panel to bottom after DOM updates
-        await Task.Yield();
-        await JS.InvokeVoidAsync("chatScroll.scrollActiveToBottom");
-    }
-
-    private void ToggleAgent(string agentId)
-    {
-        if (!_expandedAgents.Remove(agentId))
-            _expandedAgents.Add(agentId);
-    }
-
-    private static string SubAgentStatusIcon(string status) => status switch
-    {
-        "Running" => "🔄",
-        "Completed" => "✅",
-        "Failed" => "❌",
-        "Killed" => "⛔",
-        _ => "🤖"
-    };
-
-    private async Task CopySessionId(string sessionId)
-    {
-        try
-        {
-            await JS.InvokeAsync<bool>("BotNexus.copyToClipboard", sessionId);
-        }
-        catch
-        {
-            // Clipboard API may not be available
+            try
+            {
+                var baseUri = new Uri(Nav.BaseUri);
+                var hubUrl = new Uri(baseUri, "/hub/gateway").ToString();
+                await Manager.InitializeAsync(hubUrl);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Hub connection failed: {ex.Message}");
+            }
         }
     }
 
-    private async Task RestartGateway()
-    {
-        _restarting = true;
-        try
-        {
-            using var http = new HttpClient { BaseAddress = new Uri(Nav.BaseUri) };
-            await http.PostAsync("/api/gateway/shutdown", null);
-        }
-        catch
-        {
-            // Expected — connection drops when gateway shuts down
-        }
-        _restarting = false;
-    }
+    private void HandleStateChanged() => InvokeAsync(StateHasChanged);
 
     public void Dispose()
     {

@@ -1,25 +1,161 @@
 @inherits LayoutComponentBase
 @inject NavigationManager Nav
+@inject AgentSessionManager Manager
+@inject IJSRuntime JS
+@implements IDisposable
 
-<div class="app-layout">
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h2>🤖 BotNexus</h2>
+<div class="app-shell">
+    @* Full-width banner *@
+    <header class="app-banner">
+        <div class="banner-header">
+            <span class="banner-logo">🤖</span>
+            <span class="banner-title">BotNexus</span>
         </div>
-        <nav class="sidebar-nav">
-            <a href="" class="sidebar-nav-item @NavClass("")">💬 Chat</a>
-            <a href="configuration" class="sidebar-nav-item @NavClass("configuration")">⚙️ Configuration</a>
-        </nav>
-        <div class="sidebar-content">
+    </header>
+
+    @* Announcements bar — hidden when empty *@
+    @if (_announcements.Count > 0)
+    {
+        <div class="announcement-bar has-announcements">
+            @foreach (var ann in _announcements)
+            {
+                <div class="announcement-item @ann.Type">
+                    <span class="announcement-content">@ann.Text</span>
+                    <button class="announcement-dismiss" @onclick="() => DismissAnnouncement(ann.Id)">✕</button>
+                </div>
+            }
+        </div>
+    }
+
+    @* Two-column body *@
+    <div class="app-body">
+        <aside class="main-sidebar">
+            @* Connection status *@
+            <div class="sidebar-connection">
+                <ConnectionStatus Hub="@Manager.Hub" />
+            </div>
+
+            @* Nav links *@
+            <nav class="sidebar-nav">
+                <a href="" class="sidebar-nav-item @NavClass("")">💬 Chat</a>
+                <a href="configuration" class="sidebar-nav-item @NavClass("configuration")">⚙️ Configuration</a>
+            </nav>
+
+            @* Agent dropdown + session list *@
+            @if (Manager.Sessions.Count > 0)
+            {
+                <div class="agent-dropdown-container">
+                    <label class="agent-dropdown-label">Agent</label>
+                    <select class="agent-dropdown-select"
+                            value="@Manager.ActiveAgentId"
+                            @onchange="OnAgentSelected">
+                        <option value="">— select agent —</option>
+                        @foreach (var (agentId, state) in Manager.Sessions)
+                        {
+                            <option value="@agentId">
+                                @state.DisplayName
+                                @if (state.IsStreaming) { <text> ●</text> }
+                                @if (state.UnreadCount > 0) { <text> (@state.UnreadCount)</text> }
+                            </option>
+                        }
+                    </select>
+                </div>
+
+                @if (Manager.ActiveAgentId is not null &&
+                     Manager.Sessions.TryGetValue(Manager.ActiveAgentId, out var activeState))
+                {
+                    <div class="agent-session-list">
+                        @* Primary session *@
+                        @if (activeState.SessionId is not null)
+                        {
+                            <div class="agent-session-item active">
+                                <span>💬</span>
+                                <span>@(activeState.ChannelType ?? "signalr")</span>
+                            </div>
+                        }
+                        @* Sub-agents (exclude Killed/Failed as "expired") *@
+                        @foreach (var sub in activeState.SubAgents.Values
+                            .Where(s => s.Status is "Running" or "Completed"))
+                        {
+                            <div class="agent-session-item">
+                                <span>@SubAgentIcon(sub.Status)</span>
+                                <span title="@sub.Task">@(sub.Name ?? sub.SubAgentId[..Math.Min(8, sub.SubAgentId.Length)])</span>
+                                @if (sub.Archetype is not null)
+                                {
+                                    <span class="sub-agent-archetype">@sub.Archetype</span>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            }
+
+            @* Restart button at bottom *@
+            <div class="sidebar-footer">
+                <button class="restart-btn" @onclick="RestartGateway" disabled="@_restarting">
+                    @(_restarting ? "Restarting…" : "🔄 Restart Gateway")
+                </button>
+            </div>
+        </aside>
+
+        @* Main canvas — @Body renders here *@
+        <main class="main-canvas">
             @Body
-        </div>
-    </aside>
+        </main>
+    </div>
 </div>
 
 @code {
+    private record Announcement(string Id, string Text, string Type = "info");
+    private List<Announcement> _announcements = [];
+    private bool _restarting;
+
+    protected override void OnInitialized()
+    {
+        Manager.OnStateChanged += HandleStateChanged;
+    }
+
+    private void HandleStateChanged() => InvokeAsync(StateHasChanged);
+
     private string NavClass(string page)
     {
         var uri = Nav.ToBaseRelativePath(Nav.Uri).TrimEnd('/');
         return string.Equals(uri, page, StringComparison.OrdinalIgnoreCase) ? "active" : "";
+    }
+
+    private async Task OnAgentSelected(ChangeEventArgs e)
+    {
+        var agentId = e.Value?.ToString();
+        if (!string.IsNullOrEmpty(agentId))
+            await Manager.SetActiveAgentAsync(agentId);
+    }
+
+    private static string SubAgentIcon(string status) => status switch
+    {
+        "Running"   => "🔄",
+        "Completed" => "✅",
+        _           => "🤖"
+    };
+
+    private void DismissAnnouncement(string id)
+    {
+        _announcements.RemoveAll(a => a.Id == id);
+    }
+
+    private async Task RestartGateway()
+    {
+        _restarting = true;
+        try
+        {
+            using var http = new HttpClient { BaseAddress = new Uri(Nav.BaseUri) };
+            await http.PostAsync("/api/gateway/shutdown", null);
+        }
+        catch { /* Expected — gateway drops */ }
+        _restarting = false;
+    }
+
+    public void Dispose()
+    {
+        Manager.OnStateChanged -= HandleStateChanged;
     }
 }
