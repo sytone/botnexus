@@ -1,6 +1,6 @@
 # 🗺️ Planning Index
 
-> Maintained by Nova ✨ | Last updated: 2025-07-17
+> Maintained by Nova ✨ | Last updated: 2026-04-20
 >
 > Generated from spec frontmatter via `build-index.ps1` — don't hand-edit, rebuild instead.
 
@@ -14,8 +14,11 @@
 |------|-----|--------|-------|---------|
 | [bug-sqlite-session-lock](bug-sqlite-session-lock/design-spec.md) | 🔴 critical | draft | Apr '26 | SQLite global SemaphoreSlim(1,1) blocks all agents during any session I/O |
 | [bug-edit-tool-diffplex-missing](bug-edit-tool-diffplex-missing/design-spec.md) | 🔴 high | draft | Apr '26 | Edit tool fails — DiffPlex assembly not found at runtime |
+| [bug-blazor-autoscroll](bug-blazor-autoscroll/design-spec.md) | 🔴 high | draft | Jul '25 | Blazor UI auto-scroll not working on new messages (regression) |
+| [bug-subagent-completion-wakeup](bug-subagent-completion-wakeup/design-spec.md) | 🔴 high | draft | Jul '26 | Sub-agent completion signals not waking parent agent session |
 | [bug-session-switching-ui](bug-session-switching-ui/design-spec.md) | 🔴 high | partial | Apr '26 | Session switching broken during active agent work (send-side still open) |
 | [bug-steering-message-visibility](bug-steering-message-visibility/design-spec.md) | 🟡 medium | draft | Apr '26 | Steering messages not visible in conversation flow |
+| [bug-blazor-session-history-loss](bug-blazor-session-history-loss/design-spec.md) | 🟡 medium | draft | Jul '26 | Blazor UI loses session history for agent/channel combo |
 | [message-queue-injection-timing](message-queue-injection-timing/design-spec.md) | 🟡 medium | planning | Jul '25 | User messages queued during multi-tool turns not visible until turn completes |
 
 ### ✨ Features
@@ -24,6 +27,7 @@
 |------|-----|--------|-------|---------|
 | [feature-ask-user-tool](feature-ask-user-tool/design-spec.md) | 🔴 high | design | Apr '26 | Interactive ask_user tool — free-form, single/multi choice, hybrid input |
 | [feature-prompt-templates](feature-prompt-templates/design-spec.md) | 🟡 medium | planning | Jul '26 | Saved parameterized prompt templates for agents, cron, and interactive use |
+| [feature-blazor-subagent-session-view](feature-blazor-subagent-session-view/design-spec.md) | 🟡 medium | draft | Jul '26 | Read-only sub-agent session viewing in Blazor UI |
 | [feature-spec-driven-squad-automation](feature-spec-driven-squad-automation/design-spec.md) | 🟡 medium | draft | Jul '25 | Automate Squad execution based on spec status transitions |
 | [feature-api-documentation](feature-api-documentation/design-spec.md) | 🟡 medium | draft | Jul '25 | REST, SignalR, and .NET API reference — OpenAPI, DocFX, interactive docs |
 | [feature-architecture-documentation](feature-architecture-documentation/design-spec.md) | 🟡 medium | draft | Jul '25 | Architecture documentation — arc42, C4, ADRs |
@@ -36,6 +40,9 @@
 | [improvement-dynamic-config-reload](improvement-dynamic-config-reload/design-spec.md) | 🔴 high | draft | Apr '26 | Hot-reload config.json without gateway restart |
 | [improvement-memory-lifecycle](improvement-memory-lifecycle/design-spec.md) | 🔴 high | draft | Apr '26 | Memory persistence, pre-compaction flush, dreaming consolidation |
 | [improvement-skills-path-resolution](improvement-skills-path-resolution/design-spec.md) | 🟡 medium | draft | Apr '26 | Expose skill base path on load so agents can resolve relative file refs |
+| [improvement-gateway-detached-process](improvement-gateway-detached-process/design-spec.md) | 🟡 medium | delivered | Jul '26 | Launch gateway as detached process from CLI with PID tracking |
+| [improvement-blazor-configuration-ui](improvement-blazor-configuration-ui/design-spec.md) | 🟡 medium | proposed | Jul '25 | Config canvas views, root config node, Locations section, per-agent locations |
+| [improvement-blazor-dynamic-agent-list](improvement-blazor-dynamic-agent-list/design-spec.md) | 🟢 low | proposed | Jul '25 | Auto-detect new agent folders without page refresh |
 
 ### 📋 Process
 

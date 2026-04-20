@@ -704,6 +704,83 @@ If `session` is omitted, a new session ID is auto-generated.
 { "type": "pong" }
 ```
 
+## Gateway Lifecycle Management
+
+`botnexus gateway start` launches the gateway as a detached process in its own console window, returning control to your terminal immediately. This allows you to run other CLI commands without blocking on the gateway logs.
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `botnexus gateway start` | Start the gateway (detached, new window) |
+| `botnexus gateway start --attached` | Start in foreground (for debugging) |
+| `botnexus gateway stop` | Stop the gateway and clean up |
+| `botnexus gateway status` | Check if the gateway is running |
+| `botnexus gateway restart` | Stop then start |
+
+### Examples
+
+**Start the gateway on the default port (5005):**
+```bash
+botnexus gateway start
+```
+
+Output:
+```
+✓ Gateway started (PID 12345)
+  URL:  http://localhost:5005
+  Logs: C:\Users\{username}\.botnexus\logs\gateway.log
+  Stop: botnexus gateway stop
+```
+
+**Start on a custom port:**
+```bash
+botnexus gateway start --port 8080
+```
+
+**Start in foreground mode (useful for debugging):**
+```bash
+botnexus gateway start --attached
+```
+
+**Check gateway status:**
+```bash
+botnexus gateway status
+```
+
+Output example:
+```
+✓ Gateway is running (PID 12345, uptime 2m 14s)
+```
+
+**Stop the gateway:**
+```bash
+botnexus gateway stop
+```
+
+**Restart the gateway:**
+```bash
+botnexus gateway restart
+```
+
+### Runtime files
+
+| File | Purpose |
+|------|---------|
+| `~/.botnexus/gateway.pid` | PID of the running gateway process |
+| `~/.botnexus/logs/` | Gateway log files (Serilog output) |
+
+### Platform support
+
+v1 supports **Windows only**. On Linux/macOS, `gateway start` prints a clear error message. Cross-platform support (using `nohup`, systemd, or launchd) is planned for a future release.
+
+### Notes
+
+- The gateway runs in its own console window — closing the window stops the gateway, but the process manager detects this and cleans up the PID file
+- Stale PID files (from gateway crashes) are automatically detected and cleaned up on the next `start` or `status` command
+- The `--attached` flag is useful for development and debugging; it preserves the original foreground behavior where the gateway blocks the terminal
+- All gateway output (logs, errors) continues to be written to `~/.botnexus/logs/` regardless of whether the process runs detached or attached
+
 ## Development Quick Start
 
 ### Prerequisites
