@@ -27,6 +27,7 @@ Read it, then execute the full delivery cycle below.
 5. **Full team engagement.** Every wave should involve the right specialists. Anticipate downstream work (Hermes writes tests while Bender builds, Kif drafts docs while Farnsworth codes).
 6. **Verify between waves.** Run `dotnet build` and relevant tests between waves to catch integration issues early.
 7. **Scribe logs every batch.** After each wave completes, spawn Scribe to log orchestration and merge decisions.
+8. **Create test that reproduces the issue if it's a bug.** If the spec is a bug, the first wave must be to create a test that reproduces the failure. This ensures we have a clear verification path for the fix.
 
 ## Delivery Cycle
 

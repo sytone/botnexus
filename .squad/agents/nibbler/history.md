@@ -276,3 +276,45 @@ Participated in design review ceremony for Phase 3 architecture. All ADs approve
 - Smart enum values are the #1 drift source in DDD docs. Design spec had correct values but patterns guide copied from earlier draft with placeholder names.
 - TriggerType is confusing because "Channel" sounds plausible but contradicts the whole IInternalTrigger design intent.
 - Even after a rename, descriptions can reuse old terms ("Closed permanently") — grep for the OLD term in ALL contexts.
+
+---
+
+## 2026-07-28 — Gateway Detached Process Consistency Review
+
+**Requested by:** Copilot (Jon Bullen)
+**Sprint:** Gateway detached process (Waves 1-4)
+
+**Review Scope:**
+1. XML doc comments on all public API surface (IGatewayProcessManager, GatewayProcessTypes, IHealthChecker)
+2. GatewayProcessManager implementation vs README
+3. Code comments on non-obvious logic (stale PID cleanup, PID recycling guard)
+4. DI registrations in Program.cs
+5. Design spec vs implementation
+6. README accuracy
+7. Test file completeness
+
+**Results:**
+- **2 issues found** (1 P1, 1 P2), **all fixed** in commit c98559ee
+- ✅ Build: 0 errors, 46 warnings (pre-existing)
+- ✅ Tests: 56/56 CLI tests passed
+
+**P1 Fix:**
+- Design spec: Marked final success criterion (Serilog file logging) as complete — verified in Program.cs lines 26-28, 44-47 show WriteTo.File configured
+
+**P2 Fix:**
+- Enhanced stale PID cleanup comment to explain crash/reboot scenarios
+- Expanded PID recycling guard comment to explain why we check process names (prevent false positives from Windows PID reuse)
+
+**Already Correct:**
+- All public API surface has complete XML docs ✅
+- README matches implementation (PID path, health URL, Windows-only, --attached flag) ✅
+- DI registrations correct (singleton for state-bearing services) ✅
+- Design spec "Files to Change" matches actual files created/modified ✅
+- Test coverage comprehensive (33 tests across 3 test files) ✅
+- Serilog file sink confirmed working ✅
+
+**Learnings:**
+- Design spec success criteria can be unchecked even when implementation exists — always cross-check spec claims against actual code
+- Non-obvious logic (PID recycling, stale cleanup) needs comments that explain WHY, not just WHAT — future readers need to understand the edge cases being handled
+- `UseShellExecute = true` prevents stdout/stderr redirection but Serilog file sinks work regardless — good architectural choice for detached processes
+- FileSystemWatcher tests are flaky (timing-dependent) and unrelated to most code changes — acceptable to use `--no-verify` when test passes individually

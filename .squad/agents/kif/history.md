@@ -342,3 +342,51 @@ Created `docs/development/ddd-patterns.md` — comprehensive developer reference
 ✅ HTTP header and error response table format
 ✅ Reflects design-spec.md architecture
 
+---
+
+## Learnings
+
+### BotNexus Documentation Patterns (Phase 12 Wave 4)
+
+**Gateway Detached Process Feature Documentation:**
+
+The project follows a consistent pattern for documenting CLI features and process management:
+
+1. **Section Organization:**
+   - Problem statement first (e.g., "gateway was blocking the console")
+   - Command reference table with all operations and descriptions
+   - Real-world examples users can copy-paste immediately
+   - Detailed explanations of runtime files, platform limits, and behavior
+   - Notes section for edge cases or future roadmap items
+
+2. **CLI Command Documentation:**
+   - Always start with actual implementation (e.g., GatewayCommand.cs)
+   - Document every flag/option present in the code (--attached, --port, --path, --dev)
+   - Include both default and custom behavior examples
+   - Show expected output so users verify success
+   - Document error conditions with actual error messages
+
+3. **Table Conventions:**
+   - Commands: `| Command | Description |` with exact syntax
+   - Runtime files: `| File | Purpose |` pattern for artifacts
+   - Options: Icon-prefixed for quick visual scanning
+   - Consistent cell alignment and spacing
+
+4. **Platform Transparency:**
+   - Explicitly state v1 limitations (Windows-only for process spawning)
+   - Document fallback behavior on unsupported platforms
+   - Explain technical tradeoffs (hard kill vs graceful shutdown)
+   - Reference implementation to verify claim accuracy
+
+5. **Design Spec Conventions:**
+   - Status: `draft` → `in-progress` → `delivered` → `done`
+   - Success criteria as checkboxes `[x]` for verification tracking
+   - Design spec location: `docs/planning/{spec-name}/design-spec.md`
+   - Planning INDEX.md auto-generated from YAML frontmatter
+   - Work completion documented in `.squad/decisions/inbox/kif-{slug}.md`
+
+6. **File Organization:**
+   - Gateway docs in `src/gateway/README.md` (not cli subdirectory)
+   - Planning docs in `docs/planning/{improvement-id}/`
+   - History entries use RFC3339 timestamps when logging precise session work
+
