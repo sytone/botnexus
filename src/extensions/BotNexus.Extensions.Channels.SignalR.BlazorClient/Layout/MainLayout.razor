@@ -86,6 +86,18 @@
                 }
 
                 <a href="configuration" class="sidebar-nav-item @NavClass("configuration")">⚙️ Configuration</a>
+
+                @* Config section sub-nav — only shown when on the configuration page *@
+                @if (IsOnPage("configuration"))
+                {
+                    <div class="sidebar-subnav">
+                        <a href="configuration#cfg-gateway"  class="sidebar-subnav-item">🌐 Gateway</a>
+                        <a href="configuration#cfg-providers" class="sidebar-subnav-item">🔌 Providers</a>
+                        <a href="configuration#cfg-channels"  class="sidebar-subnav-item">📡 Channels</a>
+                        <a href="configuration#cfg-cron"      class="sidebar-subnav-item">⏰ Cron</a>
+                        <a href="configuration#cfg-apikey"    class="sidebar-subnav-item">🔑 Global API Key</a>
+                    </div>
+                }
             </nav>
 
             @* Restart button at bottom *@
@@ -119,6 +131,12 @@
     {
         var uri = Nav.ToBaseRelativePath(Nav.Uri).TrimEnd('/');
         return string.Equals(uri, page, StringComparison.OrdinalIgnoreCase) ? "active" : "";
+    }
+
+    private bool IsOnPage(string page)
+    {
+        var uri = Nav.ToBaseRelativePath(Nav.Uri).TrimEnd('/');
+        return string.Equals(uri, page, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task OnAgentSelected(ChangeEventArgs e)

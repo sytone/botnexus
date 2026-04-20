@@ -42,7 +42,7 @@
             </div>
 
             @* ── Gateway ─────────────────────────────────────────── *@
-            <ConfigSection Title="🌐 Gateway" Description="Core gateway settings — listen URL, default agent, directories, logging, and server identity." StartExpanded="true">
+            <ConfigSection Id="cfg-gateway" Title="🌐 Gateway" Description="Core gateway settings — listen URL, default agent, directories, logging, and server identity." StartExpanded="true">
                 @{ var gw = GetObject("gateway"); }
                 <TextField Label="Listen URL" Value="@GetStr(gw, "listenUrl")" ValueChanged="@(v => SetNested("gateway", "listenUrl", v))" Placeholder="http://localhost:5005" />
                 <TextField Label="Default Agent ID" Value="@GetStr(gw, "defaultAgentId")" ValueChanged="@(v => SetNested("gateway", "defaultAgentId", v))" />
@@ -125,7 +125,7 @@
             </ConfigSection>
 
             @* ── Providers ───────────────────────────────────────── *@
-            <ConfigSection Title="🔌 Providers" Description="LLM provider connections — API keys, endpoints, and available models.">
+            <ConfigSection Id="cfg-providers" Title="🔌 Providers" Description="LLM provider connections — API keys, endpoints, and available models.">
                 <DictionarySection Title="" SectionPath="providers" Entries="@GetDict("providers")"
                                    OnAddEntry="@((string key) => AddTopDictEntry("providers", key))"
                                    OnDeleteEntry="@((string key) => DeleteTopDictEntry("providers", key))">
@@ -140,7 +140,7 @@
             </ConfigSection>
 
             @* ── Channels ────────────────────────────────────────── *@
-            <ConfigSection Title="📡 Channels" Description="Communication channels — websocket, SignalR, Telegram, Discord, etc.">
+            <ConfigSection Id="cfg-channels" Title="📡 Channels" Description="Communication channels — websocket, SignalR, Telegram, Discord, etc.">
                 <DictionarySection Title="" SectionPath="channels" Entries="@GetDict("channels")"
                                    OnAddEntry="@((string key) => AddTopDictEntry("channels", key))"
                                    OnDeleteEntry="@((string key) => DeleteTopDictEntry("channels", key))">
@@ -163,7 +163,7 @@
             </ConfigSection>
 
             @* ── Cron ────────────────────────────────────────────── *@
-            <ConfigSection Title="⏰ Cron" Description="Scheduled job configuration — enable cron, set tick interval, and manage jobs.">
+            <ConfigSection Id="cfg-cron" Title="⏰ Cron" Description="Scheduled job configuration — enable cron, set tick interval, and manage jobs.">
                 @{ var cron = GetObject("cron"); }
                 <BoolField Label="Enabled" Value="@GetBool(cron, "enabled")" ValueChanged="@(v => SetNestedBool("cron", "enabled", v))" />
                 <NumberField Label="Tick Interval (seconds)" Value="@GetNullableInt(cron, "tickIntervalSeconds")" ValueChanged="@(v => SetNestedNum("cron", "tickIntervalSeconds", v))" />
@@ -187,7 +187,7 @@
             </ConfigSection>
 
             @* ── Global API Key ──────────────────────────────────── *@
-            <ConfigSection Title="🔑 Global API Key" Description="A global API key used for platform authentication.">
+            <ConfigSection Id="cfg-apikey" Title="🔑 Global API Key" Description="A global API key used for platform authentication.">
                 <TextField Label="API Key" Value="@GetStr(_config, "apiKey")" ValueChanged="@(v => { SetValue("apiKey", v); MarkDirty(); })" InputType="password" Placeholder="(redacted — leave blank to keep)" />
             </ConfigSection>
         </div>

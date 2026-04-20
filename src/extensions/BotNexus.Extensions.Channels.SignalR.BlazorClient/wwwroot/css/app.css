@@ -1607,13 +1607,37 @@ details[open] > .thinking-summary::before {
     font-weight: 600;
 }
 
+/* ── Sidebar sub-navigation (config section links) ──────────────────── */
+
+.sidebar-subnav {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 0 0.75rem 0.25rem 1.25rem;
+}
+
+.sidebar-subnav-item {
+    display: block;
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--radius);
+    font-size: 0.76rem;
+    color: var(--text-muted);
+    text-decoration: none;
+    transition: background 0.15s, color 0.15s;
+    border-left: 2px solid transparent;
+}
+
+.sidebar-subnav-item:hover {
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    border-left-color: var(--accent);
+}
+
 /* ── Platform Configuration Page ────────────────────────────────────── */
 
 .platform-config-page {
-    height: 100%;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
 }
 
 .platform-config-toolbar {

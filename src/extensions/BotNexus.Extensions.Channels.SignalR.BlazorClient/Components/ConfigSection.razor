@@ -1,6 +1,6 @@
 @* Collapsible section card for config groups *@
 
-<div class="pcfg-section">
+<div class="pcfg-section" id="@Id">
     <div class="pcfg-section-header" @onclick="Toggle">
         <span class="pcfg-collapse-icon">@(_collapsed ? "▸" : "▾")</span>
         <h3>@Title</h3>
@@ -20,6 +20,7 @@
 @code {
     [Parameter, EditorRequired] public string Title { get; set; } = "";
     [Parameter] public string? Description { get; set; }
+    [Parameter] public string? Id { get; set; }
     [Parameter] public RenderFragment? ChildContent { get; set; }
     [Parameter] public bool StartExpanded { get; set; }
 
