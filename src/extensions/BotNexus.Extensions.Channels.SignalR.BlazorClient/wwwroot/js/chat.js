@@ -4,9 +4,9 @@ window.chatScroll = {
      * Scrolls to bottom only if the user is already near the bottom (within threshold).
      * This preserves scroll position when the user has scrolled up to read history.
      */
-    scrollToBottom: function (element) {
+    scrollToBottom: function (element, isStreaming) {
         if (!element) return;
-        var threshold = 100;
+        var threshold = isStreaming ? 200 : 100;
         var isNearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < threshold;
         if (isNearBottom) {
             element.scrollTop = element.scrollHeight;
@@ -19,6 +19,10 @@ window.chatScroll = {
         if (!element) return;
         requestAnimationFrame(function () {
             element.scrollTop = element.scrollHeight;
+            // Backstop: re-scroll after a short delay to catch any late DOM mutations
+            setTimeout(function () {
+                element.scrollTop = element.scrollHeight;
+            }, 50);
         });
     },
 

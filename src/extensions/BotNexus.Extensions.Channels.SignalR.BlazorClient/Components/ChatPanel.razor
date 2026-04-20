@@ -375,6 +375,28 @@
                 _enterPreventionBound = true;
             }
 
+            // 1. Render markdown for any un-rendered assistant messages FIRST.
+            //    If new markdown was rendered the DOM content will change, so we
+            //    trigger a re-render and defer scrolling until the DOM is stable.
+            var needsRender = false;
+            foreach (var msg in State.Messages)
+            {
+                if (msg.Role == "Assistant" && !_markdownCache.ContainsKey(msg.Id))
+                {
+                    var html = await JS.InvokeAsync<string>("BotNexus.renderMarkdown", msg.Content);
+                    _markdownCache[msg.Id] = html;
+                    needsRender = true;
+                }
+            }
+
+            if (needsRender)
+            {
+                StateHasChanged();
+                return; // Let re-render settle before scrolling
+            }
+
+            // 2. DOM is stable — scroll now.
+
             // Detect when this panel just became visible (agent selected)
             var isActive = State.AgentId == Manager.ActiveAgentId;
             if (isActive && !_wasActive)
@@ -390,24 +412,7 @@
             }
             else
             {
-                await JS.InvokeVoidAsync("chatScroll.scrollToBottom", _messagesContainer);
-            }
-
-            // Render markdown for any un-rendered assistant messages
-            var needsRender = false;
-            foreach (var msg in State.Messages)
-            {
-                if (msg.Role == "Assistant" && !_markdownCache.ContainsKey(msg.Id))
-                {
-                    var html = await JS.InvokeAsync<string>("BotNexus.renderMarkdown", msg.Content);
-                    _markdownCache[msg.Id] = html;
-                    needsRender = true;
-                }
-            }
-
-            if (needsRender)
-            {
-                StateHasChanged();
+                await JS.InvokeVoidAsync("chatScroll.scrollToBottom", _messagesContainer, State.IsStreaming);
             }
         }
         catch (JSDisconnectedException)
