@@ -3,7 +3,7 @@ id: feature-blazor-subagent-session-view
 title: "Feature: Read-Only Sub-Agent Session Viewing in Blazor UI"
 type: feature
 priority: medium
-status: in-progress
+status: done
 created: 2026-07-27
 author: nova
 depends_on: [feature-subagent-ui-visibility]
@@ -151,6 +151,19 @@ Render as indented child items under the parent session, with status icon and co
 6. Spawn multiple sub-agents → verify all are clickable and viewable independently
 7. Refresh page → verify sub-agent session view still works after reload
 8. Verify read-only banner displays correct status (running/completed/failed/killed)
+
+## Documentation
+
+User guide for observing sub-agent sessions published at: `docs/webui/sub-agent-sessions.md`
+
+Covers:
+- How to spawn a sub-agent and locate it in the sidebar
+- How to click into read-only session view
+- Real-time streaming behavior for active sub-agents
+- Session states and status indicators
+- Tool call rendering and interaction
+- Navigation between parent and sub-agent sessions
+- Limitations and troubleshooting
 
 ## Related
 
