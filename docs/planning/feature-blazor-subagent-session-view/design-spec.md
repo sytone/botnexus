@@ -3,7 +3,7 @@ id: feature-blazor-subagent-session-view
 title: "Feature: Read-Only Sub-Agent Session Viewing in Blazor UI"
 type: feature
 priority: medium
-status: delivered
+status: done
 created: 2026-07-27
 author: nova
 depends_on: [feature-subagent-ui-visibility]
