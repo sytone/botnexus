@@ -481,3 +481,42 @@ Comprehensive DDD refactoring spec proposing 9 phases to align codebase with dom
 - Orchestration logs for all agents
 - Session log completed
 
+
+## 2026-07-28 — Gateway Detached Process Design Review (Lead)
+
+**Status:** ✅ Complete  
+**Session:** Design Review ceremony for `improvement-gateway-detached-process`
+
+**Your Role:** Lead/Architect. Design review facilitation, architectural decisions, wave breakdown.
+
+**Codebase Findings:**
+- CLI lives in `src/gateway/BotNexus.Cli/` using System.CommandLine + Spectre.Console
+- Current `ServeCommand.cs` blocks via `Process.WaitForExitAsync()` — root cause of UX issue
+- Health endpoint already exists: `GET /health` → `{"status":"ok"}` (no auth required)
+- `BotNexusHome` class manages `~/.botnexus/` structure including `logs/` directory
+- Serilog file sinks already configured in `Program.cs`
+
+**Architectural Decisions:**
+1. `IGatewayProcessManager` interface lives in CLI project (process management is CLI concern)
+2. PID file is plain text at `~/.botnexus/gateway.pid` (single integer, no JSON)
+3. Detached mode is default; `--attached` flag for foreground debugging
+4. Windows-only for v1 (`OperatingSystem.IsWindows()` guard)
+5. Hard kill for stop (console apps don't respond to `CloseMainWindow()`)
+6. 10-second health check timeout with exponential backoff
+7. Automatic stale PID cleanup on any PID file read
+
+**Wave Breakdown:**
+- Wave 1 (Bender): Core process manager + health checker — 2h
+- Wave 2 (Farnsworth): CLI command refactor + DI registration — 1.5h
+- Wave 3 (Hermes): Unit + integration tests (18-24 tests) — 2h (parallel with Wave 2)
+- Wave 4 (Kif): Documentation + spec archive — 1h
+
+**Key Risks Identified:**
+- Cross-platform spawning differs on Linux/macOS → Windows-only v1
+- Console apps on Windows don't respond to graceful shutdown signals → hard kill acceptable
+- PID recycling mitigated by process name check
+
+**Deliverables:**
+- Complete design review document with interface contracts
+- Decision file written to `.squad/decisions/inbox/leela-gateway-detached-process.md`
+- 4-wave implementation plan with agent assignments and parallelization notes
