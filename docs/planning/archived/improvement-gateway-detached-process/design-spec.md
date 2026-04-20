@@ -3,7 +3,7 @@ id: improvement-gateway-detached-process
 title: "Launch Gateway as Detached Process from CLI"
 type: improvement
 priority: medium
-status: in-progress
+status: done
 created: 2026-07-28
 updated: 2026-07-28
 author: nova
