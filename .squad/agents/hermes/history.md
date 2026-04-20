@@ -267,3 +267,26 @@
 
 **Next:** Consistency review (Nibbler), then spec archive
 
+
+---
+
+## 2026-04-20T19:02Z — Read-Only Sub-Agent Session View: Wave 2 Testing
+
+**Status:** ✅ Delivered  
+**Feature:** feature-blazor-subagent-session-view  
+
+**Your Role:** Test Engineer (comprehensive coverage)
+
+**Deliverables:**
+- **AgentSessionStateTests.cs** (11 tests) — SessionType default, IsReadOnly derivation, case-sensitivity
+- **AgentSessionManagerTests.cs** (11 tests) — ViewSubAgentAsync session creation/reuse, ActiveAgentId switching
+- **ChatPanelTests.cs** (7 tests) — Banner rendering, input visibility, status conditionals
+
+**Results:**
+- ✅ All 92 BlazorClient tests passing (added 22 new)
+- ✅ No bugs found in implementation
+
+**Recommendations:**
+1. Integration test with gateway + SignalR
+2. E2E test with Playwright
+3. Accessibility: Add ARIA attributes to banner

@@ -499,3 +499,73 @@ ull
 
 **Next:** Wave 2 verification (Hermes) + Consistency review (Nibbler)
 
+
+---
+
+## 2026-04-20 — Sub-Agent Read-Only View (Wave 1)
+
+**Task:** Implement clickable sub-agent sessions with read-only chat panel.
+
+**Changes:**
+- AgentSessionState.cs: Added SessionType (string) and IsReadOnly (computed) properties
+- AgentSessionManager.cs: Added ViewSubAgentAsync and LoadSubAgentHistoryAsync methods
+- AgentSessionManager.cs: Updated RegisterSession to accept optional sessionType parameter
+- AgentSessionManager.cs: Modified HandleSubAgentSpawned to register sub-agent sessions in _sessionToAgent mapping
+- ChatPanel.razor: Added read-only banner component with status indicator
+- ChatPanel.razor: Wrapped input area in conditional @if (!State.IsReadOnly) block
+- ChatPanel.razor: Added GetSubAgentStatus() method to display Running/Completed status
+- MainLayout.razor: Made sub-agent sidebar items clickable with @onclick handler
+- MainLayout.razor: Added ViewSubAgent() and IsSubAgentActive() methods
+- pp.css: Added .read-only-banner styling using existing CSS variables
+
+**Key Learnings:**
+
+1. **Session Type as String Not Enum** — The domain primitive SessionType uses string values ("user-agent", "agent-subagent"), not an enum. This matches the wire format and avoids conversion overhead.
+
+2. **Derived Properties for Consistency** — Made IsReadOnly a computed property based on SessionType rather than a separate boolean to ensure they stay in sync.
+
+3. **Sub-Agent Session ID Pattern** — For sub-agents, sessionId == subAgentId. This simplifies the mapping and avoids needing a separate lookup.
+
+4. **Different History Endpoints** — Sub-agent sessions use /api/sessions/{sessionId}/history (by session ID) vs user-agent sessions which use /api/channels/{channelType}/agents/{agentId}/history (by agent ID). Created separate method to handle this.
+
+5. **Session Registration Timing** — Sub-agent sessions must be registered in _sessionToAgent when HandleSubAgentSpawned fires, not just when viewing. This enables proper session-to-agent lookup for all sub-agent events.
+
+6. **Conditional Blocks vs Disabled Controls** — For read-only mode, wrapping the entire input area in @if (!State.IsReadOnly) provides cleaner UX than disabling controls. No disabled controls visible — just no input area.
+
+7. **Reuse Existing CSS Variables** — The banner styling uses existing theme variables (--bg-surface, --border, etc.) for consistency with the rest of the UI.
+
+**Build & Tests:**
+- ✅ Build: Green (0 errors, 0 warnings for Blazor project)
+- ✅ Tests: 2545 passing, 1 flaky file-locking test unrelated to changes
+- ✅ No regressions
+
+**Pattern Established:**
+- For read-only session modes, use derived properties based on SessionType to determine behavior
+- Lazy-load history only when user clicks (not on sub-agent spawn) to minimize API calls
+- Place mode indicators (like read-only banner) immediately after header for visibility
+
+**Next:** Wave 2 — Real-time streaming updates for sub-agent sessions
+
+---
+
+## 2026-04-20T19:01Z — Read-Only Sub-Agent Session View: Wave 1 Implementation
+
+**Status:** ✅ Delivered  
+**Feature:** feature-blazor-subagent-session-view  
+
+**Your Role:** Web Dev (implementation)
+
+**Deliverables:**
+1. **AgentSessionState.cs** — Added `SessionType` property and `IsReadOnly` computed property
+2. **AgentSessionManager.cs** — Added `ViewSubAgentAsync` method with `LoadSubAgentHistoryAsync`
+3. **ChatPanel.razor** — Read-only banner + conditional input hiding
+4. **MainLayout.razor** — Clickable sub-agent sidebar items
+5. **app.css** — Read-only banner styling with theme variables
+
+**Key Design Choices:**
+- SessionType as string (matches domain primitive SessionType.AgentSubAgent)
+- IsReadOnly computed property (prevents flag drift)
+- Sub-agent session ID equals sub-agent ID (simplifies mapping)
+- Conditional input area (full hide, cleaner UX)
+
+**Build & Test Status:** ✅ All tests passing

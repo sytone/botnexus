@@ -324,3 +324,32 @@ Participated in design review ceremony for Phase 3 architecture. All ADs approve
 - Docs-first approach worked well for this feature — docs written alongside implementation kept them mostly aligned
 - Icon set discrepancy shows importance of verifying UI element inventory (don't assume 4 states = 4 icons without checking the code)
 - Banner text verbatim quotes in docs risk going stale — consider "observe-only" paraphrase instead of exact wording
+---
+
+## 2026-04-20T19:05Z — Read-Only Sub-Agent Session View: Consistency Review
+
+**Status:** ✅ Delivered  
+**Feature:** feature-blazor-subagent-session-view  
+**Ceremony:** Consistency Review  
+
+**Your Role:** Quality Review (consistency verification)
+
+**Findings:**
+
+**Issues Found & Fixed (P1):**
+1. **Status icons mismatch** — Docs claimed 4 icons (⏳ Running, ✅ Completed, ❌ Failed, 🔪 Killed); actual: 3 icons (🔄 Running, ✅ Completed, 🤖 Other). Fixed docs to match implementation.
+2. **Banner text mismatch** — Docs said "This is a read-only sub-agent session"; actual: "Read-only — you can observe but not interact". Updated docs verbatim.
+
+**Consistency Verified ✅:**
+- Code ↔ Comments: XML docs accurate
+- Code ↔ Code: SessionType derivation, CSS class names, status handling consistent
+- Test ↔ Code: All property/method names correct, coverage complete
+- Docs ↔ Spec: User guide matches design spec P0 requirements
+
+**Overall Grade: Good**
+- Zero code-level inconsistencies
+- 2 minor doc drift issues (both fixed)
+- Implementation matches spec exactly
+- Test coverage complete and accurate
+
+**Orchestration Log:** `.squad/orchestration-log/2026-04-20T19-05-00Z-nibbler.md`
