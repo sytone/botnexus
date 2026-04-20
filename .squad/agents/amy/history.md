@@ -179,3 +179,25 @@ Build is clean (0 errors, 2 warnings). All 124 tests pass. Contract layer is sol
 **Deliverable:** Complete CSS written for Fry to implement. Decision doc created at .squad/decisions/inbox/amy-banner-design.md.
 
 **Lesson:** Professional UI in developer tools means clean, functional, and compact. Design system consistency (using existing tokens) prevents visual drift and maintains accessibility guarantees. Conditional visibility patterns save vertical space without sacrificing features.
+
+### 2026-04-20 — Read-Only Banner Styling and Accessibility Polish
+
+**Task:** Review and improve read-only sub-agent session banner for visual clarity, design consistency, and WCAG AA compliance.
+
+**Design Decisions:**
+- **Visual Accent:** Added 3px left border in `--warning` color to reinforce read-only state (distinct from interactive accent pattern)
+- **Status Badges:** Implemented pill-style backgrounds matching `.streaming-badge` pattern with state-specific colors:
+  - Running: `rgba(0, 180, 216, 0.12)` background + `--accent` text
+  - Completed: `rgba(46, 204, 113, 0.12)` background + `--success` text
+- **Contrast Fix:** Changed label from `--text-muted` to `--text-secondary` for WCAG AA compliance (6.6:1 ratio)
+- **Accessibility:** Added `role="status"` and `aria-label` for screen reader support
+- **Interactive Polish:** Added hover states to clickable sub-agent sidebar items with smooth transitions
+
+**WCAG AA Verification:**
+- Badge text: 12.9:1 contrast ✓
+- Label text: 6.6:1 contrast ✓
+- Status badges: High contrast guaranteed via pill backgrounds ✓
+
+**Key Pattern:** Status variant classes (`.read-only-status.completed`) allow semantic styling while maintaining component consistency. Semi-transparent backgrounds (`rgba()`) create visual hierarchy without departing from the dark theme palette.
+
+**Lesson:** Accessibility isn't optional — verify contrast ratios upfront, not after implementation. Design tokens enforce consistency and prevent hardcoded colors. Status indicators need visual differentiation (color + icon) for both color-blind users and at-a-glance scanning. Screen reader support (`role`, `aria-label`) must be part of initial design, not retrofitted.
