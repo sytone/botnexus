@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Configuration;
+using Spectre.Console;
 
 namespace BotNexus.Cli.Commands;
 
@@ -107,29 +108,37 @@ internal sealed class LocationsCommand
         var declaredLocations = config.Gateway?.Locations ?? new Dictionary<string, LocationConfig>(StringComparer.OrdinalIgnoreCase);
         if (locations.Length == 0)
         {
-            Console.WriteLine("Locations:");
-            Console.WriteLine("  (none)");
+            AnsiConsole.MarkupLine("[yellow]No locations configured.[/]");
             return 0;
         }
 
-        Console.WriteLine("Name                       Type         Path/Endpoint                                  Description");
-        Console.WriteLine("----                       ----         -------------                                  -----------");
+        var table = new Table()
+            .AddColumn("Name")
+            .AddColumn("Type")
+            .AddColumn("Path/Endpoint")
+            .AddColumn("Description");
+
         foreach (var location in locations)
         {
-            var path = location.Path ?? "(unset)";
+            var path = location.Path ?? "[dim](unset)[/]";
             var description = TryFindDictionaryKey(declaredLocations, location.Name, out var matchedName)
-                ? (declaredLocations[matchedName].Description ?? "(declared)")
-                : "(auto-derived)";
+                ? Markup.Escape(declaredLocations[matchedName].Description ?? "(declared)")
+                : "[dim](auto-derived)[/]";
 
-            Console.WriteLine($"{PadRight(location.Name, 26)} {PadRight(location.Type.Value, 12)} {PadRight(path, 46)} {description}");
+            table.AddRow(
+                Markup.Escape(location.Name),
+                Markup.Escape(location.Type.Value),
+                Markup.Escape(path),
+                description);
         }
+
+        AnsiConsole.Write(table);
 
         var declaredCount = locations.Count(location => TryFindDictionaryKey(declaredLocations, location.Name, out _));
         var autoDerivedCount = locations.Length - declaredCount;
-        Console.WriteLine();
-        Console.WriteLine($"{locations.Length} locations ({declaredCount} declared, {autoDerivedCount} auto-derived)");
+        AnsiConsole.MarkupLine($"\n{locations.Length} locations ([green]{declaredCount} declared[/], [dim]{autoDerivedCount} auto-derived[/])");
         if (verbose)
-            Console.WriteLine($"Loaded from: {PlatformConfigLoader.DefaultConfigPath}");
+            AnsiConsole.MarkupLine($"[dim]Loaded from: {Markup.Escape(PlatformConfigLoader.DefaultConfigPath)}[/]");
 
         return 0;
     }
@@ -146,7 +155,7 @@ internal sealed class LocationsCommand
     {
         if (string.IsNullOrWhiteSpace(name))
         {
-            Console.WriteLine("Error: location name is required.");
+            AnsiConsole.MarkupLine("[red]Error:[/] Location name is required.");
             return 1;
         }
 
@@ -158,7 +167,7 @@ internal sealed class LocationsCommand
         var normalizedType = type.Trim().ToLowerInvariant();
         if (!ValidTypes.Contains(normalizedType, StringComparer.OrdinalIgnoreCase))
         {
-            Console.WriteLine($"Error: location type '{type}' is invalid. Valid values: {string.Join(", ", ValidTypes)}.");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Location type [green]{Markup.Escape(type)}[/] is invalid. Valid values: {string.Join(", ", ValidTypes)}.");
             return 1;
         }
 
@@ -167,7 +176,7 @@ internal sealed class LocationsCommand
 
         if (ContainsDictionaryKey(config.Gateway.Locations, normalizedName))
         {
-            Console.WriteLine($"Error: location '{normalizedName}' already exists.");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Location [green]{Markup.Escape(normalizedName)}[/] already exists.");
             return 1;
         }
 
@@ -177,7 +186,7 @@ internal sealed class LocationsCommand
             .Any(location => string.Equals(location.Name, normalizedName, StringComparison.OrdinalIgnoreCase));
         if (autoDerivedCollision)
         {
-            Console.WriteLine($"Error: location '{normalizedName}' conflicts with an existing auto-derived location.");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Location [green]{Markup.Escape(normalizedName)}[/] conflicts with an existing auto-derived location.");
             return 1;
         }
 
@@ -192,7 +201,7 @@ internal sealed class LocationsCommand
 
         if (!TryValidateLocationConfig(normalizedName, locationConfig, out var validationError))
         {
-            Console.WriteLine($"Error: {validationError}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(validationError)}");
             return 1;
         }
 
@@ -201,7 +210,7 @@ internal sealed class LocationsCommand
             && !Directory.Exists(locationConfig.Path)
             && !File.Exists(locationConfig.Path))
         {
-            Console.WriteLine($"Warning: filesystem path '{locationConfig.Path}' does not exist.");
+            AnsiConsole.MarkupLine($"[yellow]Warning:[/] Filesystem path [dim]{Markup.Escape(locationConfig.Path)}[/] does not exist.");
         }
 
         config.Gateway.Locations[normalizedName] = locationConfig;
@@ -209,7 +218,7 @@ internal sealed class LocationsCommand
         if (saveCode != 0)
             return saveCode;
 
-        Console.WriteLine($"Added location '{normalizedName}'.");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Added location [green]{Markup.Escape(normalizedName)}[/].");
         return 0;
     }
 
@@ -223,7 +232,7 @@ internal sealed class LocationsCommand
     {
         if (string.IsNullOrWhiteSpace(name))
         {
-            Console.WriteLine("Error: location name is required.");
+            AnsiConsole.MarkupLine("[red]Error:[/] Location name is required.");
             return 1;
         }
 
@@ -234,13 +243,13 @@ internal sealed class LocationsCommand
         var declaredLocations = config.Gateway?.Locations;
         if (declaredLocations is null || !TryFindDictionaryKey(declaredLocations, name.Trim(), out var matchedName))
         {
-            Console.WriteLine($"Error: location '{name}' was not found in declared gateway.locations.");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Location [green]{Markup.Escape(name)}[/] was not found in declared gateway.locations.");
             return 1;
         }
 
         if (path is null && endpoint is null && description is null)
         {
-            Console.WriteLine("Error: specify at least one option to update (--path, --endpoint, --description).");
+            AnsiConsole.MarkupLine("[red]Error:[/] Specify at least one option to update ([green]--path[/], [green]--endpoint[/], [green]--description[/]).");
             return 1;
         }
 
@@ -254,7 +263,7 @@ internal sealed class LocationsCommand
 
         if (!TryValidateLocationConfig(matchedName, existing, out var validationError))
         {
-            Console.WriteLine($"Error: {validationError}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(validationError)}");
             return 1;
         }
 
@@ -262,7 +271,7 @@ internal sealed class LocationsCommand
         if (saveCode != 0)
             return saveCode;
 
-        Console.WriteLine($"Updated location '{matchedName}'.");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Updated location [green]{Markup.Escape(matchedName)}[/].");
         return 0;
     }
 
@@ -270,7 +279,7 @@ internal sealed class LocationsCommand
     {
         if (string.IsNullOrWhiteSpace(name))
         {
-            Console.WriteLine("Error: location name is required.");
+            AnsiConsole.MarkupLine("[red]Error:[/] Location name is required.");
             return 1;
         }
 
@@ -281,16 +290,16 @@ internal sealed class LocationsCommand
         var declaredLocations = config.Gateway?.Locations;
         if (declaredLocations is null || !TryFindDictionaryKey(declaredLocations, name.Trim(), out var matchedName))
         {
-            Console.WriteLine($"Error: location '{name}' was not found in declared gateway.locations.");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Location [green]{Markup.Escape(name)}[/] was not found in declared gateway.locations.");
             return 1;
         }
 
         var references = FindFileAccessReferences(config, matchedName);
         if (references.Count > 0)
         {
-            Console.WriteLine($"Warning: Location '{matchedName}' is referenced by fileAccess policies:");
+            AnsiConsole.MarkupLine($"[yellow]Warning:[/] Location [green]{Markup.Escape(matchedName)}[/] is referenced by fileAccess policies:");
             foreach (var reference in references)
-                Console.WriteLine($"- {reference}");
+                AnsiConsole.MarkupLine($"  [yellow]\u2022[/] {Markup.Escape(reference)}");
         }
 
         declaredLocations.Remove(matchedName);
@@ -298,7 +307,7 @@ internal sealed class LocationsCommand
         if (saveCode != 0)
             return saveCode;
 
-        Console.WriteLine($"Deleted location '{matchedName}'.");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Deleted location [green]{Markup.Escape(matchedName)}[/].");
         return 0;
     }
 
@@ -417,7 +426,7 @@ internal sealed class LocationsCommand
         var configPath = PlatformConfigLoader.DefaultConfigPath;
         if (!File.Exists(configPath))
         {
-            Console.WriteLine($"Error: config file not found at '{configPath}'. Run 'botnexus init' first.");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Config file not found at [dim]{Markup.Escape(configPath)}[/]. Run [green]botnexus init[/] first.");
             return null;
         }
 
@@ -427,7 +436,7 @@ internal sealed class LocationsCommand
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error: unable to load config: {ex.Message}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to load config: {Markup.Escape(ex.Message)}");
             return null;
         }
     }
@@ -441,14 +450,14 @@ internal sealed class LocationsCommand
         var errors = PlatformConfigLoader.Validate(reloaded);
         if (errors.Count > 0)
         {
-            Console.WriteLine("Config validation failed after write:");
+            AnsiConsole.MarkupLine("[red]Config validation failed after write:[/]");
             foreach (var error in errors)
-                Console.WriteLine($"- {error}");
+                AnsiConsole.MarkupLine($"  [red]\u2022[/] {Markup.Escape(error)}");
             return 1;
         }
 
         if (verbose)
-            Console.WriteLine($"Saved config: {configPath}");
+            AnsiConsole.MarkupLine($"[dim]Saved config: {Markup.Escape(configPath)}[/]");
 
         return 0;
     }

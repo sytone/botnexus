@@ -6,6 +6,7 @@ using BotNexus.Gateway.Sessions;
 using BotNexus.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Spectre.Console;
 
 namespace BotNexus.Cli.Commands;
 
@@ -59,7 +60,7 @@ internal sealed class MemoryCommands
             var connectionString = sessionStore?.ConnectionString;
             if (string.IsNullOrWhiteSpace(connectionString))
             {
-                Console.WriteLine("Error: gateway.sessionStore.connectionString is required for Sqlite session stores.");
+                AnsiConsole.MarkupLine("[red]Error:[/] gateway.sessionStore.connectionString is required for Sqlite session stores.");
                 return 1;
             }
 
@@ -72,7 +73,7 @@ internal sealed class MemoryCommands
             var configuredPath = sessionStore?.FilePath ?? sessionsDirectory;
             if (string.IsNullOrWhiteSpace(configuredPath))
             {
-                Console.WriteLine("Error: gateway.sessionStore.filePath is required for File session stores.");
+                AnsiConsole.MarkupLine("[red]Error:[/] gateway.sessionStore.filePath is required for File session stores.");
                 return 1;
             }
 
@@ -87,7 +88,7 @@ internal sealed class MemoryCommands
         }
         else
         {
-            Console.WriteLine($"Error: session store type '{resolvedType}' does not support backfill. Use 'Sqlite' or 'File'.");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Session store type [green]{Markup.Escape(resolvedType)}[/] does not support backfill. Use [green]Sqlite[/] or [green]File[/].");
             return 1;
         }
 
@@ -112,15 +113,15 @@ internal sealed class MemoryCommands
             try
             {
                 var result = await MemoryIndexer.BackfillAsync(store, memoryStoreFactory, logger, filter, ct).ConfigureAwait(false);
-                Console.WriteLine();
-                Console.WriteLine($"Backfill complete: {result.SessionsProcessed} session(s) processed, {result.TurnsIndexed} turn(s) indexed.");
+                AnsiConsole.WriteLine();
+                AnsiConsole.MarkupLine($"[green]\u2713[/] Backfill complete: [green]{result.SessionsProcessed}[/] session(s) processed, [green]{result.TurnsIndexed}[/] turn(s) indexed.");
                 return 0;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error: backfill failed — {ex.Message}");
+                AnsiConsole.MarkupLine($"[red]Error:[/] Backfill failed \u2014 {Markup.Escape(ex.Message)}");
                 if (verbose)
-                    Console.WriteLine(ex.ToString());
+                    AnsiConsole.WriteException(ex);
                 return 1;
             }
         }
@@ -131,7 +132,7 @@ internal sealed class MemoryCommands
         var configPath = PlatformConfigLoader.DefaultConfigPath;
         if (!File.Exists(configPath))
         {
-            Console.WriteLine($"Error: config file not found at '{configPath}'. Run 'botnexus init' first.");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Config file not found at [dim]{Markup.Escape(configPath)}[/]. Run [green]botnexus init[/] first.");
             return null;
         }
 
@@ -141,7 +142,7 @@ internal sealed class MemoryCommands
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error: unable to load config: {ex.Message}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to load config: {Markup.Escape(ex.Message)}");
             return null;
         }
     }

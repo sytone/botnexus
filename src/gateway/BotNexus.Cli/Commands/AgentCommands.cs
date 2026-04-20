@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Configuration;
+using Spectre.Console;
 
 namespace BotNexus.Cli.Commands;
 
@@ -66,19 +67,29 @@ internal sealed class AgentCommands
 
         if (config.Agents is null || config.Agents.Count == 0)
         {
-            Console.WriteLine("Agents:");
-            Console.WriteLine("  (none)");
+            AnsiConsole.MarkupLine("[yellow]No agents configured.[/] Run [green]botnexus agent add <id>[/] to create one.");
             return 0;
         }
 
-        Console.WriteLine("Agents:");
+        var table = new Table()
+            .AddColumn("Agent")
+            .AddColumn("Provider")
+            .AddColumn("Model")
+            .AddColumn("Enabled");
+
         foreach (var (agentId, agent) in config.Agents.OrderBy(a => a.Key, StringComparer.OrdinalIgnoreCase))
         {
-            Console.WriteLine($"  {agentId}  provider={agent.Provider ?? "(unset)"}  model={agent.Model ?? "(unset)"}  enabled={agent.Enabled.ToString().ToLowerInvariant()}");
+            table.AddRow(
+                Markup.Escape(agentId),
+                agent.Provider ?? "[dim](unset)[/]",
+                agent.Model ?? "[dim](unset)[/]",
+                agent.Enabled ? "[green]Yes[/]" : "[red]No[/]");
         }
 
+        AnsiConsole.Write(table);
+
         if (verbose)
-            Console.WriteLine($"Loaded from: {PlatformConfigLoader.DefaultConfigPath}");
+            AnsiConsole.MarkupLine($"[dim]Loaded from: {Markup.Escape(PlatformConfigLoader.DefaultConfigPath)}[/]");
 
         return 0;
     }
@@ -87,7 +98,7 @@ internal sealed class AgentCommands
     {
         if (string.IsNullOrWhiteSpace(id))
         {
-            Console.WriteLine("Error: agent ID is required.");
+            AnsiConsole.MarkupLine("[red]Error:[/] Agent ID is required.");
             return 1;
         }
 
@@ -98,7 +109,7 @@ internal sealed class AgentCommands
         config.Agents ??= new Dictionary<string, AgentDefinitionConfig>(StringComparer.OrdinalIgnoreCase);
         if (ContainsDictionaryKey(config.Agents, id))
         {
-            Console.WriteLine($"Error: agent '{id}' already exists.");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Agent [green]{Markup.Escape(id)}[/] already exists.");
             return 1;
         }
 
@@ -113,7 +124,7 @@ internal sealed class AgentCommands
         if (saveCode != 0)
             return saveCode;
 
-        Console.WriteLine($"Added agent '{id}'.");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Added agent [green]{Markup.Escape(id)}[/].");
         return 0;
     }
 
@@ -121,7 +132,7 @@ internal sealed class AgentCommands
     {
         if (string.IsNullOrWhiteSpace(id))
         {
-            Console.WriteLine("Error: agent ID is required.");
+            AnsiConsole.MarkupLine("[red]Error:[/] Agent ID is required.");
             return 1;
         }
 
@@ -131,7 +142,7 @@ internal sealed class AgentCommands
 
         if (config.Agents is null || !TryFindDictionaryKey(config.Agents, id, out var matchedId))
         {
-            Console.WriteLine($"Error: agent '{id}' was not found.");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Agent [green]{Markup.Escape(id)}[/] was not found.");
             return 1;
         }
 
@@ -139,7 +150,7 @@ internal sealed class AgentCommands
         if (!string.IsNullOrWhiteSpace(defaultAgent) &&
             string.Equals(defaultAgent, matchedId, StringComparison.OrdinalIgnoreCase))
         {
-            Console.WriteLine($"Warning: removing default agent '{matchedId}'. Update gateway.defaultAgentId if needed.");
+            AnsiConsole.MarkupLine($"[yellow]Warning:[/] Removing default agent [green]{Markup.Escape(matchedId)}[/]. Update gateway.defaultAgentId if needed.");
         }
 
         config.Agents.Remove(matchedId);
@@ -147,7 +158,7 @@ internal sealed class AgentCommands
         if (saveCode != 0)
             return saveCode;
 
-        Console.WriteLine($"Removed agent '{matchedId}'.");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Removed agent [green]{Markup.Escape(matchedId)}[/].");
         return 0;
     }
 
@@ -156,7 +167,7 @@ internal sealed class AgentCommands
         var configPath = PlatformConfigLoader.DefaultConfigPath;
         if (!File.Exists(configPath))
         {
-            Console.WriteLine($"Error: config file not found at '{configPath}'. Run 'botnexus init' first.");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Config file not found at [dim]{Markup.Escape(configPath)}[/]. Run [green]botnexus init[/] first.");
             return null;
         }
 
@@ -166,7 +177,7 @@ internal sealed class AgentCommands
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error: unable to load config: {ex.Message}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to load config: {Markup.Escape(ex.Message)}");
             return null;
         }
     }
@@ -180,14 +191,14 @@ internal sealed class AgentCommands
         var errors = PlatformConfigLoader.Validate(reloaded);
         if (errors.Count > 0)
         {
-            Console.WriteLine("Config validation failed after write:");
+            AnsiConsole.MarkupLine("[red]Config validation failed after write:[/]");
             foreach (var error in errors)
-                Console.WriteLine($"- {error}");
+                AnsiConsole.MarkupLine($"  [red]\u2022[/] {Markup.Escape(error)}");
             return 1;
         }
 
         if (verbose)
-            Console.WriteLine($"Saved config: {configPath}");
+            AnsiConsole.MarkupLine($"[dim]Saved config: {Markup.Escape(configPath)}[/]");
 
         return 0;
     }

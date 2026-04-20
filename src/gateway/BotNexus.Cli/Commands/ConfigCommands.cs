@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Configuration;
+using Spectre.Console;
 
 namespace BotNexus.Cli.Commands;
 
@@ -64,13 +65,13 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
 
         if (!configPathResolver.TryGetValue(config, keyPath, out var value, out var error))
         {
-            Console.WriteLine($"Error: {error}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(error)}");
             return 1;
         }
 
         PrintValue(value);
         if (verbose)
-            Console.WriteLine($"Read key: {keyPath}");
+            AnsiConsole.MarkupLine($"[dim]Read key: {Markup.Escape(keyPath)}[/]");
 
         return 0;
     }
@@ -83,7 +84,7 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
 
         if (!configPathResolver.TrySetValue(config, keyPath, rawValue, out var error))
         {
-            Console.WriteLine($"Error: {error}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(error)}");
             return 1;
         }
 
@@ -91,7 +92,7 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
         if (saveCode != 0)
             return saveCode;
 
-        Console.WriteLine($"Set {keyPath}.");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Set [green]{Markup.Escape(keyPath)}[/].");
         return 0;
     }
 
@@ -99,7 +100,7 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
     {
         if (string.IsNullOrWhiteSpace(outputPath))
         {
-            Console.WriteLine("Error: output path is required.");
+            AnsiConsole.MarkupLine("[red]Error:[/] Output path is required.");
             return Task.FromResult(1);
         }
 
@@ -109,11 +110,11 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
         if (cancellationToken.IsCancellationRequested)
             return Task.FromResult(1);
 
-        Console.WriteLine($"Generated schema: {resolvedPath}");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Generated schema: [dim]{Markup.Escape(resolvedPath)}[/]");
         if (verbose)
         {
             var availablePaths = configPathResolver.GetAvailablePaths(new PlatformConfig());
-            Console.WriteLine($"Schema generated from model graph ({availablePaths.Count} discoverable config paths).");
+            AnsiConsole.MarkupLine($"[dim]Schema generated from model graph ({availablePaths.Count} discoverable config paths).[/]");
         }
 
         return Task.FromResult(0);
@@ -124,7 +125,7 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
         var configPath = PlatformConfigLoader.DefaultConfigPath;
         if (!File.Exists(configPath))
         {
-            Console.WriteLine($"Error: config file not found at '{configPath}'. Run 'botnexus init' first.");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Config file not found at [dim]{Markup.Escape(configPath)}[/]. Run [green]botnexus init[/] first.");
             return null;
         }
 
@@ -134,7 +135,7 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error: unable to load config: {ex.Message}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to load config: {Markup.Escape(ex.Message)}");
             return null;
         }
     }
@@ -148,14 +149,14 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
         var errors = PlatformConfigLoader.Validate(reloaded);
         if (errors.Count > 0)
         {
-            Console.WriteLine("Config validation failed after write:");
+            AnsiConsole.MarkupLine("[red]Config validation failed after write:[/]");
             foreach (var error in errors)
-                Console.WriteLine($"- {error}");
+                AnsiConsole.MarkupLine($"  [red]\u2022[/] {Markup.Escape(error)}");
             return 1;
         }
 
         if (verbose)
-            Console.WriteLine($"Saved config: {configPath}");
+            AnsiConsole.MarkupLine($"[dim]Saved config: {Markup.Escape(configPath)}[/]");
 
         return 0;
     }
@@ -170,17 +171,17 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
     {
         if (value is null)
         {
-            Console.WriteLine("null");
+            AnsiConsole.WriteLine("null");
             return;
         }
 
         if (value is string stringValue)
         {
-            Console.WriteLine(stringValue);
+            AnsiConsole.WriteLine(stringValue);
             return;
         }
 
-        Console.WriteLine(JsonSerializer.Serialize(value, CreateWriteJsonOptions()));
+        AnsiConsole.WriteLine(JsonSerializer.Serialize(value, CreateWriteJsonOptions()));
     }
 
     private static JsonSerializerOptions CreateWriteJsonOptions() => new()

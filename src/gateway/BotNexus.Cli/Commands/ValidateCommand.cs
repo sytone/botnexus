@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.Text.Json;
 using BotNexus.Gateway.Configuration;
+using Spectre.Console;
 
 namespace BotNexus.Cli.Commands;
 
@@ -32,8 +33,8 @@ internal sealed class ValidateCommand
     public async Task<int> ExecuteAsync(bool verbose, CancellationToken cancellationToken)
     {
         var configPath = PlatformConfigLoader.DefaultConfigPath;
-        Console.WriteLine("BotNexus config validation (local)");
-        Console.WriteLine($"Config path: {configPath}");
+        AnsiConsole.MarkupLine("BotNexus config validation [dim](local)[/]");
+        AnsiConsole.MarkupLine($"Config path: [dim]{Markup.Escape(configPath)}[/]");
 
         if (!File.Exists(configPath))
         {
@@ -63,13 +64,13 @@ internal sealed class ValidateCommand
         var warnings = PlatformConfigLoader.ValidateWarnings(config);
         if (verbose)
         {
-            Console.WriteLine();
-            Console.WriteLine("Validation trace:");
-            Console.WriteLine($"- Loaded config file: {configPath}");
-            Console.WriteLine($"- Ran {nameof(PlatformConfigLoader)}.{nameof(PlatformConfigLoader.Validate)}");
-            Console.WriteLine();
-            Console.WriteLine("Config details:");
-            Console.WriteLine(JsonSerializer.Serialize(config, CreateWriteJsonOptions()));
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine("[dim]Validation trace:[/]");
+            AnsiConsole.MarkupLine($"[dim]- Loaded config file: {Markup.Escape(configPath)}[/]");
+            AnsiConsole.MarkupLine($"[dim]- Ran {nameof(PlatformConfigLoader)}.{nameof(PlatformConfigLoader.Validate)}[/]");
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine("[dim]Config details:[/]");
+            AnsiConsole.WriteLine(JsonSerializer.Serialize(config, CreateWriteJsonOptions()));
         }
 
         PrintResult(valid: errors.Count == 0, warnings, errors);
@@ -86,9 +87,9 @@ internal sealed class ValidateCommand
         }
 
         var endpoint = new Uri(gatewayBaseUri, "/api/config/validate");
-        Console.WriteLine("BotNexus config validation (remote)");
-        Console.WriteLine($"Gateway URL: {gatewayBaseUri}");
-        Console.WriteLine($"Endpoint: {endpoint}");
+        AnsiConsole.MarkupLine("BotNexus config validation [dim](remote)[/]");
+        AnsiConsole.MarkupLine($"Gateway URL: [dim]{Markup.Escape(gatewayBaseUri.ToString())}[/]");
+        AnsiConsole.MarkupLine($"Endpoint: [dim]{Markup.Escape(endpoint.ToString())}[/]");
 
         using var httpClient = new HttpClient();
         HttpResponseMessage response;
@@ -128,14 +129,14 @@ internal sealed class ValidateCommand
 
         if (verbose)
         {
-            Console.WriteLine();
-            Console.WriteLine("Validation trace:");
-            Console.WriteLine($"- GET {endpoint}");
-            Console.WriteLine($"- HTTP {(int)response.StatusCode} {response.ReasonPhrase}");
-            Console.WriteLine($"- Validated config path: {validation.ConfigPath}");
-            Console.WriteLine();
-            Console.WriteLine("Response details:");
-            Console.WriteLine(payload);
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine("[dim]Validation trace:[/]");
+            AnsiConsole.MarkupLine($"[dim]- GET {Markup.Escape(endpoint.ToString())}[/]");
+            AnsiConsole.MarkupLine($"[dim]- HTTP {(int)response.StatusCode} {response.ReasonPhrase}[/]");
+            AnsiConsole.MarkupLine($"[dim]- Validated config path: {Markup.Escape(validation.ConfigPath)}[/]");
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine("[dim]Response details:[/]");
+            AnsiConsole.WriteLine(payload);
         }
 
         PrintResult(validation.IsValid, validation.Warnings ?? [], validation.Errors ?? []);
@@ -160,30 +161,27 @@ internal sealed class ValidateCommand
 
     private static void PrintResult(bool valid, IReadOnlyList<string> warnings, IReadOnlyList<string> errors)
     {
-        Console.WriteLine();
-        Console.WriteLine(valid ? "Result: VALID ✅" : "Result: INVALID ❌");
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine(valid
+            ? "[green]Result: VALID ✓[/]"
+            : "[red]Result: INVALID ✗[/]");
 
-        Console.WriteLine("Warnings:");
-        if (warnings.Count == 0)
+        if (warnings.Count > 0)
         {
-            Console.WriteLine("- (none)");
-        }
-        else
-        {
+            AnsiConsole.MarkupLine("\n[yellow]Warnings:[/]");
             foreach (var warning in warnings)
-                Console.WriteLine($"- {warning}");
+                AnsiConsole.MarkupLine($"  [yellow]•[/] {Markup.Escape(warning)}");
         }
 
-        Console.WriteLine("Errors:");
-        if (errors.Count == 0)
+        if (errors.Count > 0)
         {
-            Console.WriteLine("- (none)");
-        }
-        else
-        {
+            AnsiConsole.MarkupLine("\n[red]Errors:[/]");
             foreach (var error in errors)
-                Console.WriteLine($"- {error}");
+                AnsiConsole.MarkupLine($"  [red]•[/] {Markup.Escape(error)}");
         }
+
+        if (warnings.Count == 0 && errors.Count == 0)
+            AnsiConsole.MarkupLine("[dim]No warnings or errors.[/]");
     }
 
     private static JsonSerializerOptions CreateWriteJsonOptions() => new()

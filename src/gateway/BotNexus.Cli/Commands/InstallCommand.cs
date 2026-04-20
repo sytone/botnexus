@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.Diagnostics;
+using Spectre.Console;
 
 namespace BotNexus.Cli.Commands;
 
@@ -50,25 +51,25 @@ internal sealed class InstallCommand
 
         if (Directory.Exists(Path.Combine(targetPath, ".git")))
         {
-            Console.WriteLine($"Repository already exists at: {targetPath}");
-            Console.WriteLine("Use 'git pull' to update, or remove the directory and re-run install.");
+            AnsiConsole.MarkupLine($"Repository already exists at: [dim]{Markup.Escape(targetPath)}[/]");
+            AnsiConsole.MarkupLine("Use [green]git pull[/] to update, or remove the directory and re-run install.");
         }
         else
         {
-            Console.WriteLine($"Cloning {repo} → {targetPath}");
+            AnsiConsole.MarkupLine($"Cloning [dim]{Markup.Escape(repo)}[/] → [dim]{Markup.Escape(targetPath)}[/]");
             var cloneResult = await RunProcessAsync("git", $"clone \"{repo}\" \"{targetPath}\"", null, verbose, cancellationToken);
             if (cloneResult != 0)
             {
-                Console.WriteLine("Clone failed.");
+                AnsiConsole.MarkupLine("[red]Error:[/] Clone failed.");
                 return cloneResult;
             }
 
-            Console.WriteLine($"Repository cloned to: {targetPath}");
+            AnsiConsole.MarkupLine($"[green]\u2713[/] Repository cloned to: [dim]{Markup.Escape(targetPath)}[/]");
         }
 
         if (build)
         {
-            Console.WriteLine();
+            AnsiConsole.WriteLine();
             var buildResult = await BuildCommand.BuildSolutionAsync(targetPath, verbose, cancellationToken);
             if (buildResult != 0)
                 return buildResult;

@@ -2,6 +2,7 @@ using System.CommandLine;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Data.Sqlite;
+using Spectre.Console;
 
 namespace BotNexus.Cli.Commands;
 
@@ -33,12 +34,11 @@ internal sealed class DoctorCommand
             .ToArray();
         if (locations.Length == 0)
         {
-            Console.WriteLine("No locations registered.");
+            AnsiConsole.MarkupLine("[yellow]No locations registered.[/]");
             return 0;
         }
 
-        Console.WriteLine($"Checking {locations.Length} locations...");
-        Console.WriteLine();
+        AnsiConsole.MarkupLine($"Checking [green]{locations.Length}[/] locations...\n");
 
         using var httpClient = new HttpClient
         {
@@ -48,26 +48,34 @@ internal sealed class DoctorCommand
         var healthyCount = 0;
         var warningCount = 0;
         var errorCount = 0;
+
+        var table = new Table()
+            .AddColumn("Status")
+            .AddColumn("Location")
+            .AddColumn("Target")
+            .AddColumn("Message");
+
         foreach (var location in locations)
         {
             var result = await CheckLocationAsync(location, httpClient, cancellationToken);
             var icon = result.Status switch
             {
-                HealthStatus.Healthy => "✅",
-                HealthStatus.Warning => "⚠️",
-                _ => "❌"
+                HealthStatus.Healthy => "[green]✓[/]",
+                HealthStatus.Warning => "[yellow]⚠[/]",
+                _ => "[red]✗[/]"
             };
 
             healthyCount += result.Status == HealthStatus.Healthy ? 1 : 0;
             warningCount += result.Status == HealthStatus.Warning ? 1 : 0;
             errorCount += result.Status == HealthStatus.Error ? 1 : 0;
-            Console.WriteLine($"{icon} {PadRight(location.Name, 26)} {PadRight(result.Target, 45)} {result.Message}");
+            table.AddRow(icon, Markup.Escape(location.Name), Markup.Escape(result.Target), Markup.Escape(result.Message));
         }
 
-        Console.WriteLine();
-        Console.WriteLine($"Results: {healthyCount} healthy, {warningCount} warning, {errorCount} error");
+        AnsiConsole.Write(table);
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine($"Results: [green]{healthyCount} healthy[/], [yellow]{warningCount} warning[/], [red]{errorCount} error[/]");
         if (verbose)
-            Console.WriteLine($"Loaded from: {PlatformConfigLoader.DefaultConfigPath}");
+            AnsiConsole.MarkupLine($"[dim]Loaded from: {Markup.Escape(PlatformConfigLoader.DefaultConfigPath)}[/]");
 
         return errorCount == 0 ? 0 : 1;
     }
@@ -249,7 +257,7 @@ internal sealed class DoctorCommand
         var configPath = PlatformConfigLoader.DefaultConfigPath;
         if (!File.Exists(configPath))
         {
-            Console.WriteLine($"Error: config file not found at '{configPath}'. Run 'botnexus init' first.");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Config file not found at [dim]{Markup.Escape(configPath)}[/]. Run [green]botnexus init[/] first.");
             return null;
         }
 
@@ -259,7 +267,7 @@ internal sealed class DoctorCommand
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error: unable to load config: {ex.Message}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] Unable to load config: {Markup.Escape(ex.Message)}");
             return null;
         }
     }

@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Configuration;
+using Spectre.Console;
 
 namespace BotNexus.Cli.Commands;
 
@@ -34,8 +35,8 @@ internal sealed class InitCommand
 
         if (File.Exists(configPath) && !force)
         {
-            Console.WriteLine($"Warning: config already exists at '{configPath}'. Use --force to overwrite.");
-            Console.WriteLine($"BotNexus home: {homePath}");
+            AnsiConsole.MarkupLine($"[yellow]Warning:[/] Config already exists at [dim]{Markup.Escape(configPath)}[/]. Use [green]--force[/] to overwrite.");
+            AnsiConsole.MarkupLine($"BotNexus home: [dim]{Markup.Escape(homePath)}[/]");
             return 0;
         }
 
@@ -58,14 +59,15 @@ internal sealed class InitCommand
         };
 
         await WriteConfigAsync(defaultConfig, configPath, cancellationToken);
-        Console.WriteLine($"Initialized BotNexus home at: {homePath}");
-        Console.WriteLine($"Created config: {configPath}");
-        Console.WriteLine("Next steps:");
-        Console.WriteLine("  - botnexus validate");
-        Console.WriteLine("  - botnexus agent list");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Initialized BotNexus home at: [dim]{Markup.Escape(homePath)}[/]");
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Created config: [dim]{Markup.Escape(configPath)}[/]");
+        AnsiConsole.MarkupLine("\nNext steps:");
+        AnsiConsole.MarkupLine("  [green]botnexus provider setup[/]");
+        AnsiConsole.MarkupLine("  [green]botnexus validate[/]");
+        AnsiConsole.MarkupLine("  [green]botnexus agent list[/]");
 
         if (verbose)
-            Console.WriteLine(JsonSerializer.Serialize(defaultConfig, CreateWriteJsonOptions()));
+            AnsiConsole.WriteLine(JsonSerializer.Serialize(defaultConfig, CreateWriteJsonOptions()));
 
         return 0;
     }
