@@ -18,6 +18,7 @@ using var serviceProvider = new ServiceCollection()
     .AddSingleton<InstallCommand>()
     .AddSingleton<BuildCommand>()
     .AddSingleton<ServeCommand>()
+    .AddSingleton<ProviderCommand>()
     .BuildServiceProvider();
 
 var root = new RootCommand("BotNexus platform CLI");
@@ -32,4 +33,5 @@ root.AddCommand(serviceProvider.GetRequiredService<DoctorCommand>().Build(verbos
 root.AddCommand(serviceProvider.GetRequiredService<InstallCommand>().Build(verboseOption));
 root.AddCommand(serviceProvider.GetRequiredService<BuildCommand>().Build(verboseOption));
 root.AddCommand(serviceProvider.GetRequiredService<ServeCommand>().Build(verboseOption));
+root.AddCommand(serviceProvider.GetRequiredService<ProviderCommand>().Build(verboseOption));
 return await root.InvokeAsync(args);
