@@ -100,6 +100,28 @@ public string EnsureWorkspace(AgentId agentId) { ... }
 - Document when `null` is a valid return and what it means.
 - For interfaces, document the **contract** — what implementers must guarantee.
 
+### Comments on Private Members
+
+Private methods and properties don't require XML doc comments, but **add meaningful comments when the intent isn't obvious from the code alone.** Use your judgement — if a future developer or AI agent would need to understand *why* something is done a particular way, leave a comment.
+
+Good candidates for private-member comments:
+- Non-obvious business rules or invariants
+- Workarounds for platform quirks or upstream bugs
+- Coordination between multiple private methods that form a pipeline
+- Magic numbers, thresholds, or retry logic with specific reasoning
+- Thread-safety considerations or lock ordering
+
+```csharp
+// GOOD — explains a non-obvious design choice
+// Debounce config reloads to 500ms because FileSystemWatcher fires
+// multiple events for a single save on some editors (VS Code, Rider).
+private void OnConfigChanged(object sender, FileSystemEventArgs e) { ... }
+
+// UNNECESSARY — the code is self-explanatory
+// Increments the counter
+private void IncrementCounter() { ... }
+```
+
 ## Commits
 
 Use [Conventional Commits](https://www.conventionalcommits.org/) for all commit messages.
