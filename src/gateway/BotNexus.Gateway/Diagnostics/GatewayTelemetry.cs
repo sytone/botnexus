@@ -50,5 +50,19 @@ public static class GatewayTelemetry
 
     public static readonly Counter<long> SubAgentParentWakeups = Meter.CreateCounter<long>(
         "botnexus.gateway.subagent.parent_wakeups",
-        description: "Number of times an idle parent agent was woken by sub-agent completion.");
+        description: "Number of parent wake events triggered by sub-agent completion.");
+
+    /// <summary>
+    /// Tracks sub-agent completion wake events that were queued through gateway dispatch for parent processing.
+    /// </summary>
+    public static readonly Counter<long> SubAgentWakeDispatched = Meter.CreateCounter<long>(
+        "botnexus.gateway.subagent.wake_dispatched",
+        description: "Sub-agent completion wake events dispatched to session queue.");
+
+    /// <summary>
+    /// Tracks sub-agent completion wake events that could not be delivered through the gateway dispatch pipeline.
+    /// </summary>
+    public static readonly Counter<long> SubAgentWakeDeliveryFailed = Meter.CreateCounter<long>(
+        "botnexus.gateway.subagent.wake_delivery_failed",
+        description: "Sub-agent completion wake events that failed delivery.");
 }

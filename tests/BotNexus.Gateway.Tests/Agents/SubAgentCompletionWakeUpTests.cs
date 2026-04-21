@@ -15,7 +15,7 @@ namespace BotNexus.Gateway.Tests.Agents;
 public sealed class SubAgentCompletionWakeUpTests
 {
     [Fact]
-    public async Task OnCompleted_WhenParentIdle_DispatchesWakeUpMessage()
+    public async Task OnCompleted_DispatchesWakeUpMessage()
     {
         var manager = CreateManager(parentIsRunning: false, out var parentHandle, out _, out var dispatcher);
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
@@ -38,25 +38,18 @@ public sealed class SubAgentCompletionWakeUpTests
     }
 
     [Fact]
-    public async Task OnCompleted_WhenParentRunning_EnqueuesFollowUp()
+    public async Task OnCompleted_WhenParentRunning_DispatchesWakeUpMessage()
     {
         var manager = CreateManager(parentIsRunning: true, out var parentHandle, out _, out var dispatcher);
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
-        SubAgentCompletionMessage? capturedMessage = null;
-        parentHandle
-            .Setup(h => h.FollowUpAsync(It.IsAny<AgentMessage>(), It.IsAny<CancellationToken>()))
-            .Callback<AgentMessage, CancellationToken>((message, _) => capturedMessage = message as SubAgentCompletionMessage)
-            .Returns(Task.CompletedTask);
 
         await manager.OnCompletedAsync(spawned.SubAgentId, "Done");
 
         parentHandle.Verify(h => h.FollowUpAsync(
                 It.IsAny<AgentMessage>(),
                 It.IsAny<CancellationToken>()),
-            Times.Once);
-        capturedMessage.ShouldNotBeNull();
-        capturedMessage!.SubAgentId.ShouldBe(spawned.SubAgentId);
-        dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Never);
+            Times.Never);
+        dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

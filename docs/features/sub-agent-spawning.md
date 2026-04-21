@@ -117,7 +117,7 @@ BotNexus already has **synchronous** sub-agent calls via `IAgentCommunicator.Cal
 | Execution | Synchronous — parent waits | Asynchronous — parent continues |
 | Session creation | Same (`IAgentSupervisor.GetOrCreateAsync`) | Same |
 | Session ID format | `{parentSessionId}::sub::{childAgentId}` | `{parentSessionId}::subagent::{uniqueId}` |
-| Result delivery | Return value | `FollowUpAsync` into parent session |
+| Result delivery | Return value | `DispatchAsync` wake-up via internal channel |
 | Use case | Simple delegation | Long-running research, parallel work |
 
 ---
@@ -293,8 +293,8 @@ When a sub-agent finishes its work, results are automatically delivered to the p
 
 1. **Sub-agent completes** — it reaches a natural conclusion (final response with no tool calls), hits `maxTurns`, times out, or is killed.
 2. **Manager detects completion** — `DefaultSubAgentManager.RunSubAgentAsync()` catches the completion, timeout, or failure, and calls `OnCompletedAsync()`.
-3. **Result delivered** — `OnCompletedAsync()` uses `IAgentHandle.FollowUpAsync()` to inject the result into the parent session.
-4. **Parent wakes** — If the parent is idle (waiting for user input), the follow-up triggers a new agent run. If the parent is mid-run, it processes the result between turns via the existing `PendingMessageQueue`.
+3. **Result delivered** — `OnCompletedAsync()` dispatches a synthetic inbound message via `IChannelDispatcher.DispatchAsync()` through the internal channel, waking the parent session.
+4. **Parent wakes** — The dispatched message triggers a new agent run on the parent session regardless of whether it was idle or mid-run, ensuring the parent always processes the completion promptly.
 5. **Parent processes** — The parent agent sees a message like:
 
 ```text

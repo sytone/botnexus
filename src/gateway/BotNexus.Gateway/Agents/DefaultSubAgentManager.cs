@@ -287,42 +287,42 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
         try
         {
-            var parentHandle = await _supervisor.GetOrCreateAsync(parentAgentId, updated.ParentSessionId, ct);
-            if (parentHandle.IsRunning)
-            {
-                await parentHandle.FollowUpAsync(completionMessage, ct);
-            }
-            else
-            {
-                _logger.LogInformation(
-                    "Waking idle parent agent '{ParentAgentId}' session '{ParentSessionId}' after sub-agent '{SubAgentId}' completion.",
-                    parentAgentId,
-                    updated.ParentSessionId,
-                    subAgentId);
+            _logger.LogInformation(
+                "Dispatching sub-agent completion for parent agent '{ParentAgentId}' session '{ParentSessionId}' from sub-agent '{SubAgentId}'.",
+                parentAgentId,
+                updated.ParentSessionId,
+                subAgentId);
 
-                GatewayTelemetry.SubAgentParentWakeups.Add(1,
-                    new KeyValuePair<string, object?>("botnexus.parent.agent.id", parentAgentId),
-                    new KeyValuePair<string, object?>("botnexus.parent.session.id", updated.ParentSessionId),
-                    new KeyValuePair<string, object?>("botnexus.subagent.id", subAgentId));
+            GatewayTelemetry.SubAgentParentWakeups.Add(1,
+                new KeyValuePair<string, object?>("botnexus.parent.agent.id", parentAgentId),
+                new KeyValuePair<string, object?>("botnexus.parent.session.id", updated.ParentSessionId),
+                new KeyValuePair<string, object?>("botnexus.subagent.id", subAgentId));
+            GatewayTelemetry.SubAgentWakeDispatched.Add(1,
+                new KeyValuePair<string, object?>("botnexus.parent.agent.id", parentAgentId),
+                new KeyValuePair<string, object?>("botnexus.parent.session.id", updated.ParentSessionId),
+                new KeyValuePair<string, object?>("botnexus.subagent.id", subAgentId));
 
-                await _dispatcher.DispatchAsync(new InboundMessage
+            await _dispatcher.DispatchAsync(new InboundMessage
+            {
+                ChannelType = ChannelKey.From("internal"),
+                SenderId = $"subagent:{subAgentId}",
+                ConversationId = updated.ParentSessionId,
+                SessionId = updated.ParentSessionId,
+                TargetAgentId = parentAgentId,
+                Content = followUp,
+                Metadata = new Dictionary<string, object?>
                 {
-                    ChannelType = ChannelKey.From("internal"),
-                    SenderId = $"subagent:{subAgentId}",
-                    ConversationId = updated.ParentSessionId,
-                    SessionId = updated.ParentSessionId,
-                    TargetAgentId = parentAgentId,
-                    Content = followUp,
-                    Metadata = new Dictionary<string, object?>
-                    {
-                        ["messageType"] = "subagent-completion",
-                        ["subAgentId"] = subAgentId
-                    }
-                }, ct);
-            }
+                    ["messageType"] = "subagent-completion",
+                    ["subAgentId"] = subAgentId
+                }
+            }, ct);
         }
         catch (Exception ex)
         {
+            GatewayTelemetry.SubAgentWakeDeliveryFailed.Add(1,
+                new KeyValuePair<string, object?>("botnexus.parent.agent.id", parentAgentId),
+                new KeyValuePair<string, object?>("botnexus.parent.session.id", updated.ParentSessionId),
+                new KeyValuePair<string, object?>("botnexus.subagent.id", subAgentId));
             _logger.LogWarning(
                 ex,
                 "Failed delivering completion follow-up for sub-agent '{SubAgentId}' to parent session '{ParentSessionId}'.",

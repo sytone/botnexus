@@ -10,9 +10,9 @@ namespace BotNexus.Gateway.Channels;
 
 /// <summary>
 /// Channel adapter for internal messages (sub-agent completions, cross-agent routing).
-/// Resolves the target session's original channel and delegates delivery to that adapter.
+/// Resolves the target session's original channel and delegates message and stream delivery to that adapter.
 /// </summary>
-public sealed class InternalChannelAdapter : ChannelAdapterBase
+public sealed class InternalChannelAdapter : ChannelAdapterBase, IStreamEventChannelAdapter
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly ISessionStore _sessionStore;
@@ -62,6 +62,42 @@ public sealed class InternalChannelAdapter : ChannelAdapterBase
             return;
 
         await targetAdapter.SendStreamDeltaAsync(conversationId, delta, cancellationToken);
+    }
+
+    /// <summary>
+    /// Routes structured stream events for internal wake-ups through the session's original channel adapter so
+    /// lifecycle events (start/end, thinking, and tool notifications) are preserved when parent agents are resumed.
+    /// If the target channel only supports plain deltas, content events degrade gracefully to delta forwarding.
+    /// </summary>
+    /// <param name="conversationId">The target conversation or session identifier.</param>
+    /// <param name="streamEvent">The structured stream event to deliver to the resolved channel.</param>
+    /// <param name="cancellationToken">Cancellation token for the async send operation.</param>
+    public async Task SendStreamEventAsync(
+        string conversationId,
+        AgentStreamEvent streamEvent,
+        CancellationToken cancellationToken = default)
+    {
+        var targetAdapter = await ResolveTargetAdapterForConversationAsync(conversationId, cancellationToken);
+        if (targetAdapter is null)
+        {
+            Logger.LogWarning(
+                "Internal adapter: no target channel resolved for conversation '{ConversationId}'. Stream event '{EventType}' was not delivered.",
+                conversationId,
+                streamEvent.Type);
+            return;
+        }
+
+        if (targetAdapter is IStreamEventChannelAdapter streamTarget)
+        {
+            await streamTarget.SendStreamEventAsync(conversationId, streamEvent, cancellationToken);
+            return;
+        }
+
+        if (streamEvent.Type == AgentStreamEventType.ContentDelta
+            && streamEvent.ContentDelta is not null)
+        {
+            await targetAdapter.SendStreamDeltaAsync(conversationId, streamEvent.ContentDelta, cancellationToken);
+        }
     }
 
     private async Task<IChannelAdapter?> ResolveTargetAdapterAsync(OutboundMessage message, CancellationToken cancellationToken)

@@ -345,3 +345,5 @@
 1. Integration test with gateway + SignalR
 2. E2E test with Playwright
 3. Accessibility: Add ARIA attributes to banner
+## Learnings
+- 2026-04-20: Repro tests for sub-agent wake delivery should assert both dispatch metadata (messageType=subagent-completion) and stream-event channel capabilities; race-condition coverage needs explicit fallback-to-dispatch expectations when IsRunning flips during follow-up enqueue.
