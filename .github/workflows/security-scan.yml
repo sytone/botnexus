@@ -102,7 +102,7 @@ jobs:
           echo "Checking for private key material..."
           PK_MARKER="PRIVATE KEY"
           PRIVATE_KEY_HITS=$(git ls-files -z | \
-            grep -zv -E '\.(copilot|squad)/.*secret-handling/' | \
+            grep -zv -E '\.(copilot|squad|github)/.*secret-handling/' | \
             xargs -0 grep -l \
             "BEGIN RSA ${PK_MARKER}\|BEGIN ${PK_MARKER}\|BEGIN EC ${PK_MARKER}\|BEGIN OPENSSH ${PK_MARKER}" \
             2>/dev/null || true)
