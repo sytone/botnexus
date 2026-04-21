@@ -39,7 +39,8 @@
        ContinueOnError prevents build failures when the gateway has DLLs locked. -->
   <Target Name="DeployExtension" AfterTargets="CopyBlazorClient">
     <PropertyGroup>
-      <ExtensionDeployDir>$(USERPROFILE)\.botnexus\extensions\signalr\</ExtensionDeployDir>
+      <ExtensionDeployDir Condition="'$(USERPROFILE)' != ''">$(USERPROFILE)\.botnexus\extensions\signalr\</ExtensionDeployDir>
+      <ExtensionDeployDir Condition="'$(USERPROFILE)' == ''">$(HOME)/.botnexus/extensions/signalr/</ExtensionDeployDir>
     </PropertyGroup>
     <ItemGroup>
       <ExtensionFiles Include="$(OutputPath)**\*.*" Exclude="$(OutputPath)ref\**;$(OutputPath)blazor-publish\**" />
