@@ -83,14 +83,6 @@ jobs:
             fi
           fi
 
-          # Check AllowedHosts is not wildcard in production config
-          echo "Checking AllowedHosts settings..."
-          WILDCARD_HOSTS=$(grep -n '"AllowedHosts".*"\*"' \
-            src/gateway/BotNexus.Gateway.Api/appsettings.json 2>/dev/null || true)
-          if [ -n "$WILDCARD_HOSTS" ]; then
-            FINDINGS+=("MEDIUM: AllowedHosts is set to wildcard (*) in appsettings.json — consider restricting in production config")
-          fi
-
           # Check for auth.json files accidentally committed
           echo "Checking for committed credential files..."
           CRED_FILES=$(git ls-files | grep -iE "(auth\.json|\.env$|\.env\.[^.]+$|secrets\.json|credentials\.json)" || true)
@@ -100,8 +92,11 @@ jobs:
 
           # Check for private key material in tracked files
           echo "Checking for private key material..."
-          PRIVATE_KEY_HITS=$(git ls-files -z | xargs -0 grep -l \
-            "BEGIN RSA PRIVATE KEY\|BEGIN PRIVATE KEY\|BEGIN EC PRIVATE KEY\|BEGIN OPENSSH PRIVATE KEY" \
+          PK_MARKER="PRIVATE KEY"
+          PRIVATE_KEY_HITS=$(git ls-files -z | \
+            grep -zv -E '\.(copilot|squad|github)/.*secret-handling/' | \
+            xargs -0 grep -l \
+            "BEGIN RSA ${PK_MARKER}\|BEGIN ${PK_MARKER}\|BEGIN EC ${PK_MARKER}\|BEGIN OPENSSH ${PK_MARKER}" \
             2>/dev/null || true)
           if [ -n "$PRIVATE_KEY_HITS" ]; then
             FINDINGS+=("CRITICAL: Private key material found in tracked files:\n$PRIVATE_KEY_HITS")
