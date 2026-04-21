@@ -14,7 +14,7 @@ public sealed class FileAgentConfigurationSourceTests : IDisposable
     public FileAgentConfigurationSourceTests()
     {
         _fileSystem = new MockFileSystem();
-        _directoryPath = @"C:\botnexus\file-config-tests";
+        _directoryPath = Path.Combine(Path.GetTempPath(), "botnexus", "file-config-tests");
         _fileSystem.Directory.CreateDirectory(_directoryPath);
     }
 
@@ -84,18 +84,22 @@ public sealed class FileAgentConfigurationSourceTests : IDisposable
     [Fact]
     public async Task LoadAsync_WithFileAccess_MapsFileAccessPolicy()
     {
+        var testDocsPath = Path.Combine(Path.GetTempPath(), "repos", "botnexus", "docs");
+        var testArtifactsPath = Path.Combine(Path.GetTempPath(), "repos", "botnexus", "artifacts");
+        var testSecretsPath = Path.Combine(testDocsPath, "secrets");
+        
         _fileSystem.File.WriteAllText(
             Path.Combine(_directoryPath, "agent-a.json"),
-            """
+            $$"""
             {
               "agentId": "agent-a",
               "displayName": "Agent A",
               "modelId": "model-x",
               "apiProvider": "provider-x",
               "fileAccess": {
-                "allowedReadPaths": ["Q:\\repos\\botnexus\\docs"],
-                "allowedWritePaths": ["Q:\\repos\\botnexus\\artifacts"],
-                "deniedPaths": ["Q:\\repos\\botnexus\\docs\\secrets"]
+                "allowedReadPaths": ["{{testDocsPath.Replace("\\", "\\\\")}}"],
+                "allowedWritePaths": ["{{testArtifactsPath.Replace("\\", "\\\\")}}"],
+                "deniedPaths": ["{{testSecretsPath.Replace("\\", "\\\\")}}"] 
               }
             }
             """);
@@ -105,9 +109,9 @@ public sealed class FileAgentConfigurationSourceTests : IDisposable
         var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
 
         descriptor.FileAccess.ShouldNotBeNull();
-        descriptor.FileAccess!.AllowedReadPaths.ShouldHaveSingleItem().ShouldBe(@"Q:\repos\botnexus\docs");
-        descriptor.FileAccess.AllowedWritePaths.ShouldHaveSingleItem().ShouldBe(@"Q:\repos\botnexus\artifacts");
-        descriptor.FileAccess.DeniedPaths.ShouldHaveSingleItem().ShouldBe(@"Q:\repos\botnexus\docs\secrets");
+        descriptor.FileAccess!.AllowedReadPaths.ShouldHaveSingleItem().ShouldBe(testDocsPath);
+        descriptor.FileAccess.AllowedWritePaths.ShouldHaveSingleItem().ShouldBe(testArtifactsPath);
+        descriptor.FileAccess.DeniedPaths.ShouldHaveSingleItem().ShouldBe(testSecretsPath);
     }
 
     [Fact]

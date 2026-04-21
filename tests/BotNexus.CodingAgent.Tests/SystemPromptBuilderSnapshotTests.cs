@@ -10,7 +10,7 @@ public sealed class SystemPromptBuilderSnapshotTests
     {
         var builder = new SystemPromptBuilder();
         var prompt = builder.Build(new SystemPromptContext(
-            WorkingDirectory: @"C:\\repo",
+            WorkingDirectory: Path.Combine(Path.GetTempPath(), "repo"),
             GitBranch: "feature/unify-prompts",
             GitStatus: "M src/file.cs",
             PackageManager: "pnpm",

@@ -7,7 +7,7 @@ namespace BotNexus.CodingAgent.Tests.Utils;
 public sealed class ContextFileDiscoveryTests
 {
     private readonly MockFileSystem _fileSystem = new();
-    private readonly string _testRoot = @"C:\context-discovery";
+    private readonly string _testRoot = Path.Combine(Path.GetTempPath(), "context-discovery");
 
     [Fact]
     public async Task DiscoverAsync_FindsInstructionsInParentDirectory()

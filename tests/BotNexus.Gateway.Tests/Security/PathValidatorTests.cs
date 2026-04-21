@@ -5,17 +5,19 @@ namespace BotNexus.Gateway.Tests.Security;
 
 public sealed class PathValidatorTests
 {
-    private const string Workspace = @"Q:\repos\botnexus";
+    private static readonly string Workspace = Path.Combine(Path.GetTempPath(), "repos", "botnexus");
+    private static readonly string TestRepoRoot = Path.Combine(Path.GetTempPath(), "repos", "botnexus");
+    private static readonly string TestWorkspace = Path.Combine(Path.GetTempPath(), "workspace");
 
     [Fact]
     public void CanRead_AllowedPath_ReturnsTrue()
     {
         var sut = CreateValidator(new FileAccessPolicy
         {
-            AllowedReadPaths = [@"Q:\repos\botnexus\src"]
+            AllowedReadPaths = [Path.Combine(TestRepoRoot, "src")]
         });
 
-        sut.CanRead(@"Q:\repos\botnexus\src\gateway\file.cs").ShouldBeTrue();
+        sut.CanRead(Path.Combine(TestRepoRoot, "src", "gateway", "file.cs")).ShouldBeTrue();
     }
 
     [Fact]
@@ -23,11 +25,11 @@ public sealed class PathValidatorTests
     {
         var sut = CreateValidator(new FileAccessPolicy
         {
-            AllowedReadPaths = [@"Q:\repos\botnexus"],
-            DeniedPaths = [@"Q:\repos\botnexus\src\gateway\secrets"]
+            AllowedReadPaths = [TestRepoRoot],
+            DeniedPaths = [Path.Combine(TestRepoRoot, "src", "gateway", "secrets")]
         });
 
-        sut.CanRead(@"Q:\repos\botnexus\src\gateway\secrets\file.txt").ShouldBeFalse();
+        sut.CanRead(Path.Combine(TestRepoRoot, "src", "gateway", "secrets", "file.txt")).ShouldBeFalse();
     }
 
     [Fact]
@@ -35,10 +37,10 @@ public sealed class PathValidatorTests
     {
         var sut = CreateValidator(new FileAccessPolicy
         {
-            AllowedReadPaths = [@"Q:\repos\botnexus\src"]
-        }, workspace: @"Q:\workspace");
+            AllowedReadPaths = [Path.Combine(TestRepoRoot, "src")]
+        }, workspace: TestWorkspace);
 
-        sut.CanRead(@"Q:\outside\file.txt").ShouldBeFalse();
+        sut.CanRead(Path.Combine(Path.GetTempPath(), "outside", "file.txt")).ShouldBeFalse();
     }
 
     [Fact]
@@ -46,10 +48,10 @@ public sealed class PathValidatorTests
     {
         var sut = CreateValidator(new FileAccessPolicy
         {
-            AllowedWritePaths = [@"Q:\repos\botnexus\artifacts"]
-        }, workspace: @"Q:\workspace");
+            AllowedWritePaths = [Path.Combine(TestRepoRoot, "artifacts")]
+        }, workspace: TestWorkspace);
 
-        sut.CanWrite(@"Q:\repos\botnexus\artifacts\output.json").ShouldBeTrue();
+        sut.CanWrite(Path.Combine(TestRepoRoot, "artifacts", "output.json")).ShouldBeTrue();
     }
 
     [Fact]
@@ -57,10 +59,10 @@ public sealed class PathValidatorTests
     {
         var sut = CreateValidator(new FileAccessPolicy
         {
-            AllowedReadPaths = [@"Q:\repos\botnexus\docs"]
-        }, workspace: @"Q:\workspace");
+            AllowedReadPaths = [Path.Combine(TestRepoRoot, "docs")]
+        }, workspace: TestWorkspace);
 
-        sut.CanWrite(@"Q:\repos\botnexus\docs\spec.md").ShouldBeFalse();
+        sut.CanWrite(Path.Combine(TestRepoRoot, "docs", "spec.md")).ShouldBeFalse();
     }
 
     [Fact]
@@ -68,13 +70,13 @@ public sealed class PathValidatorTests
     {
         var sut = CreateValidator(new FileAccessPolicy
         {
-            AllowedReadPaths = [@"Q:\repos\botnexus\src"],
-            AllowedWritePaths = [@"Q:\repos\botnexus\src"],
-            DeniedPaths = [@"Q:\repos\botnexus\src\private"]
-        }, workspace: @"Q:\workspace");
+            AllowedReadPaths = [Path.Combine(TestRepoRoot, "src")],
+            AllowedWritePaths = [Path.Combine(TestRepoRoot, "src")],
+            DeniedPaths = [Path.Combine(TestRepoRoot, "src", "private")]
+        }, workspace: TestWorkspace);
 
-        sut.CanRead(@"Q:\repos\botnexus\src\private\secrets.txt").ShouldBeFalse();
-        sut.CanWrite(@"Q:\repos\botnexus\src\private\secrets.txt").ShouldBeFalse();
+        sut.CanRead(Path.Combine(TestRepoRoot, "src", "private", "secrets.txt")).ShouldBeFalse();
+        sut.CanWrite(Path.Combine(TestRepoRoot, "src", "private", "secrets.txt")).ShouldBeFalse();
     }
 
     [Fact]
@@ -82,9 +84,9 @@ public sealed class PathValidatorTests
     {
         var sut = CreateValidator(policy: null);
 
-        var resolved = sut.ValidateAndResolve(@"src\gateway\Program.cs", FileAccessMode.Read);
+        var resolved = sut.ValidateAndResolve(Path.Combine("src", "gateway", "Program.cs"), FileAccessMode.Read);
 
-        resolved.ShouldBe(@"Q:\repos\botnexus\src\gateway\Program.cs");
+        resolved.ShouldBe(Path.Combine(TestRepoRoot, "src", "gateway", "Program.cs"));
     }
 
     [Fact]
@@ -92,11 +94,11 @@ public sealed class PathValidatorTests
     {
         var sut = CreateValidator(new FileAccessPolicy
         {
-            AllowedReadPaths = [@"Q:\repos\botnexus\src"],
-            DeniedPaths = [@"Q:\repos\botnexus\src\gateway"]
-        }, workspace: @"Q:\workspace");
+            AllowedReadPaths = [Path.Combine(TestRepoRoot, "src")],
+            DeniedPaths = [Path.Combine(TestRepoRoot, "src", "gateway")]
+        }, workspace: TestWorkspace);
 
-        var resolved = sut.ValidateAndResolve(@"Q:\repos\botnexus\src\gateway\Program.cs", FileAccessMode.Read);
+        var resolved = sut.ValidateAndResolve(Path.Combine(TestRepoRoot, "src", "gateway", "Program.cs"), FileAccessMode.Read);
 
         resolved.ShouldBeNull();
     }
@@ -106,12 +108,14 @@ public sealed class PathValidatorTests
     {
         var sut = CreateValidator(new FileAccessPolicy
         {
-            AllowedReadPaths = [@"Q:\repos\botnexus"]
-        }, workspace: @"Q:\workspace");
+            AllowedReadPaths = [TestRepoRoot]
+        }, workspace: TestWorkspace);
 
-        var resolved = sut.ValidateAndResolve(@"Q:/repos/botnexus/src/gateway/Program.cs", FileAccessMode.Read);
+        // Use forward slashes and then expect them to be normalized to the platform's directory separator
+        var testPath = TestRepoRoot.Replace(Path.DirectorySeparatorChar, '/') + "/src/gateway/Program.cs";
+        var resolved = sut.ValidateAndResolve(testPath, FileAccessMode.Read);
 
-        resolved.ShouldBe(@"Q:\repos\botnexus\src\gateway\Program.cs");
+        resolved.ShouldBe(Path.Combine(TestRepoRoot, "src", "gateway", "Program.cs"));
     }
 
     [Fact]
@@ -120,21 +124,23 @@ public sealed class PathValidatorTests
         var nullPolicyValidator = CreateValidator(policy: null);
         var emptyPolicyValidator = CreateValidator(new FileAccessPolicy());
 
-        nullPolicyValidator.CanRead(@"Q:\repos\botnexus\README.md").ShouldBeTrue();
-        nullPolicyValidator.CanRead(@"Q:\elsewhere\README.md").ShouldBeFalse();
-        emptyPolicyValidator.CanWrite(@"Q:\repos\botnexus\artifacts\output.txt").ShouldBeTrue();
-        emptyPolicyValidator.CanWrite(@"Q:\elsewhere\output.txt").ShouldBeFalse();
+        nullPolicyValidator.CanRead(Path.Combine(TestRepoRoot, "README.md")).ShouldBeTrue();
+        nullPolicyValidator.CanRead(Path.Combine(Path.GetTempPath(), "elsewhere", "README.md")).ShouldBeFalse();
+        emptyPolicyValidator.CanWrite(Path.Combine(TestRepoRoot, "artifacts", "output.txt")).ShouldBeTrue();
+        emptyPolicyValidator.CanWrite(Path.Combine(Path.GetTempPath(), "elsewhere", "output.txt")).ShouldBeFalse();
     }
 
     [Fact]
     public void CaseInsensitive_OnWindows()
     {
+        var testPath = Path.Combine(TestRepoRoot.Replace("repos", "Repos").Replace("botnexus", "BotNexus"));
         var sut = CreateValidator(new FileAccessPolicy
         {
-            AllowedReadPaths = [@"Q:\Repos\BotNexus"]
-        }, workspace: @"Q:\workspace");
+            AllowedReadPaths = [testPath]
+        }, workspace: TestWorkspace);
 
-        sut.CanRead(@"q:\repos\botnexus\src\gateway\Program.cs").ShouldBe(OperatingSystem.IsWindows());
+        var lowerPath = Path.Combine(TestRepoRoot, "src", "gateway", "Program.cs");
+        sut.CanRead(lowerPath).ShouldBe(OperatingSystem.IsWindows());
     }
 
     [Fact]
@@ -142,10 +148,10 @@ public sealed class PathValidatorTests
     {
         var sut = CreateValidator(new FileAccessPolicy
         {
-            AllowedReadPaths = [@"Q:\repos\botnexus"]
-        }, workspace: @"Q:\workspace");
+            AllowedReadPaths = [TestRepoRoot]
+        }, workspace: TestWorkspace);
 
-        sut.CanRead(@"Q:\repos\botnexus\src").ShouldBeTrue();
+        sut.CanRead(Path.Combine(TestRepoRoot, "src")).ShouldBeTrue();
     }
 
     [Fact]
@@ -153,33 +159,36 @@ public sealed class PathValidatorTests
     {
         var sut = CreateValidator(new FileAccessPolicy
         {
-            AllowedReadPaths = [@"Q:\repos\botnexus"]
-        }, workspace: @"Q:\workspace");
+            AllowedReadPaths = [TestRepoRoot]
+        }, workspace: TestWorkspace);
 
-        sut.CanRead(@"Q:\repos\botnexus-other\src").ShouldBeFalse();
+        var otherPath = Path.Combine(Path.GetDirectoryName(TestRepoRoot)!, "botnexus-other", "src");
+        sut.CanRead(otherPath).ShouldBeFalse();
     }
 
     [Fact]
     public void GlobStar_MatchesAllUnderDirectory()
     {
+        var repoParent = Path.GetDirectoryName(TestRepoRoot)!;
         var sut = CreateValidator(new FileAccessPolicy
         {
-            AllowedReadPaths = [@"Q:\repos\*"]
-        }, workspace: @"Q:\workspace");
+            AllowedReadPaths = [Path.Combine(repoParent, "*")]
+        }, workspace: TestWorkspace);
 
-        sut.CanRead(@"Q:\repos\botnexus\file.cs").ShouldBeTrue();
+        sut.CanRead(Path.Combine(TestRepoRoot, "file.cs")).ShouldBeTrue();
     }
 
     [Fact]
     public void GlobDoubleStar_MatchesRecursive()
     {
+        var repoParent = Path.GetDirectoryName(TestRepoRoot)!;
         var sut = CreateValidator(new FileAccessPolicy
         {
-            AllowedReadPaths = [@"Q:\repos\**\*.cs"]
-        }, workspace: @"Q:\workspace");
+            AllowedReadPaths = [Path.Combine(repoParent, "**", "*.cs")]
+        }, workspace: TestWorkspace);
 
-        sut.CanRead(@"Q:\repos\botnexus\src\gateway\Program.cs").ShouldBeTrue();
-        sut.CanRead(@"Q:\repos\botnexus\src\gateway\file.txt").ShouldBeFalse();
+        sut.CanRead(Path.Combine(TestRepoRoot, "src", "gateway", "Program.cs")).ShouldBeTrue();
+        sut.CanRead(Path.Combine(TestRepoRoot, "src", "gateway", "file.txt")).ShouldBeFalse();
     }
 
     [Fact]
@@ -187,30 +196,31 @@ public sealed class PathValidatorTests
     {
         var sut = CreateValidator(new FileAccessPolicy
         {
-            AllowedReadPaths = [@"Q:\repos\botnexus"],
-            DeniedPaths = [@"**\*.env"]
+            AllowedReadPaths = [TestRepoRoot],
+            DeniedPaths = [Path.Combine("**", "*.env")]
         });
 
-        sut.CanRead(@"Q:\repos\botnexus\src\.env").ShouldBeFalse();
-        sut.CanRead(@"Q:\repos\botnexus\config\production.env").ShouldBeFalse();
-        sut.CanRead(@"Q:\repos\botnexus\src\Program.cs").ShouldBeTrue();
+        sut.CanRead(Path.Combine(TestRepoRoot, "src", ".env")).ShouldBeFalse();
+        sut.CanRead(Path.Combine(TestRepoRoot, "config", "production.env")).ShouldBeFalse();
+        sut.CanRead(Path.Combine(TestRepoRoot, "src", "Program.cs")).ShouldBeTrue();
     }
 
     [Fact]
     public void GlobAndLiteral_BothWork()
     {
+        var repoParent = Path.GetDirectoryName(TestRepoRoot)!;
         var sut = CreateValidator(new FileAccessPolicy
         {
             AllowedReadPaths =
             [
-                @"Q:\repos\botnexus\docs",
-                @"Q:\repos\**\*.cs"
+                Path.Combine(TestRepoRoot, "docs"),
+                Path.Combine(repoParent, "**", "*.cs")
             ]
-        }, workspace: @"Q:\workspace");
+        }, workspace: TestWorkspace);
 
-        sut.CanRead(@"Q:\repos\botnexus\docs\spec.md").ShouldBeTrue();
-        sut.CanRead(@"Q:\repos\botnexus\src\Program.cs").ShouldBeTrue();
-        sut.CanRead(@"Q:\repos\botnexus\src\readme.md").ShouldBeFalse();
+        sut.CanRead(Path.Combine(TestRepoRoot, "docs", "spec.md")).ShouldBeTrue();
+        sut.CanRead(Path.Combine(TestRepoRoot, "src", "Program.cs")).ShouldBeTrue();
+        sut.CanRead(Path.Combine(TestRepoRoot, "src", "readme.md")).ShouldBeFalse();
     }
 
     [Fact]
@@ -218,12 +228,12 @@ public sealed class PathValidatorTests
     {
         var sut = CreateValidator(new FileAccessPolicy
         {
-            AllowedReadPaths = [@"Q:\other\*"]
-        }, workspace: @"Q:\workspace");
+            AllowedReadPaths = [Path.Combine(Path.GetTempPath(), "other", "*")]
+        }, workspace: TestWorkspace);
 
-        sut.CanRead(@"Q:\repos\file.cs").ShouldBeFalse();
+        sut.CanRead(Path.Combine(TestRepoRoot, "file.cs")).ShouldBeFalse();
     }
 
-    private static DefaultPathValidator CreateValidator(FileAccessPolicy? policy, string workspace = Workspace)
-        => new(policy, workspace);
+    private static DefaultPathValidator CreateValidator(FileAccessPolicy? policy, string? workspace = null)
+        => new(policy, workspace ?? Workspace);
 }

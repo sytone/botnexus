@@ -22,7 +22,7 @@ public sealed class PathUtilsTests : IDisposable
     [Fact]
     public void ResolvePath_WhenTraversalEscapesRoot_Throws()
     {
-        var action = () => PathUtils.ResolvePath("..\\outside.txt", _workingDirectory);
+        var action = () => PathUtils.ResolvePath(Path.Combine("..", "outside.txt"), _workingDirectory);
 
         action.ShouldThrow<InvalidOperationException>()
             .Message.ShouldContain("Path traversal is not allowed");

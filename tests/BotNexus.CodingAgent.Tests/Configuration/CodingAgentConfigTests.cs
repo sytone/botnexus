@@ -7,7 +7,7 @@ namespace BotNexus.CodingAgent.Tests.Configuration;
 public sealed class CodingAgentConfigTests
 {
     private readonly MockFileSystem _fileSystem = new();
-    private readonly string _workingDirectory = @"C:\repo";
+    private readonly string _workingDirectory = Path.Combine(Path.GetTempPath(), "repo");
 
     [Fact]
     public void CreateDefaults_HasExpectedDefaultValues()

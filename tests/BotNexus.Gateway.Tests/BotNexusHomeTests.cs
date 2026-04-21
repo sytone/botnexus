@@ -5,7 +5,7 @@ namespace BotNexus.Gateway.Tests;
 
 public sealed class BotNexusHomeTests
 {
-    private const string HomePath = @"C:\botnexus-home";
+    private static readonly string HomePath = Path.Combine(Path.GetTempPath(), "botnexus-home");
 
     [Fact]
     public void Initialize_CreatesRequiredDirectoriesIncludingAgents()

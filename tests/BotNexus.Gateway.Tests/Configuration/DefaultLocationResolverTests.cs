@@ -8,6 +8,7 @@ public sealed class DefaultLocationResolverTests
     [Fact]
     public void Resolve_ReturnsNamedLocation_AndResolvePathSupportsFilesystem()
     {
+        var testPath = Path.Combine(Path.GetTempPath(), "repos", "botnexus");
         var config = new PlatformConfig
         {
             Gateway = new GatewaySettingsConfig
@@ -17,7 +18,7 @@ public sealed class DefaultLocationResolverTests
                     ["repo-root"] = new()
                     {
                         Type = "filesystem",
-                        Path = "Q:\\repos\\botnexus"
+                        Path = testPath
                     },
                     ["gateway-api"] = new()
                     {
@@ -33,7 +34,7 @@ public sealed class DefaultLocationResolverTests
         var location = resolver.Resolve("repo-root");
         location.ShouldNotBeNull();
         location!.Type.ShouldBe(LocationType.FileSystem);
-        resolver.ResolvePath("repo-root").ShouldBe("Q:\\repos\\botnexus");
+        resolver.ResolvePath("repo-root").ShouldBe(testPath);
         resolver.ResolvePath("gateway-api").ShouldBeNull();
         resolver.GetAll().Where(x => x.Name == "gateway-api").ShouldHaveSingleItem();
     }

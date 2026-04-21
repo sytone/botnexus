@@ -10,7 +10,7 @@ public sealed class SystemPromptBuilderTests
     public void Build_IncludesRoleToolsAndEnvironmentSections()
     {
         var context = new SystemPromptContext(
-            WorkingDirectory: @"C:\repo",
+            WorkingDirectory: Path.Combine(Path.GetTempPath(), "repo"),
             GitBranch: "main",
             GitStatus: "clean",
             PackageManager: "npm",
@@ -42,7 +42,7 @@ public sealed class SystemPromptBuilderTests
     public void Build_WithSkillsAndCustomInstructions_IncludesBothSections()
     {
         var context = new SystemPromptContext(
-            WorkingDirectory: @"C:\repo",
+            WorkingDirectory: Path.Combine(Path.GetTempPath(), "repo"),
             GitBranch: null,
             GitStatus: null,
             PackageManager: "dotnet",
@@ -76,7 +76,7 @@ public sealed class SystemPromptBuilderTests
     public void Build_WithContextFiles_IncludesProjectContextSection()
     {
         var context = new SystemPromptContext(
-            WorkingDirectory: @"C:\repo",
+            WorkingDirectory: Path.Combine(Path.GetTempPath(), "repo"),
             GitBranch: "main",
             GitStatus: "clean",
             PackageManager: "dotnet",
@@ -100,7 +100,7 @@ public sealed class SystemPromptBuilderTests
     public void Build_WithEmptyOptionalSections_OmitsSectionHeadings()
     {
         var context = new SystemPromptContext(
-            WorkingDirectory: @"C:\repo",
+            WorkingDirectory: Path.Combine(Path.GetTempPath(), "repo"),
             GitBranch: "main",
             GitStatus: "clean",
             PackageManager: "dotnet",
@@ -120,7 +120,7 @@ public sealed class SystemPromptBuilderTests
     public void Build_WithCustomPrompt_ReplacesBaseAndAppendsConfiguredText()
     {
         var context = new SystemPromptContext(
-            WorkingDirectory: @"C:\repo",
+            WorkingDirectory: Path.Combine(Path.GetTempPath(), "repo"),
             GitBranch: null,
             GitStatus: null,
             PackageManager: "dotnet",
@@ -142,7 +142,7 @@ public sealed class SystemPromptBuilderTests
     public void Build_WithOnlyBashTool_AddsBashFileOperationsGuideline()
     {
         var context = new SystemPromptContext(
-            WorkingDirectory: @"C:\repo",
+            WorkingDirectory: Path.Combine(Path.GetTempPath(), "repo"),
             GitBranch: "main",
             GitStatus: "clean",
             PackageManager: "dotnet",
@@ -160,7 +160,7 @@ public sealed class SystemPromptBuilderTests
     public void Build_WithBashAndDiscoveryTools_PrefersDedicatedToolsGuideline()
     {
         var context = new SystemPromptContext(
-            WorkingDirectory: @"C:\repo",
+            WorkingDirectory: Path.Combine(Path.GetTempPath(), "repo"),
             GitBranch: "main",
             GitStatus: "clean",
             PackageManager: "dotnet",

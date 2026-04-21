@@ -6,7 +6,7 @@ namespace BotNexus.CodingAgent.Tests.Tools;
 
 public sealed class EditToolTests
 {
-    private readonly string _tempDirectory = @"C:\tools\edit";
+    private readonly string _tempDirectory = Path.Combine(Path.GetTempPath(), "tools", "edit");
     private readonly MockFileSystem _fileSystem = new();
     private readonly EditTool _tool;
 

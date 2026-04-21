@@ -6,7 +6,7 @@ namespace BotNexus.CodingAgent.Tests.Tools;
 
 public sealed class WriteToolTests
 {
-    private readonly string _tempDirectory = @"C:\tools\write";
+    private readonly string _tempDirectory = Path.Combine(Path.GetTempPath(), "tools", "write");
     private readonly MockFileSystem _fileSystem = new();
     private readonly WriteTool _tool;
 
