@@ -125,6 +125,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             _ = memoryStore.InitializeAsync(CancellationToken.None);
             tools.Add(new MemorySearchTool(memoryStore, descriptor.Memory));
             tools.Add(new MemoryGetTool(memoryStore));
+            tools.Add(new MemoryStoreTool(memoryStore, descriptor.AgentId));
         }
 
         var cronEnabled = descriptor.ToolIds.Count == 0
