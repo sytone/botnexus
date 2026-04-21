@@ -3,14 +3,14 @@ id: bug-subagent-completion-wakeup
 title: "Sub-Agent Completion Signals Not Waking Parent Agent Session"
 type: bug
 priority: high
-status: in-progress
+status: delivered
 created: 2026-07-22
 tags: [bug, subagent, gateway, session-wake, completion, async-delegation]
 ---
 
 # Bug: Sub-Agent Completion Signals Not Waking Parent Agent Session
 
-**Status:** in-progress
+**Status:** Delivered
 **Priority:** high
 **Created:** 2026-07-22
 
