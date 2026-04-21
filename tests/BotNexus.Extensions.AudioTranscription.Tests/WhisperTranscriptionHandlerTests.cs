@@ -8,18 +8,18 @@ namespace BotNexus.Extensions.AudioTranscription.Tests;
 public sealed class WhisperTranscriptionHandlerTests
 {
     [Fact]
-    public void Metadata_UsesStableDefaults()
+    public async Task Metadata_UsesStableDefaults()
     {
-        using var handler = CreateHandler(new AudioTranscriptionOptions());
+        await using var handler = CreateHandler(new AudioTranscriptionOptions());
 
         handler.Name.ShouldBe("whisper-transcription");
         handler.Priority.ShouldBe(50);
     }
 
     [Fact]
-    public void CanHandle_ReturnsTrueForSupportedMimeType_CaseInsensitive()
+    public async Task CanHandle_ReturnsTrueForSupportedMimeType_CaseInsensitive()
     {
-        using var handler = CreateHandler(new AudioTranscriptionOptions());
+        await using var handler = CreateHandler(new AudioTranscriptionOptions());
 
         var content = new BinaryContentPart
         {
@@ -31,9 +31,9 @@ public sealed class WhisperTranscriptionHandlerTests
     }
 
     [Fact]
-    public void CanHandle_ReturnsFalseForUnsupportedMimeType()
+    public async Task CanHandle_ReturnsFalseForUnsupportedMimeType()
     {
-        using var handler = CreateHandler(new AudioTranscriptionOptions());
+        await using var handler = CreateHandler(new AudioTranscriptionOptions());
 
         var content = new BinaryContentPart
         {
@@ -45,9 +45,9 @@ public sealed class WhisperTranscriptionHandlerTests
     }
 
     [Fact]
-    public void CanHandle_ReturnsFalseForNonBinaryContent()
+    public async Task CanHandle_ReturnsFalseForNonBinaryContent()
     {
-        using var handler = CreateHandler(new AudioTranscriptionOptions());
+        await using var handler = CreateHandler(new AudioTranscriptionOptions());
 
         var content = new TextContentPart
         {
@@ -61,7 +61,7 @@ public sealed class WhisperTranscriptionHandlerTests
     [Fact]
     public async Task ProcessAsync_ReturnsOriginalPartForNonBinaryContent()
     {
-        using var handler = CreateHandler(new AudioTranscriptionOptions());
+        await using var handler = CreateHandler(new AudioTranscriptionOptions());
         var textPart = new TextContentPart
         {
             MimeType = "text/plain",
@@ -78,7 +78,7 @@ public sealed class WhisperTranscriptionHandlerTests
     [Fact]
     public async Task ProcessAsync_ThrowsWhenModelPathIsMissing()
     {
-        using var handler = CreateHandler(
+        await using var handler = CreateHandler(
             new AudioTranscriptionOptions
             {
                 ModelPath = "   "
@@ -99,7 +99,7 @@ public sealed class WhisperTranscriptionHandlerTests
     public async Task ProcessAsync_ThrowsWhenModelFileDoesNotExist()
     {
         var missingModelPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.bin");
-        using var handler = CreateHandler(
+        await using var handler = CreateHandler(
             new AudioTranscriptionOptions
             {
                 ModelPath = missingModelPath
@@ -120,7 +120,7 @@ public sealed class WhisperTranscriptionHandlerTests
     public async Task ProcessAsync_RespectsPreCanceledTokenBeforeTranscription()
     {
         var missingModelPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.bin");
-        using var handler = CreateHandler(
+        await using var handler = CreateHandler(
             new AudioTranscriptionOptions
             {
                 ModelPath = missingModelPath
