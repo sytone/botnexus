@@ -391,8 +391,10 @@
             // 1. Render markdown for any un-rendered assistant messages FIRST.
             //    If new markdown was rendered the DOM content will change, so we
             //    trigger a re-render and defer scrolling until the DOM is stable.
+            //    Snapshot the list — SignalR callbacks can add messages during the
+            //    JS interop awaits, which would invalidate the List<T> enumerator.
             var needsRender = false;
-            foreach (var msg in State.Messages)
+            foreach (var msg in State.Messages.ToList())
             {
                 if (msg.Role == "Assistant" && !_markdownCache.ContainsKey(msg.Id))
                 {
