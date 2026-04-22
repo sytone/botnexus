@@ -148,7 +148,7 @@ public sealed class CompactionModelTests
         public StoreFixture()
         {
             FileSystem = new MockFileSystem();
-            StorePath = Path.Combine("C:\\", "CompactionModelTests", Guid.NewGuid().ToString("N"));
+            StorePath = Path.Combine(Path.GetTempPath(), "CompactionModelTests", Guid.NewGuid().ToString("N"));
             FileSystem.Directory.CreateDirectory(StorePath);
         }
 

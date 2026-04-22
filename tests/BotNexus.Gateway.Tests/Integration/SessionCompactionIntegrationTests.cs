@@ -441,7 +441,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         public MockFileStoreFixture()
         {
             FileSystem = new MockFileSystem();
-            StorePath = Path.Combine("C:\\", "SessionCompactionIntegrationTests", Guid.NewGuid().ToString("N"));
+            StorePath = Path.Combine(Path.GetTempPath(), "SessionCompactionIntegrationTests", Guid.NewGuid().ToString("N"));
             FileSystem.Directory.CreateDirectory(StorePath);
         }
 

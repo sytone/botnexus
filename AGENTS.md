@@ -74,6 +74,36 @@ Common properties and package versions are centralized — **do not duplicate th
 
 ## Code Practices
 
+### Cross-Platform Path Handling
+
+**All file paths must be constructed using `Path.Combine()` and platform APIs.** BotNexus runs on Windows, Linux, and macOS — hardcoded paths break portability.
+
+**Rules:**
+- Use `Path.Combine()` to build all file paths — never concatenate strings with `/` or `\`
+- Use `Path.GetTempPath()` for temporary directories — never hardcode `/tmp/` or `C:\Temp\`
+- Use `Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)` for the user home directory, with a fallback to `Environment.GetEnvironmentVariable("HOME")` on Linux/macOS
+- Use `Path.DirectorySeparatorChar` or `Path.AltDirectorySeparatorChar` when separator-aware logic is needed
+- In test assertions, normalise paths before comparing (e.g., `Path.GetFullPath()`) rather than asserting exact separator characters
+
+```csharp
+// GOOD — works on all platforms
+var configDir = Path.Combine(Path.GetTempPath(), "botnexus-tests", Guid.NewGuid().ToString("N"));
+var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+    is { Length: > 0 } home ? home : Environment.GetEnvironmentVariable("HOME") ?? "/tmp";
+
+// BAD — breaks on Linux
+var configDir = "C:\\Users\\test\\.botnexus";
+var tempDir = "/tmp/botnexus-tests";
+var path = workspace + "\\" + filename;
+```
+
+### Shell Command Tests
+
+When testing shell execution, ensure commands work on both `bash` and `pwsh`:
+- Use `RuntimeInformation.IsOSPlatform()` for platform-specific test branches if unavoidable
+- Prefer cross-platform commands (pwsh `Write-Output` works everywhere pwsh is installed)
+- Never hardcode `cmd.exe` or `/bin/bash` paths in tests — use the ShellTool abstraction
+
 ### Never Guess Time
 
 **Never assume or calculate the current time.** Always run `Get-Date` to get the local user time. Do not convert UTC timestamps to local time manually — you will get it wrong.

@@ -129,7 +129,7 @@ public sealed class WorkspaceContextBuilderTests
 
     private string CreateWorkspace(params (string FileName, string Content)[] files)
     {
-        var rootPath = Path.Combine("C:\\", "botnexus-workspace-context-tests", Guid.NewGuid().ToString("N"));
+        var rootPath = Path.Combine(Path.GetTempPath(), "botnexus-workspace-context-tests", Guid.NewGuid().ToString("N"));
         var workspacePath = Path.Combine(rootPath, "workspace");
         _fileSystem.Directory.CreateDirectory(workspacePath);
 

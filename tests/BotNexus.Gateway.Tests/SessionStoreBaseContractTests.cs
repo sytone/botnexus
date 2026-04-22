@@ -182,7 +182,7 @@ public sealed class SessionStoreBaseContractTests
     private sealed class FileHarness : IStoreHarness
     {
         private readonly MockFileSystem _fileSystem = new();
-        private readonly string _storePath = Path.Combine("C:\\", "SessionStoreBaseContractTests", Guid.NewGuid().ToString("N"));
+        private readonly string _storePath = Path.Combine(Path.GetTempPath(), "SessionStoreBaseContractTests", Guid.NewGuid().ToString("N"));
 
         public FileHarness()
         {
