@@ -37,21 +37,21 @@ public sealed class WorldDescriptorBuilderTests
                     Emoji = "🏠"
                 },
                 ListenUrl = "http://localhost:5005",
-                AgentsDirectory = "C:\\botnexus\\agents",
-                SessionsDirectory = "C:\\botnexus\\sessions",
+                AgentsDirectory = Path.Combine(Path.GetTempPath(), "botnexus", "agents"),
+                SessionsDirectory = Path.Combine(Path.GetTempPath(), "botnexus", "sessions"),
                 Locations = new Dictionary<string, LocationConfig>
                 {
                     ["provider:copilot"] = new()
                     {
                         Type = "filesystem",
-                        Path = "~\\declared-provider",
+                        Path = "~/declared-provider",
                         Description = "declared takes precedence",
                         Properties = new Dictionary<string, string> { ["source"] = "declared" }
                     },
                     ["repo-root"] = new()
                     {
                         Type = "filesystem",
-                        Path = "~\\repo",
+                        Path = "~/repo",
                         Description = "repository root"
                     }
                 },
@@ -134,7 +134,7 @@ public sealed class WorldDescriptorBuilderTests
         world.Locations.ShouldContain(location =>
             location.Name == "repo-root"
             && location.Type == LocationType.FileSystem
-            && location.Path == Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "repo"));
+            && location.Path == Path.Combine(GetExpectedUserProfile(), "repo"));
 
         var permission = world.CrossWorldPermissions.ShouldHaveSingleItem();
         permission.TargetWorldId.ShouldBe("prod");
@@ -153,5 +153,16 @@ public sealed class WorldDescriptorBuilderTests
             AgentExecutionContext context,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
+    }
+
+    private static string GetExpectedUserProfile()
+    {
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (string.IsNullOrWhiteSpace(userProfile))
+        {
+            // Fallback to HOME environment variable on Linux/Unix systems
+            userProfile = Environment.GetEnvironmentVariable("HOME") ?? string.Empty;
+        }
+        return userProfile;
     }
 }

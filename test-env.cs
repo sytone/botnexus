@@ -1,0 +1,1 @@
+using System; class Program { static void Main() { Console.WriteLine($"UserProfile: \"{Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)}\""); Console.WriteLine($"HOME env var: \"{Environment.GetEnvironmentVariable("HOME")}\""); Console.WriteLine($"USERPROFILE env var: \"{Environment.GetEnvironmentVariable("USERPROFILE")}\""); } }

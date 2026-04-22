@@ -58,9 +58,17 @@ public sealed class BotNexusHome
         if (!string.IsNullOrWhiteSpace(homeOverride))
             return Path.GetFullPath(homeOverride);
 
-        return Path.GetFullPath(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            HomeDirectoryName));
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (string.IsNullOrWhiteSpace(userProfile))
+        {
+            // Fallback to HOME environment variable on Linux/Unix systems
+            userProfile = Environment.GetEnvironmentVariable("HOME") ?? string.Empty;
+        }
+        
+        if (string.IsNullOrWhiteSpace(userProfile))
+            throw new InvalidOperationException("Unable to determine user home directory. Please set BOTNEXUS_HOME environment variable.");
+
+        return Path.GetFullPath(Path.Combine(userProfile, HomeDirectoryName));
     }
 
     public void Initialize()

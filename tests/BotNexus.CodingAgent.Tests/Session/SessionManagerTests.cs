@@ -7,7 +7,7 @@ namespace BotNexus.CodingAgent.Tests.Session;
 
 public sealed class SessionManagerTests
 {
-    private readonly string _workingDirectory = @"C:\session-tests";
+    private readonly string _workingDirectory = Path.Combine(Path.GetTempPath(), "session-tests");
     private readonly MockFileSystem _fileSystem = new();
     private readonly SessionManager _manager;
 

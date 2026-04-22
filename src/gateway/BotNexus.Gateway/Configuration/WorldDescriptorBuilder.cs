@@ -283,6 +283,15 @@ public static class WorldDescriptorBuilder
             return path;
 
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (string.IsNullOrWhiteSpace(home))
+        {
+            // Fallback to HOME environment variable on Linux/Unix systems
+            home = Environment.GetEnvironmentVariable("HOME") ?? string.Empty;
+        }
+        
+        if (string.IsNullOrWhiteSpace(home))
+            throw new InvalidOperationException("Unable to determine user home directory.");
+        
         if (path.Length == 1)
             return home;
 
