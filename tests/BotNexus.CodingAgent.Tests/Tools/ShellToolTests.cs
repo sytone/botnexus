@@ -298,9 +298,6 @@ public sealed class ShellToolTests
     [Fact]
     public async Task ExecuteAsync_WithPwshPreference_RunsCommandSuccessfully()
     {
-        if (!OperatingSystem.IsWindows())
-            return;
-
         var tool = new ShellTool(shellPreference: ShellPreference.Pwsh);
         var result = await tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
@@ -313,20 +310,37 @@ public sealed class ShellToolTests
     }
 
     [Fact]
-    public void ShellPreference_Pwsh_ChangesToolNameOnWindows()
+    public void ShellPreference_Pwsh_ChangesToolName()
     {
         var tool = new ShellTool(shellPreference: ShellPreference.Pwsh);
+        tool.Name.ShouldBe("shell");
+        tool.Label.ShouldContain("PowerShell");
+    }
 
-        if (OperatingSystem.IsWindows())
+    [Fact]
+    public async Task ExecuteAsync_WithPwshPreference_HandlesSpecialCharacters()
+    {
+        var tool = new ShellTool(shellPreference: ShellPreference.Pwsh);
+        var result = await tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
-            tool.Name.ShouldBe("shell");
-            tool.Label.ShouldContain("PowerShell");
-        }
-        else
+            ["command"] = "Write-Output 'hello world'"
+        });
+
+        result.Content.ShouldHaveSingleItem();
+        result.Content[0].Value.ShouldContain("hello world");
+        result.Details.ShouldBeOfType<ShellTool.ShellToolDetails>().ExitCode.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithPwshPreference_ReportsNonZeroExitCode()
+    {
+        var tool = new ShellTool(shellPreference: ShellPreference.Pwsh);
+        var result = await tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
-            // On non-Windows, pwsh preference is ignored — still bash.
-            tool.Name.ShouldBe("bash");
-        }
+            ["command"] = "exit 42"
+        });
+
+        result.Details.ShouldBeOfType<ShellTool.ShellToolDetails>().ExitCode.ShouldBe(42);
     }
 
     [Fact]

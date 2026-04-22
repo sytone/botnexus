@@ -9,8 +9,9 @@ using BotNexus.Agent.Providers.Core.Models;
 namespace BotNexus.Tools;
 
 /// <summary>
-/// Controls which shell is used for command execution on Windows.
-/// On non-Windows platforms, bash is always used regardless of this setting.
+/// Controls which shell is used for command execution.
+/// On all platforms, <see cref="ShellPreference.Pwsh"/> uses PowerShell Core (pwsh).
+/// <see cref="ShellPreference.Auto"/> and <see cref="ShellPreference.Bash"/> use bash.
 /// </summary>
 public enum ShellPreference
 {
@@ -33,8 +34,8 @@ public enum ShellPreference
 /// <list type="bullet">
 ///   <item><see cref="ShellPreference.Auto"/> (default) — Windows prefers bash when available,
 ///         falling back to PowerShell; non-Windows uses bash.</item>
-///   <item><see cref="ShellPreference.Pwsh"/> — Windows uses pwsh/powershell directly;
-///         non-Windows still uses bash.</item>
+///   <item><see cref="ShellPreference.Pwsh"/> — Uses pwsh on all platforms.
+///         Requires pwsh to be installed.</item>
 ///   <item><see cref="ShellPreference.Bash"/> — Always uses bash on all platforms.</item>
 /// </list>
 /// </para>
@@ -68,19 +69,19 @@ public sealed class ShellTool : IAgentTool
     }
 
     /// <inheritdoc />
-    public string Name => _shellPreference == ShellPreference.Pwsh && RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+    public string Name => _shellPreference == ShellPreference.Pwsh
         ? "shell"
         : "bash";
 
     /// <inheritdoc />
-    public string Label => _shellPreference == ShellPreference.Pwsh && RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+    public string Label => _shellPreference == ShellPreference.Pwsh
         ? "Shell (PowerShell)"
         : "Bash";
 
     /// <inheritdoc />
     public Tool Definition => new(
         Name,
-        _shellPreference == ShellPreference.Pwsh && RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+        _shellPreference == ShellPreference.Pwsh
             ? "Execute a PowerShell command in the current working directory and return stdout/stderr."
             : "Execute a bash command in the current working directory and return stdout/stderr.",
         JsonDocument.Parse("""
@@ -262,13 +263,14 @@ public sealed class ShellTool : IAgentTool
 
     private static ShellInvocation BuildShellInvocation(string command, ShellPreference preference)
     {
+        // Pwsh preference works on all platforms
+        if (preference == ShellPreference.Pwsh)
+        {
+            return BuildPwshInvocation(command, warningPrefix: null);
+        }
+
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            if (preference == ShellPreference.Pwsh)
-            {
-                return BuildPwshInvocation(command, warningPrefix: null);
-            }
-
             if (preference == ShellPreference.Bash)
             {
                 var bashPath = WindowsBashPath.Value;
@@ -295,8 +297,7 @@ public sealed class ShellTool : IAgentTool
                 "[warning: bash not found, using PowerShell — install Git for Windows for best compatibility]\n");
         }
 
-        // For Unix, use ArgumentList to avoid shell escaping issues with single quotes
-        // The command will be passed as separate arguments: ["-l", "-c", command]
+        // Unix with Auto or Bash preference: use bash with ArgumentList
         return new ShellInvocation("/bin/bash", null, command, null);
     }
 
