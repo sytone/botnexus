@@ -112,7 +112,7 @@ public sealed class ListDirectoryToolTests
     [Fact]
     public async Task ExecuteAsync_WhenPathEscapesWorkingDirectory_Throws()
     {
-        var action = () => _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "..\\outside" });
+        var action = () => _tool.ExecuteAsync("test-call", new Dictionary<string, object?> { ["path"] = "../outside" });
         await action.ShouldThrowAsync<InvalidOperationException>();
     }
 
