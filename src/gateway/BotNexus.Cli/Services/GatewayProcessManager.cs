@@ -7,7 +7,7 @@ namespace BotNexus.Cli.Services;
 /// <summary>
 /// Manages the lifecycle of the BotNexus Gateway process, including PID file tracking,
 /// process spawning (detached or attached), health checking, and cleanup.
-/// Windows-only for v1.
+/// Supports Windows and Unix (Linux/macOS).
 /// </summary>
 public sealed class GatewayProcessManager : IGatewayProcessManager
 {
@@ -57,15 +57,6 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
     /// </summary>
     public async Task<GatewayStartResult> StartAsync(GatewayStartOptions options, CancellationToken cancellationToken = default)
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            _logger.LogError("Gateway process manager is Windows-only for v1");
-            return new GatewayStartResult(
-                Success: false,
-                Pid: null,
-                Message: "Gateway process manager is Windows-only for v1. Run the gateway manually with 'dotnet run'.");
-        }
-
         // Check if already running
         var existingPid = await ReadPidAsync();
         if (existingPid is not null)
@@ -92,14 +83,16 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
             }
         }
 
-        // Spawn the process
+        // Spawn the process — cross-platform detached launch
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet",
             Arguments = $"\"{options.ExecutablePath}\" {options.Arguments ?? ""}".TrimEnd(),
-            UseShellExecute = true,
-            CreateNoWindow = false,
-            WindowStyle = ProcessWindowStyle.Normal
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardInput = false,
+            RedirectStandardOutput = false,
+            RedirectStandardError = false,
         };
 
         _logger.LogInformation("Starting gateway process: {FileName} {Arguments}", psi.FileName, psi.Arguments);
@@ -110,7 +103,7 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
             process = Process.Start(psi)
                 ?? throw new InvalidOperationException("Process.Start returned null");
         }
-        catch (Win32Exception ex)
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception || ex is InvalidOperationException || ex is System.IO.IOException)
         {
             _logger.LogError(ex, "Failed to start gateway process");
             return new GatewayStartResult(
@@ -196,7 +189,7 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
         {
             process.Kill();
         }
-        catch (Win32Exception ex)
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception || ex is InvalidOperationException)
         {
             _logger.LogError(ex, "Failed to kill gateway process {Pid}", pid.Value);
             return new GatewayStopResult(
@@ -284,7 +277,7 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
         {
             processName = process.ProcessName;
         }
-        catch (Win32Exception)
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception || ex is InvalidOperationException)
         {
             _logger.LogWarning("Cannot read process name for PID {Pid}", pid.Value);
             return new GatewayStatus(
@@ -309,7 +302,7 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
                 isGatewayProcess = processName.Equals("dotnet", StringComparison.OrdinalIgnoreCase)
                     || mainModulePath.Contains("BotNexus", StringComparison.OrdinalIgnoreCase);
             }
-            catch (Win32Exception)
+            catch (Exception ex) when (ex is System.ComponentModel.Win32Exception || ex is InvalidOperationException)
             {
                 // Can't read MainModule (e.g. 32-bit process on 64-bit OS, or insufficient permissions)
                 // Trust the PID file if we can't verify — false positives are better than false negatives
@@ -334,7 +327,7 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
         {
             uptime = DateTime.Now - process.StartTime;
         }
-        catch (Win32Exception)
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception || ex is InvalidOperationException)
         {
             _logger.LogDebug("Cannot read start time for PID {Pid}", pid.Value);
         }
