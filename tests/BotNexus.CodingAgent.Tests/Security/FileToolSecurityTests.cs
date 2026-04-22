@@ -24,7 +24,7 @@ public sealed class FileToolSecurityTests : IDisposable
     [Trait("Category", "Security")]
     public async Task ReadTool_PathTraversal_IsBlocked()
     {
-        var act = () => _readTool.ExecuteAsync("t1", new Dictionary<string, object?> { ["path"] = "..\\..\\etc\\passwd" });
+        var act = () => _readTool.ExecuteAsync("t1", new Dictionary<string, object?> { ["path"] = "../../etc/passwd" });
         await act.ShouldThrowAsync<InvalidOperationException>();
     }
 
@@ -32,7 +32,7 @@ public sealed class FileToolSecurityTests : IDisposable
     [Trait("Category", "Security")]
     public async Task WriteTool_PathTraversal_IsBlocked()
     {
-        var act = () => _writeTool.ExecuteAsync("t1", new Dictionary<string, object?> { ["path"] = "..\\outside\\malicious.txt", ["content"] = "x" });
+        var act = () => _writeTool.ExecuteAsync("t1", new Dictionary<string, object?> { ["path"] = "../outside/malicious.txt", ["content"] = "x" });
         await act.ShouldThrowAsync<InvalidOperationException>();
     }
 
