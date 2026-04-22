@@ -32,7 +32,7 @@ public sealed class ExtensionsControllerTests
                 extensionId: "ext-a",
                 name: "Extension A",
                 version: "1.2.3",
-                assemblyPath: "Q:\\extensions\\ext-a\\ExtensionA.dll",
+                assemblyPath: Path.Combine(Path.GetTempPath(), "extensions", "ext-a", "ExtensionA.dll"),
                 extensionTypes: ["channel"])
         ]);
 
@@ -57,7 +57,7 @@ public sealed class ExtensionsControllerTests
                 extensionId: "ext-a",
                 name: "Extension A",
                 version: "1.2.3",
-                assemblyPath: "Q:\\extensions\\ext-a\\ExtensionA.dll",
+                assemblyPath: Path.Combine(Path.GetTempPath(), "extensions", "ext-a", "ExtensionA.dll"),
                 extensionTypes: ["channel", "router"])
         ]);
 
@@ -85,13 +85,13 @@ public sealed class ExtensionsControllerTests
                 extensionId: "ext-a",
                 name: "Extension A",
                 version: "1.2.3",
-                assemblyPath: "Q:\\extensions\\ext-a\\ExtensionA.dll",
+                assemblyPath: Path.Combine(Path.GetTempPath(), "extensions", "ext-a", "ExtensionA.dll"),
                 extensionTypes: ["channel"]),
             CreateLoadedExtension(
                 extensionId: "ext-b",
                 name: "Extension B",
                 version: "2.0.0",
-                assemblyPath: "Q:\\extensions\\ext-b\\ExtensionB.dll",
+                assemblyPath: Path.Combine(Path.GetTempPath(), "extensions", "ext-b", "ExtensionB.dll"),
                 extensionTypes: ["transport"])
         ]);
 
@@ -115,7 +115,7 @@ public sealed class ExtensionsControllerTests
                 extensionId: "ext-a",
                 name: "Extension A",
                 version: "1.2.3",
-                assemblyPath: "Q:\\extensions\\ext-a\\ExtensionA.dll",
+                assemblyPath: Path.Combine(Path.GetTempPath(), "extensions", "ext-a", "ExtensionA.dll"),
                 extensionTypes: [])
         ]);
 
@@ -139,7 +139,7 @@ public sealed class ExtensionsControllerTests
                 extensionId: "ext-a",
                 name: "Extension A",
                 version: "1.2.3",
-                assemblyPath: "Q:\\extensions\\ext-a\\ExtensionA.dll",
+                assemblyPath: Path.Combine(Path.GetTempPath(), "extensions", "ext-a", "ExtensionA.dll"),
                 extensionTypes: ["channel"])
         ]);
 
@@ -160,7 +160,7 @@ public sealed class ExtensionsControllerTests
         string assemblyPath,
         IReadOnlyList<string> extensionTypes)
     {
-        var directoryPath = Path.GetDirectoryName(assemblyPath) ?? "Q:\\extensions";
+        var directoryPath = Path.GetDirectoryName(assemblyPath) ?? Path.Combine(Path.GetTempPath(), "extensions");
         return new LoadedExtension
         {
             ExtensionId = extensionId,

@@ -131,6 +131,7 @@ public sealed class ManagedProcess : IDisposable
         _process.ErrorDataReceived -= OnData;
 
         try { _process.Kill(entireProcessTree: true); } catch { /* best effort */ }
+        try { _process.WaitForExit(2_000); } catch { /* best effort */ }
         _process.Dispose();
     }
 

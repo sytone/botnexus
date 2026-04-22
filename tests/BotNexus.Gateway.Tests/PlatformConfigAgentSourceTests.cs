@@ -29,6 +29,8 @@ namespace BotNexus.Gateway.Tests;
 public sealed class PlatformConfigAgentSourceTests : IDisposable
 {
     private readonly string _configDirectory;
+    private static readonly string s_repoBotnexusPath = Path.Combine(Path.GetTempPath(), "repos", "botnexus");
+    private static readonly string s_reposSharedPath = Path.Combine(Path.GetTempPath(), "repos", "shared");
 
     public PlatformConfigAgentSourceTests()
     {
@@ -297,13 +299,13 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
             new ListLogger<PlatformConfigAgentSource>(),
             new StubLocationResolver(new Dictionary<string, string>
             {
-                ["repo-botnexus"] = @"Q:\repos\botnexus"
+                ["repo-botnexus"] = s_repoBotnexusPath
             }));
 
         var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
 
         descriptor.FileAccess.ShouldNotBeNull();
-        descriptor.FileAccess!.AllowedReadPaths.ShouldHaveSingleItem().ShouldBe(Path.GetFullPath(@"Q:\repos\botnexus\docs\planning"));
+        descriptor.FileAccess!.AllowedReadPaths.ShouldHaveSingleItem().ShouldBe(Path.GetFullPath(Path.Combine(s_repoBotnexusPath, "docs", "planning")));
     }
 
     [Fact]
@@ -354,9 +356,9 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
                     Model = "gpt-4.1",
                     FileAccess = new FileAccessPolicyConfig
                     {
-                        AllowedReadPaths = ["@repo-botnexus/docs", @"Q:\repos\shared"],
+                        AllowedReadPaths = ["@repo-botnexus/docs", s_reposSharedPath],
                         AllowedWritePaths = ["@repo-botnexus/artifacts"],
-                        DeniedPaths = ["@repo-botnexus/.env", @"Q:\repos\shared\blocked"]
+                        DeniedPaths = ["@repo-botnexus/.env", Path.Combine(s_reposSharedPath, "blocked")]
                     }
                 }
             }
@@ -368,19 +370,19 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
             new ListLogger<PlatformConfigAgentSource>(),
             new StubLocationResolver(new Dictionary<string, string>
             {
-                ["repo-botnexus"] = @"Q:\repos\botnexus"
+                ["repo-botnexus"] = s_repoBotnexusPath
             }));
 
         var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
 
         descriptor.FileAccess.ShouldNotBeNull();
         descriptor.FileAccess!.AllowedReadPaths.ShouldBe(new[] {
-            Path.GetFullPath(@"Q:\repos\botnexus\docs"),
-            @"Q:\repos\shared" }, ignoreOrder: false);
-        descriptor.FileAccess.AllowedWritePaths.ShouldHaveSingleItem().ShouldBe(Path.GetFullPath(@"Q:\repos\botnexus\artifacts"));
+            Path.GetFullPath(Path.Combine(s_repoBotnexusPath, "docs")),
+            s_reposSharedPath }, ignoreOrder: false);
+        descriptor.FileAccess.AllowedWritePaths.ShouldHaveSingleItem().ShouldBe(Path.GetFullPath(Path.Combine(s_repoBotnexusPath, "artifacts")));
         descriptor.FileAccess.DeniedPaths.ShouldBe(new[] {
-            Path.GetFullPath(@"Q:\repos\botnexus\.env"),
-            @"Q:\repos\shared\blocked" }, ignoreOrder: false);
+            Path.GetFullPath(Path.Combine(s_repoBotnexusPath, ".env")),
+            Path.Combine(s_reposSharedPath, "blocked") }, ignoreOrder: false);
     }
 
     [Fact]
@@ -452,8 +454,8 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
                         IsolationStrategy = "in-process",
                         FileAccess = new FileAccessPolicyConfig
                         {
-                            AllowedReadPaths = [@"Q:\repos\botnexus\docs"],
-                            DeniedPaths = [@"Q:\repos\botnexus\docs\secrets"]
+                            AllowedReadPaths = [Path.Combine(s_repoBotnexusPath, "docs")],
+                            DeniedPaths = [Path.Combine(s_repoBotnexusPath, "docs", "secrets")]
                         },
                         Enabled = true
                     }
@@ -495,9 +497,11 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
 
         var pathValidator = toolFactory.CapturedPathValidator;
         pathValidator.ShouldNotBeNull();
-        pathValidator!.ValidateAndResolve(@"Q:\repos\botnexus\docs\guide.md", FileAccessMode.Read)
-            .ShouldBe(@"Q:\repos\botnexus\docs\guide.md");
-        pathValidator.ValidateAndResolve(@"Q:\repos\botnexus\docs\secrets\tokens.txt", FileAccessMode.Read)
+        var guideFile = Path.Combine(s_repoBotnexusPath, "docs", "guide.md");
+        var secretsFile = Path.Combine(s_repoBotnexusPath, "docs", "secrets", "tokens.txt");
+        pathValidator!.ValidateAndResolve(guideFile, FileAccessMode.Read)
+            .ShouldBe(guideFile);
+        pathValidator.ValidateAndResolve(secretsFile, FileAccessMode.Read)
             .ShouldBeNull();
     }
 

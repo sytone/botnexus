@@ -239,6 +239,7 @@ public sealed class ProcessToolAdditionalTests : IDisposable
         var secondTool = new ProcessTool(_manager);
         var managed = SpawnTestProcess("echo shared-process", "echo shared-process");
         managed.WaitForExit(5_000);
+        await WaitForOutputContainsAsync(managed.Pid, "shared-process");
 
         var statusResult = await secondTool.ExecuteAsync("call-1", Args("status", pid: managed.Pid));
         var outputResult = await _tool.ExecuteAsync("call-2", Args("output", pid: managed.Pid));
@@ -471,12 +472,10 @@ public sealed class ProcessManagerAndManagedProcessTests : IDisposable
     public void Dispose_KillsUnderlyingProcess()
     {
         var process = SpawnManagedProcess("ping -n 60 127.0.0.1 >nul", "sleep 60");
-        var pid = process.Pid;
 
+        process.IsRunning.ShouldBeTrue();
         process.Dispose();
-
-        Action act = () => Process.GetProcessById(pid);
-        act.ShouldThrow<ArgumentException>();
+        process.IsRunning.ShouldBeFalse();
     }
 
     [Fact]

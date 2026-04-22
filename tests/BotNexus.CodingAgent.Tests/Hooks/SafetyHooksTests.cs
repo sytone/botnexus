@@ -31,7 +31,7 @@ public sealed class SafetyHooksTests : IDisposable
     {
         var context = CreateContext("write", new Dictionary<string, object?>
         {
-            ["path"] = "..\\outside.txt",
+            ["path"] = "../outside.txt",
             ["content"] = "data"
         });
 

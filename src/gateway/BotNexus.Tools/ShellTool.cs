@@ -135,6 +135,12 @@ public sealed class ShellTool : IAgentTool
     {
         var command = arguments["command"]?.ToString()
                       ?? throw new ArgumentException("Missing required argument: command.");
+
+        const int MaxCommandLength = 32_768;
+        if (command.Length > MaxCommandLength)
+        {
+            throw new ArgumentException($"Command exceeds maximum allowed length of {MaxCommandLength} characters.");
+        }
         int? timeoutSeconds = null;
         if (arguments.TryGetValue("timeout", out var timeoutObj) && timeoutObj is not null)
         {

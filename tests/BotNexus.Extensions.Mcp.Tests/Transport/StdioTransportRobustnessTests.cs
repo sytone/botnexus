@@ -1,16 +1,44 @@
 using BotNexus.Extensions.Mcp.Protocol;
 using BotNexus.Extensions.Mcp.Transport;
+using System.Runtime.InteropServices;
 
 namespace BotNexus.Extensions.Mcp.Tests.Transport;
 
 public sealed class StdioTransportRobustnessTests
 {
+    // Cross-platform shell helpers
+    private static (string FileName, string[] Args) ExitShell(int code)
+        => OperatingSystem.IsWindows()
+            ? ("cmd.exe", ["/c", $"exit {code}"])
+            : ("/bin/sh", ["-c", $"exit {code}"]);
+
+    private static (string FileName, string[] Args) EchoJsonAndExit(string json, int code = 0)
+        => OperatingSystem.IsWindows()
+            ? ("cmd.exe", ["/c", $"echo {json}& exit {code}"])
+            : ("/bin/sh", ["-c", $"printf '%s\\n' '{json}'; exit {code}"]);
+
+    private static (string FileName, string[] Args) EchoStderrThenJson(string stderr, string json)
+        => OperatingSystem.IsWindows()
+            ? ("cmd.exe", ["/c", $"echo {stderr} 1>&2 & echo {json}"])
+            : ("/bin/sh", ["-c", $"echo '{stderr}' >&2; printf '%s\\n' '{json}'"]);
+
+    private static (string FileName, string[] Args) SleepThenEchoJson(int ms, string json)
+        => OperatingSystem.IsWindows()
+            ? ("powershell", ["-NoProfile", "-Command", $"Start-Sleep -Milliseconds {ms}; Write-Output '{json}'"])
+            : ("/bin/sh", ["-c", $"sleep {ms / 1000.0:F3}; printf '%s\\n' '{json}'"]);
+
+    private static (string FileName, string[] Args) LongSleep()
+        => OperatingSystem.IsWindows()
+            ? ("powershell", ["-NoProfile", "-Command", "Start-Sleep -Seconds 60; exit 1"])
+            : ("/bin/sh", ["-c", "sleep 60; exit 1"]);
+
     [Fact]
     [Trait("Category", "Security")]
     [Trait("Category", "SecurityGap")]
     public async Task ProcessCrashDuringReceive_RequiresCallerTimeout_CurrentBehavior()
     {
-        var transport = new StdioMcpTransport("powershell", ["-NoProfile", "-Command", "exit 1"]);
+        var (file, args) = ExitShell(1);
+        var transport = new StdioMcpTransport(file, args);
         await transport.ConnectAsync();
 
         var act = () => transport.ReceiveAsync(new CancellationTokenSource(TimeSpan.FromSeconds(2)).Token);
@@ -22,8 +50,9 @@ public sealed class StdioTransportRobustnessTests
     [Trait("Category", "Security")]
     public async Task StderrGarbage_DoesNotBreakStdoutJsonParsing()
     {
-        var command = "Write-Error 'garbage'; Write-Output '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'; Start-Sleep -Milliseconds 10";
-        var transport = new StdioMcpTransport("powershell", ["-NoProfile", "-Command", command]);
+        var json = "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}";
+        var (file, args) = EchoStderrThenJson("garbage", json);
+        var transport = new StdioMcpTransport(file, args);
         await transport.ConnectAsync();
 
         var response = await transport.ReceiveAsync(new CancellationTokenSource(TimeSpan.FromSeconds(10)).Token);
@@ -36,7 +65,9 @@ public sealed class StdioTransportRobustnessTests
     [Trait("Category", "SecurityGap")]
     public async Task SlowStartingProcess_HasNoDedicatedStartTimeout_CurrentBehavior()
     {
-        var transport = new StdioMcpTransport("powershell", ["-NoProfile", "-Command", "Start-Sleep -Milliseconds 500; Write-Output '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'"]);
+        var json = "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}";
+        var (file, args) = SleepThenEchoJson(500, json);
+        var transport = new StdioMcpTransport(file, args);
         var connectTask = transport.ConnectAsync();
         await connectTask;
 
@@ -50,10 +81,10 @@ public sealed class StdioTransportRobustnessTests
     [Trait("Category", "SecurityGap")]
     public async Task NonZeroExitDuringInit_DoesNotThrowOnConnect_CurrentBehavior()
     {
-        var transport = new StdioMcpTransport("powershell", ["-NoProfile", "-Command", "Write-Output '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'; exit 7"]);
-        var act = () => transport.ConnectAsync();
+        var json = "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}";
+        var (file, args) = EchoJsonAndExit(json, 7);
+        var act = () => new StdioMcpTransport(file, args).ConnectAsync();
         await act.ShouldNotThrowAsync();
-        await transport.DisposeAsync();
     }
 
     [Fact]
@@ -61,12 +92,22 @@ public sealed class StdioTransportRobustnessTests
     [Trait("Category", "SecurityGap")]
     public async Task SendAfterProcessExit_ThrowsClearError()
     {
-        var transport = new StdioMcpTransport("powershell", ["-NoProfile", "-Command", "exit 0"]);
+        var (file, args) = ExitShell(0);
+        var transport = new StdioMcpTransport(file, args);
         await transport.ConnectAsync();
         await Task.Delay(50);
 
         var act = () => transport.SendAsync(new JsonRpcRequest { Id = 1, Method = "tools/list" });
-        await act.ShouldNotThrowAsync();
+        // On Windows: write to a dead process stdin does not throw (buffered/ignored).
+        // On Linux: write raises IOException (broken pipe). Both are valid current behavior.
+        if (OperatingSystem.IsWindows())
+        {
+            await act.ShouldNotThrowAsync();
+        }
+        else
+        {
+            await act.ShouldThrowAsync<Exception>();
+        }
         await transport.DisposeAsync();
     }
 
@@ -75,12 +116,22 @@ public sealed class StdioTransportRobustnessTests
     [Trait("Category", "SecurityGap")]
     public async Task SendNotificationAfterProcessExit_ThrowsClearError()
     {
-        var transport = new StdioMcpTransport("powershell", ["-NoProfile", "-Command", "exit 0"]);
+        var (file, args) = ExitShell(0);
+        var transport = new StdioMcpTransport(file, args);
         await transport.ConnectAsync();
         await Task.Delay(50);
 
         var act = () => transport.SendNotificationAsync(new JsonRpcNotification { Method = "notifications/initialized" });
-        await act.ShouldNotThrowAsync();
+        // On Windows: write to a dead process stdin does not throw (buffered/ignored).
+        // On Linux: write raises IOException (broken pipe). Both are valid current behavior.
+        if (OperatingSystem.IsWindows())
+        {
+            await act.ShouldNotThrowAsync();
+        }
+        else
+        {
+            await act.ShouldThrowAsync<Exception>();
+        }
         await transport.DisposeAsync();
     }
 }
