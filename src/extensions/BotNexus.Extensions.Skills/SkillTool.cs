@@ -106,7 +106,10 @@ public sealed class SkillTool(
         {
             lines.Add("## Loaded Skills");
             foreach (var s in resolution.Loaded)
+            {
                 lines.Add($"- **{s.Name}**: {s.Description}");
+                lines.Add($"  Path: {s.SourcePath}");
+            }
             lines.Add("");
         }
 
@@ -155,7 +158,8 @@ public sealed class SkillTool(
 
         return TextResult($"""
             ## Skill: {skill.Name}
-            
+            **Path:** {skill.SourcePath}
+
             {skill.Content}
             """);
     }

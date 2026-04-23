@@ -15,6 +15,9 @@ namespace BotNexus.Extensions.Channels.SignalR;
 public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger, IHubContext<GatewayHub, IGatewayHubClient> hubContext)
     : ChannelAdapterBase(logger), IStreamEventChannelAdapter
 {
+    /// <summary>Sentinel value agents use to suppress user-visible replies.</summary>
+    private const string NoReplySentinel = "NO_REPLY";
+
     private readonly IHubContext<GatewayHub, IGatewayHubClient> _hubContext = hubContext;
 
     public override ChannelKey ChannelType => ChannelKey.From("signalr");
@@ -39,6 +42,12 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
     /// <returns>The send async result.</returns>
     public override Task SendAsync(OutboundMessage message, CancellationToken cancellationToken = default)
     {
+        if (string.Equals(message.Content?.Trim(), NoReplySentinel, StringComparison.Ordinal))
+        {
+            logger.LogDebug("Suppressed NO_REPLY message for session {SessionId}", message.SessionId ?? message.ConversationId);
+            return Task.CompletedTask;
+        }
+
         var normalizedSessionId = NormalizeSessionId(message.SessionId ?? message.ConversationId);
         return _hubContext.Clients.Group(GetSessionGroup(normalizedSessionId))
             .ContentDelta(new ContentDeltaPayload(normalizedSessionId, message.Content));
