@@ -60,6 +60,7 @@ public static class PlatformConfigLoader
             config = JsonSerializer.Deserialize<PlatformConfig>(rawJson, JsonOptions)
                 ?? new PlatformConfig();
             config = MigrateLegacyGatewaySettings(config, rawJson);
+            ExtractAgentDefaults(config, rawJson);
         }
         catch (JsonException ex)
         {
@@ -106,6 +107,7 @@ public static class PlatformConfigLoader
             config = JsonSerializer.Deserialize<PlatformConfig>(rawJson, JsonOptions)
                 ?? new PlatformConfig();
             config = MigrateLegacyGatewaySettings(config, rawJson);
+            ExtractAgentDefaults(config, rawJson);
         }
         catch (JsonException ex)
         {
@@ -184,6 +186,7 @@ public static class PlatformConfigLoader
         ValidateProviders(config.Providers, errors);
         ValidateChannels(config.Channels, errors);
         ValidateAgents(config.Agents, errors);
+        ValidateAgentDefaults(config.AgentDefaults, errors);
         ValidateApiKeys(config.Gateway?.ApiKeys, errors);
         ValidateCron(config.Cron, errors);
 
@@ -271,6 +274,61 @@ public static class PlatformConfigLoader
             {
                 errors.Add($"providers.{providerKey}.baseUrl must be a valid http or https absolute URL.");
             }
+        }
+    }
+
+
+    /// <summary>
+    /// Extracts <c>agents.defaults</c> from the raw JSON and populates
+    /// <see cref="PlatformConfig.AgentDefaults" /> and <see cref="PlatformConfig.AgentRawElements" />,
+    /// then removes the reserved <c>defaults</c> key from <see cref="PlatformConfig.Agents" />.
+    /// </summary>
+    internal static void ExtractAgentDefaults(PlatformConfig config, string rawJson)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        if (string.IsNullOrWhiteSpace(rawJson))
+            return;
+
+        using var document = JsonDocument.Parse(rawJson);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+            return;
+
+        if (!document.RootElement.TryGetProperty("agents", out var agentsElement) ||
+            agentsElement.ValueKind != JsonValueKind.Object)
+            return;
+
+        // Extract agents.defaults
+        if (agentsElement.TryGetProperty("defaults", out var defaultsElement) &&
+            defaultsElement.ValueKind == JsonValueKind.Object)
+        {
+            config.AgentDefaults = JsonSerializer.Deserialize<AgentDefaultsConfig>(
+                defaultsElement.GetRawText(), JsonOptions);
+        }
+
+        // Remove reserved key from the Agents dictionary
+        if (config.Agents is not null)
+        {
+            var keysToRemove = config.Agents.Keys
+                .Where(k => string.Equals(k, "defaults", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            foreach (var key in keysToRemove)
+                config.Agents.Remove(key);
+        }
+
+        // Capture raw JSON elements for each agent for presence-aware merging
+        if (config.Agents is not null && config.Agents.Count > 0)
+        {
+            var rawElements = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+            foreach (var property in agentsElement.EnumerateObject())
+            {
+                if (string.Equals(property.Name, "defaults", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (property.Value.ValueKind == JsonValueKind.Object)
+                    rawElements[property.Name] = property.Value.Clone();
+            }
+
+            config.AgentRawElements = rawElements;
         }
     }
 
@@ -445,10 +503,67 @@ public static class PlatformConfigLoader
                 continue;
             }
 
+            // Reserved key — handled separately
+            if (string.Equals(agentId, "defaults", StringComparison.OrdinalIgnoreCase))
+                continue;
+
             if (string.IsNullOrWhiteSpace(agentConfig.Provider))
                 errors.Add($"agents.{agentId}.provider is required (example: 'copilot').");
             if (string.IsNullOrWhiteSpace(agentConfig.Model))
                 errors.Add($"agents.{agentId}.model is required (example: 'gpt-4.1').");
+        }
+    }
+
+    private static void ValidateAgentDefaults(AgentDefaultsConfig? defaults, List<string> errors)
+    {
+        if (defaults is null)
+            return;
+
+        const string prefix = "agents.defaults";
+
+        // toolIds
+        if (defaults.ToolIds is not null)
+        {
+            for (var i = 0; i < defaults.ToolIds.Count; i++)
+            {
+                if (string.IsNullOrWhiteSpace(defaults.ToolIds[i]))
+                    errors.Add($"{prefix}.toolIds[{i}] must be a non-empty string.");
+            }
+        }
+
+        // memory
+        if (defaults.Memory is not null)
+        {
+            // indexing must be non-empty if explicitly set to something other than default
+            if (defaults.Memory.Indexing is not null && string.IsNullOrWhiteSpace(defaults.Memory.Indexing))
+                errors.Add($"{prefix}.memory.indexing must be a non-empty string if specified.");
+        }
+
+        // heartbeat
+        if (defaults.Heartbeat is not null)
+        {
+            if (defaults.Heartbeat.IntervalMinutes <= 0)
+                errors.Add($"{prefix}.heartbeat.intervalMinutes must be greater than zero.");
+        }
+
+        // fileAccess
+        if (defaults.FileAccess is not null)
+        {
+            ValidateFileAccessPaths(defaults.FileAccess.AllowedReadPaths, $"{prefix}.fileAccess.allowedReadPaths", errors);
+            ValidateFileAccessPaths(defaults.FileAccess.AllowedWritePaths, $"{prefix}.fileAccess.allowedWritePaths", errors);
+            ValidateFileAccessPaths(defaults.FileAccess.DeniedPaths, $"{prefix}.fileAccess.deniedPaths", errors);
+        }
+    }
+
+    private static void ValidateFileAccessPaths(List<string>? paths, string fieldPath, List<string> errors)
+    {
+        if (paths is null)
+            return;
+
+        for (var i = 0; i < paths.Count; i++)
+        {
+            if (string.IsNullOrWhiteSpace(paths[i]))
+                errors.Add($"{fieldPath}[{i}] must be a non-empty string.");
         }
     }
 

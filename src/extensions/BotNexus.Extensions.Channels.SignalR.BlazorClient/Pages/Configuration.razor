@@ -162,6 +162,34 @@
                 </DictionarySection>
             </ConfigSection>
 
+            @* ── Agent World Defaults ────────────────────────────── *@
+            <ConfigSection Id="cfg-agent-defaults" Title="🌍 World Settings" Description="World-level agent defaults — inherited by all agents unless explicitly overridden.">
+                @{
+                    var agentsSection = GetObject("agents");
+                    var agentDef = GetObject(agentsSection, "defaults");
+                }
+
+                @* Memory defaults *@
+                <NestedSection Title="Agent Memory Defaults">
+                    @{ var memDef = GetObject(agentDef, "memory"); }
+                    <BoolField Label="Memory Enabled (default)" Value="@GetBool(memDef, "enabled")" ValueChanged="@(v => SetAgentDefaultBool("memory", "enabled", v))" />
+                    <SelectField Label="Indexing (default)" Value="@GetStr(memDef, "indexing")" ValueChanged="@(v => SetAgentDefaultStr("memory", "indexing", v))"
+                                 Options="@(new[] { "auto", "manual", "off" })" />
+                </NestedSection>
+
+                @* Heartbeat defaults *@
+                <NestedSection Title="Agent Heartbeat Defaults">
+                    @{ var hbDef = GetObject(agentDef, "heartbeat"); }
+                    <BoolField Label="Heartbeat Enabled (default)" Value="@GetBool(hbDef, "enabled")" ValueChanged="@(v => SetAgentDefaultBool("heartbeat", "enabled", v))" />
+                    <NumberField Label="Interval Minutes (default)" Value="@GetNullableInt(hbDef, "intervalMinutes")" ValueChanged="@(v => SetAgentDefaultNum("heartbeat", "intervalMinutes", v))" />
+                </NestedSection>
+
+                @* Default tool IDs *@
+                <NestedSection Title="Default Tool IDs">
+                    <ListField Label="Tool IDs" Items="@GetList(agentDef, "toolIds")" ItemsChanged="@(v => SetAgentDefaultList("toolIds", v))" />
+                </NestedSection>
+            </ConfigSection>
+
             @* ── Cron ────────────────────────────────────────────── *@
             <ConfigSection Id="cfg-cron" Title="⏰ Cron" Description="Scheduled job configuration — enable cron, set tick interval, and manage jobs.">
                 @{ var cron = GetObject("cron"); }

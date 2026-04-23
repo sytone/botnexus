@@ -3,6 +3,7 @@ using System.Text.Json;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Configuration;
+using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Extensions;
@@ -793,6 +794,191 @@ public sealed class PlatformConfigurationTests
             string? format,
             params object?[]? args)
             => Write(args is { Length: > 0 } ? string.Format(format ?? string.Empty, args) : format);
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #12: agents.defaults validation (scenario 12)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void PlatformConfigLoader_Validate_WithInvalidAgentsDefaultsMemoryIndexing_ReportsExactFieldPath()
+    {
+        // Arrange — agents.defaults.memory.indexing is empty string (invalid)
+        var config = new PlatformConfig
+        {
+            AgentDefaults = new AgentDefaultsConfig
+            {
+                Memory = new MemoryAgentConfig
+                {
+                    Enabled = true,
+                    Indexing = ""  // invalid: non-empty required
+                }
+            }
+        };
+
+        // Act
+        var errors = PlatformConfigLoader.Validate(config);
+
+        // Assert — error references exact field path
+        errors.ShouldContain(e => e.Contains("agents.defaults.memory.indexing", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PlatformConfigLoader_Validate_WithInvalidAgentsDefaultsHeartbeatInterval_ReportsExactFieldPath()
+    {
+        // Arrange — intervalMinutes <= 0 is invalid
+        var config = new PlatformConfig
+        {
+            AgentDefaults = new AgentDefaultsConfig
+            {
+                Heartbeat = new HeartbeatAgentConfig { Enabled = true, IntervalMinutes = 0 }
+            }
+        };
+
+        // Act
+        var errors = PlatformConfigLoader.Validate(config);
+
+        // Assert
+        errors.ShouldContain(e => e.Contains("agents.defaults.heartbeat.intervalMinutes", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PlatformConfigLoader_Validate_WithInvalidAgentsDefaultsFileAccessBlankPath_ReportsExactFieldPath()
+    {
+        // Arrange — blank entry in allowedReadPaths is invalid
+        var config = new PlatformConfig
+        {
+            AgentDefaults = new AgentDefaultsConfig
+            {
+                FileAccess = new FileAccessPolicyConfig
+                {
+                    AllowedReadPaths = ["/valid/path", ""]
+                }
+            }
+        };
+
+        // Act
+        var errors = PlatformConfigLoader.Validate(config);
+
+        // Assert — error must name the exact field path including array index
+        errors.ShouldContain(e =>
+            e.Contains("agents.defaults.fileAccess.allowedReadPaths", StringComparison.Ordinal) &&
+            e.Contains("[1]", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PlatformConfigLoader_Validate_WithValidAgentsDefaults_ReturnsNoErrors()
+    {
+        // Arrange — valid defaults config
+        var config = new PlatformConfig
+        {
+            AgentDefaults = new AgentDefaultsConfig
+            {
+                ToolIds = ["read", "write"],
+                Memory = new MemoryAgentConfig { Enabled = true, Indexing = "auto" },
+                Heartbeat = new HeartbeatAgentConfig { Enabled = true, IntervalMinutes = 30 },
+                FileAccess = new FileAccessPolicyConfig
+                {
+                    AllowedReadPaths = ["/home/user/docs"]
+                }
+            }
+        };
+
+        // Act
+        var errors = PlatformConfigLoader.Validate(config);
+
+        // Assert
+        errors.ShouldBeEmpty();
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #12: cron default — enabled = true (scenario 10)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void CronConfig_WhenCreatedWithDefaults_HasEnabledTrue()
+    {
+        // Arrange & Act
+        var cron = new CronConfig();
+
+        // Assert — default must be enabled per design spec
+        cron.Enabled.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void CronConfig_WhenEnabledSetFalse_ReturnsDisabled()
+    {
+        // Arrange & Act
+        var cron = new CronConfig { Enabled = false };
+
+        // Assert
+        cron.Enabled.ShouldBeFalse();
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #12: ExtractAgentDefaults (scenario 2 — loader side)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void ExtractAgentDefaults_WithDefaultsInJson_PopulatesAgentDefaultsAndStripsKey()
+    {
+        // Arrange
+        var config = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["defaults"] = new() { Provider = "copilot", Model = "gpt-4.1" }, // would be present after deserialization
+                ["assistant"] = new() { Provider = "copilot", Model = "gpt-4.1" }
+            }
+        };
+        var rawJson = """
+            {
+              "agents": {
+                "defaults": { "memory": { "enabled": true, "indexing": "auto" } },
+                "assistant": { "provider": "copilot", "model": "gpt-4.1", "enabled": true }
+              }
+            }
+            """;
+
+        // Act
+        PlatformConfigLoader.ExtractAgentDefaults(config, rawJson);
+
+        // Assert — defaults extracted
+        config.AgentDefaults.ShouldNotBeNull();
+        config.AgentDefaults!.Memory.ShouldNotBeNull();
+        config.AgentDefaults.Memory!.Enabled.ShouldBeTrue();
+        config.AgentDefaults.Memory.Indexing.ShouldBe("auto");
+
+        // Assert — reserved key stripped from Agents dictionary
+        config.Agents.ShouldNotContainKey("defaults");
+        config.Agents!.ShouldContainKey("assistant");
+    }
+
+    [Fact]
+    public void ExtractAgentDefaults_WithNoDefaultsInJson_LeavesConfigUnchanged()
+    {
+        // Arrange
+        var config = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["assistant"] = new() { Provider = "copilot", Model = "gpt-4.1" }
+            }
+        };
+        var rawJson = """
+            {
+              "agents": {
+                "assistant": { "provider": "copilot", "model": "gpt-4.1", "enabled": true }
+              }
+            }
+            """;
+
+        // Act
+        PlatformConfigLoader.ExtractAgentDefaults(config, rawJson);
+
+        // Assert — no defaults extracted; agents unchanged
+        config.AgentDefaults.ShouldBeNull();
+        config.Agents!.ShouldContainKey("assistant");
     }
 
     private sealed class StubLocationResolver : ILocationResolver

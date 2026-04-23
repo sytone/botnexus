@@ -2312,3 +2312,25 @@ details[open] > .thinking-summary::before {
     color: var(--text-secondary); /* Better contrast than text-muted */
     font-size: 0.8rem;
 }
+
+/* ── World Default Inheritance Badge ─────────────────────────────────────── */
+
+.world-default-badge {
+    display: inline-block;
+    padding: 0.1rem 0.45rem;
+    border-radius: 9999px;
+    font-size: 0.68rem;
+    font-weight: 500;
+    background: rgba(120, 120, 180, 0.12);
+    color: var(--text-secondary);
+    border: 1px solid rgba(120, 120, 180, 0.2);
+    margin-left: 0.4rem;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+.config-field-with-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}

@@ -36,6 +36,20 @@ public sealed class PlatformConfig
     /// <summary>Cron scheduler settings and optional seed jobs.</summary>
     public CronConfig? Cron { get; set; }
 
+    /// <summary>
+    /// World-level agent defaults. Populated at load time from the <c>agents.defaults</c> reserved key.
+    /// Not directly serialized — extracted separately from the agents dictionary.
+    /// </summary>
+    [JsonIgnore]
+    public AgentDefaultsConfig? AgentDefaults { get; set; }
+
+    /// <summary>
+    /// Raw JSON elements for each agent, keyed by agent ID. Used for presence-aware field-level merge.
+    /// Populated at load time alongside <see cref="AgentDefaults" />.
+    /// </summary>
+    [JsonIgnore]
+    public Dictionary<string, System.Text.Json.JsonElement>? AgentRawElements { get; set; }
+
 }
 
 /// <summary>Provider-specific configuration.</summary>

@@ -438,6 +438,65 @@ public partial class Configuration : IDisposable
             parent[key] = new JsonObject();
     }
 
+    // ── Agent Defaults helpers (agents.defaults) ─────────────────
+
+    /// <summary>Sets a bool field on agents.defaults.{section}.{key}.</summary>
+    private void SetAgentDefaultBool(string section, string key, bool value)
+    {
+        if (_config is null) return;
+        EnsureObject("agents");
+        var agents = (_config["agents"] as JsonObject)!;
+        EnsureChildObject(agents, "defaults");
+        var defaults = (agents["defaults"] as JsonObject)!;
+        EnsureChildObject(defaults, section);
+        var sectionObj = (defaults[section] as JsonObject)!;
+        sectionObj[key] = value;
+        MarkDirty();
+    }
+
+    /// <summary>Sets a string field on agents.defaults.{section}.{key}.</summary>
+    private void SetAgentDefaultStr(string section, string key, string? value)
+    {
+        if (_config is null) return;
+        EnsureObject("agents");
+        var agents = (_config["agents"] as JsonObject)!;
+        EnsureChildObject(agents, "defaults");
+        var defaults = (agents["defaults"] as JsonObject)!;
+        EnsureChildObject(defaults, section);
+        var sectionObj = (defaults[section] as JsonObject)!;
+        sectionObj[key] = value;
+        MarkDirty();
+    }
+
+    /// <summary>Sets an int field on agents.defaults.{section}.{key}.</summary>
+    private void SetAgentDefaultNum(string section, string key, int? value)
+    {
+        if (_config is null) return;
+        EnsureObject("agents");
+        var agents = (_config["agents"] as JsonObject)!;
+        EnsureChildObject(agents, "defaults");
+        var defaults = (agents["defaults"] as JsonObject)!;
+        EnsureChildObject(defaults, section);
+        var sectionObj = (defaults[section] as JsonObject)!;
+        if (value.HasValue) sectionObj[key] = value.Value;
+        else sectionObj.Remove(key);
+        MarkDirty();
+    }
+
+    /// <summary>Sets a top-level list field on agents.defaults.{key}.</summary>
+    private void SetAgentDefaultList(string key, List<string> value)
+    {
+        if (_config is null) return;
+        EnsureObject("agents");
+        var agents = (_config["agents"] as JsonObject)!;
+        EnsureChildObject(agents, "defaults");
+        var defaults = (agents["defaults"] as JsonObject)!;
+        var arr = new JsonArray();
+        foreach (var item in value) arr.Add(item);
+        defaults[key] = arr;
+        MarkDirty();
+    }
+
     public void Dispose()
     {
         _statusTimer?.Stop();

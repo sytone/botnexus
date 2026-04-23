@@ -1,4 +1,6 @@
 
+using System.Text.Json;
+
 namespace BotNexus.Gateway.Tests.Cli;
 
 public sealed class InitCommandTests
@@ -47,6 +49,44 @@ public sealed class InitCommandTests
         result.ExitCode.ShouldBe(0);
         config.Gateway?.ListenUrl.ShouldBe("http://localhost:5005");
         config.Agents.ShouldContainKey("assistant");
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #12: InitCommand scaffold — agents.defaults and cron (scenario 11)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task Init_ScaffoldEmitsCronEnabledTrue()
+    {
+        await using var fixture = await CliTestFixture.CreateAsync();
+
+        var result = await fixture.RunCliAsync("init");
+        var rawJson = await File.ReadAllTextAsync(fixture.ConfigPath);
+
+        result.ExitCode.ShouldBe(0);
+        // cron.enabled defaults to true in the C# model; init scaffold should emit it
+        using var doc = JsonDocument.Parse(rawJson);
+        doc.RootElement.TryGetProperty("cron", out var cronEl).ShouldBeTrue();
+        cronEl.TryGetProperty("enabled", out var cronEnabledEl).ShouldBeTrue();
+        cronEnabledEl.GetBoolean().ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Init_ScaffoldEmitsAgentsDefaultsMemoryEnabledTrue()
+    {
+        await using var fixture = await CliTestFixture.CreateAsync();
+
+        var result = await fixture.RunCliAsync("init");
+        var rawJson = await File.ReadAllTextAsync(fixture.ConfigPath);
+
+        result.ExitCode.ShouldBe(0);
+        // agents.defaults block with memory.enabled = true must be present
+        using var doc = JsonDocument.Parse(rawJson);
+        doc.RootElement.TryGetProperty("agents", out var agentsEl).ShouldBeTrue();
+        agentsEl.TryGetProperty("defaults", out var defaultsEl).ShouldBeTrue();
+        defaultsEl.TryGetProperty("memory", out var memoryEl).ShouldBeTrue();
+        memoryEl.TryGetProperty("enabled", out var enabledEl).ShouldBeTrue();
+        enabledEl.GetBoolean().ShouldBeTrue();
     }
 }
 

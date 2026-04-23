@@ -630,6 +630,151 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
+    // -------------------------------------------------------------------------
+    // Issue #12: agents.defaults integration tests
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task LoadAsync_WithoutAgentsDefaults_LoadsAgentsUnchanged_BackwardCompatibility()
+    {
+        // Arrange — config without any agents.defaults key
+        var config = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["assistant"] = new()
+                {
+                    Provider = "copilot",
+                    Model = "gpt-4.1",
+                    ToolIds = ["tool-a"],
+                    Memory = new MemoryAgentConfig { Enabled = true, Indexing = "manual" }
+                }
+            }
+        };
+        var source = new PlatformConfigAgentSource(
+            new TestOptionsMonitor<PlatformConfig>(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>());
+
+        // Act
+        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
+
+        // Assert — original values preserved; no inheritance side effects
+        descriptor.AgentId.Value.ShouldBe("assistant");
+        descriptor.ToolIds.ShouldBe(["tool-a"]);
+        descriptor.Memory.ShouldNotBeNull();
+        descriptor.Memory!.Enabled.ShouldBeTrue();
+        descriptor.Memory.Indexing.ShouldBe("manual");
+    }
+
+    [Fact]
+    public async Task LoadAsync_AgentsDefaultsIsReservedKey_NotRegisteredAsAgentDescriptor()
+    {
+        // Arrange — simulate ExtractAgentDefaults having been called; defaults key should not appear
+        var config = new PlatformConfig
+        {
+            AgentDefaults = new AgentDefaultsConfig
+            {
+                Memory = new MemoryAgentConfig { Enabled = true }
+            },
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                // Safety guard: even if "defaults" leaked into the dictionary, it must be skipped
+                ["defaults"] = new()
+                {
+                    Provider = "copilot",
+                    Model = "gpt-4.1",
+                    Enabled = true
+                },
+                ["assistant"] = new()
+                {
+                    Provider = "copilot",
+                    Model = "gpt-4.1",
+                    Enabled = true
+                }
+            }
+        };
+        var source = new PlatformConfigAgentSource(
+            new TestOptionsMonitor<PlatformConfig>(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>());
+
+        // Act
+        var descriptors = await source.LoadAsync();
+
+        // Assert — only "assistant" is registered; "defaults" is excluded
+        descriptors.ShouldHaveSingleItem();
+        descriptors[0].AgentId.Value.ShouldBe("assistant");
+        descriptors.ShouldNotContain(d => d.AgentId.Value.Equals("defaults", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithAgentsDefaults_MemoryInheritedIntoAgentDescriptor()
+    {
+        // Arrange — agent omits memory; defaults provide it
+        var config = new PlatformConfig
+        {
+            AgentDefaults = new AgentDefaultsConfig
+            {
+                Memory = new MemoryAgentConfig { Enabled = true, Indexing = "semantic" }
+            },
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["assistant"] = new()
+                {
+                    Provider = "copilot",
+                    Model = "gpt-4.1",
+                    Enabled = true
+                }
+            }
+        };
+        var source = new PlatformConfigAgentSource(
+            new TestOptionsMonitor<PlatformConfig>(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>());
+
+        // Act
+        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
+
+        // Assert
+        descriptor.Memory.ShouldNotBeNull();
+        descriptor.Memory!.Enabled.ShouldBeTrue();
+        descriptor.Memory.Indexing.ShouldBe("semantic");
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithAgentsDefaults_ToolIdsInheritedWhenAgentOmitsThem()
+    {
+        // Arrange
+        var config = new PlatformConfig
+        {
+            AgentDefaults = new AgentDefaultsConfig
+            {
+                ToolIds = ["read", "write"]
+            },
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["assistant"] = new()
+                {
+                    Provider = "copilot",
+                    Model = "gpt-4.1",
+                    Enabled = true
+                    // No toolIds
+                }
+            }
+        };
+        var source = new PlatformConfigAgentSource(
+            new TestOptionsMonitor<PlatformConfig>(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>());
+
+        // Act
+        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
+
+        // Assert — inherited from defaults since no AgentRawElements present (no raw JSON path)
+        descriptor.ToolIds.ShouldBe(["read", "write"]);
+    }
+
     private sealed class StubLocationResolver(IReadOnlyDictionary<string, string> paths) : ILocationResolver
     {
         private readonly IReadOnlyDictionary<string, string> _paths = paths;

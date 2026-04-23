@@ -62,40 +62,53 @@ public sealed class PlatformConfigAgentSource(
         if (agents is null || agents.Count == 0)
             return descriptors;
 
+        var agentDefaults = platformConfig.AgentDefaults;
+        var agentRawElements = platformConfig.AgentRawElements;
+
         foreach (var (agentId, agentConfig) in agents)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            // Skip the reserved defaults pseudo-agent (safety guard in case it wasn't stripped on load)
+            if (string.Equals(agentId, "defaults", StringComparison.OrdinalIgnoreCase))
+                continue;
+
             if (!agentConfig.Enabled)
                 continue;
+
+            // Merge world-level agent defaults into this agent's config
+            JsonElement? rawElement = null;
+            if (agentRawElements is not null && agentRawElements.TryGetValue(agentId, out var rawEl))
+                rawElement = rawEl;
+            var effectiveConfig = AgentConfigMerger.Merge(agentDefaults, agentConfig, rawElement);
 
             var descriptor = new AgentDescriptor
             {
                 AgentId = AgentId.From(agentId),
-                DisplayName = agentConfig.DisplayName ?? agentId,
-                Description = agentConfig.Description,
-                ModelId = agentConfig.Model ?? string.Empty,
-                ApiProvider = agentConfig.Provider ?? string.Empty,
-                SystemPromptFile = agentConfig.SystemPromptFile,
-                SystemPromptFiles = ResolveSystemPromptFiles(agentConfig),
-                ToolIds = agentConfig.ToolIds?.ToArray() ?? [],
-                AllowedModelIds = agentConfig.AllowedModels?.ToArray() ?? [],
-                SubAgentIds = agentConfig.SubAgents?.ToArray() ?? [],
-                IsolationStrategy = string.IsNullOrWhiteSpace(agentConfig.IsolationStrategy)
+                DisplayName = effectiveConfig.DisplayName ?? agentId,
+                Description = effectiveConfig.Description,
+                ModelId = effectiveConfig.Model ?? string.Empty,
+                ApiProvider = effectiveConfig.Provider ?? string.Empty,
+                SystemPromptFile = effectiveConfig.SystemPromptFile,
+                SystemPromptFiles = ResolveSystemPromptFiles(effectiveConfig),
+                ToolIds = effectiveConfig.ToolIds?.ToArray() ?? [],
+                AllowedModelIds = effectiveConfig.AllowedModels?.ToArray() ?? [],
+                SubAgentIds = effectiveConfig.SubAgents?.ToArray() ?? [],
+                IsolationStrategy = string.IsNullOrWhiteSpace(effectiveConfig.IsolationStrategy)
                     ? "in-process"
-                    : agentConfig.IsolationStrategy,
-                MaxConcurrentSessions = agentConfig.MaxConcurrentSessions ?? 0,
-                Metadata = ConvertObject(agentConfig.Metadata),
-                IsolationOptions = ConvertObject(agentConfig.IsolationOptions),
-                Memory = CloneMemoryConfig(agentConfig.Memory),
-                Soul = CloneSoulConfig(agentConfig.Soul),
-                Heartbeat = CloneHeartbeatConfig(agentConfig.Heartbeat),
-                SessionAccessLevel = agentConfig.SessionAccess?.Level ?? "own",
-                SessionAllowedAgents = agentConfig.SessionAccess?.AllowedAgents?.ToArray() ?? [],
-                FileAccess = MapFileAccessPolicy(agentConfig.FileAccess, platformConfig.Gateway?.FileAccess),
+                    : effectiveConfig.IsolationStrategy,
+                MaxConcurrentSessions = effectiveConfig.MaxConcurrentSessions ?? 0,
+                Metadata = ConvertObject(effectiveConfig.Metadata),
+                IsolationOptions = ConvertObject(effectiveConfig.IsolationOptions),
+                Memory = CloneMemoryConfig(effectiveConfig.Memory),
+                Soul = CloneSoulConfig(effectiveConfig.Soul),
+                Heartbeat = CloneHeartbeatConfig(effectiveConfig.Heartbeat),
+                SessionAccessLevel = effectiveConfig.SessionAccess?.Level ?? "own",
+                SessionAllowedAgents = effectiveConfig.SessionAccess?.AllowedAgents?.ToArray() ?? [],
+                FileAccess = MapFileAccessPolicy(effectiveConfig.FileAccess, platformConfig.Gateway?.FileAccess),
                 ExtensionConfig = ExtensionConfigMerger.Merge(
                     platformConfig.Gateway?.Extensions?.Defaults,
-                    agentConfig.Extensions)
+                    effectiveConfig.Extensions)
             };
 
             var validationErrors = AgentDescriptorValidator.Validate(descriptor);
@@ -189,8 +202,8 @@ public sealed class PlatformConfigAgentSource(
 
     private FileAccessPolicy? MapFileAccessPolicy(FileAccessPolicyConfig? agentLevel, FileAccessPolicyConfig? worldLevel)
     {
-        // Agent-level policy takes full precedence if set
-        var effective = agentLevel ?? worldLevel;
+        // Field-level merge: agent-level fields win over world-level where explicitly set
+        var effective = AgentConfigMerger.MergeFileAccess(worldLevel, agentLevel, null);
         if (effective is null)
             return null;
 

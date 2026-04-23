@@ -1,5 +1,6 @@
 @inject HttpClient Http
 @inject IJSRuntime JS
+@using System.Text.Json
 
 @if (_showPanel)
 {
@@ -66,8 +67,70 @@
 
                         <div class="config-field">
                             <label>Tool Count</label>
-                            <span class="config-value">@_agentConfig.ToolCount</span>
+                            <div class="config-field-with-badge">
+                                <span class="config-value">@_agentConfig.ToolCount</span>
+                                @if (IsInherited("toolIds"))
+                                {
+                                    <span class="world-default-badge" title="Inherited from agents.defaults">World default</span>
+                                }
+                            </div>
                         </div>
+
+                        @if (_agentConfig.MemoryEnabled.HasValue)
+                        {
+                            <div class="config-field">
+                                <label>Memory</label>
+                                <div class="config-field-with-badge">
+                                    <span class="config-value">@(_agentConfig.MemoryEnabled.Value ? "Enabled" : "Disabled")</span>
+                                    @if (IsInherited("memory.enabled"))
+                                    {
+                                        <span class="world-default-badge" title="Inherited from agents.defaults">World default</span>
+                                    }
+                                </div>
+                            </div>
+                        }
+
+                        @if (_agentConfig.HeartbeatEnabled.HasValue)
+                        {
+                            <div class="config-field">
+                                <label>Heartbeat</label>
+                                <div class="config-field-with-badge">
+                                    <span class="config-value">@(_agentConfig.HeartbeatEnabled.Value ? "Enabled" : "Disabled")</span>
+                                    @if (IsInherited("heartbeat.enabled"))
+                                    {
+                                        <span class="world-default-badge" title="Inherited from agents.defaults">World default</span>
+                                    }
+                                </div>
+                            </div>
+                        }
+
+                        @if (_agentConfig.HeartbeatIntervalMinutes.HasValue)
+                        {
+                            <div class="config-field">
+                                <label>Heartbeat Interval</label>
+                                <div class="config-field-with-badge">
+                                    <span class="config-value">@_agentConfig.HeartbeatIntervalMinutes.Value min</span>
+                                    @if (IsInherited("heartbeat.intervalMinutes"))
+                                    {
+                                        <span class="world-default-badge" title="Inherited from agents.defaults">World default</span>
+                                    }
+                                </div>
+                            </div>
+                        }
+
+                        @if (_agentConfig.HasFileAccess)
+                        {
+                            <div class="config-field">
+                                <label>File Access</label>
+                                <div class="config-field-with-badge">
+                                    <span class="config-value">Configured</span>
+                                    @if (IsInherited("fileAccess"))
+                                    {
+                                        <span class="world-default-badge" title="Inherited from agents.defaults">World default</span>
+                                    }
+                                </div>
+                            </div>
+                        }
 
                         <div class="config-field">
                             <label>System Prompt Size</label>
@@ -111,6 +174,14 @@
     private string _selectedModel = "";
     private string? _contextSize;
 
+    // Tracks which fields are inherited from world defaults vs explicitly set.
+    // Key: field path (e.g. "toolIds", "memory.enabled"). Value: true = inherited.
+    private Dictionary<string, bool> _inheritedFields = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Returns true if the field value is inherited from world defaults.</summary>
+    private bool IsInherited(string fieldPath) =>
+        _inheritedFields.TryGetValue(fieldPath, out var inherited) && inherited;
+
     public async Task Open()
     {
         _showPanel = true;
@@ -145,6 +216,10 @@
                 _availableModels = [];
             }
 
+            // Compute inheritance badges using Option B (client-side merge).
+            // Wire to GET /api/config/agents/{agentId}/effective when Bender's endpoint is ready.
+            await ComputeInheritanceBadgesAsync(apiBase);
+
             // Fetch context/system prompt size
             if (State.SessionId is not null)
             {
@@ -175,6 +250,39 @@
             _loading = false;
             StateHasChanged();
         }
+    }
+
+    /// <summary>
+    /// Populates inheritance badges by calling Bender's effective-config endpoint
+    /// (GET /api/config/agents/{agentId}/effective). The <c>Sources</c> dict drives
+    /// which fields show the "World default" badge.
+    /// </summary>
+    private async Task ComputeInheritanceBadgesAsync(string apiBase)
+    {
+        _inheritedFields.Clear();
+        try
+        {
+            var effective = await Http.GetFromJsonAsync<EffectiveAgentConfigResponse>(
+                $"{apiBase}config/agents/{State.AgentId}/effective");
+            if (effective?.Sources is null) return;
+
+            // Map endpoint sources to _inheritedFields — true when value is "inherited"
+            foreach (var (field, source) in effective.Sources)
+                _inheritedFields[field] = string.Equals(source, "inherited", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            // Inheritance badges are optional — silently ignore if endpoint is unavailable
+            _inheritedFields.Clear();
+        }
+    }
+
+    // DTO for the effective-config endpoint response (mirrors BotNexus.Gateway.Api.Models.EffectiveAgentConfigResponse)
+    private sealed class EffectiveAgentConfigResponse
+    {
+        public string? AgentId { get; init; }
+        public bool DefaultsApplied { get; init; }
+        public Dictionary<string, string>? Sources { get; init; }
     }
 
     private void Close()
@@ -222,6 +330,10 @@
         public string? Model { get; init; }
         public string? Provider { get; init; }
         public int ToolCount { get; init; }
+        public bool? MemoryEnabled { get; init; }
+        public bool? HeartbeatEnabled { get; init; }
+        public int? HeartbeatIntervalMinutes { get; init; }
+        public bool HasFileAccess { get; init; }
     }
 
     private sealed record ContextInfoDto
