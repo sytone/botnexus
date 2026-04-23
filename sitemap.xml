@@ -2,154 +2,154 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://sytone.github.io/botnexus/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/api-reference/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/cli-reference/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/configuration/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/cron-and-scheduling/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/extension-development/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/getting-started-dev/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/getting-started-release/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/getting-started/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/observability/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/skills/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/websocket-protocol/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/architecture/domain-model/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/architecture/extension-guide/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/architecture/overview/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/architecture/principles/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/architecture/system-flows/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/development/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/development/agent-execution/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/development/cli-wizard/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/development/ddd-patterns/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/development/llm-request-lifecycle/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/development/message-flow/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/development/prompt-pipeline/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/development/session-stores/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/development/triggers-and-federation/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/development/webui-connection/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/development/workspace-and-memory/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/extensions/media-handlers/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/features/sub-agent-spawning/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/guides/audio-recording/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/tutorials/first-agent/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/user-guide/agents/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/user-guide/configuration/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/user-guide/extensions/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/user-guide/getting-started/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/user-guide/troubleshooting/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
     <url>
          <loc>https://sytone.github.io/botnexus/webui/sub-agent-sessions/</loc>
-         <lastmod>2026-04-21</lastmod>
+         <lastmod>2026-04-23</lastmod>
     </url>
 </urlset>
