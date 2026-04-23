@@ -48,7 +48,7 @@ public sealed class PlatformConfig
     /// Populated at load time alongside <see cref="AgentDefaults" />.
     /// </summary>
     [JsonIgnore]
-    internal Dictionary<string, System.Text.Json.JsonElement>? AgentRawElements { get; set; }
+    public Dictionary<string, System.Text.Json.JsonElement>? AgentRawElements { get; set; }
 
 }
 

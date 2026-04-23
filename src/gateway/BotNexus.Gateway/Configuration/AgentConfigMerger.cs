@@ -8,7 +8,7 @@ namespace BotNexus.Gateway.Configuration;
 /// Agent-explicitly-set fields win; absent fields inherit from defaults.
 /// Presence is detected via the optional raw JSON element for the agent config.
 /// </summary>
-internal static class AgentConfigMerger
+public static class AgentConfigMerger
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
