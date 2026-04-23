@@ -151,4 +151,38 @@ public sealed class ToolExecutorTimeoutTests
             .Returns((string _, IReadOnlyDictionary<string, object?> _, CancellationToken ct, AgentToolUpdateCallback? _) => execute(ct));
         return mock.Object;
     }
+
+    /// <summary>
+    /// When the agent passes an explicit timeout argument that exceeds the safety cap,
+    /// ToolExecutor honours it so long-running tools (e.g. a 3-minute shell script) work.
+    /// </summary>
+    [Fact]
+    public async Task ExplicitTimeoutArgument_ExceedsSafetyCap_IsHonoured()
+    {
+        var completedNormally = false;
+
+        // Tool that runs for 200ms — would be killed by a 100ms safety cap
+        // but should succeed when the agent passes timeout: 5 (5 seconds)
+        var tool = CreateTool("slow-shell", async ct =>
+        {
+            await Task.Delay(200, ct);
+            completedNormally = true;
+            return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "done")]);
+        });
+
+        var toolCall = new ToolCallContent("tc-1", "slow-shell",
+            new Dictionary<string, object?> { ["timeout"] = "5" }); // agent requests 5s
+
+        var msg = new AssistantAgentMessage("slow-shell") { ToolCalls = [toolCall] };
+        var config = TestHelpers.CreateTestConfig(
+            toolTimeout: TimeSpan.FromMilliseconds(100)); // safety cap is only 100ms
+        var context = new AgentContext(null, [], [tool]);
+
+        var results = await ToolExecutor.ExecuteAsync(
+            context, msg, config, _ => Task.CompletedTask, CancellationToken.None);
+
+        completedNormally.ShouldBeTrue();
+        results.ShouldHaveSingleItem();
+        results[0].IsError.ShouldBeFalse();
+    }
 }

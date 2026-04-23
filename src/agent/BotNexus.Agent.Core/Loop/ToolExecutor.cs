@@ -294,13 +294,40 @@ internal static class ToolExecutor
         var isError = false;
         var updateTasks = new ConcurrentBag<Task>();
 
+        // If the tool call includes an explicit timeout argument, respect it.
+        // Tools like ShellTool (timeout: seconds) and ExecTool (timeoutMs: ms) expose this.
+        // Use whichever is larger — the configured safety cap or the agent-requested timeout
+        // plus a small buffer so the tool's own timeout fires first.
+        var effectiveTimeout = toolTimeout;
+        if (toolTimeout.HasValue)
+        {
+            TimeSpan? requested = null;
+            if (prepared.ValidatedArgs.TryGetValue("timeout", out var rawSec) && rawSec is not null
+                && int.TryParse(rawSec.ToString(), out var sec) && sec > 0)
+            {
+                requested = TimeSpan.FromSeconds(sec);
+            }
+            else if (prepared.ValidatedArgs.TryGetValue("timeoutMs", out var rawMs) && rawMs is not null
+                && int.TryParse(rawMs.ToString(), out var ms) && ms > 0)
+            {
+                requested = TimeSpan.FromMilliseconds(ms);
+            }
+
+            if (requested.HasValue && requested.Value > toolTimeout.Value)
+            {
+                // Agent explicitly requested a longer timeout — honour it with a 10s buffer
+                // so the tool's own timeout fires before the safety cap.
+                effectiveTimeout = requested.Value + TimeSpan.FromSeconds(10);
+            }
+        }
+
         // Create a linked CancellationTokenSource for the per-tool timeout if configured.
-        using var timeoutCts = toolTimeout.HasValue
+        using var timeoutCts = effectiveTimeout.HasValue
             ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
             : null;
-        if (timeoutCts is not null && toolTimeout.HasValue)
+        if (timeoutCts is not null && effectiveTimeout.HasValue)
         {
-            timeoutCts.CancelAfter(toolTimeout.Value);
+            timeoutCts.CancelAfter(effectiveTimeout.Value);
         }
         var effectiveToken = timeoutCts?.Token ?? cancellationToken;
 
@@ -320,7 +347,7 @@ internal static class ToolExecutor
         catch (OperationCanceledException) when (timeoutCts is not null && timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             // Tool timed out (not user/turn cancellation) — return structured error to LLM.
-            result = BuildErrorResult($"Tool '{prepared.ToolCall.Name}' timed out after {toolTimeout!.Value.TotalSeconds:0}s. The operation did not complete.");
+            result = BuildErrorResult($"Tool '{prepared.ToolCall.Name}' timed out after {effectiveTimeout!.Value.TotalSeconds:0}s. The operation did not complete.");
             isError = true;
         }
         catch (Exception ex)
