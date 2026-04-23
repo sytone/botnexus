@@ -15740,3 +15740,97 @@ Adopt the simpler and deterministic wake strategy: **always dispatch sub-agent c
 
 The test scaffold `InterfaceBackedSubAgentManager` in `DefaultSubAgentManagerTests.cs` still uses `FollowUpAsync` for completion delivery. Consider updating it to use `IChannelDispatcher.DispatchAsync` in a future cleanup to keep test scaffolds aligned with production behavior.
 
+
+---
+
+# Issue #12 — World Settings and Defaults (2026-04-22)
+
+## Jon Bullen (Owner) — Config Design Decisions
+
+**Decided By:** Jon Bullen | **Date:** 2026-04-22 | **Status:** Active
+
+### 1. Field-level merge (not block replacement)
+Agent config inherits world defaults field-by-field. Setting one field on an agent does not wipe the rest of the inherited block.
+
+### 2. `agents.defaults` JSON shape
+World-level defaults live under `agents.defaults`. Makes clear these are agent-specific defaults; `defaults` is not a real agent.
+
+### 3. Extensions are world-level
+Extensions are configured at world level — not part of `agents.defaults`.
+
+### 4. Cron is world-level, enabled by default
+`CronConfig.Enabled = true` is canonical. Scaffold emits `cron.enabled: true` explicitly.
+
+### 5. Memory enabled by default via `agents.defaults`
+`agents.defaults.memory.enabled = true` in new-world scaffold supports per-agent memory management on cron.
+
+---
+
+## Leela (Architect) — Issue #12 World Settings and Defaults
+
+**Date:** 2026-04-22 | **Status:** Approved
+
+### `AgentDefaultsConfig` allowed fields
+`ToolIds`, `Memory`, `Heartbeat`, `FileAccess`. Provider/model/identity/extensions/soul/topology/security-governance excluded from this wave.
+
+### Merge semantics
+- `memory` → deep field merge
+- `heartbeat` → deep field merge
+- `fileAccess` → field-level merge; each list replaces when explicitly set
+- `toolIds` → replacement, not union
+- `extensions` → unchanged; merges at world level via `ExtensionConfigMerger`
+
+### Effective-config endpoint required
+`GET /api/config/agents/{agentId}/effective` — returns resolved values + provenance/source metadata per field.
+
+### Presence-aware scalars
+Do not fake presence with `default(T)` heuristics. Use raw `JsonElement` presence detection.
+
+---
+
+## Bender — Effective-Config API Endpoint
+
+**Date:** 2026-04-22 | **Commit:** `7aa9cfd8`
+
+### Provenance values
+`"agent"` — property key exists in agent's raw JSON  
+`"inherited"` — absent on agent, present in `AgentDefaults`  
+`"implicit-default"` — absent on both; value comes from C# type default  
+
+`"world-default"` reserved for future multi-level hierarchy; currently equivalent to `"inherited"`.
+
+### List fields use replacement semantics
+For `toolIds` and file-access lists: if agent JSON has the key, source is `"agent"` regardless of value.
+
+### Reserved key: `defaults`
+`GET /api/config/agents/defaults/effective` returns 404.
+
+---
+
+## Hermes — Wave 5 Integration Tests
+
+**Date:** 2026-04-22
+
+### Integration over unit for effective-config endpoint
+`WebApplicationFactory` tests the real stack end-to-end. Mocking `PlatformConfigLoader` I/O adds fragility.
+
+### Inline DTO in Razor
+`EffectiveAgentConfigResponse` added as private nested record in `AgentConfigPanel.razor`. Avoids circular/cross-layer project reference.
+
+### IConfiguration injection in controller
+`GetEffectiveAgentConfig` now respects `BotNexus:ConfigPath`. Required for testability, consistent with other controllers.
+
+### Graceful badge fallback
+If effective-config endpoint is unavailable, badges silently disappear. No regression on error path.
+
+---
+
+## Fry — UI World-Default Inheritance Badges
+
+**Date:** 2026-04-22 | **Commit:** `502ec16c`
+
+### Badge approach: endpoint-driven (after Hermes wave 5)
+Initially implemented client-side (Option B — full config fetch + manual diff). Hermes wave 5 replaced this with direct `GET /api/config/agents/{agentId}/effective` call; `Sources` dict drives `_inheritedFields`.
+
+### Badge styling
+`.world-default-badge` — subtle, muted purple-ish tint, small text. Informational only; not visually dominant.
