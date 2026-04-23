@@ -1,7 +1,6 @@
 @inject HttpClient Http
 @inject IJSRuntime JS
 @using System.Text.Json
-@using System.Text.Json.Nodes
 
 @if (_showPanel)
 {
@@ -254,61 +253,36 @@
     }
 
     /// <summary>
-    /// Computes which fields are inherited from world defaults by fetching the full config
-    /// and comparing the agent's raw JSON against agents.defaults.
-    /// Option B: client-side inheritance computation until Bender's effective-config endpoint ships.
+    /// Populates inheritance badges by calling Bender's effective-config endpoint
+    /// (GET /api/config/agents/{agentId}/effective). The <c>Sources</c> dict drives
+    /// which fields show the "World default" badge.
     /// </summary>
     private async Task ComputeInheritanceBadgesAsync(string apiBase)
     {
         _inheritedFields.Clear();
         try
         {
-            // Fetch the full platform config to get the agents section
-            var fullConfig = await Http.GetFromJsonAsync<JsonObject>($"{apiBase}config");
-            if (fullConfig is null) return;
+            var effective = await Http.GetFromJsonAsync<EffectiveAgentConfigResponse>(
+                $"{apiBase}config/agents/{State.AgentId}/effective");
+            if (effective?.Sources is null) return;
 
-            // Extract agents.defaults and the agent-specific raw config
-            var agentsNode = fullConfig["agents"] as JsonObject;
-            if (agentsNode is null) return;
-
-            var defaultsNode = agentsNode["defaults"] as JsonObject;
-            var agentNode = agentsNode[State.AgentId] as JsonObject;
-
-            // toolIds — inherited if agent doesn't set it but defaults has it
-            if (defaultsNode?["toolIds"] is not null)
-            {
-                var agentSetsToolIds = agentNode?.ContainsKey("toolIds") == true;
-                _inheritedFields["toolIds"] = !agentSetsToolIds;
-            }
-
-            // memory.enabled
-            if (defaultsNode?["memory"] is JsonObject defaultsMem && defaultsMem.ContainsKey("enabled"))
-            {
-                var agentMem = agentNode?["memory"] as JsonObject;
-                _inheritedFields["memory.enabled"] = agentMem?.ContainsKey("enabled") != true;
-            }
-
-            // heartbeat.enabled and heartbeat.intervalMinutes
-            if (defaultsNode?["heartbeat"] is JsonObject defaultsHb)
-            {
-                var agentHb = agentNode?["heartbeat"] as JsonObject;
-                if (defaultsHb.ContainsKey("enabled"))
-                    _inheritedFields["heartbeat.enabled"] = agentHb?.ContainsKey("enabled") != true;
-                if (defaultsHb.ContainsKey("intervalMinutes"))
-                    _inheritedFields["heartbeat.intervalMinutes"] = agentHb?.ContainsKey("intervalMinutes") != true;
-            }
-
-            // fileAccess — inherited if agent doesn't set it but defaults has it
-            if (defaultsNode?["fileAccess"] is not null)
-            {
-                _inheritedFields["fileAccess"] = agentNode?.ContainsKey("fileAccess") != true;
-            }
+            // Map endpoint sources to _inheritedFields — true when value is "inherited"
+            foreach (var (field, source) in effective.Sources)
+                _inheritedFields[field] = string.Equals(source, "inherited", StringComparison.OrdinalIgnoreCase);
         }
         catch
         {
-            // Inheritance badges are optional — silently ignore if config fetch fails
+            // Inheritance badges are optional — silently ignore if endpoint is unavailable
             _inheritedFields.Clear();
         }
+    }
+
+    // DTO for the effective-config endpoint response (mirrors BotNexus.Gateway.Api.Models.EffectiveAgentConfigResponse)
+    private sealed class EffectiveAgentConfigResponse
+    {
+        public string? AgentId { get; init; }
+        public bool DefaultsApplied { get; init; }
+        public Dictionary<string, string>? Sources { get; init; }
     }
 
     private void Close()

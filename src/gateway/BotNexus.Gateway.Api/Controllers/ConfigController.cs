@@ -103,9 +103,13 @@ public sealed class ConfigController : ControllerBase
     [HttpGet("agents/{agentId}/effective")]
     public async Task<ActionResult<EffectiveAgentConfigResponse>> GetEffectiveAgentConfig(
         string agentId,
+        [FromServices] IConfiguration configuration,
         CancellationToken ct)
     {
-        var configPath = PlatformConfigLoader.DefaultConfigPath;
+        var configuredPath = configuration["BotNexus:ConfigPath"];
+        var configPath = string.IsNullOrWhiteSpace(configuredPath)
+            ? PlatformConfigLoader.DefaultConfigPath
+            : configuredPath;
         if (!System.IO.File.Exists(configPath))
             return NotFound($"Config file not found at '{configPath}'.");
 
