@@ -1,15 +1,16 @@
 ---
-updated_at: 2026-04-20T23:30:00Z
-focus_area: Sub-Agent Completion Wakeup Bug Fix Delivered
-active_issues: []
-status: subagent_wake_fix_delivered
+updated_at: 2026-04-22T01:13:00Z
+focus_area: Issue #12 World Defaults — PR #13 open for review
+active_issues: [12]
+status: pr_open
 ---
 
 # What We're Focused On
 
-**Sub-Agent Completion Wakeup Bug Fix delivered (2026-04-20 23:30Z).** Fixed two root causes preventing sub-agent completion signals from waking parent session: (1) InternalChannelAdapter stream event delivery via `SendStreamEventAsync`, (2) IsRunning race condition in `DefaultSubAgentManager.OnCompletedAsync` eliminated by removing timing-dependent branching and always dispatching via gateway queue. 5-wave delivery: Design Review (Leela) → Tests (Hermes) → Adapter Integration (Farnsworth) → Race Fix (Bender) → Consistency Review (Nibbler). 6 files changed, 309 insertions, 46 deletions. 3 new reproducing tests + 5 existing tests updated. 2,584 total tests passing, zero failures.
+**Issue #12 — World Settings and Defaults — PR #13 open for review (2026-04-22).**
+5-wave delivery: Leela (triage + design review) → Farnsworth (config schema + `AgentConfigMerger`) → Hermes (tests wave 1) → Bender (effective-config API) → Fry (UI badges) → Hermes (API integration tests + UI wiring). 2024 tests passing, 0 failures. `agents.defaults` block, field-level merge, nullable presence tracking, `toolIds` replacement, cron world-level default, `GET /api/config/agents/{agentId}/effective` with provenance.
 
-**Previous:** Read-Only Sub-Agent Session View delivered (2026-04-20 19:06Z). Users can click sub-agent sessions in sidebar to view full conversation history, tool calls, and streaming output in read-only mode. 92 BlazorClient tests passing (+22 new), 0 code issues.
+**Previous:** Sub-Agent Completion Wakeup Bug Fix delivered (2026-04-20 23:30Z). Fixed two root causes preventing sub-agent completion signals from waking parent session. 2,584 total tests passing, zero failures.
 
 ## Deferred
 
