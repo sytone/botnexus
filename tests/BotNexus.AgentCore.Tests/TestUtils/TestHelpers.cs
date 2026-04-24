@@ -34,7 +34,8 @@ internal static class TestHelpers
         LlmModel? model = null,
         ToolExecutionMode toolExecutionMode = ToolExecutionMode.Sequential,
         BeforeToolCallDelegate? beforeToolCall = null,
-        AfterToolCallDelegate? afterToolCall = null)
+        AfterToolCallDelegate? afterToolCall = null,
+        TimeSpan? toolTimeout = null)
     {
         return new AgentLoopConfig(
             Model: model ?? CreateTestModel(),
@@ -47,7 +48,8 @@ internal static class TestHelpers
             ToolExecutionMode: toolExecutionMode,
             BeforeToolCall: beforeToolCall,
             AfterToolCall: afterToolCall,
-            GenerationSettings: new SimpleStreamOptions());
+            GenerationSettings: new SimpleStreamOptions(),
+            ToolTimeout: toolTimeout);
     }
 
     public static AgentOptions CreateTestOptions(

@@ -26,6 +26,9 @@ namespace BotNexus.Agent.Core.Configuration;
 /// Optional maximum delay in milliseconds for transient retry backoff.
 /// Must be greater than zero when set; null means uncapped retry delay.
 /// </param>
+/// <param name="ToolTimeout">
+/// Per-tool execution timeout. Defaults to 120 seconds. Set to null to disable (not recommended).
+/// </param>
 /// <remarks>
 /// AgentOptions is passed to the Agent constructor and frozen for the lifetime of the agent.
 /// InitialState is used to seed AgentState — changes to InitialState after construction have no effect.
@@ -47,4 +50,5 @@ public record AgentOptions(
     QueueMode FollowUpMode,
     string? SessionId = null,
     Action<string>? OnDiagnostic = null,
-    int? MaxRetryDelayMs = null);
+    int? MaxRetryDelayMs = null,
+    TimeSpan? ToolTimeout = null);

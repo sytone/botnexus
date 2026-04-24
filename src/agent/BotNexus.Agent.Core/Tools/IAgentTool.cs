@@ -96,6 +96,14 @@ public interface IAgentTool
         AgentToolUpdateCallback? onUpdate = null);
 
     /// <summary>
+    /// Optional per-tool execution timeout hint. When set, <c>ToolExecutor</c> uses
+    /// <c>max(configuredSafetyCap, DefaultTimeout)</c> so long-running tools are not
+    /// prematurely cancelled by the global safety cap. Return <c>null</c> to defer
+    /// entirely to the configured safety cap.
+    /// </summary>
+    TimeSpan? DefaultTimeout => null;
+
+    /// <summary>
     /// Optional one-line snippet for system prompt tool listing.
     /// </summary>
     string? GetPromptSnippet() => null;

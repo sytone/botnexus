@@ -69,6 +69,11 @@ public sealed class ShellTool : IAgentTool
     }
 
     /// <inheritdoc />
+    /// <inheritdoc />
+    /// Shell commands can be long-running — default to 10 minutes so the safety cap
+    /// doesn't kill legitimate long operations. The tool's own per-call timeout still applies.
+    public TimeSpan? DefaultTimeout => TimeSpan.FromMinutes(10);
+
     public string Name => _shellPreference == ShellPreference.Pwsh
         ? "shell"
         : "bash";

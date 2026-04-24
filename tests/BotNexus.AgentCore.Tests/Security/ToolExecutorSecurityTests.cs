@@ -83,6 +83,7 @@ public sealed class ToolExecutorSecurityTests
         var mock = new Mock<IAgentTool>(MockBehavior.Strict);
         mock.SetupGet(t => t.Name).Returns("nulltool");
         mock.SetupGet(t => t.Label).Returns("nulltool");
+        mock.SetupGet(t => t.DefaultTimeout).Returns((TimeSpan?)null);
         mock.SetupGet(t => t.Definition).Returns(new Tool("nulltool", "null tool", JsonDocument.Parse("""{"type":"object"}""").RootElement.Clone()));
         mock.Setup(t => t.PrepareArgumentsAsync(It.IsAny<IReadOnlyDictionary<string, object?>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyDictionary<string, object?> args, CancellationToken _) => args);
@@ -206,6 +207,7 @@ public sealed class ToolExecutorSecurityTests
         var mock = new Mock<IAgentTool>(MockBehavior.Strict);
         mock.SetupGet(t => t.Name).Returns(name);
         mock.SetupGet(t => t.Label).Returns(name);
+        mock.SetupGet(t => t.DefaultTimeout).Returns((TimeSpan?)null);
         mock.SetupGet(t => t.Definition).Returns(new Tool(name, "mock", JsonDocument.Parse("""{"type":"object"}""").RootElement.Clone()));
         mock.Setup(t => t.PrepareArgumentsAsync(It.IsAny<IReadOnlyDictionary<string, object?>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyDictionary<string, object?> args, CancellationToken _) => args);

@@ -73,7 +73,7 @@ internal static class ToolExecutor
 
             var (result, isError) = preparation.Prepared is null
                 ? (preparation.Result!, preparation.IsError)
-                : await ExecutePreparedToolCallAsync(preparation.Prepared, emit, cancellationToken).ConfigureAwait(false);
+                : await ExecutePreparedToolCallAsync(preparation.Prepared, emit, cancellationToken, config.ToolTimeout).ConfigureAwait(false);
 
             if (preparation.Prepared is not null)
             {
@@ -164,7 +164,7 @@ internal static class ToolExecutor
 
         var executionTasks = preparedItems.Select(async item =>
         {
-            var execution = await ExecutePreparedToolCallAsync(item.Prepared, emit, cancellationToken).ConfigureAwait(false);
+            var execution = await ExecutePreparedToolCallAsync(item.Prepared, emit, cancellationToken, config.ToolTimeout).ConfigureAwait(false);
             return new ToolExecutionOutcome(
                 item.Index,
                 item.Prepared.ToolCall,
@@ -287,24 +287,79 @@ internal static class ToolExecutor
     private static async Task<(AgentToolResult Result, bool IsError)> ExecutePreparedToolCallAsync(
         PreparedToolCall prepared,
         Func<AgentEvent, Task> emit,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeSpan? toolTimeout = null)
     {
         AgentToolResult result;
         var isError = false;
         var updateTasks = new ConcurrentBag<Task>();
+
+        // If the tool call includes an explicit timeout argument, respect it.
+        // Tools like ShellTool (timeout: seconds) and ExecTool (timeoutMs: ms) expose this.
+        // Also check tool.DefaultTimeout — tools declare their own expected duration.
+        // Use the largest of: configured safety cap, tool default, agent-requested arg timeout.
+        var effectiveTimeout = toolTimeout;
+
+        // Tool-declared default — long-running tools (shell, exec, mcp) set this
+        if (prepared.Tool.DefaultTimeout.HasValue)
+        {
+            effectiveTimeout = effectiveTimeout.HasValue
+                ? (TimeSpan?)TimeSpan.FromTicks(Math.Max(effectiveTimeout.Value.Ticks, prepared.Tool.DefaultTimeout.Value.Ticks))
+                : prepared.Tool.DefaultTimeout;
+        }
+
+        // Agent-specified timeout in arguments (timeout: seconds or timeoutMs: ms)
+        // Honours explicit agent intent — e.g. "run this deploy script, timeout: 600"
+        if (effectiveTimeout.HasValue)
+        {
+            TimeSpan? requested = null;
+            if (prepared.ValidatedArgs.TryGetValue("timeout", out var rawSec) && rawSec is not null
+                && int.TryParse(rawSec.ToString(), out var sec) && sec > 0)
+            {
+                requested = TimeSpan.FromSeconds(sec);
+            }
+            else if (prepared.ValidatedArgs.TryGetValue("timeoutMs", out var rawMs) && rawMs is not null
+                && int.TryParse(rawMs.ToString(), out var ms) && ms > 0)
+            {
+                requested = TimeSpan.FromMilliseconds(ms);
+            }
+
+            if (requested.HasValue && requested.Value > toolTimeout.Value)
+            {
+                // Agent explicitly requested a longer timeout — honour it with a 10s buffer
+                // so the tool's own timeout fires before the safety cap.
+                effectiveTimeout = requested.Value + TimeSpan.FromSeconds(10);
+            }
+        }
+
+        // Create a linked CancellationTokenSource for the per-tool timeout if configured.
+        using var timeoutCts = effectiveTimeout.HasValue
+            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+            : null;
+        if (timeoutCts is not null && effectiveTimeout.HasValue)
+        {
+            timeoutCts.CancelAfter(effectiveTimeout.Value);
+        }
+        var effectiveToken = timeoutCts?.Token ?? cancellationToken;
 
         try
         {
             result = await prepared.Tool.ExecuteAsync(
                 prepared.ToolCall.Id,
                 prepared.ValidatedArgs,
-                cancellationToken,
+                effectiveToken,
                 partialResult => updateTasks.Add(emit(new ToolExecutionUpdateEvent(
                     prepared.ToolCall.Id,
                     prepared.ToolCall.Name,
                     prepared.ValidatedArgs,
                     partialResult,
                     DateTimeOffset.UtcNow)))).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (timeoutCts is not null && timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            // Tool timed out (not user/turn cancellation) — return structured error to LLM.
+            result = BuildErrorResult($"Tool '{prepared.ToolCall.Name}' timed out after {effectiveTimeout!.Value.TotalSeconds:0}s. The operation did not complete.");
+            isError = true;
         }
         catch (Exception ex)
         {

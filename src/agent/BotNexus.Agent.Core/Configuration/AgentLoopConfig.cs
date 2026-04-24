@@ -22,6 +22,7 @@ namespace BotNexus.Agent.Core.Configuration;
 /// Must be greater than zero when set; null means uncapped retry delay.
 /// </param>
 /// <param name="SkipInitialSteeringPoll">True to skip the first steering queue drain for this run.</param>
+/// <param name="ToolTimeout">Per-tool execution timeout. Null = no timeout (not recommended). Defaults to 120 seconds.</param>
 /// <remarks>
 /// AgentLoopConfig is built from AgentOptions at the start of each run.
 /// It is immutable and passed through the loop to ensure consistent configuration.
@@ -39,4 +40,5 @@ public record AgentLoopConfig(
     AfterToolCallDelegate? AfterToolCall,
     SimpleStreamOptions GenerationSettings,
     int? MaxRetryDelayMs = null,
-    bool SkipInitialSteeringPoll = false);
+    bool SkipInitialSteeringPoll = false,
+    TimeSpan? ToolTimeout = null);

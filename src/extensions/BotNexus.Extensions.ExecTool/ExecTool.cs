@@ -36,6 +36,10 @@ public sealed class ExecTool : IAgentTool
     public string Name => "exec";
 
     /// <inheritdoc />
+    /// Exec tool can run long processes — default to 10 minutes.
+    public TimeSpan? DefaultTimeout => TimeSpan.FromMinutes(10);
+
+    /// <inheritdoc />
     public string Label => "Exec";
 
     /// <inheritdoc />

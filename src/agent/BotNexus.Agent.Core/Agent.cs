@@ -582,7 +582,8 @@ public sealed class Agent
             _options.AfterToolCall,
             generationSettings,
             _options.MaxRetryDelayMs,
-            skipInitialSteeringPoll);
+            skipInitialSteeringPoll,
+            _options.ToolTimeout ?? TimeSpan.FromSeconds(120));
     }
 
     private static SimpleStreamOptions CloneGenerationSettings(SimpleStreamOptions source)

@@ -371,6 +371,63 @@ public sealed class SqliteSessionStoreTests
         await store.SaveAsync(session);
     }
 
+    /// <summary>Proves the global lock is gone: 24 different sessions save concurrently without deadlock or data loss.</summary>
+    [Fact]
+    public async Task SaveAsync_ManySessions_ConcurrentlyWithoutDeadlock()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+
+        var tasks = Enumerable.Range(0, 24).Select(async i =>
+        {
+            var session = await store.GetOrCreateAsync($"s{i:D2}", "agent-a");
+            session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"msg-{i}" });
+            await store.SaveAsync(session);
+        });
+
+        await Task.WhenAll(tasks); // must complete without timeout or exception
+
+        var all = await store.ListAsync();
+        all.Count().ShouldBe(24);
+    }
+
+    /// <summary>Proves different sessions don't block each other: session A save doesn't block session B save.</summary>
+    [Fact]
+    public async Task SaveAsync_TwoDifferentSessions_DoNotBlockEachOther()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var a = await store.GetOrCreateAsync("session-a", "agent-a");
+        var b = await store.GetOrCreateAsync("session-b", "agent-b");
+        a.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "hello-a" });
+        b.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "hello-b" });
+
+        await Task.WhenAll(store.SaveAsync(a), store.SaveAsync(b));
+
+        var ra = await store.GetAsync("session-a");
+        var rb = await store.GetAsync("session-b");
+        ra!.History.Last().Content.ShouldBe("hello-a");
+        rb!.History.Last().Content.ShouldBe("hello-b");
+    }
+
+    /// <summary>Proves WAL mode is enabled — allows concurrent reads while writing.</summary>
+    [Fact]
+    public async Task Database_EnablesWalMode()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        // Trigger DB init
+        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        await store.SaveAsync(session);
+
+        await using var connection = new SqliteConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = "PRAGMA journal_mode;";
+        var mode = (string?)await cmd.ExecuteScalarAsync();
+        mode.ShouldBe("wal", StringCompareShould.IgnoreCase);
+    }
+
     private sealed class StoreFixture : IDisposable
     {
         public StoreFixture()

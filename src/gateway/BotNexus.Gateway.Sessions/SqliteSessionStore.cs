@@ -10,18 +10,24 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
+using System.Collections.Concurrent;
 
 namespace BotNexus.Gateway.Sessions;
 
 /// <summary>
 /// SQLite-backed session store for single-node persistent gateway sessions.
+/// Uses WAL journal mode and per-session <see cref="SemaphoreSlim"/> locks so
+/// concurrent agents can read and write independent sessions without blocking each other.
+/// The global initialisation lock (<c>_initLock</c>) is only held during the one-time
+/// schema creation; all subsequent operations use per-session granularity.
 /// </summary>
 public sealed class SqliteSessionStore : SessionStoreBase
 {
     private static readonly ActivitySource ActivitySource = new("BotNexus.Gateway");
     private readonly string _connectionString;
-    private readonly SemaphoreSlim _lock = new(1, 1);
-    private readonly Dictionary<SessionId, GatewaySession> _cache = [];
+    private readonly SemaphoreSlim _initLock = new(1, 1);
+    private readonly ConcurrentDictionary<SessionId, SemaphoreSlim> _sessionLocks = new();
+    private readonly ConcurrentDictionary<SessionId, GatewaySession> _cache = new();
     private bool _initialized;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -40,10 +46,11 @@ public sealed class SqliteSessionStore : SessionStoreBase
         using var activity = ActivitySource.StartActivity("session.get", ActivityKind.Internal);
         activity?.SetTag("botnexus.session.id", sessionId);
 
-        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+        var sessionLock = GetSessionLock(sessionId);
+        await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
             if (_cache.TryGetValue(sessionId, out var cached))
                 return cached;
 
@@ -53,7 +60,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
 
             return loaded;
         }
-        finally { _lock.Release(); }
+        finally { sessionLock.Release(); }
     }
 
     /// <inheritdoc />
@@ -63,10 +70,11 @@ public sealed class SqliteSessionStore : SessionStoreBase
         activity?.SetTag("botnexus.session.id", sessionId);
         activity?.SetTag("botnexus.agent.id", agentId);
 
-        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+        var sessionLock = GetSessionLock(sessionId);
+        await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
             if (_cache.TryGetValue(sessionId, out var cached))
                 return cached;
 
@@ -81,7 +89,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
             _cache[sessionId] = session;
             return session;
         }
-        finally { _lock.Release(); }
+        finally { sessionLock.Release(); }
     }
 
     /// <inheritdoc />
@@ -91,17 +99,18 @@ public sealed class SqliteSessionStore : SessionStoreBase
         activity?.SetTag("botnexus.session.id", session.SessionId);
         activity?.SetTag("botnexus.agent.id", session.AgentId);
 
-        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+        var sessionLock = GetSessionLock(session.SessionId);
+        await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
             _cache[session.SessionId] = session;
             await using var connection = CreateConnection();
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
             await UpsertSessionAsync(connection, session, cancellationToken).ConfigureAwait(false);
             await ReplaceHistoryAsync(connection, session, cancellationToken).ConfigureAwait(false);
         }
-        finally { _lock.Release(); }
+        finally { sessionLock.Release(); }
     }
 
     /// <inheritdoc />
@@ -110,11 +119,12 @@ public sealed class SqliteSessionStore : SessionStoreBase
         using var activity = ActivitySource.StartActivity("session.delete", ActivityKind.Internal);
         activity?.SetTag("botnexus.session.id", sessionId);
 
-        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+        var sessionLock = GetSessionLock(sessionId);
+        await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
-            _cache.Remove(sessionId);
+            _cache.TryRemove(sessionId, out _);
 
             await using var connection = CreateConnection();
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
@@ -128,18 +138,20 @@ public sealed class SqliteSessionStore : SessionStoreBase
             deleteSession.CommandText = "DELETE FROM sessions WHERE id = $sessionId";
             deleteSession.Parameters.AddWithValue("$sessionId", sessionId.Value);
             await deleteSession.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            _sessionLocks.TryRemove(sessionId, out _);
         }
-        finally { _lock.Release(); }
+        finally { sessionLock.Release(); }
     }
 
     /// <inheritdoc />
     public override async Task ArchiveAsync(SessionId sessionId, CancellationToken cancellationToken = default)
     {
-        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+        var sessionLock = GetSessionLock(sessionId);
+        await sessionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
-            _cache.Remove(sessionId);
+            _cache.TryRemove(sessionId, out _);
 
             var session = await LoadSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
             if (session is not null)
@@ -153,89 +165,98 @@ public sealed class SqliteSessionStore : SessionStoreBase
                 await ReplaceHistoryAsync(connection, session, cancellationToken).ConfigureAwait(false);
             }
         }
-        finally { _lock.Release(); }
+        finally { sessionLock.Release(); }
     }
 
     protected override async Task<IReadOnlyList<GatewaySession>> EnumerateSessionsAsync(CancellationToken cancellationToken)
     {
-        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
-            await using var connection = CreateConnection();
-            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-
-            await using var command = connection.CreateCommand();
-            command.CommandText = """
-                SELECT id
-                FROM sessions
-                ORDER BY updated_at DESC
-                """;
-
-            var sessions = new List<GatewaySession>();
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-            {
-                var sessionId = SessionId.From(reader.GetString(0));
-                var session = _cache.GetValueOrDefault(sessionId)
-                    ?? await LoadSessionAsync(connection, sessionId, cancellationToken).ConfigureAwait(false);
-                if (session is not null)
-                {
-                    _cache[sessionId] = session;
-                    sessions.Add(session);
-                }
-            }
-
-            return sessions;
-        }
-        finally { _lock.Release(); }
-    }
-
-    private async Task EnsureCreatedAsync(CancellationToken cancellationToken)
-    {
-        if (_initialized)
-            return;
-
+        // EnumerateSessionsAsync reads across all sessions — safe without per-session lock under WAL
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
         await using var connection = CreateConnection();
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            CREATE TABLE IF NOT EXISTS sessions (
-                id TEXT PRIMARY KEY,
-                agent_id TEXT,
-                channel_type TEXT,
-                caller_id TEXT,
-                session_type TEXT,
-                participants_json TEXT,
-                status TEXT,
-                metadata TEXT,
-                created_at TEXT,
-                updated_at TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS session_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT,
-                role TEXT,
-                content TEXT,
-                timestamp TEXT,
-                tool_name TEXT,
-                tool_call_id TEXT,
-                is_compaction_summary INTEGER NOT NULL DEFAULT 0
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_session_history_session_id ON session_history(session_id);
-            CREATE INDEX IF NOT EXISTS idx_sessions_agent_id ON sessions(agent_id);
-            CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at);
+            SELECT id
+            FROM sessions
+            ORDER BY updated_at DESC
             """;
-        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
-        // Migrate: add tool columns to existing databases
-        await MigrateAsync(connection, cancellationToken).ConfigureAwait(false);
+        var sessions = new List<GatewaySession>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var sessionId = SessionId.From(reader.GetString(0));
+            var session = _cache.GetValueOrDefault(sessionId)
+                ?? await LoadSessionAsync(connection, sessionId, cancellationToken).ConfigureAwait(false);
+            if (session is not null)
+            {
+                _cache[sessionId] = session;
+                sessions.Add(session);
+            }
+        }
 
-        _initialized = true;
+        return sessions;
     }
+
+    private async Task EnsureCreatedAsync(CancellationToken cancellationToken)
+    {
+        if (_initialized) return;
+
+        await _initLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_initialized) return; // double-check after acquiring lock
+
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+            await using var walCmd = connection.CreateCommand();
+            walCmd.CommandText = "PRAGMA journal_mode=WAL;";
+            await walCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id TEXT PRIMARY KEY,
+                    agent_id TEXT,
+                    channel_type TEXT,
+                    caller_id TEXT,
+                    session_type TEXT,
+                    participants_json TEXT,
+                    status TEXT,
+                    metadata TEXT,
+                    created_at TEXT,
+                    updated_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS session_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT,
+                    role TEXT,
+                    content TEXT,
+                    timestamp TEXT,
+                    tool_name TEXT,
+                    tool_call_id TEXT,
+                    is_compaction_summary INTEGER NOT NULL DEFAULT 0
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_session_history_session_id ON session_history(session_id);
+                CREATE INDEX IF NOT EXISTS idx_sessions_agent_id ON sessions(agent_id);
+                CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at);
+                """;
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+            // Migrate: add tool columns to existing databases
+            await MigrateAsync(connection, cancellationToken).ConfigureAwait(false);
+
+            _initialized = true;
+        }
+        finally { _initLock.Release(); }
+    }
+
+    private SemaphoreSlim GetSessionLock(SessionId sessionId)
+        => _sessionLocks.GetOrAdd(sessionId, static _ => new SemaphoreSlim(1, 1));
 
     private static async Task MigrateAsync(SqliteConnection connection, CancellationToken cancellationToken)
     {

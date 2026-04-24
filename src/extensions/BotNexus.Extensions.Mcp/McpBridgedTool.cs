@@ -28,6 +28,10 @@ public sealed class McpBridgedTool : IAgentTool
         : _definition.Name;
 
     /// <inheritdoc />
+    /// MCP tools delegate to external processes — default to 10 minutes.
+    public TimeSpan? DefaultTimeout => TimeSpan.FromMinutes(10);
+
+    /// <inheritdoc />
     public string Label => _definition.Name;
 
     /// <inheritdoc />
