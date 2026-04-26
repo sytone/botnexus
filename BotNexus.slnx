@@ -62,6 +62,7 @@
     <Project Path="tests/BotNexus.Extensions.Mcp.Tests/BotNexus.Extensions.Mcp.Tests.csproj" />
     <Project Path="tests/BotNexus.Extensions.McpInvoke.Tests/BotNexus.Extensions.McpInvoke.Tests.csproj" />
     <Project Path="tests/BotNexus.Prompts.Tests/BotNexus.Prompts.Tests.csproj" />
+    <Project Path="tests/BotNexus.Extensions.AudioTranscription.Tests/BotNexus.Extensions.AudioTranscription.Tests.csproj" />
     <Project Path="tests/BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests/BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests.csproj" />
     <Project Path="tests/BotNexus.Cli.Tests/BotNexus.Cli.Tests.csproj" />
   </Folder>
