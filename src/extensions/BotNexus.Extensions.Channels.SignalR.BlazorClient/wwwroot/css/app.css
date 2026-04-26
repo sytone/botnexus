@@ -84,6 +84,34 @@ html, body, #app {
     background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-surface) 100%);
 }
 
+/* ── Burger button ──────────────────────────────────────────────────── */
+
+.burger-btn {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    width: 22px;
+    height: 16px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    flex-shrink: 0;
+}
+
+.burger-line {
+    display: block;
+    width: 100%;
+    height: 2px;
+    background: var(--text-secondary);
+    border-radius: 2px;
+    transition: background 0.15s;
+}
+
+.burger-btn:hover .burger-line {
+    background: var(--text-primary);
+}
+
 .banner-logo {
     font-size: 1.6rem;
     line-height: 1;
@@ -160,6 +188,54 @@ html, body, #app {
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    transition: transform 0.25s ease;
+}
+
+/* Sidebar overlay — covers main canvas on mobile when sidebar is open */
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 99;
+}
+
+/* ── Mobile: sidebar is off-screen by default ───────────────────────── */
+@media (max-width: 768px) {
+    .main-sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 100%;
+        z-index: 100;
+        transform: translateX(-100%);
+    }
+
+    .main-sidebar.sidebar-open {
+        transform: translateX(0);
+    }
+
+    .sidebar-overlay {
+        display: block;
+    }
+
+    /* Main canvas takes full width on mobile */
+    .main-canvas {
+        width: 100%;
+    }
+}
+
+/* Desktop: sidebar always visible, burger is just for toggling preference */
+@media (min-width: 769px) {
+    .main-sidebar.sidebar-closed {
+        display: none;
+    }
+
+    .main-sidebar.sidebar-open,
+    .main-sidebar:not(.sidebar-closed):not(.sidebar-open) {
+        transform: translateX(0);
+        position: relative;
+    }
 }
 
 .sidebar-connection {

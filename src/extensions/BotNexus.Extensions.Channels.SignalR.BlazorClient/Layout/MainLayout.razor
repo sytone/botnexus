@@ -5,9 +5,14 @@
 @implements IDisposable
 
 <div class="app-shell">
-    @* Full-width banner *@
+    @* Top bar with burger + logo *@
     <header class="app-banner">
         <div class="banner-header">
+            <button class="burger-btn" @onclick="ToggleSidebar" aria-label="Toggle menu">
+                <span class="burger-line"></span>
+                <span class="burger-line"></span>
+                <span class="burger-line"></span>
+            </button>
             <span class="banner-logo">🤖</span>
             <span class="banner-title">BotNexus</span>
         </div>
@@ -29,7 +34,13 @@
 
     @* Two-column body *@
     <div class="app-body">
-        <aside class="main-sidebar">
+        @* Mobile overlay — tap to close sidebar *@
+        @if (_sidebarOpen)
+        {
+            <div class="sidebar-overlay" @onclick="CloseSidebar"></div>
+        }
+
+        <aside class="main-sidebar @(_sidebarOpen ? "sidebar-open" : "sidebar-closed")">
             @* Connection status *@
             <div class="sidebar-connection">
                 <ConnectionStatus Hub="@Manager.Hub" />
@@ -37,7 +48,7 @@
 
             @* Nav links *@
             <nav class="sidebar-nav">
-                <a href="" class="sidebar-nav-item @NavClass("")">💬 Chat</a>
+                <a href="" class="sidebar-nav-item @NavClass("")" @onclick="OnNavClick">💬 Chat</a>
 
                 @* Agent dropdown + session list nested under Chat *@
                 @if (Manager.Sessions.Count > 0)
@@ -73,7 +84,7 @@
                                 .Where(s => s.Status is "Running" or "Completed"))
                             {
                                 <div class="agent-session-item @(IsSubAgentActive(sub) ? "active" : "")"
-                                     @onclick="() => ViewSubAgent(sub)"
+                                     @onclick="() => ViewSubAgentAndClose(sub)"
                                      style="cursor: pointer;"
                                      title="@sub.Task">
                                     <span>@SubAgentIcon(sub.Status)</span>
@@ -88,21 +99,21 @@
                     }
                 }
 
-                <a href="configuration" class="sidebar-nav-item @NavClass("configuration")">⚙️ Configuration</a>
+                <a href="configuration" class="sidebar-nav-item @NavClass("configuration")" @onclick="OnNavClick">⚙️ Configuration</a>
 
                 @* Config section sub-nav — only shown when on the configuration page *@
                 @if (IsOnPage("configuration"))
                 {
                     <div class="sidebar-subnav">
-                        <a href="configuration#cfg-gateway"  class="sidebar-subnav-item">🌐 Gateway</a>
-                        <a href="configuration#cfg-providers" class="sidebar-subnav-item">🔌 Providers</a>
-                        <a href="configuration#cfg-channels"  class="sidebar-subnav-item">📡 Channels</a>
-                        <a href="configuration#cfg-cron"      class="sidebar-subnav-item">⏰ Cron</a>
-                        <a href="configuration#cfg-apikey"    class="sidebar-subnav-item">🔑 Global API Key</a>
+                        <a href="configuration#cfg-gateway"  class="sidebar-subnav-item" @onclick="CloseSidebar">🌐 Gateway</a>
+                        <a href="configuration#cfg-providers" class="sidebar-subnav-item" @onclick="CloseSidebar">🔌 Providers</a>
+                        <a href="configuration#cfg-channels"  class="sidebar-subnav-item" @onclick="CloseSidebar">📡 Channels</a>
+                        <a href="configuration#cfg-cron"      class="sidebar-subnav-item" @onclick="CloseSidebar">⏰ Cron</a>
+                        <a href="configuration#cfg-apikey"    class="sidebar-subnav-item" @onclick="CloseSidebar">🔑 Global API Key</a>
                     </div>
                 }
 
-                <a href="agents" class="sidebar-nav-item @NavClass("agents")">🤖 Agents</a>
+                <a href="agents" class="sidebar-nav-item @NavClass("agents")" @onclick="OnNavClick">🤖 Agents</a>
             </nav>
 
             @* Restart button at bottom *@
@@ -124,6 +135,7 @@
     private record Announcement(string Id, string Text, string Type = "info");
     private List<Announcement> _announcements = [];
     private bool _restarting;
+    private bool _sidebarOpen = false;
 
     protected override void OnInitialized()
     {
@@ -131,6 +143,15 @@
     }
 
     private void HandleStateChanged() => InvokeAsync(StateHasChanged);
+
+    private void ToggleSidebar() => _sidebarOpen = !_sidebarOpen;
+    private void CloseSidebar() => _sidebarOpen = false;
+
+    private void OnNavClick()
+    {
+        // Close sidebar after navigation on mobile
+        _sidebarOpen = false;
+    }
 
     private string NavClass(string page)
     {
@@ -158,9 +179,10 @@
         _           => "🤖"
     };
 
-    private async Task ViewSubAgent(SubAgentInfo sub)
+    private async Task ViewSubAgentAndClose(SubAgentInfo sub)
     {
         await Manager.ViewSubAgentAsync(sub);
+        _sidebarOpen = false;
     }
 
     private bool IsSubAgentActive(SubAgentInfo sub)

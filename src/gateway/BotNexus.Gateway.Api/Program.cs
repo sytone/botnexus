@@ -7,7 +7,9 @@ using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Extensions;
 using BotNexus.Agent.Providers.Anthropic;
 using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Registry;
+using Microsoft.Extensions.Options;
 using BotNexus.Agent.Providers.OpenAI;
 using BotNexus.Agent.Providers.OpenAICompat;
 using BotNexus.Cron;
@@ -168,6 +170,66 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
     apiProviders.Register(new OpenAICompatProvider(httpClient));
 
     serviceProvider.GetRequiredService<BuiltInModels>().RegisterAll(models);
+
+    // Register models from openai-compat providers in config (e.g. Ollama, LM Studio)
+    var platformConfig = serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue;
+    if (platformConfig.Providers is not null)
+    {
+        foreach (var (providerName, providerConfig) in platformConfig.Providers)
+        {
+            if (!providerConfig.Enabled || string.IsNullOrWhiteSpace(providerConfig.BaseUrl))
+                continue;
+
+            // Register each explicitly listed model for this provider
+            if (providerConfig.Models is { Count: > 0 })
+            {
+                foreach (var modelId in providerConfig.Models)
+                {
+                    models.Register(providerName, new LlmModel(
+                        Id: modelId,
+                        Name: modelId,
+                        Api: "openai-completions",
+                        Provider: providerName,
+                        BaseUrl: providerConfig.BaseUrl,
+                        Reasoning: false,
+                        Input: ["text"],
+                        Cost: new ModelCost(0, 0, 0, 0),
+                        ContextWindow: 128000,
+                        MaxTokens: 32000));
+                }
+            }
+        }
+    }
+
+    // Also register the default model for any agent using an openai-compat provider not in BuiltInModels
+    if (platformConfig.Agents is not null && platformConfig.Providers is not null)
+    {
+        foreach (KeyValuePair<string, AgentDefinitionConfig> agentEntry in platformConfig.Agents)
+        {
+            var agentConfig = agentEntry.Value;
+            if (string.IsNullOrWhiteSpace(agentConfig.Provider) || string.IsNullOrWhiteSpace(agentConfig.Model))
+                continue;
+            if (!platformConfig.Providers.TryGetValue(agentConfig.Provider, out var agentProvider))
+                continue;
+            if (string.IsNullOrWhiteSpace(agentProvider.BaseUrl))
+                continue;
+            if (models.GetModel(agentConfig.Provider, agentConfig.Model) is not null)
+                continue; // already registered
+
+            models.Register(agentConfig.Provider, new LlmModel(
+                Id: agentConfig.Model,
+                Name: agentConfig.Model,
+                Api: "openai-completions",
+                Provider: agentConfig.Provider,
+                BaseUrl: agentProvider.BaseUrl,
+                Reasoning: agentConfig.Model.Contains("reasoning", StringComparison.OrdinalIgnoreCase),
+                Input: ["text"],
+                Cost: new ModelCost(0, 0, 0, 0),
+                ContextWindow: 128000,
+                MaxTokens: 32000));
+        }
+    }
+
     return new LlmClient(apiProviders, models);
 });
 
