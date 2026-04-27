@@ -1441,6 +1441,84 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#linux-specific-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Linux-Specific Issues
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Linux-Specific Issues">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#webui-connects-but-immediately-disconnects-culturenotfoundexception" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        WebUI Connects But Immediately Disconnects (CultureNotFoundException)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ollama-local-model-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ollama / Local Model Issues
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Ollama / Local Model Issues">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#agent-not-responding-when-using-ollama" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent Not Responding When Using Ollama
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ollama-model-not-registered-model-not-registered-error" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ollama Model Not Registered / "Model not registered" Error
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ollama-no-api-key-error" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ollama "No API Key" Error
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#logs-and-diagnostics" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3118,6 +3196,84 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#linux-specific-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Linux-Specific Issues
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Linux-Specific Issues">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#webui-connects-but-immediately-disconnects-culturenotfoundexception" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        WebUI Connects But Immediately Disconnects (CultureNotFoundException)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ollama-local-model-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ollama / Local Model Issues
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Ollama / Local Model Issues">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#agent-not-responding-when-using-ollama" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent Not Responding When Using Ollama
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ollama-model-not-registered-model-not-registered-error" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ollama Model Not Registered / "Model not registered" Error
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ollama-no-api-key-error" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ollama "No API Key" Error
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#logs-and-diagnostics" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3248,6 +3404,8 @@
 <li><a href="#tool-execution-failures">Tool Execution Failures</a></li>
 <li><a href="#extension-loading-errors">Extension Loading Errors</a></li>
 <li><a href="#performance-issues">Performance Issues</a></li>
+<li><a href="#linux-specific-issues">Linux-Specific Issues</a></li>
+<li><a href="#ollama--local-model-issues">Ollama / Local Model Issues</a></li>
 <li><a href="#logs-and-diagnostics">Logs and Diagnostics</a></li>
 </ol>
 <hr />
@@ -3770,40 +3928,119 @@ Check <code>.csproj</code>:
 <a id="__codelineno-69-7" name="__codelineno-69-7" href="#__codelineno-69-7"></a><span class="p">}</span>
 </code></pre></div></p>
 <hr />
+<h2 id="linux-specific-issues">Linux-Specific Issues<a class="headerlink" href="#linux-specific-issues" title="Permanent link">&para;</a></h2>
+<h3 id="webui-connects-but-immediately-disconnects-culturenotfoundexception">WebUI Connects But Immediately Disconnects (CultureNotFoundException)<a class="headerlink" href="#webui-connects-but-immediately-disconnects-culturenotfoundexception" title="Permanent link">&para;</a></h3>
+<p><strong>Symptom:</strong> The BotNexus web UI loads in the browser but the SignalR hub connection fails immediately. The browser console shows:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-70-1" name="__codelineno-70-1" href="#__codelineno-70-1"></a>Hub connection failed: The &#39;InvokeCoreAsync&#39; method cannot be called if the connection is not active
+</code></pre></div>
+Gateway logs show:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-71-1" name="__codelineno-71-1" href="#__codelineno-71-1"></a>System.Globalization.CultureNotFoundException: Culture is not supported. (Parameter &#39;name&#39;)
+<a id="__codelineno-71-2" name="__codelineno-71-2" href="#__codelineno-71-2"></a>`1 is an invalid culture identifier.
+<a id="__codelineno-71-3" name="__codelineno-71-3" href="#__codelineno-71-3"></a>   at System.Globalization.CultureInfo.GetCultureInfo(String name)
+<a id="__codelineno-71-4" name="__codelineno-71-4" href="#__codelineno-71-4"></a>   at System.Reflection.RuntimeAssembly.GetLocale()
+<a id="__codelineno-71-5" name="__codelineno-71-5" href="#__codelineno-71-5"></a>   at Microsoft.AspNetCore.SignalR.Internal.DefaultHubDispatcher`1.OnConnectedAsync
+</code></pre></div></p>
+<p><strong>Cause:</strong> .NET 10 on Linux attempts to resolve the locale from assembly metadata when SignalR enumerates hub methods. Generic type names (containing <code>`1</code>) produce invalid culture identifiers, crashing <code>OnConnectedAsync</code> before the client can handshake.</p>
+<p><strong>Fix:</strong> Run the gateway with globalization invariant mode:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-72-1" name="__codelineno-72-1" href="#__codelineno-72-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">DOTNET_SYSTEM_GLOBALIZATION_INVARIANT</span><span class="o">=</span><span class="m">1</span>
+<a id="__codelineno-72-2" name="__codelineno-72-2" href="#__codelineno-72-2"></a>dotnet<span class="w"> </span>BotNexus.Gateway.Api.dll<span class="w"> </span>--urls<span class="w"> </span><span class="s2">&quot;http://0.0.0.0:5005&quot;</span>
+</code></pre></div></p>
+<p>Or set it permanently in your launch script / systemd service:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-73-1" name="__codelineno-73-1" href="#__codelineno-73-1"></a><span class="c1"># systemd service example</span>
+<a id="__codelineno-73-2" name="__codelineno-73-2" href="#__codelineno-73-2"></a><span class="k">[Service]</span>
+<a id="__codelineno-73-3" name="__codelineno-73-3" href="#__codelineno-73-3"></a><span class="na">Environment</span><span class="o">=</span><span class="s">&quot;DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1&quot;</span>
+<a id="__codelineno-73-4" name="__codelineno-73-4" href="#__codelineno-73-4"></a><span class="na">ExecStart</span><span class="o">=</span><span class="s">/home/user/.dotnet/dotnet /path/to/BotNexus.Gateway.Api.dll</span>
+</code></pre></div></p>
+<hr />
+<h2 id="ollama-local-model-issues">Ollama / Local Model Issues<a class="headerlink" href="#ollama-local-model-issues" title="Permanent link">&para;</a></h2>
+<h3 id="agent-not-responding-when-using-ollama">Agent Not Responding When Using Ollama<a class="headerlink" href="#agent-not-responding-when-using-ollama" title="Permanent link">&para;</a></h3>
+<p><strong>Symptom:</strong> Agent is configured with an Ollama model but never responds. Gateway logs show:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-74-1" name="__codelineno-74-1" href="#__codelineno-74-1"></a>System.Net.Http.HttpRequestException: HTTP 400: registry.ollama.ai/library/phi4-reasoning:latest does not support tools
+</code></pre></div></p>
+<p><strong>Cause:</strong> BotNexus sends tool definitions with every agent request. Ollama models that don't declare <code>tools</code> in their capabilities manifest reject these requests with HTTP 400.</p>
+<p><strong>Fix:</strong> BotNexus automatically detects Ollama tool support via <code>/api/show</code> at startup and strips tool definitions for models that don't support them. If you see this error, ensure you're running BotNexus v1.0+ with the Ollama auto-detection fix.</p>
+<p>To check which models on your Ollama instance support tools:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-75-1" name="__codelineno-75-1" href="#__codelineno-75-1"></a>curl<span class="w"> </span>-s<span class="w"> </span>http://localhost:11434/api/show<span class="w"> </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;name&quot;:&quot;your-model:tag&quot;}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>python3<span class="w"> </span>-c<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-75-2" name="__codelineno-75-2" href="#__codelineno-75-2"></a><span class="w">  </span><span class="s2">&quot;import sys,json; d=json.load(sys.stdin); print(d.get(&#39;capabilities&#39;, []))&quot;</span>
+</code></pre></div>
+Models with <code>tools</code> in the capabilities list will receive tool definitions. Others get plain chat.</p>
+<h3 id="ollama-model-not-registered-model-not-registered-error">Ollama Model Not Registered / "Model not registered" Error<a class="headerlink" href="#ollama-model-not-registered-model-not-registered-error" title="Permanent link">&para;</a></h3>
+<p><strong>Symptom:</strong> Gateway logs show:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-76-1" name="__codelineno-76-1" href="#__codelineno-76-1"></a>System.InvalidOperationException: Model &#39;phi4-reasoning:latest&#39; for provider &#39;openai-compat&#39; is not registered.
+</code></pre></div></p>
+<p><strong>Cause:</strong> Ollama models are not in BotNexus's built-in model registry (which covers hosted providers like Copilot, OpenAI, Anthropic). Local models must be declared in <code>config.json</code>.</p>
+<p><strong>Fix:</strong> Configure your Ollama provider and agent correctly in <code>~/.botnexus/config.json</code>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-77-1" name="__codelineno-77-1" href="#__codelineno-77-1"></a><span class="p">{</span>
+<a id="__codelineno-77-2" name="__codelineno-77-2" href="#__codelineno-77-2"></a><span class="w">  </span><span class="nt">&quot;providers&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-77-3" name="__codelineno-77-3" href="#__codelineno-77-3"></a><span class="w">    </span><span class="nt">&quot;openai-compat&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-77-4" name="__codelineno-77-4" href="#__codelineno-77-4"></a><span class="w">      </span><span class="nt">&quot;baseUrl&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;http://localhost:11434/v1&quot;</span><span class="p">,</span>
+<a id="__codelineno-77-5" name="__codelineno-77-5" href="#__codelineno-77-5"></a><span class="w">      </span><span class="nt">&quot;apiKey&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ollama&quot;</span><span class="p">,</span>
+<a id="__codelineno-77-6" name="__codelineno-77-6" href="#__codelineno-77-6"></a><span class="w">      </span><span class="nt">&quot;enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-77-7" name="__codelineno-77-7" href="#__codelineno-77-7"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-77-8" name="__codelineno-77-8" href="#__codelineno-77-8"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-77-9" name="__codelineno-77-9" href="#__codelineno-77-9"></a><span class="w">  </span><span class="nt">&quot;agents&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-77-10" name="__codelineno-77-10" href="#__codelineno-77-10"></a><span class="w">    </span><span class="nt">&quot;assistant&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-77-11" name="__codelineno-77-11" href="#__codelineno-77-11"></a><span class="w">      </span><span class="nt">&quot;provider&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;openai-compat&quot;</span><span class="p">,</span>
+<a id="__codelineno-77-12" name="__codelineno-77-12" href="#__codelineno-77-12"></a><span class="w">      </span><span class="nt">&quot;model&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;your-model:tag&quot;</span><span class="p">,</span>
+<a id="__codelineno-77-13" name="__codelineno-77-13" href="#__codelineno-77-13"></a><span class="w">      </span><span class="nt">&quot;enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-77-14" name="__codelineno-77-14" href="#__codelineno-77-14"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-77-15" name="__codelineno-77-15" href="#__codelineno-77-15"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-77-16" name="__codelineno-77-16" href="#__codelineno-77-16"></a><span class="p">}</span>
+</code></pre></div></p>
+<p>Key points:
+- Provider must be <code>openai-compat</code> (not <code>ollama</code>) — Ollama exposes an OpenAI-compatible <code>/v1</code> endpoint
+- <code>apiKey</code> can be any non-empty string (e.g. <code>"ollama"</code>) — Ollama doesn't validate it but the gateway requires a value
+- The model ID must exactly match the Ollama model tag shown by <code>ollama list</code></p>
+<h3 id="ollama-no-api-key-error">Ollama "No API Key" Error<a class="headerlink" href="#ollama-no-api-key-error" title="Permanent link">&para;</a></h3>
+<p><strong>Symptom:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-78-1" name="__codelineno-78-1" href="#__codelineno-78-1"></a>System.InvalidOperationException: No API key for openai-compat.
+<a id="__codelineno-78-2" name="__codelineno-78-2" href="#__codelineno-78-2"></a>Set credentials before using model &#39;your-model:latest&#39;.
+</code></pre></div></p>
+<p><strong>Cause:</strong> The <code>openai-compat</code> provider requires an <code>apiKey</code> to be set even though Ollama doesn't authenticate.</p>
+<p><strong>Fix:</strong> Add any non-empty string as the API key:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-79-1" name="__codelineno-79-1" href="#__codelineno-79-1"></a><span class="p">{</span>
+<a id="__codelineno-79-2" name="__codelineno-79-2" href="#__codelineno-79-2"></a><span class="w">  </span><span class="nt">&quot;providers&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-79-3" name="__codelineno-79-3" href="#__codelineno-79-3"></a><span class="w">    </span><span class="nt">&quot;openai-compat&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-79-4" name="__codelineno-79-4" href="#__codelineno-79-4"></a><span class="w">      </span><span class="nt">&quot;apiKey&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ollama&quot;</span>
+<a id="__codelineno-79-5" name="__codelineno-79-5" href="#__codelineno-79-5"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-79-6" name="__codelineno-79-6" href="#__codelineno-79-6"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-79-7" name="__codelineno-79-7" href="#__codelineno-79-7"></a><span class="p">}</span>
+</code></pre></div></p>
+<hr />
 <h2 id="logs-and-diagnostics">Logs and Diagnostics<a class="headerlink" href="#logs-and-diagnostics" title="Permanent link">&para;</a></h2>
 <h3 id="log-locations">Log Locations<a class="headerlink" href="#log-locations" title="Permanent link">&para;</a></h3>
 <p><strong>Gateway logs:</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-70-1" name="__codelineno-70-1" href="#__codelineno-70-1"></a>~/.botnexus/logs/gateway.log
-<a id="__codelineno-70-2" name="__codelineno-70-2" href="#__codelineno-70-2"></a>~/.botnexus/logs/gateway-YYYYMMDD.log
+<div class="highlight"><pre><span></span><code><a id="__codelineno-80-1" name="__codelineno-80-1" href="#__codelineno-80-1"></a>~/.botnexus/logs/gateway.log
+<a id="__codelineno-80-2" name="__codelineno-80-2" href="#__codelineno-80-2"></a>~/.botnexus/logs/gateway-YYYYMMDD.log
 </code></pre></div></p>
 <p><strong>Session logs:</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-71-1" name="__codelineno-71-1" href="#__codelineno-71-1"></a>~/.botnexus/workspace/sessions/&lt;agentId&gt;/&lt;sessionId&gt;.jsonl
+<div class="highlight"><pre><span></span><code><a id="__codelineno-81-1" name="__codelineno-81-1" href="#__codelineno-81-1"></a>~/.botnexus/workspace/sessions/&lt;agentId&gt;/&lt;sessionId&gt;.jsonl
 </code></pre></div></p>
 <h3 id="viewing-logs">Viewing Logs<a class="headerlink" href="#viewing-logs" title="Permanent link">&para;</a></h3>
 <p><strong>Real-time:</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-72-1" name="__codelineno-72-1" href="#__codelineno-72-1"></a>tail<span class="w"> </span>-f<span class="w"> </span>~/.botnexus/logs/gateway.log
+<div class="highlight"><pre><span></span><code><a id="__codelineno-82-1" name="__codelineno-82-1" href="#__codelineno-82-1"></a>tail<span class="w"> </span>-f<span class="w"> </span>~/.botnexus/logs/gateway.log
 </code></pre></div></p>
 <p><strong>Filter by level:</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-73-1" name="__codelineno-73-1" href="#__codelineno-73-1"></a><span class="c1"># Errors only</span>
-<a id="__codelineno-73-2" name="__codelineno-73-2" href="#__codelineno-73-2"></a>grep<span class="w"> </span><span class="s2">&quot;error:&quot;</span><span class="w"> </span>~/.botnexus/logs/gateway.log
-<a id="__codelineno-73-3" name="__codelineno-73-3" href="#__codelineno-73-3"></a>
-<a id="__codelineno-73-4" name="__codelineno-73-4" href="#__codelineno-73-4"></a><span class="c1"># Warnings and errors</span>
-<a id="__codelineno-73-5" name="__codelineno-73-5" href="#__codelineno-73-5"></a>grep<span class="w"> </span>-E<span class="w"> </span><span class="s2">&quot;(warn:|error:)&quot;</span><span class="w"> </span>~/.botnexus/logs/gateway.log
+<div class="highlight"><pre><span></span><code><a id="__codelineno-83-1" name="__codelineno-83-1" href="#__codelineno-83-1"></a><span class="c1"># Errors only</span>
+<a id="__codelineno-83-2" name="__codelineno-83-2" href="#__codelineno-83-2"></a>grep<span class="w"> </span><span class="s2">&quot;error:&quot;</span><span class="w"> </span>~/.botnexus/logs/gateway.log
+<a id="__codelineno-83-3" name="__codelineno-83-3" href="#__codelineno-83-3"></a>
+<a id="__codelineno-83-4" name="__codelineno-83-4" href="#__codelineno-83-4"></a><span class="c1"># Warnings and errors</span>
+<a id="__codelineno-83-5" name="__codelineno-83-5" href="#__codelineno-83-5"></a>grep<span class="w"> </span>-E<span class="w"> </span><span class="s2">&quot;(warn:|error:)&quot;</span><span class="w"> </span>~/.botnexus/logs/gateway.log
 </code></pre></div></p>
 <p><strong>Recent logs via API:</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-74-1" name="__codelineno-74-1" href="#__codelineno-74-1"></a>curl<span class="w"> </span>http://localhost:5005/api/logs/recent?count<span class="o">=</span><span class="m">100</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-84-1" name="__codelineno-84-1" href="#__codelineno-84-1"></a>curl<span class="w"> </span>http://localhost:5005/api/logs/recent?count<span class="o">=</span><span class="m">100</span>
 </code></pre></div></p>
 <h3 id="increasing-log-verbosity">Increasing Log Verbosity<a class="headerlink" href="#increasing-log-verbosity" title="Permanent link">&para;</a></h3>
 <p><strong>Temporary (environment variable):</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-75-1" name="__codelineno-75-1" href="#__codelineno-75-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">Logging__LogLevel__Default</span><span class="o">=</span>Debug
-<a id="__codelineno-75-2" name="__codelineno-75-2" href="#__codelineno-75-2"></a>dotnet<span class="w"> </span>run<span class="w"> </span>--project<span class="w"> </span>src/gateway/BotNexus.Gateway.Api
+<div class="highlight"><pre><span></span><code><a id="__codelineno-85-1" name="__codelineno-85-1" href="#__codelineno-85-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">Logging__LogLevel__Default</span><span class="o">=</span>Debug
+<a id="__codelineno-85-2" name="__codelineno-85-2" href="#__codelineno-85-2"></a>dotnet<span class="w"> </span>run<span class="w"> </span>--project<span class="w"> </span>src/gateway/BotNexus.Gateway.Api
 </code></pre></div></p>
 <p><strong>Permanent (config.json):</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-76-1" name="__codelineno-76-1" href="#__codelineno-76-1"></a><span class="p">{</span>
-<a id="__codelineno-76-2" name="__codelineno-76-2" href="#__codelineno-76-2"></a><span class="w">  </span><span class="nt">&quot;gateway&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-76-3" name="__codelineno-76-3" href="#__codelineno-76-3"></a><span class="w">    </span><span class="nt">&quot;logLevel&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Debug&quot;</span>
-<a id="__codelineno-76-4" name="__codelineno-76-4" href="#__codelineno-76-4"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-76-5" name="__codelineno-76-5" href="#__codelineno-76-5"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-86-1" name="__codelineno-86-1" href="#__codelineno-86-1"></a><span class="p">{</span>
+<a id="__codelineno-86-2" name="__codelineno-86-2" href="#__codelineno-86-2"></a><span class="w">  </span><span class="nt">&quot;gateway&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-86-3" name="__codelineno-86-3" href="#__codelineno-86-3"></a><span class="w">    </span><span class="nt">&quot;logLevel&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Debug&quot;</span>
+<a id="__codelineno-86-4" name="__codelineno-86-4" href="#__codelineno-86-4"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-86-5" name="__codelineno-86-5" href="#__codelineno-86-5"></a><span class="p">}</span>
 </code></pre></div></p>
 <p><strong>Log Levels:</strong>
 - <code>Trace</code>: Most verbose (include everything)
@@ -3814,34 +4051,34 @@ Check <code>.csproj</code>:
 - <code>Critical</code>: Critical errors only</p>
 <h3 id="health-check">Health Check<a class="headerlink" href="#health-check" title="Permanent link">&para;</a></h3>
 <p><strong>Check Gateway health:</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-77-1" name="__codelineno-77-1" href="#__codelineno-77-1"></a>curl<span class="w"> </span>http://localhost:5005/health
+<div class="highlight"><pre><span></span><code><a id="__codelineno-87-1" name="__codelineno-87-1" href="#__codelineno-87-1"></a>curl<span class="w"> </span>http://localhost:5005/health
 </code></pre></div></p>
 <p><strong>Response:</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-78-1" name="__codelineno-78-1" href="#__codelineno-78-1"></a><span class="p">{</span>
-<a id="__codelineno-78-2" name="__codelineno-78-2" href="#__codelineno-78-2"></a><span class="w">  </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Healthy&quot;</span><span class="p">,</span>
-<a id="__codelineno-78-3" name="__codelineno-78-3" href="#__codelineno-78-3"></a><span class="w">  </span><span class="nt">&quot;timestamp&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2025-06-12T10:00:00Z&quot;</span><span class="p">,</span>
-<a id="__codelineno-78-4" name="__codelineno-78-4" href="#__codelineno-78-4"></a><span class="w">  </span><span class="nt">&quot;checks&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-78-5" name="__codelineno-78-5" href="#__codelineno-78-5"></a><span class="w">    </span><span class="nt">&quot;providers&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Healthy&quot;</span><span class="p">,</span>
-<a id="__codelineno-78-6" name="__codelineno-78-6" href="#__codelineno-78-6"></a><span class="w">    </span><span class="nt">&quot;extensions&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Healthy&quot;</span><span class="p">,</span>
-<a id="__codelineno-78-7" name="__codelineno-78-7" href="#__codelineno-78-7"></a><span class="w">    </span><span class="nt">&quot;sessions&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Healthy&quot;</span>
-<a id="__codelineno-78-8" name="__codelineno-78-8" href="#__codelineno-78-8"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-78-9" name="__codelineno-78-9" href="#__codelineno-78-9"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-88-1" name="__codelineno-88-1" href="#__codelineno-88-1"></a><span class="p">{</span>
+<a id="__codelineno-88-2" name="__codelineno-88-2" href="#__codelineno-88-2"></a><span class="w">  </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Healthy&quot;</span><span class="p">,</span>
+<a id="__codelineno-88-3" name="__codelineno-88-3" href="#__codelineno-88-3"></a><span class="w">  </span><span class="nt">&quot;timestamp&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2025-06-12T10:00:00Z&quot;</span><span class="p">,</span>
+<a id="__codelineno-88-4" name="__codelineno-88-4" href="#__codelineno-88-4"></a><span class="w">  </span><span class="nt">&quot;checks&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-88-5" name="__codelineno-88-5" href="#__codelineno-88-5"></a><span class="w">    </span><span class="nt">&quot;providers&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Healthy&quot;</span><span class="p">,</span>
+<a id="__codelineno-88-6" name="__codelineno-88-6" href="#__codelineno-88-6"></a><span class="w">    </span><span class="nt">&quot;extensions&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Healthy&quot;</span><span class="p">,</span>
+<a id="__codelineno-88-7" name="__codelineno-88-7" href="#__codelineno-88-7"></a><span class="w">    </span><span class="nt">&quot;sessions&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Healthy&quot;</span>
+<a id="__codelineno-88-8" name="__codelineno-88-8" href="#__codelineno-88-8"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-88-9" name="__codelineno-88-9" href="#__codelineno-88-9"></a><span class="p">}</span>
 </code></pre></div></p>
 <h3 id="distributed-tracing">Distributed Tracing<a class="headerlink" href="#distributed-tracing" title="Permanent link">&para;</a></h3>
 <p>BotNexus supports OpenTelemetry for distributed tracing:</p>
 <p><strong>Enable Jaeger (local):</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-79-1" name="__codelineno-79-1" href="#__codelineno-79-1"></a><span class="c1"># Start Jaeger</span>
-<a id="__codelineno-79-2" name="__codelineno-79-2" href="#__codelineno-79-2"></a>docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>--name<span class="w"> </span>jaeger<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-79-3" name="__codelineno-79-3" href="#__codelineno-79-3"></a><span class="w">  </span>-p<span class="w"> </span><span class="m">16686</span>:16686<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-79-4" name="__codelineno-79-4" href="#__codelineno-79-4"></a><span class="w">  </span>-p<span class="w"> </span><span class="m">4318</span>:4318<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-79-5" name="__codelineno-79-5" href="#__codelineno-79-5"></a><span class="w">  </span>jaegertracing/all-in-one:latest
-<a id="__codelineno-79-6" name="__codelineno-79-6" href="#__codelineno-79-6"></a>
-<a id="__codelineno-79-7" name="__codelineno-79-7" href="#__codelineno-79-7"></a><span class="c1"># Configure BotNexus</span>
-<a id="__codelineno-79-8" name="__codelineno-79-8" href="#__codelineno-79-8"></a><span class="nb">export</span><span class="w"> </span><span class="nv">OTEL_EXPORTER_OTLP_ENDPOINT</span><span class="o">=</span>http://localhost:4318
-<a id="__codelineno-79-9" name="__codelineno-79-9" href="#__codelineno-79-9"></a>dotnet<span class="w"> </span>run<span class="w"> </span>--project<span class="w"> </span>src/gateway/BotNexus.Gateway.Api
-<a id="__codelineno-79-10" name="__codelineno-79-10" href="#__codelineno-79-10"></a>
-<a id="__codelineno-79-11" name="__codelineno-79-11" href="#__codelineno-79-11"></a><span class="c1"># View traces</span>
-<a id="__codelineno-79-12" name="__codelineno-79-12" href="#__codelineno-79-12"></a>open<span class="w"> </span>http://localhost:16686
+<div class="highlight"><pre><span></span><code><a id="__codelineno-89-1" name="__codelineno-89-1" href="#__codelineno-89-1"></a><span class="c1"># Start Jaeger</span>
+<a id="__codelineno-89-2" name="__codelineno-89-2" href="#__codelineno-89-2"></a>docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>--name<span class="w"> </span>jaeger<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-89-3" name="__codelineno-89-3" href="#__codelineno-89-3"></a><span class="w">  </span>-p<span class="w"> </span><span class="m">16686</span>:16686<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-89-4" name="__codelineno-89-4" href="#__codelineno-89-4"></a><span class="w">  </span>-p<span class="w"> </span><span class="m">4318</span>:4318<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-89-5" name="__codelineno-89-5" href="#__codelineno-89-5"></a><span class="w">  </span>jaegertracing/all-in-one:latest
+<a id="__codelineno-89-6" name="__codelineno-89-6" href="#__codelineno-89-6"></a>
+<a id="__codelineno-89-7" name="__codelineno-89-7" href="#__codelineno-89-7"></a><span class="c1"># Configure BotNexus</span>
+<a id="__codelineno-89-8" name="__codelineno-89-8" href="#__codelineno-89-8"></a><span class="nb">export</span><span class="w"> </span><span class="nv">OTEL_EXPORTER_OTLP_ENDPOINT</span><span class="o">=</span>http://localhost:4318
+<a id="__codelineno-89-9" name="__codelineno-89-9" href="#__codelineno-89-9"></a>dotnet<span class="w"> </span>run<span class="w"> </span>--project<span class="w"> </span>src/gateway/BotNexus.Gateway.Api
+<a id="__codelineno-89-10" name="__codelineno-89-10" href="#__codelineno-89-10"></a>
+<a id="__codelineno-89-11" name="__codelineno-89-11" href="#__codelineno-89-11"></a><span class="c1"># View traces</span>
+<a id="__codelineno-89-12" name="__codelineno-89-12" href="#__codelineno-89-12"></a>open<span class="w"> </span>http://localhost:16686
 </code></pre></div></p>
 <p>See <a href="../../observability/">Observability Guide</a> for details.</p>
 <hr />
@@ -3908,7 +4145,7 @@ Check <code>.csproj</code>:
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="April 19, 2026 21:33:52 UTC">April 19, 2026</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="April 27, 2026 20:42:41 UTC">April 27, 2026</span>
   </span>
 
     
