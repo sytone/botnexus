@@ -18,13 +18,16 @@ permissions:
 jobs:
   release:
     permissions:
-      id-token: write  # enable GitHub OIDC token issuance for NuGet login
+      contents: write   # required to push version bump commits and tags
+      packages: write   # required to publish packages
+      id-token: write   # enable GitHub OIDC token issuance for NuGet login
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0        # full history for changelog generation
           token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
