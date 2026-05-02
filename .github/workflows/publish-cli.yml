@@ -189,7 +189,10 @@ jobs:
           RELEASE_ENTRIES=""
           while IFS= read -r -d '' dir; do
             ver=$(basename "$dir")
-            date_line=$(grep '^date:' "${dir}/index.md" 2>/dev/null | head -1 | sed 's/date: *"\?\([^"]*\)"\?/\1/' || true)
+            # Extract date from frontmatter: strip quotes and the "date: " prefix
+            raw_date=$(grep '^date:' "${dir}/index.md" 2>/dev/null | head -1 || true)
+            date_line="${raw_date#date: }"   # remove "date: " prefix
+            date_line="${date_line//\"/}"     # remove any surrounding quotes
             if [[ -z "$RELEASE_ENTRIES" ]]; then
               RELEASE_ENTRIES="| **[${ver}](${ver}/)** | ${date_line} | ← Latest |"
             else
