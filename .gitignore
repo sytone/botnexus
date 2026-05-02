@@ -66,3 +66,7 @@ config.local.json
 !requirements.txt
 !tests/**/Snapshots/*.txt
 site/**/*
+
+# VitePress build output and cache
+docs/.vitepress/dist/
+docs/.vitepress/cache/

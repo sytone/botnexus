@@ -1,0 +1,14 @@
+{
+  "name": "botnexus-docs",
+  "private": true,
+  "version": "0.0.1",
+  "description": "BotNexus documentation site (VitePress)",
+  "scripts": {
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.3"
+  }
+}

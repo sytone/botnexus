@@ -1038,7 +1038,7 @@ public void Register(IServiceCollection services, IConfiguration configuration)
 }
 ```
 
-### Using IOptions<T> Pattern
+### Using IOptions&lt;T&gt; Pattern
 
 For best practices, inject `IOptions<T>` in your services:
 
