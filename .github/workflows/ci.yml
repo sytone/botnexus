@@ -3,8 +3,38 @@ name: CI
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.github/workflows/docs.yml'
+      - '.squad/**'
+      - '.ai-team/**'
+      - '.copilot/**'
+      - 'mkdocs.yml'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'requirements.txt'
+      - 'cliff.toml'
+      - '.editorconfig'
+      - '.gitattributes'
+      - 'agents/**'
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.github/workflows/docs.yml'
+      - '.squad/**'
+      - '.ai-team/**'
+      - '.copilot/**'
+      - 'mkdocs.yml'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'requirements.txt'
+      - 'cliff.toml'
+      - '.editorconfig'
+      - '.gitattributes'
+      - 'agents/**'
 
 permissions:
   contents: read
