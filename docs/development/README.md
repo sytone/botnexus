@@ -46,4 +46,4 @@ This directory contains detailed documentation for developers working on or exte
 - **[../architecture/overview.md](../architecture/overview.md)** — High-level architecture reference
 - **[../api-reference.md](../api-reference.md)** — REST API and SignalR hub documentation
 - **[../extension-development.md](../extension-development.md)** — Building custom tools, channels, providers
-- **[../dev-guide.md](../dev-guide.md)** — Building and debugging BotNexus
+- **[../getting-started-dev.md](../getting-started-dev.md)** — Building and debugging BotNexus
