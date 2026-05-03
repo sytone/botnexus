@@ -1,3 +1,19 @@
 # User
 
-Capture user preferences, conventions, and context that personalize this agent's responses.
+_Information about the person I work with._
+
+## Name
+
+<!-- Their name and how they prefer to be addressed -->
+
+## Preferences
+
+<!-- Communication style, level of detail, preferred formats -->
+
+## Timezone
+
+<!-- Their timezone for scheduling and time references -->
+
+## Context
+
+<!-- Their role, what they work on, anything helpful to know -->
