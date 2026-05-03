@@ -219,7 +219,7 @@ public static class GatewayServiceCollectionExtensions
     /// </summary>
     /// <param name="services">Service collection.</param>
     /// <param name="configPath">Optional explicit path to platform config.</param>
-    public static IServiceCollection AddPlatformConfiguration(this IServiceCollection services, string? configPath = null)
+    public static IServiceCollection AddPlatformConfiguration(this IServiceCollection services, string? configPath = null, IConfiguration? configuration = null)
     {
         var fileSystem = new FileSystem();
         var resolvedConfigPath = string.IsNullOrWhiteSpace(configPath)
