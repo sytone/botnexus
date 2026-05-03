@@ -198,17 +198,14 @@ jobs:
             if [[ -z "$RELEASE_ENTRIES" ]]; then
               RELEASE_ENTRIES="| **[${ver}](${ver}/)** | ${date_line} | ← Latest |"
             else
-              RELEASE_ENTRIES="${RELEASE_ENTRIES}
-| [${ver}](${ver}/) | ${date_line} | |"
+              RELEASE_ENTRIES="$(printf '%s\n| [%s](%s/) | %s | |' "$RELEASE_ENTRIES" "$ver" "$ver" "$date_line")"
             fi
           done < <(find docs/releases -maxdepth 1 -mindepth 1 -type d -name 'v*' -print0 | sort -rVz)
 
           if [[ -z "$RELEASE_ENTRIES" ]]; then
             TABLE="> No releases yet. Release pages will appear here after the first tagged release is published."
           else
-            TABLE="| Version | Date | |
-|---------|------|---|
-${RELEASE_ENTRIES}"
+            TABLE="$(printf '| Version | Date | |\n|---------|------|---|\n%s' "$RELEASE_ENTRIES")"
           fi
 
           cat > docs/releases/index.md << MDEOF
