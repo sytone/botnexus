@@ -229,16 +229,30 @@ public static class GatewayServiceCollectionExtensions
 
         PlatformConfigLoader.EnsureConfigDirectory(configDirectory, fileSystem);
         var config = PlatformConfigLoader.Load(resolvedConfigPath, fileSystem: fileSystem);
-        services.AddOptions<PlatformConfig>()
-            .Configure(options =>
-            {
-                var freshConfig = PlatformConfigLoader.Load(resolvedConfigPath, fileSystem: fileSystem);
-                ApplyPlatformConfig(options, freshConfig);
-            });
-        services.AddSingleton<IOptionsChangeTokenSource<PlatformConfig>>(
-            new PlatformConfigChangeTokenSource(resolvedConfigPath, fileSystem));
-        // Start file watcher for dynamic config reload
-        _ = PlatformConfigLoader.Watch(resolvedConfigPath, fileSystem: fileSystem);
+
+        if (configuration is not null)
+        {
+            // Bind PlatformConfig from the host IConfiguration root (config.json is already in the pipeline).
+            // IOptionsMonitor hot-reload comes free from reloadOnChange: true in Program.cs.
+            services.AddOptions<PlatformConfig>().Bind(configuration);
+            services.AddSingleton<IPostConfigureOptions<PlatformConfig>>(sp =>
+                new PlatformConfigPostConfigure(sp.GetRequiredService<IConfiguration>()));
+        }
+        else
+        {
+            // Fallback when IConfiguration is not threaded in (e.g. tests or CLI-only usage).
+            services.AddOptions<PlatformConfig>()
+                .Configure(options =>
+                {
+                    var freshConfig = PlatformConfigLoader.Load(resolvedConfigPath, fileSystem: fileSystem);
+                    ApplyPlatformConfig(options, freshConfig);
+                });
+            services.AddSingleton<IOptionsChangeTokenSource<PlatformConfig>>(
+                new PlatformConfigChangeTokenSource(resolvedConfigPath, fileSystem));
+            // Start file watcher for dynamic config reload
+            _ = PlatformConfigLoader.Watch(resolvedConfigPath, fileSystem: fileSystem);
+        }
+
         services.Replace(ServiceDescriptor.Singleton(serviceProvider =>
             serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue));
         services.TryAddSingleton<GatewayAuthManager>();
