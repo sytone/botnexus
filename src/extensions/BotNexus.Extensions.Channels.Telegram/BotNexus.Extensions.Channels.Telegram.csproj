@@ -3,6 +3,9 @@
     <RootNamespace>BotNexus.Extensions.Channels.Telegram</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <Content Include="botnexus-extension.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
     <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Channels\BotNexus.Gateway.Channels.csproj" />
