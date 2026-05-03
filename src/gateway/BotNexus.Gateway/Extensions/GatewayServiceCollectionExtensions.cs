@@ -237,6 +237,7 @@ public static class GatewayServiceCollectionExtensions
             services.AddOptions<PlatformConfig>().Bind(configuration);
             services.AddSingleton<IPostConfigureOptions<PlatformConfig>>(sp =>
                 new PlatformConfigPostConfigure(sp.GetRequiredService<IConfiguration>(), resolvedConfigPath));
+            services.AddSingleton<IValidateOptions<PlatformConfig>, PlatformConfigOptionsValidator>();
         }
         else
         {
