@@ -372,6 +372,9 @@ internal sealed class ProviderCommand
     private static async Task SaveConfigAsync(PlatformConfig config, string configPath, CancellationToken cancellationToken)
     {
         PlatformConfigLoader.EnsureConfigDirectory(Path.GetDirectoryName(configPath) ?? PlatformConfigLoader.DefaultHomePath);
+        var backupsDir = Path.Combine(BotNexusHome.ResolveHomePath(), "backups");
+        var backup = new ConfigBackupService(backupsDir, new System.IO.Abstractions.FileSystem());
+        backup.Backup(configPath, "before-provider-update");
         var json = JsonSerializer.Serialize(config, WriteJsonOptions);
         await File.WriteAllTextAsync(configPath, json, cancellationToken);
     }

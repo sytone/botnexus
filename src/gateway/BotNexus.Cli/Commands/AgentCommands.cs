@@ -326,9 +326,12 @@ internal sealed class AgentCommands
         return 0;
     }
 
-    private static async Task WriteConfigAsync(PlatformConfig config, string configPath, CancellationToken cancellationToken)
+    private static async Task WriteConfigAsync(PlatformConfig config, string configPath, CancellationToken cancellationToken, string reason = "before-config-write")
     {
         PlatformConfigLoader.EnsureConfigDirectory(Path.GetDirectoryName(configPath) ?? PlatformConfigLoader.DefaultHomePath);
+        var backupsDir = Path.Combine(BotNexusHome.ResolveHomePath(), "backups");
+        var backup = new ConfigBackupService(backupsDir, new System.IO.Abstractions.FileSystem());
+        backup.Backup(configPath, reason);
         await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(config, CreateWriteJsonOptions()), cancellationToken);
     }
 

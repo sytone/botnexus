@@ -13,7 +13,8 @@ public sealed class BotNexusHome
         "tokens",
         "sessions",
         "logs",
-        "agents"
+        "agents",
+        "backups"
     ];
 
     private static readonly string[] WorkspaceScaffoldFiles =

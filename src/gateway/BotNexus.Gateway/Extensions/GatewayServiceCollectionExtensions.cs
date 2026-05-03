@@ -202,7 +202,10 @@ public static class GatewayServiceCollectionExtensions
             {
                 var home = serviceProvider.GetRequiredService<BotNexusHome>();
                 var defaultConfigPath = Path.Combine(home.RootPath, "config.json");
-                return new PlatformConfigAgentWriter(defaultConfigPath, home, serviceProvider.GetRequiredService<IFileSystem>());
+                var backup = new ConfigBackupService(
+                    Path.Combine(home.RootPath, "backups"),
+                    serviceProvider.GetRequiredService<IFileSystem>());
+                return new PlatformConfigAgentWriter(defaultConfigPath, home, serviceProvider.GetRequiredService<IFileSystem>(), backup);
             }));
             services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
         }
@@ -281,9 +284,13 @@ public static class GatewayServiceCollectionExtensions
         services.Replace(ServiceDescriptor.Singleton<IAgentConfigurationWriter>(serviceProvider =>
         {
             var home = serviceProvider.GetRequiredService<BotNexusHome>();
-            return new PlatformConfigAgentWriter(resolvedConfigPath, home, serviceProvider.GetRequiredService<IFileSystem>());
+            var backup = new ConfigBackupService(
+                Path.Combine(home.RootPath, "backups"),
+                serviceProvider.GetRequiredService<IFileSystem>());
+            return new PlatformConfigAgentWriter(resolvedConfigPath, home, serviceProvider.GetRequiredService<IFileSystem>(), backup);
         }));
-        services.AddSingleton(new PlatformConfigWriter(resolvedConfigPath, fileSystem));
+        services.AddSingleton(new PlatformConfigWriter(resolvedConfigPath, fileSystem,
+            new ConfigBackupService(Path.Combine(Path.GetDirectoryName(resolvedConfigPath)!, "backups"), fileSystem)));
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
 
         return services;
