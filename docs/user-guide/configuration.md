@@ -53,10 +53,9 @@ Gateway-level settings control the HTTP server, routing, and runtime behavior.
     "listenUrl": "http://localhost:5005",
     "defaultAgentId": "assistant",
     "agentsDirectory": "~/.botnexus/agents",
-    "sessionsDirectory": "~/.botnexus/workspace/sessions",
     "sessionStore": {
-      "type": "File",
-      "filePath": "~/.botnexus/workspace/sessions"
+      "type": "Sqlite",
+      "connectionString": "Data Source=~/.botnexus/sessions.sqlite"
     },
     "compaction": {
       "maxMessagesBeforeCompaction": 100,
@@ -89,9 +88,7 @@ Gateway-level settings control the HTTP server, routing, and runtime behavior.
 | `listenUrl` | string | `http://localhost:5005` | HTTP listen URL for REST API and WebUI |
 | `defaultAgentId` | string | `null` | Agent to route to when none specified |
 | `agentsDirectory` | string | `~/.botnexus/agents` | Directory containing agent descriptor JSON files |
-| `sessionsDirectory` | string | `~/.botnexus/workspace/sessions` | Directory for session persistence |
-| `sessionStore.type` | string | `File` | Session store type: `File`, `InMemory`, or `Sqlite` |
-| `sessionStore.filePath` | string | (same as sessionsDirectory) | Path for file-based session store |
+| `sessionStore.type` | string | `Sqlite` | Session store type: `InMemory` or `Sqlite` |
 | `sessionStore.connectionString` | string | `null` | SQLite connection string (when type=Sqlite) |
 | `compaction.maxMessagesBeforeCompaction` | int | `100` | Trigger compaction after this many messages |
 | `compaction.retainLastMessages` | int | `20` | Keep this many recent messages after compaction |
@@ -367,12 +364,10 @@ Channels route messages from external sources (Telegram, WebUI, TUI) to agents.
       "settings": {}
     },
     "telegram": {
-      "type": "telegram",
-      "enabled": true,
-      "settings": {
-        "botToken": "${TELEGRAM_BOT_TOKEN}",
-        "allowedUsers": ["123456789"]
-      }
+      "botToken": "${TELEGRAM_BOT_TOKEN}",
+      "agentId": "assistant",
+      "allowedChatIds": [123456789],
+      "pollingTimeoutSeconds": 30
     },
     "tui": {
       "type": "tui",
@@ -387,13 +382,7 @@ Channels route messages from external sources (Telegram, WebUI, TUI) to agents.
 
 ### Channel Settings Reference
 
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `type` | string | (required) | Channel adapter type: `signalr`, `telegram`, `tui` |
-| `enabled` | bool | `true` | Enable/disable this channel |
-| `settings` | object | `{}` | Channel-specific settings |
-
-### Channel-Specific Settings
+Channel configuration is extension-specific. The channel type is determined by the extension ID (the key under `channels`).
 
 **SignalR (WebUI):**
 - No additional settings required. WebUI is served at the Gateway root URL.
@@ -401,9 +390,36 @@ Channels route messages from external sources (Telegram, WebUI, TUI) to agents.
 **Telegram:**
 ```json
 {
-  "settings": {
-    "botToken": "${TELEGRAM_BOT_TOKEN}",
-    "allowedUsers": ["123456789", "987654321"]
+  "channels": {
+    "telegram": {
+      "botToken": "${TELEGRAM_BOT_TOKEN}",
+      "agentId": "assistant",
+      "allowedChatIds": [123456789, 987654321],
+      "pollingTimeoutSeconds": 30
+    }
+  }
+}
+```
+
+Uses long polling by default (no public URL required). For webhook mode, add `"webhookUrl": "https://your-host/telegram/webhook"`.
+
+**Multi-bot Telegram config:**
+```json
+{
+  "channels": {
+    "telegram": {
+      "bots": {
+        "larry-bot": {
+          "botToken": "111:AAA...",
+          "agentId": "larry",
+          "allowedChatIds": [123456789]
+        },
+        "assistant-bot": {
+          "botToken": "222:BBB...",
+          "agentId": "assistant"
+        }
+      }
+    }
   }
 }
 ```
@@ -560,15 +576,14 @@ Schedule recurring tasks like heartbeats, reports, or maintenance jobs.
 
 ## Session Management
 
-Sessions persist conversation history to disk.
+Sessions are persisted to a SQLite database by default.
 
 ```json
 {
   "gateway": {
-    "sessionsDirectory": "~/.botnexus/workspace/sessions",
     "sessionStore": {
-      "type": "File",
-      "filePath": "~/.botnexus/workspace/sessions"
+      "type": "Sqlite",
+      "connectionString": "Data Source=~/.botnexus/sessions.sqlite"
     },
     "compaction": {
       "maxMessagesBeforeCompaction": 100,
@@ -580,31 +595,21 @@ Sessions persist conversation history to disk.
 
 **Session Store Types:**
 
-1. **File** (default): JSONL files in `sessionsDirectory`
-   ```json
-   {
-     "sessionStore": {
-       "type": "File",
-       "filePath": "~/.botnexus/workspace/sessions"
-     }
-   }
-   ```
-
-2. **InMemory**: Ephemeral (lost on restart)
-   ```json
-   {
-     "sessionStore": {
-       "type": "InMemory"
-     }
-   }
-   ```
-
-3. **Sqlite**: SQLite database
+1. **Sqlite** (default): SQLite database
    ```json
    {
      "sessionStore": {
        "type": "Sqlite",
-       "connectionString": "Data Source=~/.botnexus/sessions.db"
+       "connectionString": "Data Source=~/.botnexus/sessions.sqlite"
+     }
+   }
+   ```
+
+2. **InMemory**: Ephemeral (lost on restart — for testing/dev only)
+   ```json
+   {
+     "sessionStore": {
+       "type": "InMemory"
      }
    }
    ```
@@ -693,9 +698,9 @@ A production-ready configuration with multiple agents, providers, and extensions
     "listenUrl": "http://localhost:5005",
     "defaultAgentId": "assistant",
     "agentsDirectory": "~/.botnexus/agents",
-    "sessionsDirectory": "~/.botnexus/workspace/sessions",
     "sessionStore": {
-      "type": "File"
+      "type": "Sqlite",
+      "connectionString": "Data Source=~/.botnexus/sessions.sqlite"
     },
     "compaction": {
       "maxMessagesBeforeCompaction": 100,
@@ -784,12 +789,9 @@ A production-ready configuration with multiple agents, providers, and extensions
       "enabled": true
     },
     "telegram": {
-      "type": "telegram",
-      "enabled": true,
-      "settings": {
-        "botToken": "${TELEGRAM_BOT_TOKEN}",
-        "allowedUsers": ["123456789"]
-      }
+      "botToken": "${TELEGRAM_BOT_TOKEN}",
+      "agentId": "assistant",
+      "allowedChatIds": [123456789]
     }
   },
   "cron": {

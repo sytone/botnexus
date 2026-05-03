@@ -895,11 +895,6 @@ Set credentials before using model 'your-model:latest'.
 ~/.botnexus/logs/gateway-YYYYMMDD.log
 ```
 
-**Session logs:**
-```text
-~/.botnexus/workspace/sessions/<agentId>/<sessionId>.jsonl
-```
-
 ### Viewing Logs
 
 **Real-time:**

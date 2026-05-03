@@ -4,10 +4,9 @@ This document describes BotNexus's session storage architecture, including persi
 
 ## Overview
 
-Sessions are persisted via `ISessionStore`, which supports multiple backend implementations:
+Sessions are persisted via `ISessionStore`, which supports two backend implementations:
 
-- **InMemorySessionStore**: Non-durable, for testing
-- **FileSessionStore**: JSON files, simple deployments
+- **InMemorySessionStore**: Non-durable, for testing and development
 - **SqliteSessionStore**: SQLite database, production default
 
 All implementations share common query patterns and lifecycle operations.
@@ -98,28 +97,6 @@ Uses `ConcurrentDictionary<string, GatewaySession>` for O(1) lookups. Non-durabl
 
 See [InMemorySessionStore.cs](../../src/gateway/BotNexus.Gateway.Sessions/InMemorySessionStore.cs)
 
-## FileSessionStore
-
-**Characteristics:**
-
-- Durable (survives restarts)
-- Simple deployment (no database)
-- File per session (inefficient for large counts)
-- No cross-process concurrency (file locking)
-
-**Storage Layout:**
-
-```text
-~/.botnexus/sessions/
-├── {sessionId}.json
-├── {sessionId}.json
-└── {sessionId}.json
-```
-
-**Key behaviors:** Atomic writes via temp file + rename, JSON serialization with camelCase naming, one file per session. Skips `.tmp` files during enumeration and logs warnings for corrupt session files.
-
-See [FileSessionStore.cs](../../src/gateway/BotNexus.Gateway.Sessions/FileSessionStore.cs)
-
 ## SqliteSessionStore
 
 **Characteristics:**
@@ -133,29 +110,38 @@ See [FileSessionStore.cs](../../src/gateway/BotNexus.Gateway.Sessions/FileSessio
 **Schema:**
 
 ```sql
-CREATE TABLE sessions (
-    session_id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
     agent_id TEXT NOT NULL,
-    session_type TEXT NOT NULL,
-    status TEXT NOT NULL,
     channel_type TEXT,
     caller_id TEXT,
+    session_type TEXT NOT NULL DEFAULT 'user-agent',
+    participants_json TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    metadata TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    expires_at TEXT,
-    participants_json TEXT,
-    history_json TEXT,
-    metadata_json TEXT
+    conversation_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS session_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    role TEXT,
+    content TEXT,
+    timestamp TEXT,
+    tool_name TEXT,
+    tool_call_id TEXT,
+    is_compaction_summary INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX idx_sessions_agent_id ON sessions(agent_id);
 CREATE INDEX idx_sessions_status ON sessions(status);
 CREATE INDEX idx_sessions_session_type ON sessions(session_type);
 CREATE INDEX idx_sessions_created_at ON sessions(created_at);
-CREATE INDEX idx_sessions_expires_at ON sessions(expires_at) WHERE expires_at IS NOT NULL;
 ```
 
-**Key behaviors:** Parameterized queries throughout, `INSERT OR REPLACE` for upserts, JSON serialization for complex fields (`participants_json`, `history_json`, `metadata_json`), lazy schema initialization via `EnsureSchemaAsync`, and ISO 8601 date formatting.
+**Key behaviors:** Parameterized queries throughout, `INSERT OR REPLACE` for upserts, JSON serialization for complex fields (`participants_json`, `metadata`). Session history stored in the separate `session_history` table. Lazy schema initialization via `EnsureSchemaAsync`, and ISO 8601 date formatting.
 
 See [SqliteSessionStore.cs](../../src/gateway/BotNexus.Gateway.Sessions/SqliteSessionStore.cs)
 
@@ -267,7 +253,6 @@ See [SessionWarmupService.cs](../../src/gateway/BotNexus.Gateway/Sessions/Sessio
 | Store | Durability | Performance | Concurrency | Use Case |
 |-------|-----------|-------------|-------------|----------|
 | InMemory | None | Fastest | Single process | Testing, dev |
-| File | Durable | Moderate | Single process | Simple deployments |
 | SQLite | Durable | Fast | Multi-process | Production |
 
 **Key Architectural Decisions:**
@@ -283,9 +268,9 @@ See [SessionWarmupService.cs](../../src/gateway/BotNexus.Gateway/Sessions/Sessio
 **Performance Characteristics:**
 
 - **Get**: O(1) for in-memory, O(log N) for SQLite (indexed)
-- **List by agent**: O(N) for file store, O(log M) for SQLite (where M = sessions per agent)
-- **Query**: O(N) for in-memory/file, O(log N) for SQLite (with indexes)
-- **Save**: O(1) for in-memory, O(1) disk I/O for file, O(log N) for SQLite
+- **List by agent**: O(log M) for SQLite (where M = sessions per agent)
+- **Query**: O(N) for in-memory, O(log N) for SQLite (with indexes)
+- **Save**: O(1) for in-memory, O(log N) for SQLite
 
 **Best Practices:**
 
@@ -294,4 +279,3 @@ See [SessionWarmupService.cs](../../src/gateway/BotNexus.Gateway/Sessions/Sessio
 3. Index frequently queried fields (agent_id, status, session_type)
 4. Run cleanup service to prevent unbounded growth
 5. Use session warmup to avoid N+1 queries in UI
-6. Archive old sessions instead of deleting (for audit trail)

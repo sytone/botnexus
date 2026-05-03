@@ -601,7 +601,7 @@ Remove an agent by:
 2. Removing its JSON file from `~/.botnexus/agents/`
 3. Configuration reload applies changes
 
-Session history is preserved in `~/.botnexus/workspace/sessions/`.
+Session history is preserved in `~/.botnexus/sessions.sqlite`.
 
 ---
 

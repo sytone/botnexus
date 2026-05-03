@@ -275,7 +275,6 @@ public record SessionParticipant
 Sessions are persisted via `ISessionStore`:
 
 - **InMemorySessionStore**: Dev/testing (not durable)
-- **FileSessionStore**: JSON files in `~/.botnexus/sessions/`
 - **SqliteSessionStore**: SQLite database (production default)
 
 **Session Structure:**

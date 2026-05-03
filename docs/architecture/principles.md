@@ -206,7 +206,7 @@ AgentCore and Providers are **independent libraries** — they have no knowledge
 | Resource | Scope | Path Pattern |
 |----------|-------|--------------|
 | Workspace | Per-agent | `~/.botnexus/workspaces/{agentId}/` |
-| Session | Per (agent, session) | `~/.botnexus/sessions/{sessionId}.jsonl` |
+| Session | Per (agent, session) | `~/.botnexus/sessions.sqlite` |
 | Memory | Per agent or session | `~/.botnexus/memory/{agentId}/{sessionId?}/` |
 | Logs | Per agent/session/world | `~/.botnexus/logs/{agentId}/{sessionId?}/` |
 
