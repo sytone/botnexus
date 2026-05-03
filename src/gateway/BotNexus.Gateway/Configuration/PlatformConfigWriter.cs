@@ -13,11 +13,13 @@ public sealed class PlatformConfigWriter
     private static readonly SemaphoreSlim WriteLock = new(1, 1);
     private readonly string _configPath;
     private readonly IFileSystem _fileSystem;
+    private readonly ConfigBackupService? _backup;
 
-    public PlatformConfigWriter(string configPath, IFileSystem fileSystem)
+    public PlatformConfigWriter(string configPath, IFileSystem fileSystem, ConfigBackupService? backup = null)
     {
         _configPath = configPath;
         _fileSystem = fileSystem;
+        _backup = backup;
     }
 
     /// <summary>
@@ -40,6 +42,7 @@ public sealed class PlatformConfigWriter
         await WriteLock.WaitAsync(ct);
         try
         {
+            _backup?.Backup(_configPath, $"before-{sectionName}-update");
             var root = await ReadAsync(ct);
             root[sectionName] = value;
             var options = new JsonSerializerOptions { WriteIndented = true };
@@ -60,6 +63,7 @@ public sealed class PlatformConfigWriter
         await WriteLock.WaitAsync(ct);
         try
         {
+            _backup?.Backup(_configPath, $"before-{sectionName}-update");
             var root = await ReadAsync(ct);
             if (root[sectionName] is not JsonObject section)
             {
@@ -86,6 +90,7 @@ public sealed class PlatformConfigWriter
         await WriteLock.WaitAsync(ct);
         try
         {
+            _backup?.Backup(_configPath, $"before-{sectionName}-remove");
             var root = await ReadAsync(ct);
             if (root[sectionName] is JsonObject section)
             {
