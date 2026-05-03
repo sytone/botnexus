@@ -411,16 +411,10 @@ public static class PlatformConfigLoader
         if (channels is null)
             return;
 
-        foreach (var (channelKey, channelConfig) in channels)
+        foreach (var (channelKey, _) in channels)
         {
             if (string.IsNullOrWhiteSpace(channelKey))
-            {
                 errors.Add("channels contains an empty channel key. Use a channel ID (example: 'web').");
-                continue;
-            }
-
-            if (string.IsNullOrWhiteSpace(channelConfig.Type))
-                errors.Add($"channels.{channelKey}.type is required (example: 'signalr' or 'slack').");
         }
     }
 
