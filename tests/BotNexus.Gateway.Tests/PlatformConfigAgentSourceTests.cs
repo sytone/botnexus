@@ -518,6 +518,36 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         subscription.ShouldNotBeNull();
     }
 
+    [Fact]
+    public void Watch_WhenOptionsMonitorFires_InvokesCallback()
+    {
+        var monitor = new TestOptionsMonitor<PlatformConfig>(new PlatformConfig());
+        var source = new PlatformConfigAgentSource(
+            monitor,
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>());
+
+        IReadOnlyList<AgentDescriptor>? received = null;
+        using var subscription = source.Watch(descriptors => received = descriptors);
+
+        var updatedConfig = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["new-agent"] = new AgentDefinitionConfig
+                {
+                    Provider = "openai",
+                    Model = "gpt-4.1",
+                    Enabled = true
+                }
+            }
+        };
+        monitor.RaiseChanged(updatedConfig);
+
+        received.ShouldNotBeNull();
+        received!.ShouldContain(d => d.AgentId.Value == "new-agent");
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_configDirectory))

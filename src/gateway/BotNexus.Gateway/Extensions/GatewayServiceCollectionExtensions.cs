@@ -236,21 +236,18 @@ public static class GatewayServiceCollectionExtensions
             // IOptionsMonitor hot-reload comes free from reloadOnChange: true in Program.cs.
             services.AddOptions<PlatformConfig>().Bind(configuration);
             services.AddSingleton<IPostConfigureOptions<PlatformConfig>>(sp =>
-                new PlatformConfigPostConfigure(sp.GetRequiredService<IConfiguration>()));
+                new PlatformConfigPostConfigure(sp.GetRequiredService<IConfiguration>(), resolvedConfigPath));
         }
         else
         {
             // Fallback when IConfiguration is not threaded in (e.g. tests or CLI-only usage).
+            // Use a manual load + PostConfigure without hot reload.
             services.AddOptions<PlatformConfig>()
                 .Configure(options =>
                 {
                     var freshConfig = PlatformConfigLoader.Load(resolvedConfigPath, fileSystem: fileSystem);
                     ApplyPlatformConfig(options, freshConfig);
                 });
-            services.AddSingleton<IOptionsChangeTokenSource<PlatformConfig>>(
-                new PlatformConfigChangeTokenSource(resolvedConfigPath, fileSystem));
-            // Start file watcher for dynamic config reload
-            _ = PlatformConfigLoader.Watch(resolvedConfigPath, fileSystem: fileSystem);
         }
 
         services.Replace(ServiceDescriptor.Singleton(serviceProvider =>

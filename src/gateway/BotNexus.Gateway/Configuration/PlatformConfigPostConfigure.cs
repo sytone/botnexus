@@ -8,7 +8,7 @@ namespace BotNexus.Gateway.Configuration;
 /// Applies BotNexus-specific normalization to <see cref="PlatformConfig"/> after standard IConfiguration binding.
 /// Handles agents.defaults extraction, AgentRawElements capture, and legacy root-level gateway field migration.
 /// </summary>
-public sealed class PlatformConfigPostConfigure(IConfiguration configuration) : IPostConfigureOptions<PlatformConfig>
+public sealed class PlatformConfigPostConfigure(IConfiguration configuration, string? configFilePath = null) : IPostConfigureOptions<PlatformConfig>
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
@@ -18,7 +18,10 @@ public sealed class PlatformConfigPostConfigure(IConfiguration configuration) : 
         // Re-read the raw JSON from the config file path to support presence-aware merging
         // (AgentRawElements) and legacy root-level gateway migration.
         // IConfiguration alone does not preserve original JSON element structure.
-        var rawJson = ReadRawJson(configuration);
+        var rawJson = configFilePath is not null && File.Exists(configFilePath)
+            ? TryReadFile(configFilePath)
+            : ReadRawJson(configuration);
+
         if (!string.IsNullOrWhiteSpace(rawJson))
         {
             PlatformConfigLoader.MigrateLegacyGatewaySettings(config, rawJson);
@@ -37,6 +40,12 @@ public sealed class PlatformConfigPostConfigure(IConfiguration configuration) : 
                     config.Agents.Remove(key);
             }
         }
+    }
+
+    private static string? TryReadFile(string path)
+    {
+        try { return File.ReadAllText(path); }
+        catch { return null; }
     }
 
     private static string? ReadRawJson(IConfiguration configuration)
