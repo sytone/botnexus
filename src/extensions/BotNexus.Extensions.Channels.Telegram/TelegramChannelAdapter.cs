@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
@@ -370,7 +371,14 @@ public sealed class TelegramChannelAdapter(
         if (_bots.Count > 0)
             return;
 
-        var configs = _options.ResolveActiveBots();
+        // IOptions<TelegramGatewayOptions> may be empty when the extension loader
+        // registered this adapter before gateway DI had a chance to bind the
+        // channels.telegram config section. Fall back to reading the config file directly.
+        var effectiveOptions = _options;
+        if (string.IsNullOrWhiteSpace(_options.BotToken) && _options.Bots.Count == 0)
+            effectiveOptions = LoadOptionsFromConfig() ?? _options;
+
+        var configs = effectiveOptions.ResolveActiveBots();
         if (configs.Count == 0)
             throw new InvalidOperationException("Telegram channel requires at least one configured bot.");
 
@@ -410,6 +418,44 @@ public sealed class TelegramChannelAdapter(
             return _bots.Values.Single();
 
         throw new InvalidOperationException("Multiple Telegram bots are configured. Outbound Telegram messages must specify metadata['telegramBotName'].");
+    }
+
+    /// <summary>
+    /// Fallback: reads channels.telegram directly from config.json when IOptions is empty.
+    /// This handles the case where the extension is loaded after DI service registration.
+    /// </summary>
+    private static TelegramGatewayOptions? LoadOptionsFromConfig()
+    {
+        try
+        {
+            // Resolve ~/.botnexus/config.json the same way BotNexusHome does
+            var homeOverride = Environment.GetEnvironmentVariable("BOTNEXUS_HOME");
+            var homePath = !string.IsNullOrWhiteSpace(homeOverride)
+                ? homeOverride
+                : Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) is { Length: > 0 } p
+                        ? p
+                        : Environment.GetEnvironmentVariable("HOME") ?? string.Empty,
+                    ".botnexus");
+
+            var configPath = Path.Combine(homePath, "config.json");
+            if (!File.Exists(configPath))
+                return null;
+
+            using var doc = JsonDocument.Parse(File.ReadAllText(configPath));
+            if (!doc.RootElement.TryGetProperty("channels", out var channels))
+                return null;
+            if (!channels.TryGetProperty("telegram", out var telegramSection))
+                return null;
+
+            return JsonSerializer.Deserialize<TelegramGatewayOptions>(
+                telegramSection.GetRawText(),
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static bool TryParseChatId(string conversationId, out long chatId)

@@ -1,4 +1,6 @@
 using BotNexus.Gateway.Abstractions.Channels;
+using Microsoft.Extensions.Options;
+using System.Text.Json;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Abstractions.Activity;
@@ -293,6 +295,12 @@ public static class GatewayServiceCollectionExtensions
             new ConfigBackupService(Path.Combine(Path.GetDirectoryName(resolvedConfigPath)!, "backups"), fileSystem)));
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
 
+        // Bind channels.* config sections into typed options so extension-provided
+        // channel adapters can access their configuration via IOptions<T>.
+        // Each channel section is re-read from the raw JSON and bound by convention:
+        //   channels.telegram -> TelegramGatewayOptions (from BotNexus.Extensions.Channels.Telegram)
+        BindChannelOptions(services, resolvedConfigPath, fileSystem);
+
         return services;
     }
 
@@ -494,4 +502,86 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
         return services;
     }
+
+    /// <summary>
+    /// Reads the raw config JSON and binds known channel sections to their typed options.
+    /// This is needed because extension-provided adapters are registered by type-scanning
+    /// and never get their config wired otherwise.
+    /// Currently handles: channels.telegram -> TelegramGatewayOptions
+    /// </summary>
+    private static void BindChannelOptions(IServiceCollection services, string configPath, IFileSystem fileSystem)
+    {
+        if (!fileSystem.File.Exists(configPath))
+            return;
+
+        try
+        {
+            var json = fileSystem.File.ReadAllText(configPath);
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("channels", out var channels))
+                return;
+
+            // Telegram
+            if (channels.TryGetProperty("telegram", out var telegramJson))
+                BindSectionToOptions(services, telegramJson,
+                    "BotNexus.Extensions.Channels.Telegram.TelegramGatewayOptions, BotNexus.Extensions.Channels.Telegram");
+        }
+        catch
+        {
+            // Non-fatal — adapter will fail with a clear error on StartAsync
+        }
+    }
+
+    private static void BindSectionToOptions(IServiceCollection services, JsonElement section, string typeName)
+    {
+        // Type.GetType only searches the default AssemblyLoadContext.
+        // Extension assemblies are loaded in a custom context, so we must
+        // search all loaded assemblies by name.
+        var simpleTypeName = typeName.Split(',')[0].Trim();
+        var type = AppDomain.CurrentDomain.GetAssemblies()
+            .SelectMany(a => { try { return a.GetTypes(); } catch { return []; } })
+            .FirstOrDefault(t => t.FullName == simpleTypeName);
+
+        if (type is null)
+            return;
+
+        var jsonOpts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var instance = JsonSerializer.Deserialize(section.GetRawText(), type, jsonOpts);
+        if (instance is null)
+            return;
+
+        // Use Configure<T> via reflection since T is only known at runtime
+        var configureMethod = typeof(OptionsServiceCollectionExtensions)
+            .GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .First(m => m.Name == nameof(OptionsServiceCollectionExtensions.Configure)
+                        && m.GetParameters().Length == 2
+                        && m.GetParameters()[1].ParameterType == typeof(Action<>).MakeGenericType(m.GetGenericArguments()[0]))
+            .MakeGenericMethod(type);
+
+        // Build Action<T> delegate that copies properties from deserialized instance
+        var param = System.Linq.Expressions.Expression.Parameter(type, "opts");
+        var props = type.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+            .Where(p => p.CanWrite && p.CanRead)
+            .ToArray();
+
+        var body = new List<System.Linq.Expressions.Expression>();
+        foreach (var prop in props)
+        {
+            var value = prop.GetValue(instance);
+            if (value is null) continue;
+            var assign = System.Linq.Expressions.Expression.Assign(
+                System.Linq.Expressions.Expression.Property(param, prop),
+                System.Linq.Expressions.Expression.Constant(value, prop.PropertyType));
+            body.Add(assign);
+        }
+
+        if (body.Count == 0) return;
+
+        var actionType = typeof(Action<>).MakeGenericType(type);
+        var lambda = System.Linq.Expressions.Expression.Lambda(actionType,
+            System.Linq.Expressions.Expression.Block(body), param);
+
+        configureMethod.Invoke(null, [services, lambda.Compile()]);
+    }
 }
+
