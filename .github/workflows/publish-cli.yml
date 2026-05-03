@@ -37,7 +37,9 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          # .NET 10 is not generally available on GitHub-hosted runners.
+          # Use the latest LTS SDK unless you explicitly require .NET 10.
+          dotnet-version: '8.0.x'
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -210,17 +212,17 @@ ${RELEASE_ENTRIES}"
           fi
 
           cat > docs/releases/index.md << MDEOF
----
-title: Releases
-description: BotNexus version history and release notes
----
+          ---
+          title: Releases
+          description: BotNexus version history and release notes
+          ---
 
-# Releases
+          # Releases
 
-Browse the full version history of BotNexus. Each release page includes the full changelog for that version.
+          Browse the full version history of BotNexus. Each release page includes the full changelog for that version.
 
-${TABLE}
-MDEOF
+          ${TABLE}
+          MDEOF
 
           echo "Updated docs/releases/index.md"
 
@@ -234,8 +236,9 @@ MDEOF
       - name: Tag release
         run: |
           TAG="${{ steps.version.outputs.tag }}"
+          # Push back to the same branch that triggered the workflow (does not assume 'main')
+          git push origin "HEAD:${GITHUB_REF_NAME}"
           git tag "$TAG" -m "Release $TAG"
-          git push origin HEAD:main
           git push origin "$TAG"
 
       - name: Build and pack
