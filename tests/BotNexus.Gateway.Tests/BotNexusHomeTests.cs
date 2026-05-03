@@ -44,6 +44,39 @@ public sealed class BotNexusHomeTests
     }
 
     [Fact]
+    public void GetAgentDirectory_ScaffoldedBootstrap_HasFirstRunInstructions()
+    {
+        var fs = new MockFileSystem();
+        var home = new BotNexusHome(fs, HomePath);
+
+        var path = home.GetAgentDirectory("newbie");
+        var bootstrapContent = fs.File.ReadAllText(Path.Combine(path, "workspace", "BOOTSTRAP.md"));
+
+        // BOOTSTRAP.md must have first-run ritual content — not just a heading stub
+        bootstrapContent.ShouldContain("first");
+        bootstrapContent.ShouldContain("SOUL.md");
+        bootstrapContent.ShouldContain("IDENTITY.md");
+        bootstrapContent.ShouldContain("deleted");
+    }
+
+    [Fact]
+    public void GetAgentDirectory_ScaffoldedTemplates_AreNotEmpty()
+    {
+        var fs = new MockFileSystem();
+        var home = new BotNexusHome(fs, HomePath);
+
+        var path = home.GetAgentDirectory("newbie");
+        var workspace = Path.Combine(path, "workspace");
+
+        // All scaffold files must have content (not just empty files)
+        foreach (var file in new[] { "SOUL.md", "IDENTITY.md", "TOOLS.md", "USER.md", "AGENTS.md" })
+        {
+            var content = fs.File.ReadAllText(Path.Combine(workspace, file));
+            content.Length.ShouldBeGreaterThan(10, $"{file} should not be empty");
+        }
+    }
+
+    [Fact]
     public void GetAgentDirectory_WhenLegacyLayoutExists_MigratesFilesToWorkspace()
     {
         var fs = new MockFileSystem();
