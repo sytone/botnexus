@@ -37,7 +37,20 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          # .NET 10 is not generally available on GitHub-hosted runners.
+          # Use the latest LTS SDK unless you explicitly require .NET 10.
+          dotnet-version: '8.0.x'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install git-cliff
+        uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff
 
       - name: Configure git
         run: |
@@ -93,6 +106,7 @@ jobs:
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "prev_tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Bump version in Directory.Build.props
         run: |
@@ -102,77 +116,127 @@ jobs:
           echo "Bumped version to ${VERSION}"
           grep "<Version>" Directory.Build.props
 
-      - name: Commit version bump
+      - name: Generate CHANGELOG.md (full history)
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          # Generate full changelog with all versions
+          git-cliff --tag "$TAG" --output CHANGELOG.md
+          echo "Generated CHANGELOG.md"
+
+      - name: Generate per-release notes
+        id: release_notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
+          PREV_TAG="${{ steps.version.outputs.prev_tag }}"
+          DATE=$(date -u +"%Y-%m-%d")
+
+          # Determine commit range for this release
+          if [[ -z "$PREV_TAG" ]]; then
+            RANGE=""
+            echo "No previous tag — using full history for release notes"
+          else
+            RANGE="${PREV_TAG}..HEAD"
+            echo "Release notes from ${PREV_TAG} to HEAD"
+          fi
+
+          # Generate release notes markdown via git-cliff
+          if [[ -z "$RANGE" ]]; then
+            git-cliff --tag "$TAG" --unreleased --strip header > /tmp/release-body.md
+          else
+            git-cliff "$RANGE" --tag "$TAG" --strip header > /tmp/release-body.md
+          fi
+
+          # Create versioned docs page
+          RELEASE_PAGE_DIR="docs/releases/${TAG}"
+          mkdir -p "$RELEASE_PAGE_DIR"
+
+          {
+            echo "---"
+            echo "title: \"Release ${TAG}\""
+            echo "description: \"Release notes for BotNexus ${TAG}\""
+            echo "date: \"${DATE}\""
+            echo "---"
+            echo ""
+            echo "# Release ${TAG}"
+            echo ""
+            echo "> **Released:** ${DATE}"
+            if [[ -n "$PREV_TAG" ]]; then
+              echo ">"
+              echo "> **Full diff:** [${PREV_TAG}...${TAG}](https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${TAG})"
+            fi
+            echo ""
+            cat /tmp/release-body.md
+          } > "${RELEASE_PAGE_DIR}/index.md"
+
+          echo "Created ${RELEASE_PAGE_DIR}/index.md"
+
+          # Store release notes for GitHub Release body
+          echo "NOTES<<EOF" >> "$GITHUB_OUTPUT"
+          cat /tmp/release-body.md >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Update releases index page
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="${{ steps.version.outputs.tag }}"
+          PREV_TAG="${{ steps.version.outputs.prev_tag }}"
+
+          # Build list of all release directories (newest first)
+          RELEASE_ENTRIES=""
+          while IFS= read -r -d '' dir; do
+            ver=$(basename "$dir")
+            # Extract date from frontmatter: strip quotes and the "date: " prefix
+            raw_date=$(grep '^date:' "${dir}/index.md" 2>/dev/null | head -1 || true)
+            date_line="${raw_date#date: }"   # remove "date: " prefix
+            date_line="${date_line//\"/}"     # remove any surrounding quotes
+            if [[ -z "$RELEASE_ENTRIES" ]]; then
+              RELEASE_ENTRIES="| **[${ver}](${ver}/)** | ${date_line} | ← Latest |"
+            else
+              RELEASE_ENTRIES="$(printf '%s\n| [%s](%s/) | %s | |' "$RELEASE_ENTRIES" "$ver" "$ver" "$date_line")"
+            fi
+          done < <(find docs/releases -maxdepth 1 -mindepth 1 -type d -name 'v*' -print0 | sort -rVz)
+
+          if [[ -z "$RELEASE_ENTRIES" ]]; then
+            TABLE="> No releases yet. Release pages will appear here after the first tagged release is published."
+          else
+            TABLE="$(printf '| Version | Date | |\n|---------|------|---|\n%s' "$RELEASE_ENTRIES")"
+          fi
+
+          cat > docs/releases/index.md << MDEOF
+          ---
+          title: Releases
+          description: BotNexus version history and release notes
+          ---
+
+          # Releases
+
+          Browse the full version history of BotNexus. Each release page includes the full changelog for that version.
+
+          ${TABLE}
+          MDEOF
+
+          echo "Updated docs/releases/index.md"
+
+      - name: Commit release artifacts
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          git add Directory.Build.props
-          git diff --staged --quiet || git commit -m "chore(release): bump version to ${VERSION}"
+          TAG="${{ steps.version.outputs.tag }}"
+          git add Directory.Build.props CHANGELOG.md docs/releases/
+          git diff --staged --quiet || git commit -m "chore(release): bump version to ${VERSION} [skip ci]"
 
       - name: Tag release
         run: |
           TAG="${{ steps.version.outputs.tag }}"
+          # Push back to the same branch that triggered the workflow (does not assume 'main')
+          git push origin "HEAD:${GITHUB_REF_NAME}"
           git tag "$TAG" -m "Release $TAG"
-          git push origin HEAD:main
           git push origin "$TAG"
-
-      - name: Generate changelog
-        id: changelog
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          TAG="${{ steps.version.outputs.tag }}"
-
-          PREV_TAG=$(git tag --sort=-version:refname | grep '^v' | sed -n '2p')
-
-          if [ -z "$PREV_TAG" ]; then
-            echo "No previous tag — including all commits"
-            RANGE="HEAD"
-          else
-            echo "Changelog from ${PREV_TAG} to HEAD"
-            RANGE="${PREV_TAG}..HEAD"
-          fi
-
-          # Group by conventional commit type
-          {
-            echo "## What's Changed"
-            echo ""
-
-            FEATURES=$(git log $RANGE --pretty=format:"%s" | grep -E "^feat(\(.+\))?:" | sed 's/^feat[^:]*: //')
-            FIXES=$(git log $RANGE --pretty=format:"%s" | grep -E "^fix(\(.+\))?:" | sed 's/^fix[^:]*: //')
-            IMPROVEMENTS=$(git log $RANGE --pretty=format:"%s" | grep -E "^(refactor|perf|improvement)(\(.+\))?:" | sed 's/^[^:]*: //')
-            DOCS=$(git log $RANGE --pretty=format:"%s" | grep -E "^docs(\(.+\))?:" | sed 's/^docs[^:]*: //')
-            OTHER=$(git log $RANGE --pretty=format:"%s" | grep -vE "^(feat|fix|refactor|perf|improvement|docs|chore|test|ci)(\(.+\))?:" | grep -v "^Merge")
-
-            if [ -n "$FEATURES" ]; then
-              echo "### ✨ New Features"
-              echo "$FEATURES" | while read -r line; do echo "- $line"; done
-              echo ""
-            fi
-
-            if [ -n "$FIXES" ]; then
-              echo "### 🐛 Bug Fixes"
-              echo "$FIXES" | while read -r line; do echo "- $line"; done
-              echo ""
-            fi
-
-            if [ -n "$IMPROVEMENTS" ]; then
-              echo "### 🔧 Improvements"
-              echo "$IMPROVEMENTS" | while read -r line; do echo "- $line"; done
-              echo ""
-            fi
-
-            if [ -n "$DOCS" ]; then
-              echo "### 📚 Documentation"
-              echo "$DOCS" | while read -r line; do echo "- $line"; done
-              echo ""
-            fi
-
-            echo "**Full changelog:** https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${TAG}"
-          } > RELEASE_NOTES.md
-
-          cat RELEASE_NOTES.md
-          echo "NOTES<<EOF" >> $GITHUB_OUTPUT
-          cat RELEASE_NOTES.md >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Build and pack
         run: |
@@ -188,7 +252,7 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.tag }}
-          body: ${{ steps.changelog.outputs.NOTES }}
+          body: ${{ steps.release_notes.outputs.NOTES }}
           prerelease: ${{ github.event.inputs.prerelease }}
           files: src/gateway/BotNexus.Cli/bin/Release/*.nupkg
 

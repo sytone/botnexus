@@ -1,6 +1,5 @@
 using BotNexus.Gateway.Abstractions.Channels;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace BotNexus.Extensions.Channels.Telegram;
 
@@ -10,26 +9,22 @@ namespace BotNexus.Extensions.Channels.Telegram;
 public static class TelegramServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers the Telegram channel adapter and configuration options.
+    /// Registers the Telegram channel adapter, options binding, and named HTTP client support
+    /// used to create one Telegram API client per configured bot.
     /// </summary>
     /// <param name="services">Service collection to update.</param>
     /// <param name="configure">Optional options configurator.</param>
     /// <returns>The same service collection for chaining.</returns>
-    /// <remarks>
-    /// Phase 2 stub registration for host integration. A full implementation would
-    /// also register Telegram API client dependencies.
-    /// </remarks>
     public static IServiceCollection AddBotNexusTelegramChannel(
         this IServiceCollection services,
-        Action<TelegramOptions>? configure = null)
+        Action<TelegramGatewayOptions>? configure = null)
     {
-        services.AddOptions<TelegramOptions>();
+        services.AddOptions<TelegramGatewayOptions>();
         if (configure is not null)
             services.Configure(configure);
-        services.TryAddSingleton<HttpClient>();
-        services.AddSingleton<TelegramBotApiClient>();
-        services.AddSingleton<IChannelAdapter, TelegramChannelAdapter>();
 
+        services.AddHttpClient();
+        services.AddSingleton<IChannelAdapter, TelegramChannelAdapter>();
         return services;
     }
 }

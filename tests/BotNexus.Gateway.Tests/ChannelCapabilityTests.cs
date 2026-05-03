@@ -55,16 +55,12 @@ public sealed class ChannelCapabilityTests
     [Fact]
     public void TelegramAdapter_SupportsStreamingThinkingAndToolDisplay()
     {
-        using var httpClient = new HttpClient();
-        var options = Options.Create(new TelegramOptions { BotToken = "token" });
-        var apiClient = new TelegramBotApiClient(
-            httpClient,
-            options,
-            NullLogger<TelegramBotApiClient>.Instance);
+        var options = Options.Create(new TelegramGatewayOptions { BotToken = "token" });
+        var factory = new StubHttpClientFactory(_ => new HttpClient());
         var adapter = new TelegramChannelAdapter(
             NullLogger<TelegramChannelAdapter>.Instance,
             options,
-            apiClient);
+            factory);
 
         adapter.SupportsStreaming.ShouldBeTrue();
         adapter.SupportsSteering.ShouldBeFalse();
@@ -83,6 +79,11 @@ public sealed class ChannelCapabilityTests
         adapter.SupportsFollowUp.ShouldBeFalse();
         adapter.SupportsThinkingDisplay.ShouldBeTrue();
         adapter.SupportsToolDisplay.ShouldBeTrue();
+    }
+
+    private sealed class StubHttpClientFactory(Func<string, HttpClient> factory) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => factory(name);
     }
 
     private sealed class TestChannelAdapter : ChannelAdapterBase

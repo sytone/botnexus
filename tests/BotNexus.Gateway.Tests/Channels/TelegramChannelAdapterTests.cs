@@ -55,7 +55,7 @@ public sealed class TelegramChannelAdapterTests
             };
         });
 
-        var adapter = CreateAdapter(new TelegramOptions
+        var adapter = CreateAdapter(new TelegramGatewayOptions
         {
             BotToken = "token",
             PollingTimeoutSeconds = 1,
@@ -89,7 +89,7 @@ public sealed class TelegramChannelAdapterTests
             return JsonOk(new TelegramMessage { MessageId = calls.Count, Chat = new TelegramChat { Id = 42 } });
         });
 
-        var adapter = CreateAdapter(new TelegramOptions
+        var adapter = CreateAdapter(new TelegramGatewayOptions
         {
             BotToken = "token",
             AllowedChatIds = { 42 },
@@ -110,7 +110,7 @@ public sealed class TelegramChannelAdapterTests
     }
 
     [Fact]
-    public async Task SendAsync_EscapesMarkdown()
+    public async Task SendAsync_EscapesHtml()
     {
         ApiCall? sendCall = null;
         var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
@@ -121,7 +121,7 @@ public sealed class TelegramChannelAdapterTests
             return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
         });
 
-        var adapter = CreateAdapter(new TelegramOptions
+        var adapter = CreateAdapter(new TelegramGatewayOptions
         {
             BotToken = "token",
             AllowedChatIds = { 42 }
@@ -131,11 +131,12 @@ public sealed class TelegramChannelAdapterTests
         {
             ChannelType = ChannelKey.From("telegram"),
             ChannelAddress = "42",
-            Content = "_*[]()~`>#+-=|{}.!\\"
+            Content = "a < b && c > d"
         });
 
         sendCall.ShouldNotBeNull();
-        sendCall!.Text.ShouldBe("\\_\\*\\[\\]\\(\\)\\~\\`\\>\\#\\+\\-\\=\\|\\{\\}\\.\\!\\\\");
+        sendCall!.Text.ShouldBe("a &lt; b &amp;&amp; c &gt; d");
+        sendCall.ParseMode.ShouldBe("HTML");
     }
 
     [Fact]
@@ -176,7 +177,7 @@ public sealed class TelegramChannelAdapterTests
             return JsonOk(true);
         });
 
-        var adapter = CreateAdapter(new TelegramOptions
+        var adapter = CreateAdapter(new TelegramGatewayOptions
         {
             BotToken = "token",
             PollingTimeoutSeconds = 1,
@@ -214,7 +215,7 @@ public sealed class TelegramChannelAdapterTests
             return JsonOk(true);
         });
 
-        var adapter = CreateAdapter(new TelegramOptions
+        var adapter = CreateAdapter(new TelegramGatewayOptions
         {
             BotToken = "token",
             PollingTimeoutSeconds = 1
@@ -238,7 +239,7 @@ public sealed class TelegramChannelAdapterTests
             return JsonOk(true);
         });
 
-        var adapter = CreateAdapter(new TelegramOptions
+        var adapter = CreateAdapter(new TelegramGatewayOptions
         {
             BotToken = "token",
             WebhookUrl = "https://example.test/hook"
@@ -268,7 +269,7 @@ public sealed class TelegramChannelAdapterTests
                 : JsonOk(true);
         });
 
-        var adapter = CreateAdapter(new TelegramOptions
+        var adapter = CreateAdapter(new TelegramGatewayOptions
         {
             BotToken = "token",
             PollingTimeoutSeconds = 1
@@ -299,7 +300,7 @@ public sealed class TelegramChannelAdapterTests
             };
         });
 
-        var adapter = CreateAdapter(new TelegramOptions
+        var adapter = CreateAdapter(new TelegramGatewayOptions
         {
             BotToken = "token",
             AllowedChatIds = { 42 },
@@ -319,12 +320,216 @@ public sealed class TelegramChannelAdapterTests
     [Fact]
     public async Task StartAsync_WithoutBotToken_Throws()
     {
-        var adapter = CreateAdapter(new TelegramOptions(), new StubHttpMessageHandler((_, _) => Task.FromResult(JsonOk(true))));
+        var adapter = CreateAdapter(new TelegramGatewayOptions(), new StubHttpMessageHandler((_, _) => Task.FromResult(JsonOk(true))));
 
         Func<Task> act = () => adapter.StartAsync(Mock.Of<IChannelDispatcher>(), CancellationToken.None);
 
         (await act.ShouldThrowAsync<InvalidOperationException>())
             .Message.ShouldContain("BotToken");
+    }
+
+    [Fact]
+    public async Task General_topic_threadId1_omits_message_thread_id()
+    {
+        ApiCall? sendCall = null;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCall = call;
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            AllowedChatIds = { 42 }
+        }, handler);
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("telegram"),
+            ChannelAddress = "42",
+            ThreadId = "1",
+            Content = "general topic"
+        });
+
+        sendCall.ShouldNotBeNull();
+        sendCall!.MessageThreadId.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Non_general_topic_threadId_includes_message_thread_id()
+    {
+        ApiCall? sendCall = null;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCall = call;
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            AllowedChatIds = { 42 }
+        }, handler);
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("telegram"),
+            ChannelAddress = "42",
+            ThreadId = "42",
+            Content = "topic reply"
+        });
+
+        sendCall.ShouldNotBeNull();
+        sendCall!.MessageThreadId.ShouldBe(42);
+    }
+
+    [Fact]
+    public async Task GetUpdates_includes_allowed_updates()
+    {
+        ApiCall? pollingCall = null;
+        var pollSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "getUpdates")
+            {
+                pollingCall = call;
+                pollSeen.TrySetResult();
+                return JsonOk(Array.Empty<TelegramUpdate>());
+            }
+
+            return JsonOk(true);
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            PollingTimeoutSeconds = 1
+        }, handler);
+
+        await adapter.StartAsync(Mock.Of<IChannelDispatcher>(), CancellationToken.None);
+        await pollSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await adapter.StopAsync(CancellationToken.None);
+
+        pollingCall.ShouldNotBeNull();
+        pollingCall!.AllowedUpdates.ShouldBe(new[]
+        {
+            "message",
+            "edited_message",
+            "channel_post",
+            "edited_channel_post",
+            "message_reaction"
+        });
+    }
+
+    [Fact]
+    public async Task SendAsync_HtmlParseMode_used()
+    {
+        ApiCall? sendCall = null;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCall = call;
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            AllowedChatIds = { 42 }
+        }, handler);
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("telegram"),
+            ChannelAddress = "42",
+            Content = "hello"
+        });
+
+        sendCall.ShouldNotBeNull();
+        sendCall!.ParseMode.ShouldBe("HTML");
+    }
+
+    [Fact]
+    public async Task SendAsync_HtmlSendFails_FallsBackToPlainText()
+    {
+        var sendCalls = new List<ApiCall>();
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+            {
+                sendCalls.Add(call);
+                if (sendCalls.Count == 1)
+                {
+                    return new HttpResponseMessage(HttpStatusCode.BadRequest)
+                    {
+                        Content = new StringContent("{\"ok\":false,\"description\":\"Bad Request: can't parse entities\"}", Encoding.UTF8, "application/json")
+                    };
+                }
+            }
+
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            AllowedChatIds = { 42 }
+        }, handler);
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("telegram"),
+            ChannelAddress = "42",
+            Content = "hello"
+        });
+
+        sendCalls.Count.ShouldBe(2);
+        sendCalls[0].ParseMode.ShouldBe("HTML");
+        sendCalls[1].ParseMode.ShouldBeNull();
+        sendCalls[1].Text.ShouldBe("hello");
+    }
+
+    [Fact]
+    public async Task ErrorCooldown_suppressesRepeatErrorReplies()
+    {
+        var sendCalls = new List<ApiCall>();
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCalls.Add(call);
+
+            return call.MethodName switch
+            {
+                "sendMessage" => JsonOk(new TelegramMessage { MessageId = sendCalls.Count, Chat = new TelegramChat { Id = 42 } }),
+                "editMessageText" => JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } }),
+                _ => JsonOk(true)
+            };
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            AllowedChatIds = { 42 },
+            ErrorCooldownMs = 60_000,
+            StreamingBufferMs = 60_000
+        }, handler);
+
+        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.Error, ErrorMessage = "first" });
+        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
+        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.Error, ErrorMessage = "second" });
+        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
+
+        sendCalls.Count.ShouldBe(1);
+        sendCalls[0].Text.ShouldContain("first");
     }
 
     [Fact]
@@ -345,7 +550,7 @@ public sealed class TelegramChannelAdapterTests
             return JsonOk(true);
         });
 
-        var adapter = CreateAdapter(new TelegramOptions
+        var adapter = CreateAdapter(new TelegramGatewayOptions
         {
             BotToken = "token",
             PollingTimeoutSeconds = -5
@@ -362,7 +567,7 @@ public sealed class TelegramChannelAdapterTests
     [Fact]
     public async Task SendAsync_WhenChatNotAllowed_Throws()
     {
-        var adapter = CreateAdapter(new TelegramOptions
+        var adapter = CreateAdapter(new TelegramGatewayOptions
         {
             BotToken = "token",
             AllowedChatIds = { 42 }
@@ -379,14 +584,63 @@ public sealed class TelegramChannelAdapterTests
             .Message.ShouldContain("not allowed");
     }
 
-    private static TelegramChannelAdapter CreateAdapter(TelegramOptions options, HttpMessageHandler handler)
+    [Fact]
+    public async Task Polling_WithConfiguredAgentId_StampsTargetAgentId_OnInboundMessage()
     {
-        var client = new HttpClient(handler);
-        var apiClient = new TelegramBotApiClient(client, Options.Create(options), NullLogger<TelegramBotApiClient>.Instance);
+        var dispatched = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            return call.MethodName switch
+            {
+                "deleteWebhook" => JsonOk(true),
+                "getUpdates" => JsonOk(new[]
+                {
+                    new TelegramUpdate
+                    {
+                        UpdateId = 10,
+                        Message = new TelegramMessage
+                        {
+                            MessageId = 100,
+                            Chat = new TelegramChat { Id = 42 },
+                            From = new TelegramUser { Id = 7 },
+                            Text = "hello"
+                        }
+                    }
+                }),
+                _ => JsonOk(true)
+            };
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            AgentId = "larry",
+            PollingTimeoutSeconds = 1,
+            AllowedChatIds = { 42 }
+        }, handler);
+
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
+
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+        var message = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await adapter.StopAsync(CancellationToken.None);
+
+        message.TargetAgentId.ShouldBe("larry");
+        message.ChannelAddress.ShouldBe("42");
+        message.Content.ShouldBe("hello");
+    }
+
+    private static TelegramChannelAdapter CreateAdapter(TelegramGatewayOptions options, HttpMessageHandler handler)
+    {
+        var factory = new StubHttpClientFactory(_ => new HttpClient(handler));
         return new TelegramChannelAdapter(
             NullLogger<TelegramChannelAdapter>.Instance,
             Options.Create(options),
-            apiClient);
+            factory);
     }
 
     private static HttpResponseMessage JsonOk<T>(T result)
@@ -409,11 +663,19 @@ public sealed class TelegramChannelAdapterTests
             => responder(request, cancellationToken);
     }
 
+    private sealed class StubHttpClientFactory(Func<string, HttpClient> factory) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => factory(name);
+    }
+
     private sealed record ApiCall(string MethodName, string Body)
     {
         public string? Text => TryGetString("text");
+        public string? ParseMode => TryGetString("parse_mode");
         public long? Offset => TryGetLong("offset");
         public int? Timeout => TryGetInt("timeout");
+        public int? MessageThreadId => TryGetInt("message_thread_id");
+        public string[] AllowedUpdates => TryGetStringArray("allowed_updates");
 
         public static async Task<ApiCall> FromRequestAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -446,6 +708,18 @@ public sealed class TelegramChannelAdapterTests
             return json.RootElement.TryGetProperty(property, out var element) && element.ValueKind == JsonValueKind.Number
                 ? element.GetInt32()
                 : null;
+        }
+
+        private string[] TryGetStringArray(string property)
+        {
+            using var json = JsonDocument.Parse(Body);
+            if (!json.RootElement.TryGetProperty(property, out var element) || element.ValueKind != JsonValueKind.Array)
+                return [];
+
+            return element.EnumerateArray()
+                .Where(x => x.ValueKind == JsonValueKind.String)
+                .Select(x => x.GetString()!)
+                .ToArray();
         }
     }
 }

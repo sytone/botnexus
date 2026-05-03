@@ -814,7 +814,7 @@ X-Api-Key: your-api-key
 - `description` (string) — Short description for the command palette
 - `category` (string) — Command category: "System" (built-in) or "Extension" (contributor)
 - `clientSideOnly` (boolean) — If true, client handles execution without backend call (e.g., `/reset` manages DOM/reconnect). If false, execution requires POST to `/api/commands/execute`
-- `subCommands` (array of objects, nullable) — Sub-command definitions (e.g., "/skills list", "/skills info <name>"). Null if command has no sub-commands
+- `subCommands` (array of objects, nullable) — Sub-command definitions (e.g., "/skills list", "/skills info &lt;name&gt;"). Null if command has no sub-commands
   - `name` (string) — Sub-command name (without slash)
   - `description` (string) — Sub-command description
 

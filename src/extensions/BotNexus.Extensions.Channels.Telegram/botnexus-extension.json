@@ -1,0 +1,10 @@
+{
+  "id": "botnexus-telegram",
+  "name": "Telegram Channel",
+  "description": "Telegram Bot API channel adapter — long polling, DMs and group topics",
+  "version": "1.0.0",
+  "entryAssembly": "BotNexus.Extensions.Channels.Telegram.dll",
+  "extensionTypes": [
+    "channel"
+  ]
+}
