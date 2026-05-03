@@ -31,7 +31,7 @@ An **agent workspace** is a persistent file system directory where each BotNexus
 - **Persistence**: Workspace survives agent restarts and redeployments
 - **Accessibility**: Files are plain Markdown — human-readable and editable
 - **Composability**: Workspace files form the foundation of the system prompt assembled per session
-- **Separation of Concerns**: Distinct from `~/.botnexus/workspace/sessions/` (transient conversation history) and `~/.botnexus/extensions/` (deployed binaries)
+- **Separation of Concerns**: Distinct from session data in `~/.botnexus/sessions.sqlite` and `~/.botnexus/extensions/` (deployed binaries)
 
 ---
 
@@ -333,7 +333,7 @@ Recommended sections (not enforced):
 ## Architecture Learnings
 - The core platform has 17 projects with clean dependency inversion
 - Extensions are loaded dynamically from `~/.botnexus/extensions/{type}/{name}/`
-- SessionManager persists conversation history to JSONL under `~/.botnexus/workspace/sessions/`
+- SessionManager persists conversation history to `~/.botnexus/sessions.sqlite`
 
 ## User Preferences
 - Async-first communication

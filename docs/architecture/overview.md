@@ -36,7 +36,7 @@ BotNexus is a **domain-driven, multi-agent execution platform** for building AI 
 │  │  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐ │  │
 │  │  │   Agents     │  │   Sessions   │  │   Channels       │ │  │
 │  │  │  (per World) │  │  (per agent  │  │  SignalR, TG,    │ │  │
-│  │  │             │  │   + channel) │  │  TUI, Cron       │ │  │
+│  │  │             │  │   + channel) │  │  TUI, Cron, TG   │ │  │
 │  │  └──────┬──────┘  └──────────────┘  └──────────────────┘ │  │
 │  │         │                                                  │  │
 │  │         │ uses                                             │  │
@@ -183,7 +183,7 @@ Agents reference Locations by name (`@repo-botnexus`) rather than raw paths. Thi
 | **Tools** | `IAgentTool` | Agent capabilities (file ops, web, MCP, skills, memory) |
 | **Hooks** | `IHookHandler` | Intercept tool execution (validation, audit, policy) |
 | **Prompt Sections** | `IPromptSection` | Customize system prompts |
-| **Session Stores** | `ISessionStore` | Persistence backends (InMemory, File, SQLite) |
+| **Session Stores** | `ISessionStore` | Persistence backends (InMemory, SQLite) |
 | **Internal Triggers** | `IInternalTrigger` | Non-channel session creation (Cron, Soul) |
 
 ---

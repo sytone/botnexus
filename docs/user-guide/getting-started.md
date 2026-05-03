@@ -143,10 +143,12 @@ On first run, BotNexus creates a home directory at `~/.botnexus/` with a default
 ```text
 ~/.botnexus/
 ├── config.json          # Main configuration (agents, providers, channels)
+├── sessions.sqlite      # Session database
+├── conversations.sqlite # Conversations database
 ├── extensions/          # Extension binaries (auto-populated)
 ├── tokens/              # OAuth tokens (GitHub Copilot)
-├── workspace/
-│   └── sessions/        # Conversation history (JSONL format)
+├── agents/              # Per-agent workspace directories
+│   └── <agentId>/       # Agent workspace (SOUL.md, IDENTITY.md, etc.)
 └── logs/                # Application logs
 ```
 

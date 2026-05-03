@@ -132,7 +132,7 @@ On startup, BotNexus creates this structure if it does not already exist:
 │   ├── channels/
 │   └── tools/
 ├── tokens/
-├── sessions/
+├── sessions.sqlite
 └── logs/
 ```
 
