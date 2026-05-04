@@ -90,7 +90,7 @@ public sealed class InMemoryConversationStore : IConversationStore
             c.ChannelBindings.Any(b =>
                 b.ChannelType == channelType &&
                 string.Equals(b.ChannelAddress, channelAddress, StringComparison.OrdinalIgnoreCase) &&
-                (threadId is null || string.Equals(b.ThreadId, threadId, StringComparison.OrdinalIgnoreCase))));
+                string.Equals(b.ThreadId, threadId, StringComparison.OrdinalIgnoreCase)));
 
         return Task.FromResult(match);
     }

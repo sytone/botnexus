@@ -140,7 +140,7 @@ public sealed class FileConversationStore : IConversationStore
                 c.ChannelBindings.Any(b =>
                     b.ChannelType == channelType &&
                     string.Equals(b.ChannelAddress, channelAddress, StringComparison.OrdinalIgnoreCase) &&
-                    (threadId is null || string.Equals(b.ThreadId, threadId, StringComparison.OrdinalIgnoreCase))));
+                    string.Equals(b.ThreadId, threadId, StringComparison.OrdinalIgnoreCase)));
         }
         finally { _lock.Release(); }
     }

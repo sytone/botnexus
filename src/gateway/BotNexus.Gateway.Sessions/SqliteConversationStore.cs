@@ -293,8 +293,10 @@ public sealed class SqliteConversationStore : IConversationStore
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
         await using var command = connection.CreateCommand();
-        command.CommandText = threadId is null
-            ? """
+        // Use a single query that matches thread_id exactly (including NULL = NULL).
+        // The previous two-branch approach matched any binding when threadId was null,
+        // causing root-chat messages to resolve into thread-specific conversations.
+        command.CommandText = """
                 SELECT c.id
                 FROM conversations c
                 INNER JOIN conversation_bindings b ON b.conversation_id = c.id
@@ -302,28 +304,16 @@ public sealed class SqliteConversationStore : IConversationStore
                   AND c.status = $status
                   AND b.channel_type = $channelType
                   AND lower(b.channel_address) = lower($channelAddress)
-                ORDER BY c.updated_at DESC
-                LIMIT 1
-                """
-            : """
-                SELECT c.id
-                FROM conversations c
-                INNER JOIN conversation_bindings b ON b.conversation_id = c.id
-                WHERE c.agent_id = $agentId
-                  AND c.status = $status
-                  AND b.channel_type = $channelType
-                  AND lower(b.channel_address) = lower($channelAddress)
-                  AND lower(ifnull(b.thread_id, '')) = lower($threadId)
+                  AND (($threadId IS NULL AND b.thread_id IS NULL)
+                       OR ($threadId IS NOT NULL AND lower(ifnull(b.thread_id, '')) = lower($threadId)))
                 ORDER BY c.updated_at DESC
                 LIMIT 1
                 """;
+        command.Parameters.AddWithValue("$threadId", (object?)threadId ?? DBNull.Value);
         command.Parameters.AddWithValue("$agentId", agentId.Value);
         command.Parameters.AddWithValue("$status", ConversationStatus.Active.ToString());
         command.Parameters.AddWithValue("$channelType", channelType.Value);
         command.Parameters.AddWithValue("$channelAddress", channelAddress);
-        if (threadId is not null)
-            command.Parameters.AddWithValue("$threadId", threadId);
-
         var id = (string?)await command.ExecuteScalarAsync(ct).ConfigureAwait(false);
         return string.IsNullOrWhiteSpace(id)
             ? null
