@@ -189,5 +189,59 @@ public sealed class SchemaValidationTests
                 Directory.Delete(rootPath, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task Validate_ConfigWithExtensionsDefaultsAndAgentJsonElements_DoesNotCrash()
+    {
+        // Regression: IConfiguration cannot bind JsonElement. gateway.extensions.defaults
+        // and per-agent extensions/metadata/isolationOptions were left undefined after
+        // IConfiguration.Bind(), causing serialization crashes in PlatformConfigSchema
+        // validation at startup.
+        var rootPath = Path.Combine(Path.GetTempPath(), "botnexus-jsonelement-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(rootPath);
+        var configPath = Path.Combine(rootPath, "config.json");
+
+        try
+        {
+            await File.WriteAllTextAsync(configPath, """
+                {
+                  "gateway": {
+                    "extensions": {
+                      "defaults": {
+                        "botnexus-skills": { "enabled": true },
+                        "botnexus-exec": { "enabled": true }
+                      }
+                    }
+                  },
+                  "providers": { "copilot": { "enabled": true, "apiKey": "test" } },
+                  "agents": {
+                    "larry": {
+                      "provider": "copilot",
+                      "model": "gpt-4.1",
+                      "extensions": { "botnexus-mcp": { "enabled": true } },
+                      "metadata": { "owner": "jon" },
+                      "isolationOptions": { "timeout": 30 }
+                    }
+                  }
+                }
+                """);
+
+            var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
+            var errors = PlatformConfigLoader.Validate(config);
+
+            errors.ShouldBeEmpty();
+            config.Gateway?.Extensions?.Defaults.ShouldNotBeNull();
+            config.Gateway!.Extensions!.Defaults!.ShouldContainKey("botnexus-skills");
+            config.Agents!["larry"].Extensions.ShouldNotBeNull();
+            config.Agents["larry"].Extensions!.ShouldContainKey("botnexus-mcp");
+        }
+        finally
+        {
+            if (Directory.Exists(rootPath))
+                Directory.Delete(rootPath, recursive: true);
+        }
+    }
+
 }
+
 
