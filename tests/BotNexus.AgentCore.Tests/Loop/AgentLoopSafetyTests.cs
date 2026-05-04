@@ -97,6 +97,12 @@ public sealed class AgentLoopSafetyTests
     [Trait("Category", "Security")]
     public async Task CancellationDuringStreaming_StopsAndCapturesPartial()
     {
+        // Use a TCS to hold the stream open indefinitely until we explicitly cancel.
+        // Previously the test used Task.Delay(200) + 100ms cancel, which is a timing
+        // race: on a slow machine the delay may not be long enough to guarantee
+        // cancellation fires mid-stream rather than after completion.
+        var streamBlocker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
         using var provider = TestHelpers.RegisterProvider(new TestApiProvider(
             "stream-cancel",
             simpleStreamFactory: (_, _, _) =>
@@ -105,18 +111,27 @@ public sealed class AgentLoopSafetyTests
                 var partial = CreateAssistant("partial");
                 _ = Task.Run(async () =>
                 {
+                    // Push a start event so the loop knows streaming has begun,
+                    // then park here until the test releases the blocker or times out.
                     stream.Push(new StartEvent(partial));
-                    await Task.Delay(200);
+                    await streamBlocker.Task;
                     stream.End(partial);
                 });
                 return stream;
             }));
         var config = CreateConfig("stream-cancel");
         var context = new AgentContext(null, [], []);
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        using var cts = new CancellationTokenSource();
 
-        var act = () => AgentLoopRunner.RunAsync([new AgentUserMessage("go")], context, config, _ => Task.CompletedTask, cts.Token);
-        await act.ShouldThrowAsync<OperationCanceledException>();
+        var runTask = AgentLoopRunner.RunAsync([new AgentUserMessage("go")], context, config, _ => Task.CompletedTask, cts.Token);
+
+        // Cancel before the stream is ever released — guarantees mid-stream cancellation.
+        cts.Cancel();
+
+        // Unblock the background task so it doesn't leak after the test ends.
+        streamBlocker.TrySetResult();
+
+        await runTask.ShouldThrowAsync<OperationCanceledException>();
     }
 
     [Fact]
