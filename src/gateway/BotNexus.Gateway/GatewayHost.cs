@@ -257,6 +257,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             // Stamp ConversationId on the session when a conversation router is available.
             // Without this call Session.ConversationId remains null, breaking GatewayEventHandler routing.
             ConversationId? resolvedConversationId = null;
+            ChannelBinding? originatingBinding = null;
             if (_conversationRouter is not null)
             {
                 var routingResult = await _conversationRouter.ResolveInboundAsync(
@@ -268,19 +269,13 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 sessionId = routingResult.SessionId.Value;
                 resolvedConversationId = routingResult.Conversation.ConversationId;
 
-                // Stamp the originating BindingId on the message so FanOutResponseAsync
-                // can exclude it — preventing the originating channel from receiving
-                // the response twice (once direct, once via fan-out).
-                if (message.BindingId is null)
-                {
-                    var originatingBinding = routingResult.Conversation.ChannelBindings
-                        .FirstOrDefault(b =>
-                            b.ChannelType == message.ChannelType &&
-                            string.Equals(b.ChannelAddress, message.ChannelAddress, StringComparison.Ordinal) &&
-                            string.Equals(b.ThreadId, message.ThreadId, StringComparison.Ordinal));
-                    if (originatingBinding is not null)
-                        message = message with { BindingId = originatingBinding.BindingId };
-                }
+                // OriginatingBinding carries ThreadId, BindingId, and DisplayPrefix for the inbound
+                // channel address — used below to stamp outbound responses and fan-out exclusion.
+                // This replaces the duplicate lookup that was added as the #123 hotfix workaround.
+                originatingBinding = routingResult.OriginatingBinding;
+                // Stamp BindingId on the message for fan-out exclusion (replaces #123 hotfix workaround)
+                if (message.BindingId is null && originatingBinding is not null)
+                    message = message with { BindingId = originatingBinding.BindingId };
             }
 
             var existingSessionTask = _sessions.GetAsync(SessionId.From(sessionId), cancellationToken);
@@ -395,6 +390,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
 
                 if (resolvedChannel is { SupportsStreaming: true } channel)
                 {
+                    // Capture the originating binding for the lambda closure so the
+                    // streaming conversationId includes the ThreadId (fixes #125).
+                    var streamingBinding = originatingBinding;
                     await StreamingSessionHelper.ProcessAndSaveAsync(
                         handle.StreamAsync(message.Content, cancellationToken),
                         session,
@@ -409,11 +407,20 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                                     ? evt with { AgentId = Domain.Primitives.AgentId.From(agentId) }
                                     : evt;
 
+                                // Build the conversationId that the channel adapter uses to
+                                // route the stream to the correct chat thread/topic.
+                                // For channels like Telegram that support forum topics, the
+                                // bare chatId is not enough — we encode threadId into the key
+                                // so the adapter can split them apart (fixes #125).
+                                var streamConversationId = streamingBinding?.ThreadId is not null
+                                    ? $"{message.ChannelAddress}:{streamingBinding.ThreadId}"
+                                    : message.ChannelAddress;
+
                                 if (channel is IStreamEventChannelAdapter streamEventChannel)
-                                    return new ValueTask(streamEventChannel.SendStreamEventAsync(message.ChannelAddress, enriched, ct));
+                                    return new ValueTask(streamEventChannel.SendStreamEventAsync(streamConversationId, enriched, ct));
 
                                 if (evt.Type == AgentStreamEventType.ContentDelta && evt.ContentDelta is not null)
-                                    return new ValueTask(channel.SendStreamDeltaAsync(message.ChannelAddress, evt.ContentDelta, ct));
+                                    return new ValueTask(channel.SendStreamDeltaAsync(streamConversationId, evt.ContentDelta, ct));
 
                                 return ValueTask.CompletedTask;
                             }),
@@ -435,7 +442,12 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                             ChannelType = message.ChannelType,
                             ChannelAddress = message.ChannelAddress,
                             Content = response.Content,
-                            SessionId = sessionId
+                            SessionId = sessionId,
+                            // Binding-aware fields from originating binding fix #126:
+                            // ensure replies go to the correct thread/topic and carry decoration.
+                            ThreadId = originatingBinding?.ThreadId ?? message.ThreadId,
+                            BindingId = originatingBinding?.BindingId,
+                            DisplayPrefix = originatingBinding?.DisplayPrefix
                         }, cancellationToken);
                     }
 

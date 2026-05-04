@@ -168,12 +168,12 @@ public sealed class MultiChannelFanOutTests
 
         await harness.Host.DispatchAsync(harness.CreateMessage("root", "telegram", "100", threadId: null));
         harness.Telegram.Messages.Count.ShouldBe(1);
-        harness.Telegram.Messages[0].ThreadId.ShouldBeNull();
+        harness.Telegram.Messages[0].ThreadId.ShouldBeNull(); // root chat, no thread
 
         harness.ClearOutbound();
         await harness.Host.DispatchAsync(harness.CreateMessage("topic", "telegram", "100", threadId: "42"));
         harness.Telegram.Messages.Count.ShouldBe(1);
-        harness.Telegram.Messages[0].ThreadId.ShouldBeNull();
+        harness.Telegram.Messages[0].ThreadId.ShouldBe("42"); // fix #126: ThreadId now correctly set on direct send
 
         var conversations = await harness.Conversations.ListAsync(BotNexus.Domain.Primitives.AgentId.From(AgentName));
         conversations.Count.ShouldBe(2);
@@ -190,9 +190,9 @@ public sealed class MultiChannelFanOutTests
         await harness.Host.DispatchAsync(harness.CreateMessage("topic", "telegram", "100", threadId: "42"));
 
         harness.SignalR.Messages.Count.ShouldBe(1);
-        harness.SignalR.Messages[0].ThreadId.ShouldBe("42");
+        harness.SignalR.Messages[0].ThreadId.ShouldBe("42"); // fan-out carries thread
         harness.Telegram.Messages.Count.ShouldBe(1);
-        harness.Telegram.Messages[0].ThreadId.ShouldBeNull();
+        harness.Telegram.Messages[0].ThreadId.ShouldBe("42"); // fix #126: direct send now carries ThreadId
     }
 
     [Fact]

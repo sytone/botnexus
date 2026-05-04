@@ -139,7 +139,14 @@ public sealed class DefaultConversationRouter : IConversationRouter
             await _conversationStore.SaveAsync(conversation, ct);
         }
 
-        return new ConversationRoutingResult(conversation, sessionId, isNewSession);
+        // Resolve the originating binding so callers don't need a second lookup into the binding list.
+        var originatingBinding = conversation.ChannelBindings
+            .FirstOrDefault(b =>
+                b.ChannelType == channelType &&
+                string.Equals(b.ChannelAddress, channelAddress, StringComparison.Ordinal) &&
+                string.Equals(b.ThreadId, threadId, StringComparison.Ordinal));
+
+        return new ConversationRoutingResult(conversation, sessionId, isNewSession, originatingBinding);
     }
 
     /// <inheritdoc />

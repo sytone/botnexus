@@ -51,7 +51,14 @@ public interface IConversationRouter
 /// <param name="Conversation">The resolved or created conversation.</param>
 /// <param name="SessionId">The session to dispatch the message into.</param>
 /// <param name="IsNewSession">True if a new session was created for this message.</param>
+/// <param name="OriginatingBinding">
+/// The specific <see cref="ChannelBinding"/> that matched the inbound message's channel type,
+/// address, and thread id. Null when no exact binding match was found (e.g. new default conversation).
+/// Callers use this to stamp BindingId, ThreadId, and DisplayPrefix on outbound responses without
+/// a second lookup into the conversation's binding list.
+/// </param>
 public sealed record ConversationRoutingResult(
     Conversation Conversation,
     SessionId SessionId,
-    bool IsNewSession);
+    bool IsNewSession,
+    ChannelBinding? OriginatingBinding = null);
