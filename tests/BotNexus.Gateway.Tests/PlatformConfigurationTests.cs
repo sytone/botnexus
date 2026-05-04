@@ -986,4 +986,28 @@ public sealed class PlatformConfigurationTests
         public string? ResolvePath(string locationName) => null;
         public IReadOnlyList<Location> GetAll() => [];
     }
+
+    // -------------------------------------------------------------------------
+    // Issue #120: PlatformConfig singleton removal
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void AddPlatformConfiguration_DoesNotRegisterBare_PlatformConfig_AsSingletonInDI()
+    {
+        // Arrange — AddPlatformConfiguration must NOT register a bare PlatformConfig singleton.
+        // All consumers must resolve via IOptionsMonitor<PlatformConfig> or IOptions<PlatformConfig>.
+        using var fixture = new PlatformConfigFixture();
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddBotNexusGateway();
+        services.AddSingleton<ILocationResolver>(new StubLocationResolver());
+        services.AddPlatformConfiguration(fixture.ConfigPath);
+
+        using var provider = services.BuildServiceProvider();
+
+        // Act & Assert — direct resolution must fail; use IOptionsMonitor<PlatformConfig> instead.
+        var registration = provider.GetService<PlatformConfig>();
+        registration.ShouldBeNull("PlatformConfig must not be registered as a singleton; use IOptionsMonitor<PlatformConfig>");
+    }
 }
