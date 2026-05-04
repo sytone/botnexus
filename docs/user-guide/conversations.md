@@ -22,7 +22,7 @@ These are distinct things that are often confused.
 | **What it is** | The full history of a dialogue | The agent's active context window |
 | **Scope** | Permanent (until archived) | Temporary — ends when reset or expired |
 | **Contains** | All messages, all sessions | Recent messages the agent is currently aware of |
-| **Survives restart** | Yes | No (new session on restart) |
+| **Survives restart** | Yes | Yes — session is resumed if still Active |
 | **Visible in portal** | Always | Only the current one |
 
 A conversation can contain many sessions. When you click **New session**, the agent's context is cleared but the conversation history is not. A `─── New session started ───` divider marks the boundary in the portal.
@@ -69,6 +69,8 @@ Sessions come and go; the conversation persists. This has practical implications
 
 - **Portal refresh** — if the SignalR connection drops and reconnects, the portal re-loads the conversation history from the database. Nothing is lost.
 - **New session** — the agent starts with no context, but history is still visible in the portal above the session divider.
+- **Gateway restart** — the session is persisted in the database. When the next message arrives the router reloads the conversation, finds the `ActiveSessionId`, and resumes it. The agent picks up where it left off.
+- **Session creation** — a new session is only created when: the conversation has no active session yet, the previous session was explicitly reset by the user, or the session was sealed/expired by compaction or a timeout.
 - **Compaction** — `/compact` summarises the current session to reduce token usage while preserving the full history in the database.
 - **Multiple sessions** — an agent can only have one active session per conversation at a time. Starting a new session seals the previous one.
 
@@ -203,12 +205,12 @@ Archiving is currently manual. Archived conversations do not appear in fan-out a
 |---|---|---|
 | Conversation history | Yes | SQLite (`~/.botnexus/sessions.sqlite`) |
 | Channel bindings | Yes | SQLite |
-| Session context (agent memory) | No | In-process only |
+| Session context (agent memory) | Yes — if session is still Active | SQLite (`~/.botnexus/sessions.sqlite`) |
 | Streaming state | No | In-process only |
 | SignalR connection | No | Reconnects on page load |
 | Unread counts | No | In-process only |
 
-After a gateway restart, conversations and their history are fully restored. The agent starts a new session with no prior context unless memory/RAG is configured.
+After a gateway restart, conversations, history, and active sessions are fully restored from the database. The agent resumes the existing session — no context is lost unless the session was sealed or the user explicitly started a new one.
 
 ---
 
@@ -224,7 +226,7 @@ User (Portal)   ──► Channel Binding ─┘         │
 ```
 
 - **Conversation** = persistent history, lives forever
-- **Session** = agent's current context window, temporary
+- **Session** = agent's current context window; persists across restarts, ends only when explicitly reset or expired
 - **Channel binding** = how a channel address connects to a conversation
 - **Fan-out** = one response delivered to all active bindings
 - **Agent** = owns one or more conversations; does not share them
