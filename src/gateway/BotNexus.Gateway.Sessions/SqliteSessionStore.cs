@@ -8,6 +8,7 @@ using SessionType = BotNexus.Domain.Primitives.SessionType;
 using SessionParticipant = BotNexus.Domain.Primitives.SessionParticipant;
 using ConversationId = BotNexus.Domain.Primitives.ConversationId;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
@@ -36,9 +37,26 @@ public sealed class SqliteSessionStore : SessionStoreBase
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    public SqliteSessionStore(string connectionString, ILogger<SqliteSessionStore> logger)
+    private readonly IConversationStore? _conversationStore;
+    private readonly ILogger<SqliteSessionStore> _logger;
+
+    /// <summary>
+    /// Initialises a new <see cref="SqliteSessionStore"/>.
+    /// </summary>
+    /// <param name="connectionString">SQLite connection string for the sessions database.</param>
+    /// <param name="logger">Logger for diagnostic output including migration summaries.</param>
+    /// <param name="conversationStore">
+    /// When provided, a startup migration links any orphaned sessions (those with no
+    /// <c>conversation_id</c>) to their agent's default conversation.
+    /// </param>
+    public SqliteSessionStore(
+        string connectionString,
+        ILogger<SqliteSessionStore> logger,
+        IConversationStore? conversationStore = null)
     {
         _connectionString = connectionString;
+        _logger = logger;
+        _conversationStore = conversationStore;
     }
 
     /// <inheritdoc />
@@ -252,6 +270,10 @@ public sealed class SqliteSessionStore : SessionStoreBase
             // Migrate: add tool columns to existing databases
             await MigrateAsync(connection, cancellationToken).ConfigureAwait(false);
 
+            // Migrate: link orphaned sessions to their agent's default conversation
+            if (_conversationStore is not null)
+                await MigrateOrphanedSessionsAsync(connection, _conversationStore, cancellationToken).ConfigureAwait(false);
+
             _initialized = true;
         }
         finally { _initLock.Release(); }
@@ -303,6 +325,89 @@ public sealed class SqliteSessionStore : SessionStoreBase
             WHERE lower(status) = 'closed'
             """;
         await renameStatus.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Finds every session with no <c>conversation_id</c>, groups them by agent, and
+    /// links each group to the agent's default conversation.  The most recently updated
+    /// orphaned session becomes <see cref="Conversation.ActiveSessionId"/>.
+    /// Safe to run on every startup — no-op when there are no orphaned rows.
+    /// </summary>
+    private async Task MigrateOrphanedSessionsAsync(
+        SqliteConnection connection,
+        IConversationStore conversationStore,
+        CancellationToken cancellationToken)
+    {
+        // Collect distinct agents that have at least one orphaned session.
+        await using var agentCmd = connection.CreateCommand();
+        agentCmd.CommandText = """
+            SELECT DISTINCT agent_id
+            FROM sessions
+            WHERE conversation_id IS NULL
+              AND agent_id IS NOT NULL
+            """;
+
+        var agents = new List<string>();
+        await using (var agentReader = await agentCmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+        {
+            while (await agentReader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                agents.Add(agentReader.GetString(0));
+        }
+
+        if (agents.Count == 0)
+            return;
+
+        var totalMigrated = 0;
+
+        foreach (var agentIdValue in agents)
+        {
+            var agentId = AgentId.From(agentIdValue);
+
+            // Resolve (or create) the default conversation for this agent.
+            var conversation = await conversationStore
+                .GetOrCreateDefaultAsync(agentId, cancellationToken)
+                .ConfigureAwait(false);
+
+            var convIdValue = conversation.ConversationId.Value;
+
+            // Find the most recently updated orphaned session for this agent.
+            await using var latestCmd = connection.CreateCommand();
+            latestCmd.CommandText = """
+                SELECT id
+                FROM sessions
+                WHERE conversation_id IS NULL
+                  AND agent_id = $agentId
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """;
+            latestCmd.Parameters.AddWithValue("$agentId", agentIdValue);
+            var latestSessionId = (string?)await latestCmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+
+            // Bulk-update all orphaned sessions for this agent.
+            await using var updateCmd = connection.CreateCommand();
+            updateCmd.CommandText = """
+                UPDATE sessions
+                SET conversation_id = $convId
+                WHERE conversation_id IS NULL
+                  AND agent_id = $agentId
+                """;
+            updateCmd.Parameters.AddWithValue("$convId", convIdValue);
+            updateCmd.Parameters.AddWithValue("$agentId", agentIdValue);
+            var count = await updateCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            totalMigrated += count;
+
+            // Point the conversation at the most recently active orphaned session,
+            // but only if it has no active session already.
+            if (latestSessionId is not null && conversation.ActiveSessionId is null)
+            {
+                conversation.ActiveSessionId = SessionId.From(latestSessionId);
+                await conversationStore.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        _logger.LogInformation(
+            "Orphaned session migration: linked {Count} session(s) across {AgentCount} agent(s) to their default conversations.",
+            totalMigrated, agents.Count);
     }
 
     private async Task<GatewaySession?> LoadSessionAsync(SessionId sessionId, CancellationToken cancellationToken)
