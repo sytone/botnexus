@@ -64,6 +64,12 @@ export default defineConfig({
           { text: 'Agents', link: '/user-guide/agents' },
           { text: 'Configuration', link: '/user-guide/configuration' },
           { text: 'Extensions', link: '/user-guide/extensions' },
+          {
+            text: 'Channels',
+            items: [
+              { text: 'Telegram', link: '/user-guide/channels/telegram' },
+            ],
+          },
           { text: 'Troubleshooting', link: '/user-guide/troubleshooting' },
         ],
       },
