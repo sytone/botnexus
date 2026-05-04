@@ -50,7 +50,8 @@ public sealed class GatewayHostBindingRoutingTests
         var routingResult = new ConversationRoutingResult(
             conversation,
             SessionId.From(SessionIdStr),
-            false);
+            false,
+            OriginatingBinding: binding);
 
         var convRouter = new Mock<IConversationRouter>();
         convRouter
@@ -122,7 +123,8 @@ public sealed class GatewayHostBindingRoutingTests
         var routingResult = new ConversationRoutingResult(
             conversation,
             SessionId.From(SessionIdStr),
-            false);
+            false,
+            OriginatingBinding: binding);
 
         var convRouter = new Mock<IConversationRouter>();
         convRouter
@@ -173,6 +175,7 @@ public sealed class GatewayHostBindingRoutingTests
         });
 
         capturedStreamConversationIds.ShouldNotBeEmpty("SendStreamDeltaAsync must be called");
+        // The conversationId must encode the thread context, not just the bare chatId.
         capturedStreamConversationIds.ShouldAllBe(
             cid => cid.Contains("topic-99"),
             "Streaming conversationId must include ThreadId so Telegram sends to the correct topic");
@@ -204,7 +207,8 @@ public sealed class GatewayHostBindingRoutingTests
         var routingResult = new ConversationRoutingResult(
             conversation,
             SessionId.From(SessionIdStr),
-            false);
+            false,
+            OriginatingBinding: binding);
 
         string? capturedOriginatingBindingId = null;
         var convRouter = new Mock<IConversationRouter>();
