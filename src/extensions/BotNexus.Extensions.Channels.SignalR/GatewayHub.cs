@@ -488,6 +488,35 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         await base.OnConnectedAsync();
     }
 
+    /// <summary>
+    /// Executes on disconnected async. Mutes all channel bindings for this SignalR connection
+    /// so fan-out stops delivering to dead connections on future requests.
+    /// </summary>
+    /// <param name="exception">The disconnect exception, if any.</param>
+    public override async Task OnDisconnectedAsync(Exception? exception)
+    {
+        _logger.LogInformation("Hub OnDisconnected: connection={ConnectionId}", Context.ConnectionId);
+
+        // Best-effort: mute any Interactive/NotifyOnly bindings keyed to this connection ID.
+        // If the store lookup fails, fan-out self-healing via StaleChannelConnectionException
+        // will catch remaining deliveries on the next send attempt.
+        try
+        {
+            await _conversationRouter.MuteBindingByAddressAsync(
+                // Pass null to search all agents' conversations for bindings keyed to this connection.
+                agentId: null,
+                ChannelKey.From("signalr"),
+                Context.ConnectionId,
+                Context.ConnectionAborted);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Hub OnDisconnected: failed to mute bindings for connection {ConnectionId}", Context.ConnectionId);
+        }
+
+        await base.OnDisconnectedAsync(exception);
+    }
+
     private static string GetSessionGroup(SessionId sessionId) => $"session:{sessionId.Value}";
 
     private static AgentId ParseAgentId(string agentId)

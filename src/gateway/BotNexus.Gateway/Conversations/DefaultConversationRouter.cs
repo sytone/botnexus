@@ -43,28 +43,33 @@ public sealed class DefaultConversationRouter : IConversationRouter
         var addedBinding = false;
         if (conversation is null)
         {
-            if (threadId is not null)
+            if (!string.IsNullOrWhiteSpace(channelAddress))
             {
-                // A non-null thread id means this is a distinct sub-channel (e.g. Telegram topic).
-                // Create a new conversation so the thread gets its own history.
+                // Every unique (channelType, channelAddress, threadId) gets its own conversation.
+                // A Teams DM, a Telegram DM, and a group chat all have different addresses and
+                // must not share context. The default conversation is reserved for portal/addressless channels.
+                var title = threadId is not null
+                    ? $"{channelType}:{channelAddress}/{threadId}"
+                    : $"{channelType}:{channelAddress}";
                 conversation = new Conversation
                 {
                     ConversationId = ConversationId.Create(),
                     AgentId = agentId,
-                    Title = $"{channelType}:{channelAddress}/{threadId}",
+                    Title = title,
                     IsDefault = false
                 };
                 _logger.LogDebug(
-                    "Creating new conversation for thread agent={AgentId} channel={ChannelType} address={ChannelAddress} thread={ThreadId}",
+                    "Creating new conversation for agent={AgentId} channel={ChannelType} address={ChannelAddress} thread={ThreadId}",
                     agentId, channelType, channelAddress, threadId);
             }
             else
             {
-                // 2. Fall back to the agent's default conversation and add a binding
+                // No channel address — fall back to the agent's default conversation.
+                // This is the portal (SignalR) case where there is no stable external address.
                 conversation = await _conversationStore.GetOrCreateDefaultAsync(agentId, ct);
                 _logger.LogDebug(
-                    "No conversation found for agent={AgentId} channel={ChannelType} address={ChannelAddress}. Using default conversation {ConversationId}",
-                    agentId, channelType, channelAddress, conversation.ConversationId);
+                    "No channel address for agent={AgentId} channel={ChannelType}. Using default conversation {ConversationId}",
+                    agentId, channelType, conversation.ConversationId);
             }
 
             var binding = new ChannelBinding
@@ -248,5 +253,54 @@ public sealed class DefaultConversationRouter : IConversationRouter
             .Where(b => b.Mode != BindingMode.Muted)
             .Where(b => originatingBindingId is null || !string.Equals(b.BindingId, originatingBindingId, StringComparison.Ordinal))
             .ToList();
+    }
+
+    /// <inheritdoc />
+    public async Task MuteBindingAsync(ConversationId conversationId, string bindingId, CancellationToken ct = default)
+    {
+        var conversation = await _conversationStore.GetAsync(conversationId, ct);
+        if (conversation is null)
+        {
+            _logger.LogDebug("MuteBinding: conversation {ConversationId} not found", conversationId);
+            return;
+        }
+
+        var binding = conversation.ChannelBindings.FirstOrDefault(b =>
+            string.Equals(b.BindingId, bindingId, StringComparison.Ordinal));
+
+        if (binding is null)
+        {
+            _logger.LogDebug("MuteBinding: binding {BindingId} not found in conversation {ConversationId}", bindingId, conversationId);
+            return;
+        }
+
+        if (binding.Mode == BindingMode.Muted)
+            return;
+
+        binding.Mode = BindingMode.Muted;
+        await _conversationStore.SaveAsync(conversation, ct);
+        _logger.LogInformation("MuteBinding: binding {BindingId} ({ChannelType}:{ChannelAddress}) demoted to Muted in conversation {ConversationId}",
+            bindingId, binding.ChannelType, binding.ChannelAddress, conversationId);
+    }
+
+    /// <inheritdoc />
+    public async Task MuteBindingByAddressAsync(AgentId? agentId, ChannelKey channelType, string channelAddress, CancellationToken ct = default)
+    {
+        var conversations = await _conversationStore.ListAsync(agentId, ct);
+        foreach (var conversation in conversations)
+        {
+            var binding = conversation.ChannelBindings.FirstOrDefault(b =>
+                b.ChannelType.Equals(channelType) &&
+                string.Equals(b.ChannelAddress, channelAddress, StringComparison.Ordinal) &&
+                b.Mode != BindingMode.Muted);
+
+            if (binding is null)
+                continue;
+
+            binding.Mode = BindingMode.Muted;
+            await _conversationStore.SaveAsync(conversation, ct);
+            _logger.LogInformation("MuteBindingByAddress: binding {BindingId} ({ChannelType}:{ChannelAddress}) demoted to Muted in conversation {ConversationId}",
+                binding.BindingId, channelType, channelAddress, conversation.ConversationId);
+        }
     }
 }

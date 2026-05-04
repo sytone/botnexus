@@ -43,6 +43,25 @@ public interface IConversationRouter
         SessionId sessionId,
         string? originatingBindingId,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Demotes a channel binding to <see cref="BindingMode.Muted"/> so it no longer receives fan-out.
+    /// Used to self-heal stale bindings when a send attempt fails (e.g. SignalR connection gone).
+    /// </summary>
+    /// <param name="conversationId">The conversation that owns the binding.</param>
+    /// <param name="bindingId">The binding to silence.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task MuteBindingAsync(ConversationId conversationId, string bindingId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Finds and mutes the binding associated with the given channel type and address.
+    /// Used by SignalR OnDisconnectedAsync to silence stale bindings by connection ID.
+    /// </summary>
+    /// <param name="agentId">The agent whose conversations should be searched, or <c>null</c> to search all agents.</param>
+    /// <param name="channelType">The channel type (e.g. signalr).</param>
+    /// <param name="channelAddress">The channel address (e.g. SignalR connection ID).</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task MuteBindingByAddressAsync(AgentId? agentId, ChannelKey channelType, string channelAddress, CancellationToken ct = default);
 }
 
 /// <summary>

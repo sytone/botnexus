@@ -207,6 +207,10 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _store.NotifyChanged();
     }
 
+    // Agents use this exact string to indicate they have nothing to say in a turn.
+    // Suppress it silently — users must never see "NO_REPLY" as a chat message.
+    private const string NoReplySentinel = "NO_REPLY";
+
     public void HandleMessageEnd(AgentStreamEvent evt)
     {
         if (!ResolveAgent(evt.SessionId, out var agentId, out var agent)) return;
@@ -220,7 +224,9 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             ? null
             : conv.StreamState.ThinkingBuffer;
 
-        if (!string.IsNullOrEmpty(conv.StreamState.Buffer) || thinkingContent is not null)
+        var isNoReply = string.Equals(conv.StreamState.Buffer.Trim(), NoReplySentinel, StringComparison.Ordinal);
+
+        if (!isNoReply && (!string.IsNullOrEmpty(conv.StreamState.Buffer) || thinkingContent is not null))
         {
             conv.Messages.Add(new ChatMessage("Assistant", conv.StreamState.Buffer, DateTimeOffset.UtcNow)
             {

@@ -99,12 +99,17 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         var workspaceTools = _toolFactory.CreateTools(workspacePath, pathValidator);
         var workspaceToolNames = new HashSet<string>(workspaceTools.Select(tool => tool.Name), StringComparer.OrdinalIgnoreCase);
 
-        IReadOnlyList<IAgentTool> selectedWorkspaceTools = descriptor.ToolIds.Count > 0
-            ? [.. workspaceTools.Where(tool => descriptor.ToolIds.Contains(tool.Name, StringComparer.OrdinalIgnoreCase))]
+        // Normalise toolIds: ["*"] is a user-friendly alias for [] (all tools).
+        var effectiveToolIds = IsWildcardToolIds(descriptor.ToolIds)
+            ? (IReadOnlyList<string>)[]
+            : descriptor.ToolIds;
+
+        IReadOnlyList<IAgentTool> selectedWorkspaceTools = effectiveToolIds.Count > 0
+            ? [.. workspaceTools.Where(tool => effectiveToolIds.Contains(tool.Name, StringComparer.OrdinalIgnoreCase))]
             : workspaceTools;
 
-        var extensionTools = descriptor.ToolIds.Count > 0
-            ? _toolRegistry.ResolveTools(descriptor.ToolIds)
+        var extensionTools = effectiveToolIds.Count > 0
+            ? _toolRegistry.ResolveTools(effectiveToolIds)
             : _toolRegistry.GetAll();
 
         var tools = selectedWorkspaceTools
@@ -114,7 +119,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         _logger.LogInformation(
             "Tool setup for '{AgentId}': workspace={WorkspaceCount} extension={ExtCount} total={Total} toolIds={ToolIdCount} workspace={WorkspacePath}",
             descriptor.AgentId, workspaceTools.Count, extensionTools.Count(), tools.Count,
-            descriptor.ToolIds.Count, workspacePath);
+            effectiveToolIds.Count, workspacePath);
 
         if (descriptor.Memory?.Enabled == true)
         {
@@ -127,8 +132,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             tools.Add(new MemoryStoreTool(memoryStore, descriptor.AgentId));
         }
 
-        var cronEnabled = descriptor.ToolIds.Count == 0
-                          || descriptor.ToolIds.Contains("cron", StringComparer.OrdinalIgnoreCase);
+        var cronEnabled = effectiveToolIds.Count == 0
+                          || effectiveToolIds.Contains("cron", StringComparer.OrdinalIgnoreCase);
         var hasCronTool = tools.Any(tool => string.Equals(tool.Name, "cron", StringComparison.OrdinalIgnoreCase));
         if (cronEnabled && !hasCronTool)
         {
@@ -162,12 +167,12 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             subAgentOptions is { MaxDepth: > 0 } &&
             !isSubAgentSession)
         {
-            var includeSpawn = descriptor.ToolIds.Count == 0
-                || descriptor.ToolIds.Contains("spawn_subagent", StringComparer.OrdinalIgnoreCase);
-            var includeList = descriptor.ToolIds.Count == 0
-                || descriptor.ToolIds.Contains("list_subagents", StringComparer.OrdinalIgnoreCase);
-            var includeManage = descriptor.ToolIds.Count == 0
-                || descriptor.ToolIds.Contains("manage_subagent", StringComparer.OrdinalIgnoreCase);
+            var includeSpawn = effectiveToolIds.Count == 0
+                || effectiveToolIds.Contains("spawn_subagent", StringComparer.OrdinalIgnoreCase);
+            var includeList = effectiveToolIds.Count == 0
+                || effectiveToolIds.Contains("list_subagents", StringComparer.OrdinalIgnoreCase);
+            var includeManage = effectiveToolIds.Count == 0
+                || effectiveToolIds.Contains("manage_subagent", StringComparer.OrdinalIgnoreCase);
 
             if (includeSpawn)
                 tools.Add(new SubAgentSpawnTool(subAgentManager, descriptor.AgentId, context.SessionId));
@@ -180,8 +185,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         var conversationService = _serviceProvider.GetService<IAgentExchangeService>();
         if (conversationService is not null && sessionStore is not null)
         {
-            var includeConverse = descriptor.ToolIds.Count == 0
-                || descriptor.ToolIds.Contains("agent_converse", StringComparer.OrdinalIgnoreCase);
+            var includeConverse = effectiveToolIds.Count == 0
+                || effectiveToolIds.Contains("agent_converse", StringComparer.OrdinalIgnoreCase);
             if (includeConverse)
                 tools.Add(new AgentConverseTool(conversationService, sessionStore, descriptor.AgentId, context.SessionId));
         }
@@ -309,6 +314,12 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         return handle;
     }
 
+    /// <summary>
+    /// Returns true when <paramref name="toolIds"/> represents the all-tools wildcard — either an
+    /// empty list (legacy behaviour) or a list whose sole entry is <c>"*"</c> (intuitive form).
+    /// </summary>
+    private static bool IsWildcardToolIds(IReadOnlyList<string> toolIds)
+        => toolIds.Count == 0 || (toolIds.Count == 1 && toolIds[0] == "*");
     private static bool ResolveAllowCrossAgentCron(AgentDescriptor descriptor)
     {
         if (!descriptor.Metadata.TryGetValue("allowCrossAgentCron", out var raw) || raw is null)

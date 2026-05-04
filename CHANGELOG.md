@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-05-04
+
+### ✨ Features
+
+- **config:** Backup config.json before every write (#116)
+
+### 🐛 Bug Fixes
+
+- **config:** Remove mandatory type field validation for channel entries (#117)
+- **config:** Populate JsonElement fields from raw JSON in PostConfigure (#122)
+- **gateway:** Stamp BindingId after routing to prevent duplicate Telegram messages (#124)
+- **gateway:** Carry OriginatingBinding through processing — fixes ThreadId on direct sends and streaming (#129)
+- **portal:** Session reset preserves conversation history (#132)
+- **telegram:** Harden inbound message security — allowedUserIds, reject channel posts, disable edited messages by default (#134)
+- **sessions:** ResolveByBindingAsync null threadId must only match null-thread bindings (#136)
+- **gateway:** Per-address conversation routing (#139)
+
+### 📖 Documentation
+
+- **channels:** Add Telegram configuration and security guide (#135)
+
+### 🔨 Refactor
+
+- **config:** Migrate from PlatformConfigLoader to IConfiguration (#119)
+- **config:** Complete IOptionsMonitor migration — remove PlatformConfig singleton (#121)
+
 ## [0.1.1] - 2026-05-03
 
 ### ✨ Features
@@ -1600,5 +1626,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Session log for loop alignment & UI fix
 - Log session-switching design review orchestration, decisions, and session metadata
 
+[0.1.2]: https://github.com/sytone/botnexus/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/sytone/botnexus/compare/v0.1.0...v0.1.1
 
