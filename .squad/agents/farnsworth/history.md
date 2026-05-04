@@ -154,3 +154,28 @@
 - 2026-05-04: Gateway now resolves extension-contributed runtime tools through `IAgentToolContributor` (`src/gateway/BotNexus.Gateway.Contracts/Agents/IAgentToolContributor.cs`) discovered by `AssemblyLoadContextExtensionLoader`, removing compile-time Gateway references to Skills/MCP/McpInvoke/WebTools.
 - 2026-05-04: `InProcessIsolationStrategy` now aggregates extension tool contributions via DI and disposes contributor-provided session resources through `InProcessAgentHandle`, replacing hardcoded extension tool construction paths.
 - 2026-05-04: Skills hook registration moved fully to extension runtime loading (hook handlers discovered from extension assemblies), so `GatewayServiceCollectionExtensions` only wires core hooks and policy handlers.
+
+## 2026-05-04 — Architecture Review & Test Audit Results
+
+**From:** Leela + Hermes  
+**Re:** Your gateway decoupling implementation  
+**Status:** ✅ Implemented, audit in progress
+
+**Leela's Architecture Findings (related to your work):**
+- Your implementation addresses HIGH-priority issue: Gateway Hardwires Extension Projects
+- 7 additional architectural issues identified (2 HIGH, 3 MEDIUM, 2 LOW) for future phases
+- Next priority: Create Agent.Abstractions leaf package (HIGH) + Move Copilot OAuth (MEDIUM)
+- Full analysis in decisions.md
+
+**Hermes's Test Audit:**
+- 4 pre-existing test failures (pre-decoupling, not new regressions)
+- 3 tests require review (mocking, registration flow, extension loading)
+- 4 new tests needed to cover new pattern:
+  1. IAgentToolContributor discovery
+  2. AgentToolContribution context propagation
+  3. Lifecycle cleanup (resources disposed)
+  4. Runtime tool append
+
+**Action:** Fix 4 pre-existing failures before merge. Hermes or designee will write the 4 new tests.
+
+---

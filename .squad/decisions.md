@@ -15834,3 +15834,322 @@ Initially implemented client-side (Option B — full config fetch + manual diff)
 
 ### Badge styling
 `.world-default-badge` — subtle, muted purple-ish tint, small text. Informational only; not visually dominant.
+
+
+
+---
+
+# Architecture Dependency Review — BotNexus Solution
+
+**Decision Date:** 2026-05-04  
+**Decided By:** Leela (Lead/Architect)  
+**Status:** Analysis Complete — Findings for Team Review  
+**Requested By:** Sytone (Jon Bullen)
+
+---
+
+## Dependency Graph
+
+```
+Layer 0 — Foundation (no project deps):
+  BotNexus.Domain                    (54 files, 0 deps)
+  BotNexus.Agent.Providers.Core      (30 files, 0 deps)
+  BotNexus.Extensions.Channels.SignalR.BlazorClient (22 files, 0 deps)
+
+Layer 1 — Core Runtime:
+  BotNexus.Agent.Core                (31 files) → Providers.Core
+  BotNexus.Gateway.Prompts           (15 files) → Domain
+  BotNexus.Gateway.Channels          (4 files)  → Domain, Contracts
+
+Layer 2 — Contracts & Abstractions:
+  BotNexus.Gateway.Contracts         (48 files) → Agent.Core, Domain
+  BotNexus.Gateway.Abstractions      (3 files)  → Agent.Core, Domain, Contracts [TYPE FORWARDS ONLY]
+
+Layer 3 — Gateway Services:
+  BotNexus.Gateway.Sessions          (11 files) → Domain, Contracts
+  BotNexus.Memory                    (11 files) → Agent.Core, Domain, Contracts
+  BotNexus.Tools                     (10 files) → Agent.Core, Domain, Contracts, Providers.Core
+  BotNexus.Cron                      (12 files) → Agent.Core, Domain, Contracts, Providers.Core
+
+Layer 4 — Provider Implementations:
+  BotNexus.Agent.Providers.Anthropic (5 files)  → Providers.Core
+  BotNexus.Agent.Providers.OpenAI    (4 files)  → Providers.Core
+  BotNexus.Agent.Providers.OpenAICompat (5 files) → Providers.Core
+  BotNexus.Agent.Providers.Copilot   (2 files)  → Providers.Core
+
+Layer 5 — Extensions:
+  Extensions.ProcessTool             (3 files)  → Agent.Core, Providers.Core
+  Extensions.ExecTool                (1 file)   → Agent.Core, Providers.Core
+  Extensions.Skills                  (10 files) → Domain, Contracts, Providers.Core
+  Extensions.Mcp                     (10 files) → Agent.Core, Domain, Contracts, Providers.Core
+  Extensions.McpInvoke               (2 files)  → Agent.Core, Providers.Core, Extensions.Mcp
+  Extensions.WebTools                (9 files)  → Agent.Core, Providers.Core, Extensions.Mcp
+  Extensions.AudioTranscription      (2 files)  → Contracts
+  Extensions.Channels.SignalR        (7 files)  → Abstractions, Channels, Domain, BlazorClient
+  Extensions.Channels.Telegram       (6 files)  → Domain, Contracts, Channels
+  Extensions.Channels.Tui            (2 files)  → Domain, Contracts, Channels
+
+Layer 6 — Composition Roots:
+  BotNexus.Gateway                   (81 files) → 16 PROJECTS (see issues)
+  BotNexus.Gateway.Api               (31 files) → Domain, Contracts, Gateway, Cron, Channels,
+                                                   Providers.Anthropic, Providers.OpenAI, Providers.OpenAICompat
+
+Layer 7 — CLI:
+  BotNexus.Cli                       (32 files) → Gateway
+```
+
+---
+
+## Issues Found (Prioritized)
+
+### 🔴 HIGH — Gateway Hardwires Extension Projects (Lines 25-28, Gateway.csproj)
+
+**What:** `BotNexus.Gateway` has compile-time `<ProjectReference>` to 4 extension projects:
+- `BotNexus.Extensions.Skills`
+- `BotNexus.Extensions.Mcp`
+- `BotNexus.Extensions.McpInvoke`
+- `BotNexus.Extensions.WebTools`
+
+**Why it's wrong:** The project's own `src/gateway/AGENTS.md` explicitly states: *"Extensions depend on the gateway, not the other way around. The gateway discovers and loads extensions dynamically via the extension loader."* This is a direct violation of the documented architecture. Two files drive this coupling:
+- `InProcessIsolationStrategy.cs` — directly `new`s up extension tool types
+- `GatewayServiceCollectionExtensions.cs` — registers extension services at compile time
+
+**Impact:** These 4 extensions cannot be loaded/unloaded independently, can't be shipped as plugins, and create a dependency inversion. The Gateway is 81 files and references 16 projects — it has become a gravity well pulling everything into a monolith.
+
+**Fix:** Move tool registration to each extension's own `IServiceCollection` contributor or use the existing `IExtensionLoader` mechanism. Gateway should discover these at runtime, not compile time.
+
+---
+
+### 🔴 HIGH — Gateway.Contracts Depends on Agent.Core (Contracts.csproj line 9)
+
+**What:** `Gateway.Contracts` (the "lightweight shared types" package) has a `<ProjectReference>` to `Agent.Core`.
+
+**Why it's wrong:** The documented contract is "Domain only." Contracts should be the thinnest possible shared surface. Having it depend on Agent.Core means every consumer (14 projects reference Contracts) transitively pulls in the agent runtime. The coupling points are:
+- `IAgentToolFactory` uses `IAgentTool` from `Agent.Core.Tools`
+- `IAgentHandle` uses `AgentState` from `Agent.Core.Types`
+- `IAgentHandleInspector` uses `IAgentTool` from `Agent.Core.Tools`
+- `CommandModels.cs` uses `IAgentTool` for `ResolveSessionTool` delegate
+
+**Impact:** "Lightweight contracts" is a fiction when it transitively includes the full agent loop engine. Extensions that only need session/config contracts get the entire agent runtime as baggage.
+
+**Fix:** Either:
+(a) Extract `IAgentTool`, `AgentToolResult`, and related types into a true leaf package (`Agent.Abstractions`) with zero deps, or
+(b) Move the agent-coupled interfaces (`IAgentHandle`, `IAgentToolFactory`, `IAgentHandleInspector`) up out of Contracts into a separate `Gateway.Agent` bridge.
+
+---
+
+### 🟡 MEDIUM — Gateway.Abstractions is a Dead Shim (3 files, all type-forwards)
+
+**What:** `Gateway.Abstractions` contains only:
+- `TypeForwards.cs` — 98 type-forward declarations
+- `IApiContributor.cs` — 1 interface
+- `IEndpointContributor.cs` — 1 interface
+
+All real types live in `Gateway.Contracts` and `Domain`, using `BotNexus.Gateway.Abstractions.*` namespaces. Only 3 projects reference Abstractions directly (SignalR extension, Gateway, and itself).
+
+**Why it matters:** The split between Contracts and Abstractions is confusing. Types in Contracts use the `BotNexus.Gateway.Abstractions` namespace. Abstractions exists only to forward types and hold 2 ASP.NET-dependent interfaces. New contributors will struggle to know where things belong.
+
+**Fix:** Consider merging the two — move `IApiContributor` and `IEndpointContributor` into Contracts (they already reference ASP.NET via FrameworkReference). Alternatively, rename Contracts to clarify it IS the abstractions layer. The type-forwards can be eliminated once all consumers have been recompiled.
+
+---
+
+### 🟡 MEDIUM — Domain Contains Gateway-Namespaced Types (25 files)
+
+**What:** `BotNexus.Domain/Gateway/Models/` contains 25 files all in the `BotNexus.Gateway.Abstractions.Models` namespace. These are gateway-specific models (`GatewaySession`, `AgentDescriptor`, `SessionReplayBuffer`, `SubAgentSpawnRequest`, etc.) physically in the Domain project but logically belonging to the Gateway layer.
+
+**Why it matters:** Domain's documented purpose is "domain primitives, value objects, and shared models." Having gateway-specific records here (agent health responses, session replay buffers, channel bindings) blurs the boundary between what's a universal domain concept and what's a gateway implementation detail. Domain at 54 files is the 2nd largest project — some of that weight is gateway baggage.
+
+**Fix:** This is a migration artifact and doesn't need urgent action, but future planning specs that touch these models should be aware: the physical location doesn't match the logical layer. A future cleanup could move them to Contracts (where the interfaces that use them already live).
+
+---
+
+### 🟡 MEDIUM — Copilot Provider Hardwired into Gateway
+
+**What:** `Gateway.csproj` has a direct `<ProjectReference>` to `Agent.Providers.Copilot`. The coupling is in `GatewayAuthManager.cs` which calls `CopilotOAuth.RefreshAsync()`.
+
+**Why it's wrong:** All other providers (Anthropic, OpenAI, OpenAICompat) are registered in `Gateway.Api` — the composition root. Copilot gets special treatment because of its OAuth flow. This breaks the pattern where providers are peers and the Gateway doesn't pick favorites.
+
+**Fix:** Extract the Copilot OAuth logic into the provider itself or into a shared auth service that Gateway.Api wires up, alongside the other providers.
+
+---
+
+### 🟡 MEDIUM — Redundant Agent.Providers.Core References
+
+**What:** Multiple projects reference both `Agent.Core` and `Agent.Providers.Core`, but `Agent.Core` already depends on `Providers.Core` transitively. Projects with redundant explicit refs:
+- `BotNexus.Tools` (uses `Providers.Core.Models.Tool` directly)
+- `BotNexus.Cron` (uses `Providers.Core.Models.Tool` directly)
+- `BotNexus.Memory` (uses `Providers.Core.Models.Tool` directly)
+- `BotNexus.Extensions.ProcessTool`
+- `BotNexus.Extensions.ExecTool`
+- `BotNexus.Extensions.Mcp`
+- `BotNexus.Extensions.McpInvoke`
+- `BotNexus.Extensions.WebTools`
+- `BotNexus.Gateway`
+
+**Why it matters:** The `Tool` record type (name, description, JSON schema) used in `IAgentTool.Definition` lives in `Providers.Core.Models`. This means every tool implementation needs a type from the *provider* layer — a naming/placement issue. Tool *definition* is a schema concept; it shouldn't live in a provider package.
+
+**Fix:** Move `Tool` (the schema record) to `Agent.Core.Tools` alongside `IAgentTool`. This eliminates the need for extensions and gateway services to reference `Providers.Core` at all. The redundant `<ProjectReference>` entries can then be removed.
+
+---
+
+### 🟢 LOW — 20 of 34 Contracts Interfaces Have Single Implementation
+
+**What:** 20 out of 34 interfaces in `Gateway.Contracts` have exactly 1 implementation. 2 have 0 implementations (`IAgentHandleInspector`, `IHealthCheckable`).
+
+**Assessment:** This is NOT over-abstraction in this case. The interfaces exist for the extension point/DI contract pattern. Implementations are in the Gateway core; extensions code against the interfaces. This is the correct use of ISP. The 0-implementation interfaces may be speculative, but they're tiny contracts — not a real cost.
+
+**Action:** Monitor `IAgentHandleInspector` and `IHealthCheckable` — if no implementation materializes in the next phase, remove them.
+
+---
+
+### 🟢 LOW — Gateway.Api References Cron and Channels Directly
+
+**What:** `Gateway.Api` has `<ProjectReference>` to `Cron` and `Channels` in addition to `Gateway`. Since `Gateway` already depends on both, these references are redundant unless Api uses types from them directly.
+
+**Action:** Audit whether Api uses types from Cron/Channels directly or only through the Gateway. If transitive, remove the explicit refs.
+
+---
+
+### 🟢 LOW — Extension Cross-Dependencies (Mcp ↔ WebTools ↔ McpInvoke)
+
+**What:** Three extensions form a dependency chain:
+- `Extensions.WebTools` → `Extensions.Mcp`
+- `Extensions.McpInvoke` → `Extensions.Mcp`
+
+**Assessment:** Mcp is acting as a shared library for MCP protocol handling, with McpInvoke and WebTools building on it. This is reasonable — Mcp is the "MCP SDK" and the others are consumers. Not a circular dependency. The chain is linear and shallow.
+
+**Action:** No immediate action, but if Mcp grows, consider splitting its shared types from its tool implementations.
+
+---
+
+## Layering Assessment
+
+**Dependency direction generally flows correctly:** Foundation (Domain, Providers.Core) → Core Runtime (Agent.Core) → Contracts → Services (Sessions, Memory, Tools, Cron) → Gateway → Gateway.Api → CLI.
+
+**Key violations of Dependency Inversion Principle:**
+1. Gateway → Extensions (compile-time, should be runtime discovery) — **HIGH**
+2. Contracts → Agent.Core (heavyweight dep on a "lightweight" package) — **HIGH**
+3. Copilot provider hardwired in Gateway instead of Api composition root — **MEDIUM**
+
+**What's working well:**
+- Agent layer is self-contained (no deps on Gateway/Extensions) ✅
+- Domain has zero project deps ✅
+- Provider implementations are clean peers (only depend on Providers.Core) ✅
+- Channel extensions properly depend on Channels base + Contracts ✅
+- Gateway.Api is clean of extension references ✅
+
+---
+
+## Refactoring Recommendations (Priority Order)
+
+1. **Decouple Gateway from Extensions** — Move tool registration from `InProcessIsolationStrategy` into each extension. Use `IExtensionLoader` or assembly scanning. This is the single highest-impact change.
+
+2. **Create Agent.Abstractions leaf package** — Extract `IAgentTool`, `Tool` (schema record), `AgentToolResult`, `AgentToolContent`, `AgentToolContentType`, `AgentToolUpdateCallback`, `ToolExecutionMode` into a zero-dependency abstractions package. Contracts then depends on this leaf instead of Agent.Core.
+
+3. **Move Copilot OAuth out of Gateway** — The auth refresh belongs in the Copilot provider or a shared auth service, registered in Gateway.Api alongside other providers.
+
+4. **Merge or clarify Abstractions/Contracts** — The current split is a migration artifact. Consider collapsing Abstractions into Contracts with a deprecation path.
+
+5. **Clean up redundant ProjectReferences** — After moving `Tool` to Agent.Core, remove explicit Providers.Core refs from 9 projects.
+
+---
+
+---
+
+# Decision: Gateway runtime tool contribution contract
+
+- **Date:** 2026-05-04
+- **Owner:** Farnsworth
+- **Status:** Proposed (implemented in branch)
+
+## Context
+
+`BotNexus.Gateway` had compile-time references to extension projects (`Skills`, `Mcp`, `McpInvoke`, `WebTools`) and directly instantiated extension tool types in `InProcessIsolationStrategy`, violating the documented dependency direction.
+
+## Decision
+
+Introduce a runtime contribution contract in Gateway contracts:
+
+- `IAgentToolContributor`
+- `AgentToolContributionContext`
+- `AgentToolContribution`
+
+`AssemblyLoadContextExtensionLoader` now discovers and registers `IAgentToolContributor` implementations from extension assemblies. `InProcessIsolationStrategy` invokes contributors per agent/session and appends returned tools/resources, with lifecycle cleanup handled by `InProcessAgentHandle`.
+
+## Consequences
+
+- Gateway no longer needs compile-time `ProjectReference` to those extension projects.
+- Extensions self-register runtime tools while keeping dependency direction extension → gateway contracts.
+- Special runtime behaviors (skills paths, MCP startup, web-search auth wiring) live with the extension code that owns them.
+
+---
+
+# Hermes — Issue #12 agents.defaults test coverage
+
+**Date:** 2026-04-22
+**Status:** Complete
+**Branch:** `test/issue-12-agent-defaults-hermes`
+
+## What I added
+
+### 1. `tests/BotNexus.Gateway.Tests/Configuration/AgentConfigMergerTests.cs`
+Comprehensive merge-contract coverage for `agents.defaults`:
+- memory full inherit
+- memory partial override
+- memory explicit `false`
+- heartbeat partial override
+- fileAccess list replacement
+- fileAccess partial inheritance
+- toolIds inherit when omitted
+- toolIds full replacement when set
+- explicit empty toolIds list replaces defaults
+- null-default passthrough behavior
+- direct presence-aware merge helper coverage for memory/heartbeat
+
+### 2. `tests/BotNexus.Gateway.Tests/PlatformConfigAgentSourceTests.cs`
+Integration coverage for descriptor loading:
+- backward compatibility when no `agents.defaults` exists
+- reserved `defaults` key is not emitted as an `AgentDescriptor`
+- memory inheritance flows into loaded `AgentDescriptor`
+- toolIds inheritance flows into loaded `AgentDescriptor`
+
+### 3. `tests/BotNexus.Gateway.Tests/PlatformConfigurationTests.cs`
+Loader/validation coverage:
+- invalid `agents.defaults.memory.indexing` reports exact field path
+- invalid `agents.defaults.heartbeat.intervalMinutes` reports exact field path
+- invalid `agents.defaults.fileAccess.allowedReadPaths[1]` reports exact field path/index
+- valid `agents.defaults` returns no validation errors
+- `CronConfig` default remains `Enabled = true`
+- `ExtractAgentDefaults` extracts defaults block and strips reserved key
+- `ExtractAgentDefaults` no-op behavior when no defaults block exists
+
+### 4. `tests/BotNexus.Gateway.Tests/Cli/InitCommandTests.cs`
+Scaffold coverage:
+- init scaffold emits `cron.enabled = true`
+- init scaffold emits `agents.defaults.memory.enabled = true`
+
+## Test result
+
+Ran:
+
+```bash
+dotnet test tests/BotNexus.Gateway.Tests --nologo --tl:off
+```
+
+Result:
+- **Passed:** 987
+- **Failed:** 0
+- **Skipped:** 0
+
+## Gaps / findings
+
+- Farnsworth’s merge implementation appears present enough for the contract tests to pass.
+- I hit one compile issue in `PlatformConfigAgentSource` around nullable `JsonElement` handling for raw agent elements; corrected it so tests could run.
+- I did **not** add effective-config API coverage here; that is Bender’s/API-side contract and can land with endpoint implementation.
+- I did **not** add a direct “config file without cron block resolves to enabled=true after full load” integration case because the current model-level default is already covered and scaffold emission is now covered separately.
+
+## Notes for merge
+
+- Keep `scripts/botnexus-sync.sh` out of this test commit; unrelated local file.
+- Branch is safe to cherry-pick or merge on top of Farnsworth’s feature branch.
+
