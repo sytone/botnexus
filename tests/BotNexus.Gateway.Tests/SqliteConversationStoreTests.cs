@@ -123,11 +123,30 @@ public sealed class SqliteConversationStoreTests
     }
 
     [Fact]
-    public async Task ResolveByBindingAsync_WithoutThreadId_MatchesOnAddressOnly()
+    public async Task ResolveByBindingAsync_WithNullThreadId_OnlyMatchesNullThreadBinding()
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
+        // Conversation bound to thread-42 only — no null-thread binding
         var expected = CreateConversation(Agent("agent-a"), "Address", CreateBinding("teams", "channel-1", "thread-42"));
+        await store.CreateAsync(expected);
+
+        // Querying with null threadId should NOT match the thread-42 binding
+        var resolved = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("teams"), "channel-1", null);
+        resolved.ShouldBeNull();
+
+        // But querying with the actual thread-42 should match
+        var resolvedWithThread = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("teams"), "channel-1", "thread-42");
+        resolvedWithThread.ShouldNotBeNull();
+        resolvedWithThread!.ConversationId.ShouldBe(expected.ConversationId);
+    }
+
+    [Fact]
+    public async Task ResolveByBindingAsync_WithNullThreadId_MatchesNullThreadBinding()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var expected = CreateConversation(Agent("agent-a"), "Address", CreateBinding("teams", "channel-1", null));
         await store.CreateAsync(expected);
 
         var resolved = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("teams"), "channel-1", null);
