@@ -219,7 +219,7 @@ public static class GatewayServiceCollectionExtensions
     /// </summary>
     /// <param name="services">Service collection.</param>
     /// <param name="configPath">Optional explicit path to platform config.</param>
-    public static IServiceCollection AddPlatformConfiguration(this IServiceCollection services, string? configPath = null)
+    public static IServiceCollection AddPlatformConfiguration(this IServiceCollection services, string? configPath = null, IConfiguration? configuration = null)
     {
         var fileSystem = new FileSystem();
         var resolvedConfigPath = string.IsNullOrWhiteSpace(configPath)
@@ -229,16 +229,28 @@ public static class GatewayServiceCollectionExtensions
 
         PlatformConfigLoader.EnsureConfigDirectory(configDirectory, fileSystem);
         var config = PlatformConfigLoader.Load(resolvedConfigPath, fileSystem: fileSystem);
-        services.AddOptions<PlatformConfig>()
-            .Configure(options =>
-            {
-                var freshConfig = PlatformConfigLoader.Load(resolvedConfigPath, fileSystem: fileSystem);
-                ApplyPlatformConfig(options, freshConfig);
-            });
-        services.AddSingleton<IOptionsChangeTokenSource<PlatformConfig>>(
-            new PlatformConfigChangeTokenSource(resolvedConfigPath, fileSystem));
-        // Start file watcher for dynamic config reload
-        _ = PlatformConfigLoader.Watch(resolvedConfigPath, fileSystem: fileSystem);
+
+        if (configuration is not null)
+        {
+            // Bind PlatformConfig from the host IConfiguration root (config.json is already in the pipeline).
+            // IOptionsMonitor hot-reload comes free from reloadOnChange: true in Program.cs.
+            services.AddOptions<PlatformConfig>().Bind(configuration);
+            services.AddSingleton<IPostConfigureOptions<PlatformConfig>>(sp =>
+                new PlatformConfigPostConfigure(sp.GetRequiredService<IConfiguration>(), resolvedConfigPath));
+            services.AddSingleton<IValidateOptions<PlatformConfig>, PlatformConfigOptionsValidator>();
+        }
+        else
+        {
+            // Fallback when IConfiguration is not threaded in (e.g. tests or CLI-only usage).
+            // Use a manual load + PostConfigure without hot reload.
+            services.AddOptions<PlatformConfig>()
+                .Configure(options =>
+                {
+                    var freshConfig = PlatformConfigLoader.Load(resolvedConfigPath, fileSystem: fileSystem);
+                    ApplyPlatformConfig(options, freshConfig);
+                });
+        }
+
         services.Replace(ServiceDescriptor.Singleton(serviceProvider =>
             serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue));
         services.TryAddSingleton<GatewayAuthManager>();

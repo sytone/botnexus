@@ -651,14 +651,9 @@ public sealed class PlatformConfigurationTests
         errors.ShouldBeEmpty();
     }
 
-    [Fact]
-    public void PlatformConfigLoader_Watch_CanBeCreatedAndDisposed()
-    {
-        using var fixture = new PlatformConfigFixture();
-        using var watcher = PlatformConfigLoader.Watch(fixture.ConfigPath);
-
-        watcher.ShouldNotBeNull();
-    }
+    // PlatformConfigLoader.Watch was removed in the IConfiguration migration.
+    // Hot reload is now provided by IConfiguration AddJsonFile(reloadOnChange: true).
+    // See PlatformConfigReloadTests for the replacement coverage.
 
     [Fact]
     public async Task PlatformConfigLoader_LoadAsync_WhenReadConcurrently_IsThreadSafe()

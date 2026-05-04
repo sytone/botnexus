@@ -6,6 +6,7 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Channels;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -19,14 +20,35 @@ namespace BotNexus.Extensions.Channels.Telegram;
 public sealed class TelegramChannelAdapter(
     ILogger<TelegramChannelAdapter> logger,
     IOptions<TelegramGatewayOptions> optionsAccessor,
-    IHttpClientFactory httpClientFactory) : ChannelAdapterBase(logger), IStreamEventChannelAdapter
+    IHttpClientFactory httpClientFactory,
+    IConfiguration? configuration = null) : ChannelAdapterBase(logger), IStreamEventChannelAdapter
 {
     private const int StreamingFlushThresholdChars = 100;
 
     private readonly ILogger<TelegramChannelAdapter> _logger = logger;
-    private readonly TelegramGatewayOptions _options = optionsAccessor.Value;
+    private readonly TelegramGatewayOptions _options = ResolveOptions(optionsAccessor, configuration);
     private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
     private readonly ConcurrentDictionary<string, BotRuntime> _bots = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Resolves Telegram options from <see cref="IOptions{T}"/> if populated, or falls back to
+    /// binding from <see cref="IConfiguration"/> when the extension was loaded after the initial
+    /// DI registration pass and <see cref="IOptions{T}"/> was never bound.
+    /// </summary>
+    private static TelegramGatewayOptions ResolveOptions(
+        IOptions<TelegramGatewayOptions> optionsAccessor,
+        IConfiguration? configuration)
+    {
+        var opts = optionsAccessor.Value;
+        if (string.IsNullOrWhiteSpace(opts.BotToken) && opts.Bots.Count == 0 && configuration is not null)
+        {
+            var bound = new TelegramGatewayOptions();
+            configuration.GetSection("channels:telegram").Bind(bound);
+            return bound;
+        }
+
+        return opts;
+    }
 
     /// <summary>
     /// Telegram channel identifier used by BotNexus routing.
