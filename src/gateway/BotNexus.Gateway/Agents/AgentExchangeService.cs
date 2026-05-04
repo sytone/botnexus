@@ -23,7 +23,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
     private readonly ISessionStore _sessionStore;
     private readonly IOptions<Gateway.Configuration.GatewayOptions> _options;
     private readonly ILogger<AgentExchangeService> _logger;
-    private readonly PlatformConfig _platformConfig;
+    private readonly IOptions<PlatformConfig> _platformConfigOptions;
     private readonly CrossWorldChannelAdapter _crossWorldChannelAdapter;
     private readonly string _sourceWorldId;
 
@@ -33,7 +33,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
         ISessionStore sessionStore,
         IOptions<Gateway.Configuration.GatewayOptions> options,
         ILogger<AgentExchangeService> logger,
-        PlatformConfig? platformConfig = null,
+        IOptions<PlatformConfig>? platformConfigOptions = null,
         CrossWorldChannelAdapter? crossWorldChannelAdapter = null)
     {
         _registry = registry;
@@ -41,11 +41,11 @@ public sealed class AgentExchangeService : IAgentExchangeService
         _sessionStore = sessionStore;
         _options = options;
         _logger = logger;
-        _platformConfig = platformConfig ?? new PlatformConfig();
+        _platformConfigOptions = platformConfigOptions ?? Options.Create(new PlatformConfig());
         _crossWorldChannelAdapter = crossWorldChannelAdapter ?? new CrossWorldChannelAdapter(
             NullLogger<CrossWorldChannelAdapter>.Instance,
             new HttpClient());
-        _sourceWorldId = WorldIdentityResolver.Resolve(_platformConfig).Id;
+        _sourceWorldId = WorldIdentityResolver.Resolve(_platformConfigOptions.Value).Id;
     }
 
     /// <inheritdoc />
@@ -332,7 +332,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
 
     private CrossWorldPermissionConfig? ResolveOutboundPermission(string worldId, AgentId initiatorId)
     {
-        var permission = _platformConfig.Gateway?.CrossWorldPermissions?
+        var permission = _platformConfigOptions.Value.Gateway?.CrossWorldPermissions?
             .FirstOrDefault(item => string.Equals(item.TargetWorldId, worldId, StringComparison.OrdinalIgnoreCase));
         if (permission is null)
             return null;
@@ -347,7 +347,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
 
     private CrossWorldPeerConfig? ResolvePeer(string worldId)
     {
-        var peers = _platformConfig.Gateway?.CrossWorld?.Peers;
+        var peers = _platformConfigOptions.Value.Gateway?.CrossWorld?.Peers;
         if (peers is null || peers.Count == 0)
             return null;
 
@@ -362,7 +362,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
 
     private CrossWorldAgentReference ResolveTarget(CrossWorldAgentReference fallback, AgentId requestedTarget)
     {
-        var explicitTargets = _platformConfig.Gateway?.CrossWorld?.Agents;
+        var explicitTargets = _platformConfigOptions.Value.Gateway?.CrossWorld?.Agents;
         if (explicitTargets is null || !explicitTargets.TryGetValue(requestedTarget.Value, out var configuredTarget))
             return fallback;
 
