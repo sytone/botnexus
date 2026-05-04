@@ -156,6 +156,71 @@ public sealed class InProcessIsolationStrategyTests
         messages[4].ShouldBe(new AssistantAgentMessage("You're welcome!"));
     }
 
+    [Fact]
+    public async Task CreateAsync_WithWildcardToolIds_ReturnsAllToolsLikeEmptyList()
+    {
+        // toolIds: ["*"] should behave identically to toolIds: [] (all tools available)
+        var strategy = CreateStrategyWithRegisteredModel();
+        var wildcardDescriptor = new AgentDescriptor
+        {
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-wc"),
+            DisplayName = "Wildcard Agent",
+            ModelId = "test-model",
+            ApiProvider = "test-provider",
+            SystemPrompt = "You are a test agent.",
+            ToolIds = ["*"]
+        };
+        var emptyDescriptor = new AgentDescriptor
+        {
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-empty"),
+            DisplayName = "Empty ToolIds Agent",
+            ModelId = "test-model",
+            ApiProvider = "test-provider",
+            SystemPrompt = "You are a test agent.",
+            ToolIds = []
+        };
+
+        var wildcardHandle = await strategy.CreateAsync(wildcardDescriptor, new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-wc") });
+        var emptyHandle = await strategy.CreateAsync(emptyDescriptor, new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-empty") });
+
+        var wildcardTools = GetTools(wildcardHandle);
+        var emptyTools = GetTools(emptyHandle);
+
+        wildcardTools.Count.ShouldBe(emptyTools.Count);
+        wildcardTools.Select(t => t.Name).ShouldBe(emptyTools.Select(t => t.Name), ignoreOrder: true);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithWildcardToolIds_IncludesWorkspaceTools()
+    {
+        // Ensures workspace tools (like read) are not filtered out when toolIds is ["*"]
+        var strategy = CreateStrategyWithRegisteredModel();
+        var descriptor = new AgentDescriptor
+        {
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-wc2"),
+            DisplayName = "Wildcard Agent 2",
+            ModelId = "test-model",
+            ApiProvider = "test-provider",
+            SystemPrompt = "You are a test agent.",
+            ToolIds = ["*"]
+        };
+
+        var handle = await strategy.CreateAsync(descriptor, new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-wc2") });
+        var tools = GetTools(handle);
+
+        // StaticAgentToolFactory always registers a ReadTool — it must be present with wildcard
+        tools.ShouldContain(t => string.Equals(t.Name, "read", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static IReadOnlyList<IAgentTool> GetTools(IAgentHandle handle)
+    {
+        var agentField = handle.GetType().GetField("_agent", BindingFlags.Instance | BindingFlags.NonPublic);
+        agentField.ShouldNotBeNull();
+        var agent = agentField!.GetValue(handle) as BotNexus.Agent.Core.Agent;
+        agent.ShouldNotBeNull();
+        return agent!.State.Tools;
+    }
+
     private static InProcessIsolationStrategy CreateStrategyWithRegisteredModel()
     {
         var modelRegistry = new ModelRegistry();
