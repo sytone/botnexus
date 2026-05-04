@@ -314,7 +314,9 @@ public sealed class TelegramChannelAdapter(
 
     private async Task HandleUpdateAsync(BotRuntime runtime, TelegramUpdate update, CancellationToken cancellationToken)
     {
-        var message = update.Message ?? update.EditedMessage ?? update.ChannelPost;
+        // Only process real user messages \u2014 not channel posts (no authenticated sender)
+        var message = update.Message
+            ?? (runtime.Config.ProcessEditedMessages ? update.EditedMessage : null);
         if (message?.Chat is null || string.IsNullOrWhiteSpace(message.Text))
             return;
 
@@ -326,7 +328,20 @@ public sealed class TelegramChannelAdapter(
         }
 
         var chatIdText = chatId.ToString(CultureInfo.InvariantCulture);
-        var senderId = (message.From?.Id ?? chatId).ToString(CultureInfo.InvariantCulture);
+        if (message.From is null)
+        {
+            _logger.LogDebug("bot '{BotName}' ignored message with no sender (updateId={UpdateId})", runtime.BotName, update.UpdateId);
+            return;
+        }
+
+        var fromId = message.From.Id;
+        if (!IsUserAllowed(runtime.Config, fromId))
+        {
+            _logger.LogDebug("bot '{BotName}' ignored message from unauthorized user {UserId}", runtime.BotName, fromId);
+            return;
+        }
+
+        var senderId = message.From.Id.ToString(CultureInfo.InvariantCulture);
 
         await DispatchInboundAsync(new InboundMessage
         {
@@ -439,6 +454,9 @@ public sealed class TelegramChannelAdapter(
 
     private static bool IsChatAllowed(TelegramBotConfig config, long chatId)
         => config.AllowedChatIds.Count == 0 || config.AllowedChatIds.Contains(chatId);
+
+    private static bool IsUserAllowed(TelegramBotConfig config, long userId)
+        => config.AllowedUserIds.Count == 0 || config.AllowedUserIds.Contains(userId);
 
     private static void EnsureChatAllowed(TelegramBotConfig config, long chatId)
     {
