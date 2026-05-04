@@ -1011,3 +1011,6 @@ public sealed class PlatformConfigurationTests
         registration.ShouldBeNull("PlatformConfig must not be registered as a singleton; use IOptionsMonitor<PlatformConfig>");
     }
 }
+
+// Note: GetDefaultHomePath(IFileSystem) was dead code removed in refactor/iconfiguration-cleanup.
+// Confirmed not called by any gateway or CLI code (only defined in PlatformConfigLoader).

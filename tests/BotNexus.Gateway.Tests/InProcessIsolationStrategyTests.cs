@@ -8,6 +8,7 @@ using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Isolation;
+using Microsoft.Extensions.Options;
 using BotNexus.Gateway.Tools;
 using BotNexus.Memory;
 using BotNexus.Memory.Models;
@@ -43,7 +44,7 @@ public sealed class InProcessIsolationStrategyTests
         var llmClient = new LlmClient(new ApiProviderRegistry(), new ModelRegistry());
         var strategy = new InProcessIsolationStrategy(
             llmClient,
-            new GatewayAuthManager(new PlatformConfig(), NullLogger<GatewayAuthManager>.Instance, new FileSystem()),
+            new GatewayAuthManager(new StaticOptionsMonitor<PlatformConfig>(new PlatformConfig()), NullLogger<GatewayAuthManager>.Instance, new FileSystem()),
             new PassthroughContextBuilder(),
             new StaticAgentToolFactory(),
             new TestWorkspaceManager(),
@@ -173,7 +174,7 @@ public sealed class InProcessIsolationStrategyTests
         var llmClient = new LlmClient(new ApiProviderRegistry(), modelRegistry);
         return new InProcessIsolationStrategy(
             llmClient,
-            new GatewayAuthManager(new PlatformConfig(), NullLogger<GatewayAuthManager>.Instance, new FileSystem()),
+            new GatewayAuthManager(new StaticOptionsMonitor<PlatformConfig>(new PlatformConfig()), NullLogger<GatewayAuthManager>.Instance, new FileSystem()),
             new PassthroughContextBuilder(),
             new StaticAgentToolFactory(),
             new TestWorkspaceManager(),
@@ -247,4 +248,11 @@ public sealed class InProcessIsolationStrategyTests
         public Task<MemoryStoreStats> GetStatsAsync(CancellationToken ct = default) => Task.FromResult(new MemoryStoreStats(0, 0, null));
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
+}
+
+file sealed class StaticOptionsMonitor<T>(T value) : IOptionsMonitor<T>
+{
+    public T CurrentValue => value;
+    public T Get(string? name) => value;
+    public IDisposable? OnChange(Action<T, string?> listener) => null;
 }

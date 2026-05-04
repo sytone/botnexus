@@ -7,6 +7,7 @@ using BotNexus.Gateway.Federation;
 using BotNexus.Gateway.Sessions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using Moq;
 
 namespace BotNexus.Gateway.Tests;
@@ -51,13 +52,14 @@ public sealed class CrossWorldFederationControllerTests
         supervisor.Setup(s => s.GetOrCreateAsync(AgentId.From("leela"), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(handle.Object);
         var sessions = new InMemorySessionStore();
+        var platformConfigMonitor = new StaticOptionsMonitor<PlatformConfig>(platformConfig);
 
         var controller = new CrossWorldFederationController(
             registry.Object,
             supervisor.Object,
             sessions,
-            new CrossWorldInboundAuthService(platformConfig),
-            platformConfig)
+            new CrossWorldInboundAuthService(platformConfigMonitor),
+            platformConfigMonitor)
         {
             ControllerContext = new ControllerContext
             {
@@ -119,12 +121,13 @@ public sealed class CrossWorldFederationControllerTests
 
         var registry = new Mock<IAgentRegistry>();
         registry.Setup(r => r.Contains(AgentId.From("leela"))).Returns(true);
+        var platformConfigMonitor2 = new StaticOptionsMonitor<PlatformConfig>(platformConfig);
         var controller = new CrossWorldFederationController(
             registry.Object,
             Mock.Of<IAgentSupervisor>(),
             new InMemorySessionStore(),
-            new CrossWorldInboundAuthService(platformConfig),
-            platformConfig)
+            new CrossWorldInboundAuthService(platformConfigMonitor2),
+            platformConfigMonitor2)
         {
             ControllerContext = new ControllerContext
             {
@@ -146,4 +149,11 @@ public sealed class CrossWorldFederationControllerTests
 
         result.Result.ShouldBeOfType<UnauthorizedObjectResult>();
     }
+}
+
+file sealed class StaticOptionsMonitor<T>(T value) : IOptionsMonitor<T>
+{
+    public T CurrentValue => value;
+    public T Get(string? name) => value;
+    public IDisposable? OnChange(Action<T, string?> listener) => null;
 }

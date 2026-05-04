@@ -1,6 +1,7 @@
 using System.Reflection;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using System.IO.Abstractions.TestingHelpers;
 
 namespace BotNexus.Gateway.Tests;
@@ -266,7 +267,8 @@ public sealed class GatewayAuthManagerTests : IDisposable
 
     private GatewayAuthManager CreateManager(PlatformConfig platformConfig, bool usePrimaryAuthPath = true)
     {
-        var manager = new GatewayAuthManager(platformConfig, NullLogger<GatewayAuthManager>.Instance, _fileSystem);
+        var monitor = new StaticOptionsMonitor<PlatformConfig>(platformConfig);
+        var manager = new GatewayAuthManager(monitor, NullLogger<GatewayAuthManager>.Instance, _fileSystem);
         var authPathField = typeof(GatewayAuthManager).GetField("_authFilePath", BindingFlags.NonPublic | BindingFlags.Instance);
         var legacyAuthPathField = typeof(GatewayAuthManager).GetField("_legacyAuthFilePath", BindingFlags.NonPublic | BindingFlags.Instance);
         authPathField.ShouldNotBeNull();
@@ -283,5 +285,13 @@ public sealed class GatewayAuthManagerTests : IDisposable
 
         Environment.SetEnvironmentVariable(name, value);
     }
+}
+
+/// <summary>Minimal IOptionsMonitor wrapper for tests that don't need change callbacks.</summary>
+file sealed class StaticOptionsMonitor<T>(T value) : IOptionsMonitor<T>
+{
+    public T CurrentValue => value;
+    public T Get(string? name) => value;
+    public IDisposable? OnChange(Action<T, string?> listener) => null;
 }
 

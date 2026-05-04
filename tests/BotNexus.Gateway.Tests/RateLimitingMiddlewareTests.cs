@@ -3,6 +3,7 @@ using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Api;
 using BotNexus.Gateway.Configuration;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Options;
 using System.Reflection;
 
 namespace BotNexus.Gateway.Tests;
@@ -331,8 +332,8 @@ public sealed class RateLimitingMiddlewareTests
         rateLimit.WindowSeconds.ShouldBe(45);
     }
 
-    private static PlatformConfig CreateConfig(int requestsPerMinute, int windowSeconds)
-        => new()
+    private static IOptions<PlatformConfig> CreateConfig(int requestsPerMinute, int windowSeconds)
+        => Microsoft.Extensions.Options.Options.Create(new PlatformConfig
         {
             Gateway = new GatewaySettingsConfig
             {
@@ -343,7 +344,7 @@ public sealed class RateLimitingMiddlewareTests
                     WindowSeconds = windowSeconds
                 }
             }
-        };
+        });
 
     private static DefaultHttpContext CreateContext(string remoteIpAddress)
     {
