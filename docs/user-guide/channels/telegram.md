@@ -6,7 +6,7 @@ BotNexus supports Telegram as a first-class channel via the Telegram Bot API. Th
 
 ### 1. Create a bot
 
-Open Telegram and message **@BotFather**. Run `/newbot`, follow the prompts, and save the token it gives you (e.g. `7123456789:AAFxxx...`).
+Open Telegram and message **@BotFather**. Run `/newbot`, follow the prompts, and save the token it gives you (e.g. `1234567890:AAFxxxxxxxxxx...`).
 
 ### 2. Find your Telegram user ID
 
@@ -20,8 +20,8 @@ Add a `channels.telegram` section to `~/.botnexus/config.json`:
 {
   "channels": {
     "telegram": {
-      "botToken": "7123456789:AAFxxx...",
-      "agentId": "larry",
+      "botToken": "YOUR_BOT_TOKEN",
+      "agentId": "my-agent",
       "allowedChatIds": [1234567890],
       "allowedUserIds": [1234567890],
       "pollingTimeoutSeconds": 30
@@ -83,15 +83,15 @@ Each key under `bots` is a logical bot name. Each bot maps to its own token and 
   "channels": {
     "telegram": {
       "bots": {
-        "larry-bot": {
-          "botToken": "111:AAA...",
-          "agentId": "larry",
+        "personal-bot": {
+          "botToken": "BOT_TOKEN_1",
+          "agentId": "my-agent",
           "allowedChatIds": [1234567890],
           "allowedUserIds": [1234567890]
         },
-        "assistant-bot": {
-          "botToken": "222:BBB...",
-          "agentId": "assistant",
+        "helper-bot": {
+          "botToken": "BOT_TOKEN_2",
+          "agentId": "assistant-agent",
           "allowedChatIds": [1234567890],
           "allowedUserIds": [1234567890]
         }
