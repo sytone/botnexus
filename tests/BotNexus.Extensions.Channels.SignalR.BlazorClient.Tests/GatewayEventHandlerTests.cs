@@ -125,20 +125,24 @@ public sealed class GatewayEventHandlerTests
     }
 
     [Fact]
-    public void HandleSessionReset_clears_state_and_adds_system_message()
+    public void HandleSessionReset_preserves_history_and_adds_session_boundary_divider()
     {
         var agent = _store.GetAgent("agent-1")!;
         var conv = agent.Conversations["conv-1"];
         agent.SessionId = "sess-1";
-        conv.Messages.Add(new ChatMessage("User", "before", DateTimeOffset.UtcNow));
+        conv.Messages.Add(new ChatMessage("User", "before reset", DateTimeOffset.UtcNow));
         conv.HistoryLoaded = true;
 
         _handler.HandleSessionReset(new SessionResetPayload("agent-1", "sess-1"));
 
         Assert.Null(agent.SessionId);
         Assert.False(agent.IsStreaming);
-        Assert.False(conv.HistoryLoaded);
-        Assert.Single(conv.Messages);
-        Assert.Equal("System", conv.Messages[0].Role);
+        // History is preserved — session reset only clears agent context, not visible history
+        Assert.True(conv.HistoryLoaded);
+        Assert.Equal(2, conv.Messages.Count); // original + divider
+        Assert.Equal("User", conv.Messages[0].Role);
+        Assert.Equal("before reset", conv.Messages[0].Content);
+        Assert.Equal("System", conv.Messages[1].Role);
+        Assert.Contains("───", conv.Messages[1].Content); // visual divider
     }
 }

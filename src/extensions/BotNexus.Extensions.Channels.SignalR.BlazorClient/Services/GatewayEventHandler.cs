@@ -284,9 +284,11 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             conv.StreamState.ThinkingBuffer = "";
             conv.StreamState.IsStreaming = false;
             conv.StreamState.ActiveToolCalls.Clear();
-            conv.HistoryLoaded = false;
-            conv.Messages.Clear();
-            conv.Messages.Add(new ChatMessage("System", "Session reset. Start a new conversation.", DateTimeOffset.UtcNow));
+            // Do NOT clear conv.Messages or set HistoryLoaded=false.
+            // Session reset clears the agent's context window — it does not
+            // erase conversation history. The portal should keep showing all
+            // prior messages with a visual divider marking the new session.
+            conv.Messages.Add(new ChatMessage("System", "─── New session started ───", DateTimeOffset.UtcNow));
         }
 
         agent.ActiveToolCalls.Clear();
