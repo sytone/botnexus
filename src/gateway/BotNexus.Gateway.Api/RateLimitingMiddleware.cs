@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Configuration;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Api;
 
@@ -16,7 +17,7 @@ public sealed class RateLimitingMiddleware
     private static readonly TimeSpan MinimumRetryAfter = TimeSpan.FromSeconds(1);
 
     private readonly RequestDelegate _next;
-    private readonly PlatformConfig _platformConfig;
+    private readonly IOptions<PlatformConfig> _platformConfig;
     private readonly ConcurrentDictionary<string, ClientWindow> _clientWindows = new(StringComparer.Ordinal);
     private long _lastCleanupTicks;
 
@@ -25,7 +26,7 @@ public sealed class RateLimitingMiddleware
     /// </summary>
     /// <param name="next">The next middleware in the pipeline.</param>
     /// <param name="platformConfig">Loaded platform configuration.</param>
-    public RateLimitingMiddleware(RequestDelegate next, PlatformConfig platformConfig)
+    public RateLimitingMiddleware(RequestDelegate next, IOptions<PlatformConfig> platformConfig)
     {
         _next = next;
         _platformConfig = platformConfig;
@@ -39,7 +40,7 @@ public sealed class RateLimitingMiddleware
     public async Task InvokeAsync(HttpContext context)
     {
         // Rate limiting is opt-in. Disabled by default for local development.
-        var configuredRateLimit = _platformConfig.Gateway?.RateLimit;
+        var configuredRateLimit = _platformConfig.Value.Gateway?.RateLimit;
         if (configuredRateLimit?.Enabled != true)
         {
             await _next(context);

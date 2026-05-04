@@ -556,7 +556,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
 
     private GatewayAuthManager CreateGatewayAuthManagerWithTempAuthPath()
     {
-        var authManager = new GatewayAuthManager(new PlatformConfig(), NullLogger<GatewayAuthManager>.Instance, new FileSystem());
+        var authManager = new GatewayAuthManager(new StaticOptionsMonitor<PlatformConfig>(new PlatformConfig()), NullLogger<GatewayAuthManager>.Instance, new FileSystem());
         var authPathField = typeof(GatewayAuthManager).GetField("_authFilePath", BindingFlags.NonPublic | BindingFlags.Instance);
         authPathField.ShouldNotBeNull();
         authPathField!.SetValue(authManager, Path.Combine(_configDirectory, "auth.json"));
@@ -818,4 +818,11 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         public IReadOnlyList<Location> GetAll()
             => [];
     }
+}
+
+file sealed class StaticOptionsMonitor<T>(T value) : IOptionsMonitor<T>
+{
+    public T CurrentValue => value;
+    public T Get(string? name) => value;
+    public IDisposable? OnChange(Action<T, string?> listener) => null;
 }

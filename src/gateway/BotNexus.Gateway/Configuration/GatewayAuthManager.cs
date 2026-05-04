@@ -4,6 +4,7 @@ using System.IO.Abstractions;
 using BotNexus.Agent.Providers.Copilot;
 using BotNexus.Agent.Providers.Core;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Configuration;
 
@@ -13,7 +14,7 @@ namespace BotNexus.Gateway.Configuration;
 public sealed class GatewayAuthManager
 {
     private const string AuthFileName = "auth.json";
-    private readonly PlatformConfig _platformConfig;
+    private readonly IOptionsMonitor<PlatformConfig> _platformConfig;
     private readonly ILogger<GatewayAuthManager> _logger;
     private readonly IFileSystem _fileSystem;
     private readonly string _authFilePath;
@@ -22,7 +23,7 @@ public sealed class GatewayAuthManager
     private Dictionary<string, AuthEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
     private bool _loaded;
 
-    public GatewayAuthManager(PlatformConfig platformConfig, ILogger<GatewayAuthManager> logger, IFileSystem fileSystem)
+    public GatewayAuthManager(IOptionsMonitor<PlatformConfig> platformConfig, ILogger<GatewayAuthManager> logger, IFileSystem fileSystem)
     {
         _platformConfig = platformConfig;
         _logger = logger;
@@ -45,8 +46,8 @@ public sealed class GatewayAuthManager
         if (TryGetAuthEntry(provider, out var entry) && !string.IsNullOrWhiteSpace(entry.Endpoint))
             return entry.Endpoint;
 
-        if (_platformConfig.Providers is not null &&
-            TryGetProviderConfig(_platformConfig.Providers, provider, out var providerConfig) &&
+        if (_platformConfig.CurrentValue.Providers is not null &&
+            TryGetProviderConfig(_platformConfig.CurrentValue.Providers, provider, out var providerConfig) &&
             !string.IsNullOrWhiteSpace(providerConfig?.BaseUrl))
             return providerConfig.BaseUrl;
 
@@ -80,12 +81,12 @@ public sealed class GatewayAuthManager
 
     private async Task<string?> ResolveProviderConfigApiKeyAsync(string provider, CancellationToken cancellationToken)
     {
-        if (_platformConfig.Providers is null)
+        if (_platformConfig.CurrentValue.Providers is null)
         {
             return null;
         }
 
-        if (!TryGetProviderConfig(_platformConfig.Providers, provider, out var providerConfig) ||
+        if (!TryGetProviderConfig(_platformConfig.CurrentValue.Providers, provider, out var providerConfig) ||
             string.IsNullOrWhiteSpace(providerConfig?.ApiKey))
         {
             return null;

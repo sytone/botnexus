@@ -253,7 +253,7 @@ using (var bootstrapLoggerFactory = new Serilog.Extensions.Logging.SerilogLogger
 
 var app = builder.Build();
 
-var platformConfig = app.Services.GetRequiredService<PlatformConfig>();
+var platformConfig = app.Services.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue;
 var worldDescriptor = WorldDescriptorBuilder.Build(
     platformConfig,
     app.Services.GetRequiredService<IAgentRegistry>(),

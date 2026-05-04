@@ -251,8 +251,6 @@ public static class GatewayServiceCollectionExtensions
                 });
         }
 
-        services.Replace(ServiceDescriptor.Singleton(serviceProvider =>
-            serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue));
         services.TryAddSingleton<GatewayAuthManager>();
         services.TryAddSingleton<ILocationResolver>(serviceProvider =>
             new DefaultLocationResolver(

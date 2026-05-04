@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
+using Microsoft.Extensions.Options;
 using BotNexus.Gateway.Hooks;
 using BotNexus.Gateway.Isolation;
 using BotNexus.Gateway.Tools;
@@ -147,7 +148,7 @@ public sealed class ToolHookWiringTests
 
         return new InProcessIsolationStrategy(
             llmClient,
-            new GatewayAuthManager(new PlatformConfig(), NullLogger<GatewayAuthManager>.Instance, new FileSystem()),
+            new GatewayAuthManager(new StaticOptionsMonitor<PlatformConfig>(new PlatformConfig()), NullLogger<GatewayAuthManager>.Instance, new FileSystem()),
             new PassthroughContextBuilder(),
             new StaticToolFactory(),
             new StubWorkspaceManager(),
@@ -221,4 +222,11 @@ public sealed class ToolHookWiringTests
         public Task<TResult?> HandleAsync(TEvent hookEvent, CancellationToken ct = default)
             => Task.FromResult(handler(hookEvent));
     }
+}
+
+file sealed class StaticOptionsMonitor<T>(T value) : IOptionsMonitor<T>
+{
+    public T CurrentValue => value;
+    public T Get(string? name) => value;
+    public IDisposable? OnChange(Action<T, string?> listener) => null;
 }

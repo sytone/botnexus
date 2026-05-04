@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Federation;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 
 namespace BotNexus.Gateway.Api.Controllers;
@@ -24,9 +25,9 @@ public sealed class CrossWorldFederationController(
     IAgentSupervisor supervisor,
     ISessionStore sessionStore,
     CrossWorldInboundAuthService inboundAuthService,
-    PlatformConfig platformConfig) : ControllerBase
+    IOptionsMonitor<PlatformConfig> platformConfig) : ControllerBase
 {
-    private readonly string _localWorldId = WorldIdentityResolver.Resolve(platformConfig).Id;
+    private readonly string _localWorldId = WorldIdentityResolver.Resolve(platformConfig.CurrentValue).Id;
 
     /// <summary>
     /// Executes relay async.

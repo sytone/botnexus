@@ -30,10 +30,7 @@ public static class PlatformConfigLoader
     public static string GetDefaultConfigDirectory(IFileSystem fileSystem)
         => new BotNexusHome(fileSystem).RootPath;
 
-    public static string GetDefaultHomePath(IFileSystem fileSystem)
-        => GetDefaultConfigDirectory(fileSystem);
-
-    public static string GetDefaultConfigPath(IFileSystem fileSystem)
+        public static string GetDefaultConfigPath(IFileSystem fileSystem)
         => Path.Combine(GetDefaultConfigDirectory(fileSystem), "config.json");
 
     /// <summary>Loads config from disk and optionally validates it.</summary>
