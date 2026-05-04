@@ -10,7 +10,7 @@ Open Telegram and message **@BotFather**. Run `/newbot`, follow the prompts, and
 
 ### 2. Find your Telegram user ID
 
-Message **@userinfobot** on Telegram — it replies with your numeric user ID (e.g. `5067802539`).
+Message **@userinfobot** on Telegram — it replies with your numeric user ID (e.g. `1234567890`).
 
 ### 3. Configure the bot
 
@@ -22,8 +22,8 @@ Add a `channels.telegram` section to `~/.botnexus/config.json`:
     "telegram": {
       "botToken": "7123456789:AAFxxx...",
       "agentId": "larry",
-      "allowedChatIds": [5067802539],
-      "allowedUserIds": [5067802539],
+      "allowedChatIds": [1234567890],
+      "allowedUserIds": [1234567890],
       "pollingTimeoutSeconds": 30
     }
   }
@@ -86,14 +86,14 @@ Each key under `bots` is a logical bot name. Each bot maps to its own token and 
         "larry-bot": {
           "botToken": "111:AAA...",
           "agentId": "larry",
-          "allowedChatIds": [5067802539],
-          "allowedUserIds": [5067802539]
+          "allowedChatIds": [1234567890],
+          "allowedUserIds": [1234567890]
         },
         "assistant-bot": {
           "botToken": "222:BBB...",
           "agentId": "assistant",
-          "allowedChatIds": [5067802539],
-          "allowedUserIds": [5067802539]
+          "allowedChatIds": [1234567890],
+          "allowedUserIds": [1234567890]
         }
       }
     }
