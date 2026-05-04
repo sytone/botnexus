@@ -835,6 +835,17 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                         "Fan-out delivered to {ChannelType}:{ChannelAddress} for session {SessionId}",
                         binding.ChannelType, binding.ChannelAddress, sessionId);
                 }
+                catch (BotNexus.Gateway.Abstractions.Channels.StaleChannelConnectionException ex)
+                {
+                    // Self-heal: demote stale bindings to Muted so future fan-outs skip them.
+                    _logger.LogWarning(
+                        ex,
+                        "Fan-out: stale connection for binding {BindingId} in conversation {ConversationId}. Demoting to Muted.",
+                        ex.BindingId, ex.ConversationId);
+
+                    if (session?.Session.ConversationId is { } convId)
+                        await _conversationRouter.MuteBindingAsync(convId, ex.BindingId, cancellationToken);
+                }
                 catch (Exception ex)
                 {
                     _logger.LogWarning(

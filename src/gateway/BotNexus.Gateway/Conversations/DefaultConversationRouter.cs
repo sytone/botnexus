@@ -254,4 +254,53 @@ public sealed class DefaultConversationRouter : IConversationRouter
             .Where(b => originatingBindingId is null || !string.Equals(b.BindingId, originatingBindingId, StringComparison.Ordinal))
             .ToList();
     }
+
+    /// <inheritdoc />
+    public async Task MuteBindingAsync(ConversationId conversationId, string bindingId, CancellationToken ct = default)
+    {
+        var conversation = await _conversationStore.GetAsync(conversationId, ct);
+        if (conversation is null)
+        {
+            _logger.LogDebug("MuteBinding: conversation {ConversationId} not found", conversationId);
+            return;
+        }
+
+        var binding = conversation.ChannelBindings.FirstOrDefault(b =>
+            string.Equals(b.BindingId, bindingId, StringComparison.Ordinal));
+
+        if (binding is null)
+        {
+            _logger.LogDebug("MuteBinding: binding {BindingId} not found in conversation {ConversationId}", bindingId, conversationId);
+            return;
+        }
+
+        if (binding.Mode == BindingMode.Muted)
+            return;
+
+        binding.Mode = BindingMode.Muted;
+        await _conversationStore.SaveAsync(conversation, ct);
+        _logger.LogInformation("MuteBinding: binding {BindingId} ({ChannelType}:{ChannelAddress}) demoted to Muted in conversation {ConversationId}",
+            bindingId, binding.ChannelType, binding.ChannelAddress, conversationId);
+    }
+
+    /// <inheritdoc />
+    public async Task MuteBindingByAddressAsync(AgentId? agentId, ChannelKey channelType, string channelAddress, CancellationToken ct = default)
+    {
+        var conversations = await _conversationStore.ListAsync(agentId, ct);
+        foreach (var conversation in conversations)
+        {
+            var binding = conversation.ChannelBindings.FirstOrDefault(b =>
+                b.ChannelType.Equals(channelType) &&
+                string.Equals(b.ChannelAddress, channelAddress, StringComparison.Ordinal) &&
+                b.Mode != BindingMode.Muted);
+
+            if (binding is null)
+                continue;
+
+            binding.Mode = BindingMode.Muted;
+            await _conversationStore.SaveAsync(conversation, ct);
+            _logger.LogInformation("MuteBindingByAddress: binding {BindingId} ({ChannelType}:{ChannelAddress}) demoted to Muted in conversation {ConversationId}",
+                binding.BindingId, channelType, channelAddress, conversation.ConversationId);
+        }
+    }
 }
