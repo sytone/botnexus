@@ -24,7 +24,6 @@ using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Security;
 using BotNexus.Gateway.Federation;
 using BotNexus.Gateway.Channels;
-using BotNexus.Extensions.Skills;
 using BotNexus.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -145,10 +144,6 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<IHookDispatcher>(sp =>
         {
             var dispatcher = new HookDispatcher();
-            dispatcher.Register<BeforePromptBuildEvent, BeforePromptBuildResult>(
-                new SkillPromptHookHandler(
-                    sp.GetRequiredService<IAgentWorkspaceManager>(),
-                    sp.GetRequiredService<IAgentRegistry>()));
             dispatcher.Register<BeforeToolCallEvent, BeforeToolCallResult>(
                 sp.GetRequiredService<ToolPolicyHookHandler>());
             return dispatcher;

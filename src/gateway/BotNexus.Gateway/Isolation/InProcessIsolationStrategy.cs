@@ -22,10 +22,6 @@ using BotNexus.Gateway.Security;
 using BotNexus.Gateway.Tools;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
-using BotNexus.Extensions.Skills;
-using BotNexus.Extensions.Mcp;
-using BotNexus.Extensions.McpInvoke;
-using BotNexus.Extensions.WebTools;
 using BotNexus.Memory;
 using BotNexus.Memory.Tools;
 using Microsoft.Extensions.DependencyInjection;
@@ -53,6 +49,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
     private readonly IAgentToolFactory _toolFactory;
     private readonly IAgentWorkspaceManager _workspaceManager;
     private readonly IToolRegistry _toolRegistry;
+    private readonly IEnumerable<IAgentToolContributor> _toolContributors;
     private readonly IMemoryStoreFactory _memoryStoreFactory;
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<InProcessIsolationStrategy> _logger;
@@ -64,6 +61,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         IAgentToolFactory toolFactory,
         IAgentWorkspaceManager workspaceManager,
         IToolRegistry toolRegistry,
+        IEnumerable<IAgentToolContributor> toolContributors,
         IMemoryStoreFactory memoryStoreFactory,
         IServiceProvider serviceProvider,
         ILogger<InProcessIsolationStrategy> logger)
@@ -74,6 +72,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         _toolFactory = toolFactory;
         _workspaceManager = workspaceManager;
         _toolRegistry = toolRegistry;
+        _toolContributors = toolContributors;
         _memoryStoreFactory = memoryStoreFactory;
         _serviceProvider = serviceProvider;
         _logger = logger;
@@ -187,62 +186,22 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 tools.Add(new AgentConverseTool(conversationService, sessionStore, descriptor.AgentId, context.SessionId));
         }
 
-        // TODO: SkillTool is hardcoded here because it needs agent-specific discovery paths.
-        // Move to extension loader discovery once extensions can receive per-agent context.
-        var homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var globalSkillsDir = Path.Combine(homeDir, ".botnexus", "skills");
-        var agentSkillsDir = Path.Combine(homeDir, ".botnexus", "agents", descriptor.AgentId, "skills");
-        var workspaceSkillsDir = Path.Combine(workspacePath, "skills");
-        var skillsConfig = ResolveExtensionConfig<BotNexus.Extensions.Skills.SkillsConfig>(descriptor, "botnexus-skills");
-        tools.Add(new SkillTool(globalSkillsDir, agentSkillsDir, workspaceSkillsDir, skillsConfig));
+        List<object> extensionResourcesToDispose = [];
+        var toolContributionContext = new AgentToolContributionContext(
+            descriptor,
+            context,
+            workspacePath,
+            pathValidator,
+            provider => _authManager.GetApiEndpoint(provider),
+            (provider, ct) => _authManager.GetApiKeyAsync(provider, ct));
 
-        // MCP extension — bridge MCP server tools as native IAgentTool instances.
-        // Servers start in the background so the agent responds immediately.
-        // Tools are appended to agent.State.Tools as each server comes online.
-        McpServerManager? mcpManager = null;
-        var mcpConfig = ResolveExtensionConfig<McpExtensionConfig>(descriptor, "botnexus-mcp");
-        if (mcpConfig is { Servers.Count: > 0 })
+        foreach (var contributor in _toolContributors)
         {
-            var mcpLogger = _serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger<McpServerManager>();
-            mcpManager = new McpServerManager(mcpLogger);
-        }
-
-        // MCP Invoke extension — single tool for skill-driven MCP access (lazy server lifecycle)
-        McpInvokeTool? mcpInvokeTool = null;
-        var mcpInvokeConfig = ResolveExtensionConfig<McpInvokeConfig>(descriptor, "botnexus-mcp-invoke");
-        if (mcpInvokeConfig is { Enabled: true, Servers.Count: > 0 })
-        {
-            var invokeLogger = _serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger<McpInvokeTool>();
-            mcpInvokeTool = new McpInvokeTool(mcpInvokeConfig, invokeLogger);
-            tools.Add(mcpInvokeTool);
-        }
-
-        // Web Tools extension — web search and URL fetch
-        var webConfig = ResolveExtensionConfig<WebToolsConfig>(descriptor, "botnexus-web");
-        if (webConfig is not null)
-        {
-            var fetchConfig = webConfig.Fetch ?? new WebFetchConfig();
-            tools.Add(new WebFetchTool(fetchConfig));
-
-            if (webConfig.Search is { } searchConfig)
-            {
-                var useCopilotProvider = string.Equals(searchConfig.Provider, "copilot", StringComparison.OrdinalIgnoreCase);
-                var hasApiKey = !string.IsNullOrWhiteSpace(searchConfig.ApiKey);
-
-                if (useCopilotProvider || hasApiKey)
-                {
-                    var copilotApiEndpoint = useCopilotProvider
-                        ? ResolveCopilotMcpEndpoint(_authManager.GetApiEndpoint(descriptor.ApiProvider))
-                        : null;
-
-                    tools.Add(new WebSearchTool(
-                        searchConfig,
-                        copilotApiKeyResolver: useCopilotProvider
-                            ? ct => _authManager.GetApiKeyAsync(descriptor.ApiProvider, ct)
-                            : null,
-                        copilotApiEndpoint: copilotApiEndpoint));
-                }
-            }
+            var contribution = await contributor.ContributeAsync(toolContributionContext, cancellationToken).ConfigureAwait(false);
+            if (contribution.Tools.Count > 0)
+                tools.AddRange(contribution.Tools);
+            if (contribution.ResourcesToDispose is { Count: > 0 })
+                extensionResourcesToDispose.AddRange(contribution.ResourcesToDispose);
         }
 
         var hookDispatcher = _serviceProvider.GetService<IHookDispatcher>();
@@ -339,75 +298,15 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             descriptor.AgentId,
             context.SessionId,
             _logger,
-            mcpManager,
-            mcpInvokeTool,
-            tools);
+            tools,
+            extensionResourcesToDispose);
 
         _logger.LogWarning(
             "Created agent handle for '{AgentId}' session '{SessionId}' with {ToolCount} tools: {ToolNames}",
             descriptor.AgentId, context.SessionId, tools.Count,
             string.Join(", ", tools.Select(t => t.Name)));
 
-        // Start MCP servers in background — tools become available progressively
-        if (mcpManager is not null && mcpConfig is { Servers.Count: > 0 })
-        {
-            _ = StartMcpServersInBackgroundAsync(agent, mcpManager, mcpConfig, descriptor.AgentId, context.SessionId);
-        }
-
         return handle;
-    }
-
-    /// <summary>
-    /// Starts MCP servers in the background and appends their tools to the agent
-    /// as each server comes online. Each server connects independently — a slow or
-    /// failed server does not block other servers from providing their tools.
-    /// </summary>
-    private async Task StartMcpServersInBackgroundAsync(
-        BotNexus.Agent.Core.Agent agent,
-        McpServerManager mcpManager,
-        McpExtensionConfig mcpConfig,
-        AgentId agentId,
-        SessionId sessionId)
-    {
-        _logger.LogInformation(
-            "Starting {Count} MCP server(s) in background for '{AgentId}' session '{SessionId}'",
-            mcpConfig.Servers.Count, agentId, sessionId);
-
-        // Start each server independently so fast servers provide tools immediately
-        // while slow servers continue connecting in the background.
-        var tasks = mcpConfig.Servers.Select(kvp =>
-            StartSingleMcpServerAsync(agent, mcpManager, mcpConfig, kvp.Key, kvp.Value, agentId));
-
-        await Task.WhenAll(tasks).ConfigureAwait(false);
-    }
-
-    private async Task StartSingleMcpServerAsync(
-        BotNexus.Agent.Core.Agent agent,
-        McpServerManager mcpManager,
-        McpExtensionConfig mcpConfig,
-        string serverId,
-        McpServerConfig serverConfig,
-        AgentId agentId)
-    {
-        try
-        {
-            var tools = await mcpManager.StartSingleServerAsync(serverId, serverConfig, mcpConfig.ToolPrefix, CancellationToken.None)
-                .ConfigureAwait(false);
-
-            if (tools.Count > 0)
-            {
-                agent.State.Tools = [.. agent.State.Tools, .. tools];
-                _logger.LogInformation(
-                    "MCP server '{ServerId}' loaded {ToolCount} tool(s) for '{AgentId}'. Agent now has {TotalTools} tools.",
-                    serverId, tools.Count, agentId, agent.State.Tools.Count);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex,
-                "MCP server '{ServerId}' failed for '{AgentId}'. Agent continues without its tools.",
-                serverId, agentId);
-        }
     }
 
     private static bool ResolveAllowCrossAgentCron(AgentDescriptor descriptor)
@@ -454,20 +353,6 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         return (level, allowed);
     }
 
-    private static T? ResolveExtensionConfig<T>(AgentDescriptor descriptor, string extensionId) where T : class
-    {
-        if (descriptor.ExtensionConfig.TryGetValue(extensionId, out var element))
-        {
-            try
-            {
-                return System.Text.Json.JsonSerializer.Deserialize<T>(element.GetRawText());
-            }
-            catch { /* invalid config — use defaults */ }
-        }
-
-        return null;
-    }
-
     private static AgentMessage ConvertSessionEntryToAgentMessage(SessionEntry entry)
     {
         return entry.Role.Value switch
@@ -483,31 +368,6 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         };
     }
 
-    private static string ResolveCopilotMcpEndpoint(string? baseEndpoint)
-    {
-        const string fallbackEndpoint = "https://api.githubcopilot.com/mcp";
-        if (string.IsNullOrWhiteSpace(baseEndpoint))
-            return fallbackEndpoint;
-
-        if (Uri.TryCreate(baseEndpoint, UriKind.Absolute, out var absoluteUri))
-        {
-            var path = absoluteUri.AbsolutePath.TrimEnd('/');
-            if (path.EndsWith("/mcp", StringComparison.OrdinalIgnoreCase))
-                return absoluteUri.ToString().TrimEnd('/');
-
-            var builder = new UriBuilder(absoluteUri)
-            {
-                Path = string.IsNullOrEmpty(path) || path == "/" ? "/mcp" : $"{path}/mcp"
-            };
-
-            return builder.Uri.ToString().TrimEnd('/');
-        }
-
-        var trimmed = baseEndpoint.TrimEnd('/');
-        return trimmed.EndsWith("/mcp", StringComparison.OrdinalIgnoreCase)
-            ? trimmed
-            : $"{trimmed}/mcp";
-    }
 }
 
 /// <summary>
@@ -517,9 +377,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
 {
     private readonly BotNexus.Agent.Core.Agent _agent;
     private readonly ILogger _logger;
-    private readonly McpServerManager? _mcpManager;
-    private readonly McpInvokeTool? _mcpInvokeTool;
-    private readonly IReadOnlyList<object> _disposableTools;
+    private readonly IReadOnlyList<object> _disposableResources;
     private readonly IReadOnlyDictionary<string, IAgentTool> _toolsByName;
 
     public InProcessAgentHandle(
@@ -527,22 +385,20 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         AgentId agentId,
         SessionId sessionId,
         ILogger logger,
-        McpServerManager? mcpManager = null,
-        McpInvokeTool? mcpInvokeTool = null,
-        IReadOnlyList<IAgentTool>? tools = null)
+        IReadOnlyList<IAgentTool>? tools = null,
+        IReadOnlyList<object>? resourcesToDispose = null)
     {
         _agent = agent;
         AgentId = agentId;
         SessionId = sessionId;
         _logger = logger;
-        _mcpManager = mcpManager;
-        _mcpInvokeTool = mcpInvokeTool;
-        _disposableTools = tools?
-            .Where(tool => !ReferenceEquals(tool, mcpInvokeTool))
+        _disposableResources = (tools ?? [])
             .Where(static tool => tool is IAsyncDisposable || tool is IDisposable)
             .Cast<object>()
-            .ToList()
-            ?? [];
+            .Concat((resourcesToDispose ?? [])
+                .Where(static resource => resource is IAsyncDisposable || resource is IDisposable))
+            .Distinct(ReferenceEqualityComparer.Instance)
+            .ToList();
         _toolsByName = (tools ?? [])
             .GroupBy(static tool => tool.Name, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(static group => group.Key, static group => group.First(), StringComparer.OrdinalIgnoreCase);
@@ -836,32 +692,20 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         try { await _agent.AbortAsync(); }
         catch (Exception ex) { _logger.LogWarning(ex, "Error aborting agent during dispose"); }
 
-        foreach (var tool in _disposableTools)
+        foreach (var resource in _disposableResources)
         {
-            if (tool is IAsyncDisposable asyncDisposable)
+            if (resource is IAsyncDisposable asyncDisposable)
             {
                 try { await asyncDisposable.DisposeAsync(); }
-                catch (Exception ex) { _logger.LogWarning(ex, "Error disposing async tool {ToolType}", tool.GetType().Name); }
+                catch (Exception ex) { _logger.LogWarning(ex, "Error disposing async resource {ResourceType}", resource.GetType().Name); }
                 continue;
             }
 
-            if (tool is IDisposable disposable)
+            if (resource is IDisposable disposable)
             {
                 try { disposable.Dispose(); }
-                catch (Exception ex) { _logger.LogWarning(ex, "Error disposing tool {ToolType}", tool.GetType().Name); }
+                catch (Exception ex) { _logger.LogWarning(ex, "Error disposing resource {ResourceType}", resource.GetType().Name); }
             }
-        }
-
-        if (_mcpManager is not null)
-        {
-            try { await _mcpManager.DisposeAsync(); }
-            catch (Exception ex) { _logger.LogWarning(ex, "Error disposing MCP server manager"); }
-        }
-
-        if (_mcpInvokeTool is not null)
-        {
-            try { await _mcpInvokeTool.DisposeAsync(); }
-            catch (Exception ex) { _logger.LogWarning(ex, "Error disposing MCP invoke tool"); }
         }
     }
 }

@@ -22,10 +22,6 @@
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Copilot\BotNexus.Agent.Providers.Copilot.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway.Prompts\BotNexus.Gateway.Prompts.csproj" />
-    <ProjectReference Include="..\..\extensions\BotNexus.Extensions.Skills\BotNexus.Extensions.Skills.csproj" />
-    <ProjectReference Include="..\..\extensions\BotNexus.Extensions.Mcp\BotNexus.Extensions.Mcp.csproj" />
-    <ProjectReference Include="..\..\extensions\BotNexus.Extensions.McpInvoke\BotNexus.Extensions.McpInvoke.csproj" />
-    <ProjectReference Include="..\..\extensions\BotNexus.Extensions.WebTools\BotNexus.Extensions.WebTools.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -427,6 +427,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
             new StaticAgentToolFactory(),
             new TestWorkspaceManager(_configDirectory),
             new DefaultToolRegistry(Array.Empty<IAgentTool>()),
+            Array.Empty<IAgentToolContributor>(),
             new StubMemoryStoreFactory(),
             new ServiceCollection().BuildServiceProvider(),
             NullLogger<InProcessIsolationStrategy>.Instance);
@@ -487,6 +488,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
             toolFactory,
             new TestWorkspaceManager(_configDirectory),
             new DefaultToolRegistry(Array.Empty<IAgentTool>()),
+            Array.Empty<IAgentToolContributor>(),
             new StubMemoryStoreFactory(),
             new ServiceCollection().BuildServiceProvider(),
             NullLogger<InProcessIsolationStrategy>.Instance);

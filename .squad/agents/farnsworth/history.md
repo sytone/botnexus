@@ -151,3 +151,6 @@
 ✅ All unit tests passing (956 gateway tests, full test suite green)
 
 **Next Steps:** Integration testing, user acceptance testing of CLI surface
+- 2026-05-04: Gateway now resolves extension-contributed runtime tools through `IAgentToolContributor` (`src/gateway/BotNexus.Gateway.Contracts/Agents/IAgentToolContributor.cs`) discovered by `AssemblyLoadContextExtensionLoader`, removing compile-time Gateway references to Skills/MCP/McpInvoke/WebTools.
+- 2026-05-04: `InProcessIsolationStrategy` now aggregates extension tool contributions via DI and disposes contributor-provided session resources through `InProcessAgentHandle`, replacing hardcoded extension tool construction paths.
+- 2026-05-04: Skills hook registration moved fully to extension runtime loading (hook handlers discovered from extension assemblies), so `GatewayServiceCollectionExtensions` only wires core hooks and policy handlers.

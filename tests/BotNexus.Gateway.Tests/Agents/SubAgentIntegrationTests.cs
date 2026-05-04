@@ -204,6 +204,7 @@ public sealed class SubAgentIntegrationTests
             new EmptyToolFactory(),
             new TestWorkspaceManager(),
             new DefaultToolRegistry([]),
+            Array.Empty<IAgentToolContributor>(),
             new StubMemoryStoreFactory(),
             services.BuildServiceProvider(),
             NullLogger<InProcessIsolationStrategy>.Instance);
