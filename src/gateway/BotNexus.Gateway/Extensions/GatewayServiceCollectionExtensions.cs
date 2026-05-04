@@ -387,7 +387,8 @@ public static class GatewayServiceCollectionExtensions
             services.Replace(ServiceDescriptor.Singleton<ISessionStore>(serviceProvider =>
                 new SqliteSessionStore(
                     connectionString,
-                    serviceProvider.GetRequiredService<ILogger<SqliteSessionStore>>())));
+                    serviceProvider.GetRequiredService<ILogger<SqliteSessionStore>>(),
+                    serviceProvider.GetRequiredService<IConversationStore>())));
             return;
         }
 
