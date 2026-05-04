@@ -54,8 +54,7 @@ public sealed class MultiChannelFanOutTests
     public async Task TwoChannels_MessageFromSignalR_FansOutToTelegram()
     {
         var harness = CreateHarness(responseContent: "fanout");
-        await harness.SeedBindingAsync("signalr", "chat-1");
-        await harness.SeedBindingAsync("telegram", "chat-100");
+        await harness.SeedSharedConversationAsync(("signalr", "chat-1"), ("telegram", "chat-100"));
         harness.ClearOutbound();
 
         await harness.Host.DispatchAsync(harness.CreateMessage("hello", "signalr", "chat-1"));
@@ -71,8 +70,7 @@ public sealed class MultiChannelFanOutTests
     public async Task TwoChannels_MessageFromTelegram_FansOutToSignalR()
     {
         var harness = CreateHarness(responseContent: "fanout");
-        await harness.SeedBindingAsync("signalr", "chat-1");
-        await harness.SeedBindingAsync("telegram", "chat-100");
+        await harness.SeedSharedConversationAsync(("signalr", "chat-1"), ("telegram", "chat-100"));
         harness.ClearOutbound();
 
         await harness.Host.DispatchAsync(harness.CreateMessage("hello", "telegram", "chat-100"));
@@ -87,8 +85,7 @@ public sealed class MultiChannelFanOutTests
     public async Task TwoChannels_MessageFromTelegram_TelegramReceivesExactlyOnce()
     {
         var harness = CreateHarness(responseContent: "fanout");
-        await harness.SeedBindingAsync("signalr", "chat-1");
-        await harness.SeedBindingAsync("telegram", "chat-100");
+        await harness.SeedSharedConversationAsync(("signalr", "chat-1"), ("telegram", "chat-100"));
         harness.ClearOutbound();
 
         await harness.Host.DispatchAsync(harness.CreateMessage("hello", "telegram", "chat-100"));
@@ -100,9 +97,9 @@ public sealed class MultiChannelFanOutTests
     [Fact]
     public async Task TwoChannels_NewConversation_BothChannelsGetSubsequentMessages()
     {
+        // Explicitly bind both channels to the same conversation, then verify fan-out
         var harness = CreateHarness(responseContent: "follow-up");
-        await harness.Host.DispatchAsync(harness.CreateMessage("first", "signalr", "chat-1"));
-        await harness.Host.DispatchAsync(harness.CreateMessage("join", "telegram", "chat-100"));
+        await harness.SeedSharedConversationAsync(("signalr", "chat-1"), ("telegram", "chat-100"));
         harness.ClearOutbound();
 
         await harness.Host.DispatchAsync(harness.CreateMessage("second", "signalr", "chat-1"));
@@ -117,9 +114,7 @@ public sealed class MultiChannelFanOutTests
     public async Task ThreeChannels_MessageFromA_FansOutToBAndC()
     {
         var harness = CreateHarness(responseContent: "matrix");
-        await harness.SeedBindingAsync("signalr", "chat-1");
-        await harness.SeedBindingAsync("telegram", "chat-100");
-        await harness.SeedBindingAsync("tui", "terminal-1");
+        await harness.SeedSharedConversationAsync(("signalr", "chat-1"), ("telegram", "chat-100"), ("tui", "terminal-1"));
         harness.ClearOutbound();
 
         await harness.Host.DispatchAsync(harness.CreateMessage("hello", "signalr", "chat-1"));
@@ -133,9 +128,7 @@ public sealed class MultiChannelFanOutTests
     public async Task ThreeChannels_MessageFromB_FansOutToAAndC()
     {
         var harness = CreateHarness(responseContent: "matrix");
-        await harness.SeedBindingAsync("signalr", "chat-1");
-        await harness.SeedBindingAsync("telegram", "chat-100");
-        await harness.SeedBindingAsync("tui", "terminal-1");
+        await harness.SeedSharedConversationAsync(("signalr", "chat-1"), ("telegram", "chat-100"), ("tui", "terminal-1"));
         harness.ClearOutbound();
 
         await harness.Host.DispatchAsync(harness.CreateMessage("hello", "telegram", "chat-100"));
@@ -149,9 +142,7 @@ public sealed class MultiChannelFanOutTests
     public async Task ThreeChannels_EachChannelSends_OthersTwoReceive_NoDuplicates()
     {
         var harness = CreateHarness(responseContent: "matrix");
-        await harness.SeedBindingAsync("signalr", "chat-1");
-        await harness.SeedBindingAsync("telegram", "chat-100");
-        await harness.SeedBindingAsync("tui", "terminal-1");
+        await harness.SeedSharedConversationAsync(("signalr", "chat-1"), ("telegram", "chat-100"), ("tui", "terminal-1"));
 
         await AssertPerSendAsync(harness, harness.CreateMessage("from-a", "signalr", "chat-1"));
         await AssertPerSendAsync(harness, harness.CreateMessage("from-b", "telegram", "chat-100"));
@@ -262,6 +253,71 @@ public sealed class MultiChannelFanOutTests
         harness.SignalR.Messages.Count.ShouldBe(1);
         harness.Telegram.Messages.Count.ShouldBe(1);
     }
+
+    [Fact]
+    public async Task DifferentChannelAddresses_GetSeparateConversations()
+    {
+        // Regression for #138: a Teams DM and a Telegram DM must not share the default conversation
+        var harness = CreateHarness(responseContent: "isolated");
+
+        await harness.Host.DispatchAsync(harness.CreateMessage("hello", "telegram", "chat-100"));
+        await harness.Host.DispatchAsync(harness.CreateMessage("hello", "signalr", "browser-1"));
+
+        var conversations = await harness.Conversations.ListAsync(BotNexus.Domain.Primitives.AgentId.From(AgentName));
+        conversations.Count.ShouldBe(2, "each channel address must get its own conversation");
+
+        var telegramConv = conversations.FirstOrDefault(c =>
+            c.ChannelBindings.Any(b => b.ChannelType == ChannelKey.From("telegram")));
+        var signalrConv = conversations.FirstOrDefault(c =>
+            c.ChannelBindings.Any(b => b.ChannelType == ChannelKey.From("signalr")));
+
+        telegramConv.ShouldNotBeNull();
+        signalrConv.ShouldNotBeNull();
+        telegramConv!.ConversationId.ShouldNotBe(signalrConv!.ConversationId);
+    }
+
+    [Fact]
+    public async Task SameChannelAddress_SecondMessage_ReusesConversation()
+    {
+        // Same (channelType, channelAddress) must always route to the same conversation
+        var harness = CreateHarness(responseContent: "reuse");
+
+        await harness.Host.DispatchAsync(harness.CreateMessage("first", "telegram", "chat-100"));
+        await harness.Host.DispatchAsync(harness.CreateMessage("second", "telegram", "chat-100"));
+
+        var conversations = await harness.Conversations.ListAsync(BotNexus.Domain.Primitives.AgentId.From(AgentName));
+        conversations.Count.ShouldBe(1, "same address must reuse the same conversation");
+    }
+
+    [Fact]
+    public async Task GroupChat_AndDM_SameChannelType_GetSeparateConversations()
+    {
+        // A Telegram group (chat-id: -1001234) and a DM (chat-id: 1234567) must be separate
+        var harness = CreateHarness(responseContent: "group-isolated");
+
+        await harness.Host.DispatchAsync(harness.CreateMessage("hi from DM", "telegram", "1234567"));
+        await harness.Host.DispatchAsync(harness.CreateMessage("hi from group", "telegram", "-1001234567"));
+
+        var conversations = await harness.Conversations.ListAsync(BotNexus.Domain.Primitives.AgentId.From(AgentName));
+        conversations.Count.ShouldBe(2, "DM and group chat must have separate conversations");
+    }
+
+    [Fact]
+    public async Task NoChannelAddress_UsesDefaultConversation()
+    {
+        // When channelAddress is empty/null, fall back to default conversation (portal edge case)
+        var harness = CreateHarness(responseContent: "default");
+
+        var msg1 = harness.CreateMessage("first", "signalr", "");
+        var msg2 = harness.CreateMessage("second", "signalr", "");
+        await harness.Host.DispatchAsync(msg1);
+        await harness.Host.DispatchAsync(msg2);
+
+        var conversations = await harness.Conversations.ListAsync(BotNexus.Domain.Primitives.AgentId.From(AgentName));
+        conversations.Count.ShouldBe(1, "addressless messages should share the default conversation");
+        conversations[0].IsDefault.ShouldBeTrue();
+    }
+
 
     private static async Task AssertPerSendAsync(TestHarness harness, InboundMessage message)
     {
@@ -378,7 +434,35 @@ public sealed class MultiChannelFanOutTests
 
         public async Task SeedBindingAsync(string channelType, string channelAddress, string? threadId = null)
         {
+            // Dispatch a seed message — the router will find or create the correct conversation
+            // per (channelType, channelAddress, threadId). For fan-out tests that need multiple
+            // channels in one conversation, use SeedSharedConversationAsync or AttachBindingToConversationAsync directly.
             await Host.DispatchAsync(CreateMessage($"seed-{channelType}", channelType, channelAddress, threadId));
+        }
+
+        /// <summary>
+        /// Creates a shared conversation with all given (channelType, channelAddress) bindings.
+        /// The first address seeds the conversation via dispatch; the rest are attached directly.
+        /// Use this for fan-out tests where multiple channels must share one conversation.
+        /// </summary>
+        public async Task SeedSharedConversationAsync(params (string channelType, string channelAddress)[] bindings)
+        {
+            if (bindings.Length == 0) return;
+            // First binding seeds the conversation
+            await Host.DispatchAsync(CreateMessage($"seed-{bindings[0].channelType}", bindings[0].channelType, bindings[0].channelAddress));
+            var conversations = await Conversations.ListAsync(BotNexus.Domain.Primitives.AgentId.From(AgentName));
+            var conversation = conversations.Last();
+            // Remaining bindings attached directly to the same conversation
+            foreach (var (channelType, channelAddress) in bindings.Skip(1))
+            {
+                conversation.ChannelBindings.Add(new ChannelBinding
+                {
+                    ChannelType = ChannelKey.From(channelType),
+                    ChannelAddress = channelAddress,
+                    Mode = BindingMode.Interactive
+                });
+            }
+            await Conversations.SaveAsync(conversation);
         }
 
         public Conversation GetConversationFor(string channelType, string channelAddress, string? threadId)

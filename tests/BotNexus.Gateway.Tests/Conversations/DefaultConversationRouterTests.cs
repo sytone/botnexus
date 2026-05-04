@@ -29,7 +29,7 @@ public sealed class DefaultConversationRouterTests
     // ── ResolveInboundAsync ────────────────────────────────────────────────────
 
     [Fact]
-    public async Task ResolveInbound_CreatesDefaultConversation_ForNewChannelAddress()
+    public async Task ResolveInbound_CreatesPerAddressConversation_ForNewChannelAddress()
     {
         var router = CreateRouter();
         var agentId = Agent();
@@ -39,7 +39,21 @@ public sealed class DefaultConversationRouterTests
         result.ShouldNotBeNull();
         result.Conversation.ShouldNotBeNull();
         result.Conversation.AgentId.ShouldBe(agentId);
-        result.Conversation.IsDefault.ShouldBeTrue();
+        result.Conversation.IsDefault.ShouldBeFalse(); // per-address conversation, not the default
+        result.Conversation.ChannelBindings.ShouldHaveSingleItem();
+        result.Conversation.ChannelBindings[0].ChannelAddress.ShouldBe("chat-123");
+    }
+
+    [Fact]
+    public async Task ResolveInbound_CreatesDefaultConversation_ForAddresslessChannel()
+    {
+        var router = CreateRouter();
+        var agentId = Agent();
+
+        var result = await router.ResolveInboundAsync(agentId, Channel(), "", null);
+
+        result.ShouldNotBeNull();
+        result.Conversation.IsDefault.ShouldBeTrue(); // no address — falls back to default
     }
 
     [Fact]
