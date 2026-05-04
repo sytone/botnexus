@@ -635,6 +635,59 @@ public sealed class TelegramChannelAdapterTests
         message.Content.ShouldBe("hello");
     }
 
+    [Fact]
+    public async Task Polling_InboundMessage_BindingIdIsNull_RouterStampsIt()
+    {
+        // The adapter does NOT stamp BindingId — GatewayHost stamps it after
+        // ResolveInboundAsync returns the matching conversation binding.
+        // This test documents that contract: adapter dispatches without BindingId,
+        // GatewayHost is responsible for stamping it to prevent self-fanout.
+        var dispatched = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            return call.MethodName switch
+            {
+                "deleteWebhook" => JsonOk(true),
+                "getUpdates" => JsonOk(new[]
+                {
+                    new TelegramUpdate
+                    {
+                        UpdateId = 10,
+                        Message = new TelegramMessage
+                        {
+                            MessageId = 100,
+                            Chat = new TelegramChat { Id = 42 },
+                            From = new TelegramUser { Id = 7 },
+                            Text = "hello"
+                        }
+                    }
+                }),
+                _ => JsonOk(true)
+            };
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            PollingTimeoutSeconds = 1,
+            AllowedChatIds = { 42 }
+        }, handler);
+
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
+
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+        var message = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await adapter.StopAsync(CancellationToken.None);
+
+        // Adapter dispatches without BindingId — GatewayHost stamps it after routing
+        message.BindingId.ShouldBeNull();
+        message.ChannelAddress.ShouldBe("42");
+    }
+
     private static TelegramChannelAdapter CreateAdapter(TelegramGatewayOptions options, HttpMessageHandler handler)
     {
         var factory = new StubHttpClientFactory(_ => new HttpClient(handler));

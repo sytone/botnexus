@@ -267,6 +267,20 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     cancellationToken);
                 sessionId = routingResult.SessionId.Value;
                 resolvedConversationId = routingResult.Conversation.ConversationId;
+
+                // Stamp the originating BindingId on the message so FanOutResponseAsync
+                // can exclude it — preventing the originating channel from receiving
+                // the response twice (once direct, once via fan-out).
+                if (message.BindingId is null)
+                {
+                    var originatingBinding = routingResult.Conversation.ChannelBindings
+                        .FirstOrDefault(b =>
+                            b.ChannelType == message.ChannelType &&
+                            string.Equals(b.ChannelAddress, message.ChannelAddress, StringComparison.Ordinal) &&
+                            string.Equals(b.ThreadId, message.ThreadId, StringComparison.Ordinal));
+                    if (originatingBinding is not null)
+                        message = message with { BindingId = originatingBinding.BindingId };
+                }
             }
 
             var existingSessionTask = _sessions.GetAsync(SessionId.From(sessionId), cancellationToken);
