@@ -165,7 +165,8 @@ public sealed class TelegramChannelAdapterTests
                             {
                                 MessageId = 200,
                                 Chat = new TelegramChat { Id = 42 },
-                                Text = "once"
+                                Text = "once",
+                                From = new TelegramUser { Id = 1 },
                             }
                         }
                     });
@@ -686,6 +687,383 @@ public sealed class TelegramChannelAdapterTests
         // Adapter dispatches without BindingId — GatewayHost stamps it after routing
         message.BindingId.ShouldBeNull();
         message.ChannelAddress.ShouldBe("42");
+    }
+
+    // ── Security: AllowedUserIds ────────────────────────────────────────────
+
+    [Fact]
+    public async Task Polling_MessageFromUnauthorizedUser_IsBlocked()
+    {
+        var dispatched = false;
+        var updatesSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var callCount = 0;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "getUpdates")
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    return JsonOk(new[]
+                    {
+                        new TelegramUpdate
+                        {
+                            UpdateId = 10,
+                            Message = new TelegramMessage
+                            {
+                                MessageId = 100,
+                                Chat = new TelegramChat { Id = 42 },
+                                From = new TelegramUser { Id = 99 }, // unauthorized user
+                                Text = "blocked"
+                            }
+                        }
+                    });
+                }
+
+                updatesSeen.TrySetResult();
+                return JsonOk(Array.Empty<TelegramUpdate>());
+            }
+
+            return JsonOk(true);
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            PollingTimeoutSeconds = 1,
+            AllowedChatIds = { 42 },
+            AllowedUserIds = { 42 } // only user 42 allowed; message is from 99
+        }, handler);
+
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback(() => dispatched = true);
+
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+        await updatesSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await adapter.StopAsync(CancellationToken.None);
+
+        dispatched.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task Polling_MessageFromAuthorizedUser_IsDelivered()
+    {
+        var dispatched = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            return call.MethodName switch
+            {
+                "deleteWebhook" => JsonOk(true),
+                "getUpdates" => JsonOk(new[]
+                {
+                    new TelegramUpdate
+                    {
+                        UpdateId = 10,
+                        Message = new TelegramMessage
+                        {
+                            MessageId = 100,
+                            Chat = new TelegramChat { Id = 42 },
+                            From = new TelegramUser { Id = 42 }, // authorized user
+                            Text = "hello"
+                        }
+                    }
+                }),
+                _ => JsonOk(true)
+            };
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            PollingTimeoutSeconds = 1,
+            AllowedChatIds = { 42 },
+            AllowedUserIds = { 42 }
+        }, handler);
+
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
+
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+        var msg = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await adapter.StopAsync(CancellationToken.None);
+
+        msg.Content.ShouldBe("hello");
+    }
+
+    [Fact]
+    public async Task Polling_EmptyAllowedUserIds_AllowsAnyUser()
+    {
+        var dispatched = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            return call.MethodName switch
+            {
+                "deleteWebhook" => JsonOk(true),
+                "getUpdates" => JsonOk(new[]
+                {
+                    new TelegramUpdate
+                    {
+                        UpdateId = 10,
+                        Message = new TelegramMessage
+                        {
+                            MessageId = 100,
+                            Chat = new TelegramChat { Id = 42 },
+                            From = new TelegramUser { Id = 9999 }, // any user
+                            Text = "hello"
+                        }
+                    }
+                }),
+                _ => JsonOk(true)
+            };
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            PollingTimeoutSeconds = 1,
+            AllowedChatIds = { 42 }
+            // AllowedUserIds empty — all users allowed
+        }, handler);
+
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
+
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+        var msg = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await adapter.StopAsync(CancellationToken.None);
+
+        msg.Content.ShouldBe("hello");
+    }
+
+    // ── Security: ChannelPost ─────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Polling_ChannelPost_IsIgnored()
+    {
+        var dispatched = false;
+        var updatesSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var callCount = 0;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "getUpdates")
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    return JsonOk(new[]
+                    {
+                        new TelegramUpdate
+                        {
+                            UpdateId = 10,
+                            // No Message — only ChannelPost (no authenticated sender)
+                            ChannelPost = new TelegramMessage
+                            {
+                                MessageId = 100,
+                                Chat = new TelegramChat { Id = 42 },
+                                Text = "channel announcement"
+                            }
+                        }
+                    });
+                }
+
+                updatesSeen.TrySetResult();
+                return JsonOk(Array.Empty<TelegramUpdate>());
+            }
+
+            return JsonOk(true);
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            PollingTimeoutSeconds = 1
+        }, handler);
+
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback(() => dispatched = true);
+
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+        await updatesSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await adapter.StopAsync(CancellationToken.None);
+
+        dispatched.ShouldBeFalse();
+    }
+
+    // ── Security: EditedMessage ───────────────────────────────────────────────
+
+    [Fact]
+    public async Task Polling_EditedMessage_IgnoredByDefault()
+    {
+        var dispatched = false;
+        var updatesSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var callCount = 0;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "getUpdates")
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    return JsonOk(new[]
+                    {
+                        new TelegramUpdate
+                        {
+                            UpdateId = 10,
+                            EditedMessage = new TelegramMessage
+                            {
+                                MessageId = 100,
+                                Chat = new TelegramChat { Id = 42 },
+                                From = new TelegramUser { Id = 7 },
+                                Text = "edited text"
+                            }
+                        }
+                    });
+                }
+
+                updatesSeen.TrySetResult();
+                return JsonOk(Array.Empty<TelegramUpdate>());
+            }
+
+            return JsonOk(true);
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            PollingTimeoutSeconds = 1,
+            AllowedChatIds = { 42 }
+            // ProcessEditedMessages defaults to false
+        }, handler);
+
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback(() => dispatched = true);
+
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+        await updatesSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await adapter.StopAsync(CancellationToken.None);
+
+        dispatched.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task Polling_EditedMessage_ProcessedWhenEnabled()
+    {
+        var dispatched = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            return call.MethodName switch
+            {
+                "deleteWebhook" => JsonOk(true),
+                "getUpdates" => JsonOk(new[]
+                {
+                    new TelegramUpdate
+                    {
+                        UpdateId = 10,
+                        EditedMessage = new TelegramMessage
+                        {
+                            MessageId = 100,
+                            Chat = new TelegramChat { Id = 42 },
+                            From = new TelegramUser { Id = 7 },
+                            Text = "edited text"
+                        }
+                    }
+                }),
+                _ => JsonOk(true)
+            };
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            PollingTimeoutSeconds = 1,
+            AllowedChatIds = { 42 },
+            ProcessEditedMessages = true
+        }, handler);
+
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
+
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+        var msg = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await adapter.StopAsync(CancellationToken.None);
+
+        msg.Content.ShouldBe("edited text");
+    }
+
+    // ── Security: Null From ───────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Polling_MessageWithNullFrom_IsIgnored()
+    {
+        var dispatched = false;
+        var updatesSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var callCount = 0;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "getUpdates")
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    return JsonOk(new[]
+                    {
+                        new TelegramUpdate
+                        {
+                            UpdateId = 10,
+                            Message = new TelegramMessage
+                            {
+                                MessageId = 100,
+                                Chat = new TelegramChat { Id = 42 },
+                                From = null, // no sender
+                                Text = "mysterious message"
+                            }
+                        }
+                    });
+                }
+
+                updatesSeen.TrySetResult();
+                return JsonOk(Array.Empty<TelegramUpdate>());
+            }
+
+            return JsonOk(true);
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            PollingTimeoutSeconds = 1,
+            AllowedChatIds = { 42 }
+        }, handler);
+
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback(() => dispatched = true);
+
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+        await updatesSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await adapter.StopAsync(CancellationToken.None);
+
+        dispatched.ShouldBeFalse();
     }
 
     private static TelegramChannelAdapter CreateAdapter(TelegramGatewayOptions options, HttpMessageHandler handler)
