@@ -162,17 +162,48 @@ internal class UpdateCommand
             var psi = new ProcessStartInfo
             {
                 FileName = "git",
-                Arguments = $"-C \"{repoRoot}\" pull origin main",
+                // --no-rebase avoids interactive prompts; GIT_TERMINAL_PROMPT=0 prevents
+                // credential prompts that would hang indefinitely.
+                Arguments = $"-C \"{repoRoot}\" pull --no-rebase origin main",
                 UseShellExecute = false,
-                RedirectStandardOutput = !verbose,
-                RedirectStandardError = !verbose,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
                 CreateNoWindow = true
             };
+            // Disable interactive credential prompts — if auth fails, fail fast.
+            psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
+            psi.Environment["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes";
 
             using var proc = Process.Start(psi);
             if (proc is null) return 1;
 
-            await proc.WaitForExitAsync(cancellationToken);
+            // Always drain stdout/stderr to avoid deadlock on pipe buffer full.
+            // In verbose mode, stream to console; otherwise discard (we only care about exit code).
+            var stdoutTask = verbose
+                ? DrainToConsoleAsync(proc.StandardOutput, cancellationToken)
+                : proc.StandardOutput.ReadToEndAsync(cancellationToken);
+            var stderrTask = verbose
+                ? DrainToConsoleAsync(proc.StandardError, cancellationToken)
+                : proc.StandardError.ReadToEndAsync(cancellationToken);
+
+            // Apply a 60-second timeout in addition to the caller's cancellation token.
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+
+            try
+            {
+                await Task.WhenAll(
+                    proc.WaitForExitAsync(linkedCts.Token),
+                    stdoutTask,
+                    stderrTask);
+            }
+            catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+            {
+                proc.Kill(entireProcessTree: true);
+                AnsiConsole.MarkupLine("[red][[update]][/] ✗ git pull timed out after 60 seconds.");
+                return 1;
+            }
+
             return proc.ExitCode;
         }
         catch (Exception ex)
@@ -180,6 +211,14 @@ internal class UpdateCommand
             AnsiConsole.MarkupLine($"[red][[update]][/] git pull error: {Markup.Escape(ex.Message)}");
             return 1;
         }
+    }
+
+    private static async Task<string> DrainToConsoleAsync(System.IO.TextReader reader, CancellationToken ct)
+    {
+        string? line;
+        while ((line = await reader.ReadLineAsync(ct)) is not null)
+            AnsiConsole.MarkupLine($"[dim]{Markup.Escape(line)}[/]");
+        return string.Empty;
     }
 
     private static string GetCommitSha(string repoRoot)
