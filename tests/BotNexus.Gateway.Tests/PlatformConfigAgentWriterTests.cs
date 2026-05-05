@@ -24,7 +24,7 @@ public sealed class PlatformConfigAgentWriterTests : IDisposable
     public async Task SaveAsync_WritesAgentIntoConfigAndCreatesWorkspace()
     {
         var writer = new PlatformConfigAgentWriter(_configPath, _home, _fileSystem);
-        var descriptor = CreateDescriptor("nova") with
+        var descriptor = CreateDescriptor("test-agent") with
         {
             AllowedModelIds = ["claude-sonnet-4.5"],
             ToolIds = ["read"],
@@ -36,11 +36,11 @@ public sealed class PlatformConfigAgentWriterTests : IDisposable
         await writer.SaveAsync(descriptor);
 
         var root = await ReadConfigAsync();
-        var agent = root["agents"]!["nova"]!;
+        var agent = root["agents"]!["test-agent"]!;
 
         agent["provider"]!.GetValue<string>().ShouldBe("github-copilot");
         agent["model"]!.GetValue<string>().ShouldBe("claude-sonnet-4.5");
-        agent["displayName"]!.GetValue<string>().ShouldBe("nova");
+        agent["displayName"]!.GetValue<string>().ShouldBe("test-agent");
         agent["enabled"]!.GetValue<bool>().ShouldBeTrue();
         agent["allowedModels"]!.AsArray().ShouldHaveSingleItem()!.GetValue<string>().ShouldBe("claude-sonnet-4.5");
         agent["toolIds"]!.AsArray().ShouldHaveSingleItem()!.GetValue<string>().ShouldBe("read");
@@ -48,8 +48,8 @@ public sealed class PlatformConfigAgentWriterTests : IDisposable
         agent["metadata"]!["owner"]!.GetValue<string>().ShouldBe("gateway");
         agent["isolationOptions"]!["timeoutMs"]!.GetValue<int>().ShouldBe(1000);
 
-        _fileSystem.Directory.Exists(Path.Combine(_home.AgentsPath, "nova")).ShouldBeTrue();
-        _fileSystem.File.Exists(Path.Combine(_home.AgentsPath, "nova", "workspace", "SOUL.md")).ShouldBeTrue();
+        _fileSystem.Directory.Exists(Path.Combine(_home.AgentsPath, "test-agent")).ShouldBeTrue();
+        _fileSystem.File.Exists(Path.Combine(_home.AgentsPath, "test-agent", "workspace", "SOUL.md")).ShouldBeTrue();
     }
 
     [Fact]
@@ -60,7 +60,7 @@ public sealed class PlatformConfigAgentWriterTests : IDisposable
               "version": 1,
               "customRootField": "preserve-me",
               "agents": {
-                "nova": {
+                "test-agent": {
                   "customAgentField": "keep"
                 }
               }
@@ -68,7 +68,7 @@ public sealed class PlatformConfigAgentWriterTests : IDisposable
             """);
 
         var writer = new PlatformConfigAgentWriter(_configPath, _home, _fileSystem);
-        await writer.SaveAsync(CreateDescriptor("nova") with
+        await writer.SaveAsync(CreateDescriptor("test-agent") with
         {
             Description = null,
             SystemPromptFile = null,
@@ -79,7 +79,7 @@ public sealed class PlatformConfigAgentWriterTests : IDisposable
         });
 
         var root = await ReadConfigAsync();
-        var agent = root["agents"]!["nova"]!;
+        var agent = root["agents"]!["test-agent"]!;
 
         root["customRootField"]!.GetValue<string>().ShouldBe("preserve-me");
         agent["customAgentField"]!.GetValue<string>().ShouldBe("keep");
@@ -97,17 +97,17 @@ public sealed class PlatformConfigAgentWriterTests : IDisposable
         await _fileSystem.File.WriteAllTextAsync(_configPath, """
             {
               "agents": {
-                "nova": { "provider": "github-copilot", "model": "gpt-4.1" },
+                "test-agent": { "provider": "github-copilot", "model": "gpt-4.1" },
                 "other": { "provider": "openai", "model": "gpt-4.1" }
               }
             }
             """);
 
         var writer = new PlatformConfigAgentWriter(_configPath, _home, _fileSystem);
-        await writer.DeleteAsync("nova");
+        await writer.DeleteAsync("test-agent");
 
         var root = await ReadConfigAsync();
-        root["agents"]!["nova"].ShouldBeNull();
+        root["agents"]!["test-agent"].ShouldBeNull();
         root["agents"]!["other"].ShouldNotBeNull();
     }
 

@@ -196,7 +196,7 @@ Agent
 ## Open Questions
 
 1. **Naming** — should the new container be `Conversation`, `Conversation`, or `Thread` (not chosen)?
-2. **Binding granularity** — is channel binding per provider (`telegram`) or per channel identity (`telegram chat 5067802539`)?
+2. **Binding granularity** — is channel binding per provider (`telegram`) or per channel identity (`telegram chat 1234567890`)?
 3. **Fan-out policy** — should all agent replies go to all bound channels by default, or should bindings support notification-only vs interactive modes?
 4. **Topic creation policy** — should every agent always have exactly one default topic at first boot, or only once first contacted?
 5. **Portal semantics** — when the user clicks "new conversation", does that create a new topic immediately or lazily on first message?

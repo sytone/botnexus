@@ -20,7 +20,7 @@ public class ConversationBindingTests(LiveGatewayFixture fixture, ITestOutputHel
 
         var convId = await CreateConversationAsync();
         var response = await fixture.Conversations.AddBindingAsync(
-            convId, "telegram", "5067802539", "Single");
+            convId, "telegram", "1234567890", "Single");
         response.StatusCode.ShouldBe(HttpStatusCode.Created);
 
         var json = await response.Content.ReadAsStringAsync();
@@ -34,7 +34,7 @@ public class ConversationBindingTests(LiveGatewayFixture fixture, ITestOutputHel
         bidStr.ShouldNotContain("-");
 
         doc.GetProperty("channelType").GetString().ShouldBe("telegram");
-        doc.GetProperty("channelAddress").GetString().ShouldBe("5067802539");
+        doc.GetProperty("channelAddress").GetString().ShouldBe("1234567890");
 
         doc.TryGetProperty("threadId", out var threadId).ShouldBeTrue();
         threadId.ValueKind.ShouldBe(JsonValueKind.Null);
@@ -49,7 +49,7 @@ public class ConversationBindingTests(LiveGatewayFixture fixture, ITestOutputHel
         Skip.If(!fixture.IsAvailable, "Dev gateway not running at localhost:5006");
 
         var response = await fixture.Conversations.AddBindingAsync(
-            "c_doesnotexist", "telegram", "5067802539", "Single");
+            "c_doesnotexist", "telegram", "1234567890", "Single");
         response.StatusCode.ShouldBe(HttpStatusCode.NotFound);
     }
 
@@ -88,7 +88,7 @@ public class ConversationBindingTests(LiveGatewayFixture fixture, ITestOutputHel
 
         var convId = await CreateConversationAsync();
         var addResponse = await fixture.Conversations.AddBindingAsync(
-            convId, "telegram", "5067802539", "Single");
+            convId, "telegram", "1234567890", "Single");
         addResponse.StatusCode.ShouldBe(HttpStatusCode.Created);
         var bindingId = JsonDocument.Parse(await addResponse.Content.ReadAsStringAsync())
             .RootElement.GetProperty("bindingId").GetString()!;
@@ -104,7 +104,7 @@ public class ConversationBindingTests(LiveGatewayFixture fixture, ITestOutputHel
         var binding = bindings.EnumerateArray().First();
         binding.GetProperty("bindingId").GetString().ShouldBe(bindingId);
         binding.GetProperty("channelType").GetString().ShouldBe("telegram");
-        binding.GetProperty("channelAddress").GetString().ShouldBe("5067802539");
+        binding.GetProperty("channelAddress").GetString().ShouldBe("1234567890");
     }
 
     [SkippableFact]
@@ -118,7 +118,7 @@ public class ConversationBindingTests(LiveGatewayFixture fixture, ITestOutputHel
         var convId = JsonDocument.Parse(await createResponse.Content.ReadAsStringAsync())
             .RootElement.GetProperty("conversationId").GetString()!;
 
-        var addResponse = await fixture.Conversations.AddBindingAsync(convId, "telegram", "5067802539", "Single");
+        var addResponse = await fixture.Conversations.AddBindingAsync(convId, "telegram", "1234567890", "Single");
         addResponse.StatusCode.ShouldBe(HttpStatusCode.Created);
 
         var listResponse = await fixture.Conversations.GetConversationsAsync(agentId);
@@ -140,7 +140,7 @@ public class ConversationBindingTests(LiveGatewayFixture fixture, ITestOutputHel
 
         var convId = await CreateConversationAsync();
         var addResponse = await fixture.Conversations.AddBindingAsync(
-            convId, "telegram", "5067802539", "Single");
+            convId, "telegram", "1234567890", "Single");
         addResponse.StatusCode.ShouldBe(HttpStatusCode.Created);
         var bindingId = JsonDocument.Parse(await addResponse.Content.ReadAsStringAsync())
             .RootElement.GetProperty("bindingId").GetString()!;

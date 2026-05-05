@@ -1074,7 +1074,7 @@ Extension defaults are defined in the `gateway.extensions.defaults` section of `
     }
   },
   "agents": {
-    "nova": {
+    "my-agent": {
       "extensions": {
         "botnexus-skills": { "maxLoadedSkills": 30 }
       }
@@ -1090,7 +1090,7 @@ Extension defaults are defined in the `gateway.extensions.defaults` section of `
 ```json
 {
   "agents": {
-    "nova": {
+    "my-agent": {
       "extensions": {
         "botnexus-skills": { "enabled": true, "maxLoadedSkills": 20 },
         "botnexus-exec": { "enabled": true }
@@ -1118,7 +1118,7 @@ Extension defaults are defined in the `gateway.extensions.defaults` section of `
     }
   },
   "agents": {
-    "nova": {
+    "my-agent": {
       "extensions": {
         "botnexus-skills": { "maxLoadedSkills": 30 }
       }

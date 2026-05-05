@@ -100,7 +100,7 @@ public sealed class CommandsControllerTests
                       ?? throw new InvalidOperationException($"Could not create {requestType.Name}.");
 
         SetPropertyIfPresent(requestType, request, "Input", input);
-        SetPropertyIfPresent(requestType, request, "AgentId", "nova");
+        SetPropertyIfPresent(requestType, request, "AgentId", "test-agent");
         SetPropertyIfPresent(requestType, request, "SessionId", "session-1");
         return request;
     }

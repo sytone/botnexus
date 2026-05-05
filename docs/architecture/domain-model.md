@@ -1,6 +1,6 @@
 ---
 owner: human
-author: Jon Bullen
+author: BotNexus Team
 ai-policy: minimal
 # AI agents: this document is human-owned. Do not rewrite, restructure,
 # or remove content. Minor fixes (typos, broken links) are OK.

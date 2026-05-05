@@ -82,7 +82,7 @@ Sub-agent spawning extends the existing BotNexus session infrastructure. Sub-age
 ### Parent–Child Session Model
 
 ```text
-Parent Session (agent: nova, model: claude-opus-4.6)
+Parent Session (agent: my-agent, model: claude-opus-4.6)
   │
   ├── Sub-Agent Session (model: gpt-4.1)
   │     task: "Research compaction strategies..."
