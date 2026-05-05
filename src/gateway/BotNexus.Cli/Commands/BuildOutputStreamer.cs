@@ -31,6 +31,11 @@ internal static partial class BuildOutputStreamer
             RedirectStandardError = true,
             CreateNoWindow = true
         };
+        // Disable telemetry and skip first-run messages that can add latency.
+        psi.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
+        psi.Environment["DOTNET_NOLOGO"] = "1";
+        // Use a local NuGet cache within the home dir to avoid permission issues.
+        psi.Environment["NUGET_PACKAGES"] = Path.Combine(workingDirectory, ".nuget", "packages");
 
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start dotnet build.");
@@ -40,8 +45,21 @@ internal static partial class BuildOutputStreamer
         var stdoutTask = ReadStreamAsync(process.StandardOutput, state, verbose, isError: false);
         var stderrTask = ReadStreamAsync(process.StandardError, state, verbose, isError: true);
 
-        await Task.WhenAll(stdoutTask, stderrTask);
-        await process.WaitForExitAsync(cancellationToken);
+        // 10-minute hard timeout — a hung NuGet restore or MSBuild lock should not block forever.
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+
+        try
+        {
+            await Task.WhenAll(stdoutTask, stderrTask);
+            await process.WaitForExitAsync(linkedCts.Token);
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+        {
+            process.Kill(entireProcessTree: true);
+            AnsiConsole.MarkupLine("[red][[build]][/] ✗ Build timed out after 10 minutes. Run with --verbose for details.");
+            return 1;
+        }
 
         RenderSummary(state, process.ExitCode);
         return process.ExitCode;
