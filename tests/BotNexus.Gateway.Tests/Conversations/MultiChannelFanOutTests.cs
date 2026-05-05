@@ -303,9 +303,10 @@ public sealed class MultiChannelFanOutTests
     }
 
     [Fact]
-    public async Task NoChannelAddress_UsesDefaultConversation()
+    public async Task NoChannelAddress_CreatesOwnConversation()
     {
-        // When channelAddress is empty/null, fall back to default conversation (portal edge case)
+        // Empty-address messages now get their own conversation like any other channel.
+        // Multiple messages from the same empty-address channel reuse that conversation.
         var harness = CreateHarness(responseContent: "default");
 
         var msg1 = harness.CreateMessage("first", "signalr", "");
@@ -314,8 +315,7 @@ public sealed class MultiChannelFanOutTests
         await harness.Host.DispatchAsync(msg2);
 
         var conversations = await harness.Conversations.ListAsync(BotNexus.Domain.Primitives.AgentId.From(AgentName));
-        conversations.Count.ShouldBe(1, "addressless messages should share the default conversation");
-        conversations[0].IsDefault.ShouldBeTrue();
+        conversations.Count.ShouldBe(1, "addressless messages from the same channel reuse the same conversation");
     }
 
 

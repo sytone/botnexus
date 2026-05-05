@@ -623,8 +623,10 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
 
     private async Task<GatewaySession> ResolveOrCreateSessionAsync(AgentId agentId, ChannelKey channelType)
     {
-        // Conversation-first routing: resolve/create via IConversationRouter
-        var channelAddress = Context.ConnectionId;
+        // Conversation-first routing: resolve/create via IConversationRouter.
+        // Use agentId as the channel address so every connection from the same agent
+        // routes to the same portal conversation, regardless of SignalR connection ID.
+        var channelAddress = agentId.Value;
         var routingResult = await _conversationRouter.ResolveInboundAsync(
             agentId,
             channelType,

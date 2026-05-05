@@ -12,7 +12,7 @@ public interface IConversationRouter
     /// <summary>
     /// Resolves or creates the conversation for an inbound message.
     /// Uses (AgentId, ChannelType, ChannelAddress, ThreadId?) as the lookup key.
-    /// Falls back to the agent's default conversation if no binding matches.
+    /// Every channel gets its own conversation on first contact regardless of address.
     /// Stamps Session.ConversationId when creating/resolving sessions.
     /// </summary>
     Task<ConversationRoutingResult> ResolveInboundAsync(
@@ -43,6 +43,15 @@ public interface IConversationRouter
         SessionId sessionId,
         string? originatingBindingId,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Moves a channel binding from its current conversation to the target conversation.
+    /// Used to explicitly share a channel address across conversations (e.g. /share command).
+    /// </summary>
+    /// <param name="bindingId">The binding to move.</param>
+    /// <param name="targetConversationId">The conversation that should own the binding after the call.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task ReattachBindingAsync(string bindingId, ConversationId targetConversationId, CancellationToken ct = default);
 
     /// <summary>
     /// Demotes a channel binding to <see cref="BindingMode.Muted"/> so it no longer receives fan-out.

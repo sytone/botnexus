@@ -151,6 +151,66 @@ public sealed class SignalRHubTests
     }
 
     [Fact]
+    public async Task SignalR_SameAgent_MultipleConnections_ShareConversation()
+    {
+        // Two different SignalR connection IDs for the same agent should land
+        // in the same conversation because channelAddress = agentId (not connectionId).
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var router = new DefaultConversationRouter(
+            conversationStore,
+            sessionStore,
+            NullLogger<DefaultConversationRouter>.Instance);
+
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Two hubs with different connection IDs but same underlying stores/router
+        var hub1 = new GatewayHub(
+            Mock.Of<IAgentSupervisor>(),
+            Mock.Of<IAgentRegistry>(),
+            sessionStore,
+            dispatcher.Object,
+            Mock.Of<IActivityBroadcaster>(),
+            Mock.Of<ISessionCompactor>(),
+            Mock.Of<ISessionWarmupService>(),
+            router,
+            new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
+            NullLogger<GatewayHub>.Instance)
+        {
+            Clients = Mock.Of<IHubCallerClients<IGatewayHubClient>>(),
+            Groups = Mock.Of<IGroupManager>(),
+            Context = new TestHubCallerContext("conn-1")
+        };
+
+        var hub2 = new GatewayHub(
+            Mock.Of<IAgentSupervisor>(),
+            Mock.Of<IAgentRegistry>(),
+            sessionStore,
+            dispatcher.Object,
+            Mock.Of<IActivityBroadcaster>(),
+            Mock.Of<ISessionCompactor>(),
+            Mock.Of<ISessionWarmupService>(),
+            router,
+            new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
+            NullLogger<GatewayHub>.Instance)
+        {
+            Clients = Mock.Of<IHubCallerClients<IGatewayHubClient>>(),
+            Groups = Mock.Of<IGroupManager>(),
+            Context = new TestHubCallerContext("conn-2")
+        };
+
+        var result1 = await hub1.SendMessage("agent-a", "signalr", "from conn-1");
+        var result2 = await hub2.SendMessage("agent-a", "signalr", "from conn-2");
+
+        // Both connections route to the same session (same agent conversation)
+        result1.SessionId.ShouldBe(result2.SessionId);
+        var conversations = await conversationStore.ListAsync(BotNexus.Domain.Primitives.AgentId.From("agent-a"));
+        conversations.Count.ShouldBe(1, "two connections for the same agent share one conversation");
+    }
+
+    [Fact]
     public async Task GatewayHub_SendMessage_WithNoSessionForChannel_AutoCreatesSession()
     {
         // Wave 2: sending on a new channel creates a session.

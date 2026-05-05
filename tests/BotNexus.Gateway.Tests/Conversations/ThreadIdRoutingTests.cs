@@ -135,4 +135,7 @@ internal sealed class CapturingConversationRouter : IConversationRouter
 
     public Task MuteBindingByAddressAsync(AgentId? agentId, ChannelKey channelType, string channelAddress, CancellationToken ct = default)
         => Task.CompletedTask;
+
+    public Task ReattachBindingAsync(string bindingId, ConversationId targetConversationId, CancellationToken ct = default)
+        => Task.CompletedTask;
 }
