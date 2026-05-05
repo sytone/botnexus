@@ -52,8 +52,31 @@ internal static partial class BuildOutputStreamer
         var stdoutTask = ReadStreamAsync(process.StandardOutput, state, suppressLive ? false : verbose, isError: false);
         var stderrTask = ReadStreamAsync(process.StandardError, state, suppressLive ? false : verbose, isError: true);
 
+        // Monitor for locked files and kill the build immediately if detected.
+        // MSBuild retries 10 times per file — without this we'd wait minutes.
+        var lockedFileMonitor = Task.Run(async () =>
+        {
+            while (!process.HasExited)
+            {
+                if (state.HasLockedFiles)
+                {
+                    try { process.Kill(entireProcessTree: true); } catch { }
+                    return;
+                }
+                await Task.Delay(100, CancellationToken.None);
+            }
+        }, CancellationToken.None);
+
         await Task.WhenAll(stdoutTask, stderrTask);
         await process.WaitForExitAsync(cancellationToken);
+
+        if (state.HasLockedFiles)
+        {
+            AnsiConsole.MarkupLine("[red][[build]][/] [red]✗[/] Build aborted — file locks detected.");
+            AnsiConsole.MarkupLine("[yellow][[build]][/] The gateway must be fully stopped before building on Windows.");
+            AnsiConsole.MarkupLine("[yellow][[build]][/] Run [dim]botnexus gateway stop[/] and wait a few seconds, then retry.");
+            return 1;
+        }
 
         RenderSummary(state, process.ExitCode, interactive);
         return process.ExitCode;
@@ -103,6 +126,19 @@ internal static partial class BuildOutputStreamer
             state.ProjectsBuilt++;
             var projectName = arrowMatch.Groups[1].Value;
             AnsiConsole.MarkupLine($"[blue][[build]][/] [green]\u2713[/] {Markup.Escape(projectName)}");
+            return;
+        }
+
+        // Locked file detection: MSB3027 means the gateway is still running and holding DLL locks
+        if (trimmed.Contains("MSB3027", StringComparison.Ordinal) || trimmed.Contains("MSB3021", StringComparison.Ordinal))
+        {
+            if (!state.HasLockedFiles)
+            {
+                state.HasLockedFiles = true;
+                AnsiConsole.MarkupLine("[red][[build]][/] [red]✗[/] File locked — the gateway is still running.");
+                AnsiConsole.MarkupLine("[yellow][[build]][/] Run [dim]botnexus gateway stop[/] first, then retry.");
+            }
+            state.ErrorCount++;
             return;
         }
 
@@ -261,6 +297,7 @@ internal static partial class BuildOutputStreamer
         public int ProjectsBuilt;
         public int WarningCount;
         public int ErrorCount;
+        public bool HasLockedFiles;
         public string? Elapsed;
         public bool RestoreShown;
         public List<DiagnosticEntry> Diagnostics { get; } = [];
