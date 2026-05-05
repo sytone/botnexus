@@ -14,7 +14,11 @@ public class UpdateCommandTests
     private sealed class NoOpPreStopUpdateCommand(IGatewayProcessManager processManager)
         : UpdateCommand(processManager)
     {
-        protected override Task<int> RunPreStopStepsAsync(
+        protected override Task<int> RunGitPullStepAsync(
+            string repoRoot, bool verbose, CancellationToken cancellationToken)
+            => Task.FromResult(0);
+
+        protected override Task<int> RunBuildAndDeployAsync(
             string repoRoot, string home, bool verbose, CancellationToken cancellationToken)
             => Task.FromResult(0);
     }

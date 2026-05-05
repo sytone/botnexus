@@ -49,12 +49,12 @@ internal class UpdateCommand
     {
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
 
-        // Step 1: git pull
-        var pullResult = await RunPreStopStepsAsync(repoRoot, home, verbose, cancellationToken);
+        // Step 1: git pull (safe to do while gateway is running)
+        var pullResult = await RunGitPullStepAsync(repoRoot, verbose, cancellationToken);
         if (pullResult != 0)
             return pullResult;
 
-        // Step 2: Stop gateway BEFORE building to release file locks on Windows
+        // Step 2: Stop gateway BEFORE building — releases file locks on Windows
         GatewayStopResult stopResult;
         if (interactive)
         {
@@ -75,22 +75,40 @@ internal class UpdateCommand
         }
 
         if (!stopResult.Success)
-            AnsiConsole.MarkupLine($"[yellow]⚠[/] Could not stop gateway ({Markup.Escape(stopResult.Message ?? "not running")}). Continuing anyway.");
+            AnsiConsole.MarkupLine($"[yellow]\u26a0[/] Could not stop gateway ({Markup.Escape(stopResult.Message ?? "not running")}). Continuing anyway.");
         else
-            AnsiConsole.MarkupLine("[green]✓[/] Gateway stopped");
+            AnsiConsole.MarkupLine("[green]\u2713[/] Gateway stopped");
 
-        // Small grace period for file handles to release on Windows
-        await Task.Delay(500, cancellationToken);
+        // Wait for the port to be free — confirms the process has fully released file locks.
+        // On Windows this can take several seconds after the process exits.
+        if (interactive)
+        {
+            await AnsiConsole.Status()
+                .Spinner(Spinner.Known.Dots)
+                .SpinnerStyle(Style.Parse("dim"))
+                .StartAsync("Waiting for gateway to release file handles...", async ctx =>
+                {
+                    await WaitForPortFreeAsync(port, cancellationToken);
+                });
+        }
+        else
+        {
+            await WaitForPortFreeAsync(port, cancellationToken);
+        }
 
-        // Steps 3–5: build, deploy, start
+        // Steps 3 & 4: Build and deploy (gateway is now stopped, no file locks)
+        var buildResult = await RunBuildAndDeployAsync(repoRoot, home, verbose, cancellationToken);
+        if (buildResult != 0)
+            return buildResult;
+
+        // Step 5: Start
         return await RunRestartAsync(home, port, repoRoot, cancellationToken);
     }
 
     /// <summary>
-    /// Runs git pull, build, and extension deploy steps before the gateway restart.
-    /// Protected virtual so tests can override it to skip real git/build operations.
+    /// Runs git pull. Protected virtual so tests can override it.
     /// </summary>
-    protected virtual async Task<int> RunPreStopStepsAsync(string repoRoot, string home, bool verbose, CancellationToken cancellationToken)
+    protected virtual async Task<int> RunGitPullStepAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
     {
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
 
@@ -154,7 +172,18 @@ internal class UpdateCommand
             AnsiConsole.MarkupLine($"[green]✓[/] Pulled {countStr}: [dim]{Markup.Escape(Short(beforeSha))}[/] → [dim]{Markup.Escape(Short(afterSha))}[/]");
         }
 
-        // Step 2: Build
+        return 0;
+    }
+
+    /// <summary>
+    /// Runs build and deploy steps. Called after the gateway has been stopped.
+    /// Protected virtual so tests can override it.
+    /// </summary>
+    protected virtual async Task<int> RunBuildAndDeployAsync(string repoRoot, string home, bool verbose, CancellationToken cancellationToken)
+    {
+        var interactive = AnsiConsole.Profile.Capabilities.Interactive;
+
+        // Build
         int buildResult;
         if (interactive && !verbose)
         {
@@ -181,7 +210,7 @@ internal class UpdateCommand
         }
         AnsiConsole.MarkupLine("[green]✓[/] Build succeeded");
 
-        // Step 3: Deploy extensions
+        // Deploy extensions
         int deployed = 0;
         if (interactive)
         {
@@ -367,6 +396,22 @@ internal class UpdateCommand
     /// Checks if a TCP port is available for binding. Mirrors ServeCommand.IsPortAvailable.
     /// Used to verify the port is free before starting the new gateway process.
     /// </summary>
+    /// <summary>
+    /// Waits until the given port is available (process released it) or timeout elapses.
+    /// Polls every 250ms for up to 15 seconds.
+    /// </summary>
+    private static async Task WaitForPortFreeAsync(int port, CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        while (DateTime.UtcNow < deadline && !cancellationToken.IsCancellationRequested)
+        {
+            if (IsPortAvailable(port))
+                return;
+            await Task.Delay(250, cancellationToken);
+        }
+        // If still not free, proceed anyway — build may still succeed if it's a different process
+    }
+
     internal static bool IsPortAvailable(int port)
     {
         try
