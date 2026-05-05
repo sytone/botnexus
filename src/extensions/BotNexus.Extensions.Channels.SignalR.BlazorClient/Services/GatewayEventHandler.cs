@@ -207,6 +207,10 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _store.NotifyChanged();
     }
 
+    // Agents use this exact string to indicate they have nothing to say in a turn.
+    // Suppress it silently — users must never see "NO_REPLY" as a chat message.
+    private const string NoReplySentinel = "NO_REPLY";
+
     public void HandleMessageEnd(AgentStreamEvent evt)
     {
         if (!ResolveAgent(evt.SessionId, out var agentId, out var agent)) return;
@@ -220,7 +224,9 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             ? null
             : conv.StreamState.ThinkingBuffer;
 
-        if (!string.IsNullOrEmpty(conv.StreamState.Buffer) || thinkingContent is not null)
+        var isNoReply = string.Equals(conv.StreamState.Buffer.Trim(), NoReplySentinel, StringComparison.Ordinal);
+
+        if (!isNoReply && (!string.IsNullOrEmpty(conv.StreamState.Buffer) || thinkingContent is not null))
         {
             conv.Messages.Add(new ChatMessage("Assistant", conv.StreamState.Buffer, DateTimeOffset.UtcNow)
             {
@@ -284,9 +290,11 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             conv.StreamState.ThinkingBuffer = "";
             conv.StreamState.IsStreaming = false;
             conv.StreamState.ActiveToolCalls.Clear();
-            conv.HistoryLoaded = false;
-            conv.Messages.Clear();
-            conv.Messages.Add(new ChatMessage("System", "Session reset. Start a new conversation.", DateTimeOffset.UtcNow));
+            // Do NOT clear conv.Messages or set HistoryLoaded=false.
+            // Session reset clears the agent's context window — it does not
+            // erase conversation history. The portal should keep showing all
+            // prior messages with a visual divider marking the new session.
+            conv.Messages.Add(new ChatMessage("System", "─── New session started ───", DateTimeOffset.UtcNow));
         }
 
         agent.ActiveToolCalls.Clear();

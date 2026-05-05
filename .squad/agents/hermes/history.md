@@ -347,3 +347,39 @@
 3. Accessibility: Add ARIA attributes to banner
 ## Learnings
 - 2026-04-20: Repro tests for sub-agent wake delivery should assert both dispatch metadata (messageType=subagent-completion) and stream-event channel capabilities; race-condition coverage needs explicit fallback-to-dispatch expectations when IsRunning flips during follow-up enqueue.
+
+- 2026-05-04: Gateway decoupling audit found direct test coupling concentrated in InProcessIsolationStrategy constructor wiring tests (tests\BotNexus.Gateway.Tests\InProcessIsolationStrategyTests.cs, ToolHookWiringTests.cs, Agents\SubAgentIntegrationTests.cs, PlatformConfigAgentSourceTests.cs); these should shift to DI/extension-loader-backed tool registration seams instead of hardcoded strategy composition.
+- 2026-05-04: DI registration coverage for gateway startup is currently broad but shallow (IsolationStrategyRegistrationTests.cs, PlatformConfigurationTests.cs) and lacks assertions for runtime extension assembly scanning outcomes (IAgentTool/ICommandContributor registrations).
+- 2026-05-04: Coverage gap: no gateway-level tests verify graceful degradation when skills/mcp/mcpinvoke/web extensions are absent or fail load; add extension-loader + in-process tool availability integration tests to prevent regressions during runtime discovery refactors.
+
+
+## 2026-05-04 — Gateway Decoupling Test Audit
+
+**From:** Hermes (Test Strategy)  
+**Completed:** Test audit for gateway decoupling feature  
+**Status:** ✅ Audit complete, ready for test implementation
+
+**Farnsworth's Implementation (reviewed):**
+- Introduced IAgentToolContributor runtime contract
+- Removed 4 compile-time <ProjectReference> entries
+- Changed extension loading from compile-time to runtime discovery
+- AssemblyLoadContextExtensionLoader now finds contributors
+- InProcessIsolationStrategy aggregates contributions per agent/session
+
+**Leela's Architecture Context:**
+- This implementation addresses HIGH-priority architectural issue
+- Restores proper dependency direction (Extensions → Gateway.Contracts)
+- Enables future refactoring of Contracts/Agent.Abstractions coupling
+
+**Your Audit Results:**
+- 🔴 4 pre-existing test failures (pre-decoupling, not new regressions) — should be fixed before merge
+- 🟡 3 tests require manual review (mocking patterns, registration flow)
+- 🟢 4 new tests needed:
+  1. Contributor discovery test
+  2. Context propagation test
+  3. Lifecycle cleanup test (resource disposal)
+  4. Tool registry append test
+
+**Next Step:** Implement 4 new tests + fix 4 pre-existing failures before merge.
+
+---

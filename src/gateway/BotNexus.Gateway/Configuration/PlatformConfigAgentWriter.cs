@@ -17,9 +17,10 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
     private readonly string _configPath;
     private readonly BotNexusHome _botNexusHome;
     private readonly IFileSystem _fileSystem;
+    private readonly ConfigBackupService? _backup;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
 
-    public PlatformConfigAgentWriter(string configPath, BotNexusHome botNexusHome, IFileSystem fileSystem)
+    public PlatformConfigAgentWriter(string configPath, BotNexusHome botNexusHome, IFileSystem fileSystem, ConfigBackupService? backup = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(configPath);
         ArgumentNullException.ThrowIfNull(botNexusHome);
@@ -27,6 +28,7 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
         _configPath = Path.GetFullPath(configPath);
         _botNexusHome = botNexusHome;
         _fileSystem = fileSystem;
+        _backup = backup;
     }
 
     public async Task SaveAsync(AgentDescriptor descriptor, CancellationToken cancellationToken = default)
@@ -41,6 +43,7 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
         {
             var root = await ReadRootAsync(cancellationToken);
             var agents = EnsureAgentsObject(root);
+            var isNew = agents[descriptor.AgentId] is null;
             var entry = GetOrCreateAgentEntry(agents, descriptor.AgentId);
 
             entry["provider"] = descriptor.ApiProvider;
@@ -58,7 +61,10 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
             SetOptionalObject(entry, "isolationOptions", descriptor.IsolationOptions);
             SetOptionalNode(entry, "soul", descriptor.Soul);
 
-            await WriteRootAtomicallyAsync(root, cancellationToken);
+            var saveReason = isNew
+                ? $"before-agent-create-{descriptor.AgentId}"
+                : $"before-agent-update-{descriptor.AgentId}";
+            await WriteRootAtomicallyAsync(root, saveReason, cancellationToken);
         }
         finally
         {
@@ -85,7 +91,7 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
             if (!agents.Remove(agentId))
                 return;
 
-            await WriteRootAtomicallyAsync(root, cancellationToken);
+            await WriteRootAtomicallyAsync(root, $"before-agent-delete-{agentId}", cancellationToken);
         }
         finally
         {
@@ -158,8 +164,9 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
         return node as JsonObject ?? new JsonObject();
     }
 
-    private async Task WriteRootAtomicallyAsync(JsonObject root, CancellationToken cancellationToken)
+    private async Task WriteRootAtomicallyAsync(JsonObject root, string reason, CancellationToken cancellationToken)
     {
+        _backup?.Backup(_configPath, reason);
         _fileSystem.Directory.CreateDirectory(Path.GetDirectoryName(_configPath)!);
 
         var tempPath = _configPath + "." + Guid.NewGuid().ToString("N") + ".tmp";

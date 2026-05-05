@@ -16,9 +16,6 @@ public static class PlatformConfigLoader
     {
         PropertyNameCaseInsensitive = true
     };
-    private static readonly TimeSpan ReloadDebounce = TimeSpan.FromMilliseconds(500);
-
-    public static event Action<PlatformConfig>? ConfigChanged;
 
     /// <summary>The default platform configuration directory.</summary>
     public static string DefaultConfigDirectory => GetDefaultConfigDirectory(new FileSystem());
@@ -33,10 +30,7 @@ public static class PlatformConfigLoader
     public static string GetDefaultConfigDirectory(IFileSystem fileSystem)
         => new BotNexusHome(fileSystem).RootPath;
 
-    public static string GetDefaultHomePath(IFileSystem fileSystem)
-        => GetDefaultConfigDirectory(fileSystem);
-
-    public static string GetDefaultConfigPath(IFileSystem fileSystem)
+        public static string GetDefaultConfigPath(IFileSystem fileSystem)
         => Path.Combine(GetDefaultConfigDirectory(fileSystem), "config.json");
 
     /// <summary>Loads config from disk and optionally validates it.</summary>
@@ -206,23 +200,6 @@ public static class PlatformConfigLoader
         }
 
         fs.Directory.CreateDirectory(configDir);
-    }
-
-    public static IDisposable Watch(
-        string? configPath = null,
-        Action<PlatformConfig>? onChanged = null,
-        Action<Exception>? onError = null,
-        IFileSystem? fileSystem = null)
-    {
-        var fs = fileSystem ?? new FileSystem();
-        var path = string.IsNullOrWhiteSpace(configPath)
-            ? GetDefaultConfigPath(fs)
-            : Path.GetFullPath(configPath);
-
-        var directory = Path.GetDirectoryName(path) ?? GetDefaultConfigDirectory(fs);
-        EnsureConfigDirectory(directory, fs);
-
-        return new PlatformConfigWatcher(path, fs, onChanged, onError);
     }
 
     private static void ValidatePath(string? path, string fieldName, List<string> errors)
@@ -411,16 +388,10 @@ public static class PlatformConfigLoader
         if (channels is null)
             return;
 
-        foreach (var (channelKey, channelConfig) in channels)
+        foreach (var (channelKey, _) in channels)
         {
             if (string.IsNullOrWhiteSpace(channelKey))
-            {
                 errors.Add("channels contains an empty channel key. Use a channel ID (example: 'web').");
-                continue;
-            }
-
-            if (string.IsNullOrWhiteSpace(channelConfig.Type))
-                errors.Add($"channels.{channelKey}.type is required (example: 'signalr' or 'slack').");
         }
     }
 
@@ -802,88 +773,4 @@ public static class PlatformConfigLoader
             Trace.TraceWarning("Platform config warning for '{0}': {1}", configPath, warning);
     }
 
-    private sealed class PlatformConfigWatcher : IDisposable
-    {
-        private readonly IFileSystemWatcher _watcher;
-        private readonly Timer _timer;
-        private readonly string _configPath;
-        private readonly IFileSystem _fileSystem;
-        private readonly Action<PlatformConfig>? _onChanged;
-        private readonly Action<Exception>? _onError;
-        private readonly Lock _sync = new();
-        private bool _disposed;
-
-        public PlatformConfigWatcher(string configPath, IFileSystem fileSystem, Action<PlatformConfig>? onChanged, Action<Exception>? onError)
-        {
-            _configPath = configPath;
-            _fileSystem = fileSystem;
-            _onChanged = onChanged;
-            _onError = onError;
-
-            _watcher = _fileSystem.FileSystemWatcher.New(Path.GetDirectoryName(configPath)!, Path.GetFileName(configPath));
-            _watcher.NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.CreationTime | NotifyFilters.Size;
-            _watcher.IncludeSubdirectories = false;
-            _timer = new Timer(OnTimerElapsed, this, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-
-            _watcher.Changed += OnFileChanged;
-            _watcher.Created += OnFileChanged;
-            _watcher.Deleted += OnFileChanged;
-            _watcher.Renamed += OnFileRenamed;
-            _watcher.EnableRaisingEvents = true;
-        }
-
-        public void Dispose()
-        {
-            lock (_sync)
-            {
-                if (_disposed)
-                    return;
-
-                _disposed = true;
-            }
-
-            _watcher.Dispose();
-            _timer.Dispose();
-        }
-
-        private static void OnTimerElapsed(object? state)
-            => ((PlatformConfigWatcher)state!).ReloadConfig();
-
-        private void OnFileChanged(object sender, FileSystemEventArgs e)
-            => QueueReload();
-
-        private void OnFileRenamed(object sender, RenamedEventArgs e)
-            => QueueReload();
-
-        private void QueueReload()
-        {
-            lock (_sync)
-            {
-                if (_disposed)
-                    return;
-
-                _timer.Change(ReloadDebounce, Timeout.InfiniteTimeSpan);
-            }
-        }
-
-        private void ReloadConfig()
-        {
-            lock (_sync)
-            {
-                if (_disposed)
-                    return;
-            }
-
-            try
-            {
-                var config = Load(_configPath, fileSystem: _fileSystem);
-                _onChanged?.Invoke(config);
-                ConfigChanged?.Invoke(config);
-            }
-            catch (Exception ex)
-            {
-                _onError?.Invoke(ex);
-            }
-        }
-    }
 }

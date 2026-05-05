@@ -123,11 +123,30 @@ public sealed class SqliteConversationStoreTests
     }
 
     [Fact]
-    public async Task ResolveByBindingAsync_WithoutThreadId_MatchesOnAddressOnly()
+    public async Task ResolveByBindingAsync_WithNullThreadId_OnlyMatchesNullThreadBinding()
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
+        // Conversation bound to thread-42 only — no null-thread binding
         var expected = CreateConversation(Agent("agent-a"), "Address", CreateBinding("teams", "channel-1", "thread-42"));
+        await store.CreateAsync(expected);
+
+        // Querying with null threadId should NOT match the thread-42 binding
+        var resolved = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("teams"), "channel-1", null);
+        resolved.ShouldBeNull();
+
+        // But querying with the actual thread-42 should match
+        var resolvedWithThread = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("teams"), "channel-1", "thread-42");
+        resolvedWithThread.ShouldNotBeNull();
+        resolvedWithThread!.ConversationId.ShouldBe(expected.ConversationId);
+    }
+
+    [Fact]
+    public async Task ResolveByBindingAsync_WithNullThreadId_MatchesNullThreadBinding()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var expected = CreateConversation(Agent("agent-a"), "Address", CreateBinding("teams", "channel-1", null));
         await store.CreateAsync(expected);
 
         var resolved = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("teams"), "channel-1", null);
@@ -181,6 +200,84 @@ public sealed class SqliteConversationStoreTests
         await store.CreateAsync(conversation);
 
         await Should.ThrowAsync<InvalidOperationException>(() => store.CreateAsync(conversation));
+    }
+
+    [Fact]
+    public async Task Migration_StaleSignalRConversations_ArchivedOnStartup()
+    {
+        // Arrange: create conversations with titles that match the old connection-ID pattern
+        // (signalr:<32 hex chars>) using a first store instance.
+        using var fixture = new StoreFixture();
+        var seedStore = fixture.CreateStore();
+
+        var staleConvId1 = ConversationId.Create();
+        var staleConvId2 = ConversationId.Create();
+        var staleHex1 = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"; // 32 hex chars
+        var staleHex2 = "0011223344556677889900112233445566"[..32]; // another 32 hex chars
+
+        await seedStore.CreateAsync(new Conversation
+        {
+            ConversationId = staleConvId1,
+            AgentId = Agent("agent-a"),
+            Title = $"signalr:{staleHex1}",
+            Status = ConversationStatus.Active,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow,
+            ChannelBindings = []
+        });
+        await seedStore.CreateAsync(new Conversation
+        {
+            ConversationId = staleConvId2,
+            AgentId = Agent("agent-b"),
+            Title = $"signalr:{staleHex2}",
+            Status = ConversationStatus.Active,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow,
+            ChannelBindings = []
+        });
+
+        // Act: open a fresh store — EnsureCreatedAsync will run the migration
+        var freshStore = fixture.CreateStore();
+        // Trigger initialization by performing any read
+        await freshStore.ListAsync(null);
+
+        // Assert: both stale conversations should now be archived
+        var conv1 = await freshStore.GetAsync(staleConvId1);
+        var conv2 = await freshStore.GetAsync(staleConvId2);
+
+        conv1.ShouldNotBeNull();
+        conv1!.Status.ShouldBe(ConversationStatus.Archived);
+        conv2.ShouldNotBeNull();
+        conv2!.Status.ShouldBe(ConversationStatus.Archived);
+    }
+
+    [Fact]
+    public async Task Migration_SignalRConversationWithAgentIdTitle_NotArchived()
+    {
+        // Arrange: a conversation with title 'signalr:nova' — agent-id style, not a hex GUID
+        using var fixture = new StoreFixture();
+        var seedStore = fixture.CreateStore();
+
+        var convId = ConversationId.Create();
+        await seedStore.CreateAsync(new Conversation
+        {
+            ConversationId = convId,
+            AgentId = Agent("nova"),
+            Title = "signalr:nova",
+            Status = ConversationStatus.Active,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow,
+            ChannelBindings = []
+        });
+
+        // Act: fresh store triggers migration
+        var freshStore = fixture.CreateStore();
+        await freshStore.ListAsync(null);
+
+        // Assert: agent-ID-style title should NOT be archived
+        var conv = await freshStore.GetAsync(convId);
+        conv.ShouldNotBeNull();
+        conv!.Status.ShouldBe(ConversationStatus.Active);
     }
 
     private static AgentId Agent(string id) => AgentId.From(id);

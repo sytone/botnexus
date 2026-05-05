@@ -6,6 +6,7 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Channels;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -19,14 +20,35 @@ namespace BotNexus.Extensions.Channels.Telegram;
 public sealed class TelegramChannelAdapter(
     ILogger<TelegramChannelAdapter> logger,
     IOptions<TelegramGatewayOptions> optionsAccessor,
-    IHttpClientFactory httpClientFactory) : ChannelAdapterBase(logger), IStreamEventChannelAdapter
+    IHttpClientFactory httpClientFactory,
+    IConfiguration? configuration = null) : ChannelAdapterBase(logger), IStreamEventChannelAdapter
 {
     private const int StreamingFlushThresholdChars = 100;
 
     private readonly ILogger<TelegramChannelAdapter> _logger = logger;
-    private readonly TelegramGatewayOptions _options = optionsAccessor.Value;
+    private readonly TelegramGatewayOptions _options = ResolveOptions(optionsAccessor, configuration);
     private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
     private readonly ConcurrentDictionary<string, BotRuntime> _bots = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Resolves Telegram options from <see cref="IOptions{T}"/> if populated, or falls back to
+    /// binding from <see cref="IConfiguration"/> when the extension was loaded after the initial
+    /// DI registration pass and <see cref="IOptions{T}"/> was never bound.
+    /// </summary>
+    private static TelegramGatewayOptions ResolveOptions(
+        IOptions<TelegramGatewayOptions> optionsAccessor,
+        IConfiguration? configuration)
+    {
+        var opts = optionsAccessor.Value;
+        if (string.IsNullOrWhiteSpace(opts.BotToken) && opts.Bots.Count == 0 && configuration is not null)
+        {
+            var bound = new TelegramGatewayOptions();
+            configuration.GetSection("channels:telegram").Bind(bound);
+            return bound;
+        }
+
+        return opts;
+    }
 
     /// <summary>
     /// Telegram channel identifier used by BotNexus routing.
@@ -292,7 +314,9 @@ public sealed class TelegramChannelAdapter(
 
     private async Task HandleUpdateAsync(BotRuntime runtime, TelegramUpdate update, CancellationToken cancellationToken)
     {
-        var message = update.Message ?? update.EditedMessage ?? update.ChannelPost;
+        // Only process real user messages \u2014 not channel posts (no authenticated sender)
+        var message = update.Message
+            ?? (runtime.Config.ProcessEditedMessages ? update.EditedMessage : null);
         if (message?.Chat is null || string.IsNullOrWhiteSpace(message.Text))
             return;
 
@@ -304,7 +328,20 @@ public sealed class TelegramChannelAdapter(
         }
 
         var chatIdText = chatId.ToString(CultureInfo.InvariantCulture);
-        var senderId = (message.From?.Id ?? chatId).ToString(CultureInfo.InvariantCulture);
+        if (message.From is null)
+        {
+            _logger.LogDebug("bot '{BotName}' ignored message with no sender (updateId={UpdateId})", runtime.BotName, update.UpdateId);
+            return;
+        }
+
+        var fromId = message.From.Id;
+        if (!IsUserAllowed(runtime.Config, fromId))
+        {
+            _logger.LogDebug("bot '{BotName}' ignored message from unauthorized user {UserId}", runtime.BotName, fromId);
+            return;
+        }
+
+        var senderId = message.From.Id.ToString(CultureInfo.InvariantCulture);
 
         await DispatchInboundAsync(new InboundMessage
         {
@@ -417,6 +454,9 @@ public sealed class TelegramChannelAdapter(
 
     private static bool IsChatAllowed(TelegramBotConfig config, long chatId)
         => config.AllowedChatIds.Count == 0 || config.AllowedChatIds.Contains(chatId);
+
+    private static bool IsUserAllowed(TelegramBotConfig config, long userId)
+        => config.AllowedUserIds.Count == 0 || config.AllowedUserIds.Contains(userId);
 
     private static void EnsureChatAllowed(TelegramBotConfig config, long chatId)
     {

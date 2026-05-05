@@ -50,6 +50,14 @@ builder.Host.UseSerilog((context, services, configuration) => configuration
     preserveStaticLogger: true);
 
 var platformConfigPath = builder.Configuration["BotNexus:ConfigPath"];
+var resolvedConfigPath = string.IsNullOrWhiteSpace(platformConfigPath)
+    ? PlatformConfigLoader.GetDefaultConfigPath(new System.IO.Abstractions.FileSystem())
+    : Path.GetFullPath(platformConfigPath);
+
+// Add config.json to the IConfiguration pipeline so IOptionsMonitor<T> gets reload and extension
+// assemblies can bind their own config sections without a separate file-reading path.
+builder.Configuration.AddJsonFile(resolvedConfigPath, optional: true, reloadOnChange: true);
+
 var startupPlatformConfig = PlatformConfigLoader.Load(platformConfigPath, validateOnLoad: false);
 
 builder.Services.AddOpenTelemetry()
@@ -72,7 +80,7 @@ builder.Services.AddOpenTelemetry()
 
 builder.Services.AddBotNexusGateway(builder.Configuration);
 builder.Services.AddBotNexusCron();
-builder.Services.AddPlatformConfiguration(platformConfigPath);
+builder.Services.AddPlatformConfiguration(resolvedConfigPath, builder.Configuration);
 builder.Services.Configure<CronOptions>(options =>
 {
     var cron = startupPlatformConfig.Cron;
@@ -245,7 +253,7 @@ using (var bootstrapLoggerFactory = new Serilog.Extensions.Logging.SerilogLogger
 
 var app = builder.Build();
 
-var platformConfig = app.Services.GetRequiredService<PlatformConfig>();
+var platformConfig = app.Services.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue;
 var worldDescriptor = WorldDescriptorBuilder.Build(
     platformConfig,
     app.Services.GetRequiredService<IAgentRegistry>(),

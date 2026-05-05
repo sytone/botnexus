@@ -29,7 +29,7 @@ public sealed class DefaultConversationRouterTests
     // ── ResolveInboundAsync ────────────────────────────────────────────────────
 
     [Fact]
-    public async Task ResolveInbound_CreatesDefaultConversation_ForNewChannelAddress()
+    public async Task ResolveInbound_CreatesPerAddressConversation_ForNewChannelAddress()
     {
         var router = CreateRouter();
         var agentId = Agent();
@@ -39,7 +39,26 @@ public sealed class DefaultConversationRouterTests
         result.ShouldNotBeNull();
         result.Conversation.ShouldNotBeNull();
         result.Conversation.AgentId.ShouldBe(agentId);
-        result.Conversation.IsDefault.ShouldBeTrue();
+        result.Conversation.IsDefault.ShouldBeFalse(); // per-address conversation, not the default
+        result.Conversation.ChannelBindings.ShouldHaveSingleItem();
+        result.Conversation.ChannelBindings[0].ChannelAddress.ShouldBe("chat-123");
+    }
+
+    [Fact]
+    public async Task ResolveInbound_EmptyAddress_CreatesConversation()
+    {
+        // Empty address no longer falls back to the default conversation —
+        // every channel, even addressless ones, gets its own conversation on first contact.
+        var router = CreateRouter();
+        var agentId = Agent();
+
+        var result = await router.ResolveInboundAsync(agentId, Channel(), "", null);
+
+        result.ShouldNotBeNull();
+        result.Conversation.ShouldNotBeNull();
+        result.Conversation.AgentId.ShouldBe(agentId);
+        result.Conversation.ChannelBindings.ShouldHaveSingleItem();
+        result.Conversation.ChannelBindings[0].ChannelAddress.ShouldBe("");
     }
 
     [Fact]
@@ -102,6 +121,102 @@ public sealed class DefaultConversationRouterTests
         var result = await router.ResolveInboundAsync(Agent(), Channel(), "new-chat", null);
 
         result.IsNewSession.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ResolveInbound_SameAgentSameAddress_ReusesConversation()
+    {
+        // A second message from the same channel:address must land in the same conversation.
+        var router = CreateRouter();
+        var agentId = Agent();
+
+        var result1 = await router.ResolveInboundAsync(agentId, Channel(), "chat-abc", null);
+        var result2 = await router.ResolveInboundAsync(agentId, Channel(), "chat-abc", null);
+
+        result2.Conversation.ConversationId.ShouldBe(result1.Conversation.ConversationId);
+        result2.SessionId.ShouldBe(result1.SessionId);
+    }
+
+    [Fact]
+    public async Task ReattachBinding_MovesBindingToTargetConversation()
+    {
+        // After ReattachBinding, the old conversation no longer has the binding
+        // and the target conversation does.
+        var conversationStore = new InMemoryConversationStore();
+        var agentId = Agent();
+        var channel = Channel("telegram");
+
+        // Create source conversation with a binding
+        var result = await new DefaultConversationRouter(
+            conversationStore,
+            new InMemorySessionStore(),
+            NullLogger<DefaultConversationRouter>.Instance)
+            .ResolveInboundAsync(agentId, channel, "addr-src", null);
+        var sourceConversationId = result.Conversation.ConversationId;
+        var bindingId = result.Conversation.ChannelBindings[0].BindingId;
+
+        // Create target conversation
+        var targetConv = new Conversation
+        {
+            ConversationId = ConversationId.Create(),
+            AgentId = agentId,
+            Title = "target"
+        };
+        await conversationStore.SaveAsync(targetConv);
+
+        var router = CreateRouter(conversationStore);
+        await router.ReattachBindingAsync(bindingId, targetConv.ConversationId);
+
+        var source = await conversationStore.GetAsync(sourceConversationId);
+        var target = await conversationStore.GetAsync(targetConv.ConversationId);
+
+        source!.ChannelBindings.ShouldNotContain(b => b.BindingId == bindingId);
+        target!.ChannelBindings.ShouldContain(b => b.BindingId == bindingId);
+    }
+
+    [Fact]
+    public async Task ReattachBinding_FanOut_UsesNewConversationBindings()
+    {
+        // After reattaching a binding to a target conversation, the source conversation
+        // no longer has that binding. Fan-out for a new session in the target will
+        // include the moved binding alongside any bindings already in the target.
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var agentId = Agent();
+
+        var router = new DefaultConversationRouter(conversationStore, sessionStore, NullLogger<DefaultConversationRouter>.Instance);
+
+        // Source: conversation A with a telegram binding
+        var inbound = await router.ResolveInboundAsync(agentId, Channel("telegram"), "addr-a", null);
+        var telegramBindingId = inbound.Conversation.ChannelBindings[0].BindingId;
+        var sourceConvId = inbound.Conversation.ConversationId;
+
+        // Target: conversation B with a slack binding
+        var targetConv = new Conversation
+        {
+            ConversationId = ConversationId.Create(),
+            AgentId = agentId,
+            Title = "target"
+        };
+        targetConv.ChannelBindings.Add(new ChannelBinding
+        {
+            ChannelType = Channel("slack"),
+            ChannelAddress = "slack-channel",
+            Mode = BindingMode.Interactive
+        });
+        await conversationStore.SaveAsync(targetConv);
+
+        // Move telegram binding to target
+        await router.ReattachBindingAsync(telegramBindingId, targetConv.ConversationId);
+
+        // Source conversation should no longer have the telegram binding
+        var source = await conversationStore.GetAsync(sourceConvId);
+        source!.ChannelBindings.ShouldNotContain(b => b.BindingId == telegramBindingId);
+
+        // Target conversation should now have both telegram and slack bindings
+        var target = await conversationStore.GetAsync(targetConv.ConversationId);
+        target!.ChannelBindings.ShouldContain(b => b.BindingId == telegramBindingId);
+        target.ChannelBindings.ShouldContain(b => b.ChannelAddress == "slack-channel");
     }
 
     // ── GetOutboundBindingsAsync ───────────────────────────────────────────────

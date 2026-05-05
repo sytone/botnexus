@@ -76,12 +76,14 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
     /// <returns>The send stream event async result.</returns>
     public Task SendStreamEventAsync(string conversationId, AgentStreamEvent streamEvent, CancellationToken cancellationToken = default)
     {
-        var normalizedSessionId = NormalizeSessionId(conversationId);
-        var typedSessionId = SessionId.From(normalizedSessionId);
+        // Prefer the session ID stamped on the event (set by GatewayHost) over the conversationId
+        // parameter, which may be the channel address (e.g. agentId for SignalR) rather than a session ID.
+        var sessionIdStr = streamEvent.SessionId?.Value ?? NormalizeSessionId(conversationId);
+        var typedSessionId = SessionId.From(sessionIdStr);
 
-        logger.LogInformation("SignalR → group session:{SessionId} method {Method}", normalizedSessionId, streamEvent.Type);
+        logger.LogInformation("SignalR → group session:{SessionId} method {Method}", sessionIdStr, streamEvent.Type);
         var enrichedEvent = streamEvent with { SessionId = typedSessionId };
-        var client = _hubContext.Clients.Group(GetSessionGroup(normalizedSessionId));
+        var client = _hubContext.Clients.Group(GetSessionGroup(sessionIdStr));
 
         return streamEvent.Type switch
         {

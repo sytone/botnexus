@@ -1,11 +1,12 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Configuration;
+using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Federation;
 
-public sealed class CrossWorldInboundAuthService(PlatformConfig platformConfig)
+public sealed class CrossWorldInboundAuthService(IOptionsMonitor<PlatformConfig> platformConfig)
 {
-    private readonly PlatformConfig _platformConfig = platformConfig;
+    private readonly IOptionsMonitor<PlatformConfig> _platformConfig = platformConfig;
 
     public bool TryAuthorize(
         string sourceWorldId,
@@ -13,7 +14,7 @@ public sealed class CrossWorldInboundAuthService(PlatformConfig platformConfig)
         string? presentedApiKey,
         out string error)
     {
-        var inbound = _platformConfig.Gateway?.CrossWorld?.Inbound;
+        var inbound = _platformConfig.CurrentValue.Gateway?.CrossWorld?.Inbound;
         if (inbound is null || !inbound.Enabled)
         {
             error = "Cross-world inbound federation is disabled.";
@@ -65,7 +66,7 @@ public sealed class CrossWorldInboundAuthService(PlatformConfig platformConfig)
     }
 
     private CrossWorldPermissionConfig? ResolvePermission(string sourceWorldId)
-        => _platformConfig.Gateway?.CrossWorldPermissions?
+        => _platformConfig.CurrentValue.Gateway?.CrossWorldPermissions?
             .FirstOrDefault(permission => string.Equals(permission.TargetWorldId, sourceWorldId, StringComparison.OrdinalIgnoreCase));
 
     private static bool TryGetApiKey(IReadOnlyDictionary<string, string> keys, string sourceWorldId, out string? apiKey)

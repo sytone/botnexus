@@ -427,6 +427,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
             new StaticAgentToolFactory(),
             new TestWorkspaceManager(_configDirectory),
             new DefaultToolRegistry(Array.Empty<IAgentTool>()),
+            Array.Empty<IAgentToolContributor>(),
             new StubMemoryStoreFactory(),
             new ServiceCollection().BuildServiceProvider(),
             NullLogger<InProcessIsolationStrategy>.Instance);
@@ -487,6 +488,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
             toolFactory,
             new TestWorkspaceManager(_configDirectory),
             new DefaultToolRegistry(Array.Empty<IAgentTool>()),
+            Array.Empty<IAgentToolContributor>(),
             new StubMemoryStoreFactory(),
             new ServiceCollection().BuildServiceProvider(),
             NullLogger<InProcessIsolationStrategy>.Instance);
@@ -518,6 +520,36 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         subscription.ShouldNotBeNull();
     }
 
+    [Fact]
+    public void Watch_WhenOptionsMonitorFires_InvokesCallback()
+    {
+        var monitor = new TestOptionsMonitor<PlatformConfig>(new PlatformConfig());
+        var source = new PlatformConfigAgentSource(
+            monitor,
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>());
+
+        IReadOnlyList<AgentDescriptor>? received = null;
+        using var subscription = source.Watch(descriptors => received = descriptors);
+
+        var updatedConfig = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["new-agent"] = new AgentDefinitionConfig
+                {
+                    Provider = "openai",
+                    Model = "gpt-4.1",
+                    Enabled = true
+                }
+            }
+        };
+        monitor.RaiseChanged(updatedConfig);
+
+        received.ShouldNotBeNull();
+        received!.ShouldContain(d => d.AgentId.Value == "new-agent");
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_configDirectory))
@@ -526,7 +558,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
 
     private GatewayAuthManager CreateGatewayAuthManagerWithTempAuthPath()
     {
-        var authManager = new GatewayAuthManager(new PlatformConfig(), NullLogger<GatewayAuthManager>.Instance, new FileSystem());
+        var authManager = new GatewayAuthManager(new StaticOptionsMonitor<PlatformConfig>(new PlatformConfig()), NullLogger<GatewayAuthManager>.Instance, new FileSystem());
         var authPathField = typeof(GatewayAuthManager).GetField("_authFilePath", BindingFlags.NonPublic | BindingFlags.Instance);
         authPathField.ShouldNotBeNull();
         authPathField!.SetValue(authManager, Path.Combine(_configDirectory, "auth.json"));
@@ -788,4 +820,11 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         public IReadOnlyList<Location> GetAll()
             => [];
     }
+}
+
+file sealed class StaticOptionsMonitor<T>(T value) : IOptionsMonitor<T>
+{
+    public T CurrentValue => value;
+    public T Get(string? name) => value;
+    public IDisposable? OnChange(Action<T, string?> listener) => null;
 }

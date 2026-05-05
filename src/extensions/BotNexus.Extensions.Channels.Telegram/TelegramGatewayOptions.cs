@@ -46,6 +46,19 @@ public sealed class TelegramGatewayOptions
     public ICollection<long> AllowedChatIds { get; } = [];
 
     /// <summary>
+    /// Gets the allow-list of Telegram user IDs that can send messages to this bot.
+    /// Filters message.from.id. An empty list allows any user (subject to AllowedChatIds).
+    /// For a personal bot, set this to your Telegram user ID.
+    /// </summary>
+    public ICollection<long> AllowedUserIds { get; } = [];
+
+    /// <summary>
+    /// When true, edited messages are processed the same as new messages.
+    /// Defaults to false 2014 edited messages are ignored to prevent replay.
+    /// </summary>
+    public bool ProcessEditedMessages { get; set; } = false;
+
+    /// <summary>
     /// Long polling timeout in seconds. Clamped to a minimum of 1.
     /// </summary>
     public int PollingTimeoutSeconds { get; set; } = 30;
@@ -101,10 +114,13 @@ public sealed class TelegramGatewayOptions
             PollingTimeoutSeconds = PollingTimeoutSeconds,
             StreamingBufferMs = StreamingBufferMs,
             MaxMessageLength = MaxMessageLength,
-            ErrorCooldownMs = ErrorCooldownMs
+            ErrorCooldownMs = ErrorCooldownMs,
+            ProcessEditedMessages = ProcessEditedMessages
         };
         foreach (var id in AllowedChatIds)
             single.AllowedChatIds.Add(id);
+        foreach (var id in AllowedUserIds)
+            single.AllowedUserIds.Add(id);
 
         return new Dictionary<string, TelegramBotConfig>(StringComparer.OrdinalIgnoreCase)
         {

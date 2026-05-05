@@ -125,20 +125,78 @@ public sealed class GatewayEventHandlerTests
     }
 
     [Fact]
-    public void HandleSessionReset_clears_state_and_adds_system_message()
+    public void HandleMessageEnd_no_reply_sentinel_does_not_add_message_to_conversation()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+        agent.IsStreaming = true;
+        conv.StreamState.IsStreaming = true;
+        // Buffer contains exactly the NO_REPLY sentinel
+        conv.StreamState.Buffer = "NO_REPLY";
+        conv.StreamState.ThinkingBuffer = "";
+
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+
+        // Streaming state should be cleared
+        Assert.False(agent.IsStreaming);
+        Assert.False(conv.StreamState.IsStreaming);
+        Assert.Equal(string.Empty, conv.StreamState.Buffer);
+        // No message must be added — NO_REPLY is a silent sentinel
+        Assert.Empty(conv.Messages);
+    }
+
+    [Fact]
+    public void HandleMessageEnd_no_reply_sentinel_with_whitespace_does_not_add_message()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+        agent.IsStreaming = true;
+        conv.StreamState.IsStreaming = true;
+        // Gateway may emit the sentinel with surrounding whitespace
+        conv.StreamState.Buffer = "  NO_REPLY  ";
+        conv.StreamState.ThinkingBuffer = "";
+
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+
+        Assert.False(agent.IsStreaming);
+        Assert.Empty(conv.Messages);
+    }
+
+    [Fact]
+    public void HandleMessageEnd_non_sentinel_content_is_added_normally()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+        agent.IsStreaming = true;
+        conv.StreamState.IsStreaming = true;
+        conv.StreamState.Buffer = "Hello world";
+        conv.StreamState.ThinkingBuffer = "";
+
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+
+        Assert.Single(conv.Messages);
+        Assert.Equal("Hello world", conv.Messages[0].Content);
+    }
+
+    [Fact]
+    public void HandleSessionReset_preserves_history_and_adds_session_boundary_divider()
     {
         var agent = _store.GetAgent("agent-1")!;
         var conv = agent.Conversations["conv-1"];
         agent.SessionId = "sess-1";
-        conv.Messages.Add(new ChatMessage("User", "before", DateTimeOffset.UtcNow));
+        conv.Messages.Add(new ChatMessage("User", "before reset", DateTimeOffset.UtcNow));
         conv.HistoryLoaded = true;
 
         _handler.HandleSessionReset(new SessionResetPayload("agent-1", "sess-1"));
 
         Assert.Null(agent.SessionId);
         Assert.False(agent.IsStreaming);
-        Assert.False(conv.HistoryLoaded);
-        Assert.Single(conv.Messages);
-        Assert.Equal("System", conv.Messages[0].Role);
+        // History is preserved — session reset only clears agent context, not visible history
+        Assert.True(conv.HistoryLoaded);
+        Assert.Equal(2, conv.Messages.Count); // original + divider
+        Assert.Equal("User", conv.Messages[0].Role);
+        Assert.Equal("before reset", conv.Messages[0].Content);
+        Assert.Equal("System", conv.Messages[1].Role);
+        Assert.Contains("───", conv.Messages[1].Content); // visual divider
     }
 }

@@ -35,7 +35,7 @@ public sealed class PlatformConfigAgentSource(
     {
         ArgumentNullException.ThrowIfNull(onChanged);
 
-        Action<PlatformConfig> onPlatformConfigChanged = config =>
+        return _configOptions.OnChange(config =>
         {
             try
             {
@@ -49,10 +49,7 @@ public sealed class PlatformConfigAgentSource(
                     "Failed to reload platform-config agents after config change notification for config directory '{ConfigDirectory}'.",
                     _configDirectory);
             }
-        };
-
-        PlatformConfigLoader.ConfigChanged += onPlatformConfigChanged;
-        return new Subscription(() => PlatformConfigLoader.ConfigChanged -= onPlatformConfigChanged);
+        });
     }
 
     private IReadOnlyList<AgentDescriptor> LoadFromConfig(PlatformConfig platformConfig, CancellationToken cancellationToken)
@@ -306,18 +303,4 @@ public sealed class PlatformConfigAgentSource(
             _ => element.GetRawText()
         };
 
-    private sealed class Subscription(Action disposeAction) : IDisposable
-    {
-        private readonly Action _disposeAction = disposeAction;
-        private bool _disposed;
-
-        public void Dispose()
-        {
-            if (_disposed)
-                return;
-
-            _disposed = true;
-            _disposeAction();
-        }
-    }
 }

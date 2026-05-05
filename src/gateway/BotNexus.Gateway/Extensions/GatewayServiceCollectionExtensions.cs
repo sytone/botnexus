@@ -24,7 +24,6 @@ using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Security;
 using BotNexus.Gateway.Federation;
 using BotNexus.Gateway.Channels;
-using BotNexus.Extensions.Skills;
 using BotNexus.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -145,10 +144,6 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<IHookDispatcher>(sp =>
         {
             var dispatcher = new HookDispatcher();
-            dispatcher.Register<BeforePromptBuildEvent, BeforePromptBuildResult>(
-                new SkillPromptHookHandler(
-                    sp.GetRequiredService<IAgentWorkspaceManager>(),
-                    sp.GetRequiredService<IAgentRegistry>()));
             dispatcher.Register<BeforeToolCallEvent, BeforeToolCallResult>(
                 sp.GetRequiredService<ToolPolicyHookHandler>());
             return dispatcher;
@@ -202,7 +197,10 @@ public static class GatewayServiceCollectionExtensions
             {
                 var home = serviceProvider.GetRequiredService<BotNexusHome>();
                 var defaultConfigPath = Path.Combine(home.RootPath, "config.json");
-                return new PlatformConfigAgentWriter(defaultConfigPath, home, serviceProvider.GetRequiredService<IFileSystem>());
+                var backup = new ConfigBackupService(
+                    Path.Combine(home.RootPath, "backups"),
+                    serviceProvider.GetRequiredService<IFileSystem>());
+                return new PlatformConfigAgentWriter(defaultConfigPath, home, serviceProvider.GetRequiredService<IFileSystem>(), backup);
             }));
             services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
         }
@@ -216,7 +214,7 @@ public static class GatewayServiceCollectionExtensions
     /// </summary>
     /// <param name="services">Service collection.</param>
     /// <param name="configPath">Optional explicit path to platform config.</param>
-    public static IServiceCollection AddPlatformConfiguration(this IServiceCollection services, string? configPath = null)
+    public static IServiceCollection AddPlatformConfiguration(this IServiceCollection services, string? configPath = null, IConfiguration? configuration = null)
     {
         var fileSystem = new FileSystem();
         var resolvedConfigPath = string.IsNullOrWhiteSpace(configPath)
@@ -226,18 +224,28 @@ public static class GatewayServiceCollectionExtensions
 
         PlatformConfigLoader.EnsureConfigDirectory(configDirectory, fileSystem);
         var config = PlatformConfigLoader.Load(resolvedConfigPath, fileSystem: fileSystem);
-        services.AddOptions<PlatformConfig>()
-            .Configure(options =>
-            {
-                var freshConfig = PlatformConfigLoader.Load(resolvedConfigPath, fileSystem: fileSystem);
-                ApplyPlatformConfig(options, freshConfig);
-            });
-        services.AddSingleton<IOptionsChangeTokenSource<PlatformConfig>>(
-            new PlatformConfigChangeTokenSource(resolvedConfigPath, fileSystem));
-        // Start file watcher for dynamic config reload
-        _ = PlatformConfigLoader.Watch(resolvedConfigPath, fileSystem: fileSystem);
-        services.Replace(ServiceDescriptor.Singleton(serviceProvider =>
-            serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue));
+
+        if (configuration is not null)
+        {
+            // Bind PlatformConfig from the host IConfiguration root (config.json is already in the pipeline).
+            // IOptionsMonitor hot-reload comes free from reloadOnChange: true in Program.cs.
+            services.AddOptions<PlatformConfig>().Bind(configuration);
+            services.AddSingleton<IPostConfigureOptions<PlatformConfig>>(sp =>
+                new PlatformConfigPostConfigure(sp.GetRequiredService<IConfiguration>(), resolvedConfigPath));
+            services.AddSingleton<IValidateOptions<PlatformConfig>, PlatformConfigOptionsValidator>();
+        }
+        else
+        {
+            // Fallback when IConfiguration is not threaded in (e.g. tests or CLI-only usage).
+            // Use a manual load + PostConfigure without hot reload.
+            services.AddOptions<PlatformConfig>()
+                .Configure(options =>
+                {
+                    var freshConfig = PlatformConfigLoader.Load(resolvedConfigPath, fileSystem: fileSystem);
+                    ApplyPlatformConfig(options, freshConfig);
+                });
+        }
+
         services.TryAddSingleton<GatewayAuthManager>();
         services.TryAddSingleton<ILocationResolver>(serviceProvider =>
             new DefaultLocationResolver(
@@ -281,9 +289,13 @@ public static class GatewayServiceCollectionExtensions
         services.Replace(ServiceDescriptor.Singleton<IAgentConfigurationWriter>(serviceProvider =>
         {
             var home = serviceProvider.GetRequiredService<BotNexusHome>();
-            return new PlatformConfigAgentWriter(resolvedConfigPath, home, serviceProvider.GetRequiredService<IFileSystem>());
+            var backup = new ConfigBackupService(
+                Path.Combine(home.RootPath, "backups"),
+                serviceProvider.GetRequiredService<IFileSystem>());
+            return new PlatformConfigAgentWriter(resolvedConfigPath, home, serviceProvider.GetRequiredService<IFileSystem>(), backup);
         }));
-        services.AddSingleton(new PlatformConfigWriter(resolvedConfigPath, fileSystem));
+        services.AddSingleton(new PlatformConfigWriter(resolvedConfigPath, fileSystem,
+            new ConfigBackupService(Path.Combine(Path.GetDirectoryName(resolvedConfigPath)!, "backups"), fileSystem)));
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
 
         return services;
@@ -370,7 +382,8 @@ public static class GatewayServiceCollectionExtensions
             services.Replace(ServiceDescriptor.Singleton<ISessionStore>(serviceProvider =>
                 new SqliteSessionStore(
                     connectionString,
-                    serviceProvider.GetRequiredService<ILogger<SqliteSessionStore>>())));
+                    serviceProvider.GetRequiredService<ILogger<SqliteSessionStore>>(),
+                    serviceProvider.GetRequiredService<IConversationStore>())));
             return;
         }
 

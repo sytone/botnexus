@@ -41,9 +41,15 @@ internal sealed class InitCommand
 
         if (File.Exists(configPath) && !force)
         {
-            AnsiConsole.MarkupLine($"[yellow]Warning:[/] Config already exists at [dim]{Markup.Escape(configPath)}[/]. Use [green]--force[/] to overwrite.");
-            AnsiConsole.MarkupLine($"BotNexus home: [dim]{Markup.Escape(homePath)}[/]");
+            AnsiConsole.MarkupLine($"[yellow]⚠[/] Config already exists at [dim]{Markup.Escape(configPath)}[/]. Use [green]--force[/] to overwrite.");
+            AnsiConsole.MarkupLine($"  Home: [dim]{Markup.Escape(homePath)}[/]");
             return 0;
+        }
+
+        var interactive = AnsiConsole.Profile.Capabilities.Interactive;
+        if (interactive)
+        {
+            AnsiConsole.Write(new FigletText("BotNexus").Color(Color.Blue));
         }
 
         var defaultConfig = new PlatformConfig
@@ -75,12 +81,35 @@ internal sealed class InitCommand
         };
 
         await WriteConfigAsync(defaultConfig, configPath, cancellationToken);
-        AnsiConsole.MarkupLine($"[green]\u2713[/] Initialized BotNexus home at: [dim]{Markup.Escape(homePath)}[/]");
-        AnsiConsole.MarkupLine($"[green]\u2713[/] Created config: [dim]{Markup.Escape(configPath)}[/]");
-        AnsiConsole.MarkupLine("\nNext steps:");
-        AnsiConsole.MarkupLine("  [green]botnexus provider setup[/]");
-        AnsiConsole.MarkupLine("  [green]botnexus validate[/]");
-        AnsiConsole.MarkupLine("  [green]botnexus agent list[/]");
+
+        var interactive2 = AnsiConsole.Profile.Capabilities.Interactive;
+        if (interactive2)
+        {
+            var panel = new Panel(
+                $"[green]\u2713[/] Initialized BotNexus home\n\n" +
+                $"[dim]Home:[/]   [dim]{Markup.Escape(homePath)}[/]\n" +
+                $"[dim]Config:[/] [dim]{Markup.Escape(configPath)}[/]\n\n" +
+                "[bold]Next steps:[/]\n" +
+                "  [green]botnexus provider setup[/]\n" +
+                "  [green]botnexus validate[/]\n" +
+                "  [green]botnexus agent list[/]")
+            {
+                Border = BoxBorder.Rounded,
+                Header = new PanelHeader("[bold blue] BotNexus Init [/]"),
+                Padding = new Padding(1, 0)
+            };
+            AnsiConsole.WriteLine();
+            AnsiConsole.Write(panel);
+        }
+        else
+        {
+            AnsiConsole.MarkupLine($"[green]\u2713[/] Initialized BotNexus home at: [dim]{Markup.Escape(homePath)}[/]");
+            AnsiConsole.MarkupLine($"[green]\u2713[/] Created config: [dim]{Markup.Escape(configPath)}[/]");
+            AnsiConsole.MarkupLine("\nNext steps:");
+            AnsiConsole.MarkupLine("  [green]botnexus provider setup[/]");
+            AnsiConsole.MarkupLine("  [green]botnexus validate[/]");
+            AnsiConsole.MarkupLine("  [green]botnexus agent list[/]");
+        }
 
         if (verbose)
             AnsiConsole.WriteLine(JsonSerializer.Serialize(defaultConfig, CreateWriteJsonOptions()));

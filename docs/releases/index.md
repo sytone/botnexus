@@ -7,4 +7,11 @@ description: BotNexus version history and release notes
 
 Browse the full version history of BotNexus. Each release page includes the full changelog for that version.
 
-> No releases yet. Release pages will appear here after the first tagged release is published.
+| Version | Date | |
+|---------|------|---|
+| **[v0.1.6](v0.1.6/)** | 2026-05-05 | ← Latest |
+| [v0.1.5](v0.1.5/) | 2026-05-05 | |
+| [v0.1.4](v0.1.4/) | 2026-05-05 | |
+| [v0.1.3](v0.1.3/) | 2026-05-05 | |
+| [v0.1.2](v0.1.2/) | 2026-05-04 | |
+| [v0.1.1](v0.1.1/) | 2026-05-03 | |

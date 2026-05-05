@@ -13,6 +13,8 @@ internal static partial class BuildOutputStreamer
     /// <summary>
     /// Runs <c>dotnet build</c> with redirected output, parsing and rendering
     /// each line as it arrives so the user sees live progress without raw noise.
+    /// When the terminal is interactive and not in verbose mode, wraps the build
+    /// in a spinner and renders a summary Table on completion.
     /// </summary>
     internal static async Task<int> RunAsync(
         string solution,
@@ -21,6 +23,8 @@ internal static partial class BuildOutputStreamer
         bool verbose,
         CancellationToken cancellationToken)
     {
+        var interactive = AnsiConsole.Profile.Capabilities.Interactive;
+
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet",
@@ -32,18 +36,26 @@ internal static partial class BuildOutputStreamer
             CreateNoWindow = true
         };
 
+        // When interactive and not verbose, suppress per-line output and show a brief message instead.
+        var suppressLive = interactive && !verbose;
+
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start dotnet build.");
 
         var state = new BuildState();
 
-        var stdoutTask = ReadStreamAsync(process.StandardOutput, state, verbose, isError: false);
-        var stderrTask = ReadStreamAsync(process.StandardError, state, verbose, isError: true);
+        if (suppressLive)
+        {
+            AnsiConsole.MarkupLine("[dim]  Building...[/]");
+        }
+
+        var stdoutTask = ReadStreamAsync(process.StandardOutput, state, suppressLive ? false : verbose, isError: false);
+        var stderrTask = ReadStreamAsync(process.StandardError, state, suppressLive ? false : verbose, isError: true);
 
         await Task.WhenAll(stdoutTask, stderrTask);
         await process.WaitForExitAsync(cancellationToken);
 
-        RenderSummary(state, process.ExitCode);
+        RenderSummary(state, process.ExitCode, interactive);
         return process.ExitCode;
     }
 
@@ -154,63 +166,64 @@ internal static partial class BuildOutputStreamer
         }
     }
 
-    private static void RenderSummary(BuildState state, int exitCode)
+    private static void RenderSummary(BuildState state, int exitCode, bool interactive)
     {
         AnsiConsole.WriteLine();
 
         if (exitCode == 0)
         {
-            var parts = new List<string>
+            if (interactive)
             {
-                $"[green]{state.ProjectsBuilt}[/] project(s)"
-            };
+                // Render a compact summary Table
+                var table = new Table()
+                    .Border(TableBorder.Rounded)
+                    .AddColumn(new TableColumn("[bold]Result[/]"))
+                    .AddColumn(new TableColumn("[bold]Projects[/]") { Alignment = Justify.Right })
+                    .AddColumn(new TableColumn("[bold]Warnings[/]") { Alignment = Justify.Right })
+                    .AddColumn(new TableColumn("[bold]Time[/]"));
 
-            if (state.WarningCount > 0)
-                parts.Add($"[yellow]{state.WarningCount}[/] warning(s)");
-
-            if (state.Elapsed is not null)
-                parts.Add($"[dim]{Markup.Escape(state.Elapsed)}[/]");
-
-            AnsiConsole.MarkupLine($"[blue][[build]][/] [green]Build succeeded[/] — {string.Join(", ", parts)}");
+                var warnStr = state.WarningCount > 0 ? $"[yellow]{state.WarningCount}[/]" : $"[dim]{state.WarningCount}[/]";
+                table.AddRow(
+                    "[green]✓ Build succeeded[/]",
+                    $"[green]{state.ProjectsBuilt}[/]",
+                    warnStr,
+                    state.Elapsed is not null ? $"[dim]{Markup.Escape(state.Elapsed)}[/]" : "[dim]—[/]");
+                AnsiConsole.Write(table);
+            }
+            else
+            {
+                var parts = new List<string> { $"[green]{state.ProjectsBuilt}[/] project(s)" };
+                if (state.WarningCount > 0)
+                    parts.Add($"[yellow]{state.WarningCount}[/] warning(s)");
+                if (state.Elapsed is not null)
+                    parts.Add($"[dim]{Markup.Escape(state.Elapsed)}[/]");
+                AnsiConsole.MarkupLine($"[blue][[build]][/] [green]Build succeeded[/] — {string.Join(", ", parts)}");
+            }
         }
         else
         {
-            var parts = new List<string>
-            {
-                $"[red]{state.ErrorCount}[/] error(s)"
-            };
-
+            var parts = new List<string> { $"[red]{state.ErrorCount}[/] error(s)" };
             if (state.WarningCount > 0)
                 parts.Add($"[yellow]{state.WarningCount}[/] warning(s)");
-
             AnsiConsole.MarkupLine($"[blue][[build]][/] [red]Build FAILED[/] — {string.Join(", ", parts)}");
 
-            // Show error details if there are errors not yet printed
             var errors = state.Diagnostics.Where(d => d.Severity == "error").ToList();
             if (errors.Count > 0)
             {
                 AnsiConsole.WriteLine();
                 foreach (var err in errors)
-                {
-                    AnsiConsole.MarkupLine($"  [red]\u2717[/] {Markup.Escape(err.File)}: [red]{Markup.Escape(err.Code)}[/] — {Markup.Escape(err.Message)}");
-                }
+                    AnsiConsole.MarkupLine($"  [red]✗[/] {Markup.Escape(err.File)}: [red]{Markup.Escape(err.Code)}[/] — {Markup.Escape(err.Message)}");
             }
         }
 
-        // Show full warning summary when some were suppressed
         if (state.WarningCount > 5)
         {
             AnsiConsole.WriteLine();
             var warnings = state.Diagnostics.Where(d => d.Severity == "warning").ToList();
-            var grouped = warnings
-                .GroupBy(w => w.Code)
-                .OrderByDescending(g => g.Count());
-
+            var grouped = warnings.GroupBy(w => w.Code).OrderByDescending(g => g.Count());
             AnsiConsole.MarkupLine($"[blue][[build]][/] [yellow]Warning summary ({state.WarningCount} total):[/]");
             foreach (var group in grouped)
-            {
-                AnsiConsole.MarkupLine($"  [yellow]{Markup.Escape(group.Key)}[/] \u00d7{group.Count()}: {Markup.Escape(group.First().Message)}");
-            }
+                AnsiConsole.MarkupLine($"  [yellow]{Markup.Escape(group.Key)}[/] ×{group.Count()}: {Markup.Escape(group.First().Message)}");
         }
     }
 

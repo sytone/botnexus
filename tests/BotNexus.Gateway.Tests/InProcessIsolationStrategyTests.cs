@@ -8,6 +8,7 @@ using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Isolation;
+using Microsoft.Extensions.Options;
 using BotNexus.Gateway.Tools;
 using BotNexus.Memory;
 using BotNexus.Memory.Models;
@@ -19,6 +20,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.IO.Abstractions;
 using System.Reflection;
+using System.Text.Json;
 using AgentCoreUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 
 namespace BotNexus.Gateway.Tests;
@@ -43,11 +45,12 @@ public sealed class InProcessIsolationStrategyTests
         var llmClient = new LlmClient(new ApiProviderRegistry(), new ModelRegistry());
         var strategy = new InProcessIsolationStrategy(
             llmClient,
-            new GatewayAuthManager(new PlatformConfig(), NullLogger<GatewayAuthManager>.Instance, new FileSystem()),
+            new GatewayAuthManager(new StaticOptionsMonitor<PlatformConfig>(new PlatformConfig()), NullLogger<GatewayAuthManager>.Instance, new FileSystem()),
             new PassthroughContextBuilder(),
             new StaticAgentToolFactory(),
             new TestWorkspaceManager(),
             new DefaultToolRegistry(Array.Empty<IAgentTool>()),
+            Array.Empty<IAgentToolContributor>(),
             new StubMemoryStoreFactory(),
             new ServiceCollection().BuildServiceProvider(),
             NullLogger<InProcessIsolationStrategy>.Instance);
@@ -78,6 +81,21 @@ public sealed class InProcessIsolationStrategyTests
         var strategy = CreateStrategyWithRegisteredModel();
 
         strategy.Name.ShouldBe("in-process");
+    }
+
+    [Fact]
+    public async Task CreateAsync_WhenToolContributorRegistered_AddsContributedTool()
+    {
+        var contributor = new TestToolContributor();
+        var strategy = CreateStrategyWithRegisteredModel(contributors: [contributor]);
+
+        var handle = await strategy.CreateAsync(
+            CreateDescriptor(),
+            new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-contrib") });
+
+        var tools = GetTools(handle);
+        tools.Any(t => string.Equals(t.Name, "contributed_tool", StringComparison.OrdinalIgnoreCase)).ShouldBeTrue();
+        contributor.Invocations.ShouldBe(1);
     }
 
     [Fact]
@@ -155,7 +173,64 @@ public sealed class InProcessIsolationStrategyTests
         messages[4].ShouldBe(new AssistantAgentMessage("You're welcome!"));
     }
 
-    private static InProcessIsolationStrategy CreateStrategyWithRegisteredModel()
+    [Fact]
+    public async Task CreateAsync_WithWildcardToolIds_ReturnsAllToolsLikeEmptyList()
+    {
+        // toolIds: ["*"] should behave identically to toolIds: [] (all tools available)
+        var strategy = CreateStrategyWithRegisteredModel();
+        var wildcardDescriptor = new AgentDescriptor
+        {
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-wc"),
+            DisplayName = "Wildcard Agent",
+            ModelId = "test-model",
+            ApiProvider = "test-provider",
+            SystemPrompt = "You are a test agent.",
+            ToolIds = ["*"]
+        };
+        var emptyDescriptor = new AgentDescriptor
+        {
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-empty"),
+            DisplayName = "Empty ToolIds Agent",
+            ModelId = "test-model",
+            ApiProvider = "test-provider",
+            SystemPrompt = "You are a test agent.",
+            ToolIds = []
+        };
+
+        var wildcardHandle = await strategy.CreateAsync(wildcardDescriptor, new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-wc") });
+        var emptyHandle = await strategy.CreateAsync(emptyDescriptor, new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-empty") });
+
+        var wildcardTools = GetTools(wildcardHandle);
+        var emptyTools = GetTools(emptyHandle);
+
+        wildcardTools.Count.ShouldBe(emptyTools.Count);
+        wildcardTools.Select(t => t.Name).ShouldBe(emptyTools.Select(t => t.Name), ignoreOrder: true);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithWildcardToolIds_IncludesWorkspaceTools()
+    {
+        // Ensures workspace tools (like read) are not filtered out when toolIds is ["*"]
+        var strategy = CreateStrategyWithRegisteredModel();
+        var descriptor = new AgentDescriptor
+        {
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-wc2"),
+            DisplayName = "Wildcard Agent 2",
+            ModelId = "test-model",
+            ApiProvider = "test-provider",
+            SystemPrompt = "You are a test agent.",
+            ToolIds = ["*"]
+        };
+
+        var handle = await strategy.CreateAsync(descriptor, new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-wc2") });
+        var tools = GetTools(handle);
+
+        // StaticAgentToolFactory always registers a ReadTool — it must be present with wildcard
+        tools.ShouldContain(t => string.Equals(t.Name, "read", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static InProcessIsolationStrategy CreateStrategyWithRegisteredModel(
+        IReadOnlyList<IAgentToolContributor>? contributors = null)
     {
         var modelRegistry = new ModelRegistry();
         modelRegistry.Register("test-provider", new LlmModel(
@@ -173,11 +248,12 @@ public sealed class InProcessIsolationStrategyTests
         var llmClient = new LlmClient(new ApiProviderRegistry(), modelRegistry);
         return new InProcessIsolationStrategy(
             llmClient,
-            new GatewayAuthManager(new PlatformConfig(), NullLogger<GatewayAuthManager>.Instance, new FileSystem()),
+            new GatewayAuthManager(new StaticOptionsMonitor<PlatformConfig>(new PlatformConfig()), NullLogger<GatewayAuthManager>.Instance, new FileSystem()),
             new PassthroughContextBuilder(),
             new StaticAgentToolFactory(),
             new TestWorkspaceManager(),
             new DefaultToolRegistry(Array.Empty<IAgentTool>()),
+            contributors ?? Array.Empty<IAgentToolContributor>(),
             new StubMemoryStoreFactory(),
             new ServiceCollection().BuildServiceProvider(),
             NullLogger<InProcessIsolationStrategy>.Instance);
@@ -200,6 +276,15 @@ public sealed class InProcessIsolationStrategyTests
         var agent = agentField!.GetValue(handle) as BotNexus.Agent.Core.Agent;
         agent.ShouldNotBeNull();
         return agent!.State.Messages;
+    }
+
+    private static IReadOnlyList<IAgentTool> GetTools(IAgentHandle handle)
+    {
+        var agentField = handle.GetType().GetField("_agent", BindingFlags.Instance | BindingFlags.NonPublic);
+        agentField.ShouldNotBeNull();
+        var agent = agentField!.GetValue(handle) as BotNexus.Agent.Core.Agent;
+        agent.ShouldNotBeNull();
+        return agent!.State.Tools;
     }
 
     private sealed class PassthroughContextBuilder : IContextBuilder
@@ -247,4 +332,41 @@ public sealed class InProcessIsolationStrategyTests
         public Task<MemoryStoreStats> GetStatsAsync(CancellationToken ct = default) => Task.FromResult(new MemoryStoreStats(0, 0, null));
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
+
+    private sealed class TestToolContributor : IAgentToolContributor
+    {
+        public int Invocations { get; private set; }
+
+        public Task<AgentToolContribution> ContributeAsync(AgentToolContributionContext context, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Invocations++;
+            return Task.FromResult(new AgentToolContribution([new ContributedTool()]));
+        }
+    }
+
+    private sealed class ContributedTool : IAgentTool
+    {
+        public string Name => "contributed_tool";
+        public string Label => "Contributed Tool";
+        public Tool Definition => new(Name, "test", JsonDocument.Parse("""{"type":"object"}""").RootElement.Clone());
+
+        public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(
+            IReadOnlyDictionary<string, object?> arguments,
+            CancellationToken cancellationToken = default) => Task.FromResult(arguments);
+
+        public Task<AgentToolResult> ExecuteAsync(
+            string toolCallId,
+            IReadOnlyDictionary<string, object?> arguments,
+            CancellationToken cancellationToken = default,
+            AgentToolUpdateCallback? onUpdate = null)
+            => Task.FromResult(new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "ok")]));
+    }
+}
+
+file sealed class StaticOptionsMonitor<T>(T value) : IOptionsMonitor<T>
+{
+    public T CurrentValue => value;
+    public T Get(string? name) => value;
+    public IDisposable? OnChange(Action<T, string?> listener) => null;
 }

@@ -243,7 +243,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 {
                     ChannelType = ChannelKey.From("signalr"),
                     SenderId = connectionId,
-                    ChannelAddress = session.SessionId.Value,
+                    ChannelAddress = typedAgentId.Value, // stable per-agent address — one portal conversation per agent
                     SessionId = session.SessionId.Value,
                     TargetAgentId = typedAgentId.Value,
                     Content = content,
@@ -266,7 +266,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             {
                 ChannelType = ChannelKey.From("signalr"),
                 SenderId = senderId,
-                ChannelAddress = typedSessionId.Value,
+                ChannelAddress = typedAgentId.Value, // stable per-agent address — one portal conversation per agent
                 SessionId = typedSessionId.Value,
                 TargetAgentId = typedAgentId.Value,
                 Content = content,
@@ -346,7 +346,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 {
                     ChannelType = ChannelKey.From("signalr"),
                     SenderId = connectionId,
-                    ChannelAddress = typedSessionId.Value,
+                    ChannelAddress = typedAgentId.Value, // stable per-agent address — one portal conversation per agent
                     SessionId = typedSessionId.Value,
                     TargetAgentId = typedAgentId.Value,
                     Content = content,
@@ -488,6 +488,35 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         await base.OnConnectedAsync();
     }
 
+    /// <summary>
+    /// Executes on disconnected async. Mutes all channel bindings for this SignalR connection
+    /// so fan-out stops delivering to dead connections on future requests.
+    /// </summary>
+    /// <param name="exception">The disconnect exception, if any.</param>
+    public override async Task OnDisconnectedAsync(Exception? exception)
+    {
+        _logger.LogInformation("Hub OnDisconnected: connection={ConnectionId}", Context.ConnectionId);
+
+        // Best-effort: mute any Interactive/NotifyOnly bindings keyed to this connection ID.
+        // If the store lookup fails, fan-out self-healing via StaleChannelConnectionException
+        // will catch remaining deliveries on the next send attempt.
+        try
+        {
+            await _conversationRouter.MuteBindingByAddressAsync(
+                // Pass null to search all agents' conversations for bindings keyed to this connection.
+                agentId: null,
+                ChannelKey.From("signalr"),
+                Context.ConnectionId,
+                Context.ConnectionAborted);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Hub OnDisconnected: failed to mute bindings for connection {ConnectionId}", Context.ConnectionId);
+        }
+
+        await base.OnDisconnectedAsync(exception);
+    }
+
     private static string GetSessionGroup(SessionId sessionId) => $"session:{sessionId.Value}";
 
     private static AgentId ParseAgentId(string agentId)
@@ -594,8 +623,10 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
 
     private async Task<GatewaySession> ResolveOrCreateSessionAsync(AgentId agentId, ChannelKey channelType)
     {
-        // Conversation-first routing: resolve/create via IConversationRouter
-        var channelAddress = Context.ConnectionId;
+        // Conversation-first routing: resolve/create via IConversationRouter.
+        // Use agentId as the channel address so every connection from the same agent
+        // routes to the same portal conversation, regardless of SignalR connection ID.
+        var channelAddress = agentId.Value;
         var routingResult = await _conversationRouter.ResolveInboundAsync(
             agentId,
             channelType,

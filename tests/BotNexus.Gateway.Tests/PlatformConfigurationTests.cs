@@ -651,14 +651,9 @@ public sealed class PlatformConfigurationTests
         errors.ShouldBeEmpty();
     }
 
-    [Fact]
-    public void PlatformConfigLoader_Watch_CanBeCreatedAndDisposed()
-    {
-        using var fixture = new PlatformConfigFixture();
-        using var watcher = PlatformConfigLoader.Watch(fixture.ConfigPath);
-
-        watcher.ShouldNotBeNull();
-    }
+    // PlatformConfigLoader.Watch was removed in the IConfiguration migration.
+    // Hot reload is now provided by IConfiguration AddJsonFile(reloadOnChange: true).
+    // See PlatformConfigReloadTests for the replacement coverage.
 
     [Fact]
     public async Task PlatformConfigLoader_LoadAsync_WhenReadConcurrently_IsThreadSafe()
@@ -991,4 +986,31 @@ public sealed class PlatformConfigurationTests
         public string? ResolvePath(string locationName) => null;
         public IReadOnlyList<Location> GetAll() => [];
     }
+
+    // -------------------------------------------------------------------------
+    // Issue #120: PlatformConfig singleton removal
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void AddPlatformConfiguration_DoesNotRegisterBare_PlatformConfig_AsSingletonInDI()
+    {
+        // Arrange — AddPlatformConfiguration must NOT register a bare PlatformConfig singleton.
+        // All consumers must resolve via IOptionsMonitor<PlatformConfig> or IOptions<PlatformConfig>.
+        using var fixture = new PlatformConfigFixture();
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddBotNexusGateway();
+        services.AddSingleton<ILocationResolver>(new StubLocationResolver());
+        services.AddPlatformConfiguration(fixture.ConfigPath);
+
+        using var provider = services.BuildServiceProvider();
+
+        // Act & Assert — direct resolution must fail; use IOptionsMonitor<PlatformConfig> instead.
+        var registration = provider.GetService<PlatformConfig>();
+        registration.ShouldBeNull("PlatformConfig must not be registered as a singleton; use IOptionsMonitor<PlatformConfig>");
+    }
 }
+
+// Note: GetDefaultHomePath(IFileSystem) was dead code removed in refactor/iconfiguration-cleanup.
+// Confirmed not called by any gateway or CLI code (only defined in PlatformConfigLoader).

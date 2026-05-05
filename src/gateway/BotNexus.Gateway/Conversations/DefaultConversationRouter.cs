@@ -43,30 +43,19 @@ public sealed class DefaultConversationRouter : IConversationRouter
         var addedBinding = false;
         if (conversation is null)
         {
-            if (threadId is not null)
+            // Every unique (channelType, channelAddress, threadId) gets its own conversation.
+            // There is no special "default" conversation for addressless channels — an empty
+            // address is a valid stable identity (e.g. a future channel with no external ID).
+            var title = threadId is not null
+                ? $"{channelType}:{channelAddress}/{threadId}"
+                : $"{channelType}:{channelAddress}";
+            conversation = new Conversation
             {
-                // A non-null thread id means this is a distinct sub-channel (e.g. Telegram topic).
-                // Create a new conversation so the thread gets its own history.
-                conversation = new Conversation
-                {
-                    ConversationId = ConversationId.Create(),
-                    AgentId = agentId,
-                    Title = $"{channelType}:{channelAddress}/{threadId}",
-                    IsDefault = false
-                };
-                _logger.LogDebug(
-                    "Creating new conversation for thread agent={AgentId} channel={ChannelType} address={ChannelAddress} thread={ThreadId}",
-                    agentId, channelType, channelAddress, threadId);
-            }
-            else
-            {
-                // 2. Fall back to the agent's default conversation and add a binding
-                conversation = await _conversationStore.GetOrCreateDefaultAsync(agentId, ct);
-                _logger.LogDebug(
-                    "No conversation found for agent={AgentId} channel={ChannelType} address={ChannelAddress}. Using default conversation {ConversationId}",
-                    agentId, channelType, channelAddress, conversation.ConversationId);
-            }
-
+                ConversationId = ConversationId.Create(),
+                AgentId = agentId,
+                Title = title,
+                IsDefault = false
+            };
             var binding = new ChannelBinding
             {
                 ChannelType = channelType,
@@ -76,62 +65,15 @@ public sealed class DefaultConversationRouter : IConversationRouter
             };
             conversation.ChannelBindings.Add(binding);
             addedBinding = true;
+            _logger.LogDebug(
+                "Creating new conversation for agent={AgentId} channel={ChannelType} address={ChannelAddress} thread={ThreadId}",
+                agentId, channelType, channelAddress, threadId);
         }
 
         // 3. Resolve or create the active session
-        var isNewSession = false;
         var conversationChanged = addedBinding;
-        SessionId sessionId;
-
-        if (conversation.ActiveSessionId.HasValue)
-        {
-            // Verify the active session is still usable (not sealed/archived)
-            var existingSession = await _sessionStore.GetAsync(conversation.ActiveSessionId.Value, ct);
-            if (existingSession is { Status: not SessionStatus.Sealed and not SessionStatus.Expired })
-            {
-                sessionId = conversation.ActiveSessionId.Value;
-                _logger.LogDebug("Reusing active session {SessionId} for conversation {ConversationId}", sessionId, conversation.ConversationId);
-            }
-            else
-            {
-                // Active session is sealed/expired — create a new one
-                sessionId = SessionId.Create();
-                isNewSession = true;
-                conversation.ActiveSessionId = null; // will be stamped below
-                conversationChanged = true;
-                _logger.LogDebug(
-                    "Active session {OldSessionId} is no longer usable; creating new session {NewSessionId} for conversation {ConversationId}",
-                    conversation.ActiveSessionId, sessionId, conversation.ConversationId);
-            }
-        }
-        else
-        {
-            sessionId = SessionId.Create();
-            isNewSession = true;
-            _logger.LogDebug("Creating new session {SessionId} for conversation {ConversationId}", sessionId, conversation.ConversationId);
-        }
-
-        var session = await _sessionStore.GetOrCreateAsync(sessionId, agentId, ct);
-        if (session.SessionId != sessionId)
-        {
-            // GetOrCreateAsync returned a different session — treat as new
-            sessionId = session.SessionId;
-            isNewSession = true;
-        }
-
-
-        // 4. Stamp ConversationId and ActiveSessionId if not already set
-        if (session.Session.ConversationId is null || session.Session.ConversationId != conversation.ConversationId)
-        {
-            session.Session.ConversationId = conversation.ConversationId;
-            await _sessionStore.SaveAsync(session, ct);
-        }
-
-        if (conversation.ActiveSessionId is null || conversation.ActiveSessionId != sessionId)
-        {
-            conversation.ActiveSessionId = sessionId;
-            conversationChanged = true;
-        }
+        var (sessionId, isNewSession, sessionChanged) = await ResolveOrCreateSessionAsync(conversation, agentId, ct);
+        conversationChanged |= sessionChanged;
 
         if (conversationChanged)
         {
@@ -139,7 +81,14 @@ public sealed class DefaultConversationRouter : IConversationRouter
             await _conversationStore.SaveAsync(conversation, ct);
         }
 
-        return new ConversationRoutingResult(conversation, sessionId, isNewSession);
+        // Resolve the originating binding so callers don't need a second lookup into the binding list.
+        var originatingBinding = conversation.ChannelBindings
+            .FirstOrDefault(b =>
+                b.ChannelType == channelType &&
+                string.Equals(b.ChannelAddress, channelAddress, StringComparison.Ordinal) &&
+                string.Equals(b.ThreadId, threadId, StringComparison.Ordinal));
+
+        return new ConversationRoutingResult(conversation, sessionId, isNewSession, originatingBinding);
     }
 
     /// <inheritdoc />
@@ -160,44 +109,7 @@ public sealed class DefaultConversationRouter : IConversationRouter
         }
 
         // Resolve or create session for this conversation
-        var isNewSession = false;
-        SessionId sessionId;
-
-        if (conversation.ActiveSessionId.HasValue)
-        {
-            var existingSession = await _sessionStore.GetAsync(conversation.ActiveSessionId.Value, ct);
-            if (existingSession is { Status: not SessionStatus.Sealed and not SessionStatus.Expired })
-            {
-                sessionId = conversation.ActiveSessionId.Value;
-            }
-            else
-            {
-                sessionId = SessionId.Create();
-                isNewSession = true;
-                conversation.ActiveSessionId = null;
-            }
-        }
-        else
-        {
-            sessionId = SessionId.Create();
-            isNewSession = true;
-        }
-
-        var session = await _sessionStore.GetOrCreateAsync(sessionId, agentId, ct);
-        sessionId = session.SessionId;
-
-        var changed = false;
-        if (session.Session.ConversationId is null || session.Session.ConversationId != conversation.ConversationId)
-        {
-            session.Session.ConversationId = conversation.ConversationId;
-            await _sessionStore.SaveAsync(session, ct);
-        }
-
-        if (conversation.ActiveSessionId is null || conversation.ActiveSessionId != sessionId)
-        {
-            conversation.ActiveSessionId = sessionId;
-            changed = true;
-        }
+        var (sessionId, isNewSession, changed) = await ResolveOrCreateSessionAsync(conversation, agentId, ct);
 
         if (changed)
         {
@@ -241,5 +153,156 @@ public sealed class DefaultConversationRouter : IConversationRouter
             .Where(b => b.Mode != BindingMode.Muted)
             .Where(b => originatingBindingId is null || !string.Equals(b.BindingId, originatingBindingId, StringComparison.Ordinal))
             .ToList();
+    }
+
+    /// <inheritdoc />
+    public async Task MuteBindingAsync(ConversationId conversationId, string bindingId, CancellationToken ct = default)
+    {
+        var conversation = await _conversationStore.GetAsync(conversationId, ct);
+        if (conversation is null)
+        {
+            _logger.LogDebug("MuteBinding: conversation {ConversationId} not found", conversationId);
+            return;
+        }
+
+        var binding = conversation.ChannelBindings.FirstOrDefault(b =>
+            string.Equals(b.BindingId, bindingId, StringComparison.Ordinal));
+
+        if (binding is null)
+        {
+            _logger.LogDebug("MuteBinding: binding {BindingId} not found in conversation {ConversationId}", bindingId, conversationId);
+            return;
+        }
+
+        if (binding.Mode == BindingMode.Muted)
+            return;
+
+        binding.Mode = BindingMode.Muted;
+        await _conversationStore.SaveAsync(conversation, ct);
+        _logger.LogInformation("MuteBinding: binding {BindingId} ({ChannelType}:{ChannelAddress}) demoted to Muted in conversation {ConversationId}",
+            bindingId, binding.ChannelType, binding.ChannelAddress, conversationId);
+    }
+
+    /// <inheritdoc />
+    public async Task MuteBindingByAddressAsync(AgentId? agentId, ChannelKey channelType, string channelAddress, CancellationToken ct = default)
+    {
+        var conversations = await _conversationStore.ListAsync(agentId, ct);
+        foreach (var conversation in conversations)
+        {
+            var binding = conversation.ChannelBindings.FirstOrDefault(b =>
+                b.ChannelType.Equals(channelType) &&
+                string.Equals(b.ChannelAddress, channelAddress, StringComparison.Ordinal) &&
+                b.Mode != BindingMode.Muted);
+
+            if (binding is null)
+                continue;
+
+            binding.Mode = BindingMode.Muted;
+            await _conversationStore.SaveAsync(conversation, ct);
+            _logger.LogInformation("MuteBindingByAddress: binding {BindingId} ({ChannelType}:{ChannelAddress}) demoted to Muted in conversation {ConversationId}",
+                binding.BindingId, channelType, channelAddress, conversation.ConversationId);
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task ReattachBindingAsync(string bindingId, ConversationId targetConversationId, CancellationToken ct = default)
+    {
+        var target = await _conversationStore.GetAsync(targetConversationId, ct);
+        if (target is null)
+        {
+            _logger.LogWarning("ReattachBinding: target conversation {ConversationId} not found", targetConversationId);
+            return;
+        }
+
+        // Find the binding across all conversations for the same agent
+        var conversations = await _conversationStore.ListAsync(target.AgentId, ct);
+        foreach (var source in conversations)
+        {
+            var binding = source.ChannelBindings.FirstOrDefault(b =>
+                string.Equals(b.BindingId, bindingId, StringComparison.Ordinal));
+
+            if (binding is null)
+                continue;
+
+            if (source.ConversationId == targetConversationId)
+            {
+                _logger.LogDebug("ReattachBinding: binding {BindingId} is already in target conversation {ConversationId}", bindingId, targetConversationId);
+                return;
+            }
+
+            source.ChannelBindings.Remove(binding);
+            source.UpdatedAt = DateTimeOffset.UtcNow;
+            await _conversationStore.SaveAsync(source, ct);
+
+            target.ChannelBindings.Add(binding);
+            target.UpdatedAt = DateTimeOffset.UtcNow;
+            await _conversationStore.SaveAsync(target, ct);
+
+            _logger.LogInformation(
+                "ReattachBinding: moved binding {BindingId} from conversation {SourceId} to {TargetId}",
+                bindingId, source.ConversationId, targetConversationId);
+            return;
+        }
+
+        _logger.LogWarning("ReattachBinding: binding {BindingId} not found in any conversation for agent {AgentId}", bindingId, target.AgentId);
+    }
+
+    // Resolves or creates an active session for the given conversation.
+    // Stamps session.ConversationId and conversation.ActiveSessionId when changed.
+    // Returns the sessionId, whether it is new, and whether the conversation was mutated.
+    private async Task<(SessionId sessionId, bool isNewSession, bool conversationChanged)> ResolveOrCreateSessionAsync(
+        Conversation conversation, AgentId agentId, CancellationToken ct)
+    {
+        SessionId sessionId;
+        var isNewSession = false;
+        var conversationChanged = false;
+
+        if (conversation.ActiveSessionId.HasValue)
+        {
+            var existingSession = await _sessionStore.GetAsync(conversation.ActiveSessionId.Value, ct);
+            if (existingSession is { Status: not SessionStatus.Sealed and not SessionStatus.Expired })
+            {
+                sessionId = conversation.ActiveSessionId.Value;
+                _logger.LogDebug("Reusing active session {SessionId} for conversation {ConversationId}", sessionId, conversation.ConversationId);
+            }
+            else
+            {
+                var oldId = conversation.ActiveSessionId.Value;
+                sessionId = SessionId.Create();
+                isNewSession = true;
+                conversation.ActiveSessionId = null;
+                conversationChanged = true;
+                _logger.LogDebug(
+                    "Active session {OldSessionId} is no longer usable; creating new session {NewSessionId} for conversation {ConversationId}",
+                    oldId, sessionId, conversation.ConversationId);
+            }
+        }
+        else
+        {
+            sessionId = SessionId.Create();
+            isNewSession = true;
+            _logger.LogDebug("Creating new session {SessionId} for conversation {ConversationId}", sessionId, conversation.ConversationId);
+        }
+
+        var session = await _sessionStore.GetOrCreateAsync(sessionId, agentId, ct);
+        if (session.SessionId != sessionId)
+        {
+            sessionId = session.SessionId;
+            isNewSession = true;
+        }
+
+        if (session.Session.ConversationId is null || session.Session.ConversationId != conversation.ConversationId)
+        {
+            session.Session.ConversationId = conversation.ConversationId;
+            await _sessionStore.SaveAsync(session, ct);
+        }
+
+        if (conversation.ActiveSessionId is null || conversation.ActiveSessionId != sessionId)
+        {
+            conversation.ActiveSessionId = sessionId;
+            conversationChanged = true;
+        }
+
+        return (sessionId, isNewSession, conversationChanged);
     }
 }

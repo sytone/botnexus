@@ -29,6 +29,19 @@ public sealed class TelegramBotConfig
     public ICollection<long> AllowedChatIds { get; } = [];
 
     /// <summary>
+    /// Gets the allow-list of Telegram user IDs that can send messages to this bot.
+    /// Filters message.from.id. An empty list allows any user (subject to AllowedChatIds).
+    /// For a personal bot, set this to your Telegram user ID.
+    /// </summary>
+    public ICollection<long> AllowedUserIds { get; } = [];
+
+    /// <summary>
+    /// When true, edited messages are processed the same as new messages.
+    /// Defaults to false \u2014 edited messages are ignored to prevent replay.
+    /// </summary>
+    public bool ProcessEditedMessages { get; set; } = false;
+
+    /// <summary>
     /// Gets or sets the long polling timeout in seconds.
     /// </summary>
     public int PollingTimeoutSeconds { get; set; } = 30;

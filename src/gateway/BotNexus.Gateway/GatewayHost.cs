@@ -257,6 +257,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             // Stamp ConversationId on the session when a conversation router is available.
             // Without this call Session.ConversationId remains null, breaking GatewayEventHandler routing.
             ConversationId? resolvedConversationId = null;
+            ChannelBinding? originatingBinding = null;
             if (_conversationRouter is not null)
             {
                 var routingResult = await _conversationRouter.ResolveInboundAsync(
@@ -267,6 +268,14 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     cancellationToken);
                 sessionId = routingResult.SessionId.Value;
                 resolvedConversationId = routingResult.Conversation.ConversationId;
+
+                // OriginatingBinding carries ThreadId, BindingId, and DisplayPrefix for the inbound
+                // channel address — used below to stamp outbound responses and fan-out exclusion.
+                // This replaces the duplicate lookup that was added as the #123 hotfix workaround.
+                originatingBinding = routingResult.OriginatingBinding;
+                // Stamp BindingId on the message for fan-out exclusion (replaces #123 hotfix workaround)
+                if (message.BindingId is null && originatingBinding is not null)
+                    message = message with { BindingId = originatingBinding.BindingId };
             }
 
             var existingSessionTask = _sessions.GetAsync(SessionId.From(sessionId), cancellationToken);
@@ -381,6 +390,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
 
                 if (resolvedChannel is { SupportsStreaming: true } channel)
                 {
+                    // Capture the originating binding for the lambda closure so the
+                    // streaming conversationId includes the ThreadId (fixes #125).
+                    var streamingBinding = originatingBinding;
                     await StreamingSessionHelper.ProcessAndSaveAsync(
                         handle.StreamAsync(message.Content, cancellationToken),
                         session,
@@ -391,15 +403,28 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                             {
                                 // Enrich with agentId so the client can route events
                                 // even before session registration completes.
-                                var enriched = evt.AgentId is null
-                                    ? evt with { AgentId = Domain.Primitives.AgentId.From(agentId) }
+                                var enriched = evt.AgentId is null || evt.SessionId is null
+                                    ? evt with 
+                                    { 
+                                        AgentId = evt.AgentId ?? Domain.Primitives.AgentId.From(agentId),
+                                        SessionId = evt.SessionId ?? Domain.Primitives.SessionId.From(sessionId)
+                                    }
                                     : evt;
 
+                                // Build the conversationId that the channel adapter uses to
+                                // route the stream to the correct chat thread/topic.
+                                // For channels like Telegram that support forum topics, the
+                                // bare chatId is not enough — we encode threadId into the key
+                                // so the adapter can split them apart (fixes #125).
+                                var streamConversationId = streamingBinding?.ThreadId is not null
+                                    ? $"{message.ChannelAddress}:{streamingBinding.ThreadId}"
+                                    : message.ChannelAddress;
+
                                 if (channel is IStreamEventChannelAdapter streamEventChannel)
-                                    return new ValueTask(streamEventChannel.SendStreamEventAsync(message.ChannelAddress, enriched, ct));
+                                    return new ValueTask(streamEventChannel.SendStreamEventAsync(streamConversationId, enriched, ct));
 
                                 if (evt.Type == AgentStreamEventType.ContentDelta && evt.ContentDelta is not null)
-                                    return new ValueTask(channel.SendStreamDeltaAsync(message.ChannelAddress, evt.ContentDelta, ct));
+                                    return new ValueTask(channel.SendStreamDeltaAsync(streamConversationId, evt.ContentDelta, ct));
 
                                 return ValueTask.CompletedTask;
                             }),
@@ -421,7 +446,12 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                             ChannelType = message.ChannelType,
                             ChannelAddress = message.ChannelAddress,
                             Content = response.Content,
-                            SessionId = sessionId
+                            SessionId = sessionId,
+                            // Binding-aware fields from originating binding fix #126:
+                            // ensure replies go to the correct thread/topic and carry decoration.
+                            ThreadId = originatingBinding?.ThreadId ?? message.ThreadId,
+                            BindingId = originatingBinding?.BindingId,
+                            DisplayPrefix = originatingBinding?.DisplayPrefix
                         }, cancellationToken);
                     }
 
@@ -808,6 +838,17 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     _logger.LogDebug(
                         "Fan-out delivered to {ChannelType}:{ChannelAddress} for session {SessionId}",
                         binding.ChannelType, binding.ChannelAddress, sessionId);
+                }
+                catch (BotNexus.Gateway.Abstractions.Channels.StaleChannelConnectionException ex)
+                {
+                    // Self-heal: demote stale bindings to Muted so future fan-outs skip them.
+                    _logger.LogWarning(
+                        ex,
+                        "Fan-out: stale connection for binding {BindingId} in conversation {ConversationId}. Demoting to Muted.",
+                        ex.BindingId, ex.ConversationId);
+
+                    if (session?.Session.ConversationId is { } convId)
+                        await _conversationRouter.MuteBindingAsync(convId, ex.BindingId, cancellationToken);
                 }
                 catch (Exception ex)
                 {

@@ -173,7 +173,7 @@ public sealed class AgentExchangeServiceTests
             sessionStore,
             Options.Create(new GatewayOptions()),
             NullLogger<AgentExchangeService>.Instance,
-            new PlatformConfig
+            Options.Create(new PlatformConfig
             {
                 Gateway = new GatewaySettingsConfig
                 {
@@ -200,7 +200,7 @@ public sealed class AgentExchangeServiceTests
                         }
                     }
                 }
-            },
+            }),
             adapter);
 
         var result = await service.ConverseAsync(new AgentExchangeRequest
@@ -238,7 +238,7 @@ public sealed class AgentExchangeServiceTests
             new InMemorySessionStore(),
             Options.Create(new GatewayOptions()),
             NullLogger<AgentExchangeService>.Instance,
-            new PlatformConfig
+            Options.Create(new PlatformConfig
             {
                 Gateway = new GatewaySettingsConfig
                 {
@@ -264,7 +264,7 @@ public sealed class AgentExchangeServiceTests
                         }
                     }
                 }
-            });
+            }));
 
         Func<Task> action = () => service.ConverseAsync(new AgentExchangeRequest
         {

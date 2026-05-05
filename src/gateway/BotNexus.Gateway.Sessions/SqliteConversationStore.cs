@@ -24,6 +24,7 @@ public sealed class SqliteConversationStore : IConversationStore
     };
 
     private readonly string _connectionString;
+    private readonly ILogger<SqliteConversationStore> _logger;
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _conversationLocks = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Conversation> _cache = new(StringComparer.Ordinal);
@@ -37,6 +38,7 @@ public sealed class SqliteConversationStore : IConversationStore
     public SqliteConversationStore(string connectionString, ILogger<SqliteConversationStore> logger)
     {
         _connectionString = connectionString;
+        _logger = logger;
     }
 
     /// <inheritdoc />
@@ -293,8 +295,10 @@ public sealed class SqliteConversationStore : IConversationStore
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
         await using var command = connection.CreateCommand();
-        command.CommandText = threadId is null
-            ? """
+        // Use a single query that matches thread_id exactly (including NULL = NULL).
+        // The previous two-branch approach matched any binding when threadId was null,
+        // causing root-chat messages to resolve into thread-specific conversations.
+        command.CommandText = """
                 SELECT c.id
                 FROM conversations c
                 INNER JOIN conversation_bindings b ON b.conversation_id = c.id
@@ -302,28 +306,16 @@ public sealed class SqliteConversationStore : IConversationStore
                   AND c.status = $status
                   AND b.channel_type = $channelType
                   AND lower(b.channel_address) = lower($channelAddress)
-                ORDER BY c.updated_at DESC
-                LIMIT 1
-                """
-            : """
-                SELECT c.id
-                FROM conversations c
-                INNER JOIN conversation_bindings b ON b.conversation_id = c.id
-                WHERE c.agent_id = $agentId
-                  AND c.status = $status
-                  AND b.channel_type = $channelType
-                  AND lower(b.channel_address) = lower($channelAddress)
-                  AND lower(ifnull(b.thread_id, '')) = lower($threadId)
+                  AND (($threadId IS NULL AND b.thread_id IS NULL)
+                       OR ($threadId IS NOT NULL AND lower(ifnull(b.thread_id, '')) = lower($threadId)))
                 ORDER BY c.updated_at DESC
                 LIMIT 1
                 """;
+        command.Parameters.AddWithValue("$threadId", (object?)threadId ?? DBNull.Value);
         command.Parameters.AddWithValue("$agentId", agentId.Value);
         command.Parameters.AddWithValue("$status", ConversationStatus.Active.ToString());
         command.Parameters.AddWithValue("$channelType", channelType.Value);
         command.Parameters.AddWithValue("$channelAddress", channelAddress);
-        if (threadId is not null)
-            command.Parameters.AddWithValue("$threadId", threadId);
-
         var id = (string?)await command.ExecuteScalarAsync(ct).ConfigureAwait(false);
         return string.IsNullOrWhiteSpace(id)
             ? null
@@ -450,6 +442,23 @@ public sealed class SqliteConversationStore : IConversationStore
                 CREATE INDEX IF NOT EXISTS idx_bindings_lookup ON conversation_bindings(channel_type, channel_address, thread_id);
                 """;
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+
+            // One-time migration: archive stale signalr:connection-id conversations created
+            // before binding-first routing (#148). Those conversations have a title matching
+            // 'signalr:<32-hex-chars>' — a connection ID, not an agent ID.
+            await using var archiveStaleMigration = connection.CreateCommand();
+            archiveStaleMigration.CommandText = """
+                UPDATE conversations
+                SET status = 'Archived', updated_at = $now
+                WHERE status = 'Active'
+                  AND title LIKE 'signalr:%'
+                  AND length(replace(substr(title, 9), '-', '')) = 32
+                  AND substr(title, 9) NOT GLOB '*[^0-9a-fA-F-]*'
+                """;
+            archiveStaleMigration.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("o"));
+            var archived = await archiveStaleMigration.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            if (archived > 0)
+                _logger.LogInformation("Archived {Count} stale signalr:connection-id conversations (pre-v0.1.3 cleanup)", archived);
 
             _initialized = true;
         }
