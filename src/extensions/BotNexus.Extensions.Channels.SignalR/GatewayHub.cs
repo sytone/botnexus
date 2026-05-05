@@ -35,6 +35,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     private readonly ISessionCompactor _compactor;
     private readonly ISessionWarmupService _warmup;
     private readonly IConversationRouter _conversationRouter;
+    private readonly IConversationStore _conversationStore;
     private readonly IOptionsMonitor<CompactionOptions> _compactionOptions;
     private readonly ILogger<GatewayHub> _logger;
 
@@ -47,6 +48,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         ISessionCompactor compactor,
         ISessionWarmupService warmup,
         IConversationRouter conversationRouter,
+        IConversationStore conversationStore,
         IOptionsMonitor<CompactionOptions> compactionOptions,
         ILogger<GatewayHub> logger)
     {
@@ -58,6 +60,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         _compactor = compactor;
         _warmup = warmup;
         _conversationRouter = conversationRouter;
+        _conversationStore = conversationStore;
         _compactionOptions = compactionOptions;
         _logger = logger;
     }
@@ -199,7 +202,8 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             typedAgentId, typedChannelType, session.SessionId, connectionId, content.Length > 50 ? content[..50] + "..." : content);
 
         _ = SafeDispatchAsync(
-            () => DispatchMessageAsync(typedAgentId, session.SessionId, content, "message", connectionId),
+            () => DispatchMessageAsync(typedAgentId, session.SessionId, content, "message", connectionId,
+                threadId: string.IsNullOrWhiteSpace(conversationId) ? null : conversationId),
             typedAgentId,
             session.SessionId);
 
@@ -260,13 +264,14 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             session.ChannelType?.Value);
     }
 
-    private Task DispatchMessageAsync(AgentId typedAgentId, SessionId typedSessionId, string content, string messageType, string senderId)
+    private Task DispatchMessageAsync(AgentId typedAgentId, SessionId typedSessionId, string content, string messageType, string senderId, string? threadId = null)
         => _dispatcher.DispatchAsync(
             new InboundMessage
             {
                 ChannelType = ChannelKey.From("signalr"),
                 SenderId = senderId,
                 ChannelAddress = typedAgentId.Value, // stable per-agent address — one portal conversation per agent
+                ThreadId = threadId, // non-null for secondary conversations; null targets the default portal conversation
                 SessionId = typedSessionId.Value,
                 TargetAgentId = typedAgentId.Value,
                 Content = content,
@@ -617,6 +622,27 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
 
         if (needsSave)
             await _sessions.SaveAsync(session, Context.ConnectionAborted);
+
+        // Ensure the conversation has a (signalr, agentId, conversationId) binding so that
+        // future ResolveInboundAsync calls with ThreadId=conversationId route here correctly.
+        var conversation = routingResult.Conversation;
+        var hasThreadBinding = conversation.ChannelBindings.Any(b =>
+            b.ChannelType == channelType &&
+            string.Equals(b.ChannelAddress, agentId.Value, StringComparison.Ordinal) &&
+            string.Equals(b.ThreadId, conversationId, StringComparison.Ordinal));
+
+        if (!hasThreadBinding)
+        {
+            conversation.ChannelBindings.Add(new ChannelBinding
+            {
+                ChannelType = channelType,
+                ChannelAddress = agentId.Value,
+                ThreadId = conversationId,
+                Mode = BindingMode.Interactive
+            });
+            conversation.UpdatedAt = DateTimeOffset.UtcNow;
+            await _conversationStore.SaveAsync(conversation, Context.ConnectionAborted);
+        }
 
         return session;
     }
