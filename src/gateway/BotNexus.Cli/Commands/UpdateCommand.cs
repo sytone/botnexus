@@ -47,11 +47,42 @@ internal class UpdateCommand
 
     internal async Task<int> ExecuteAsync(string repoRoot, string home, int port, bool verbose, CancellationToken cancellationToken)
     {
-        // Steps 1–3: git pull, build, deploy extensions
-        var preStopResult = await RunPreStopStepsAsync(repoRoot, home, verbose, cancellationToken);
-        if (preStopResult != 0)
-            return preStopResult;
+        var interactive = AnsiConsole.Profile.Capabilities.Interactive;
 
+        // Step 1: git pull
+        var pullResult = await RunPreStopStepsAsync(repoRoot, home, verbose, cancellationToken);
+        if (pullResult != 0)
+            return pullResult;
+
+        // Step 2: Stop gateway BEFORE building to release file locks on Windows
+        GatewayStopResult stopResult;
+        if (interactive)
+        {
+            GatewayStopResult capturedStop = new(true, "skipped");
+            await AnsiConsole.Status()
+                .Spinner(Spinner.Known.Dots)
+                .SpinnerStyle(Style.Parse("blue"))
+                .StartAsync("Stopping gateway...", async ctx =>
+                {
+                    capturedStop = await _processManager.StopAsync(home, cancellationToken);
+                });
+            stopResult = capturedStop;
+        }
+        else
+        {
+            AnsiConsole.MarkupLine("[blue][[update]][/] Stopping gateway...");
+            stopResult = await _processManager.StopAsync(home, cancellationToken);
+        }
+
+        if (!stopResult.Success)
+            AnsiConsole.MarkupLine($"[yellow]⚠[/] Could not stop gateway ({Markup.Escape(stopResult.Message ?? "not running")}). Continuing anyway.");
+        else
+            AnsiConsole.MarkupLine("[green]✓[/] Gateway stopped");
+
+        // Small grace period for file handles to release on Windows
+        await Task.Delay(500, cancellationToken);
+
+        // Steps 3–5: build, deploy, start
         return await RunRestartAsync(home, port, repoRoot, cancellationToken);
     }
 
@@ -179,37 +210,7 @@ internal class UpdateCommand
     {
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
 
-        // Stop gateway
-        GatewayStopResult stopResult;
-        if (interactive)
-        {
-            GatewayStopResult capturedStop = default!;
-            await AnsiConsole.Status()
-                .Spinner(Spinner.Known.Dots)
-                .SpinnerStyle(Style.Parse("blue"))
-                .StartAsync("Stopping gateway...", async ctx =>
-                {
-                    capturedStop = await _processManager.StopAsync(home, cancellationToken);
-                });
-            stopResult = capturedStop;
-        }
-        else
-        {
-            AnsiConsole.MarkupLine("[blue][[update]][/] Stopping gateway...");
-            stopResult = await _processManager.StopAsync(home, cancellationToken);
-        }
-
-        if (!stopResult.Success)
-        {
-            AnsiConsole.MarkupLine($"[red]✗[/] Failed to stop gateway: {Markup.Escape(stopResult.Message ?? "Unknown")}");
-            AnsiConsole.MarkupLine("[yellow]⚠[/] Tip: try [dim]botnexus gateway stop[/] manually first.");
-            return 1;
-        }
-        AnsiConsole.MarkupLine("[green]✓[/] Gateway stopped");
-
-        await Task.Delay(1000, cancellationToken);
-
-        // Verify port is free
+        // Verify port is free (gateway was stopped before build in ExecuteAsync)
         if (!IsPortAvailable(port))
         {
             AnsiConsole.MarkupLine($"[red]✗[/] Port {port} is still in use after stopping gateway.");
