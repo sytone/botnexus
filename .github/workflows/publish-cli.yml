@@ -109,19 +109,13 @@ jobs:
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
           echo "prev_tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
 
-      - name: Update workflow run name with version
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const version = '${{ steps.version.outputs.version }}';
-            const prerelease = '${{ github.event.inputs.prerelease }}' === 'true';
-            const suffix = prerelease ? ' (pre-release)' : '';
-            await github.rest.actions.updateWorkflowRun({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: context.runId,
-              name: `Release - v${version}${suffix}`,
-            });
+      - name: Write version to summary
+        run: |
+          echo "## Release" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Version:** v${{ steps.version.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Tag:** ${{ steps.version.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Prerelease:** ${{ github.event.inputs.prerelease }}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Bump version in Directory.Build.props
         run: |
