@@ -9,5 +9,6 @@ Browse the full version history of BotNexus. Each release page includes the full
 
 | Version | Date | |
 |---------|------|---|
-| **[v0.1.2](v0.1.2/)** | 2026-05-04 | ← Latest |
+| **[v0.1.3](v0.1.3/)** | 2026-05-05 | ← Latest |
+| [v0.1.2](v0.1.2/) | 2026-05-04 | |
 | [v0.1.1](v0.1.1/) | 2026-05-03 | |
