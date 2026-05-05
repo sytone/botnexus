@@ -34,7 +34,11 @@ internal sealed class CopilotMcpSearchProvider : ISearchProvider, IAsyncDisposab
     public async Task<IReadOnlyList<SearchResult>> SearchAsync(string query, int maxResults, CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        return await SearchWithRetryAsync(query, maxResults, isRetry: false, ct).ConfigureAwait(false);
+    }
 
+    private async Task<IReadOnlyList<SearchResult>> SearchWithRetryAsync(string query, int maxResults, bool isRetry, CancellationToken ct)
+    {
         var client = await GetOrCreateClientAsync(ct).ConfigureAwait(false);
         var arguments = JsonSerializer.SerializeToElement(new { query });
 
@@ -43,9 +47,25 @@ internal sealed class CopilotMcpSearchProvider : ISearchProvider, IAsyncDisposab
         {
             callResult = await client.CallToolAsync("web_search", arguments, ct).ConfigureAwait(false);
         }
+        catch (McpException ex) when (!isRetry)
+        {
+            // Token may have rotated — invalidate cached client and retry once
+            await InvalidateClientAsync().ConfigureAwait(false);
+            if (ex.Message.Contains("401", StringComparison.Ordinal) ||
+                ex.Message.Contains("400", StringComparison.Ordinal) ||
+                ex.Message.Contains("unauthorized", StringComparison.OrdinalIgnoreCase))
+                return await SearchWithRetryAsync(query, maxResults, isRetry: true, ct).ConfigureAwait(false);
+            throw new InvalidOperationException($"Copilot MCP web_search failed: {ex.Message}", ex);
+        }
         catch (McpException ex)
         {
             throw new InvalidOperationException($"Copilot MCP web_search failed: {ex.Message}", ex);
+        }
+        catch (HttpRequestException ex) when (!isRetry && (ex.StatusCode == System.Net.HttpStatusCode.BadRequest || ex.StatusCode == System.Net.HttpStatusCode.Unauthorized))
+        {
+            // Token rotation — invalidate and retry once
+            await InvalidateClientAsync().ConfigureAwait(false);
+            return await SearchWithRetryAsync(query, maxResults, isRetry: true, ct).ConfigureAwait(false);
         }
 
         if (callResult.IsError)
@@ -76,6 +96,23 @@ internal sealed class CopilotMcpSearchProvider : ISearchProvider, IAsyncDisposab
         }
 
         _clientGate.Dispose();
+    }
+
+    private async Task InvalidateClientAsync()
+    {
+        await _clientGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (_client is not null)
+            {
+                await _client.DisposeAsync().ConfigureAwait(false);
+                _client = null;
+            }
+        }
+        finally
+        {
+            _clientGate.Release();
+        }
     }
 
     private async Task<McpClient> GetOrCreateClientAsync(CancellationToken ct)
