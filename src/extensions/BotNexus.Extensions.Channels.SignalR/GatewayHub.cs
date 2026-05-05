@@ -243,7 +243,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 {
                     ChannelType = ChannelKey.From("signalr"),
                     SenderId = connectionId,
-                    ChannelAddress = session.SessionId.Value,
+                    ChannelAddress = typedAgentId.Value, // stable per-agent address — one portal conversation per agent
                     SessionId = session.SessionId.Value,
                     TargetAgentId = typedAgentId.Value,
                     Content = content,
@@ -266,7 +266,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             {
                 ChannelType = ChannelKey.From("signalr"),
                 SenderId = senderId,
-                ChannelAddress = typedSessionId.Value,
+                ChannelAddress = typedAgentId.Value, // stable per-agent address — one portal conversation per agent
                 SessionId = typedSessionId.Value,
                 TargetAgentId = typedAgentId.Value,
                 Content = content,
@@ -346,7 +346,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 {
                     ChannelType = ChannelKey.From("signalr"),
                     SenderId = connectionId,
-                    ChannelAddress = typedSessionId.Value,
+                    ChannelAddress = typedAgentId.Value, // stable per-agent address — one portal conversation per agent
                     SessionId = typedSessionId.Value,
                     TargetAgentId = typedAgentId.Value,
                     Content = content,
