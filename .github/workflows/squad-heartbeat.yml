@@ -8,14 +8,8 @@ name: Squad Heartbeat (Ralph)
 
 on:
   schedule:
-    # Every hour — adjust via cron expression as needed
-    - cron: '0 * * * *'
-
-  # React to completed work or new squad work
-  issues:
-    types: [closed, labeled]
-  pull_request:
-    types: [closed]
+    # Every 6 hours — reduced from hourly to cut costs
+    - cron: '0 */6 * * *'
 
   # Manual trigger
   workflow_dispatch:

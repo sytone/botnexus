@@ -14,8 +14,38 @@ name: "CodeQL Advanced"
 on:
   push:
     branches: [ "main" ]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.github/workflows/docs.yml'
+      - '.squad/**'
+      - '.ai-team/**'
+      - '.copilot/**'
+      - 'agents/**'
+      - 'mkdocs.yml'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'requirements.txt'
+      - 'cliff.toml'
+      - '.editorconfig'
+      - '.gitattributes'
   pull_request:
     branches: [ "main" ]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.github/workflows/docs.yml'
+      - '.squad/**'
+      - '.ai-team/**'
+      - '.copilot/**'
+      - 'agents/**'
+      - 'mkdocs.yml'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'requirements.txt'
+      - 'cliff.toml'
+      - '.editorconfig'
+      - '.gitattributes'
   schedule:
     - cron: '36 4 * * 1'
 
