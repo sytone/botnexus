@@ -177,17 +177,19 @@ public sealed class DefaultConversationRouterTests
     [Fact]
     public async Task ReattachBinding_FanOut_UsesNewConversationBindings()
     {
-        // After reattach, GetOutboundBindings on the session should return
-        // bindings from the new (target) conversation.
+        // After reattaching a binding to a target conversation, the source conversation
+        // no longer has that binding. Fan-out for a new session in the target will
+        // include the moved binding alongside any bindings already in the target.
         var conversationStore = new InMemoryConversationStore();
         var sessionStore = new InMemorySessionStore();
         var agentId = Agent();
 
-        // Source: conversation A with a telegram binding
         var router = new DefaultConversationRouter(conversationStore, sessionStore, NullLogger<DefaultConversationRouter>.Instance);
+
+        // Source: conversation A with a telegram binding
         var inbound = await router.ResolveInboundAsync(agentId, Channel("telegram"), "addr-a", null);
-        var bindingId = inbound.Conversation.ChannelBindings[0].BindingId;
-        var sessionId = inbound.SessionId;
+        var telegramBindingId = inbound.Conversation.ChannelBindings[0].BindingId;
+        var sourceConvId = inbound.Conversation.ConversationId;
 
         // Target: conversation B with a slack binding
         var targetConv = new Conversation
@@ -205,11 +207,16 @@ public sealed class DefaultConversationRouterTests
         await conversationStore.SaveAsync(targetConv);
 
         // Move telegram binding to target
-        await router.ReattachBindingAsync(bindingId, targetConv.ConversationId);
+        await router.ReattachBindingAsync(telegramBindingId, targetConv.ConversationId);
 
-        // Fan-out from sessionId should now only go to slack (the moved binding is the originator)
-        var outbound = await router.GetOutboundBindingsAsync(sessionId, null);
-        outbound.ShouldContain(b => b.ChannelAddress == "slack-channel");
+        // Source conversation should no longer have the telegram binding
+        var source = await conversationStore.GetAsync(sourceConvId);
+        source!.ChannelBindings.ShouldNotContain(b => b.BindingId == telegramBindingId);
+
+        // Target conversation should now have both telegram and slack bindings
+        var target = await conversationStore.GetAsync(targetConv.ConversationId);
+        target!.ChannelBindings.ShouldContain(b => b.BindingId == telegramBindingId);
+        target.ChannelBindings.ShouldContain(b => b.ChannelAddress == "slack-channel");
     }
 
     // ── GetOutboundBindingsAsync ───────────────────────────────────────────────
