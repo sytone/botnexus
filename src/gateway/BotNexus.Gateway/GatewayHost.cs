@@ -403,8 +403,12 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                             {
                                 // Enrich with agentId so the client can route events
                                 // even before session registration completes.
-                                var enriched = evt.AgentId is null
-                                    ? evt with { AgentId = Domain.Primitives.AgentId.From(agentId) }
+                                var enriched = evt.AgentId is null || evt.SessionId is null
+                                    ? evt with 
+                                    { 
+                                        AgentId = evt.AgentId ?? Domain.Primitives.AgentId.From(agentId),
+                                        SessionId = evt.SessionId ?? Domain.Primitives.SessionId.From(sessionId)
+                                    }
                                     : evt;
 
                                 // Build the conversationId that the channel adapter uses to

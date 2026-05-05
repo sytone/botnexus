@@ -24,6 +24,7 @@ public sealed class SqliteConversationStore : IConversationStore
     };
 
     private readonly string _connectionString;
+    private readonly ILogger<SqliteConversationStore> _logger;
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _conversationLocks = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Conversation> _cache = new(StringComparer.Ordinal);
@@ -37,6 +38,7 @@ public sealed class SqliteConversationStore : IConversationStore
     public SqliteConversationStore(string connectionString, ILogger<SqliteConversationStore> logger)
     {
         _connectionString = connectionString;
+        _logger = logger;
     }
 
     /// <inheritdoc />
@@ -440,6 +442,23 @@ public sealed class SqliteConversationStore : IConversationStore
                 CREATE INDEX IF NOT EXISTS idx_bindings_lookup ON conversation_bindings(channel_type, channel_address, thread_id);
                 """;
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+
+            // One-time migration: archive stale signalr:connection-id conversations created
+            // before binding-first routing (#148). Those conversations have a title matching
+            // 'signalr:<32-hex-chars>' — a connection ID, not an agent ID.
+            await using var archiveStaleMigration = connection.CreateCommand();
+            archiveStaleMigration.CommandText = """
+                UPDATE conversations
+                SET status = 'Archived', updated_at = $now
+                WHERE status = 'Active'
+                  AND title LIKE 'signalr:%'
+                  AND length(replace(substr(title, 9), '-', '')) = 32
+                  AND substr(title, 9) NOT GLOB '*[^0-9a-fA-F-]*'
+                """;
+            archiveStaleMigration.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("o"));
+            var archived = await archiveStaleMigration.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            if (archived > 0)
+                _logger.LogInformation("Archived {Count} stale signalr:connection-id conversations (pre-v0.1.3 cleanup)", archived);
 
             _initialized = true;
         }
