@@ -28,7 +28,7 @@ public sealed class CrossWorldFederationControllerTests
                     {
                         TargetWorldId = "world-a",
                         AllowInbound = true,
-                        AllowedAgents = ["leela"]
+                        AllowedAgents = ["agent-c"]
                     }
                 ],
                 CrossWorld = new CrossWorldFederationConfig
@@ -44,12 +44,12 @@ public sealed class CrossWorldFederationControllerTests
         };
 
         var registry = new Mock<IAgentRegistry>();
-        registry.Setup(r => r.Contains(AgentId.From("leela"))).Returns(true);
+        registry.Setup(r => r.Contains(AgentId.From("agent-c"))).Returns(true);
         var handle = new Mock<IAgentHandle>();
         handle.Setup(h => h.PromptAsync("Hello from world-a", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = "Hello back from world-b" });
         var supervisor = new Mock<IAgentSupervisor>();
-        supervisor.Setup(s => s.GetOrCreateAsync(AgentId.From("leela"), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+        supervisor.Setup(s => s.GetOrCreateAsync(AgentId.From("agent-c"), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(handle.Object);
         var sessions = new InMemorySessionStore();
         var platformConfigMonitor = new StaticOptionsMonitor<PlatformConfig>(platformConfig);
@@ -72,8 +72,8 @@ public sealed class CrossWorldFederationControllerTests
             new CrossWorldRelayRequest
             {
                 SourceWorldId = "world-a",
-                SourceAgentId = "nova",
-                TargetAgentId = "leela",
+                SourceAgentId = "test-agent",
+                TargetAgentId = "agent-c",
                 Message = "Hello from world-a",
                 ChannelAddress = "nova::cross::leela::abc123"
             },
@@ -87,8 +87,8 @@ public sealed class CrossWorldFederationControllerTests
         var savedSession = await sessions.GetAsync(SessionId.From(payload.SessionId));
         savedSession.ShouldNotBeNull();
         savedSession!.ChannelType.ShouldBe(ChannelKey.From("cross-world"));
-        savedSession.Participants.Where(p => p.Id == "nova" && p.WorldId == "world-a").ShouldHaveSingleItem();
-        savedSession.Participants.Where(p => p.Id == "leela" && p.WorldId == "world-b").ShouldHaveSingleItem();
+        savedSession.Participants.Where(p => p.Id == "test-agent" && p.WorldId == "world-a").ShouldHaveSingleItem();
+        savedSession.Participants.Where(p => p.Id == "agent-c" && p.WorldId == "world-b").ShouldHaveSingleItem();
     }
 
     [Fact]
@@ -104,7 +104,7 @@ public sealed class CrossWorldFederationControllerTests
                     {
                         TargetWorldId = "world-a",
                         AllowInbound = true,
-                        AllowedAgents = ["leela"]
+                        AllowedAgents = ["agent-c"]
                     }
                 ],
                 CrossWorld = new CrossWorldFederationConfig
@@ -120,7 +120,7 @@ public sealed class CrossWorldFederationControllerTests
         };
 
         var registry = new Mock<IAgentRegistry>();
-        registry.Setup(r => r.Contains(AgentId.From("leela"))).Returns(true);
+        registry.Setup(r => r.Contains(AgentId.From("agent-c"))).Returns(true);
         var platformConfigMonitor2 = new StaticOptionsMonitor<PlatformConfig>(platformConfig);
         var controller = new CrossWorldFederationController(
             registry.Object,
@@ -140,8 +140,8 @@ public sealed class CrossWorldFederationControllerTests
             new CrossWorldRelayRequest
             {
                 SourceWorldId = "world-a",
-                SourceAgentId = "nova",
-                TargetAgentId = "leela",
+                SourceAgentId = "test-agent",
+                TargetAgentId = "agent-c",
                 Message = "hello",
                 ChannelAddress = "c-1"
             },

@@ -125,7 +125,7 @@ public sealed record ChannelBinding
 {
     public string BindingId { get; set; } = Guid.NewGuid().ToString("N");
     public ChannelKey ChannelType { get; set; }
-    public string ExternalAddress { get; set; } = string.Empty; // e.g. telegram:5067802539
+    public string ExternalAddress { get; set; } = string.Empty; // e.g. telegram:1234567890
     public BindingMode Mode { get; set; } = BindingMode.Interactive;
     public ThreadingMode ThreadingMode { get; set; } = ThreadingMode.Single;
     public string? ThreadId { get; set; } // native thread/topic id when ThreadingMode = NativeThread
@@ -482,7 +482,7 @@ Current design assumes a single effective user per agent/channel context.
 
 ## Design Decisions
 
-The following were decided by Jon Bullen on 2026-04-27:
+The following were decided by BotNexus Team on 2026-04-27:
 
 1. **Name: `Conversation`** — More natural. Humans have conversations across any channel — in person, on the phone, via text.
 

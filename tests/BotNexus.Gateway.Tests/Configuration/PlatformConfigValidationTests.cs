@@ -359,7 +359,7 @@ public sealed class PlatformConfigValidationTests
                     "botnexus-mcp": { "enabled": true, "servers": ["filesystem"] }
                   },
                   "metadata": {
-                    "owner": "jon",
+                    "owner": "test-user",
                     "priority": 1
                   }
                 }
@@ -386,7 +386,7 @@ public sealed class PlatformConfigValidationTests
                 agent.Extensions.ShouldContainKey("botnexus-mcp");
                 agent.Extensions!["botnexus-mcp"].GetProperty("enabled").GetBoolean().ShouldBeTrue();
                 agent.Metadata.ShouldNotBeNull();
-                agent.Metadata!.Value.GetProperty("owner").GetString().ShouldBe("jon");
+                agent.Metadata!.Value.GetProperty("owner").GetString().ShouldBe("test-user");
                 SerializeShouldNotThrow(config);
             });
 
@@ -1578,7 +1578,7 @@ public sealed class PlatformConfigValidationTests
                   "provider": "copilot",
                   "model": "gpt-4.1",
                   "metadata": {
-                    "owner": "jon",
+                    "owner": "test-user",
                     "tags": ["core", "test"]
                   },
                   "isolationOptions": {
@@ -1602,7 +1602,7 @@ public sealed class PlatformConfigValidationTests
 
                 PlatformConfigLoader.Validate(config).ShouldBeEmpty();
                 config.Gateway!.Extensions!.Defaults!["botnexus-skills"].GetProperty("paths")[0].GetString().ShouldBe("skills");
-                agent.Metadata!.Value.GetProperty("owner").GetString().ShouldBe("jon");
+                agent.Metadata!.Value.GetProperty("owner").GetString().ShouldBe("test-user");
                 agent.IsolationOptions!.Value.GetProperty("timeout").GetInt32().ShouldBe(30);
                 agent.Extensions!["botnexus-exec"].GetProperty("shell").GetString().ShouldBe("bash");
                 SerializeShouldNotThrow(config);

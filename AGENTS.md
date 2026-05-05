@@ -7,7 +7,7 @@ Some docs have a YAML front-matter header indicating ownership:
 ```yaml
 ---
 owner: human          # human | ai | shared
-author: Jon Bullen
+author: BotNexus Team
 ai-policy: minimal    # minimal | collaborative | open
 ---
 ```

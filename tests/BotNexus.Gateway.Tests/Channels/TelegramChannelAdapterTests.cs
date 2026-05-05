@@ -617,7 +617,7 @@ public sealed class TelegramChannelAdapterTests
         var adapter = CreateAdapter(new TelegramGatewayOptions
         {
             BotToken = "token",
-            AgentId = "larry",
+            AgentId = "agent-b",
             PollingTimeoutSeconds = 1,
             AllowedChatIds = { 42 }
         }, handler);
@@ -631,7 +631,7 @@ public sealed class TelegramChannelAdapterTests
         var message = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await adapter.StopAsync(CancellationToken.None);
 
-        message.TargetAgentId.ShouldBe("larry");
+        message.TargetAgentId.ShouldBe("agent-b");
         message.ChannelAddress.ShouldBe("42");
         message.Content.ShouldBe("hello");
     }

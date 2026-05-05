@@ -231,7 +231,7 @@ public sealed class SkillsCommandContributorTests
             RawInput = $"/skills {subCommand} {string.Join(" ", arguments)}".Trim(),
             SubCommand = subCommand,
             Arguments = arguments,
-            AgentId = "nova",
+            AgentId = "test-agent",
             SessionId = "session-1",
             HomeDirectory = @"Q:\repos\botnexus",
             ResolveSessionTool = name => string.Equals(name, "skills", StringComparison.OrdinalIgnoreCase) ? skillTool : null

@@ -219,7 +219,7 @@ Controls which file paths agents can access via file tools (`read`, `write`, `ed
 ```json
 {
   "agents": {
-    "nova": {
+    "my-agent": {
       "fileAccess": {
         "allowedReadPaths": ["Q:/repos/botnexus"],
         "allowedWritePaths": ["Q:/repos/botnexus/docs/planning"],
@@ -409,9 +409,9 @@ Uses long polling by default (no public URL required). For webhook mode, add `"w
   "channels": {
     "telegram": {
       "bots": {
-        "larry-bot": {
+        "my-bot": {
           "botToken": "111:AAA...",
-          "agentId": "larry",
+          "agentId": "my-agent",
           "allowedChatIds": [123456789]
         },
         "assistant-bot": {

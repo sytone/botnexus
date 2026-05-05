@@ -253,7 +253,7 @@ Content-Type: application/json
 **Side Effects:**
 - Config is backed up to `config.json.bak`
 - Agent workspace is bootstrapped with template files (SOUL.md, IDENTITY.md, etc.)
-- Agent name is normalized to lowercase with dashes (e.g., "My Agent" → "my-agent")
+- Agent name is normalized to lowercase with dashes (e.g., "My Agent" → my-agent")
 
 **Error Responses:**
 - `400 Bad Request` — Invalid configuration or duplicate agent name
@@ -836,7 +836,7 @@ X-Api-Key: your-api-key
 ```json
 {
   "input": "/skills list",
-  "agentId": "nova",
+  "agentId": "my-agent",
   "sessionId": "sess-123abc"
 }
 ```
@@ -854,7 +854,7 @@ Content-Type: application/json
 
 {
   "input": "/skills list",
-  "agentId": "nova",
+  "agentId": "my-agent",
   "sessionId": "sess-123abc"
 }
 ```
@@ -862,14 +862,14 @@ Content-Type: application/json
 **Response:** 200 OK
 ```json
 {
-  "title": "📚 Skills for nova",
+  "title": "📚 Skills for my-agent",
   "body": "Loaded (3):\n  ado-work-management          Unified ADO work management...\n  m365-communication           Microsoft 365 communication...\n  reference-bank               Shared reference data...\n\nAvailable (8):\n  calendar-interaction         Calendar management...\n  datetime-helper              Date/time utilities...\n  ...\n\nConfig: max 20 loaded, ~25K token budget, ~10.5K used",
   "isError": false
 }
 ```
 
 **Response Fields:**
-- `title` (string) — Display title for the result block (e.g., "📚 Skills for nova")
+- `title` (string) — Display title for the result block (e.g., "📚 Skills for my-agent")
 - `body` (string) — Result content (plain text, rendered in a preformatted block)
 - `isError` (boolean) — True if the command execution failed. When true, the client should render the body as an error message
 
@@ -883,7 +883,7 @@ Content-Type: application/json
 
 {
   "input": "/skills info ado-work-management",
-  "agentId": "nova",
+  "agentId": "my-agent",
   "sessionId": "sess-123abc"
 }
 ```
@@ -907,7 +907,7 @@ Content-Type: application/json
 
 {
   "input": "/skills add nonexistent-skill",
-  "agentId": "nova",
+  "agentId": "my-agent",
   "sessionId": "sess-123abc"
 }
 ```

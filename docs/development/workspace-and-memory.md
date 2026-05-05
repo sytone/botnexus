@@ -171,7 +171,7 @@ Lead/Architect for BotNexus platform. You own architectural decisions, code revi
 # User
 
 ## About
-Jon Bullen, Product Owner and Technical Lead for BotNexus.
+BotNexus Team.
 
 ## Working Preferences
 - Prefer written communication and documentation over sync meetings
@@ -878,7 +878,7 @@ System prompt assembled at session start for "leela" agent:
 
 - Agent: leela
 - Platform: Windows 10.0 (Build 22621)
-- Workspace: C:\Users\jonbullen\.botnexus\agents\leela
+- Workspace: C:\Users\username\.botnexus\agents\leela
 - Time (UTC): 2026-04-02T15:30:45.1234567+00:00
 
 ### Guidelines
@@ -905,7 +905,7 @@ Lead/Architect for the engineering team. You own architectural decisions...
 ## USER.md
 
 ## About
-Jon Bullen, Product Owner and Technical Lead for BotNexus.
+BotNexus Team.
 
 ## Working Preferences
 - Prefer written communication and documentation over sync meetings

@@ -61,7 +61,7 @@ public sealed class TelegramMultiBotTests
                 ["larry-bot"] = new TelegramBotConfig
                 {
                     BotToken = "token-larry",
-                    AgentId = "larry",
+                    AgentId = "agent-b",
                     AllowedChatIds = { 101 },
                     PollingTimeoutSeconds = 1
                 },
@@ -97,7 +97,7 @@ public sealed class TelegramMultiBotTests
         await twoMessagesSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await adapter.StopAsync(CancellationToken.None);
 
-        dispatchedMessages.ShouldContain(m => m.TargetAgentId == "larry" && m.Content == "hello from bot1");
+        dispatchedMessages.ShouldContain(m => m.TargetAgentId == "agent-b" && m.Content == "hello from bot1");
         dispatchedMessages.ShouldContain(m => m.TargetAgentId == "assistant" && m.Content == "hello from bot2");
     }
 

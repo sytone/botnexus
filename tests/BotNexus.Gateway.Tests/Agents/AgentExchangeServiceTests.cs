@@ -21,9 +21,9 @@ public sealed class AgentExchangeServiceTests
     [Fact]
     public async Task ConverseAsync_SingleTurn_CreatesSealedAgentAgentSessionVisibleToBothAgents()
     {
-        var initiator = AgentId.From("nova");
-        var target = AgentId.From("leela");
-        var registry = CreateRegistry(initiator, target, ["leela"]);
+        var initiator = AgentId.From("test-agent");
+        var target = AgentId.From("agent-c");
+        var registry = CreateRegistry(initiator, target, ["agent-c"]);
         var sessionStore = new InMemorySessionStore();
 
         var handle = new Mock<IAgentHandle>();
@@ -57,8 +57,8 @@ public sealed class AgentExchangeServiceTests
         session.ShouldNotBeNull();
         session!.SessionType.ShouldBe(SessionType.AgentAgent);
         session.Status.ShouldBe(GatewaySessionStatus.Sealed);
-        session.Participants.Where(p => p.Type == ParticipantType.Agent && p.Id == "nova" && p.Role == "initiator").ShouldHaveSingleItem();
-        session.Participants.Where(p => p.Type == ParticipantType.Agent && p.Id == "leela" && p.Role == "target").ShouldHaveSingleItem();
+        session.Participants.Where(p => p.Type == ParticipantType.Agent && p.Id == "test-agent" && p.Role == "initiator").ShouldHaveSingleItem();
+        session.Participants.Where(p => p.Type == ParticipantType.Agent && p.Id == "agent-c" && p.Role == "target").ShouldHaveSingleItem();
 
         var initiatorExistence = await sessionStore.GetExistenceAsync(initiator, new ExistenceQuery());
         var targetExistence = await sessionStore.GetExistenceAsync(target, new ExistenceQuery());
@@ -69,8 +69,8 @@ public sealed class AgentExchangeServiceTests
     [Fact]
     public async Task ConverseAsync_WhenTargetNotAllowed_ThrowsUnauthorizedAccessException()
     {
-        var initiator = AgentId.From("nova");
-        var target = AgentId.From("leela");
+        var initiator = AgentId.From("test-agent");
+        var target = AgentId.From("agent-c");
         var registry = CreateRegistry(initiator, target, []);
         var service = new AgentExchangeService(
             registry.Object,
@@ -92,9 +92,9 @@ public sealed class AgentExchangeServiceTests
     [Fact]
     public async Task ConverseAsync_WhenCycleDetected_ThrowsInvalidOperationException()
     {
-        var initiator = AgentId.From("nova");
-        var target = AgentId.From("leela");
-        var registry = CreateRegistry(initiator, target, ["leela"]);
+        var initiator = AgentId.From("test-agent");
+        var target = AgentId.From("agent-c");
+        var registry = CreateRegistry(initiator, target, ["agent-c"]);
         var service = new AgentExchangeService(
             registry.Object,
             Mock.Of<IAgentSupervisor>(),
@@ -107,7 +107,7 @@ public sealed class AgentExchangeServiceTests
             InitiatorId = initiator,
             TargetId = target,
             Message = "hello",
-            CallChain = [AgentId.From("nova"), AgentId.From("leela")]
+            CallChain = [AgentId.From("test-agent"), AgentId.From("agent-c")]
         });
 
         (await action.ShouldThrowAsync<InvalidOperationException>())
@@ -117,9 +117,9 @@ public sealed class AgentExchangeServiceTests
     [Fact]
     public async Task ConverseAsync_WhenDepthExceeded_ThrowsInvalidOperationException()
     {
-        var initiator = AgentId.From("nova");
-        var target = AgentId.From("leela");
-        var registry = CreateRegistry(initiator, target, ["leela"]);
+        var initiator = AgentId.From("test-agent");
+        var target = AgentId.From("agent-c");
+        var registry = CreateRegistry(initiator, target, ["agent-c"]);
         var service = new AgentExchangeService(
             registry.Object,
             Mock.Of<IAgentSupervisor>(),
@@ -132,7 +132,7 @@ public sealed class AgentExchangeServiceTests
             InitiatorId = initiator,
             TargetId = target,
             Message = "hello",
-            CallChain = [AgentId.From("alpha"), AgentId.From("nova")]
+            CallChain = [AgentId.From("alpha"), AgentId.From("test-agent")]
         });
 
         (await action.ShouldThrowAsync<InvalidOperationException>())
@@ -142,9 +142,9 @@ public sealed class AgentExchangeServiceTests
     [Fact]
     public async Task ConverseAsync_CrossWorldTarget_CreatesCrossWorldSessionAndRelaysMessage()
     {
-        var initiator = AgentId.From("nova");
-        var target = AgentId.From("world-b:leela");
-        var registry = CreateRegistry(initiator, AgentId.From("leela"), ["world-b:leela"]);
+        var initiator = AgentId.From("test-agent");
+        var target = AgentId.From("world-b:agent-c");
+        var registry = CreateRegistry(initiator, AgentId.From("agent-c"), ["world-b:agent-c"]);
         registry.Setup(r => r.Contains(target)).Returns(false);
         var sessionStore = new InMemorySessionStore();
 
@@ -184,7 +184,7 @@ public sealed class AgentExchangeServiceTests
                         {
                             TargetWorldId = "world-b",
                             AllowOutbound = true,
-                            AllowedAgents = ["nova"]
+                            AllowedAgents = ["test-agent"]
                         }
                     ],
                     CrossWorld = new CrossWorldFederationConfig
@@ -216,8 +216,8 @@ public sealed class AgentExchangeServiceTests
         var session = await sessionStore.GetAsync(result.SessionId);
         session.ShouldNotBeNull();
         session!.ChannelType.ShouldBe(ChannelKey.From("cross-world"));
-        session.Participants.Where(p => p.Id == "nova" && p.WorldId == "world-a").ShouldHaveSingleItem();
-        session.Participants.Where(p => p.Id == "leela" && p.WorldId == "world-b").ShouldHaveSingleItem();
+        session.Participants.Where(p => p.Id == "test-agent" && p.WorldId == "world-a").ShouldHaveSingleItem();
+        session.Participants.Where(p => p.Id == "agent-c" && p.WorldId == "world-b").ShouldHaveSingleItem();
 
         capturedRequest.ShouldNotBeNull();
         capturedRequest!.Headers.TryGetValues("X-Cross-World-Key", out var keys).ShouldBeTrue();
@@ -227,9 +227,9 @@ public sealed class AgentExchangeServiceTests
     [Fact]
     public async Task ConverseAsync_CrossWorldTargetWithoutOutboundPermission_ThrowsUnauthorizedAccessException()
     {
-        var initiator = AgentId.From("nova");
-        var target = AgentId.From("world-b:leela");
-        var registry = CreateRegistry(initiator, AgentId.From("leela"), ["world-b:leela"]);
+        var initiator = AgentId.From("test-agent");
+        var target = AgentId.From("world-b:agent-c");
+        var registry = CreateRegistry(initiator, AgentId.From("agent-c"), ["world-b:agent-c"]);
         registry.Setup(r => r.Contains(target)).Returns(false);
 
         var service = new AgentExchangeService(
@@ -248,7 +248,7 @@ public sealed class AgentExchangeServiceTests
                         {
                             TargetWorldId = "world-b",
                             AllowOutbound = false,
-                            AllowedAgents = ["nova"]
+                            AllowedAgents = ["test-agent"]
                         }
                     ],
                     CrossWorld = new CrossWorldFederationConfig

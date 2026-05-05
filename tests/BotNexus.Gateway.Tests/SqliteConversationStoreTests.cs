@@ -262,7 +262,7 @@ public sealed class SqliteConversationStoreTests
         await seedStore.CreateAsync(new Conversation
         {
             ConversationId = convId,
-            AgentId = Agent("nova"),
+            AgentId = Agent("test-agent"),
             Title = "signalr:nova",
             Status = ConversationStatus.Active,
             CreatedAt = DateTimeOffset.UtcNow,

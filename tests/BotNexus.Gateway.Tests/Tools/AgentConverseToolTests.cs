@@ -15,7 +15,7 @@ public sealed class AgentConverseToolTests
     [Fact]
     public void Tool_HasExpectedNameAndLabel()
     {
-        var tool = new AgentConverseTool(Mock.Of<IAgentExchangeService>(), new InMemorySessionStore(), "nova", "session-1");
+        var tool = new AgentConverseTool(Mock.Of<IAgentExchangeService>(), new InMemorySessionStore(), "test-agent", "session-1");
         tool.Name.ShouldBe("agent_converse");
         tool.Label.ShouldBe("Agent Converse");
     }
@@ -23,7 +23,7 @@ public sealed class AgentConverseToolTests
     [Fact]
     public async Task PrepareArgumentsAsync_WhenRequiredArgsMissing_Throws()
     {
-        var tool = new AgentConverseTool(Mock.Of<IAgentExchangeService>(), new InMemorySessionStore(), "nova", "session-1");
+        var tool = new AgentConverseTool(Mock.Of<IAgentExchangeService>(), new InMemorySessionStore(), "test-agent", "session-1");
 
         Func<Task> action = () => tool.PrepareArgumentsAsync(new Dictionary<string, object?>());
 
@@ -47,19 +47,19 @@ public sealed class AgentConverseToolTests
             });
 
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("session-1", "nova");
-        session.Metadata["callChain"] = new[] { "alpha", "nova" };
+        var session = await store.GetOrCreateAsync("session-1", "test-agent");
+        session.Metadata["callChain"] = new[] { "alpha", "test-agent" };
         await store.SaveAsync(session);
 
-        var tool = new AgentConverseTool(service.Object, store, "nova", "session-1");
+        var tool = new AgentConverseTool(service.Object, store, "test-agent", "session-1");
         await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
         {
-            ["agentId"] = "leela",
+            ["agentId"] = "agent-c",
             ["message"] = "Review this plan"
         });
 
         captured.ShouldNotBeNull();
-        captured!.CallChain.Select(id => id.Value).ShouldBe(new[] { "alpha", "nova" });
+        captured!.CallChain.Select(id => id.Value).ShouldBe(new[] { "alpha", "test-agent" });
     }
 
     [Fact]
@@ -79,16 +79,16 @@ public sealed class AgentConverseToolTests
             });
 
         var store = new InMemorySessionStore();
-        var tool = new AgentConverseTool(service.Object, store, "nova", "session-1");
+        var tool = new AgentConverseTool(service.Object, store, "test-agent", "session-1");
         var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
         {
-            ["agentId"] = "leela",
+            ["agentId"] = "agent-c",
             ["message"] = "Review this plan",
             ["maxTurns"] = 3
         });
 
         captured.ShouldNotBeNull();
-        captured!.CallChain.ShouldHaveSingleItem().Value.ShouldBe("nova");
+        captured!.CallChain.ShouldHaveSingleItem().Value.ShouldBe("test-agent");
         captured.MaxTurns.ShouldBe(3);
         ReadText(result).ShouldContain("\"sessionId\"");
     }

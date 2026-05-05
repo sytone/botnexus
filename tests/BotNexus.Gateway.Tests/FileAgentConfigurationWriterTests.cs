@@ -24,21 +24,21 @@ public sealed class FileAgentConfigurationWriterTests : IDisposable
     public async Task SaveAsync_WritesConfigAndCreatesWorkspace()
     {
         var writer = new FileAgentConfigurationWriter(_configDirectory, _home, _fileSystem);
-        var descriptor = CreateDescriptor("nova");
+        var descriptor = CreateDescriptor("test-agent");
 
         await writer.SaveAsync(descriptor);
 
-        var configPath = Path.Combine(_configDirectory, "nova.json");
+        var configPath = Path.Combine(_configDirectory, "test-agent.json");
         _fileSystem.File.Exists(configPath).ShouldBeTrue();
-        _fileSystem.Directory.Exists(Path.Combine(_home.AgentsPath, "nova")).ShouldBeTrue();
-        _fileSystem.File.Exists(Path.Combine(_home.AgentsPath, "nova", "workspace", "SOUL.md")).ShouldBeTrue();
+        _fileSystem.Directory.Exists(Path.Combine(_home.AgentsPath, "test-agent")).ShouldBeTrue();
+        _fileSystem.File.Exists(Path.Combine(_home.AgentsPath, "test-agent", "workspace", "SOUL.md")).ShouldBeTrue();
     }
 
     [Fact]
     public async Task SaveAsync_UsesCamelCaseAndOmitsNulls()
     {
         var writer = new FileAgentConfigurationWriter(_configDirectory, _home, _fileSystem);
-        var descriptor = CreateDescriptor("nova") with
+        var descriptor = CreateDescriptor("test-agent") with
         {
             Description = null,
             SystemPromptFile = null,
@@ -48,8 +48,8 @@ public sealed class FileAgentConfigurationWriterTests : IDisposable
 
         await writer.SaveAsync(descriptor);
 
-        var json = await _fileSystem.File.ReadAllTextAsync(Path.Combine(_configDirectory, "nova.json"));
-        json.ShouldContain("\"agentId\": \"nova\"");
+        var json = await _fileSystem.File.ReadAllTextAsync(Path.Combine(_configDirectory, "test-agent.json"));
+        json.ShouldContain("\"agentId\": \"test-agent\"");
         json.ShouldContain("\"subAgentIds\": [");
         json.ShouldContain("\"toolIds\": [");
         json.ShouldNotContain("\"description\"");
@@ -60,17 +60,17 @@ public sealed class FileAgentConfigurationWriterTests : IDisposable
     public async Task DeleteAsync_RemovesConfigFile()
     {
         var writer = new FileAgentConfigurationWriter(_configDirectory, _home, _fileSystem);
-        await writer.SaveAsync(CreateDescriptor("nova"));
+        await writer.SaveAsync(CreateDescriptor("test-agent"));
 
-        await writer.DeleteAsync("nova");
+        await writer.DeleteAsync("test-agent");
 
-        _fileSystem.File.Exists(Path.Combine(_configDirectory, "nova.json")).ShouldBeFalse();
+        _fileSystem.File.Exists(Path.Combine(_configDirectory, "test-agent.json")).ShouldBeFalse();
     }
 
     [Fact]
     public async Task SaveAsync_PreservesRoundTripCompatibilityWithSource()
     {
-        var descriptor = CreateDescriptor("nova") with
+        var descriptor = CreateDescriptor("test-agent") with
         {
             Metadata = new Dictionary<string, object?> { ["owner"] = "gateway" },
             IsolationOptions = new Dictionary<string, object?> { ["timeoutMs"] = 1000 }

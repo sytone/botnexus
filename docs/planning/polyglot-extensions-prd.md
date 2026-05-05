@@ -1,6 +1,6 @@
 # PRD: Polyglot Extension System
 
-**Author:** Jon Bullen
+**Author:** BotNexus Team
 **Date:** 2026-04-08
 **Status:** Draft
 **Area:** Extension System / Platform Architecture

@@ -50,16 +50,16 @@ Provides persistent, shared reference data storage for skills...
 
 ```
 ## Skill: reference-bank
-**Path:** C:\Users\jobullen\.botnexus\skills\reference-bank\
+**Path:** C:\Users\username\.botnexus\skills\reference-bank\
 
 # Reference Bank
 Provides persistent, shared reference data storage for skills...
 ```
 
 With the base path, the agent can:
-- `read("C:\Users\jobullen\.botnexus\skills\reference-bank\scripts\Resolve-UserDataRoot.ps1")`
-- `exec("powershell", "-File", "C:\Users\jobullen\.botnexus\skills\reference-bank\scripts\Sync-AdoFeatures.ps1")`
-- `ls("C:\Users\jobullen\.botnexus\skills\reference-bank\references\")`
+- `read("C:\Users\username\.botnexus\skills\reference-bank\scripts\Resolve-UserDataRoot.ps1")`
+- `exec("powershell", "-File", "C:\Users\username\.botnexus\skills\reference-bank\scripts\Sync-AdoFeatures.ps1")`
+- `ls("C:\Users\username\.botnexus\skills\reference-bank\references\")`
 
 Without it, the agent is blind to the skill's file tree.
 
@@ -93,9 +93,9 @@ When listing loaded skills, also show their base paths:
 ```
 ## Loaded Skills
 - **ado-work-management**: Unified ADO work management...
-  Path: C:\Users\jobullen\.botnexus\skills\ado-work-management\
+  Path: C:\Users\username\.botnexus\skills\ado-work-management\
 - **reference-bank**: Shared reference data...
-  Path: C:\Users\jobullen\.botnexus\skills\reference-bank\
+  Path: C:\Users\username\.botnexus\skills\reference-bank\
 ```
 
 Available (not-yet-loaded) skills don't need paths in the list — the agent can get the path when it loads.
@@ -106,7 +106,7 @@ For richer context, include a brief file listing alongside the path:
 
 ```
 ## Skill: ado-work-management
-**Path:** C:\Users\jobullen\.botnexus\skills\ado-work-management\
+**Path:** C:\Users\username\.botnexus\skills\ado-work-management\
 **Files:** SKILL.md, scripts/Sync-AdoFeatures.ps1, references/features.md, references/epics.md, workflows/daily.md
 ```
 

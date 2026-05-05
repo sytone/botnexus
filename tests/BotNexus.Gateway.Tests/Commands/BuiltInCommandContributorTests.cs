@@ -68,7 +68,7 @@ public sealed class BuiltInCommandContributorTests
         [
             new AgentDescriptor
             {
-                AgentId = AgentId.From("nova"),
+                AgentId = AgentId.From("test-agent"),
                 DisplayName = "Nova",
                 ModelId = "claude-sonnet-4.5",
                 ApiProvider = "copilot"
@@ -78,7 +78,7 @@ public sealed class BuiltInCommandContributorTests
         var result = await InvokeExecuteAsync(contributor, "/agents", "/agents");
 
         result.IsError.ShouldBeFalse();
-        result.Body.ToLowerInvariant().ShouldContain("nova");
+        result.Body.ToLowerInvariant().ShouldContain("test-agent");
     }
 
     [Fact]

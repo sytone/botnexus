@@ -215,11 +215,11 @@ public sealed class SchemaValidationTests
                   },
                   "providers": { "copilot": { "enabled": true, "apiKey": "test" } },
                   "agents": {
-                    "larry": {
+                    "agent-b": {
                       "provider": "copilot",
                       "model": "gpt-4.1",
                       "extensions": { "botnexus-mcp": { "enabled": true } },
-                      "metadata": { "owner": "jon" },
+                      "metadata": { "owner": "test-user" },
                       "isolationOptions": { "timeout": 30 }
                     }
                   }
@@ -232,8 +232,8 @@ public sealed class SchemaValidationTests
             errors.ShouldBeEmpty();
             config.Gateway?.Extensions?.Defaults.ShouldNotBeNull();
             config.Gateway!.Extensions!.Defaults!.ShouldContainKey("botnexus-skills");
-            config.Agents!["larry"].Extensions.ShouldNotBeNull();
-            config.Agents["larry"].Extensions!.ShouldContainKey("botnexus-mcp");
+            config.Agents!["agent-b"].Extensions.ShouldNotBeNull();
+            config.Agents["agent-b"].Extensions!.ShouldContainKey("botnexus-mcp");
         }
         finally
         {

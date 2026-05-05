@@ -125,13 +125,13 @@ If you want two agents to collaborate, you use one of:
 - **Shared memory** — agents can read from shared memory files/databases if configured, but this is outside the conversation model.
 
 ```
-Agent: larry          Agent: assistant
+Agent: my-agent          Agent: assistant
 │                     │
 Conversation A        Conversation B
-(Jon ↔ larry)         (Jon ↔ assistant)
+(User ↔ my-agent)         (Jon ↔ assistant)
 ```
 
-These are independent. A message sent to larry does not reach assistant.
+These are independent. A message sent to my-agent does not reach assistant.
 
 ---
 
