@@ -1,4 +1,5 @@
 name: Release
+run-name: "Release - ${{ inputs.release_type }}${{ inputs.prerelease && ' (pre-release)' || '' }}"
 
 on:
   workflow_dispatch:
@@ -107,6 +108,20 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
           echo "prev_tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Update workflow run name with version
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = '${{ steps.version.outputs.version }}';
+            const prerelease = '${{ github.event.inputs.prerelease }}' === 'true';
+            const suffix = prerelease ? ' (pre-release)' : '';
+            await github.rest.actions.updateWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+              name: `Release - v${version}${suffix}`,
+            });
 
       - name: Bump version in Directory.Build.props
         run: |
