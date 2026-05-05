@@ -87,12 +87,12 @@ internal sealed class ServeCommand
         var configPath = Path.Combine(home, "config.json");
         if (!File.Exists(configPath))
         {
-            AnsiConsole.MarkupLine("[blue][[serve]][/] No configuration found \u2014 creating default config...");
+            AnsiConsole.MarkupLine("[blue][[serve]][/] No configuration found — creating default config...");
             var init = new InitCommand();
             var initResult = await init.ExecuteAsync(force: false, verbose, cancellationToken);
             if (initResult != 0)
                 return initResult;
-            AnsiConsole.MarkupLine("[blue][[serve]][/] Configure your gateway via the WebUI at the root URL.");
+            AnsiConsole.MarkupLine("[dim]Configure your gateway via the WebUI at the root URL.[/]");
             AnsiConsole.WriteLine();
         }
 
@@ -110,11 +110,11 @@ internal sealed class ServeCommand
         while (true)
         {
             AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine("[blue][[serve]][/] Starting Gateway");
-            AnsiConsole.MarkupLine($"   URL:         [green]{Markup.Escape(gatewayUrl)}[/]");
-            AnsiConsole.MarkupLine("   Environment: [dim]Development[/]");
+            AnsiConsole.Write(new Rule("[bold blue]BotNexus Gateway[/]") { Justification = Justify.Left });
+            AnsiConsole.MarkupLine($"  [dim]URL:[/]         [green]{Markup.Escape(gatewayUrl)}[/]");
+            AnsiConsole.MarkupLine("  [dim]Environment:[/] Development");
+            AnsiConsole.MarkupLine("  Press [yellow]Ctrl+C[/] to stop the gateway.");
             AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine("Press [yellow]Ctrl+C[/] to stop the gateway.");
 
             var psi = new ProcessStartInfo
             {
@@ -133,7 +133,7 @@ internal sealed class ServeCommand
             lastExitCode = process.ExitCode;
 
             AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine($"[blue][[serve]][/] Gateway exited (code [yellow]{lastExitCode}[/]).");
+            AnsiConsole.MarkupLine($"[dim]Gateway exited (code [yellow]{lastExitCode}[/]).[/]");
 
             if (cancellationToken.IsCancellationRequested)
                 break;
@@ -168,9 +168,9 @@ internal sealed class ServeCommand
         var probeUrl = $"http://localhost:{port}";
 
         AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[blue][[serve]][/] Starting Probe");
-        AnsiConsole.MarkupLine($"   URL:         [green]{Markup.Escape(probeUrl)}[/]");
-        AnsiConsole.MarkupLine($"   Gateway:     [dim]{Markup.Escape(gatewayUrl)}[/]");
+        AnsiConsole.Write(new Rule("[bold blue]BotNexus Probe[/]") { Justification = Justify.Left });
+        AnsiConsole.MarkupLine($"  [dim]URL:[/]     [green]{Markup.Escape(probeUrl)}[/]");
+        AnsiConsole.MarkupLine($"  [dim]Gateway:[/] [dim]{Markup.Escape(gatewayUrl)}[/]");
         AnsiConsole.WriteLine();
 
         var psi = new ProcessStartInfo
@@ -186,8 +186,84 @@ internal sealed class ServeCommand
             ?? throw new InvalidOperationException("Failed to start Probe process.");
 
         await process.WaitForExitAsync(cancellationToken);
-        AnsiConsole.MarkupLine($"[blue][[serve]][/] Probe exited (code [yellow]{process.ExitCode}[/]).");
+        AnsiConsole.MarkupLine($"[dim]Probe exited (code [yellow]{process.ExitCode}[/]).[/]");
         return process.ExitCode;
+    }
+
+    /// <summary>
+    /// Deploys built extensions silently (no per-extension output) and returns the count deployed.
+    /// Used when a spinner is active so output doesn't interleave.
+    /// </summary>
+    public static int DeployExtensionsSilent(string repoRoot, string home, bool verbose)
+    {
+        var count = 0;
+        var extensionsRoot = Path.Combine(repoRoot, "src", "extensions");
+        if (!Directory.Exists(extensionsRoot))
+            return 0;
+
+        var destRoot = Path.Combine(home, "extensions");
+        var projects = Directory.GetFiles(extensionsRoot, "*.csproj", SearchOption.AllDirectories);
+        var deployedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var project in projects)
+        {
+            var projectDir = Path.GetDirectoryName(project)!;
+            var projectName = Path.GetFileNameWithoutExtension(project);
+            var manifestPath = Path.Combine(projectDir, "botnexus-extension.json");
+            if (!File.Exists(manifestPath))
+                continue;
+
+            string? extId;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(manifestPath));
+                extId = doc.RootElement.GetProperty("id").GetString();
+            }
+            catch { continue; }
+
+            if (string.IsNullOrWhiteSpace(extId))
+                continue;
+
+            deployedIds.Add(extId);
+            var srcDir = Path.Combine(projectDir, "bin", "Release");
+            if (!Directory.Exists(srcDir))
+                continue;
+
+            var tfmDir = Directory.GetDirectories(srcDir)
+                .Where(d => Path.GetFileName(d).StartsWith("net", StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(d => d)
+                .FirstOrDefault();
+            if (tfmDir is null)
+                continue;
+
+            var extDest = Path.Combine(destRoot, extId);
+            Directory.CreateDirectory(extDest);
+            foreach (var file in Directory.GetFiles(tfmDir, "*", SearchOption.AllDirectories))
+            {
+                var relativePath = Path.GetRelativePath(tfmDir, file);
+                var destFile = Path.Combine(extDest, relativePath);
+                Directory.CreateDirectory(Path.GetDirectoryName(destFile)!);
+                File.Copy(file, destFile, overwrite: true);
+            }
+            File.Copy(manifestPath, Path.Combine(extDest, "botnexus-extension.json"), overwrite: true);
+            count++;
+        }
+
+        // Clean stale extensions
+        if (Directory.Exists(destRoot))
+        {
+            foreach (var dir in Directory.GetDirectories(destRoot))
+            {
+                var dirName = Path.GetFileName(dir);
+                if (!deployedIds.Contains(dirName))
+                {
+                    try { Directory.Delete(dir, recursive: true); }
+                    catch { /* locked — leave it */ }
+                }
+            }
+        }
+
+        return count;
     }
 
     /// <summary>
@@ -298,7 +374,7 @@ internal sealed class ServeCommand
             }
         }
 
-        AnsiConsole.MarkupLine($"[blue][[deploy]][/] [green]{deployed}[/] extension(s) deployed to [dim]{Markup.Escape(destRoot)}[/]");
+        AnsiConsole.MarkupLine($"[green]✓[/] {deployed} extension(s) deployed to [dim]{Markup.Escape(destRoot)}[/]");
     }
 
     /// <summary>
@@ -308,7 +384,7 @@ internal sealed class ServeCommand
     public static async Task<bool> WaitForRestartOrQuitAsync(int seconds, CancellationToken cancellationToken)
     {
         AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine($"[blue][[restart]][/] Gateway will restart in [yellow]{seconds}[/] seconds. Press [yellow]q[/] to quit.");
+        AnsiConsole.MarkupLine($"[blue]Restarting[/] in [yellow]{seconds}s[/] — press [yellow]q[/] to quit.");
 
         for (var i = seconds; i > 0; i--)
         {
