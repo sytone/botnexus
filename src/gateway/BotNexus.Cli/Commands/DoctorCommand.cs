@@ -48,42 +48,78 @@ internal sealed class DoctorCommand
             return 0;
         }
 
-        AnsiConsole.MarkupLine($"Checking [green]{locations.Length}[/] locations...\n");
+        var interactive = AnsiConsole.Profile.Capabilities.Interactive;
 
-        using var httpClient = new HttpClient
-        {
-            Timeout = TimeSpan.FromSeconds(5)
-        };
+        if (interactive)
+            AnsiConsole.MarkupLine($"[dim]Checking {locations.Length} location(s)...[/]");
+        else
+            AnsiConsole.MarkupLine($"Checking [green]{locations.Length}[/] locations...\n");
+
+        using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
 
         var healthyCount = 0;
         var warningCount = 0;
         var errorCount = 0;
 
         var table = new Table()
+            .Border(interactive ? TableBorder.Rounded : TableBorder.Simple)
             .AddColumn("Status")
             .AddColumn("Location")
             .AddColumn("Target")
             .AddColumn("Message");
 
-        foreach (var location in locations)
+        if (interactive)
         {
-            var result = await CheckLocationAsync(location, httpClient, cancellationToken);
-            var icon = result.Status switch
+            await AnsiConsole.Status()
+                .Spinner(Spinner.Known.Dots)
+                .SpinnerStyle(Style.Parse("blue"))
+                .StartAsync("Checking locations...", async ctx =>
+                {
+                    foreach (var location in locations)
+                    {
+                        ctx.Status($"Checking [dim]{Markup.Escape(location.Name)}[/]...");
+                        var result = await CheckLocationAsync(location, httpClient, cancellationToken);
+                        var icon = result.Status switch
+                        {
+                            HealthStatus.Healthy => "[green]✓[/]",
+                            HealthStatus.Warning => "[yellow]⚠[/]",
+                            _ => "[red]✗[/]"
+                        };
+                        healthyCount += result.Status == HealthStatus.Healthy ? 1 : 0;
+                        warningCount += result.Status == HealthStatus.Warning ? 1 : 0;
+                        errorCount += result.Status == HealthStatus.Error ? 1 : 0;
+                        table.AddRow(icon, Markup.Escape(location.Name), Markup.Escape(result.Target), Markup.Escape(result.Message));
+                    }
+                });
+        }
+        else
+        {
+            foreach (var location in locations)
             {
-                HealthStatus.Healthy => "[green]✓[/]",
-                HealthStatus.Warning => "[yellow]⚠[/]",
-                _ => "[red]✗[/]"
-            };
-
-            healthyCount += result.Status == HealthStatus.Healthy ? 1 : 0;
-            warningCount += result.Status == HealthStatus.Warning ? 1 : 0;
-            errorCount += result.Status == HealthStatus.Error ? 1 : 0;
-            table.AddRow(icon, Markup.Escape(location.Name), Markup.Escape(result.Target), Markup.Escape(result.Message));
+                var result = await CheckLocationAsync(location, httpClient, cancellationToken);
+                var icon = result.Status switch
+                {
+                    HealthStatus.Healthy => "[green]✓[/]",
+                    HealthStatus.Warning => "[yellow]⚠[/]",
+                    _ => "[red]✗[/]"
+                };
+                healthyCount += result.Status == HealthStatus.Healthy ? 1 : 0;
+                warningCount += result.Status == HealthStatus.Warning ? 1 : 0;
+                errorCount += result.Status == HealthStatus.Error ? 1 : 0;
+                table.AddRow(icon, Markup.Escape(location.Name), Markup.Escape(result.Target), Markup.Escape(result.Message));
+            }
         }
 
         AnsiConsole.Write(table);
         AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine($"Results: [green]{healthyCount} healthy[/], [yellow]{warningCount} warning[/], [red]{errorCount} error[/]");
+
+        // Summary Rule with colour-coded result
+        var summaryColor = errorCount > 0 ? "red" : warningCount > 0 ? "yellow" : "green";
+        var summaryIcon = errorCount > 0 ? "✗" : warningCount > 0 ? "⚠" : "✓";
+        AnsiConsole.Write(new Rule(
+            $"[{summaryColor}]{summaryIcon}[/] [green]{healthyCount} healthy[/]  [yellow]{warningCount} warning[/]  [red]{errorCount} error[/]")
+        { Justification = Justify.Left });
+
         if (verbose)
             AnsiConsole.MarkupLine($"[dim]Loaded from: {Markup.Escape(configPath)}[/]");
 
