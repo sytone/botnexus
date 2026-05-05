@@ -153,6 +153,7 @@ public sealed class ToolHookWiringTests
             new StaticToolFactory(),
             new StubWorkspaceManager(),
             new DefaultToolRegistry(Array.Empty<IAgentTool>()),
+            Array.Empty<IAgentToolContributor>(),
             new StubMemoryStoreFactory(),
             services.BuildServiceProvider(),
             NullLogger<InProcessIsolationStrategy>.Instance);

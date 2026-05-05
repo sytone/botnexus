@@ -20,6 +20,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.IO.Abstractions;
 using System.Reflection;
+using System.Text.Json;
 using AgentCoreUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 
 namespace BotNexus.Gateway.Tests;
@@ -49,6 +50,7 @@ public sealed class InProcessIsolationStrategyTests
             new StaticAgentToolFactory(),
             new TestWorkspaceManager(),
             new DefaultToolRegistry(Array.Empty<IAgentTool>()),
+            Array.Empty<IAgentToolContributor>(),
             new StubMemoryStoreFactory(),
             new ServiceCollection().BuildServiceProvider(),
             NullLogger<InProcessIsolationStrategy>.Instance);
@@ -79,6 +81,21 @@ public sealed class InProcessIsolationStrategyTests
         var strategy = CreateStrategyWithRegisteredModel();
 
         strategy.Name.ShouldBe("in-process");
+    }
+
+    [Fact]
+    public async Task CreateAsync_WhenToolContributorRegistered_AddsContributedTool()
+    {
+        var contributor = new TestToolContributor();
+        var strategy = CreateStrategyWithRegisteredModel(contributors: [contributor]);
+
+        var handle = await strategy.CreateAsync(
+            CreateDescriptor(),
+            new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-contrib") });
+
+        var tools = GetTools(handle);
+        tools.Any(t => string.Equals(t.Name, "contributed_tool", StringComparison.OrdinalIgnoreCase)).ShouldBeTrue();
+        contributor.Invocations.ShouldBe(1);
     }
 
     [Fact]
@@ -212,16 +229,8 @@ public sealed class InProcessIsolationStrategyTests
         tools.ShouldContain(t => string.Equals(t.Name, "read", StringComparison.OrdinalIgnoreCase));
     }
 
-    private static IReadOnlyList<IAgentTool> GetTools(IAgentHandle handle)
-    {
-        var agentField = handle.GetType().GetField("_agent", BindingFlags.Instance | BindingFlags.NonPublic);
-        agentField.ShouldNotBeNull();
-        var agent = agentField!.GetValue(handle) as BotNexus.Agent.Core.Agent;
-        agent.ShouldNotBeNull();
-        return agent!.State.Tools;
-    }
-
-    private static InProcessIsolationStrategy CreateStrategyWithRegisteredModel()
+    private static InProcessIsolationStrategy CreateStrategyWithRegisteredModel(
+        IReadOnlyList<IAgentToolContributor>? contributors = null)
     {
         var modelRegistry = new ModelRegistry();
         modelRegistry.Register("test-provider", new LlmModel(
@@ -244,6 +253,7 @@ public sealed class InProcessIsolationStrategyTests
             new StaticAgentToolFactory(),
             new TestWorkspaceManager(),
             new DefaultToolRegistry(Array.Empty<IAgentTool>()),
+            contributors ?? Array.Empty<IAgentToolContributor>(),
             new StubMemoryStoreFactory(),
             new ServiceCollection().BuildServiceProvider(),
             NullLogger<InProcessIsolationStrategy>.Instance);
@@ -266,6 +276,15 @@ public sealed class InProcessIsolationStrategyTests
         var agent = agentField!.GetValue(handle) as BotNexus.Agent.Core.Agent;
         agent.ShouldNotBeNull();
         return agent!.State.Messages;
+    }
+
+    private static IReadOnlyList<IAgentTool> GetTools(IAgentHandle handle)
+    {
+        var agentField = handle.GetType().GetField("_agent", BindingFlags.Instance | BindingFlags.NonPublic);
+        agentField.ShouldNotBeNull();
+        var agent = agentField!.GetValue(handle) as BotNexus.Agent.Core.Agent;
+        agent.ShouldNotBeNull();
+        return agent!.State.Tools;
     }
 
     private sealed class PassthroughContextBuilder : IContextBuilder
@@ -312,6 +331,36 @@ public sealed class InProcessIsolationStrategyTests
         public Task ClearAsync(CancellationToken ct = default) => Task.CompletedTask;
         public Task<MemoryStoreStats> GetStatsAsync(CancellationToken ct = default) => Task.FromResult(new MemoryStoreStats(0, 0, null));
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class TestToolContributor : IAgentToolContributor
+    {
+        public int Invocations { get; private set; }
+
+        public Task<AgentToolContribution> ContributeAsync(AgentToolContributionContext context, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Invocations++;
+            return Task.FromResult(new AgentToolContribution([new ContributedTool()]));
+        }
+    }
+
+    private sealed class ContributedTool : IAgentTool
+    {
+        public string Name => "contributed_tool";
+        public string Label => "Contributed Tool";
+        public Tool Definition => new(Name, "test", JsonDocument.Parse("""{"type":"object"}""").RootElement.Clone());
+
+        public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(
+            IReadOnlyDictionary<string, object?> arguments,
+            CancellationToken cancellationToken = default) => Task.FromResult(arguments);
+
+        public Task<AgentToolResult> ExecuteAsync(
+            string toolCallId,
+            IReadOnlyDictionary<string, object?> arguments,
+            CancellationToken cancellationToken = default,
+            AgentToolUpdateCallback? onUpdate = null)
+            => Task.FromResult(new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "ok")]));
     }
 }
 

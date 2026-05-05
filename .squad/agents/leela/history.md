@@ -442,6 +442,33 @@ Updated the per-agent file permission model to support glob patterns in AllowedR
 - `src/gateway/BotNexus.Gateway/Security/DefaultPathValidator.cs`
 - `tests/BotNexus.Gateway.Tests/Security/PathValidatorTests.cs`
 
+## Learnings — Architecture Dependency Review (2026-05-04)
+
+1. **Gateway → Extensions is the #1 architectural violation.** `BotNexus.Gateway.csproj` has compile-time ProjectReferences to 4 extension projects (Skills, Mcp, McpInvoke, WebTools) via `InProcessIsolationStrategy.cs` and `GatewayServiceCollectionExtensions.cs`. This contradicts the documented rule that extensions depend on the gateway, not vice versa.
+
+2. **Gateway.Contracts is NOT lightweight.** It depends on Agent.Core (full agent runtime), which means all 14 consumers transitively pull in the agent loop, hooks, and types. The coupling points are `IAgentToolFactory`, `IAgentHandle`, `IAgentHandleInspector`, and `CommandModels.cs`.
+
+3. **`Tool` record (schema definition) is misplaced in Providers.Core.Models.** Every tool implementation needs this type, forcing 9+ projects to reference Agent.Providers.Core. Moving it to Agent.Core.Tools would eliminate most redundant Providers.Core references.
+
+4. **Abstractions is a dead shim.** Only 3 files (98 type-forwards + 2 ASP.NET interfaces). All real types live in Contracts (using `BotNexus.Gateway.Abstractions.*` namespaces) and Domain. Migration artifact.
+
+5. **Domain contains 25 gateway-namespaced model files** in `Domain/Gateway/Models/` using `BotNexus.Gateway.Abstractions.Models` namespace. Migration artifact — physically in Domain, logically gateway-layer.
+
+6. **Copilot provider is hardwired** into Gateway (for OAuth), while all other providers are registered in Gateway.Api. Breaks the peer-provider pattern.
+
+7. **20 of 34 Contracts interfaces have single implementations.** This is correct for extension-point DI — not over-abstraction. Two interfaces (`IAgentHandleInspector`, `IHealthCheckable`) have zero implementations — may be speculative.
+
+8. **Key file paths for dependency analysis:**
+   - Solution: `BotNexus.slnx`
+   - Gateway csproj: `src/gateway/BotNexus.Gateway/BotNexus.Gateway.csproj` (16 project refs)
+   - Extension coupling: `src/gateway/BotNexus.Gateway/Isolation/InProcessIsolationStrategy.cs`
+   - DI registration: `src/gateway/BotNexus.Gateway/Extensions/GatewayServiceCollectionExtensions.cs`
+   - Type forwards: `src/gateway/BotNexus.Gateway.Abstractions/TypeForwards.cs`
+   - Copilot auth coupling: `src/gateway/BotNexus.Gateway/Configuration/GatewayAuthManager.cs`
+   - Tool schema type: `src/agent/BotNexus.Agent.Providers.Core/Models/Tool.cs`
+
+9. **Decision written to:** `.squad/decisions/inbox/leela-arch-dependency-review.md`
+
 ## 2026-07-08 — DDD Refactoring Design Review (Lead)
 
 **Status:** ✅ Design Review Complete — Approved with 8 modifications (Grade: B+)
@@ -574,3 +601,23 @@ Comprehensive DDD refactoring spec proposing 9 phases to align codebase with dom
 5. **CronTrigger creates new sessions, not waking existing ones** — Despite the spec suggesting cron "wakes idle sessions," CronTrigger actually creates new ephemeral sessions per run. The only mechanism for waking existing sessions is DispatchAsync.
 6. **Key file paths for sub-agent completion flow:** `DefaultSubAgentManager.OnCompletedAsync:218`, `InternalChannelAdapter.cs`, `GatewayHost.ProcessInboundMessageAsync:199`, `AgentLoopRunner.RunLoopAsync:224`, `Agent.RunAsync:420`.
 7. **Decision: Always use DispatchAsync for completions** — Removing the IsRunning branch simplifies reasoning, eliminates the race, and produces cleaner UX (separate completion turns). Filed to `.squad/decisions/inbox/leela-subagent-completion-wakeup.md`.
+## 2026-05-04 — Gateway Decoupling Implementation Signal from Farnsworth
+
+**From:** Farnsworth (Platform Dev)  
+**Re:** Your HIGH-priority recommendation #1 (Decouple Gateway from Extensions)  
+**Status:** ✅ Implemented
+
+Farnsworth has implemented your recommendation to decouple Gateway from compile-time extension references.
+
+**Implementation Pattern:**
+- Introduced IAgentToolContributor runtime contract in Gateway.Contracts
+- Extension assemblies self-register tools via AssemblyLoadContextExtensionLoader
+- Removed 4 compile-time <ProjectReference> entries (Skills, Mcp, McpInvoke, WebTools)
+- InProcessIsolationStrategy now calls contributors per agent/session
+- InProcessAgentHandle manages lifecycle cleanup
+
+**Consequence:** Dependency direction restored (Extensions → Gateway.Contracts). Gateway no longer pulls extension implementations.
+
+**What This Enables:** Your remaining recommendations (Agent.Abstractions extraction, Copilot OAuth decoupling) are now better positioned to succeed. Build is green, no new test failures.
+
+---
