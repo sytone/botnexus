@@ -188,7 +188,7 @@ public sealed class MainLayoutTests : IDisposable
 
         var cut = RenderLayout();
 
-        var activeConv = cut.Find(".conversation-list-item.active");
+        var activeConv = cut.Find(".conversation-list-item-btn.active");
         Assert.NotNull(activeConv);
     }
 }

@@ -199,4 +199,36 @@ public sealed class GatewayEventHandlerTests
         Assert.Equal("System", conv.Messages[1].Role);
         Assert.Contains("───", conv.Messages[1].Content); // visual divider
     }
+
+    // ── Fix 3 — Steering feedback ────────────────────────────────────────
+
+    [Fact]
+    public void HandleSteeringInjected_AppendsFeedbackMessage()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+        var initialCount = conv.Messages.Count;
+
+        _handler.HandleSteeringFeedback(new SteeringFeedbackPayload("agent-1", "sess-1", SteeringFeedbackKind.Injected));
+
+        Assert.Equal(initialCount + 1, conv.Messages.Count);
+        var msg = conv.Messages.Last();
+        Assert.Equal("System", msg.Role);
+        Assert.Contains("↳ Steering accepted mid-turn", msg.Content);
+    }
+
+    [Fact]
+    public void HandleSteeringQueued_AppendsFeedbackMessage()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+        var initialCount = conv.Messages.Count;
+
+        _handler.HandleSteeringFeedback(new SteeringFeedbackPayload("agent-1", "sess-1", SteeringFeedbackKind.Queued));
+
+        Assert.Equal(initialCount + 1, conv.Messages.Count);
+        var msg = conv.Messages.Last();
+        Assert.Equal("System", msg.Role);
+        Assert.Contains("↳ Steering queued", msg.Content);
+    }
 }
