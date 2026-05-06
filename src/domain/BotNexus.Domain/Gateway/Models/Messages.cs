@@ -56,7 +56,7 @@ public sealed record InboundMessage
     /// The channel binding ID this message arrived on, if known.
     /// Used by fan-out to exclude the originating binding from echo.
     /// </summary>
-    public string? BindingId { get; init; }
+    public BindingId? BindingId { get; init; }
 
     /// <summary>
     /// When set, routes directly to this conversation, bypassing binding lookup.
@@ -94,7 +94,7 @@ public sealed record OutboundMessage
     /// Stable identifier of the channel binding that this message is being sent to.
     /// Populated during fan-out to allow adapters and logging to correlate delivery.
     /// </summary>
-    public string? BindingId { get; init; }
+    public BindingId? BindingId { get; init; }
 
     /// <summary>
     /// Optional display prefix prepended to outbound content when

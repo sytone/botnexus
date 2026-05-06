@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -236,8 +237,8 @@ public sealed class MultiChannelFanOutTests
             ActiveSessionId = BotNexus.Domain.Primitives.SessionId.From("legacy-session"),
             ChannelBindings =
             [
-                new ChannelBinding { BindingId = "sig", ChannelType = ChannelKey.From("signalr"), ChannelAddress = "chat-1" },
-                new ChannelBinding { BindingId = "tel", ChannelType = ChannelKey.From("telegram"), ChannelAddress = "chat-100" }
+                new ChannelBinding { BindingId = BindingId.From("sig"), ChannelType = ChannelKey.From("signalr"), ChannelAddress = "chat-1" },
+                new ChannelBinding { BindingId = BindingId.From("tel"), ChannelType = ChannelKey.From("telegram"), ChannelAddress = "chat-100" }
             ]
         };
         await harness.Conversations.CreateAsync(conversation);

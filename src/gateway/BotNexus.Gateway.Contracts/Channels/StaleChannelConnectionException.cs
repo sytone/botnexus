@@ -1,3 +1,5 @@
+using BotNexus.Domain.Primitives;
+
 namespace BotNexus.Gateway.Abstractions.Channels;
 
 /// <summary>
@@ -10,7 +12,7 @@ namespace BotNexus.Gateway.Abstractions.Channels;
 public class StaleChannelConnectionException : Exception
 {
     /// <summary>Gets the binding ID whose underlying connection is gone.</summary>
-    public string BindingId { get; }
+    public BindingId BindingId { get; }
 
     /// <summary>Gets the conversation ID the binding belongs to.</summary>
     public string ConversationId { get; }
@@ -18,7 +20,7 @@ public class StaleChannelConnectionException : Exception
     /// <summary>
     /// Initialises a new instance describing a stale connection for a specific binding.
     /// </summary>
-    public StaleChannelConnectionException(string bindingId, string conversationId, Exception? inner = null)
+    public StaleChannelConnectionException(BindingId bindingId, string conversationId, Exception? inner = null)
         : base($"Channel send failed — connection for binding {bindingId} in conversation {conversationId} is gone.", inner)
     {
         BindingId = bindingId;

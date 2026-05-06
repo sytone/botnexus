@@ -71,7 +71,7 @@ public sealed class FanOutStaleBindingTests
         const string agentId = "agent-a";
         const string sessionId = "session-1";
         const string convId = "conv-fanout-stale";
-        const string bindingId = "binding-signalr-1";
+        var bindingId = BindingId.From("binding-signalr-1");
 
         var router = new Mock<IMessageRouter>();
         router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
@@ -129,7 +129,7 @@ public sealed class FanOutStaleBindingTests
 
         // Return the stale binding for fan-out
         convRouter
-            .Setup(r => r.GetOutboundBindingsAsync(SessionId.From(sessionId), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.GetOutboundBindingsAsync(SessionId.From(sessionId), It.IsAny<BindingId?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([staleBinding]);
 
         convRouter
@@ -195,7 +195,7 @@ public sealed class FanOutStaleBindingTests
 
         // Empty list = already muted / no fan-out targets
         convRouter
-            .Setup(r => r.GetOutboundBindingsAsync(SessionId.From(sessionId), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.GetOutboundBindingsAsync(SessionId.From(sessionId), It.IsAny<BindingId?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
         await using var host = CreateHost(supervisor.Object, router.Object, sessions, channelManager.Object, convRouter.Object);

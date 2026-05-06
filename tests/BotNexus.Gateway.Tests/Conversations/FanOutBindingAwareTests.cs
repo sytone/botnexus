@@ -28,14 +28,14 @@ public sealed class FanOutBindingAwareTests
         var conversation = await conversationStore.GetOrCreateDefaultAsync(agentId);
         conversation.ChannelBindings.Add(new ChannelBinding
         {
-            BindingId = "binding-src",
+            BindingId = BindingId.From("binding-src"),
             ChannelType = Channel("signalr"),
             ChannelAddress = "conn-origin",
             Mode = BindingMode.Interactive
         });
         conversation.ChannelBindings.Add(new ChannelBinding
         {
-            BindingId = "binding-tg",
+            BindingId = BindingId.From("binding-tg"),
             ChannelType = Channel("telegram"),
             ChannelAddress = "chat-999",
             ThreadId = "topic-77",
@@ -49,7 +49,7 @@ public sealed class FanOutBindingAwareTests
         await sessionStore.SaveAsync(session);
 
         var router = new DefaultConversationRouter(conversationStore, sessionStore, NullLogger<DefaultConversationRouter>.Instance);
-        var bindings = await router.GetOutboundBindingsAsync(sessionId, "binding-src");
+        var bindings = await router.GetOutboundBindingsAsync(sessionId, BindingId.From("binding-src"));
 
         // The telegram binding with ThreadId should be included
         bindings.Count.ShouldBe(1);
@@ -69,6 +69,6 @@ public sealed class FanOutBindingAwareTests
         };
 
         outbound.ThreadId.ShouldBe("topic-77");
-        outbound.BindingId.ShouldBe("binding-tg");
+        outbound.BindingId?.Value.ShouldBe("binding-tg");
     }
 }

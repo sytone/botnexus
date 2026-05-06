@@ -31,7 +31,7 @@ public interface IConversationRouter
     /// </summary>
     Task<IReadOnlyList<ChannelBinding>> GetOutboundBindingsAsync(
         SessionId sessionId,
-        string? originatingBindingId,
+        BindingId? originatingBindingId,
         CancellationToken ct = default);
 
     /// <summary>
@@ -41,7 +41,7 @@ public interface IConversationRouter
     /// <param name="bindingId">The binding to move.</param>
     /// <param name="targetConversationId">The conversation that should own the binding after the call.</param>
     /// <param name="ct">Cancellation token.</param>
-    Task ReattachBindingAsync(string bindingId, ConversationId targetConversationId, CancellationToken ct = default);
+    Task ReattachBindingAsync(BindingId bindingId, ConversationId targetConversationId, CancellationToken ct = default);
 
     /// <summary>
     /// Demotes a channel binding to <see cref="BindingMode.Muted"/> so it no longer receives fan-out.
@@ -50,7 +50,7 @@ public interface IConversationRouter
     /// <param name="conversationId">The conversation that owns the binding.</param>
     /// <param name="bindingId">The binding to silence.</param>
     /// <param name="ct">Cancellation token.</param>
-    Task MuteBindingAsync(ConversationId conversationId, string bindingId, CancellationToken ct = default);
+    Task MuteBindingAsync(ConversationId conversationId, BindingId bindingId, CancellationToken ct = default);
 
     /// <summary>
     /// Finds and mutes the binding associated with the given channel type and address.

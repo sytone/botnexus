@@ -230,8 +230,8 @@ public sealed class DefaultConversationRouterTests
 
         // Create conversation with two bindings — each with an explicit BindingId
         var conversation = await conversationStore.GetOrCreateDefaultAsync(agentId);
-        conversation.ChannelBindings.Add(new ChannelBinding { BindingId = "binding-tg", ChannelType = Channel("telegram"), ChannelAddress = "chat-A", Mode = BindingMode.Interactive });
-        conversation.ChannelBindings.Add(new ChannelBinding { BindingId = "binding-sr", ChannelType = Channel("signalr"), ChannelAddress = "conn-B", Mode = BindingMode.Interactive });
+        conversation.ChannelBindings.Add(new ChannelBinding { BindingId = BindingId.From("binding-tg"), ChannelType = Channel("telegram"), ChannelAddress = "chat-A", Mode = BindingMode.Interactive });
+        conversation.ChannelBindings.Add(new ChannelBinding { BindingId = BindingId.From("binding-sr"), ChannelType = Channel("signalr"), ChannelAddress = "conn-B", Mode = BindingMode.Interactive });
         await conversationStore.SaveAsync(conversation);
 
         var sessionId = SessionId.Create();
@@ -241,7 +241,7 @@ public sealed class DefaultConversationRouterTests
 
         var router = CreateRouter(conversationStore, sessionStore);
         // Exclude by BindingId, not ChannelAddress
-        var bindings = await router.GetOutboundBindingsAsync(sessionId, "binding-tg");
+        var bindings = await router.GetOutboundBindingsAsync(sessionId, BindingId.From("binding-tg"));
 
         bindings.ShouldNotBeNull();
         bindings.Count.ShouldBe(1);
@@ -256,9 +256,9 @@ public sealed class DefaultConversationRouterTests
         var agentId = Agent();
 
         var conversation = await conversationStore.GetOrCreateDefaultAsync(agentId);
-        conversation.ChannelBindings.Add(new ChannelBinding { BindingId = "binding-orig", ChannelType = Channel("telegram"), ChannelAddress = "originator", Mode = BindingMode.Interactive });
-        conversation.ChannelBindings.Add(new ChannelBinding { BindingId = "binding-muted", ChannelType = Channel("signalr"), ChannelAddress = "muted-chan", Mode = BindingMode.Muted });
-        conversation.ChannelBindings.Add(new ChannelBinding { BindingId = "binding-active", ChannelType = Channel("slack"), ChannelAddress = "active-chan", Mode = BindingMode.Interactive });
+        conversation.ChannelBindings.Add(new ChannelBinding { BindingId = BindingId.From("binding-orig"), ChannelType = Channel("telegram"), ChannelAddress = "originator", Mode = BindingMode.Interactive });
+        conversation.ChannelBindings.Add(new ChannelBinding { BindingId = BindingId.From("binding-muted"), ChannelType = Channel("signalr"), ChannelAddress = "muted-chan", Mode = BindingMode.Muted });
+        conversation.ChannelBindings.Add(new ChannelBinding { BindingId = BindingId.From("binding-active"), ChannelType = Channel("slack"), ChannelAddress = "active-chan", Mode = BindingMode.Interactive });
         await conversationStore.SaveAsync(conversation);
 
         var sessionId = SessionId.Create();
@@ -267,7 +267,7 @@ public sealed class DefaultConversationRouterTests
         await sessionStore.SaveAsync(session);
 
         var router = CreateRouter(conversationStore, sessionStore);
-        var bindings = await router.GetOutboundBindingsAsync(sessionId, "binding-orig");
+        var bindings = await router.GetOutboundBindingsAsync(sessionId, BindingId.From("binding-orig"));
 
         bindings.ShouldNotContain(b => b.Mode == BindingMode.Muted);
         bindings.Count.ShouldBe(1);
@@ -281,7 +281,7 @@ public sealed class DefaultConversationRouterTests
         var sessionId = SessionId.Create();
 
         // Session does not exist in store
-        var bindings = await router.GetOutboundBindingsAsync(sessionId, "anything");
+        var bindings = await router.GetOutboundBindingsAsync(sessionId, BindingId.From("anything"));
 
         bindings.ShouldNotBeNull();
         bindings.Count.ShouldBe(0);
@@ -305,7 +305,7 @@ public sealed class DefaultConversationRouterTests
         await sessionStore.SaveAsync(session);
 
         var router = CreateRouter(conversationStore, sessionStore);
-        var bindings = await router.GetOutboundBindingsAsync(sessionId, "src");
+        var bindings = await router.GetOutboundBindingsAsync(sessionId, BindingId.From("src"));
 
         bindings.ShouldContain(b => b.ChannelAddress == "notify-only-chan" && b.Mode == BindingMode.NotifyOnly);
     }

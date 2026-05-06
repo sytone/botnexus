@@ -155,7 +155,7 @@ public sealed class ConversationsController : ControllerBase
 
         var binding = new ChannelBinding
         {
-            BindingId = Guid.NewGuid().ToString("N"),
+            BindingId = BindingId.Create(),
             ChannelType = ChannelKey.From(request.ChannelType),
             ChannelAddress = request.ChannelAddress ?? string.Empty,
             ThreadId = request.ThreadId,
@@ -192,7 +192,7 @@ public sealed class ConversationsController : ControllerBase
             return NotFound();
 
         var binding = conversation.ChannelBindings.FirstOrDefault(b =>
-            string.Equals(b.BindingId, bindingId, StringComparison.Ordinal));
+            string.Equals(b.BindingId.Value, bindingId, StringComparison.Ordinal));
         if (binding is null)
             return NotFound();
 
@@ -317,7 +317,7 @@ public sealed class ConversationsController : ControllerBase
         UpdatedAt: c.UpdatedAt);
 
     private static BindingResponse ToBindingResponse(ChannelBinding b) => new(
-        BindingId: b.BindingId,
+        BindingId: b.BindingId.Value,
         ChannelType: b.ChannelType.Value,
         ChannelAddress: b.ChannelAddress,
         ThreadId: b.ThreadId,
