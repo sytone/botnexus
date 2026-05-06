@@ -80,7 +80,9 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         try
         {
-            await _hub.SteerAsync(agentId, agent.ActiveConversationSessionId!, content);
+            var result = await _hub.SteerAsync(agentId, agent.ActiveConversationSessionId!, content);
+            _store.RegisterSession(agentId, result.SessionId, result.ChannelType);
+            await RefreshConversationsForAgentAsync(agentId);
         }
         catch (Exception ex)
         {

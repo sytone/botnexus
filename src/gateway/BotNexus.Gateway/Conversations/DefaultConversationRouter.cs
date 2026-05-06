@@ -260,10 +260,13 @@ public sealed class DefaultConversationRouter : IConversationRouter
         if (conversation.ActiveSessionId.HasValue)
         {
             var existingSession = await _sessionStore.GetAsync(conversation.ActiveSessionId.Value, ct);
-            if (existingSession is { Status: not SessionStatus.Sealed and not SessionStatus.Expired })
+            if (existingSession is { Status: not SessionStatus.Sealed })
             {
+                // Reuse Active AND Expired sessions — GatewayHost reactivates Expired sessions.
+                // Only Sealed sessions (explicit reset/archive) should trigger a new session.
                 sessionId = conversation.ActiveSessionId.Value;
-                _logger.LogDebug("Reusing active session {SessionId} for conversation {ConversationId}", sessionId, conversation.ConversationId);
+                _logger.LogDebug("Reusing {Status} session {SessionId} for conversation {ConversationId}",
+                    existingSession.Status, sessionId, conversation.ConversationId);
             }
             else
             {
