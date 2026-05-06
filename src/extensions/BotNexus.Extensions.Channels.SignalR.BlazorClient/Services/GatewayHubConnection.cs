@@ -120,12 +120,11 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     public async Task<SubscribeAllResult> SubscribeAllAsync()
         => await _connection!.InvokeAsync<SubscribeAllResult>("SubscribeAll");
 
-    /// <summary>Send a message to the specified agent.</summary>
+    /// <summary>Send a message to the specified agent, optionally targeting a specific conversation.</summary>
     public async Task<SendMessageResult> SendMessageAsync(string agentId, string channelType, string content, string? conversationId = null)
     {
-        if (!string.IsNullOrWhiteSpace(conversationId))
-            return await _connection!.InvokeAsync<SendMessageResult>("SendMessageToConversation", agentId, channelType, content, conversationId);
-        return await _connection!.InvokeAsync<SendMessageResult>("SendMessage", agentId, channelType, content);
+        // Hub.SendMessage now accepts an optional conversationId — no separate SendMessageToConversation method.
+        return await _connection!.InvokeAsync<SendMessageResult>("SendMessage", agentId, channelType, content, conversationId);
     }
 
     /// <summary>Steer an in-progress agent response.</summary>

@@ -891,6 +891,7 @@ public sealed class GatewayHostTests
                 It.IsAny<BotNexus.Domain.Primitives.ChannelKey>(),
                 It.IsAny<string>(),
                 It.IsAny<string?>(),
+                It.IsAny<string?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BotNexus.Gateway.Abstractions.Conversations.ConversationRoutingResult(
                 conversation, expectedSessionId, false));
@@ -913,6 +914,7 @@ public sealed class GatewayHostTests
             It.IsAny<BotNexus.Domain.Primitives.AgentId>(),
             It.IsAny<BotNexus.Domain.Primitives.ChannelKey>(),
             It.IsAny<string>(),
+            It.IsAny<string?>(),
             It.IsAny<string?>(),
             It.IsAny<CancellationToken>()), Times.AtLeastOnce, "IConversationRouter.ResolveInboundAsync must be called");
 

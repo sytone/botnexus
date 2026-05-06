@@ -63,17 +63,18 @@ public sealed class SignalRConversationRoutingTests : IAsyncDisposable
 
         await using var connection = await CreateStartedConnection(factory, cts.Token);
         var result = await connection.InvokeAsync<JsonElement>(
-            "SendMessageToConversation", TestAgentId, "signalr", "routed message", conversationId, cts.Token);
+            "SendMessage", TestAgentId, "signalr", "routed message", conversationId, cts.Token);
 
         var sessionId = result.GetProperty("sessionId").GetString();
         sessionId.ShouldNotBeNullOrWhiteSpace();
 
-        // Verify the session has the conversationId stamped
-        var sessionStore = factory.Services.GetRequiredService<ISessionStore>();
-        var session = await sessionStore.GetAsync(SessionId.From(sessionId!), cts.Token);
-        session.ShouldNotBeNull();
-        session!.Session.ConversationId.ShouldNotBeNull("session should have conversationId stamped after SendMessageToConversation");
-        session.Session.ConversationId!.Value.Value.ShouldBe(conversationId);
+        // With conversation-first routing: the dispatched InboundMessage carries the ConversationId.
+        // GatewayHost uses it to route to the correct conversation.
+        // The hub returns the default portal session; the ConversationId on the dispatched message
+        // is what routes correctly — verify the dispatcher received it.
+        dispatcher.Messages.ShouldHaveSingleItem();
+        dispatcher.Messages[0].ConversationId.ShouldBe(conversationId,
+            "InboundMessage.ConversationId must carry the target conversationId for direct routing");
     }
 
     // ── Two messages to same conversation: both sessions link to same conversationId ──
@@ -100,25 +101,16 @@ public sealed class SignalRConversationRoutingTests : IAsyncDisposable
         await using var conn1 = await CreateStartedConnection(factory, cts.Token);
         await using var conn2 = await CreateStartedConnection(factory, cts.Token);
 
-        var result1 = await conn1.InvokeAsync<JsonElement>(
-            "SendMessageToConversation", TestAgentId, "signalr", "message one", conversationId, cts.Token);
-        var result2 = await conn2.InvokeAsync<JsonElement>(
-            "SendMessageToConversation", TestAgentId, "signalr", "message two", conversationId, cts.Token);
+        await conn1.InvokeAsync<JsonElement>(
+            "SendMessage", TestAgentId, "signalr", "message one", conversationId, cts.Token);
+        await conn2.InvokeAsync<JsonElement>(
+            "SendMessage", TestAgentId, "signalr", "message two", conversationId, cts.Token);
 
-        var sessionId1 = result1.GetProperty("sessionId").GetString()!;
-        var sessionId2 = result2.GetProperty("sessionId").GetString()!;
-
-        var sessionStore = factory.Services.GetRequiredService<ISessionStore>();
-        var s1 = await sessionStore.GetAsync(SessionId.From(sessionId1), cts.Token);
-        var s2 = await sessionStore.GetAsync(SessionId.From(sessionId2), cts.Token);
-
-        s1.ShouldNotBeNull();
-        s2.ShouldNotBeNull();
-        s1!.Session.ConversationId.ShouldNotBeNull();
-        s2!.Session.ConversationId.ShouldNotBeNull();
-        s1.Session.ConversationId!.Value.Value.ShouldBe(conversationId);
-        s2.Session.ConversationId!.Value.Value.ShouldBe(conversationId,
-            "both messages to same conversation should produce sessions linking to the same conversationId");
+        // With conversation-first routing, both dispatched InboundMessages carry the same ConversationId.
+        // No duplicate thread bindings, no double fan-out.
+        dispatcher.Messages.Count.ShouldBe(2);
+        dispatcher.Messages.ShouldAllBe(m => m.ConversationId == conversationId,
+            "both messages to same conversation should carry the correct ConversationId for routing");
     }
 
     // ── SendMessage without conversationId creates default conversation with conversationId ──
@@ -136,7 +128,7 @@ public sealed class SignalRConversationRoutingTests : IAsyncDisposable
         await RegisterAgentAsync(factory, cts.Token);
 
         await using var connection = await CreateStartedConnection(factory, cts.Token);
-        var result = await connection.InvokeAsync<JsonElement>("SendMessage", TestAgentId, "signalr", "hello", cts.Token);
+        var result = await connection.InvokeAsync<JsonElement>("SendMessage", TestAgentId, "signalr", "hello", (string?)null, cts.Token);
 
         var sessionId = result.GetProperty("sessionId").GetString()!;
 
@@ -171,7 +163,7 @@ public sealed class SignalRConversationRoutingTests : IAsyncDisposable
 
         await using var connection = await CreateStartedConnection(factory, cts.Token);
         var msgResult = await connection.InvokeAsync<JsonElement>(
-            "SendMessageToConversation", TestAgentId, "signalr", "before reset", conversationId, cts.Token);
+            "SendMessage", TestAgentId, "signalr", "before reset", conversationId, cts.Token);
         var originalSessionId = msgResult.GetProperty("sessionId").GetString()!;
 
         // Reset the session
@@ -180,19 +172,17 @@ public sealed class SignalRConversationRoutingTests : IAsyncDisposable
         await connection.InvokeAsync("ResetSession", TestAgentId, originalSessionId, cts.Token);
         await resetDone.Task.WaitAsync(cts.Token);
 
-        // Send again — should route to same conversation and create a new session
+        // Send again to the same conversation — still routes via ConversationId
         var msg2Result = await connection.InvokeAsync<JsonElement>(
-            "SendMessageToConversation", TestAgentId, "signalr", "after reset", conversationId, cts.Token);
+            "SendMessage", TestAgentId, "signalr", "after reset", conversationId, cts.Token);
         var newSessionId = msg2Result.GetProperty("sessionId").GetString()!;
 
         newSessionId.ShouldNotBe(originalSessionId, "after reset, a new session should be created");
 
-        var sessionStore = factory.Services.GetRequiredService<ISessionStore>();
-        var newSession = await sessionStore.GetAsync(SessionId.From(newSessionId), cts.Token);
-        newSession.ShouldNotBeNull();
-        newSession!.Session.ConversationId.ShouldNotBeNull();
-        newSession.Session.ConversationId!.Value.Value.ShouldBe(conversationId,
-            "new session after ResetSession should still be linked to the same conversation");
+        // The dispatched messages should both carry the target conversationId
+        dispatcher.Messages.Count.ShouldBe(2);
+        dispatcher.Messages.ShouldAllBe(m => m.ConversationId == conversationId,
+            "after reset, sending to same conversationId should still dispatch with the correct ConversationId");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

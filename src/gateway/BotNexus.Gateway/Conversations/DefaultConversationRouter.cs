@@ -34,8 +34,34 @@ public sealed class DefaultConversationRouter : IConversationRouter
         ChannelKey channelType,
         string channelAddress,
         string? threadId,
+        string? conversationId = null,
         CancellationToken ct = default)
     {
+        // When the caller knows the exact conversation (e.g. portal with active conversation tab),
+        // skip binding lookup entirely. This is the fast path that eliminates the thread-binding hack.
+        if (conversationId is not null)
+        {
+            var convId = ConversationId.From(conversationId);
+            var direct = await _conversationStore.GetAsync(convId, ct);
+            if (direct is null)
+            {
+                _logger.LogWarning(
+                    "ResolveInbound: explicit conversationId {ConversationId} not found — falling back to binding lookup",
+                    conversationId);
+                // Fall through to binding lookup below
+            }
+            else
+            {
+                var (directSessionId, directIsNew, changed) = await ResolveOrCreateSessionAsync(direct, agentId, ct);
+                if (changed)
+                {
+                    direct.UpdatedAt = DateTimeOffset.UtcNow;
+                    await _conversationStore.SaveAsync(direct, ct);
+                }
+                return new ConversationRoutingResult(direct, directSessionId, directIsNew);
+            }
+        }
+
         // 1. Try to find an existing conversation by binding
         var conversation = await _conversationStore.ResolveByBindingAsync(
             agentId, channelType, channelAddress, threadId, ct);
@@ -89,35 +115,6 @@ public sealed class DefaultConversationRouter : IConversationRouter
                 string.Equals(b.ThreadId, threadId, StringComparison.Ordinal));
 
         return new ConversationRoutingResult(conversation, sessionId, isNewSession, originatingBinding);
-    }
-
-    /// <inheritdoc />
-    public async Task<ConversationRoutingResult> ResolveInboundByConversationAsync(
-        ConversationId conversationId,
-        AgentId agentId,
-        ChannelKey channelType,
-        string channelAddress,
-        CancellationToken ct = default)
-    {
-        var conversation = await _conversationStore.GetAsync(conversationId, ct);
-        if (conversation is null)
-        {
-            _logger.LogWarning(
-                "ResolveInboundByConversation: conversation {ConversationId} not found — falling back to default routing",
-                conversationId);
-            return await ResolveInboundAsync(agentId, channelType, channelAddress, null, ct);
-        }
-
-        // Resolve or create session for this conversation
-        var (sessionId, isNewSession, changed) = await ResolveOrCreateSessionAsync(conversation, agentId, ct);
-
-        if (changed)
-        {
-            conversation.UpdatedAt = DateTimeOffset.UtcNow;
-            await _conversationStore.SaveAsync(conversation, ct);
-        }
-
-        return new ConversationRoutingResult(conversation, sessionId, isNewSession);
     }
 
     /// <inheritdoc />

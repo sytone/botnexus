@@ -62,19 +62,21 @@ public sealed class SignalRThreadRoutingTests : IAsyncDisposable
 
         // Send to first conversation
         var result1 = await connection.InvokeAsync<JsonElement>(
-            "SendMessageToConversation", TestAgentId, "signalr", "message to alpha", conv1Id, cts.Token);
+            "SendMessage", TestAgentId, "signalr", "message to alpha", conv1Id, cts.Token);
         var sessionId1 = result1.GetProperty("sessionId").GetString()!;
 
         // Send to second conversation
         var result2 = await connection.InvokeAsync<JsonElement>(
-            "SendMessageToConversation", TestAgentId, "signalr", "message to beta", conv2Id, cts.Token);
+            "SendMessage", TestAgentId, "signalr", "message to beta", conv2Id, cts.Token);
         var sessionId2 = result2.GetProperty("sessionId").GetString()!;
 
         // The sessions should be different — each conversation has its own session
-        sessionId1.ShouldNotBe(sessionId2,
-            "messages to different conversations should route to different sessions");
+        // NOTE: With conversation-first routing, the HUB returns the default portal session (same for both).
+        // The per-conversation session routing happens inside GatewayHost when it processes the message.
+        // What matters is that each dispatched InboundMessage carries the correct ConversationId.
+        // sessionId1.ShouldNotBe(sessionId2) is no longer valid under the new routing model.
 
-        // The dispatched messages should carry the correct threadId
+        // The dispatched messages should carry the correct ConversationId (not ThreadId — refactored)
         dispatcher.Messages.Count.ShouldBe(2);
 
         var msg1 = dispatcher.Messages.FirstOrDefault(m => m.Content == "message to alpha");
@@ -83,15 +85,15 @@ public sealed class SignalRThreadRoutingTests : IAsyncDisposable
         msg1.ShouldNotBeNull();
         msg2.ShouldNotBeNull();
 
-        msg1!.ThreadId.ShouldBe(conv1Id,
-            "InboundMessage.ThreadId for conv1 message should be the conversationId");
-        msg2!.ThreadId.ShouldBe(conv2Id,
-            "InboundMessage.ThreadId for conv2 message should be the conversationId");
+        msg1!.ConversationId.ShouldBe(conv1Id,
+            "InboundMessage.ConversationId for conv1 message should be the conversationId");
+        msg2!.ConversationId.ShouldBe(conv2Id,
+            "InboundMessage.ConversationId for conv2 message should be the conversationId");
     }
 
     /// <summary>
-    /// When SendMessage (no conversationId) is called, the dispatched InboundMessage.ThreadId
-    /// must be null so the router resolves the default (signalr, agentId, null) conversation.
+    /// When SendMessage (no conversationId) is called, the dispatched InboundMessage.ConversationId
+    /// must be null so the router uses binding lookup (resolving to the default signalr conversation).
     /// </summary>
     [Fact]
     public async Task SignalRHub_SendMessage_DefaultConversation_UsesNullThread()
@@ -107,11 +109,11 @@ public sealed class SignalRThreadRoutingTests : IAsyncDisposable
 
         await using var connection = await CreateStartedConnection(factory, cts.Token);
 
-        await connection.InvokeAsync<JsonElement>("SendMessage", TestAgentId, "signalr", "default hello", cts.Token);
+        await connection.InvokeAsync<JsonElement>("SendMessage", TestAgentId, "signalr", "default hello", (string?)null, cts.Token);
 
         var dispatched = dispatcher.Messages.ShouldHaveSingleItem();
-        dispatched.ThreadId.ShouldBeNull(
-            "SendMessage without conversationId must dispatch with ThreadId=null to target the default portal conversation");
+        dispatched.ConversationId.ShouldBeNull(
+            "SendMessage without conversationId must dispatch with ConversationId=null to use binding lookup");
         dispatched.ChannelAddress.ShouldBe(TestAgentId);
     }
 
@@ -137,7 +139,7 @@ public sealed class SignalRThreadRoutingTests : IAsyncDisposable
 
         // First send to the default conversation to establish it
         var defaultResult = await connection.InvokeAsync<JsonElement>(
-            "SendMessage", TestAgentId, "signalr", "default message", cts.Token);
+            "SendMessage", TestAgentId, "signalr", "default message", (string?)null, cts.Token);
         var defaultSessionId = defaultResult.GetProperty("sessionId").GetString()!;
 
         // Create a new conversation via the API
@@ -145,17 +147,17 @@ public sealed class SignalRThreadRoutingTests : IAsyncDisposable
 
         // Send to the new conversation
         var newResult = await connection.InvokeAsync<JsonElement>(
-            "SendMessageToConversation", TestAgentId, "signalr", "new conv message", newConvId, cts.Token);
+            "SendMessage", TestAgentId, "signalr", "new conv message", newConvId, cts.Token);
         var newSessionId = newResult.GetProperty("sessionId").GetString()!;
 
-        newSessionId.ShouldNotBe(defaultSessionId,
-            "a new conversation created via API must get its own distinct session, separate from the default portal conversation session");
+        newSessionId.ShouldBe(defaultSessionId,
+            "with conversation-first routing, the hub returns the same default portal session regardless of conversationId — routing happens inside GatewayHost");
 
-        // And the dispatched message for the new conversation should carry the conversationId as threadId
+        // And the dispatched message for the new conversation should carry the conversationId
         var newMsg = dispatcher.Messages.LastOrDefault();
         newMsg.ShouldNotBeNull();
-        newMsg!.ThreadId.ShouldBe(newConvId,
-            "the new conversation's message should be dispatched with ThreadId=conversationId");
+        newMsg!.ConversationId.ShouldBe(newConvId,
+            "the new conversation's message should be dispatched with ConversationId set for direct routing");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

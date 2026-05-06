@@ -98,7 +98,8 @@ public sealed class ThreadIdRoutingTests
             Agent(),
             message.ChannelType,
             message.ChannelAddress,
-            message.ThreadId);
+            message.ThreadId,
+            conversationId: null);
 
         capturingRouter.CapturedThreadId.ShouldBe("topic-55");
     }
@@ -113,18 +114,13 @@ internal sealed class CapturingConversationRouter : IConversationRouter
 
     public Task<ConversationRoutingResult> ResolveInboundAsync(
         AgentId agentId, ChannelKey channelType, string channelAddress,
-        string? threadId, CancellationToken ct = default)
+        string? threadId, string? conversationId = null, CancellationToken ct = default)
     {
         CapturedThreadId = threadId;
         var conv = new Conversation { AgentId = agentId };
         var sessionId = SessionId.Create();
         return Task.FromResult(new ConversationRoutingResult(conv, sessionId, true));
     }
-
-    public Task<ConversationRoutingResult> ResolveInboundByConversationAsync(
-        ConversationId conversationId, AgentId agentId, ChannelKey channelType,
-        string channelAddress, CancellationToken ct = default)
-        => throw new NotImplementedException();
 
     public Task<IReadOnlyList<ChannelBinding>> GetOutboundBindingsAsync(
         SessionId sessionId, string originatingChannelAddress, CancellationToken ct = default)

@@ -57,7 +57,7 @@ public sealed class GatewayHostBindingRoutingTests
         convRouter
             .Setup(r => r.ResolveInboundAsync(
                 It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(routingResult);
         convRouter
             .Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
@@ -130,7 +130,7 @@ public sealed class GatewayHostBindingRoutingTests
         convRouter
             .Setup(r => r.ResolveInboundAsync(
                 It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(routingResult);
         convRouter
             .Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
@@ -215,7 +215,7 @@ public sealed class GatewayHostBindingRoutingTests
         convRouter
             .Setup(r => r.ResolveInboundAsync(
                 It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(routingResult);
         convRouter
             .Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))

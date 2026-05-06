@@ -265,6 +265,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     message.ChannelType,
                     message.ChannelAddress ?? string.Empty,
                     threadId: message.ThreadId,
+                    conversationId: message.ConversationId,
                     cancellationToken);
                 sessionId = routingResult.SessionId.Value;
                 resolvedConversationId = routingResult.Conversation.ConversationId;
