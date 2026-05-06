@@ -80,8 +80,8 @@ public sealed class InMemoryConversationStore : IConversationStore
     public Task<Conversation?> ResolveByBindingAsync(
         AgentId agentId,
         ChannelKey channelType,
-        string channelAddress,
-        string? threadId,
+        ChannelAddress channelAddress,
+        ThreadId? threadId,
         CancellationToken ct = default)
     {
         var match = _conversations.Values.FirstOrDefault(c =>
@@ -89,8 +89,8 @@ public sealed class InMemoryConversationStore : IConversationStore
             c.Status == ConversationStatus.Active &&
             c.ChannelBindings.Any(b =>
                 b.ChannelType == channelType &&
-                string.Equals(b.ChannelAddress, channelAddress, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(b.ThreadId, threadId, StringComparison.OrdinalIgnoreCase)));
+                b.ChannelAddress == channelAddress &&
+                b.ThreadId == threadId));
 
         return Task.FromResult(match);
     }

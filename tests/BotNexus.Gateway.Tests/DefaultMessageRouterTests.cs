@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
@@ -100,7 +101,7 @@ public sealed class DefaultMessageRouterTests
         {
             ChannelType = ChannelKey.From("web"),
             SenderId = "sender-1",
-            ChannelAddress = "conv-1",
+            ChannelAddress = ChannelAddress.From("conv-1"),
             Content = "hello",
             TargetAgentId = targetAgentId,
             SessionId = sessionId

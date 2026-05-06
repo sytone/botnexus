@@ -76,7 +76,7 @@ public sealed class TelegramChannelAdapterTests
         dispatcher.Invocations
             .Where(i => i.Method.Name == nameof(IChannelDispatcher.DispatchAsync))
             .Select(i => (InboundMessage)i.Arguments[0])
-            .Where(m => m.ChannelAddress == "42" && m.Content == "hello")
+            .Where(m => m.ChannelAddress == ChannelAddress.From("42") && m.Content == "hello")
             .ShouldHaveSingleItem();
     }
 
@@ -101,7 +101,7 @@ public sealed class TelegramChannelAdapterTests
         await adapter.SendAsync(new OutboundMessage
         {
             ChannelType = ChannelKey.From("telegram"),
-            ChannelAddress = "42",
+            ChannelAddress = ChannelAddress.From("42"),
             Content = new string('a', 5000)
         });
 
@@ -132,7 +132,7 @@ public sealed class TelegramChannelAdapterTests
         await adapter.SendAsync(new OutboundMessage
         {
             ChannelType = ChannelKey.From("telegram"),
-            ChannelAddress = "42",
+            ChannelAddress = ChannelAddress.From("42"),
             Content = "a < b && c > d"
         });
 
@@ -352,8 +352,8 @@ public sealed class TelegramChannelAdapterTests
         await adapter.SendAsync(new OutboundMessage
         {
             ChannelType = ChannelKey.From("telegram"),
-            ChannelAddress = "42",
-            ThreadId = "1",
+            ChannelAddress = ChannelAddress.From("42"),
+            ThreadId = ThreadId.From("1"),
             Content = "general topic"
         });
 
@@ -382,8 +382,8 @@ public sealed class TelegramChannelAdapterTests
         await adapter.SendAsync(new OutboundMessage
         {
             ChannelType = ChannelKey.From("telegram"),
-            ChannelAddress = "42",
-            ThreadId = "42",
+            ChannelAddress = ChannelAddress.From("42"),
+            ThreadId = ThreadId.From("42"),
             Content = "topic reply"
         });
 
@@ -451,7 +451,7 @@ public sealed class TelegramChannelAdapterTests
         await adapter.SendAsync(new OutboundMessage
         {
             ChannelType = ChannelKey.From("telegram"),
-            ChannelAddress = "42",
+            ChannelAddress = ChannelAddress.From("42"),
             Content = "hello"
         });
 
@@ -490,7 +490,7 @@ public sealed class TelegramChannelAdapterTests
         await adapter.SendAsync(new OutboundMessage
         {
             ChannelType = ChannelKey.From("telegram"),
-            ChannelAddress = "42",
+            ChannelAddress = ChannelAddress.From("42"),
             Content = "hello"
         });
 
@@ -579,7 +579,7 @@ public sealed class TelegramChannelAdapterTests
         Func<Task> act = () => adapter.SendAsync(new OutboundMessage
         {
             ChannelType = ChannelKey.From("telegram"),
-            ChannelAddress = "99",
+            ChannelAddress = ChannelAddress.From("99"),
             Content = "blocked"
         });
 
@@ -633,7 +633,7 @@ public sealed class TelegramChannelAdapterTests
         await adapter.StopAsync(CancellationToken.None);
 
         message.TargetAgentId.ShouldBe("agent-b");
-        message.ChannelAddress.ShouldBe("42");
+        message.ChannelAddress.ShouldBe(ChannelAddress.From("42"));
         message.Content.ShouldBe("hello");
     }
 
@@ -687,7 +687,7 @@ public sealed class TelegramChannelAdapterTests
 
         // Adapter dispatches without BindingId — GatewayHost stamps it after routing
         message.BindingId.ShouldBeNull();
-        message.ChannelAddress.ShouldBe("42");
+        message.ChannelAddress.ShouldBe(ChannelAddress.From("42"));
     }
 
     // ── Security: AllowedUserIds ────────────────────────────────────────────

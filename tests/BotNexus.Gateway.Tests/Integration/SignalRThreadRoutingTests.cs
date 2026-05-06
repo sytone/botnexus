@@ -114,7 +114,7 @@ public sealed class SignalRThreadRoutingTests : IAsyncDisposable
         var dispatched = dispatcher.Messages.ShouldHaveSingleItem();
         dispatched.ConversationId.ShouldBeNull(
             "SendMessage without conversationId must dispatch with ConversationId=null to use binding lookup");
-        dispatched.ChannelAddress.ShouldBe(TestAgentId);
+        dispatched.ChannelAddress.ShouldBe(ChannelAddress.From(TestAgentId));
     }
 
     /// <summary>

@@ -36,10 +36,10 @@ public sealed class ThreadIdRoutingTests
         const string address = "group-chat-123";
 
         // Act: first message with no thread
-        var resultNoThread = await router.ResolveInboundAsync(agentId, channel, address, threadId: null);
+        var resultNoThread = await router.ResolveInboundAsync(agentId, channel, ChannelAddress.From(address), threadId: null);
 
         // Act: second message with a specific thread id
-        var resultWithThread = await router.ResolveInboundAsync(agentId, channel, address, threadId: "topic-42");
+        var resultWithThread = await router.ResolveInboundAsync(agentId, channel, ChannelAddress.From(address), threadId: ThreadId.From("topic-42"));
 
         // They should resolve to different conversations since thread identity differs
         resultWithThread.Conversation.ConversationId.ShouldNotBe(resultNoThread.Conversation.ConversationId);
@@ -56,8 +56,8 @@ public sealed class ThreadIdRoutingTests
         const string address = "group-chat-456";
         const string threadId = "topic-99";
 
-        var result1 = await router.ResolveInboundAsync(agentId, channel, address, threadId: threadId);
-        var result2 = await router.ResolveInboundAsync(agentId, channel, address, threadId: threadId);
+        var result1 = await router.ResolveInboundAsync(agentId, channel, ChannelAddress.From(address), threadId: ThreadId.From(threadId));
+        var result2 = await router.ResolveInboundAsync(agentId, channel, ChannelAddress.From(address), threadId: ThreadId.From(threadId));
 
         result2.Conversation.ConversationId.ShouldBe(result1.Conversation.ConversationId);
         result2.IsNewSession.ShouldBeFalse();
@@ -71,12 +71,12 @@ public sealed class ThreadIdRoutingTests
         {
             ChannelType = Channel(),
             SenderId = "user1",
-            ChannelAddress = "chat1",
+            ChannelAddress = ChannelAddress.From("chat1"),
             Content = "hello",
-            ThreadId = "thread-1"
+            ThreadId = ThreadId.From("thread-1")
         };
 
-        msg.ThreadId.ShouldBe("thread-1");
+        msg.ThreadId.ShouldBe(ThreadId.From("thread-1"));
     }
 
     [Fact]
@@ -89,9 +89,9 @@ public sealed class ThreadIdRoutingTests
         {
             ChannelType = Channel("telegram"),
             SenderId = "user1",
-            ChannelAddress = "chat-789",
+            ChannelAddress = ChannelAddress.From("chat-789"),
             Content = "hello",
-            ThreadId = "topic-55"
+            ThreadId = ThreadId.From("topic-55")
         };
 
         var result = await capturingRouter.ResolveInboundAsync(
@@ -101,7 +101,7 @@ public sealed class ThreadIdRoutingTests
             message.ThreadId,
             conversationId: null);
 
-        capturingRouter.CapturedThreadId.ShouldBe("topic-55");
+        capturingRouter.CapturedThreadId.ShouldBe(ThreadId.From("topic-55"));
     }
 }
 
@@ -110,11 +110,11 @@ public sealed class ThreadIdRoutingTests
 /// </summary>
 internal sealed class CapturingConversationRouter : IConversationRouter
 {
-    public string? CapturedThreadId { get; private set; }
+    public ThreadId? CapturedThreadId { get; private set; }
 
     public Task<ConversationRoutingResult> ResolveInboundAsync(
-        AgentId agentId, ChannelKey channelType, string channelAddress,
-        string? threadId, string? conversationId = null, CancellationToken ct = default)
+        AgentId agentId, ChannelKey channelType, ChannelAddress channelAddress,
+        ThreadId? threadId, string? conversationId = null, CancellationToken ct = default)
     {
         CapturedThreadId = threadId;
         var conv = new Conversation { AgentId = agentId };
@@ -129,7 +129,7 @@ internal sealed class CapturingConversationRouter : IConversationRouter
     public Task MuteBindingAsync(ConversationId conversationId, BindingId bindingId, CancellationToken ct = default)
         => Task.CompletedTask;
 
-    public Task MuteBindingByAddressAsync(AgentId? agentId, ChannelKey channelType, string channelAddress, CancellationToken ct = default)
+    public Task MuteBindingByAddressAsync(AgentId? agentId, ChannelKey channelType, ChannelAddress channelAddress, CancellationToken ct = default)
         => Task.CompletedTask;
 
     public Task ReattachBindingAsync(BindingId bindingId, ConversationId targetConversationId, CancellationToken ct = default)

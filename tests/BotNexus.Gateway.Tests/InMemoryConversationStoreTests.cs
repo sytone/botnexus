@@ -141,13 +141,13 @@ public sealed class InMemoryConversationStoreTests
                 new ChannelBinding
                 {
                     ChannelType = ChannelKey.From("telegram"),
-                    ChannelAddress = "12345"
+                    ChannelAddress = ChannelAddress.From("12345")
                 }
             ]
         };
         await store.CreateAsync(conv);
 
-        var result = await store.ResolveByBindingAsync(agentId, ChannelKey.From("telegram"), "12345", null);
+        var result = await store.ResolveByBindingAsync(agentId, ChannelKey.From("telegram"), ChannelAddress.From("12345"), null);
 
         result.ShouldNotBeNull();
         result!.ConversationId.ShouldBe(conv.ConversationId);
@@ -165,15 +165,15 @@ public sealed class InMemoryConversationStoreTests
                 new ChannelBinding
                 {
                     ChannelType = ChannelKey.From("teams"),
-                    ChannelAddress = "team-channel",
-                    ThreadId = "thread-42"
+                    ChannelAddress = ChannelAddress.From("team-channel"),
+                    ThreadId = ThreadId.From("thread-42")
                 }
             ]
         };
         await store.CreateAsync(conv);
 
-        var match = await store.ResolveByBindingAsync(agentId, ChannelKey.From("teams"), "team-channel", "thread-42");
-        var noMatch = await store.ResolveByBindingAsync(agentId, ChannelKey.From("teams"), "team-channel", "wrong-thread");
+        var match = await store.ResolveByBindingAsync(agentId, ChannelKey.From("teams"), ChannelAddress.From("team-channel"), ThreadId.From("thread-42"));
+        var noMatch = await store.ResolveByBindingAsync(agentId, ChannelKey.From("teams"), ChannelAddress.From("team-channel"), ThreadId.From("wrong-thread"));
 
         match.ShouldNotBeNull();
         noMatch.ShouldBeNull();
@@ -191,14 +191,14 @@ public sealed class InMemoryConversationStoreTests
                 new ChannelBinding
                 {
                     ChannelType = ChannelKey.From("telegram"),
-                    ChannelAddress = "99999"
+                    ChannelAddress = ChannelAddress.From("99999")
                 }
             ]
         };
         await store.CreateAsync(conv);
         await store.ArchiveAsync(conv.ConversationId);
 
-        var result = await store.ResolveByBindingAsync(agentId, ChannelKey.From("telegram"), "99999", null);
+        var result = await store.ResolveByBindingAsync(agentId, ChannelKey.From("telegram"), ChannelAddress.From("99999"), null);
         result.ShouldBeNull();
     }
 
@@ -209,7 +209,7 @@ public sealed class InMemoryConversationStoreTests
         var agentId = Agent("summary-agent");
         var conv = MakeConversation(agentId) with
         {
-            ChannelBindings = [new ChannelBinding { ChannelType = ChannelKey.From("telegram"), ChannelAddress = "1" }]
+            ChannelBindings = [new ChannelBinding { ChannelType = ChannelKey.From("telegram"), ChannelAddress = ChannelAddress.From("1") }]
         };
         await store.CreateAsync(conv);
 

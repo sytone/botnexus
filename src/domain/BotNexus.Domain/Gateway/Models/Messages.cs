@@ -17,7 +17,7 @@ public sealed record InboundMessage
     /// Conversation identifier within the channel (e.g., chat ID, thread ID).
     /// Combined with <see cref="ChannelType"/> to derive a session key.
     /// </summary>
-    public required string ChannelAddress { get; init; }
+    public required ChannelAddress ChannelAddress { get; init; }
 
     /// <summary>The message text content.</summary>
     public required string Content { get; init; }
@@ -50,7 +50,7 @@ public sealed record InboundMessage
     /// For Telegram group topics, Signal threads, Teams threads, etc.
     /// When non-null, used to route into a thread-specific conversation binding.
     /// </summary>
-    public string? ThreadId { get; init; }
+    public ThreadId? ThreadId { get; init; }
 
     /// <summary>
     /// The channel binding ID this message arrived on, if known.
@@ -75,7 +75,7 @@ public sealed record OutboundMessage
     public required ChannelKey ChannelType { get; init; }
 
     /// <summary>Target conversation identifier within the channel.</summary>
-    public required string ChannelAddress { get; init; }
+    public required ChannelAddress ChannelAddress { get; init; }
 
     /// <summary>The message content.</summary>
     public required string Content { get; init; }
@@ -88,7 +88,7 @@ public sealed record OutboundMessage
     /// When non-null, adapters should deliver the message into the specified thread
     /// (e.g. Telegram <c>message_thread_id</c>, Teams thread id).
     /// </summary>
-    public string? ThreadId { get; init; }
+    public ThreadId? ThreadId { get; init; }
 
     /// <summary>
     /// Stable identifier of the channel binding that this message is being sent to.

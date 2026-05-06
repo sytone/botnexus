@@ -1,3 +1,5 @@
+using ChannelAddress = BotNexus.Domain.Primitives.ChannelAddress;
+using ThreadId = BotNexus.Domain.Primitives.ThreadId;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
@@ -830,7 +832,7 @@ public sealed class GatewayHostTests
         {
             ChannelType = channelType,
             SenderId = "sender-1",
-            ChannelAddress = conversationId,
+            ChannelAddress = ChannelAddress.From(conversationId),
             Content = content,
             SessionId = sessionId,
             Metadata = metadata ?? new Dictionary<string, object?>()
@@ -889,8 +891,8 @@ public sealed class GatewayHostTests
             .Setup(r => r.ResolveInboundAsync(
                 It.IsAny<BotNexus.Domain.Primitives.AgentId>(),
                 It.IsAny<BotNexus.Domain.Primitives.ChannelKey>(),
-                It.IsAny<string>(),
-                It.IsAny<string?>(),
+                It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(),
+                It.IsAny<BotNexus.Domain.Primitives.ThreadId?>(),
                 It.IsAny<string?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BotNexus.Gateway.Abstractions.Conversations.ConversationRoutingResult(
@@ -913,8 +915,8 @@ public sealed class GatewayHostTests
         convRouter.Verify(r => r.ResolveInboundAsync(
             It.IsAny<BotNexus.Domain.Primitives.AgentId>(),
             It.IsAny<BotNexus.Domain.Primitives.ChannelKey>(),
-            It.IsAny<string>(),
-            It.IsAny<string?>(),
+            It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(),
+            It.IsAny<BotNexus.Domain.Primitives.ThreadId?>(),
             It.IsAny<string?>(),
             It.IsAny<CancellationToken>()), Times.AtLeastOnce, "IConversationRouter.ResolveInboundAsync must be called");
 

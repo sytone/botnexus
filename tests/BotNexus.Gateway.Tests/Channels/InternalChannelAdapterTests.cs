@@ -34,7 +34,7 @@ public sealed class InternalChannelAdapterTests
         var outbound = new OutboundMessage
         {
             ChannelType = ChannelKey.From("internal"),
-            ChannelAddress = "conversation-1",
+            ChannelAddress = ChannelAddress.From("conversation-1"),
             SessionId = "session-1",
             Content = "hello"
         };
@@ -45,7 +45,7 @@ public sealed class InternalChannelAdapterTests
             a => a.SendAsync(
                 It.Is<OutboundMessage>(m =>
                     m.ChannelType.Equals(ChannelKey.From("signalr")) &&
-                    m.ChannelAddress == "conversation-1" &&
+                    m.ChannelAddress == ChannelAddress.From("conversation-1") &&
                     m.SessionId == "session-1" &&
                     m.Content == "hello"),
                 CancellationToken.None),
@@ -72,7 +72,7 @@ public sealed class InternalChannelAdapterTests
         await sut.SendAsync(new OutboundMessage
         {
             ChannelType = ChannelKey.From("internal"),
-            ChannelAddress = "conversation-1",
+            ChannelAddress = ChannelAddress.From("conversation-1"),
             SessionId = "session-1",
             Content = "hello"
         }, CancellationToken.None);
@@ -99,7 +99,7 @@ public sealed class InternalChannelAdapterTests
         Func<Task> act = () => sut.SendAsync(new OutboundMessage
         {
             ChannelType = ChannelKey.From("internal"),
-            ChannelAddress = "conversation-1",
+            ChannelAddress = ChannelAddress.From("conversation-1"),
             SessionId = "session-1",
             Content = "hello"
         }, CancellationToken.None);
@@ -145,7 +145,7 @@ public sealed class InternalChannelAdapterTests
         await sut.SendAsync(new OutboundMessage
         {
             ChannelType = ChannelKey.From("internal"),
-            ChannelAddress = "conversation-1",
+            ChannelAddress = ChannelAddress.From("conversation-1"),
             SessionId = "session-1",
             Content = "hello"
         }, CancellationToken.None);

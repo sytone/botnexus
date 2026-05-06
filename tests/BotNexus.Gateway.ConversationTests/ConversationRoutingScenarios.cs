@@ -45,8 +45,8 @@ public sealed class ConversationRoutingScenarios
         var agentId = Agent();
 
         // Act — two messages from the same Telegram chat ID
-        var result1 = await router.ResolveInboundAsync(agentId, Telegram(), "chat-123", null);
-        var result2 = await router.ResolveInboundAsync(agentId, Telegram(), "chat-123", null);
+        var result1 = await router.ResolveInboundAsync(agentId, Telegram(), ChannelAddress.From("chat-123"), null);
+        var result2 = await router.ResolveInboundAsync(agentId, Telegram(), ChannelAddress.From("chat-123"), null);
 
         // Assert — same conversation, same session
         result1.Conversation.ConversationId.ShouldBe(result2.Conversation.ConversationId,
@@ -68,8 +68,8 @@ public sealed class ConversationRoutingScenarios
         var agentId = Agent();
 
         // Act — portal sends with null conversationId (binding lookup path)
-        var result1 = await router.ResolveInboundAsync(agentId, SignalR(), "agent1", null);
-        var result2 = await router.ResolveInboundAsync(agentId, SignalR(), "agent1", null);
+        var result1 = await router.ResolveInboundAsync(agentId, SignalR(), ChannelAddress.From("agent1"), null);
+        var result2 = await router.ResolveInboundAsync(agentId, SignalR(), ChannelAddress.From("agent1"), null);
 
         // Assert — same conversation on both calls (binding found on second call)
         result1.Conversation.ConversationId.ShouldBe(result2.Conversation.ConversationId,
@@ -101,7 +101,7 @@ public sealed class ConversationRoutingScenarios
 
         // Act — portal sends with explicit conversationId (direct routing path)
         var result = await router.ResolveInboundAsync(
-            agentId, SignalR(), "agent1", null,
+            agentId, SignalR(), ChannelAddress.From("agent1"), null,
             conversationId: secondaryConv.ConversationId.Value);
 
         // Assert — routes to the correct conversation with NO new binding added
@@ -130,7 +130,7 @@ public sealed class ConversationRoutingScenarios
         var agentId = Agent();
 
         // First contact via Telegram creates the conversation with a Telegram binding
-        var result = await router.ResolveInboundAsync(agentId, Telegram(), "chat-789", null);
+        var result = await router.ResolveInboundAsync(agentId, Telegram(), ChannelAddress.From("chat-789"), null);
         var conversationId = result.Conversation.ConversationId;
 
         // Attach a SignalR binding (simulates portal joining the same conversation)
@@ -138,7 +138,7 @@ public sealed class ConversationRoutingScenarios
         conv!.ChannelBindings.Add(new ChannelBinding
         {
             ChannelType = SignalR(),
-            ChannelAddress = "conn-abc",
+            ChannelAddress = ChannelAddress.From("conn-abc"),
             Mode = BindingMode.Interactive
         });
         await convStore.SaveAsync(conv);
@@ -168,7 +168,7 @@ public sealed class ConversationRoutingScenarios
         var agentId = Agent();
 
         // First message creates session
-        var result1 = await router.ResolveInboundAsync(agentId, Telegram(), "chat-exp", null);
+        var result1 = await router.ResolveInboundAsync(agentId, Telegram(), ChannelAddress.From("chat-exp"), null);
         var originalSessionId = result1.SessionId;
 
         // Expire the session
@@ -177,7 +177,7 @@ public sealed class ConversationRoutingScenarios
         await sessionStore.SaveAsync(session);
 
         // Act — second message should reuse the expired session (not create a new one)
-        var result2 = await router.ResolveInboundAsync(agentId, Telegram(), "chat-exp", null);
+        var result2 = await router.ResolveInboundAsync(agentId, Telegram(), ChannelAddress.From("chat-exp"), null);
 
         // Assert — same session reused (GatewayHost reactivates expired sessions)
         result2.SessionId.ShouldBe(originalSessionId,
@@ -199,7 +199,7 @@ public sealed class ConversationRoutingScenarios
         var agentId = Agent();
 
         // First message creates session
-        var result1 = await router.ResolveInboundAsync(agentId, Telegram(), "chat-seal", null);
+        var result1 = await router.ResolveInboundAsync(agentId, Telegram(), ChannelAddress.From("chat-seal"), null);
         var originalSessionId = result1.SessionId;
 
         // Seal the session (simulates an explicit reset/archive)
@@ -208,7 +208,7 @@ public sealed class ConversationRoutingScenarios
         await sessionStore.SaveAsync(session);
 
         // Act — next message must create a new session
-        var result2 = await router.ResolveInboundAsync(agentId, Telegram(), "chat-seal", null);
+        var result2 = await router.ResolveInboundAsync(agentId, Telegram(), ChannelAddress.From("chat-seal"), null);
 
         // Assert
         result2.SessionId.ShouldNotBe(originalSessionId,
@@ -236,8 +236,8 @@ public sealed class ConversationRoutingScenarios
         var agentB = Agent("agent-b");
 
         // Act — same Telegram chat ID sends to both agents
-        var resultA = await routerA.ResolveInboundAsync(agentA, Telegram(), "shared-chat", null);
-        var resultB = await routerB.ResolveInboundAsync(agentB, Telegram(), "shared-chat", null);
+        var resultA = await routerA.ResolveInboundAsync(agentA, Telegram(), ChannelAddress.From("shared-chat"), null);
+        var resultB = await routerB.ResolveInboundAsync(agentB, Telegram(), ChannelAddress.From("shared-chat"), null);
 
         // Assert — each agent gets its own conversation
         resultA.Conversation.ConversationId.ShouldNotBe(resultB.Conversation.ConversationId,
@@ -260,8 +260,8 @@ public sealed class ConversationRoutingScenarios
         var agentId = Agent();
 
         // Act — same group chat but different topics
-        var result42 = await router.ResolveInboundAsync(agentId, Telegram(), "group-1", threadId: "42");
-        var result99 = await router.ResolveInboundAsync(agentId, Telegram(), "group-1", threadId: "99");
+        var result42 = await router.ResolveInboundAsync(agentId, Telegram(), ChannelAddress.From("group-1"), ThreadId.From("42"));
+        var result99 = await router.ResolveInboundAsync(agentId, Telegram(), ChannelAddress.From("group-1"), ThreadId.From("99"));
 
         // Assert — thread isolation: different topics → different conversations
         result42.Conversation.ConversationId.ShouldNotBe(result99.Conversation.ConversationId,
@@ -269,9 +269,9 @@ public sealed class ConversationRoutingScenarios
 
         // Verify bindings have correct thread IDs
         result42.OriginatingBinding.ShouldNotBeNull();
-        result42.OriginatingBinding!.ThreadId.ShouldBe("42");
+        result42.OriginatingBinding!.ThreadId.ShouldBe(ThreadId.From("42"));
         result99.OriginatingBinding.ShouldNotBeNull();
-        result99.OriginatingBinding!.ThreadId.ShouldBe("99");
+        result99.OriginatingBinding!.ThreadId.ShouldBe(ThreadId.From("99"));
     }
 
     // ──────────────────────────────────────────────────────────────────────────────
@@ -288,7 +288,7 @@ public sealed class ConversationRoutingScenarios
         var agentId = Agent();
 
         // Create conversation A via binding lookup
-        var resultA = await router.ResolveInboundAsync(agentId, SignalR(), "agent1", null);
+        var resultA = await router.ResolveInboundAsync(agentId, SignalR(), ChannelAddress.From("agent1"), null);
         var convAId = resultA.Conversation.ConversationId;
 
         // Create conversation B via API (no binding)
@@ -304,7 +304,7 @@ public sealed class ConversationRoutingScenarios
         // Note: (SignalR, "agent1", null) binding points to conversation A,
         // but we override with conversationId=B
         var resultB = await router.ResolveInboundAsync(
-            agentId, SignalR(), "agent1", null,
+            agentId, SignalR(), ChannelAddress.From("agent1"), null,
             conversationId: convB.ConversationId.Value);
 
         // Assert — routed to conversation B, not A

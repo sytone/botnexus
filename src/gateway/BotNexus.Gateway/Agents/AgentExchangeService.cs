@@ -212,7 +212,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
                     new OutboundMessage
                     {
                         ChannelType = ChannelKey.From("cross-world"),
-                        ChannelAddress = conversationId,
+                        ChannelAddress = ChannelAddress.From(conversationId),
                         Content = message,
                         SessionId = sessionId.Value,
                         Metadata = new Dictionary<string, object?>

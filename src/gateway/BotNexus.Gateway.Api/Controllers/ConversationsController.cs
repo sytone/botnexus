@@ -157,8 +157,8 @@ public sealed class ConversationsController : ControllerBase
         {
             BindingId = BindingId.Create(),
             ChannelType = ChannelKey.From(request.ChannelType),
-            ChannelAddress = request.ChannelAddress ?? string.Empty,
-            ThreadId = request.ThreadId,
+            ChannelAddress = ChannelAddress.From(request.ChannelAddress ?? string.Empty),
+            ThreadId = ThreadId.FromNullable(request.ThreadId),
             Mode = bindingMode,
             ThreadingMode = threadingMode,
             DisplayPrefix = request.DisplayPrefix,
@@ -319,8 +319,8 @@ public sealed class ConversationsController : ControllerBase
     private static BindingResponse ToBindingResponse(ChannelBinding b) => new(
         BindingId: b.BindingId.Value,
         ChannelType: b.ChannelType.Value,
-        ChannelAddress: b.ChannelAddress,
-        ThreadId: b.ThreadId,
+        ChannelAddress: b.ChannelAddress.Value,
+        ThreadId: b.ThreadId?.Value,
         Mode: b.Mode.ToString(),
         ThreadingMode: b.ThreadingMode.ToString(),
         DisplayPrefix: b.DisplayPrefix,

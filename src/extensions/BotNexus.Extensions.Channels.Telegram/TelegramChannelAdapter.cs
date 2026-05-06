@@ -150,12 +150,12 @@ public sealed class TelegramChannelAdapter(
         cancellationToken.ThrowIfCancellationRequested();
         EnsureBotsInitialized();
 
-        if (!TryParseChatId(message.ChannelAddress, out var chatId))
+        if (!TryParseChatId(message.ChannelAddress.Value, out var chatId))
         {
             _logger.LogWarning(
                 "{DisplayName} send requested with invalid conversation id '{ConversationId}'",
                 DisplayName,
-                message.ChannelAddress);
+                message.ChannelAddress.Value);
             return;
         }
 
@@ -164,7 +164,7 @@ public sealed class TelegramChannelAdapter(
         var formatted = BuildOutboundText(message.Content, message.Metadata, message.DisplayPrefix);
 
         int? threadId = null;
-        if (!string.IsNullOrEmpty(message.ThreadId) && int.TryParse(message.ThreadId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedThreadId))
+        if (!string.IsNullOrEmpty(message.ThreadId?.Value) && int.TryParse(message.ThreadId.Value.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedThreadId))
             threadId = parsedThreadId;
 
         foreach (var chunk in SplitMessage(formatted, Math.Max(1, runtime.Config.MaxMessageLength)))
@@ -347,11 +347,11 @@ public sealed class TelegramChannelAdapter(
         {
             ChannelType = ChannelType,
             SenderId = senderId,
-            ChannelAddress = chatIdText,
+            ChannelAddress = ChannelAddress.From(chatIdText),
             Content = message.Text,
             TargetAgentId = string.IsNullOrWhiteSpace(runtime.Config.AgentId) ? null : runtime.Config.AgentId,
             ThreadId = message.MessageThreadId.HasValue
-                ? message.MessageThreadId.Value.ToString(CultureInfo.InvariantCulture)
+                ? ThreadId.From(message.MessageThreadId.Value.ToString(CultureInfo.InvariantCulture))
                 : null,
             Metadata = new Dictionary<string, object?>
             {

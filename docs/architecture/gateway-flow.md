@@ -146,32 +146,24 @@ sequenceDiagram
 
 ---
 
-## String Smell — Remaining Issues
+## Strong Types — Status
 
-The following fields are still plain `string` but should be strong types in a future refactor.
-**Do not change these yet** — too many callsites across extensions and tests.
+All channel-addressing fields have been migrated to strong types (completed in PR #171/#172/#173).
 
-### Pending strong types
-
-| Field / Parameter | Should become | Affected types |
+| Field / Parameter | Type | Notes |
 |---|---|---|
-| `ChannelBinding.ChannelAddress` | `ChannelAddress` | `ChannelBinding`, `InboundMessage`, `OutboundMessage`, `IConversationRouter` |
-| `ChannelBinding.ThreadId` | `ThreadId` | `ChannelBinding`, `InboundMessage`, `OutboundMessage`, `IConversationRouter` |
-| `InboundMessage.SenderId` | `SenderId` (already exists as a type — wire up) | `InboundMessage` |
+| `ChannelBinding.ChannelAddress` | `ChannelAddress` | Value type; `ChannelAddress.Empty` for addressless channels (e.g. portal SignalR) |
+| `ChannelBinding.ThreadId` | `ThreadId?` | Nullable; `ThreadId.FromNullable()` for optional thread context |
+| `InboundMessage.ChannelAddress` | `ChannelAddress` | Required on all inbound messages |
+| `InboundMessage.ThreadId` | `ThreadId?` | Nullable thread context |
+| `OutboundMessage.ChannelAddress` | `ChannelAddress` | Required on all outbound messages |
+| `OutboundMessage.ThreadId` | `ThreadId?` | Nullable thread context |
+| `StaleChannelConnectionException.ConversationId` | `ConversationId` | Was `string` — now strong type |
 
-### Swap-risk: adjacent string parameters
+### Remaining string boundaries
 
-Methods where two or more adjacent parameters are plain `string` and could be silently swapped by a caller:
-
-| Method | Adjacent string params | Risk |
+| Field | Location | Note |
 |---|---|---|
-| `IConversationRouter.ResolveInboundAsync` | `string channelAddress, string? threadId` | Caller could swap address and threadId — both are strings, no compile error |
-| `IConversationRouter.MuteBindingByAddressAsync` | `ChannelKey channelType, string channelAddress` | `channelAddress` is adjacent to `channelType` (which is a strong `ChannelKey`) — lower risk but worth noting |
-| `ChannelBinding` constructor / init | `ChannelAddress`, `ThreadId` as plain strings | Any code building a `ChannelBinding` with positional-style init could swap the two |
-| `StaleChannelConnectionException` constructor | `BindingId bindingId` (now strong), `string conversationId` | `conversationId` is still a string — misuse is unlikely but `ConversationId` strong type exists |
-
-**Recommended next steps:**
-1. File issue: introduce `ChannelAddress` record struct (similar to `ChannelKey`)
-2. File issue: introduce `ThreadId` record struct
-3. Wire existing `SenderId` primitive to `InboundMessage.SenderId`
-4. Update `StaleChannelConnectionException.ConversationId` to `ConversationId` strong type
+| `InboundMessage.SenderId` | `InboundMessage` | Could become `SenderId` strong type (already exists) — not yet wired |
+| `CrossWorldRelayRequest.ChannelAddress` | DTO | Intentionally string for HTTP wire format |
+| Streaming `conversationId` | `IStreamEventChannelAdapter` | Channel-specific encoding; strong type would need format changes |
