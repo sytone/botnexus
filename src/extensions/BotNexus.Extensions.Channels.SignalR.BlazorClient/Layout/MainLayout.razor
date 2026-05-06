@@ -57,6 +57,8 @@
             <nav class="sidebar-nav">
                 <a href="" class="sidebar-nav-item @NavClass("")" @onclick="OnNavClick">💬 Chat</a>
 
+                @* Scrollable agent/conversation section *@
+                <div class="sidebar-scroll-region">
                 @* Agent dropdown + session list nested under Chat *@
                 @if (Store.Agents.Count > 0)
                 {
@@ -160,6 +162,8 @@
                         </div>
                     }
                 }
+
+                </div>@* end sidebar-scroll-region *@
 
                 <a href="configuration" class="sidebar-nav-item @NavClass("configuration")" @onclick="OnNavClick">⚙️ Configuration</a>
 

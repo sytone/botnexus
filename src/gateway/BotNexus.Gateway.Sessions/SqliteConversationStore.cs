@@ -348,6 +348,7 @@ public sealed class SqliteConversationStore : IConversationStore
                     COUNT(b.binding_id)
                 FROM conversations c
                 LEFT JOIN conversation_bindings b ON b.conversation_id = c.id
+                WHERE c.status = 'Active'
                 GROUP BY c.id, c.agent_id, c.title, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at
                 ORDER BY c.updated_at DESC
                 """
@@ -364,7 +365,7 @@ public sealed class SqliteConversationStore : IConversationStore
                     COUNT(b.binding_id)
                 FROM conversations c
                 LEFT JOIN conversation_bindings b ON b.conversation_id = c.id
-                WHERE c.agent_id = $agentId
+                WHERE c.agent_id = $agentId AND c.status = 'Active'
                 GROUP BY c.id, c.agent_id, c.title, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at
                 ORDER BY c.updated_at DESC
                 """;
