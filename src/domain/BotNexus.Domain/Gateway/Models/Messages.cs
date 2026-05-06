@@ -57,6 +57,13 @@ public sealed record InboundMessage
     /// Used by fan-out to exclude the originating binding from echo.
     /// </summary>
     public string? BindingId { get; init; }
+
+    /// <summary>
+    /// When set, routes directly to this conversation, bypassing binding lookup.
+    /// Used by portal clients that know which conversation they are viewing.
+    /// This avoids the thread-binding hack that caused duplicate bindings and double fan-out.
+    /// </summary>
+    public string? ConversationId { get; init; }
 }
 
 /// <summary>

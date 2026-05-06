@@ -59,11 +59,9 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         try
         {
-            // For default conversations use null conversationId so the router uses the null-thread
-            // binding (signalr, agentId, null). Passing the conversationId for a default conversation
-            // causes a duplicate thread binding to be added, leading to double fan-out delivery.
-            var routingConvId = conv.IsDefault ? null : convIdNow;
-            var result = await _hub.SendMessageAsync(agentId, agent.ChannelType ?? "signalr", content, routingConvId);
+            // Always pass the conversation ID — the router handles direct lookup without binding scan.
+            // Removed the IsDefault special-case that previously caused duplicate thread bindings and double fan-out.
+            var result = await _hub.SendMessageAsync(agentId, agent.ChannelType ?? "signalr", content, convIdNow);
             _store.RegisterSession(agentId, result.SessionId, result.ChannelType);
 
             // Refresh conversation so ActiveSessionId is current

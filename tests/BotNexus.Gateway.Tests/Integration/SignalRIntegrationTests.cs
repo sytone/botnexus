@@ -258,7 +258,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         await RegisterAgentAsync(factory, cts.Token);
 
         await using var connection = await CreateStartedConnection(factory, cts.Token);
-        var result = await connection.InvokeAsync<JsonElement>("SendMessage", TestAgentId, "signalr", "hello", cts.Token);
+        var result = await connection.InvokeAsync<JsonElement>("SendMessage", TestAgentId, "signalr", "hello", (string?)null, cts.Token);
         var sessionId = result.GetProperty("sessionId").GetString();
         sessionId.ShouldNotBeNullOrWhiteSpace();
 
@@ -282,7 +282,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         await RegisterAgentAsync(factory, cts.Token);
 
         await using var connection = await CreateStartedConnection(factory, cts.Token);
-        Func<Task> act = async () => await connection.InvokeCoreAsync("SendMessage", [TestAgentId, null, "no-session"], cts.Token);
+        Func<Task> act = async () => await connection.InvokeCoreAsync("SendMessage", [TestAgentId, null, "no-session", null], cts.Token);
 
         await act.ShouldThrowAsync<HubException>();
     }
@@ -302,7 +302,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         // Wave 2: conversation routing creates a new session for new channel addresses.
         // Seed sessions are no longer picked up by channel-type scan; a conversation binding is required.
         await using var connection = await CreateStartedConnection(factory, cts.Token);
-        await connection.InvokeAsync("SendMessage", TestAgentId, "telegram", "latest", cts.Token);
+        await connection.InvokeAsync("SendMessage", TestAgentId, "telegram", "latest", (string?)null, cts.Token);
 
         dispatcher.Messages.ShouldHaveSingleItem();
         dispatcher.Messages[0].TargetAgentId.ShouldBe(TestAgentId);
@@ -326,8 +326,8 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         // Rapid sends on different channel types each create/reuse their own conversation sessions.
         await using var connection = await CreateStartedConnection(factory, cts.Token);
         await Task.WhenAll(
-            connection.InvokeAsync("SendMessage", TestAgentId, "signalr", "before-switch", cts.Token),
-            connection.InvokeAsync("SendMessage", TestAgentId, "telegram", "after-switch", cts.Token));
+            connection.InvokeAsync("SendMessage", TestAgentId, "signalr", "before-switch", (string?)null, cts.Token),
+            connection.InvokeAsync("SendMessage", TestAgentId, "telegram", "after-switch", (string?)null, cts.Token));
 
         dispatcher.Messages.ShouldContain(m => m.Content == "after-switch");
         dispatcher.Messages.ShouldContain(m => m.Content == "before-switch");
@@ -347,7 +347,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
 
         // Wave 2: conversation routing creates a session per conversation binding.
         await using var connection = await CreateStartedConnection(factory, cts.Token);
-        await connection.InvokeAsync("SendMessage", TestAgentId, "telegram", "send-during-join", cts.Token);
+        await connection.InvokeAsync("SendMessage", TestAgentId, "telegram", "send-during-join", (string?)null, cts.Token);
 
         dispatcher.Messages.ShouldHaveSingleItem();
         dispatcher.Messages[0].Content.ShouldBe("send-during-join");
@@ -368,7 +368,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
 
         // Wave 2: conversation routing creates sessions per conversation binding.
         await using var connection = await CreateStartedConnection(factory, cts.Token);
-        await connection.InvokeAsync("SendMessage", TestAgentId, "telegram", "immediate-after-join", cts.Token);
+        await connection.InvokeAsync("SendMessage", TestAgentId, "telegram", "immediate-after-join", (string?)null, cts.Token);
 
         dispatcher.Messages.ShouldHaveSingleItem();
         dispatcher.Messages[0].Content.ShouldBe("immediate-after-join");
@@ -392,8 +392,8 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
 
         // Wave 2: conversation routing creates sessions per conversation binding.
         await using var connection = await CreateStartedConnection(factory, cts.Token);
-        await connection.InvokeAsync("SendMessage", agentA, "signalr", "message-for-a", cts.Token);
-        await connection.InvokeAsync("SendMessage", agentB, "signalr", "message-for-b", cts.Token);
+        await connection.InvokeAsync("SendMessage", agentA, "signalr", "message-for-a", (string?)null, cts.Token);
+        await connection.InvokeAsync("SendMessage", agentB, "signalr", "message-for-b", (string?)null, cts.Token);
 
         dispatcher.Messages.Count().ShouldBe(2);
         dispatcher.Messages.Where(m =>
@@ -421,8 +421,8 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
 
         // Wave 2: conversation routing creates sessions per conversation binding.
         await using var connection = await CreateStartedConnection(factory, cts.Token);
-        await connection.InvokeAsync("SendMessage", agentA, "signalr", "message-for-a", cts.Token);
-        await connection.InvokeAsync("SendMessage", agentB, "signalr", "message-for-b", cts.Token);
+        await connection.InvokeAsync("SendMessage", agentA, "signalr", "message-for-a", (string?)null, cts.Token);
+        await connection.InvokeAsync("SendMessage", agentB, "signalr", "message-for-b", (string?)null, cts.Token);
 
         dispatcher.Messages.Count().ShouldBe(2);
         dispatcher.Messages.Where(m =>
@@ -459,7 +459,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         await connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionA, cts.Token);
         await connection.InvokeAsync("LeaveSession", sessionA, cts.Token);
 
-        var result = await connection.InvokeAsync<JsonElement>("SendMessage", TestAgentId, "signalr", "after-leave", cts.Token);
+        var result = await connection.InvokeAsync<JsonElement>("SendMessage", TestAgentId, "signalr", "after-leave", (string?)null, cts.Token);
 
         result.GetProperty("sessionId").GetString().ShouldNotBeNullOrWhiteSpace();
         dispatcher.Messages.ShouldHaveSingleItem();

@@ -124,7 +124,7 @@ public sealed class FanOutStaleBindingTests
         var convRouter = new Mock<IConversationRouter>();
         convRouter
             .Setup(r => r.ResolveInboundAsync(
-                It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ConversationRoutingResult(conversation, SessionId.From(sessionId), false));
 
         // Return the stale binding for fan-out
@@ -190,7 +190,7 @@ public sealed class FanOutStaleBindingTests
         var convRouter = new Mock<IConversationRouter>();
         convRouter
             .Setup(r => r.ResolveInboundAsync(
-                It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ConversationRoutingResult(conversation, SessionId.From(sessionId), false));
 
         // Empty list = already muted / no fan-out targets

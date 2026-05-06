@@ -176,7 +176,6 @@ public sealed class SignalRHubTests
             Mock.Of<ISessionCompactor>(),
             Mock.Of<ISessionWarmupService>(),
             router,
-            conversationStore,
             new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
             NullLogger<GatewayHub>.Instance)
         {
@@ -194,7 +193,6 @@ public sealed class SignalRHubTests
             Mock.Of<ISessionCompactor>(),
             Mock.Of<ISessionWarmupService>(),
             router,
-            conversationStore,
             new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
             NullLogger<GatewayHub>.Instance)
         {
@@ -356,11 +354,10 @@ public sealed class SignalRHubTests
         ISessionWarmupService? warmup = null,
         IOptionsMonitor<CompactionOptions>? compactionOptions = null,
         IConversationRouter? conversationRouter = null,
-        IConversationStore? conversationStore = null,
         string connectionId = "conn-test")
     {
         var sessionStore = sessions ?? new InMemorySessionStore();
-        var convStore = conversationStore ?? new InMemoryConversationStore();
+        var convStore = new InMemoryConversationStore();
         var router = conversationRouter ?? new DefaultConversationRouter(
             convStore,
             sessionStore,
@@ -375,7 +372,6 @@ public sealed class SignalRHubTests
             compactor ?? Mock.Of<ISessionCompactor>(),
             warmup ?? Mock.Of<ISessionWarmupService>(),
             router,
-            convStore,
             compactionOptions ?? new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
             NullLogger<GatewayHub>.Instance)
         {

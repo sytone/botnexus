@@ -72,8 +72,8 @@ public sealed class MultiAgentConcurrencyTests : IAsyncDisposable
         });
 
         // Act - Send messages concurrently
-        var slowResult = await connection.InvokeAsync<JsonElement>("SendMessage", "agent-slow", "signalr", "test-slow", cts.Token);
-        var fastResult = await connection.InvokeAsync<JsonElement>("SendMessage", "agent-fast", "signalr", "test-fast", cts.Token);
+        var slowResult = await connection.InvokeAsync<JsonElement>("SendMessage", "agent-slow", "signalr", "test-slow", (string?)null, cts.Token);
+        var fastResult = await connection.InvokeAsync<JsonElement>("SendMessage", "agent-fast", "signalr", "test-fast", (string?)null, cts.Token);
 
         var slowSessionId = slowResult.GetProperty("sessionId").GetString();
         var fastSessionId = fastResult.GetProperty("sessionId").GetString();
@@ -135,9 +135,9 @@ public sealed class MultiAgentConcurrencyTests : IAsyncDisposable
         });
 
         // Act - Send messages to all 3 agents concurrently
-        var slowResult = await connection.InvokeAsync<JsonElement>("SendMessage", "agent-slow", "signalr", "test", cts.Token);
-        var mediumResult = await connection.InvokeAsync<JsonElement>("SendMessage", "agent-medium", "signalr", "test", cts.Token);
-        var fastResult = await connection.InvokeAsync<JsonElement>("SendMessage", "agent-fast", "signalr", "test", cts.Token);
+        var slowResult = await connection.InvokeAsync<JsonElement>("SendMessage", "agent-slow", "signalr", "test", (string?)null, cts.Token);
+        var mediumResult = await connection.InvokeAsync<JsonElement>("SendMessage", "agent-medium", "signalr", "test", (string?)null, cts.Token);
+        var fastResult = await connection.InvokeAsync<JsonElement>("SendMessage", "agent-fast", "signalr", "test", (string?)null, cts.Token);
 
         var slowSessionId = slowResult.GetProperty("sessionId").GetString()!;
         var mediumSessionId = mediumResult.GetProperty("sessionId").GetString()!;
@@ -197,12 +197,12 @@ public sealed class MultiAgentConcurrencyTests : IAsyncDisposable
         });
 
         // Act
-        var resultA = await connection.InvokeAsync<JsonElement>("SendMessage", "agent-a", "signalr", "start processing", cts.Token);
+        var resultA = await connection.InvokeAsync<JsonElement>("SendMessage", "agent-a", "signalr", "start processing", (string?)null, cts.Token);
         
         // Wait 100ms to ensure agent-a is processing
         await Task.Delay(100, cts.Token);
         
-        var resultB = await connection.InvokeAsync<JsonElement>("SendMessage", "agent-b", "signalr", "quick response", cts.Token);
+        var resultB = await connection.InvokeAsync<JsonElement>("SendMessage", "agent-b", "signalr", "quick response", (string?)null, cts.Token);
 
         var sessionA = resultA.GetProperty("sessionId").GetString()!;
         var sessionB = resultB.GetProperty("sessionId").GetString()!;
@@ -259,7 +259,7 @@ public sealed class MultiAgentConcurrencyTests : IAsyncDisposable
         });
 
         // Act - Send first message
-        var firstResult = await connection.InvokeAsync<JsonElement>("SendMessage", "agent-reset", "signalr", "first message", cts.Token);
+        var firstResult = await connection.InvokeAsync<JsonElement>("SendMessage", "agent-reset", "signalr", "first message", (string?)null, cts.Token);
         var firstSessionId = firstResult.GetProperty("sessionId").GetString()!;
 
         // Wait for first response
@@ -270,7 +270,7 @@ public sealed class MultiAgentConcurrencyTests : IAsyncDisposable
         await connection.InvokeAsync("ResetSession", "agent-reset", firstSessionId, cts.Token);
 
         // Send second message to same agent
-        var secondResult = await connection.InvokeAsync<JsonElement>("SendMessage", "agent-reset", "signalr", "second message", cts.Token);
+        var secondResult = await connection.InvokeAsync<JsonElement>("SendMessage", "agent-reset", "signalr", "second message", (string?)null, cts.Token);
         var secondSessionId = secondResult.GetProperty("sessionId").GetString()!;
 
         // Assert - Should create new session and respond
@@ -326,7 +326,7 @@ public sealed class MultiAgentConcurrencyTests : IAsyncDisposable
         // Act - Start all agents concurrently
         var sendTasks = agentIds.Select(async agentId =>
         {
-            var result = await connection.InvokeAsync<JsonElement>("SendMessage", agentId, "signalr", "concurrent start", cts.Token);
+            var result = await connection.InvokeAsync<JsonElement>("SendMessage", agentId, "signalr", "concurrent start", (string?)null, cts.Token);
             return (AgentId: agentId, SessionId: result.GetProperty("sessionId").GetString()!);
         });
 

@@ -11,7 +11,8 @@ public interface IConversationRouter
 {
     /// <summary>
     /// Resolves or creates the conversation for an inbound message.
-    /// Uses (AgentId, ChannelType, ChannelAddress, ThreadId?) as the lookup key.
+    /// Uses (AgentId, ChannelType, ChannelAddress, ThreadId?) as the lookup key when conversationId is null.
+    /// When conversationId is provided, routes directly to that conversation, bypassing binding lookup.
     /// Every channel gets its own conversation on first contact regardless of address.
     /// Stamps Session.ConversationId when creating/resolving sessions.
     /// </summary>
@@ -20,18 +21,7 @@ public interface IConversationRouter
         ChannelKey channelType,
         string channelAddress,
         string? threadId,
-        CancellationToken ct = default);
-
-    /// <summary>
-    /// Resolves the conversation and session for an inbound message using an explicit conversation ID.
-    /// Use this when the client specifies which conversation a message belongs to (e.g. portal multi-conversation).
-    /// Creates a new session for the conversation if it has none active.
-    /// </summary>
-    Task<ConversationRoutingResult> ResolveInboundByConversationAsync(
-        ConversationId conversationId,
-        AgentId agentId,
-        ChannelKey channelType,
-        string channelAddress,
+        string? conversationId = null,
         CancellationToken ct = default);
 
     /// <summary>
