@@ -59,7 +59,11 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         try
         {
-            var result = await _hub.SendMessageAsync(agentId, agent.ChannelType ?? "signalr", content, convIdNow);
+            // For default conversations use null conversationId so the router uses the null-thread
+            // binding (signalr, agentId, null). Passing the conversationId for a default conversation
+            // causes a duplicate thread binding to be added, leading to double fan-out delivery.
+            var routingConvId = conv.IsDefault ? null : convIdNow;
+            var result = await _hub.SendMessageAsync(agentId, agent.ChannelType ?? "signalr", content, routingConvId);
             _store.RegisterSession(agentId, result.SessionId, result.ChannelType);
 
             // Refresh conversation so ActiveSessionId is current
@@ -363,11 +367,8 @@ public sealed class AgentInteractionService : IAgentInteractionService
         if (agent is null) return;
         var conv = agent.Conversations.GetValueOrDefault(conversationId);
         if (conv is null || conv.IsLoadingHistory) return;
-        if (conv.Messages.Count > 0)
-        {
-            conv.HistoryLoaded = true;
-            return;
-        }
+        if (conv.HistoryLoaded)
+            return; // Already loaded from server — don't reload
 
         // Cache hit: render immediately, then fall through to refresh from server
         if (_featureFlags?.ConversationHistoryCache == true && _cache is not null)
