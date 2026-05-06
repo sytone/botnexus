@@ -240,4 +240,34 @@ public sealed class ProbeRound3GatewayTests
         // Should refuse to send to a suspended session
         result.Result.ShouldBeOfType<ConflictObjectResult>();
     }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Fix 2 — Archive conversation endpoint
+    // ══════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task ConversationsController_Archive_Returns204()
+    {
+        var store = new InMemoryConversationStore();
+        var conv = await store.CreateAsync(MakeConversation("to-archive"));
+        var controller = CreateConvController(store);
+
+        var result = await controller.Archive(conv.ConversationId.Value, CancellationToken.None);
+
+        result.ShouldBeOfType<NoContentResult>();
+        var loaded = await store.GetAsync(conv.ConversationId);
+        loaded.ShouldNotBeNull();
+        loaded!.Status.ShouldBe(ConversationStatus.Archived);
+    }
+
+    [Fact]
+    public async Task ConversationsController_Archive_NotFound_Returns404()
+    {
+        var store = new InMemoryConversationStore();
+        var controller = CreateConvController(store);
+
+        var result = await controller.Archive("nonexistent-id", CancellationToken.None);
+
+        result.ShouldBeOfType<NotFoundResult>();
+    }
 }

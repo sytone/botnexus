@@ -597,6 +597,13 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 "Steering received but agent is not running (instance={HasInstance}, running={IsRunning}). Falling through to normal processing for session {SessionId}",
                 instance is not null, handle?.IsRunning ?? false, sessionId);
 
+            await _activity.PublishAsync(new GatewayActivity
+            {
+                Type = GatewayActivityType.SteeringQueued,
+                AgentId = agentId,
+                SessionId = sessionId
+            }, cancellationToken);
+
             return false;
         }
 
@@ -626,6 +633,13 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         await _sessions.SaveAsync(session, cancellationToken);
 
         await handle.SteerAsync(message.Content, cancellationToken);
+
+        await _activity.PublishAsync(new GatewayActivity
+        {
+            Type = GatewayActivityType.SteeringInjected,
+            AgentId = agentId,
+            SessionId = sessionId
+        }, cancellationToken);
 
         _logger.LogInformation("Steering message injected for agent {AgentId} session {SessionId}", agentId, sessionId);
         return true;

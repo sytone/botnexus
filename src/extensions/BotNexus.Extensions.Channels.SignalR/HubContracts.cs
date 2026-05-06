@@ -78,3 +78,12 @@ public sealed record SubAgentEventPayload(
     [property: JsonPropertyName("turnsUsed")] int TurnsUsed,
     [property: JsonPropertyName("resultSummary")] string? ResultSummary,
     [property: JsonPropertyName("timedOut")] bool TimedOut);
+
+/// <summary>Kind of steering feedback event.</summary>
+public enum SteeringFeedbackKind { Injected, Queued }
+
+/// <summary>Payload sent via the <c>SteeringFeedback</c> client method.</summary>
+public sealed record SteeringFeedbackPayload(
+    [property: JsonPropertyName("agentId")] string AgentId,
+    [property: JsonPropertyName("sessionId")] string SessionId,
+    [property: JsonPropertyName("kind")] SteeringFeedbackKind Kind);

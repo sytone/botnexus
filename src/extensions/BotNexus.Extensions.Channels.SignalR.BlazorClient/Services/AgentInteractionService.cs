@@ -247,6 +247,40 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
     }
 
+    public async Task ArchiveConversationAsync(string agentId, string conversationId)
+    {
+        var agent = _store.GetAgent(agentId);
+        if (agent is null) return;
+        if (!agent.Conversations.ContainsKey(conversationId)) return;
+
+        try
+        {
+            var success = await _restClient.ArchiveConversationAsync(conversationId);
+            if (!success)
+            {
+                Console.Error.WriteLine($"AgentInteractionService: ArchiveConversation returned failure for {conversationId}");
+                return;
+            }
+
+            agent.Conversations.Remove(conversationId);
+
+            // If this was the active conversation, switch to the next available or clear
+            if (agent.ActiveConversationId == conversationId)
+            {
+                var next = agent.Conversations.Keys.FirstOrDefault();
+                _store.SetActiveConversation(agentId, next);
+            }
+            else
+            {
+                _store.NotifyChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"AgentInteractionService: ArchiveConversation failed: {ex.Message}");
+        }
+    }
+
     public async Task RefreshAgentsAsync()
     {
         try

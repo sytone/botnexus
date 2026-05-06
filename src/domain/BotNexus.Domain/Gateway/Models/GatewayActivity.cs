@@ -93,5 +93,11 @@ public enum GatewayActivityType
     Error,
 
     /// <summary>A system-level informational event.</summary>
-    System
+    System,
+
+    /// <summary>A steering message was injected mid-turn into a running agent.</summary>
+    SteeringInjected,
+
+    /// <summary>A steering message arrived but agent was not running; queued as normal message.</summary>
+    SteeringQueued
 }

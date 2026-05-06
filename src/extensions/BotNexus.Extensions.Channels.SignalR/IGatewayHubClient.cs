@@ -21,4 +21,5 @@ public interface IGatewayHubClient
     Task SubAgentCompleted(SubAgentEventPayload payload);
     Task SubAgentFailed(SubAgentEventPayload payload);
     Task SubAgentKilled(SubAgentEventPayload payload);
+    Task SteeringFeedback(SteeringFeedbackPayload payload);
 }

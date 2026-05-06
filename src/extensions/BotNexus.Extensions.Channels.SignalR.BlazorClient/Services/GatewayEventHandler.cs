@@ -32,6 +32,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub.OnSubAgentCompleted += HandleSubAgentCompleted;
         _hub.OnSubAgentFailed += HandleSubAgentFailed;
         _hub.OnSubAgentKilled += HandleSubAgentKilled;
+        _hub.OnSteeringFeedback += HandleSteeringFeedback;
         _hub.OnReconnecting += HandleReconnecting;
         _hub.OnReconnected += HandleReconnected;
         _hub.OnDisconnected += HandleDisconnected;
@@ -402,6 +403,32 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _store.NotifyChanged();
     }
 
+    // ── Steering feedback ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Appends a subtle system message to the active conversation confirming that
+    /// a steering message was accepted or queued.
+    /// </summary>
+    public void HandleSteeringFeedback(SteeringFeedbackPayload payload)
+    {
+        // Find agent owning this session
+        var agent = _store.Agents.Values.FirstOrDefault(a =>
+            a.ActiveConversationSessionId == payload.SessionId ||
+            a.SessionId == payload.SessionId);
+
+        if (agent is null) return;
+
+        var convId = agent.ActiveConversationId;
+        if (convId is null || !agent.Conversations.TryGetValue(convId, out var conv)) return;
+
+        var text = payload.Kind == SteeringFeedbackKind.Injected
+            ? "↳ Steering accepted mid-turn"
+            : "↳ Steering queued — will process next turn";
+
+        conv.Messages.Add(new ChatMessage("System", text, DateTimeOffset.UtcNow));
+        _store.NotifyChanged();
+    }
+
     // ── Connection lifecycle ──────────────────────────────────────────────
 
     public void HandleReconnecting()
@@ -499,6 +526,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub.OnSubAgentCompleted -= HandleSubAgentCompleted;
         _hub.OnSubAgentFailed -= HandleSubAgentFailed;
         _hub.OnSubAgentKilled -= HandleSubAgentKilled;
+        _hub.OnSteeringFeedback -= HandleSteeringFeedback;
         _hub.OnReconnecting -= HandleReconnecting;
         _hub.OnReconnected -= HandleReconnected;
         _hub.OnDisconnected -= HandleDisconnected;

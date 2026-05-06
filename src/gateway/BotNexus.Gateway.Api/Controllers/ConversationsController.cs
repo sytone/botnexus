@@ -291,6 +291,18 @@ public sealed class ConversationsController : ControllerBase
             Entries: page));
     }
 
+    /// <summary>Archives a conversation (soft delete).</summary>
+    [HttpDelete("{conversationId}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> Archive(string conversationId, CancellationToken cancellationToken)
+    {
+        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
+        if (conversation is null) return NotFound();
+        await _conversations.ArchiveAsync(ConversationId.From(conversationId), cancellationToken);
+        return NoContent();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static ConversationResponse ToResponse(Conversation c) => new(
