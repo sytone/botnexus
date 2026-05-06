@@ -161,6 +161,9 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         tools.Add(new FileWatcherTool(fileWatcherToolOptions, pathValidator));
 
         var subAgentOptions = _serviceProvider.GetService<IOptions<GatewayOptions>>()?.Value.SubAgents;
+        var gatewayOptions = _serviceProvider.GetService<IOptions<GatewayOptions>>()?.Value;
+        var toolTimeoutSeconds = gatewayOptions?.ToolTimeoutSeconds ?? 120;
+        var toolTimeout = toolTimeoutSeconds > 0 ? TimeSpan.FromSeconds(toolTimeoutSeconds) : (TimeSpan?)null;
         var subAgentManager = _serviceProvider.GetService<ISubAgentManager>();
         var isSubAgentSession = context.SessionId.IsSubAgent;
         if (subAgentManager is not null &&
@@ -295,7 +298,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             GenerationSettings: new SimpleStreamOptions(),
             SteeringMode: QueueMode.All,
             FollowUpMode: QueueMode.All,
-            SessionId: context.SessionId);
+            SessionId: context.SessionId,
+            ToolTimeout: toolTimeout);
 
         var agent = new BotNexus.Agent.Core.Agent(options);
         IAgentHandle handle = new InProcessAgentHandle(

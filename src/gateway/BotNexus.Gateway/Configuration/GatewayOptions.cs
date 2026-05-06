@@ -41,4 +41,13 @@ public sealed class GatewayOptions
     /// Options controlling the built-in file watcher tool.
     /// </summary>
     public FileWatcherToolOptions FileWatcherTool { get; set; } = new();
+
+    /// <summary>
+    /// Per-tool execution timeout in seconds. When a tool call exceeds this duration
+    /// it is cancelled and the agent receives an error result. Defaults to 120 seconds.
+    /// Set to 0 to disable (not recommended for production).
+    /// Can be overridden per-tool via <c>DefaultTimeout</c> on the tool itself,
+    /// or per-call via a <c>timeout</c> argument in the tool invocation.
+    /// </summary>
+    public int ToolTimeoutSeconds { get; set; } = 120;
 }
