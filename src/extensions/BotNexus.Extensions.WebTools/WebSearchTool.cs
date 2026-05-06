@@ -4,6 +4,7 @@ using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Extensions.WebTools.Search;
 using BotNexus.Agent.Providers.Core.Models;
+using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Extensions.WebTools;
 
@@ -18,6 +19,8 @@ public sealed class WebSearchTool : IAgentTool, IDisposable, IAsyncDisposable
     private readonly bool _ownsHttpClient;
     private readonly Func<CancellationToken, Task<string?>>? _copilotApiKeyResolver;
     private readonly string? _copilotApiEndpoint;
+    private readonly ILogger<WebSearchTool> _logger;
+    private readonly ILoggerFactory? _loggerFactory;
     private readonly object _providerGate = new();
     private ISearchProvider? _provider;
     private bool _disposed;
@@ -26,11 +29,15 @@ public sealed class WebSearchTool : IAgentTool, IDisposable, IAsyncDisposable
         WebSearchConfig config,
         HttpClient? httpClient = null,
         Func<CancellationToken, Task<string?>>? copilotApiKeyResolver = null,
-        string? copilotApiEndpoint = null)
+        string? copilotApiEndpoint = null,
+        ILogger<WebSearchTool>? logger = null,
+        ILoggerFactory? loggerFactory = null)
     {
         _config = config;
         _copilotApiKeyResolver = copilotApiKeyResolver;
         _copilotApiEndpoint = copilotApiEndpoint;
+        _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<WebSearchTool>.Instance;
+        _loggerFactory = loggerFactory;
 
         if (httpClient is not null)
         {
@@ -100,6 +107,7 @@ public sealed class WebSearchTool : IAgentTool, IDisposable, IAsyncDisposable
 
         var query = (string)arguments["query"]!;
         var providerName = _config.Provider.ToLowerInvariant();
+        _logger.LogInformation("WebSearch executing: provider={Provider} query={Query} maxResults={MaxResults}", providerName, query, _config.MaxResults);
         var isCopilot = string.Equals(providerName, "copilot", StringComparison.Ordinal);
         var apiKey = string.Empty;
 
@@ -125,6 +133,7 @@ public sealed class WebSearchTool : IAgentTool, IDisposable, IAsyncDisposable
         {
             var results = await provider.SearchAsync(query, _config.MaxResults, cancellationToken)
                 .ConfigureAwait(false);
+            _logger.LogInformation("WebSearch completed: provider={Provider} query={Query} resultCount={Count}", providerName, query, results.Count);
 
             if (results.Count == 0)
             {
@@ -152,6 +161,7 @@ public sealed class WebSearchTool : IAgentTool, IDisposable, IAsyncDisposable
         }
         catch (HttpRequestException ex)
         {
+            _logger.LogError(ex, "WebSearch HTTP error: provider={Provider} query={Query} status={Status}", providerName, query, ex.StatusCode);
             return TextResult($"Search API error: {ex.Message}");
         }
         catch (TaskCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -177,7 +187,8 @@ public sealed class WebSearchTool : IAgentTool, IDisposable, IAsyncDisposable
                 "tavily" when !string.IsNullOrWhiteSpace(apiKey) => new TavilySearchProvider(_httpClient, apiKey),
                 "bing" when !string.IsNullOrWhiteSpace(apiKey) => new BingSearchProvider(_httpClient, apiKey),
                 "copilot" when _copilotApiKeyResolver is not null =>
-                    new CopilotMcpSearchProvider(_copilotApiKeyResolver, _httpClient, _copilotApiEndpoint),
+                    new CopilotMcpSearchProvider(_copilotApiKeyResolver, _httpClient, _copilotApiEndpoint,
+                        _loggerFactory?.CreateLogger<CopilotMcpSearchProvider>()),
                 _ => null
             };
         }

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using BotNexus.Extensions.Mcp;
@@ -17,6 +18,7 @@ internal sealed class CopilotMcpSearchProvider : ISearchProvider, IAsyncDisposab
     private readonly Func<CancellationToken, Task<string?>> _copilotApiKeyResolver;
     private readonly HttpClient _httpClient;
     private readonly string _endpoint;
+    private readonly ILogger<CopilotMcpSearchProvider> _logger;
     private readonly SemaphoreSlim _clientGate = new(1, 1);
     private McpClient? _client;
     private bool _disposed;
@@ -24,11 +26,13 @@ internal sealed class CopilotMcpSearchProvider : ISearchProvider, IAsyncDisposab
     public CopilotMcpSearchProvider(
         Func<CancellationToken, Task<string?>> copilotApiKeyResolver,
         HttpClient httpClient,
-        string? endpoint = null)
+        string? endpoint = null,
+        ILogger<CopilotMcpSearchProvider>? logger = null)
     {
         _copilotApiKeyResolver = copilotApiKeyResolver;
         _httpClient = httpClient;
         _endpoint = string.IsNullOrWhiteSpace(endpoint) ? DefaultEndpoint : endpoint;
+        _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<CopilotMcpSearchProvider>.Instance;
     }
 
     public async Task<IReadOnlyList<SearchResult>> SearchAsync(string query, int maxResults, CancellationToken ct)
@@ -39,6 +43,7 @@ internal sealed class CopilotMcpSearchProvider : ISearchProvider, IAsyncDisposab
 
     private async Task<IReadOnlyList<SearchResult>> SearchWithRetryAsync(string query, int maxResults, bool isRetry, CancellationToken ct)
     {
+        _logger.LogInformation("CopilotMcpSearch: querying endpoint={Endpoint} query={Query} isRetry={IsRetry}", _endpoint, query, isRetry);
         var client = await GetOrCreateClientAsync(ct).ConfigureAwait(false);
         var arguments = JsonSerializer.SerializeToElement(new { query });
 
@@ -49,7 +54,7 @@ internal sealed class CopilotMcpSearchProvider : ISearchProvider, IAsyncDisposab
         }
         catch (McpException ex) when (!isRetry)
         {
-            // Token may have rotated — invalidate cached client and retry once
+            _logger.LogWarning(ex, "CopilotMcpSearch: MCP error on first attempt, invalidating client and retrying. Error={Error}", ex.Message);
             await InvalidateClientAsync().ConfigureAwait(false);
             if (ex.Message.Contains("401", StringComparison.Ordinal) ||
                 ex.Message.Contains("400", StringComparison.Ordinal) ||
@@ -63,7 +68,7 @@ internal sealed class CopilotMcpSearchProvider : ISearchProvider, IAsyncDisposab
         }
         catch (HttpRequestException ex) when (!isRetry && (ex.StatusCode == System.Net.HttpStatusCode.BadRequest || ex.StatusCode == System.Net.HttpStatusCode.Unauthorized))
         {
-            // Token rotation — invalidate and retry once
+            _logger.LogWarning(ex, "CopilotMcpSearch: HTTP {Status} on first attempt, invalidating client and retrying", ex.StatusCode);
             await InvalidateClientAsync().ConfigureAwait(false);
             return await SearchWithRetryAsync(query, maxResults, isRetry: true, ct).ConfigureAwait(false);
         }
@@ -78,10 +83,14 @@ internal sealed class CopilotMcpSearchProvider : ISearchProvider, IAsyncDisposab
                     .Where(static text => !string.IsNullOrWhiteSpace(text)));
 
             var detail = string.IsNullOrWhiteSpace(errorText) ? "no additional details." : errorText;
+            _logger.LogError("CopilotMcpSearch: tool returned error: {Detail}", detail);
             throw new InvalidOperationException($"Copilot MCP web_search returned an error: {detail}");
         }
 
-        return ParseResults(callResult.Content, maxResults);
+        _logger.LogDebug("CopilotMcpSearch: raw response contentItems={Count}", callResult.Content.Count);
+        var parsed = ParseResults(callResult.Content, maxResults);
+        _logger.LogInformation("CopilotMcpSearch: parsed {ResultCount} results for query={Query}", parsed.Count, query);
+        return parsed;
     }
 
     public async ValueTask DisposeAsync()
@@ -126,9 +135,14 @@ internal sealed class CopilotMcpSearchProvider : ISearchProvider, IAsyncDisposab
             if (_client is not null)
                 return _client;
 
+            _logger.LogDebug("CopilotMcpSearch: resolving Copilot API token");
             var apiKey = await _copilotApiKeyResolver(ct).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(apiKey))
+            {
+                _logger.LogError("CopilotMcpSearch: no Copilot token available");
                 throw new InvalidOperationException("Copilot token unavailable. Sign in again to refresh authentication.");
+            }
+            _logger.LogDebug("CopilotMcpSearch: initialising MCP client at {Endpoint}", _endpoint);
 
             var headers = new Dictionary<string, string>(StringComparer.Ordinal)
             {
