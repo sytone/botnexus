@@ -1674,6 +1674,18 @@ details[open] > .thinking-summary::before {
     padding: 0.5rem 0.75rem;
     gap: 2px;
     border-bottom: 1px solid var(--border);
+    flex: 1;
+    min-height: 0; /* allow flex child to shrink below content size */
+    overflow: hidden;
+}
+
+/* Scrollable region within sidebar nav — contains agent dropdown + conversations */
+.sidebar-scroll-region {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
 }
 
 .sidebar-nav-item {
