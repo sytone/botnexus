@@ -103,4 +103,13 @@ public sealed class GatewayRestClient : IGatewayRestClient
             throw new InvalidOperationException(
                 "GatewayRestClient has not been configured. Call Configure(apiBaseUrl) before making REST calls.");
     }
+
+    /// <inheritdoc />
+    public async Task<bool> ArchiveConversationAsync(string conversationId, CancellationToken ct = default)
+    {
+        EnsureConfigured();
+        var response = await _http.DeleteAsync(
+            $"{_apiBaseUrl}conversations/{Uri.EscapeDataString(conversationId)}", ct);
+        return response.IsSuccessStatusCode;
+    }
 }

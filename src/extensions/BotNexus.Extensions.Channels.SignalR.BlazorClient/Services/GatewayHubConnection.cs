@@ -52,6 +52,9 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     /// <summary>Raised when a sub-agent is killed.</summary>
     public event Action<SubAgentEventPayload>? OnSubAgentKilled;
 
+    /// <summary>Raised when steering feedback is received from the server.</summary>
+    public event Action<SteeringFeedbackPayload>? OnSteeringFeedback;
+
     // ── Connection lifecycle events ─────────────────────────────────────
 
     /// <summary>Raised when the connection is lost and automatic reconnect starts.</summary>
@@ -102,6 +105,7 @@ public sealed class GatewayHubConnection : IAsyncDisposable
         _connection.On<SubAgentEventPayload>("SubAgentCompleted", p => OnSubAgentCompleted?.Invoke(p));
         _connection.On<SubAgentEventPayload>("SubAgentFailed", p => OnSubAgentFailed?.Invoke(p));
         _connection.On<SubAgentEventPayload>("SubAgentKilled", p => OnSubAgentKilled?.Invoke(p));
+        _connection.On<SteeringFeedbackPayload>("SteeringFeedback", p => OnSteeringFeedback?.Invoke(p));
 
         _connection.Reconnecting += _ => { OnReconnecting?.Invoke(); return Task.CompletedTask; };
         _connection.Reconnected += _ => { OnReconnected?.Invoke(); return Task.CompletedTask; };

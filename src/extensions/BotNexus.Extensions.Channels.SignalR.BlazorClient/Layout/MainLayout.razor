@@ -104,29 +104,40 @@
                                     .OrderByDescending(c => c.IsDefault)
                                     .ThenByDescending(c => c.UpdatedAt))
                                 {
-                                    <button class="conversation-list-item @(conversation.ConversationId == activeAgent.ActiveConversationId ? "active" : "")"
-                                            @onclick="() => SelectConversationAsync(activeAgent.AgentId, conversation.ConversationId)">
-                                        <span class="conversation-list-item-main">
-                                            <span class="conversation-list-item-title">@conversation.Title</span>
+                                    <div class="conversation-list-item">
+                                        <button class="conversation-list-item-btn @(conversation.ConversationId == activeAgent.ActiveConversationId ? "active" : "")"
+                                                @onclick="() => SelectConversationAsync(activeAgent.AgentId, conversation.ConversationId)">
+                                            <span class="conversation-list-item-main">
+                                                <span class="conversation-list-item-title">@conversation.Title</span>
 
-                                            @if (conversation.IsDefault)
-                                            {
-                                                <span class="conversation-default-badge">Default</span>
-                                            }
-                                        </span>
-
-                                        <span class="conversation-list-item-meta">
-                                            @if (conversation.UnreadCount > 0)
-                                            {
-                                                <span class="conversation-unread-dot"
-                                                      aria-label="Unread messages"></span>
-                                            }
-
-                                            <span class="conversation-updated-at">
-                                                @FormatConversationTimestamp(conversation.UpdatedAt)
+                                                @if (conversation.IsDefault)
+                                                {
+                                                    <span class="conversation-default-badge">Default</span>
+                                                }
                                             </span>
-                                        </span>
-                                    </button>
+
+                                            <span class="conversation-list-item-meta">
+                                                @if (conversation.UnreadCount > 0)
+                                                {
+                                                    <span class="conversation-unread-dot"
+                                                          aria-label="Unread messages"></span>
+                                                }
+
+                                                <span class="conversation-updated-at">
+                                                    @FormatConversationTimestamp(conversation.UpdatedAt)
+                                                </span>
+                                            </span>
+                                        </button>
+                                        @if (!conversation.IsDefault)
+                                        {
+                                            <button class="conversation-archive-btn"
+                                                    title="Archive conversation"
+                                                    @onclick:stopPropagation="true"
+                                                    @onclick="() => ArchiveConversationAsync(activeAgent.AgentId, conversation.ConversationId, conversation.Title)">
+                                                🗑️
+                                            </button>
+                                        }
+                                    </div>
                                 }
                             }
 
@@ -401,6 +412,13 @@
         await Interaction.CreateConversationAsync(agentId);
         if (_isMobile)
             _sidebarOpen = false;
+    }
+
+    private async Task ArchiveConversationAsync(string agentId, string conversationId, string title)
+    {
+        var confirmed = await JS.InvokeAsync<bool>("confirm", $"Archive '{title}'?");
+        if (confirmed)
+            await Interaction.ArchiveConversationAsync(agentId, conversationId);
     }
 
     private static string FormatConversationTimestamp(DateTimeOffset ts)

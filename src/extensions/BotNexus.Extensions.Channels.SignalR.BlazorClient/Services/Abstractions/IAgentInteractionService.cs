@@ -16,6 +16,7 @@ public interface IAgentInteractionService
     Task<string?> CreateConversationAsync(string agentId, string? title = null, bool select = true);
     Task SelectConversationAsync(string agentId, string conversationId);
     Task RenameConversationAsync(string agentId, string? conversationId, string newTitle);
+    Task ArchiveConversationAsync(string agentId, string conversationId);
     Task RefreshAgentsAsync();
     Task ViewSubAgentAsync(SubAgentInfo subAgent);
     void ClearLocalMessages(string agentId);

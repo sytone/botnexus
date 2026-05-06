@@ -135,3 +135,18 @@ public sealed record SessionHistoryResponse(
     [property: JsonPropertyName("totalCount")] int TotalCount,
     [property: JsonPropertyName("offset")] int Offset,
     [property: JsonPropertyName("limit")] int Limit);
+
+/// <summary>Kind of steering feedback event.</summary>
+public enum SteeringFeedbackKind
+{
+    /// <summary>Steering was injected mid-turn into the running agent.</summary>
+    Injected,
+    /// <summary>Steering arrived when the agent was not running and was queued.</summary>
+    Queued
+}
+
+/// <summary>Payload sent via the <c>SteeringFeedback</c> client method.</summary>
+public sealed record SteeringFeedbackPayload(
+    [property: JsonPropertyName("agentId")] string AgentId,
+    [property: JsonPropertyName("sessionId")] string SessionId,
+    [property: JsonPropertyName("kind")] SteeringFeedbackKind Kind);
