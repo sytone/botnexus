@@ -8,7 +8,7 @@ namespace BotNexus.Gateway.Abstractions.Models;
 public sealed record ChannelBinding
 {
     /// <summary>Gets or sets the unique binding identifier.</summary>
-    public string BindingId { get; set; } = Guid.NewGuid().ToString("N");
+    public BindingId BindingId { get; set; } = BindingId.Create();
 
     /// <summary>Gets or sets the channel type for this binding.</summary>
     public ChannelKey ChannelType { get; set; }

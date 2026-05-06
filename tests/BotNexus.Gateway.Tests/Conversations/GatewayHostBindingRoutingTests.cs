@@ -32,7 +32,7 @@ public sealed class GatewayHostBindingRoutingTests
     {
         var binding = new ChannelBinding
         {
-            BindingId = "bind-tg-1",
+            BindingId = BindingId.From("bind-tg-1"),
             ChannelType = ChannelKey.From("telegram"),
             ChannelAddress = "chat-100",
             ThreadId = "topic-42",
@@ -60,7 +60,7 @@ public sealed class GatewayHostBindingRoutingTests
                 It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(routingResult);
         convRouter
-            .Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<BindingId?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
         var handle = CreatePromptHandle(AgentIdStr, SessionIdStr, "response text");
@@ -93,7 +93,7 @@ public sealed class GatewayHostBindingRoutingTests
 
         capturedOutbound.ShouldNotBeNull("adapter.SendAsync should have been called for non-streaming path");
         capturedOutbound!.ThreadId.ShouldBe("topic-42", "ThreadId from originating binding must be stamped on direct send");
-        capturedOutbound.BindingId.ShouldBe("bind-tg-1", "BindingId from originating binding must be stamped on direct send");
+        capturedOutbound.BindingId?.Value.ShouldBe("bind-tg-1", "BindingId from originating binding must be stamped on direct send");
         capturedOutbound.DisplayPrefix.ShouldBe("[Bot]", "DisplayPrefix from originating binding must be stamped on direct send");
     }
 
@@ -106,7 +106,7 @@ public sealed class GatewayHostBindingRoutingTests
     {
         var binding = new ChannelBinding
         {
-            BindingId = "bind-tg-2",
+            BindingId = BindingId.From("bind-tg-2"),
             ChannelType = ChannelKey.From("telegram"),
             ChannelAddress = "chat-200",
             ThreadId = "topic-99",
@@ -133,7 +133,7 @@ public sealed class GatewayHostBindingRoutingTests
                 It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(routingResult);
         convRouter
-            .Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<BindingId?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
         var handle = new Mock<IAgentHandle>();
@@ -190,7 +190,7 @@ public sealed class GatewayHostBindingRoutingTests
     {
         var binding = new ChannelBinding
         {
-            BindingId = "bind-origin",
+            BindingId = BindingId.From("bind-origin"),
             ChannelType = ChannelKey.From("telegram"),
             ChannelAddress = "chat-300",
             ThreadId = null,
@@ -210,7 +210,7 @@ public sealed class GatewayHostBindingRoutingTests
             false,
             OriginatingBinding: binding);
 
-        string? capturedOriginatingBindingId = null;
+        BindingId? capturedOriginatingBindingId = null;
         var convRouter = new Mock<IConversationRouter>();
         convRouter
             .Setup(r => r.ResolveInboundAsync(
@@ -218,8 +218,8 @@ public sealed class GatewayHostBindingRoutingTests
                 It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(routingResult);
         convRouter
-            .Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .Callback<SessionId, string?, CancellationToken>((_, bindId, _) => capturedOriginatingBindingId = bindId)
+            .Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<BindingId?>(), It.IsAny<CancellationToken>()))
+            .Callback<SessionId, BindingId?, CancellationToken>((_, bindId, _) => capturedOriginatingBindingId = bindId)
             .ReturnsAsync([]);
 
         var handle = CreatePromptHandle(AgentIdStr, SessionIdStr, "ok");
@@ -245,7 +245,8 @@ public sealed class GatewayHostBindingRoutingTests
             Metadata = new Dictionary<string, object?>()
         });
 
-        capturedOriginatingBindingId.ShouldBe("bind-origin",
+        capturedOriginatingBindingId.ShouldNotBeNull();
+        capturedOriginatingBindingId.Value.Value.ShouldBe("bind-origin",
             "The originating BindingId from the resolved binding must be passed to GetOutboundBindingsAsync for fan-out exclusion");
     }
 

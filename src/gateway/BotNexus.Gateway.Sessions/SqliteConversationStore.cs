@@ -529,7 +529,7 @@ public sealed class SqliteConversationStore : IConversationStore
         {
             bindings.Add(new ChannelBinding
             {
-                BindingId = reader.GetString(0),
+                BindingId = BindingId.From(reader.GetString(0)),
                 ChannelType = ChannelKey.From(reader.GetString(1)),
                 ChannelAddress = reader.GetString(2),
                 ThreadId = reader.IsDBNull(3) ? null : reader.GetString(3),
@@ -594,7 +594,7 @@ public sealed class SqliteConversationStore : IConversationStore
                 INSERT INTO conversation_bindings (binding_id, conversation_id, channel_type, channel_address, thread_id, mode, threading_mode, display_prefix, bound_at, last_inbound_at, last_outbound_at)
                 VALUES ($bindingId, $conversationId, $channelType, $channelAddress, $threadId, $mode, $threadingMode, $displayPrefix, $boundAt, $lastInboundAt, $lastOutboundAt)
                 """;
-            bindingCommand.Parameters.AddWithValue("$bindingId", binding.BindingId);
+            bindingCommand.Parameters.AddWithValue("$bindingId", binding.BindingId.Value);
             bindingCommand.Parameters.AddWithValue("$conversationId", conversation.ConversationId.Value);
             bindingCommand.Parameters.AddWithValue("$channelType", binding.ChannelType.Value);
             bindingCommand.Parameters.AddWithValue("$channelAddress", binding.ChannelAddress);

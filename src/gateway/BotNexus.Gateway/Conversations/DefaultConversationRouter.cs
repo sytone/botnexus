@@ -120,7 +120,7 @@ public sealed class DefaultConversationRouter : IConversationRouter
     /// <inheritdoc />
     public async Task<IReadOnlyList<ChannelBinding>> GetOutboundBindingsAsync(
         SessionId sessionId,
-        string? originatingBindingId,
+        BindingId? originatingBindingId,
         CancellationToken ct = default)
     {
         // 1. Resolve the session to get ConversationId
@@ -148,12 +148,12 @@ public sealed class DefaultConversationRouter : IConversationRouter
         // 2. Filter bindings: not muted, not the originating binding
         return conversation.ChannelBindings
             .Where(b => b.Mode != BindingMode.Muted)
-            .Where(b => originatingBindingId is null || !string.Equals(b.BindingId, originatingBindingId, StringComparison.Ordinal))
+            .Where(b => originatingBindingId is null || b.BindingId != originatingBindingId.Value)
             .ToList();
     }
 
     /// <inheritdoc />
-    public async Task MuteBindingAsync(ConversationId conversationId, string bindingId, CancellationToken ct = default)
+    public async Task MuteBindingAsync(ConversationId conversationId, BindingId bindingId, CancellationToken ct = default)
     {
         var conversation = await _conversationStore.GetAsync(conversationId, ct);
         if (conversation is null)
@@ -163,7 +163,7 @@ public sealed class DefaultConversationRouter : IConversationRouter
         }
 
         var binding = conversation.ChannelBindings.FirstOrDefault(b =>
-            string.Equals(b.BindingId, bindingId, StringComparison.Ordinal));
+            string.Equals(b.BindingId.Value, bindingId.Value, StringComparison.Ordinal));
 
         if (binding is null)
         {
@@ -202,7 +202,7 @@ public sealed class DefaultConversationRouter : IConversationRouter
     }
 
     /// <inheritdoc />
-    public async Task ReattachBindingAsync(string bindingId, ConversationId targetConversationId, CancellationToken ct = default)
+    public async Task ReattachBindingAsync(BindingId bindingId, ConversationId targetConversationId, CancellationToken ct = default)
     {
         var target = await _conversationStore.GetAsync(targetConversationId, ct);
         if (target is null)
@@ -216,7 +216,7 @@ public sealed class DefaultConversationRouter : IConversationRouter
         foreach (var source in conversations)
         {
             var binding = source.ChannelBindings.FirstOrDefault(b =>
-                string.Equals(b.BindingId, bindingId, StringComparison.Ordinal));
+                string.Equals(b.BindingId.Value, bindingId.Value, StringComparison.Ordinal));
 
             if (binding is null)
                 continue;

@@ -300,7 +300,7 @@ public sealed class SqliteConversationStoreTests
     private static ChannelBinding CreateBinding(string channelType, string channelAddress, string? threadId = null)
         => new()
         {
-            BindingId = Guid.NewGuid().ToString("N"),
+            BindingId = BindingId.Create(),
             ChannelType = ChannelKey.From(channelType),
             ChannelAddress = channelAddress,
             ThreadId = threadId,

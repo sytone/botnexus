@@ -123,15 +123,15 @@ internal sealed class CapturingConversationRouter : IConversationRouter
     }
 
     public Task<IReadOnlyList<ChannelBinding>> GetOutboundBindingsAsync(
-        SessionId sessionId, string originatingChannelAddress, CancellationToken ct = default)
+        SessionId sessionId, BindingId? originatingChannelAddress, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<ChannelBinding>>([]);
 
-    public Task MuteBindingAsync(ConversationId conversationId, string bindingId, CancellationToken ct = default)
+    public Task MuteBindingAsync(ConversationId conversationId, BindingId bindingId, CancellationToken ct = default)
         => Task.CompletedTask;
 
     public Task MuteBindingByAddressAsync(AgentId? agentId, ChannelKey channelType, string channelAddress, CancellationToken ct = default)
         => Task.CompletedTask;
 
-    public Task ReattachBindingAsync(string bindingId, ConversationId targetConversationId, CancellationToken ct = default)
+    public Task ReattachBindingAsync(BindingId bindingId, ConversationId targetConversationId, CancellationToken ct = default)
         => Task.CompletedTask;
 }
