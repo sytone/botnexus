@@ -22,9 +22,10 @@ public sealed record CrossWorldRelayRequest
     /// </summary>
     public required string Message { get; init; }
     /// <summary>
-    /// Gets or sets the conversation id.
+    /// Gets or sets the conversation id that the message belongs to on the source world.
+    /// Used by the remote gateway to correlate the response back to the originating conversation.
     /// </summary>
-    public required string ChannelAddress { get; init; }
+    public required string ConversationId { get; init; }
     /// <summary>
     /// Gets or sets the source session id.
     /// </summary>

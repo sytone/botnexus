@@ -212,7 +212,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
                     new OutboundMessage
                     {
                         ChannelType = ChannelKey.From("cross-world"),
-                        ChannelAddress = ChannelAddress.From(conversationId),
+                        ChannelAddress = ChannelAddress.From(peer.Endpoint ?? string.Empty), // target endpoint is the channel address
                         Content = message,
                         SessionId = sessionId.Value,
                         Metadata = new Dictionary<string, object?>

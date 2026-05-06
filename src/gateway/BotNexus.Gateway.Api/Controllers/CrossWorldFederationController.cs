@@ -83,7 +83,7 @@ public sealed class CrossWorldFederationController(
             WorldId = _localWorldId,
             Role = "target"
         });
-        session.Metadata["conversationId"] = request.ChannelAddress;
+        session.Metadata["conversationId"] = request.ConversationId;
         session.Metadata["sourceWorldId"] = request.SourceWorldId;
         session.Metadata["sourceSessionId"] = request.SourceSessionId;
         session.Status = GatewaySessionStatus.Active;
