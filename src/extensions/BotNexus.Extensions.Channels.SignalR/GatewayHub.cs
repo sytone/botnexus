@@ -9,6 +9,7 @@ using ChannelKey = BotNexus.Domain.Primitives.ChannelKey;
 using ParticipantType = BotNexus.Domain.Primitives.ParticipantType;
 using SessionId = BotNexus.Domain.Primitives.SessionId;
 using ConversationId = BotNexus.Domain.Primitives.ConversationId;
+using ChannelAddress = BotNexus.Domain.Primitives.ChannelAddress;
 using SessionParticipant = BotNexus.Domain.Primitives.SessionParticipant;
 using SessionType = BotNexus.Domain.Primitives.SessionType;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
@@ -234,7 +235,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 {
                     ChannelType = ChannelKey.From("signalr"),
                     SenderId = connectionId,
-                    ChannelAddress = typedAgentId.Value, // stable per-agent address — one portal conversation per agent
+                    ChannelAddress = ChannelAddress.From(typedAgentId.Value), // stable per-agent address — one portal conversation per agent
                     SessionId = session.SessionId.Value,
                     TargetAgentId = typedAgentId.Value,
                     Content = content,
@@ -258,7 +259,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             {
                 ChannelType = ChannelKey.From("signalr"),
                 SenderId = senderId,
-                ChannelAddress = typedAgentId.Value, // stable per-agent address — one portal conversation per agent
+                ChannelAddress = ChannelAddress.From(typedAgentId.Value), // stable per-agent address — one portal conversation per agent
                 ConversationId = conversationId, // router uses this to find the right conversation directly
                 SessionId = typedSessionId.Value,
                 TargetAgentId = typedAgentId.Value,
@@ -345,7 +346,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 {
                     ChannelType = typedChannelType,
                     SenderId = connectionId,
-                    ChannelAddress = typedAgentId.Value,
+                    ChannelAddress = ChannelAddress.From(typedAgentId.Value),
                     SessionId = session.SessionId.Value,
                     TargetAgentId = typedAgentId.Value,
                     Content = content,
@@ -506,7 +507,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 // Pass null to search all agents' conversations for bindings keyed to this connection.
                 agentId: null,
                 ChannelKey.From("signalr"),
-                Context.ConnectionId,
+                ChannelAddress.From(Context.ConnectionId),
                 Context.ConnectionAborted);
         }
         catch (Exception ex)
@@ -583,7 +584,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         // Conversation-first routing: resolve/create via IConversationRouter.
         // Use agentId as the channel address so every connection from the same agent
         // routes to the same portal conversation, regardless of SignalR connection ID.
-        var channelAddress = agentId.Value;
+        var channelAddress = ChannelAddress.From(agentId.Value);
         var routingResult = await _conversationRouter.ResolveInboundAsync(
             agentId,
             channelType,

@@ -263,7 +263,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 var routingResult = await _conversationRouter.ResolveInboundAsync(
                     AgentId.From(agentId),
                     message.ChannelType,
-                    message.ChannelAddress ?? string.Empty,
+                    message.ChannelAddress,
                     threadId: message.ThreadId,
                     conversationId: message.ConversationId,
                     cancellationToken);
@@ -419,7 +419,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                                 // so the adapter can split them apart (fixes #125).
                                 var streamConversationId = streamingBinding?.ThreadId is not null
                                     ? $"{message.ChannelAddress}:{streamingBinding.ThreadId}"
-                                    : message.ChannelAddress;
+                                    : message.ChannelAddress.Value;
 
                                 if (channel is IStreamEventChannelAdapter streamEventChannel)
                                     return new ValueTask(streamEventChannel.SendStreamEventAsync(streamConversationId, enriched, ct));

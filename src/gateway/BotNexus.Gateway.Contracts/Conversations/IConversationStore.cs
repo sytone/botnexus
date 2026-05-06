@@ -71,8 +71,8 @@ public interface IConversationStore
     Task<Conversation?> ResolveByBindingAsync(
         AgentId agentId,
         ChannelKey channelType,
-        string channelAddress,
-        string? threadId,
+        ChannelAddress channelAddress,
+        ThreadId? threadId,
         CancellationToken ct = default);
 
     /// <summary>

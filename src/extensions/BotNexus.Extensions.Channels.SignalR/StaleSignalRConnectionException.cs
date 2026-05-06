@@ -13,7 +13,7 @@ public sealed class StaleSignalRConnectionException : StaleChannelConnectionExce
     /// <summary>
     /// Initialises a new instance describing a stale SignalR connection for a specific binding.
     /// </summary>
-    public StaleSignalRConnectionException(BindingId bindingId, string conversationId, Exception? inner = null)
+    public StaleSignalRConnectionException(BindingId bindingId, ConversationId conversationId, Exception? inner = null)
         : base(bindingId, conversationId, inner)
     {
     }

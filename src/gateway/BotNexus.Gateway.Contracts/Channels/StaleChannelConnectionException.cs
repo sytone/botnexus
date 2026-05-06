@@ -15,12 +15,12 @@ public class StaleChannelConnectionException : Exception
     public BindingId BindingId { get; }
 
     /// <summary>Gets the conversation ID the binding belongs to.</summary>
-    public string ConversationId { get; }
+    public ConversationId ConversationId { get; }
 
     /// <summary>
     /// Initialises a new instance describing a stale connection for a specific binding.
     /// </summary>
-    public StaleChannelConnectionException(BindingId bindingId, string conversationId, Exception? inner = null)
+    public StaleChannelConnectionException(BindingId bindingId, ConversationId conversationId, Exception? inner = null)
         : base($"Channel send failed — connection for binding {bindingId} in conversation {conversationId} is gone.", inner)
     {
         BindingId = bindingId;

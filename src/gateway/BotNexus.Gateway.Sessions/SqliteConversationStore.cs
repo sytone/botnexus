@@ -279,16 +279,16 @@ public sealed class SqliteConversationStore : IConversationStore
     public async Task<Conversation?> ResolveByBindingAsync(
         AgentId agentId,
         ChannelKey channelType,
-        string channelAddress,
-        string? threadId,
+        ChannelAddress channelAddress,
+        ThreadId? threadId,
         CancellationToken ct = default)
     {
         using var activity = ActivitySource.StartActivity("conversation.resolve_by_binding", ActivityKind.Internal);
         activity?.SetTag("botnexus.agent.id", agentId.Value);
         activity?.SetTag("botnexus.channel.type", channelType.Value);
-        activity?.SetTag("botnexus.channel.address", channelAddress);
-        if (!string.IsNullOrWhiteSpace(threadId))
-            activity?.SetTag("botnexus.channel.thread_id", threadId);
+        activity?.SetTag("botnexus.channel.address", channelAddress.Value);
+        if (threadId is not null)
+            activity?.SetTag("botnexus.channel.thread_id", threadId.Value.Value);
 
         await EnsureCreatedAsync(ct).ConfigureAwait(false);
         await using var connection = CreateConnection();
@@ -311,11 +311,11 @@ public sealed class SqliteConversationStore : IConversationStore
                 ORDER BY c.updated_at DESC
                 LIMIT 1
                 """;
-        command.Parameters.AddWithValue("$threadId", (object?)threadId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$threadId", (object?)threadId?.Value ?? DBNull.Value);
         command.Parameters.AddWithValue("$agentId", agentId.Value);
         command.Parameters.AddWithValue("$status", ConversationStatus.Active.ToString());
         command.Parameters.AddWithValue("$channelType", channelType.Value);
-        command.Parameters.AddWithValue("$channelAddress", channelAddress);
+        command.Parameters.AddWithValue("$channelAddress", channelAddress.Value);
         var id = (string?)await command.ExecuteScalarAsync(ct).ConfigureAwait(false);
         return string.IsNullOrWhiteSpace(id)
             ? null
@@ -531,8 +531,8 @@ public sealed class SqliteConversationStore : IConversationStore
             {
                 BindingId = BindingId.From(reader.GetString(0)),
                 ChannelType = ChannelKey.From(reader.GetString(1)),
-                ChannelAddress = reader.GetString(2),
-                ThreadId = reader.IsDBNull(3) ? null : reader.GetString(3),
+                ChannelAddress = ChannelAddress.From(reader.GetString(2)),
+                ThreadId = reader.IsDBNull(3) ? null : ThreadId.From(reader.GetString(3)),
                 Mode = ParseBindingMode(reader.GetString(4)),
                 ThreadingMode = ParseThreadingMode(reader.GetString(5)),
                 DisplayPrefix = reader.IsDBNull(6) ? null : reader.GetString(6),
@@ -597,8 +597,8 @@ public sealed class SqliteConversationStore : IConversationStore
             bindingCommand.Parameters.AddWithValue("$bindingId", binding.BindingId.Value);
             bindingCommand.Parameters.AddWithValue("$conversationId", conversation.ConversationId.Value);
             bindingCommand.Parameters.AddWithValue("$channelType", binding.ChannelType.Value);
-            bindingCommand.Parameters.AddWithValue("$channelAddress", binding.ChannelAddress);
-            bindingCommand.Parameters.AddWithValue("$threadId", (object?)binding.ThreadId ?? DBNull.Value);
+            bindingCommand.Parameters.AddWithValue("$channelAddress", binding.ChannelAddress.Value);
+            bindingCommand.Parameters.AddWithValue("$threadId", (object?)binding.ThreadId?.Value ?? DBNull.Value);
             bindingCommand.Parameters.AddWithValue("$mode", binding.Mode.ToString());
             bindingCommand.Parameters.AddWithValue("$threadingMode", binding.ThreadingMode.ToString());
             bindingCommand.Parameters.AddWithValue("$displayPrefix", (object?)binding.DisplayPrefix ?? DBNull.Value);

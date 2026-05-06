@@ -32,8 +32,8 @@ public sealed class DefaultConversationRouter : IConversationRouter
     public async Task<ConversationRoutingResult> ResolveInboundAsync(
         AgentId agentId,
         ChannelKey channelType,
-        string channelAddress,
-        string? threadId,
+        ChannelAddress channelAddress,
+        ThreadId? threadId,
         string? conversationId = null,
         CancellationToken ct = default)
     {
@@ -111,8 +111,8 @@ public sealed class DefaultConversationRouter : IConversationRouter
         var originatingBinding = conversation.ChannelBindings
             .FirstOrDefault(b =>
                 b.ChannelType == channelType &&
-                string.Equals(b.ChannelAddress, channelAddress, StringComparison.Ordinal) &&
-                string.Equals(b.ThreadId, threadId, StringComparison.Ordinal));
+                b.ChannelAddress == channelAddress &&
+                b.ThreadId == threadId);
 
         return new ConversationRoutingResult(conversation, sessionId, isNewSession, originatingBinding);
     }
@@ -181,14 +181,14 @@ public sealed class DefaultConversationRouter : IConversationRouter
     }
 
     /// <inheritdoc />
-    public async Task MuteBindingByAddressAsync(AgentId? agentId, ChannelKey channelType, string channelAddress, CancellationToken ct = default)
+    public async Task MuteBindingByAddressAsync(AgentId? agentId, ChannelKey channelType, ChannelAddress channelAddress, CancellationToken ct = default)
     {
         var conversations = await _conversationStore.ListAsync(agentId, ct);
         foreach (var conversation in conversations)
         {
             var binding = conversation.ChannelBindings.FirstOrDefault(b =>
                 b.ChannelType.Equals(channelType) &&
-                string.Equals(b.ChannelAddress, channelAddress, StringComparison.Ordinal) &&
+                b.ChannelAddress == channelAddress &&
                 b.Mode != BindingMode.Muted);
 
             if (binding is null)

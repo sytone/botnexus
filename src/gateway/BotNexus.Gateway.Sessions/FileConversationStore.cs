@@ -127,8 +127,8 @@ public sealed class FileConversationStore : IConversationStore
     public async Task<Conversation?> ResolveByBindingAsync(
         AgentId agentId,
         ChannelKey channelType,
-        string channelAddress,
-        string? threadId,
+        ChannelAddress channelAddress,
+        ThreadId? threadId,
         CancellationToken ct = default)
     {
         await _lock.WaitAsync(ct).ConfigureAwait(false);
@@ -139,8 +139,8 @@ public sealed class FileConversationStore : IConversationStore
                 c.Status == ConversationStatus.Active &&
                 c.ChannelBindings.Any(b =>
                     b.ChannelType == channelType &&
-                    string.Equals(b.ChannelAddress, channelAddress, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(b.ThreadId, threadId, StringComparison.OrdinalIgnoreCase)));
+                    b.ChannelAddress == channelAddress &&
+                    b.ThreadId == threadId));
         }
         finally { _lock.Release(); }
     }

@@ -306,7 +306,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             {
                 ChannelType = ChannelKey.From("internal"),
                 SenderId = $"subagent:{subAgentId}",
-                ChannelAddress = updated.ParentSessionId,
+                ChannelAddress = ChannelAddress.From(updated.ParentSessionId.Value),
                 SessionId = updated.ParentSessionId,
                 TargetAgentId = parentAgentId,
                 Content = followUp,

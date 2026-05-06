@@ -90,7 +90,7 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger)
             _logger.LogDebug("{DisplayName} send requested while adapter is not running", DisplayName);
         }
 
-        return Console.Out.WriteLineAsync($"[{DisplayName}:{message.ChannelAddress}] {message.Content}");
+        return Console.Out.WriteLineAsync($"[{DisplayName}:{message.ChannelAddress.Value}] {message.Content}");
     }
 
     /// <summary>
@@ -193,7 +193,7 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger)
                 {
                     ChannelType = ChannelType,
                     SenderId = Environment.UserName,
-                    ChannelAddress = "console",
+                    ChannelAddress = ChannelAddress.From("console"),
                     SessionId = "tui-console",
                     Content = steerContent,
                     Metadata = new Dictionary<string, object?>
@@ -208,7 +208,7 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger)
             {
                 ChannelType = ChannelType,
                 SenderId = Environment.UserName,
-                ChannelAddress = "console",
+                ChannelAddress = ChannelAddress.From("console"),
                 SessionId = "tui-console",
                 Content = line
             }, cancellationToken);

@@ -44,11 +44,11 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
     {
         if (string.Equals(message.Content?.Trim(), NoReplySentinel, StringComparison.Ordinal))
         {
-            logger.LogDebug("Suppressed NO_REPLY message for session {SessionId}", message.SessionId ?? message.ChannelAddress);
+            logger.LogDebug("Suppressed NO_REPLY message for session {SessionId}", message.SessionId ?? message.ChannelAddress.Value);
             return Task.CompletedTask;
         }
 
-        var normalizedSessionId = NormalizeSessionId(message.SessionId ?? message.ChannelAddress);
+        var normalizedSessionId = NormalizeSessionId(message.SessionId ?? message.ChannelAddress.Value);
         return _hubContext.Clients.Group(GetSessionGroup(normalizedSessionId))
             .ContentDelta(new ContentDeltaPayload(normalizedSessionId, message.Content));
     }

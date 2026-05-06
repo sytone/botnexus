@@ -19,8 +19,8 @@ public interface IConversationRouter
     Task<ConversationRoutingResult> ResolveInboundAsync(
         AgentId agentId,
         ChannelKey channelType,
-        string channelAddress,
-        string? threadId,
+        ChannelAddress channelAddress,
+        ThreadId? threadId,
         string? conversationId = null,
         CancellationToken ct = default);
 
@@ -60,7 +60,7 @@ public interface IConversationRouter
     /// <param name="channelType">The channel type (e.g. signalr).</param>
     /// <param name="channelAddress">The channel address (e.g. SignalR connection ID).</param>
     /// <param name="ct">Cancellation token.</param>
-    Task MuteBindingByAddressAsync(AgentId? agentId, ChannelKey channelType, string channelAddress, CancellationToken ct = default);
+    Task MuteBindingByAddressAsync(AgentId? agentId, ChannelKey channelType, ChannelAddress channelAddress, CancellationToken ct = default);
 }
 
 /// <summary>

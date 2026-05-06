@@ -29,7 +29,7 @@ public sealed class SqliteConversationStoreTests
         loaded!.Title.ShouldBe("First");
         loaded.ChannelBindings.Count.ShouldBe(1);
         loaded.ChannelBindings[0].ChannelType.ShouldBe(ChannelKey.From("telegram"));
-        loaded.ChannelBindings[0].ChannelAddress.ShouldBe("12345");
+        loaded.ChannelBindings[0].ChannelAddress.ShouldBe(ChannelAddress.From("12345"));
     }
 
     [Fact]
@@ -101,7 +101,7 @@ public sealed class SqliteConversationStoreTests
         await store.CreateAsync(expected);
         await store.CreateAsync(CreateConversation(Agent("agent-a"), "Other", CreateBinding("telegram", "99999")));
 
-        var resolved = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("telegram"), "12345", null);
+        var resolved = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("telegram"), ChannelAddress.From("12345"), null);
 
         resolved.ShouldNotBeNull();
         resolved!.ConversationId.ShouldBe(expected.ConversationId);
@@ -116,7 +116,7 @@ public sealed class SqliteConversationStoreTests
         await store.CreateAsync(expected);
         await store.CreateAsync(CreateConversation(Agent("agent-a"), "Other", CreateBinding("teams", "channel-1", "thread-99")));
 
-        var resolved = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("teams"), "channel-1", "thread-42");
+        var resolved = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("teams"), ChannelAddress.From("channel-1"), ThreadId.From("thread-42"));
 
         resolved.ShouldNotBeNull();
         resolved!.ConversationId.ShouldBe(expected.ConversationId);
@@ -132,11 +132,11 @@ public sealed class SqliteConversationStoreTests
         await store.CreateAsync(expected);
 
         // Querying with null threadId should NOT match the thread-42 binding
-        var resolved = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("teams"), "channel-1", null);
+        var resolved = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("teams"), ChannelAddress.From("channel-1"), null);
         resolved.ShouldBeNull();
 
         // But querying with the actual thread-42 should match
-        var resolvedWithThread = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("teams"), "channel-1", "thread-42");
+        var resolvedWithThread = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("teams"), ChannelAddress.From("channel-1"), ThreadId.From("thread-42"));
         resolvedWithThread.ShouldNotBeNull();
         resolvedWithThread!.ConversationId.ShouldBe(expected.ConversationId);
     }
@@ -149,7 +149,7 @@ public sealed class SqliteConversationStoreTests
         var expected = CreateConversation(Agent("agent-a"), "Address", CreateBinding("teams", "channel-1", null));
         await store.CreateAsync(expected);
 
-        var resolved = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("teams"), "channel-1", null);
+        var resolved = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("teams"), ChannelAddress.From("channel-1"), null);
 
         resolved.ShouldNotBeNull();
         resolved!.ConversationId.ShouldBe(expected.ConversationId);
@@ -188,7 +188,7 @@ public sealed class SqliteConversationStoreTests
         var loaded = await fixture.CreateStore().GetAsync(conversation.ConversationId);
         loaded.ShouldNotBeNull();
         loaded!.ChannelBindings.Count.ShouldBe(2);
-        loaded.ChannelBindings.Any(b => b.ChannelType == ChannelKey.From("teams") && b.ThreadId == "thread-1").ShouldBeTrue();
+        loaded.ChannelBindings.Any(b => b.ChannelType == ChannelKey.From("teams") && b.ThreadId == ThreadId.From("thread-1")).ShouldBeTrue();
     }
 
     [Fact]
@@ -302,8 +302,8 @@ public sealed class SqliteConversationStoreTests
         {
             BindingId = BindingId.Create(),
             ChannelType = ChannelKey.From(channelType),
-            ChannelAddress = channelAddress,
-            ThreadId = threadId,
+            ChannelAddress = ChannelAddress.From(channelAddress),
+            ThreadId = ThreadId.FromNullable(threadId),
             BoundAt = DateTimeOffset.UtcNow,
             Mode = BindingMode.Interactive,
             ThreadingMode = threadId is null ? ThreadingMode.Single : ThreadingMode.NativeThread

@@ -13,11 +13,11 @@ public sealed record ChannelBinding
     /// <summary>Gets or sets the channel type for this binding.</summary>
     public ChannelKey ChannelType { get; set; }
 
-    /// <summary>Gets or sets the channel-specific address (e.g. chat id, phone number).</summary>
-    public string ChannelAddress { get; set; } = string.Empty;
+    /// <summary>Gets or sets the channel-specific address (e.g. chat id, phone number). Use <see cref="ChannelAddress.Empty"/> for addressless channels.</summary>
+    public ChannelAddress ChannelAddress { get; set; } = ChannelAddress.Empty;
 
-    /// <summary>Gets or sets the native thread or topic id within the channel, if applicable.</summary>
-    public string? ThreadId { get; set; }
+    /// <summary>Gets or sets the native thread or topic id within the channel, if applicable. Null for channels without thread support.</summary>
+    public ThreadId? ThreadId { get; set; }
 
     /// <summary>Gets or sets the binding mode controlling message fan-out participation.</summary>
     public BindingMode Mode { get; set; } = BindingMode.Interactive;

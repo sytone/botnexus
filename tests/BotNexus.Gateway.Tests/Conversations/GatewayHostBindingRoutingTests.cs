@@ -34,8 +34,8 @@ public sealed class GatewayHostBindingRoutingTests
         {
             BindingId = BindingId.From("bind-tg-1"),
             ChannelType = ChannelKey.From("telegram"),
-            ChannelAddress = "chat-100",
-            ThreadId = "topic-42",
+            ChannelAddress = ChannelAddress.From("chat-100"),
+            ThreadId = ThreadId.From("topic-42"),
             DisplayPrefix = "[Bot]",
             Mode = BindingMode.Interactive
         };
@@ -56,8 +56,8 @@ public sealed class GatewayHostBindingRoutingTests
         var convRouter = new Mock<IConversationRouter>();
         convRouter
             .Setup(r => r.ResolveInboundAsync(
-                It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(),
+                It.IsAny<BotNexus.Domain.Primitives.ThreadId?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(routingResult);
         convRouter
             .Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<BindingId?>(), It.IsAny<CancellationToken>()))
@@ -85,14 +85,14 @@ public sealed class GatewayHostBindingRoutingTests
         {
             ChannelType = ChannelKey.From("telegram"),
             SenderId = "user-1",
-            ChannelAddress = "chat-100",
-            ThreadId = "topic-42",
+            ChannelAddress = ChannelAddress.From("chat-100"),
+            ThreadId = ThreadId.From("topic-42"),
             Content = "hello",
             Metadata = new Dictionary<string, object?>()
         });
 
         capturedOutbound.ShouldNotBeNull("adapter.SendAsync should have been called for non-streaming path");
-        capturedOutbound!.ThreadId.ShouldBe("topic-42", "ThreadId from originating binding must be stamped on direct send");
+        capturedOutbound!.ThreadId.ShouldBe(ThreadId.From("topic-42"), "ThreadId from originating binding must be stamped on direct send");
         capturedOutbound.BindingId?.Value.ShouldBe("bind-tg-1", "BindingId from originating binding must be stamped on direct send");
         capturedOutbound.DisplayPrefix.ShouldBe("[Bot]", "DisplayPrefix from originating binding must be stamped on direct send");
     }
@@ -108,8 +108,8 @@ public sealed class GatewayHostBindingRoutingTests
         {
             BindingId = BindingId.From("bind-tg-2"),
             ChannelType = ChannelKey.From("telegram"),
-            ChannelAddress = "chat-200",
-            ThreadId = "topic-99",
+            ChannelAddress = ChannelAddress.From("chat-200"),
+            ThreadId = ThreadId.From("topic-99"),
             Mode = BindingMode.Interactive
         };
 
@@ -129,8 +129,8 @@ public sealed class GatewayHostBindingRoutingTests
         var convRouter = new Mock<IConversationRouter>();
         convRouter
             .Setup(r => r.ResolveInboundAsync(
-                It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(),
+                It.IsAny<BotNexus.Domain.Primitives.ThreadId?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(routingResult);
         convRouter
             .Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<BindingId?>(), It.IsAny<CancellationToken>()))
@@ -168,8 +168,8 @@ public sealed class GatewayHostBindingRoutingTests
         {
             ChannelType = ChannelKey.From("telegram"),
             SenderId = "user-1",
-            ChannelAddress = "chat-200",
-            ThreadId = "topic-99",
+            ChannelAddress = ChannelAddress.From("chat-200"),
+            ThreadId = ThreadId.From("topic-99"),
             Content = "hello",
             Metadata = new Dictionary<string, object?>()
         });
@@ -192,7 +192,7 @@ public sealed class GatewayHostBindingRoutingTests
         {
             BindingId = BindingId.From("bind-origin"),
             ChannelType = ChannelKey.From("telegram"),
-            ChannelAddress = "chat-300",
+            ChannelAddress = ChannelAddress.From("chat-300"),
             ThreadId = null,
             Mode = BindingMode.Interactive
         };
@@ -214,8 +214,8 @@ public sealed class GatewayHostBindingRoutingTests
         var convRouter = new Mock<IConversationRouter>();
         convRouter
             .Setup(r => r.ResolveInboundAsync(
-                It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(),
+                It.IsAny<BotNexus.Domain.Primitives.ThreadId?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(routingResult);
         convRouter
             .Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<BindingId?>(), It.IsAny<CancellationToken>()))
@@ -239,7 +239,7 @@ public sealed class GatewayHostBindingRoutingTests
         {
             ChannelType = ChannelKey.From("telegram"),
             SenderId = "user-1",
-            ChannelAddress = "chat-300",
+            ChannelAddress = ChannelAddress.From("chat-300"),
             ThreadId = null,
             Content = "hello",
             Metadata = new Dictionary<string, object?>()

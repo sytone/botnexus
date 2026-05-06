@@ -39,7 +39,7 @@ public sealed class FanOutStaleBindingTests
         {
             ChannelType = channelType,
             SenderId = "sender-1",
-            ChannelAddress = conversationId,
+            ChannelAddress = ChannelAddress.From(conversationId),
             Content = content,
             SessionId = sessionId,
             Metadata = new Dictionary<string, object?>()
@@ -99,7 +99,7 @@ public sealed class FanOutStaleBindingTests
         signalrAdapter.SetupGet(a => a.ChannelType).Returns(ChannelKey.From("signalr"));
         signalrAdapter
             .Setup(a => a.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new StaleSignalRConnectionException(bindingId, convId));
+            .ThrowsAsync(new StaleSignalRConnectionException(bindingId, ConversationId.From(convId)));
 
         var channelManager = new Mock<IChannelManager>();
         channelManager.SetupGet(m => m.Adapters).Returns([primaryAdapter.Object, signalrAdapter.Object]);
@@ -111,7 +111,7 @@ public sealed class FanOutStaleBindingTests
         {
             BindingId = bindingId,
             ChannelType = ChannelKey.From("signalr"),
-            ChannelAddress = "conn-dead-1",
+            ChannelAddress = ChannelAddress.From("conn-dead-1"),
             Mode = BindingMode.Interactive
         };
         var conversation = new Conversation
@@ -124,7 +124,7 @@ public sealed class FanOutStaleBindingTests
         var convRouter = new Mock<IConversationRouter>();
         convRouter
             .Setup(r => r.ResolveInboundAsync(
-                It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(), It.IsAny<BotNexus.Domain.Primitives.ThreadId?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ConversationRoutingResult(conversation, SessionId.From(sessionId), false));
 
         // Return the stale binding for fan-out
@@ -133,7 +133,7 @@ public sealed class FanOutStaleBindingTests
             .ReturnsAsync([staleBinding]);
 
         convRouter
-            .Setup(r => r.MuteBindingByAddressAsync(It.IsAny<BotNexus.Domain.Primitives.AgentId?>(), It.IsAny<ChannelKey>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.MuteBindingByAddressAsync(It.IsAny<BotNexus.Domain.Primitives.AgentId?>(), It.IsAny<ChannelKey>(), It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         await using var host = CreateHost(supervisor.Object, router.Object, sessions, channelManager.Object, convRouter.Object);
@@ -190,7 +190,7 @@ public sealed class FanOutStaleBindingTests
         var convRouter = new Mock<IConversationRouter>();
         convRouter
             .Setup(r => r.ResolveInboundAsync(
-                It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(), It.IsAny<BotNexus.Domain.Primitives.ThreadId?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ConversationRoutingResult(conversation, SessionId.From(sessionId), false));
 
         // Empty list = already muted / no fan-out targets
