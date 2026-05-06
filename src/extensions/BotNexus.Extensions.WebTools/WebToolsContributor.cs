@@ -1,6 +1,7 @@
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
+using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Extensions.WebTools;
 
@@ -9,6 +10,13 @@ namespace BotNexus.Extensions.WebTools;
 /// </summary>
 public sealed class WebToolsContributor : IAgentToolContributor
 {
+    private readonly ILoggerFactory? _loggerFactory;
+
+    public WebToolsContributor(ILoggerFactory? loggerFactory = null)
+    {
+        _loggerFactory = loggerFactory;
+    }
+
     /// <inheritdoc />
     public Task<AgentToolContribution> ContributeAsync(
         AgentToolContributionContext context,
@@ -40,7 +48,8 @@ public sealed class WebToolsContributor : IAgentToolContributor
                     copilotApiKeyResolver: useCopilotProvider
                         ? ct => context.GetProviderApiKeyAsync(context.Descriptor.ApiProvider, ct)
                         : null,
-                    copilotApiEndpoint: copilotApiEndpoint));
+                    copilotApiEndpoint: copilotApiEndpoint,
+                    logger: _loggerFactory?.CreateLogger<WebSearchTool>()));
             }
         }
 
