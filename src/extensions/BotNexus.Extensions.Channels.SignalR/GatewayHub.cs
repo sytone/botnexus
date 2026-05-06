@@ -339,20 +339,26 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <param name="sessionId">The session id.</param>
     /// <param name="content">The content.</param>
     /// <returns>The steer result.</returns>
-    public Task Steer(AgentId agentId, SessionId sessionId, string content)
+    public async Task<SendMessageResult> Steer(AgentId agentId, SessionId sessionId, string content)
     {
         var typedAgentId = NormalizeAgentId(agentId);
-        var typedSessionId = NormalizeSessionId(sessionId);
-        var connectionId = Context.ConnectionId;
+        var typedChannelType = ChannelKey.From("signalr");
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
+
+        // Resolve the actual session that will handle this steer — may differ from the
+        // requested sessionId if the old session was sealed and the router created a new one.
+        var session = await ResolveOrCreateSessionAsync(typedAgentId, typedChannelType);
+        await SubscribeInternalAsync(session.SessionId);
+
+        var connectionId = Context.ConnectionId;
         _ = SafeDispatchAsync(
             () => _dispatcher.DispatchAsync(
                 new InboundMessage
                 {
-                    ChannelType = ChannelKey.From("signalr"),
+                    ChannelType = typedChannelType,
                     SenderId = connectionId,
-                    ChannelAddress = typedAgentId.Value, // stable per-agent address — one portal conversation per agent
-                    SessionId = typedSessionId.Value,
+                    ChannelAddress = typedAgentId.Value,
+                    SessionId = session.SessionId.Value,
                     TargetAgentId = typedAgentId.Value,
                     Content = content,
                     Metadata = new Dictionary<string, object?>
@@ -363,8 +369,9 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 },
                 CancellationToken.None),
             typedAgentId,
-            typedSessionId);
-        return Task.CompletedTask;
+            session.SessionId);
+
+        return new SendMessageResult(session.SessionId.Value, typedAgentId.Value, typedChannelType.Value);
     }
 
     /// <summary>
