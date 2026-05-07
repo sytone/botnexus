@@ -775,6 +775,40 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadAsync_WithAgentMemoryPathOverride_MapsPathOnDescriptorMemoryConfig()
+    {
+        var config = JsonSerializer.Deserialize<PlatformConfig>(
+            """
+            {
+              "Agents": {
+                "assistant": {
+                  "Provider": "copilot",
+                  "Model": "gpt-4.1",
+                  "Enabled": true,
+                  "Memory": {
+                    "Enabled": true,
+                    "Indexing": "auto",
+                    "Path": "memory/custom-notes.md"
+                  }
+                }
+              }
+            }
+            """)!;
+
+        var source = new PlatformConfigAgentSource(
+            new TestOptionsMonitor<PlatformConfig>(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>());
+
+        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
+
+        descriptor.Memory.ShouldNotBeNull();
+        var pathProperty = descriptor.Memory!.GetType().GetProperty("Path");
+        pathProperty.ShouldNotBeNull("Wave 1 requires per-agent memory path override support.");
+        pathProperty!.GetValue(descriptor.Memory)?.ToString().ShouldBe("memory/custom-notes.md");
+    }
+
+    [Fact]
     public async Task LoadAsync_WithAgentsDefaults_ToolIdsInheritedWhenAgentOmitsThem()
     {
         // Arrange

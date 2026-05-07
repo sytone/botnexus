@@ -108,6 +108,44 @@ public sealed class WorkspaceContextBuilderTests
         }
     }
 
+    [Fact]
+    public async Task BuildSystemPromptAsync_DefaultPrompt_IncludesMemorySummaryAndRecentDailyMemoryFiles()
+    {
+        var todayFileName = $"{DateTime.Now:yyyy-MM-dd}.md";
+        var yesterdayFileName = $"{DateTime.Now.AddDays(-1):yyyy-MM-dd}.md";
+        var workspacePath = CreateWorkspace(
+            ("AGENTS.md", "AGENTS"),
+            ("SOUL.md", "SOUL"),
+            ("TOOLS.md", "TOOLS"),
+            ("BOOTSTRAP.md", "BOOTSTRAP"),
+            ("IDENTITY.md", "IDENTITY"),
+            ("USER.md", "USER"),
+            ("MEMORY.md", "LONG-TERM MEMORY"),
+            ($@"memory\{todayFileName}", "TODAY MEMORY ENTRY"),
+            ($@"memory\{yesterdayFileName}", "YESTERDAY MEMORY ENTRY"));
+        try
+        {
+            var manager = new StubWorkspaceManager(workspacePath);
+            var builder = new WorkspaceContextBuilder(manager, _fileSystem);
+
+            var result = await builder.BuildSystemPromptAsync(new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("farnsworth"),
+                DisplayName = "Farnsworth",
+                ModelId = "test-model",
+                ApiProvider = "test-provider"
+            });
+
+            result.ShouldContain("LONG-TERM MEMORY");
+            result.ShouldContain("TODAY MEMORY ENTRY");
+            result.ShouldContain("YESTERDAY MEMORY ENTRY");
+        }
+        finally
+        {
+            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
+        }
+    }
+
     private sealed class StubWorkspaceManager : IAgentWorkspaceManager
     {
         private readonly string _workspacePath;
@@ -134,7 +172,13 @@ public sealed class WorkspaceContextBuilderTests
         _fileSystem.Directory.CreateDirectory(workspacePath);
 
         foreach (var (fileName, content) in files)
-            _fileSystem.File.WriteAllText(Path.Combine(workspacePath, fileName), content);
+        {
+            var filePath = Path.Combine(workspacePath, fileName);
+            var directory = Path.GetDirectoryName(filePath);
+            if (!string.IsNullOrWhiteSpace(directory))
+                _fileSystem.Directory.CreateDirectory(directory);
+            _fileSystem.File.WriteAllText(filePath, content);
+        }
 
         return workspacePath;
     }
