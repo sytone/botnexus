@@ -138,3 +138,15 @@ Farnsworth has implemented your recommendation to decouple Gateway from compile-
 - `GatewayEventHandler` on client side uses `ResolveConversationId` which falls back to `ActiveConversationId` — this masks the bug since events from the wrong session can't be mapped
 
 ---
+
+### 2026-05-07 — Conversation Routing Architecture Design Review
+
+- **Role:** Design ceremony lead; architectural oversight for conversation routing bug
+- **Issue:** Non-default conversations receive no response; agent always replies on default conversation
+- **Root Cause:** Dual routing mismatch in GatewayHub (passes conversationId: null → default session) vs GatewayHost (passes correct conversationId → target session); client subscribes to wrong SignalR group
+- **Decision:** Two-phase fix:
+  - **Phase 1 (Bender):** Pass conversationId through GatewayHub to conversation router (low-risk hotfix)
+  - **Phase 2 (Farnsworth):** Extract conversation/routing layer into BotNexus.Gateway.Dispatching, decouple GatewayHub dependencies (architectural cleanup)
+- **Also Extracted:** Separate decision for conversation project extraction (user request; no bug link)
+- **Deliverables:** Design spec + Phase 1/2 breakdown in decisions.md
+- **Wave Plan:** Bender Phase 1 → Hermes Phase 1 tests → Farnsworth Phase 2 → Hermes Phase 2 tests

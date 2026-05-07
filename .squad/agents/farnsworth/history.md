@@ -76,6 +76,7 @@
 - 2026-04-15 (Wave 2): CLI command structure uses System.CommandLine with DI-injected command classes. Singleton registration is appropriate for stateless command classes and for services that maintain shared state (e.g., `IGatewayProcessManager` with PID file tracking). When `UseShellExecute = true` (required for detached Windows processes), environment variables cannot be set on `ProcessStartInfo` — use command-line arguments instead (e.g., `--urls`, `--environment`).
 - 2026-04-15: System.CommandLine `Command` objects cannot be added to two parents — call `.Build()` twice on the command builder to get two separate instances when registering in multiple command trees (e.g., `gateway` at top-level and as `serve gateway` subcommand).
 - 2026-04-20 (Wave 2): `InternalChannelAdapter` must implement `IStreamEventChannelAdapter` to preserve full `AgentStreamEvent` delivery through `GatewayHost`; without it, non-delta lifecycle events are dropped and only delta fallback can be used.
+- 2026-05-07: Phase 2 conversation extraction should introduce a dedicated conversation dispatch layer that owns inbound resolution/session binding and returns a dispatch result, leaving GatewayHost/GatewayHub as transport relays only.
 
 
 ## 2026-04-15 — Extension-Contributed Commands Implementation, Wave 1 (Platform Dev)
@@ -179,3 +180,19 @@
 **Action:** Fix 4 pre-existing failures before merge. Hermes or designee will write the 4 new tests.
 
 ---
+
+
+### 2026-05-07 — Phase 2 Design: Conversation Routing Layer Extraction
+
+- **Task:** Design Phase 2 architectural extraction (non-blocking after Phase 1 merge)
+- **Scope:** New layer BotNexus.Gateway.Dispatching to own end-to-end message dispatch orchestration and resolve conversation/session routing deterministically
+- **Key Contracts:**
+  - IConversationDispatcher: orchestrator interface (DispatchAsync returns DispatchResult)
+  - DispatchResult: resolved session/conversation + metadata (binding, thread, display prefix, newness flags)
+  - InboundMessageContext: full context for inbound dispatch (agent, channel, payload, conversation/session hints)
+  - ChannelSource: channel identity + thread/binding metadata
+  - ConversationSessionResolution: resolved conversation/session + newness flags
+- **Dependency Graph:** Domain → Contracts → Conversations → Dispatching → Gateway/Extensions (no circular dependencies)
+- **Migration Sequence:** 6 steps (contract-first, safe, non-conflicting with Phase 1)
+- **Risk Matrix:** 5 primary risks identified + Hermes test coverage mitigations documented
+- **Status:** Design complete; implementation scheduled for Wave 3 after Phase 1 merge

@@ -153,3 +153,20 @@
 - Removed `IsRunning`/`FollowUpAsync` branching in `DefaultSubAgentManager.OnCompletedAsync`; parent wake now always uses `_dispatcher.DispatchAsync` so completion delivery is serialized via the session queue.
 - Added wake-delivery telemetry in `GatewayTelemetry`: `SubAgentWakeDispatched` and `SubAgentWakeDeliveryFailed`, and instrumented success/failure paths in `OnCompletedAsync`.
 - Updated sub-agent wake tests to reflect always-dispatch semantics and verified `SubAgentCompletionWake` test suite passes (8/8).
+
+### 2026-05-07 — SignalR conversation routing fix (Phase 1)
+- Fixed `GatewayHub.SendMessageCore` to normalize and pass client `conversationId` into `ResolveOrCreateSessionAsync`, so session resolution uses the same conversation context as dispatch.
+- Updated `GatewayHub.ResolveOrCreateSessionAsync` to forward `conversationId` into `IConversationRouter.ResolveInboundAsync` instead of always forcing `null`.
+- Result: non-default conversations now resolve to their own session at hub time, so SignalR group subscription and gateway routing stay aligned.
+
+
+### 2026-05-07 — Phase 1 Bug Fix: SignalR Conversation Routing
+
+- **Task:** Implement conversation routing fix per design review — pass client conversationId through GatewayHub into session resolution
+- **Changes:**
+  - GatewayHub.SendMessageCore: normalize optional conversationId, pass to ResolveOrCreateSessionAsync
+  - GatewayHub.ResolveOrCreateSessionAsync: accept conversationId parameter, forward to IConversationRouter.ResolveInboundAsync (instead of always 
+ull)
+- **Result:** Non-default conversations now resolve to target session at hub time; SignalR group subscription aligns with gateway routing
+- **Test Status:** Targeted SignalR routing tests pass; full suite blocked by unrelated baseline failures (pre-existing)
+- **Risk:** LOW — existing conversation router path used by GatewayHost; we're just exposing it to GatewayHub

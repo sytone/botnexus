@@ -31,6 +31,7 @@
 ---
 
 ## Learnings
+- 2026-05-07: Added SignalR conversation routing regressions that assert explicit conversationId resolves a distinct session (not the default portal session) and preserves conversation stamping on the resolved session.
 - 2026-04-20: Repro tests for sub-agent wake delivery should assert both dispatch metadata (messageType=subagent-completion) and stream-event channel capabilities; race-condition coverage needs explicit fallback-to-dispatch expectations when IsRunning flips during follow-up enqueue.
 
 - 2026-05-04: Gateway decoupling audit found direct test coupling concentrated in InProcessIsolationStrategy constructor wiring tests (tests\BotNexus.Gateway.Tests\InProcessIsolationStrategyTests.cs, ToolHookWiringTests.cs, Agents\SubAgentIntegrationTests.cs, PlatformConfigAgentSourceTests.cs); these should shift to DI/extension-loader-backed tool registration seams instead of hardcoded strategy composition.
@@ -83,3 +84,14 @@
 - Outcome: AgentCore timeout behavior passes; gateway timeout config wiring tests fail (expected, highlights issue #24 gap).
 
 ---
+
+
+### 2026-05-07 — Phase 1 Regression Coverage: Conversation Routing Tests
+
+- **Task:** Add regression tests for Phase 1 bug fix; verify session resolution behavior (not just metadata)
+- **Test Philosophy:** Prior bug manifested in session resolution returning default even when metadata was correct; metadata-only assertions insufficient
+- **Tests Added:**
+  - SignalRHubTests.GatewayHub_SendMessage_WithConversationId_ResolvesConversationSession: verify explicit conversationId resolves target conversation's session
+  - SignalRThreadRoutingTests.SignalRHub_NewConversation_GetsItsOwnSession (strengthened): expanded assertions to check both dispatched metadata AND resolved session identity + conversation store persistence
+- **Test Status:** Targeted SignalR routing tests pass; full suite blocked by unrelated baseline failures
+- **Coverage:** Session resolution behavior, conversation stamp persistence, non-default conversation isolation
