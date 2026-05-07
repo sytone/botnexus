@@ -5,7 +5,7 @@ type: improvement
 priority: high
 status: planning
 created: 2026-05-07
-updated: 2026-05-08
+updated: 2026-05-07
 author: Kif (Documentation Engineer)
 tags: [memory, architecture, openclaw, migration, data-portability]
 depends_on: [improvement-memory-lifecycle]
@@ -315,7 +315,7 @@ memory_search(query) runs embedding + keyword search
 
 ## 7. Resolved Design Decisions
 
-The following questions were raised during planning and resolved by Sytone (2026-05-08).
+The following questions were raised during planning and resolved by Sytone (2026-05-07).
 
 ### 7.1 Daily notes format
 
