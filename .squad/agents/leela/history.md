@@ -99,3 +99,38 @@ Farnsworth has implemented your recommendation to decouple Gateway from compile-
 **What This Enables:** Your remaining recommendations (Agent.Abstractions extraction, Copilot OAuth decoupling) are now better positioned to succeed. Build is green, no new test failures.
 
 ---
+
+---
+
+## 2026-05-07 — OpenClaw Memory Model Architecture Assessment (Team Coordination)
+
+**Status:** ✓ Assessment complete, merged to decisions.md
+
+**Context:** Sytone requested BotNexus team to research OpenClaw memory model for migration compatibility.
+
+**Your Contribution:**
+- Architecture assessment: OpenClaw treats Markdown as authoritative; SQLite/embeddings are derived indexes
+- Gap analysis identified 8 major divergences (primary authoring surface, file-based tools, daily notes path, daily notes loading, embeddings, memory flush, dreaming, conversation indexing, AGENTS.md, memory_get)
+- Proposed 5-wave implementation plan with detailed scope and file/project impacts
+- Wave 1: File-first authoring + daily load + replace memory_store
+- Wave 2: File-based indexing (rebuild SQLite from MEMORY.md + memory/*.md)
+- Wave 3: Embeddings hybrid search
+- Wave 4: Pre-compaction memory flush
+- Wave 5: Memory instructions + dreaming
+- Migration path documented (backward compatibility for Wave 1, data export before Wave 2 cutover)
+
+**Kif's Parallel Work:**
+- Comprehensive research on OpenClaw's memory model and system prompts
+- Documentation roadmap with priority tiers
+- Design insights and recommendations
+
+**Team Coordination:**
+- Both research outputs merged into decisions.md (2026-05-07 section)
+- Orchestration log created: .squad/orchestration-log/2026-05-07T15-17-40Z-memory-architecture-research.md
+- Session log created: .squad/log/2026-05-07T15-17-40Z-openclaw-memory-research.md
+- Inbox decision files deleted after merge
+
+**Next Steps:**
+- Implementation team to scope 5-wave plan against backlog (Wave 1-4 are priority)
+- Architecture team to finalize Wave 1 contracts
+- Migration strategy: export existing SQLite memories to memory/ files before Wave 2 cutover

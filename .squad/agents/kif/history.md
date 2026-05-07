@@ -129,3 +129,35 @@ The project follows a consistent pattern for documenting CLI features and proces
 ✅ Deferred features documented  
 
 **Orchestration Log:** `.squad/orchestration-log/2026-04-20T19-04-00Z-kif.md`
+
+---
+
+## 2026-05-07 — OpenClaw Memory Model Research (Team Coordination)
+
+**Status:** ✓ Research complete, merged to decisions.md
+
+**Context:** Sytone requested BotNexus team to research OpenClaw memory model for migration compatibility.
+
+**Your Contribution:**
+- Comprehensive research on OpenClaw's user-facing memory model, system prompts, agent initialization
+- Documented dreaming consolidation system (6 weighted scoring signals), commitments, active memory plugin
+- BotNexus current state assessment: memory infrastructure exists but gaps include dreaming, commitments, embedding support, daily notes auto-loading
+- Recommended documentation roadmap: high-priority updates to workspace-and-memory.md, new concepts/memory.md, user-guide/agents.md updates
+- Identified key design insights: simplicity over formality, explicit boundaries, consolidation optional, proactive recall adds UX
+
+**Leela's Parallel Work:**
+- Architecture assessment identifying 8 gaps between BotNexus and OpenClaw
+- Proposed 5-wave implementation plan (file-first authoring, file-based indexing, embeddings, pre-compaction flush, dreaming)
+- Key principle: Markdown files are source of truth; SQLite/embeddings are derived indexes
+- Migration compatibility and data portability as design drivers
+
+**Team Coordination:**
+- Both research outputs merged into decisions.md (2026-05-07 section)
+- Orchestration log created: .squad/orchestration-log/2026-05-07T15-17-40Z-memory-architecture-research.md
+- Session log created: .squad/log/2026-05-07T15-17-40Z-openclaw-memory-research.md
+- Inbox decision files deleted after merge
+
+**Next Steps:**
+- Implementation team to scope 5-wave plan against backlog
+- Documentation team to prioritize high-priority docs
+- Design team to finalize migration strategy for existing SQLite memories

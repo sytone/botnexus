@@ -14523,3 +14523,326 @@ No circular dependencies. `Gateway.Conversations` and `Gateway.Sessions` are sib
 - [ ] Gateway.Conversations does not reference Gateway.Sessions
 - [ ] Gateway.Sessions does not reference Gateway.Conversations
 
+
+---
+
+## 2026-05-07: OpenClaw Memory Model Research & Architecture Assessment
+
+### 2026-05-07T08:10:59-07:00: User Directive
+**By:** Sytone (via Copilot)  
+**What:** BotNexus memory should follow a path similar to OpenClaw to simplify migration: agents store daily information in `memory/YYYY-MM-DD.md`, durable memories go in `MEMORY.md` in the agent workspace, and searchable memory should be processed from those files into a store, likely using embeddings, instead of treating `memory_store` SQLite writes as the primary authoring path.  
+**Why:** User request — captured for team memory
+
+---
+
+### 2026-05-07T08:14:27-07:00: Kif Research Report — OpenClaw Memory Model Documentation
+
+**By:** Kif (Research Specialist)  
+**Requested by:** Sytone  
+**Status:** Research complete  
+**Deliverable:** Comprehensive OpenClaw memory model analysis
+
+#### Key Findings
+
+**1. OpenClaw's User-Facing Memory Model**
+- **MEMORY.md** — Long-term durable facts, preferences, decisions (manually edited or promoted via dreaming)
+- **memory/YYYY-MM-DD.md** — Daily running context, observations, specific conversations (auto-created per day; today + yesterday auto-loaded)
+- **DREAMS.md** — Dream Diary + grounded historical backfill for human review (written by dreaming subsystem)
+- **memory/.dreams/** — Machine state (recall store, phase signals, checkpoints); not user-edited
+
+**Key insight:** Users see only Markdown files. No database, no hidden state visible to the agent.
+
+**2. Memory Tools (OpenClaw)**
+- **memory_search** — Semantic + keyword hybrid search across memory files
+- **memory_get** — Read specific memory file or line range
+- Search uses embedding-based retrieval (OpenAI, Anthropic, etc.) but falls back to keyword matching
+
+**3. Memory Lifecycle (Pre-Compaction Flush)**
+Before compaction summarizes a conversation, OpenClaw runs a hidden background turn where:
+1. Agent is reminded to save important context to memory files
+2. Agent writes to `memory/YYYY-MM-DD.md` or `MEMORY.md`
+3. Compaction proceeds normally
+4. Memory files are re-indexed
+
+**4. Dreaming Consolidation System**
+- Runs on scheduled cron job (default: 3 AM daily)
+- Ingests short-term signals from daily notes
+- Scores candidates using 6 weighted signals: frequency (0.24), relevance (0.30), query diversity (0.15), recency (0.15), consolidation (0.10), conceptual richness (0.06)
+- Promotes qualified items into MEMORY.md
+- Writes human-readable diary entries to DREAMS.md
+- Machine state lives in `memory/.dreams/`
+
+**5. Commitments System (Inferred Follow-Ups)**
+- After an agent reply, hidden background pass looks for future check-in opportunities
+- Example: user mentions "interview tomorrow" → system infers "check in after interview"
+- Stored locally with agent ID, session, due window, suggested check-in text
+- Delivered via heartbeat when due
+- Scoped to exact agent + channel context
+
+**6. Active Memory Plugin**
+- Optional recall sub-agent that runs **before** main reply
+- Searches memory using available tools; surfaces relevant context without main agent having to ask
+- Runs in bounded time window (default 15 seconds)
+- Does not expose raw XML tags to users
+
+**7. BotNexus Current State**
+- Already has file infrastructure: MEMORY.md, memory/daily/YYYY-MM-DD.md, SOUL.md, IDENTITY.md, USER.md
+- Existing memory persistence spec: `docs/planning/improvement-memory-lifecycle/design-spec.md`
+- Missing: Dreaming/consolidation (mentioned in spec but not shipped), Commitments (not in BotNexus), Active Memory plugin, Agent instructions for memory usage
+
+**8. Naming & Structure Parallels**
+
+| Naming | OpenClaw | BotNexus |
+|--------|----------|---------|
+| Long-term memory | MEMORY.md | MEMORY.md ✓ **same** |
+| Daily notes | memory/YYYY-MM-DD.md | memory/daily/YYYY-MM-DD.md — **nested under /daily/** |
+| Consolidation output | DREAMS.md | Mentioned in spec, not yet documented |
+| Machine state | memory/.dreams/ | No equivalent documented |
+
+**Migration friction:** BotNexus uses `memory/daily/` instead of `memory/` for daily notes. Could alias for familiarity, or document the difference clearly.
+
+**9. Recommended Documentation Updates**
+
+**High Priority (Align with OpenClaw):**
+1. **`docs/development/workspace-and-memory.md`** — Add section on Dreaming (consolidation trigger, scoring signals, diary output), Commitments (inferred follow-ups, heartbeat delivery), daily notes location difference, user guidance
+2. **`docs/user-guide/agents.md`** (System Prompt Files section) — Add explicit reference to memory loading at startup, link to memory model doc, example of agent using memory tools
+3. **New doc: `docs/concepts/memory.md`** — Plain-language user guide for memory, how agents write memory, when to use MEMORY.md vs daily notes, memory search usage
+
+**Medium Priority:**
+4. **`docs/development/agent-execution.md`** — Add memory flush hook before compaction, document pre-compaction prompt behavior
+5. **`docs/configuration.md`** — Document dreaming config section (if/when shipped), commitments config
+
+**Low Priority (Future, Post-MVP):**
+6. **`docs/concepts/dreaming.md`** — Mirror OpenClaw's dreaming docs
+7. **`docs/concepts/commitments.md`** — Mirror OpenClaw's commitments docs
+8. **`docs/concepts/active-memory.md`** — Mirror OpenClaw's active memory plugin docs
+
+**10. Agent Instruction Patterns**
+OpenClaw's root AGENTS.md contains minimal telegraph-style rules; BotNexus should adopt similar: verify sources/tests before answering, cite file paths consistently, no absolute paths.
+
+#### Key Design Insights for Migration
+1. **Simplicity Over Formality** — Plain Markdown, not special YAML frontmatter or binary formats
+2. **Explicit Boundaries** — Clear separation of MEMORY.md (curated), daily notes (ephemeral), DREAMS.md (consolidation)
+3. **Consolidation is Optional** — Dreaming is opt-in; most agents don't need it immediately
+4. **Proactive Recall Adds UX** — Active Memory plugin improves recall feel
+5. **Commitments are Niche** — Solve specific use case; not critical for MVP memory migration
+
+#### Immediate Next Steps
+1. ✓ Research complete
+2. Add **Memory Concepts** doc (`docs/concepts/memory.md`)
+3. Update **`docs/development/workspace-and-memory.md`** with dreaming section reference
+4. Add **daily notes usage example** to `docs/user-guide/agents.md`
+
+---
+
+### 2026-05-07T08:14:27-07:00: Leela Architecture Assessment — Memory Model Alignment with OpenClaw
+
+**By:** Leela (Lead/Architect)  
+**Requested by:** Sytone  
+**Status:** Assessment complete — no code changes made  
+**Impact:** High — foundational to agent continuity and migration compatibility
+
+#### Executive Summary
+
+OpenClaw implements a **Markdown-first, file-authoritative** memory model where SQLite/embeddings are derived indexes (rebuildable). BotNexus treats SQLite `memory_store` as the primary authoring surface — a fundamental architectural divergence with implications for portability, data lock-in, and migration compatibility.
+
+**Design Principle: Markdown files are the source of truth; SQLite/embeddings are derived indexes.**
+
+This matches OpenClaw and preserves migration compatibility. It also means:
+- Agents can be migrated between platforms by copying their workspace directory
+- Memory is human-readable, editable, and version-controllable
+- The index can always be rebuilt from files
+- No data is trapped in a database that only tooling can access
+
+#### 1. How OpenClaw Tells Agents to Author Memory
+
+OpenClaw's memory model is **Markdown-first, file-authoritative**:
+
+| Layer | File | Purpose | Loaded when |
+|-------|------|---------|-------------|
+| Daily notes | memory/YYYY-MM-DD.md | Raw logs, observations, running context | Today + yesterday auto-loaded at session start |
+| Long-term | MEMORY.md | Curated durable facts, decisions, preferences | Every main/DM session start |
+| Dreams | DREAMS.md (optional) | Dreaming sweep summaries for human review | On demand |
+
+**Key AGENTS.md instructions to agents:**
+- "You wake up fresh each session. These files are your continuity."
+- Daily notes go in `memory/YYYY-MM-DD.md` — raw logs of what happened.
+- MEMORY.md is curated long-term memory — distilled essence, not raw logs.
+- "Mental notes don't survive session restarts. Files do." — explicit rule against relying on in-session state.
+- MEMORY.md is **only loaded in main sessions** (security: personal context doesn't leak to group chats)
+- During heartbeats, agents periodically review daily files and promote insights to MEMORY.md
+
+**Pre-compaction memory flush** — Before compaction, the platform injects a special turn telling the agent to write durable memories to `memory/YYYY-MM-DD.md`. APPEND only — never overwrite existing entries. MEMORY.md, SOUL.md, AGENTS.md, TOOLS.md, DREAMS.md are **read-only during flush**.
+
+**Bottom line:** Agents author memory by writing Markdown files. The files are the source of truth. There is no `memory_store` tool that writes directly to a database.
+
+#### 2. How OpenClaw Processes Memory Files into Searchable Storage
+
+**Indexing Pipeline:**
+1. **Source files:** MEMORY.md + memory/*.md are the primary corpus
+2. **Chunking:** Files are split into ~400-token chunks with 80-token overlap
+3. **SQLite database:** Per-agent at ~/.openclaw/memory/<agentId>.sqlite
+4. **FTS5 full-text index:** BM25 scoring for keyword search
+5. **Embedding vectors:** Stored as BLOB columns; computed via configurable provider (OpenAI, Gemini, Voyage, Mistral, Ollama, local GGUF)
+6. **Hybrid search:** Vector similarity (0.7 weight) + BM25 keyword (0.3 weight) combined, with optional MMR diversity and temporal decay (30-day half-life)
+7. **File watching:** Changes to memory files trigger debounced reindex (1.5s)
+8. **Auto-reindex:** When embedding provider/model/chunking config changes, full rebuild
+
+**Search Tools (agent-facing):**
+- memory_search — semantic/hybrid search across indexed memory. **No memory_store tool exists.**
+- memory_get — exact file/line range read from memory files
+
+**Key insight:** SQLite is purely derived state. The Markdown files are authoritative. The database is rebuilt from files at any time. Embeddings are used — they are real and central to search quality.
+
+#### 3. How BotNexus Currently Handles Memory
+
+**Current Architecture:**
+
+| Component | Location | What it does |
+|-----------|----------|--------------|
+| MemoryStoreTool | BotNexus.Memory/Tools/MemoryStoreTool.cs | Agent tool memory_store — writes directly to SQLite |
+| MemorySearchTool | BotNexus.Memory/Tools/MemorySearchTool.cs | Agent tool memory_search — FTS5 keyword search over SQLite |
+| MemoryGetTool | BotNexus.Memory/Tools/MemoryGetTool.cs | Agent tool memory_get — retrieve by ID or session |
+| SqliteMemoryStore | BotNexus.Memory/SqliteMemoryStore.cs | Per-agent SQLite database with FTS5 |
+| MemoryIndexer | BotNexus.Memory/MemoryIndexer.cs | Hosted service — indexes session conversation turns into SQLite on session close |
+| FileAgentWorkspaceManager | BotNexus.Gateway/Agents/FileAgentWorkspaceManager.cs | Loads SOUL.md, IDENTITY.md, USER.md, MEMORY.md from workspace |
+| AgentWorkspace | BotNexus.Gateway.Contracts/Agents/AgentWorkspace.cs | Record holding workspace file contents |
+| Workspace docs | docs/development/workspace-and-memory.md | Documents the intended layout including memory/daily/ |
+
+**What BotNexus Gets Right (aligned with OpenClaw):**
+- ✅ Workspace file structure: SOUL.md, IDENTITY.md, USER.md, MEMORY.md
+- ✅ MEMORY.md loaded into system prompt every session
+- ✅ Daily notes layout documented: memory/daily/YYYY-MM-DD.md
+- ✅ Per-agent SQLite with FTS5
+- ✅ Temporal decay in search (30-day half-life)
+- ✅ Design spec exists for memory flush lifecycle
+
+**Where BotNexus Diverges (gaps):**
+
+| Gap | BotNexus Today | OpenClaw Target |
+|-----|---------------|-----------------|
+| **Primary authoring surface** | memory_store tool writes directly to SQLite. SQLite is the source of truth. | Agents write Markdown files. SQLite is derived from files. |
+| **No file-based memory tools** | memory_store takes content string → SQLite row. No tool writes to memory/YYYY-MM-DD.md. | No memory_store tool at all. Agents use workspace file tools (write, edit) to author memory/YYYY-MM-DD.md. |
+| **Daily notes path** | Documented as memory/daily/YYYY-MM-DD.md (extra daily/ segment). | memory/YYYY-MM-DD.md (flat under memory/). |
+| **Daily notes not auto-loaded** | Only MEMORY.md loaded at session start. Daily notes exist but aren't injected into context. | Today + yesterday's daily notes auto-loaded into context. |
+| **No embeddings** | Embedding column exists in schema but is always null. Search is FTS5-only. | Hybrid search with embeddings is central. Multiple providers supported. |
+| **No memory flush** | Design spec written but not implemented. No pre-compaction flush turn. | Automatic pre-compaction flush is on by default. |
+| **No dreaming** | Not implemented. Design spec acknowledges it as Phase 4. | Optional but mature. Three-phase consolidation with scoring gates. |
+| **MemoryIndexer indexes conversations** | Indexes user/assistant turn pairs from session history into SQLite. | No equivalent — OpenClaw indexes file contents, not conversation turns directly. |
+| **AGENTS.md is auto-generated** | Lists configured agents (model, role). No memory instructions. | Contains detailed memory authoring instructions. |
+| **memory_get retrieves by ID/session** | Returns SQLite rows by ID or session. | Reads file contents by path and line range. |
+
+#### 4. Target Architecture
+
+`
+Agent Workspace (authoritative)
+├── MEMORY.md                     ← durable long-term memory (agent-curated)
+├── memory/
+│   ├── 2026-05-07.md            ← daily notes (agent-authored, append-only)
+│   ├── 2026-05-06.md
+│   └── ...
+└── DREAMS.md                     ← (future) dreaming summaries
+
+SQLite Index (derived, rebuildable)
+├── Per-agent: ~/.botnexus/memory/<agentId>.sqlite
+├── FTS5 full-text index over chunked file content
+├── Embedding vectors (when provider configured)
+└── Rebuilt on demand or on file change
+`
+
+**Key Architectural Decisions:**
+
+1. **Remove memory_store tool.** Agents should not write directly to SQLite. They write to files using existing workspace file tools (or a thin wrapper that targets memory/YYYY-MM-DD.md).
+
+2. **Repurpose MemoryIndexer to index files, not conversations.** Instead of indexing session turn pairs, it should chunk and index MEMORY.md + memory/*.md — the same corpus OpenClaw uses.
+
+3. **Add embedding support.** The Embedding column already exists. Add a configurable embedding provider abstraction (start with OpenAI text-embedding-3-small, then Ollama/local). Hybrid search = vector + FTS5.
+
+4. **Auto-load daily notes into context.** FileAgentWorkspaceManager.LoadWorkspaceAsync should also load today's and yesterday's memory/YYYY-MM-DD.md files.
+
+5. **Fix daily notes path.** Change from memory/daily/YYYY-MM-DD.md to memory/YYYY-MM-DD.md to match OpenClaw convention.
+
+6. **Implement pre-compaction memory flush.** The design spec already exists at docs/planning/improvement-memory-lifecycle/design-spec.md. This is the highest-value platform feature — it prevents memory loss.
+
+7. **Add memory instructions to AGENTS.md (or system prompt).** BotNexus's auto-generated AGENTS.md currently lists agents but has no memory authoring guidance. Add OpenClaw-style instructions telling agents how and when to write to memory files.
+
+8. **Repurpose memory_get to read files.** Instead of SQLite row lookup, it should read from MEMORY.md or memory/*.md by path and optional line range — matching OpenClaw's memory_get.
+
+#### 5. Staged Implementation Plan
+
+**Wave 1: Foundation (file-first memory model)**
+- **Scope:** Make Markdown files the primary authoring and reading surface
+- **Files/projects affected:**
+  - BotNexus.Memory/Tools/MemoryStoreTool.cs — remove or replace with tool that appends to memory/YYYY-MM-DD.md
+  - BotNexus.Memory/Tools/MemoryGetTool.cs — rewrite to read from workspace files by path/line range
+  - BotNexus.Gateway/Agents/FileAgentWorkspaceManager.cs — add daily notes loading (today + yesterday)
+  - BotNexus.Gateway.Contracts/Agents/AgentWorkspace.cs — add DailyNotes property
+  - docs/development/workspace-and-memory.md — update path from memory/daily/ to memory/
+  - BotNexus.Gateway.Prompts/ — inject daily notes into system prompt context
+  - Tests: migrate MemoryStoreToolTests, add FileAgentWorkspaceManager daily notes tests
+
+**Wave 2: File-based indexing**
+- **Scope:** Rebuild SQLite index from files instead of conversation turns
+- **Files/projects affected:**
+  - BotNexus.Memory/MemoryIndexer.cs — rewrite to scan MEMORY.md + memory/*.md, chunk into ~400-token segments, insert into SQLite
+  - BotNexus.Memory/SqliteMemoryStore.cs — adapt schema for file-sourced chunks (add path, start_line, end_line columns; remove session_id, turn_index)
+  - BotNexus.Memory/Models/MemoryEntry.cs — update fields
+  - BotNexus.Memory/MemorySearchFilter.cs — update filter options
+  - File watcher: add FileSystemWatcher on workspace memory/ directory for debounced reindex
+  - CLI: update botnexus memory backfill to reindex from files
+  - Tests: rewrite MemoryIndexerTests, SqliteMemoryStoreExtendedTests
+
+**Wave 3: Embedding support**
+- **Scope:** Add vector search alongside FTS5
+- **New files/projects:**
+  - BotNexus.Memory/Embeddings/IEmbeddingProvider.cs — abstraction
+  - BotNexus.Memory/Embeddings/OpenAiEmbeddingProvider.cs — first implementation
+  - BotNexus.Memory/Embeddings/OllamaEmbeddingProvider.cs — local option
+  - BotNexus.Memory/SqliteMemoryStore.cs — hybrid search: combine cosine similarity with BM25
+  - BotNexus.Domain/Gateway/Models/MemoryAgentConfig.cs — add embedding provider config
+  - docs/botnexus-config.schema.json — extend schema
+  - Tests: embedding provider tests, hybrid search tests
+
+**Wave 4: Pre-compaction memory flush**
+- **Scope:** Implement the already-designed memory flush from improvement-memory-lifecycle spec
+- **Files/projects affected:**
+  - BotNexus.Gateway/ — compaction pipeline integration point
+  - New: MemoryFlushService or integration into existing compaction flow
+  - Flush prompt injection (modeled on OpenClaw's flush-plan.ts)
+  - Config: gateway.compaction.memoryFlush settings
+  - Tests: flush trigger tests, safety guard tests
+
+**Wave 5: Memory instructions and dreaming (future)**
+- **Scope:** Agent-facing instructions and optional consolidation
+- Add memory authoring instructions to system prompt (either via AGENTS.md generation or prompt pipeline)
+- Dreaming: periodic cron-based consolidation of daily notes → MEMORY.md
+- DREAMS.md output for human review
+
+**Migration Path:**
+- Wave 1 is backward-compatible: existing SQLite data remains but is no longer the primary write path
+- Wave 2 rebuilds the index from files — any existing SQLite memories from memory_store that aren't backed by files will be lost. Migration step: export existing SQLite entries to memory/ files before cutting over
+- Waves 3-5 are additive
+
+#### 6. Rationale for File-First Architecture
+
+1. **Migration compatibility** — Files are portable across platforms; SQLite is not
+2. **Human readability** — Memory is editable, reviewable, version-controllable
+3. **Data portability** — No lock-in to a platform or tool ecosystem
+4. **Index robustness** — Derived state can always be rebuilt from files
+5. **Clarity** — Agents understand they're writing files, not database tables
+6. **Alignment with OpenClaw** — Establishes shared architecture patterns for future integrations
+
+---
+
+## Summary of 2026-05-07 OpenClaw Memory Research
+
+**Key Decision:** BotNexus memory architecture should transition from **SQLite-primary to Markdown-primary**, mirroring OpenClaw's model for migration compatibility and data portability.
+
+**Immediate Actions:**
+1. Merge Kif's research findings and Leela's architecture assessment into team decisions
+2. Update documentation: workspace-and-memory.md, create concepts/memory.md, update user-guide/agents.md
+3. Scope 5-wave implementation plan against backlog (priority: Wave 1-4)
+4. Plan migration strategy for existing SQLite memories
+
+**Design Principle:** Markdown files are the source of truth; SQLite/embeddings are derived, rebuildable indexes.
+
