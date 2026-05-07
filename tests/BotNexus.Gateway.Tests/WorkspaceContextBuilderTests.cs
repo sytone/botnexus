@@ -121,8 +121,8 @@ public sealed class WorkspaceContextBuilderTests
             ("IDENTITY.md", "IDENTITY"),
             ("USER.md", "USER"),
             ("MEMORY.md", "LONG-TERM MEMORY"),
-            ($@"memory\{todayFileName}", "TODAY MEMORY ENTRY"),
-            ($@"memory\{yesterdayFileName}", "YESTERDAY MEMORY ENTRY"));
+            (Path.Combine("memory", todayFileName), "TODAY MEMORY ENTRY"),
+            (Path.Combine("memory", yesterdayFileName), "YESTERDAY MEMORY ENTRY"));
         try
         {
             var manager = new StubWorkspaceManager(workspacePath);
@@ -159,9 +159,9 @@ public sealed class WorkspaceContextBuilderTests
             ("IDENTITY.md", "IDENTITY"),
             ("USER.md", "USER"),
             ("MEMORY.md", "LONG-TERM MEMORY"),
-            ($@"journals\{todayFileName}", "OVERRIDE TODAY"),
-            ($@"journals\{yesterdayFileName}", "OVERRIDE YESTERDAY"),
-            ($@"memory\{todayFileName}", "DEFAULT MEMORY SHOULD NOT LOAD"));
+            (Path.Combine("journals", todayFileName), "OVERRIDE TODAY"),
+            (Path.Combine("journals", yesterdayFileName), "OVERRIDE YESTERDAY"),
+            (Path.Combine("memory", todayFileName), "DEFAULT MEMORY SHOULD NOT LOAD"));
         try
         {
             var manager = new StubWorkspaceManager(workspacePath);
@@ -205,8 +205,8 @@ public sealed class WorkspaceContextBuilderTests
             ("BOOTSTRAP.md", "BOOTSTRAP"),
             ("IDENTITY.md", "IDENTITY"),
             ("USER.md", "USER"),
-            ($@"journals\{todayFileName}", "FILE OVERRIDE TODAY"),
-            ($@"memory\{todayFileName}", "DEFAULT MEMORY SHOULD NOT LOAD"));
+            (Path.Combine("journals", todayFileName), "FILE OVERRIDE TODAY"),
+            (Path.Combine("memory", todayFileName), "DEFAULT MEMORY SHOULD NOT LOAD"));
         try
         {
             var manager = new StubWorkspaceManager(workspacePath);
@@ -218,7 +218,7 @@ public sealed class WorkspaceContextBuilderTests
                 DisplayName = "Farnsworth",
                 ModelId = "test-model",
                 ApiProvider = "test-provider",
-                Memory = new MemoryAgentConfig { Enabled = true, Path = "journals\\daily.md" }
+                Memory = new MemoryAgentConfig { Enabled = true, Path = Path.Combine("journals", "daily.md") }
             });
 
             result.ShouldContain("FILE OVERRIDE TODAY");
@@ -269,7 +269,10 @@ public sealed class WorkspaceContextBuilderTests
 
         foreach (var (fileName, content) in files)
         {
-            var filePath = Path.Combine(workspacePath, fileName);
+            var normalizedFileName = fileName
+                .Replace('\\', Path.DirectorySeparatorChar)
+                .Replace('/', Path.DirectorySeparatorChar);
+            var filePath = Path.Combine(workspacePath, normalizedFileName);
             var directory = Path.GetDirectoryName(filePath);
             if (!string.IsNullOrWhiteSpace(directory))
                 _fileSystem.Directory.CreateDirectory(directory);
