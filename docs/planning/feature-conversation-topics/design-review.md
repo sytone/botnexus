@@ -66,7 +66,7 @@ The spec's Phase 1 item "Add `ConversationId` primitive" is already complete fro
 The current codebase pattern is:
 - contracts/interfaces in `src/gateway/BotNexus.Gateway.Contracts/`
 - runtime orchestration in `src/gateway/BotNexus.Gateway/`
-- persistence implementations in `src/gateway/BotNexus.Gateway.Sessions/`
+- persistence implementations in `src/gateway/BotNexus.Gateway.Conversations/` (extracted from Sessions)
 - domain/value types in `src/domain/BotNexus.Domain/`
 
 Session persistence already has three implementations:
@@ -76,14 +76,14 @@ Session persistence already has three implementations:
 
 ### Decision
 - `IConversationStore` should live in **`BotNexus.Gateway.Contracts/Conversations`**.
-- The initial implementations should live in **`BotNexus.Gateway.Sessions`**, not a new assembly.
+- The initial implementations should live in **`BotNexus.Gateway.Conversations`** (a dedicated project, extracted during implementation).
 - Required implementations for v1:
   - `InMemoryConversationStore`
   - `FileConversationStore`
   - `SqliteConversationStore`
 
 ### Rationale
-Conversation persistence is the same class of problem as session persistence: gateway-owned durable state. Reusing `BotNexus.Gateway.Sessions` avoids unnecessary project sprawl and allows the same config path / storage mode decisions to apply.
+Conversation persistence is the same class of problem as session persistence: gateway-owned durable state. During implementation, conversation stores were extracted into a dedicated `BotNexus.Gateway.Conversations` project to keep the Sessions project focused on session persistence.
 
 ### Backing store shape
 - **InMemory**: for tests/dev parity.
@@ -644,9 +644,9 @@ This keeps history assembly out of the store.
 - `src/domain/BotNexus.Domain/Gateway/Models/Session.cs`
 - `src/gateway/BotNexus.Gateway.Contracts/Conversations/IConversationStore.cs`
 - `src/gateway/BotNexus.Gateway.Contracts/Conversations/ConversationSummary.cs`
-- `src/gateway/BotNexus.Gateway.Sessions/InMemoryConversationStore.cs`
-- `src/gateway/BotNexus.Gateway.Sessions/FileConversationStore.cs`
-- `src/gateway/BotNexus.Gateway.Sessions/SqliteConversationStore.cs`
+- `src/gateway/BotNexus.Gateway.Conversations/InMemoryConversationStore.cs`
+- `src/gateway/BotNexus.Gateway.Conversations/FileConversationStore.cs`
+- `src/gateway/BotNexus.Gateway.Conversations/SqliteConversationStore.cs`
 - `src/gateway/BotNexus.Gateway/Extensions/GatewayServiceCollectionExtensions.cs`
 
 ### Done when
@@ -789,7 +789,7 @@ This keeps history assembly out of the store.
 ## 5. SQLite/file schema drift between session and conversation persistence
 
 **Risk:** implementing conversation store in a separate pattern from session store increases maintenance burden.  
-**Mitigation:** keep conversation persistence in `BotNexus.Gateway.Sessions` and mirror session store configuration and serialization conventions.
+**Mitigation:** keep conversation persistence in `BotNexus.Gateway.Conversations` and mirror session store configuration and serialization conventions.
 
 ---
 
@@ -797,7 +797,7 @@ This keeps history assembly out of the store.
 
 1. **Conversation is approved as the top-level user-visible container.**
 2. **`ConversationId` already exists and must be reused.**
-3. **`IConversationStore` belongs in `BotNexus.Gateway.Contracts`; implementations belong in `BotNexus.Gateway.Sessions`.**
+3. **`IConversationStore` belongs in `BotNexus.Gateway.Contracts`; implementations belong in `BotNexus.Gateway.Conversations`.**
 4. **`GatewayHub.ResolveOrCreateSessionAsync()` must be replaced by conversation-first routing.**
 5. **`Session.ConversationId` remains nullable for compatibility; no eager historical backfill.**
 6. **`ISessionWarmupService` remains session-scoped; conversation warmup/catalog is a separate service.**

@@ -4,7 +4,7 @@ The **Gateway** is the central orchestrator of the BotNexus platform. It manages
 
 ## Architecture
 
-The Gateway is composed of **5 core projects**:
+The Gateway is composed of **6 core projects**:
 
 | Project | Purpose |
 |---------|---------|
@@ -12,6 +12,7 @@ The Gateway is composed of **5 core projects**:
 | **BotNexus.Gateway** | Main host — message routing, agent supervision, hot reload, channel management |
 | **BotNexus.Gateway.Api** | REST API (agents, sessions, chat, config) + WebSocket handler + SignalR hub |
 | **BotNexus.Gateway.Sessions** | Session persistence implementations (InMemory, FileSessionStore) |
+| **BotNexus.Gateway.Conversations** | Conversation persistence (InMemory, File, Sqlite) and routing |
 | **BotNexus.Cli** | Command-line interface for Gateway management and interaction |
 
 ### Message Flow
@@ -948,6 +949,11 @@ src/gateway/
 │   ├── InMemorySessionStore.cs
 │   ├── FileSessionStore.cs
 │   └── ...
+├── BotNexus.Gateway.Conversations/
+│   ├── InMemoryConversationStore.cs
+│   ├── FileConversationStore.cs
+│   ├── SqliteConversationStore.cs
+│   └── DefaultConversationRouter.cs
 └── README.md (this file)
 ```
 
