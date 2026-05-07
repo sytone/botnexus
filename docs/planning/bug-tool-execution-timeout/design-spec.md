@@ -3,14 +3,14 @@ id: bug-tool-execution-timeout
 title: "No Tool Execution Timeout or Stuck-Turn Recovery"
 type: bug
 priority: critical
-status: draft
+status: in-progress
 created: 2026-04-20
 tags: [tools, timeout, resilience, session-recovery, agent-lifecycle]
 ---
 
 # Bug: No Tool Execution Timeout or Stuck-Turn Recovery
 
-**Status:** draft
+**Status:** in-progress
 **Priority:** critical
 **Created:** 2026-04-20
 

@@ -10,12 +10,13 @@ namespace BotNexus.Gateway.Abstractions.Sessions;
 /// <remarks>
 /// <para>Built-in implementations:</para>
 /// <list type="bullet">
-///   <item><b>InMemorySessionStore</b> — Fast, non-durable. For development and testing.</item>
-///   <item><b>FileSessionStore</b> — JSONL file-backed. For single-instance deployments.
-///   Inspired by the archive's <c>SessionManager</c> (JSONL with .meta.json sidecar).</item>
+///   <item><b>InMemorySessionStore</b> — Non-durable, in-process. For development and testing.</item>
+///   <item><b>FileSessionStore</b> — File-backed with JSONL history + JSON metadata sidecar. For single-instance deployments.</item>
+///   <item><b>SqliteSessionStore</b> — SQLite database-backed, production-ready. Features indexed queries,
+///   WAL mode for concurrency, and per-session locking.</item>
 /// </list>
 /// <para>
-/// Future implementations could use SQLite, Redis, PostgreSQL, etc.
+/// Future implementations could use Redis, PostgreSQL, or other backends.
 /// All implementations must be thread-safe.
 /// </para>
 /// </remarks>

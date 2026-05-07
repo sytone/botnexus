@@ -50,6 +50,7 @@ public static class AgentConfigMerger
             SubAgents = agent.SubAgents,
             IsolationStrategy = agent.IsolationStrategy,
             MaxConcurrentSessions = agent.MaxConcurrentSessions,
+            ToolTimeoutSeconds = MergeToolTimeoutSeconds(defaults.ToolTimeoutSeconds, agent.ToolTimeoutSeconds, agentObj),
             Metadata = agent.Metadata,
             IsolationOptions = agent.IsolationOptions,
             Enabled = agent.Enabled,
@@ -80,6 +81,17 @@ public static class AgentConfigMerger
             return agent;
 
         // No agent override — inherit defaults
+        return agent ?? defaults;
+    }
+
+    private static int? MergeToolTimeoutSeconds(
+        int? defaults,
+        int? agent,
+        JsonElement? agentObj)
+    {
+        if (agentObj is not null && agentObj.Value.TryGetProperty("toolTimeoutSeconds", out _))
+            return agent;
+
         return agent ?? defaults;
     }
 

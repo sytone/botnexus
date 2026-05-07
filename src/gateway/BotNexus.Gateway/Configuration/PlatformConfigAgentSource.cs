@@ -59,7 +59,7 @@ public sealed class PlatformConfigAgentSource(
         if (agents is null || agents.Count == 0)
             return descriptors;
 
-        var agentDefaults = platformConfig.AgentDefaults;
+        var agentDefaults = platformConfig.AgentDefaults ?? ExtractInlineAgentDefaults(agents);
         var agentRawElements = platformConfig.AgentRawElements;
 
         foreach (var (agentId, agentConfig) in agents)
@@ -78,6 +78,9 @@ public sealed class PlatformConfigAgentSource(
             if (agentRawElements is not null && agentRawElements.TryGetValue(agentId, out var rawEl))
                 rawElement = rawEl;
             var effectiveConfig = AgentConfigMerger.Merge(agentDefaults, agentConfig, rawElement);
+            var metadata = new Dictionary<string, object?>(ConvertObject(effectiveConfig.Metadata), StringComparer.OrdinalIgnoreCase);
+            if (effectiveConfig.ToolTimeoutSeconds is int toolTimeoutSeconds)
+                metadata["toolTimeoutSeconds"] = toolTimeoutSeconds;
 
             var descriptor = new AgentDescriptor
             {
@@ -95,7 +98,7 @@ public sealed class PlatformConfigAgentSource(
                     ? "in-process"
                     : effectiveConfig.IsolationStrategy,
                 MaxConcurrentSessions = effectiveConfig.MaxConcurrentSessions ?? 0,
-                Metadata = ConvertObject(effectiveConfig.Metadata),
+                Metadata = metadata,
                 IsolationOptions = ConvertObject(effectiveConfig.IsolationOptions),
                 Memory = CloneMemoryConfig(effectiveConfig.Memory),
                 Soul = CloneSoulConfig(effectiveConfig.Soul),
@@ -122,6 +125,26 @@ public sealed class PlatformConfigAgentSource(
         }
 
         return descriptors;
+    }
+
+    private static AgentDefaultsConfig? ExtractInlineAgentDefaults(IReadOnlyDictionary<string, AgentDefinitionConfig> agents)
+    {
+        foreach (var (agentId, config) in agents)
+        {
+            if (!string.Equals(agentId, "defaults", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            return new AgentDefaultsConfig
+            {
+                ToolIds = config.ToolIds,
+                ToolTimeoutSeconds = config.ToolTimeoutSeconds,
+                Memory = config.Memory,
+                Heartbeat = config.Heartbeat,
+                FileAccess = config.FileAccess
+            };
+        }
+
+        return null;
     }
 
     private static IReadOnlyList<string> ResolveSystemPromptFiles(AgentDefinitionConfig agentConfig)

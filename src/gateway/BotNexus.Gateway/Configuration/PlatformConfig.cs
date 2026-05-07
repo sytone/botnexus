@@ -356,6 +356,8 @@ public sealed class AgentDefinitionConfig
     public string? SystemPromptFile { get; set; }
     /// <summary>Tool identifiers this agent has access to.</summary>
     public List<string>? ToolIds { get; set; }
+    /// <summary>Per-tool timeout in seconds for runtime tool execution safety caps.</summary>
+    public int? ToolTimeoutSeconds { get; set; }
     /// <summary>Agent IDs this agent can call as sub-agents.</summary>
     public List<string>? SubAgents { get; set; }
     /// <summary>Isolation strategy name (e.g. 'in-process').</summary>
