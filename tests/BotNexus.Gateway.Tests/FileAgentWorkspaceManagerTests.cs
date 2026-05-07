@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Data.Sqlite;
+using System.Reflection;
 using System.IO.Abstractions.TestingHelpers;
 
 namespace BotNexus.Gateway.Tests;
@@ -40,16 +41,59 @@ public sealed class FileAgentWorkspaceManagerTests : IDisposable
     }
 
     [Fact]
-    public async Task SaveMemoryAsync_AppendsMemoryFile()
+    public async Task SaveMemoryAsync_LegacyOverload_AppendsToTodaysDailyMemoryFile()
     {
         await _workspaceManager.SaveMemoryAsync("farnsworth", "first line");
         await _workspaceManager.SaveMemoryAsync("farnsworth", "second line");
 
-        var memoryPath = Path.Combine(_workspaceManager.GetWorkspacePath("farnsworth"), "MEMORY.md");
-        var content = await _fileSystem.File.ReadAllTextAsync(memoryPath);
+        var workspacePath = _workspaceManager.GetWorkspacePath("farnsworth");
+        var dailyMemoryPath = Path.Combine(workspacePath, "memory", $"{DateTime.UtcNow:yyyy-MM-dd}.md");
+        var content = await _fileSystem.File.ReadAllTextAsync(dailyMemoryPath);
 
         content.ShouldContain("first line");
         content.ShouldContain("second line");
+        _fileSystem.File.Exists(Path.Combine(workspacePath, "MEMORY.md")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task SaveMemoryAsync_WithRelativeMemoryPath_AppendsToRequestedMarkdownFile()
+    {
+        var overload = typeof(FileAgentWorkspaceManager).GetMethod(
+            nameof(FileAgentWorkspaceManager.SaveMemoryAsync),
+            BindingFlags.Public | BindingFlags.Instance,
+            binder: null,
+            types: [typeof(string), typeof(string), typeof(string), typeof(CancellationToken)],
+            modifiers: null);
+
+        overload.ShouldNotBeNull("Wave 1 requires memory_save(file_path, content) support.");
+
+        var task = (Task?)overload!.Invoke(
+            _workspaceManager,
+            ["farnsworth", @"memory\handoff.md", "first handoff entry", CancellationToken.None]);
+
+        task.ShouldNotBeNull();
+        await task!;
+
+        var handoffPath = Path.Combine(_workspaceManager.GetWorkspacePath("farnsworth"), "memory", "handoff.md");
+        var content = await _fileSystem.File.ReadAllTextAsync(handoffPath);
+        content.ShouldContain("first handoff entry");
+    }
+
+    [Fact]
+    public async Task SaveMemoryAsync_WithMemoryPathOverride_AppendsToOverrideLocation()
+    {
+        await _workspaceManager.SaveMemoryAsync(
+            "farnsworth",
+            filePath: null,
+            content: "override entry",
+            memoryPathOverride: @"journals\notes.md",
+            cancellationToken: CancellationToken.None);
+
+        var workspacePath = _workspaceManager.GetWorkspacePath("farnsworth");
+        var overrideFilePath = Path.Combine(workspacePath, "journals", "notes.md");
+        _fileSystem.File.Exists(overrideFilePath).ShouldBeTrue();
+        var content = await _fileSystem.File.ReadAllTextAsync(overrideFilePath);
+        content.ShouldContain("override entry");
     }
 
     public void Dispose()

@@ -111,3 +111,37 @@
 - Ready for PR merge
 
 ---
+## 2026-05-07 — OpenClaw Memory Wave 1 Consistency Review (Consistency Reviewer)
+
+**Role:** Cross-doc consistency validation  
+**Branch:** feature/openclaw-memory-alignment  
+**Status:** ✅ COMPLETE — No blocking consistency issues; planning spec drift flagged  
+
+**Consistency Review (nibbler-memory-wave1-consistency.md):**
+
+**Issue Identified:** Planning spec Phase 2b contradicts resolved Wave 1 contract
+- **Phase 2b instruction:** "Update MEMORY.md if significant long-term items were discussed"
+- **Wave 1 contract:** MEMORY.md is read-only during normal agent turns; only Wave 5 consolidation (dreaming) writes it
+- **Root cause:** Spec drafted before Wave 1 architecture decision to make MEMORY.md read-only during normal turns
+
+**Why This Matters:**
+1. Phase 2b labeled "No Platform Changes" — implies agents should do this now with existing tools
+2. But \memory_save\ blocks path traversal outside \memory/\, so agents cannot write to MEMORY.md via tool
+3. Future implementer reading Phase 2b could build bypass or weaken path guard
+4. Spec should align with Wave 1 contract or defer writes to Phase 4 (Dreaming)
+
+**Recommendation:** Move "Update MEMORY.md" bullet from Phase 2b to Phase 4 (Dreaming)
+
+**Safe Fixes Already Committed:**
+- \docs/development/workspace-and-memory.md\: Removed false claim about \	arget\ parameter; clarified consolidation is future Wave 5 capability
+
+**Coordination with Leela:** Escalated Phase 2b contradiction; Leela incorporated into leela-memory-wave1-rereview.md
+- Confirmed Phase 2b contradiction is planning artifact, not implementation issue
+- No production code changes needed
+- Planning spec can remain as-is (historical) or be updated post-merge
+
+**Outcomes:**
+- Wave 1 implementation is internally consistent and aligned with resolved contracts
+- Planning spec drift documented and flagged for post-merge planning-spec update (optional, non-blocking)
+- Active docs (workspace-and-memory.md) corrected
+- No consistency issues blocking Wave 1 merge
