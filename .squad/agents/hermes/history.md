@@ -83,3 +83,40 @@
 - Outcome: AgentCore timeout behavior passes; gateway timeout config wiring tests fail (expected, highlights issue #24 gap).
 
 ---
+
+## 2026-05-07 — OpenClaw Memory Wave 1 QA & Validation (QA/Test Coverage)
+
+**Role:** Test coverage, validation, final QA verdict  
+**Branch:** feature/openclaw-memory-alignment  
+**Status:** ✅ APPROVE — Ready for merge  
+
+**QA Activities:**
+
+**Initial Validation (Post-Bender):**
+- Reviewed diff: e21e9e38..494804c8
+- Executed targeted Wave 1 tests: FileAgentWorkspaceManagerTests, WorkspaceContextBuilderTests, PlatformConfigAgentSourceTests, InProcessIsolationStrategyTests, ToolHookWiringTests, SubAgentIntegrationTests
+- Found change-related failures: SystemPromptBuilderSnapshotTests (3 failures from AGENTS.md changes), WorkspaceContextBuilderTests ordering instability
+- Pre-existing unrelated failures: SqliteSessionStoreConversationIdTests file lock cleanup
+
+**Remediation Validation (Post-Farnsworth 58d03d13):**
+- Full test execution results:
+  - BotNexus.Memory.Tests: ✅ 61 pass
+  - BotNexus.Prompts.Tests: ✅ 6 pass
+  - Wave 1 targeted Gateway classes: ✅ all pass
+  - Full BotNexus.Gateway.Tests: ❌ 7 pre-existing failures (outside Wave 1 scope)
+  - Full solution suite: ❌ pre-existing failures only (CodingAgent timeouts, MCP flake, snapshot drift, file locks)
+
+**Coverage Assignments (From Leela Conditions):**
+- **N1 (now C2):** Missing ContextFileOrdering_DailyNoteTests — coverage exists in Prompts and WorkspaceContextBuilder tests (ordering, deterministic sequencing)
+- **N3 (now C1):** DateTime consistency (DateTime.Now vs DateTime.UtcNow) — flagged as Wave 2 carry-forward
+- **N4 (now C3):** 4000-char daily note budget not enforced — tracked for Wave 2 backlog
+
+**Final Verdict:** ✅ **APPROVE**
+- No change-related test failures in Wave 1 targeted scope
+- Material coverage exists for modified areas (WorkspaceContextBuilder, FileAgentWorkspaceManager, MemorySaveTool delegation, ToolHookWiring)
+- Full suite feasibility verified (pre-existing failures documented and isolated)
+- Ready for merge
+
+**Outcomes:**
+- Wave 1 memory alignment validated and approved
+- Three non-blocking conditions (C1–C3) carried to Wave 2 backlog

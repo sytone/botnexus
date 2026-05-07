@@ -153,3 +153,33 @@
 - Removed `IsRunning`/`FollowUpAsync` branching in `DefaultSubAgentManager.OnCompletedAsync`; parent wake now always uses `_dispatcher.DispatchAsync` so completion delivery is serialized via the session queue.
 - Added wake-delivery telemetry in `GatewayTelemetry`: `SubAgentWakeDispatched` and `SubAgentWakeDeliveryFailed`, and instrumented success/failure paths in `OnCompletedAsync`.
 - Updated sub-agent wake tests to reflect always-dispatch semantics and verified `SubAgentCompletionWake` test suite passes (8/8).
+
+## 2026-05-07 — OpenClaw Memory Wave 1 Initial Implementation (Runtime Implementation)
+
+**Role:** Runtime seams mapping and initial Wave 1 delivery  
+**Branch:** feature/openclaw-memory-alignment  
+**Status:** REJECTED (blocking issues B1, B2) → Remediated by Farnsworth  
+
+**Initial Implementation (Commits e21e9e38, 494804c8):**
+- Wave 1 contracts fully implemented (1A): memory_save tool, context loading, config mapping
+- Runtime tool delivery (1B): memory_save with daily-note routing
+- Gateway context wiring (1C): MEMORY.md + recent notes integration
+- Test coverage (1D, partial): 739 new lines across 9 files
+
+**Architecture Assessment (Leela Review):**
+- ✅ Scope correctness: No premature Wave 2/3 abstractions
+- ✅ Path safety: EnsureWithinRoot guard, cross-platform handling, traversal validation
+- ❌ **B1 (HIGH severity):** MemorySaveTool reimplemented filesystem logic instead of delegating through workspace manager (DIP + DRY violation)
+- ❌ **B2 (HIGH severity):** Daily note loading duplicated with behavioral divergence; DailyMemoryNote + RecentMemoryNotes are dead code
+
+**Rejection Outcome (Leela's leela-memory-wave1-review.md):**
+- **REJECT** — both blocking issues require remediation before merge
+- Strict lockout protocol applied: Bender cannot revise rejected work
+- Remediation delegated to Farnsworth
+
+**Contribution Legacy:**
+- Initial scope was correct for Wave 1
+- Path safety design and traversal validation concepts carried forward to remediation
+- Foundation for Farnsworth's clean fix (58d03d13)
+
+**Learning:** Strict rejection protocol ensures architectural rigor — rejected work delegates to fresh implementer, prevents scope drift from remediation.
