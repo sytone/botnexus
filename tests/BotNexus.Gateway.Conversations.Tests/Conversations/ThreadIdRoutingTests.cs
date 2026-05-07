@@ -6,7 +6,7 @@ using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace BotNexus.Gateway.Tests.Conversations;
+namespace BotNexus.Gateway.Conversations.Tests.Conversations;
 
 /// <summary>
 /// Tests for thread-aware inbound routing in <see cref="DefaultConversationRouter"/>.
@@ -135,3 +135,4 @@ internal sealed class CapturingConversationRouter : IConversationRouter
     public Task ReattachBindingAsync(BindingId bindingId, ConversationId targetConversationId, CancellationToken ct = default)
         => Task.CompletedTask;
 }
+

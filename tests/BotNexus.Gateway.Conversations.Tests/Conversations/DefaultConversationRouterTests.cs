@@ -6,7 +6,7 @@ using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace BotNexus.Gateway.Tests.Conversations;
+namespace BotNexus.Gateway.Conversations.Tests.Conversations;
 
 /// <summary>
 /// Unit tests for <see cref="DefaultConversationRouter"/>.
@@ -310,3 +310,4 @@ public sealed class DefaultConversationRouterTests
         bindings.ShouldContain(b => b.ChannelAddress == ChannelAddress.From("notify-only-chan") && b.Mode == BindingMode.NotifyOnly);
     }
 }
+

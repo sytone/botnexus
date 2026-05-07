@@ -7,7 +7,7 @@ using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace BotNexus.Gateway.Tests.Conversations;
+namespace BotNexus.Gateway.Conversations.Tests.Conversations;
 
 /// <summary>
 /// Tests verifying that fan-out delivers binding-aware OutboundMessage fields.
@@ -72,3 +72,4 @@ public sealed class FanOutBindingAwareTests
         outbound.BindingId?.Value.ShouldBe("binding-tg");
     }
 }
+

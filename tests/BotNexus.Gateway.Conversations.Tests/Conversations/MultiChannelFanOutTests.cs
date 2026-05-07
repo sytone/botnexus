@@ -11,7 +11,7 @@ using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
-namespace BotNexus.Gateway.Tests.Conversations;
+namespace BotNexus.Gateway.Conversations.Tests.Conversations;
 
 public sealed class MultiChannelFanOutTests
 {
@@ -517,3 +517,4 @@ public sealed class MultiChannelFanOutTests
         }
     }
 }
+

@@ -6,12 +6,13 @@ using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 
-namespace BotNexus.Gateway.Tests.Conversations;
+namespace BotNexus.Gateway.Conversations.Tests.Conversations;
 
 /// <summary>
 /// Tests proving that the originating ChannelBinding fields (ThreadId, BindingId, DisplayPrefix)
@@ -330,3 +331,4 @@ public sealed class GatewayHostBindingRoutingTests
         }
     }
 }
+

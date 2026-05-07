@@ -5,9 +5,9 @@ using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using Microsoft.Extensions.Logging;
 
-namespace BotNexus.Gateway.Sessions;
+namespace BotNexus.Gateway.Conversations;
 
-// Gateway.Sessions is a reusable library — it uses ConfigureAwait(false) on all awaited
+// Gateway.Conversations is a reusable library — it uses ConfigureAwait(false) on all awaited
 // tasks to prevent deadlocks when consumed by callers with a synchronization context.
 
 /// <summary>

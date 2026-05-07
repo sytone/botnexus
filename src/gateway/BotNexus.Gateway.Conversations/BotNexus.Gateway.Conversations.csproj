@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <RootNamespace>BotNexus.Gateway.Sessions</RootNamespace>
-    <Description>Session store implementations — file-backed (JSONL), in-memory, and SQLite stores for the BotNexus Gateway.</Description>
+    <RootNamespace>BotNexus.Gateway.Conversations</RootNamespace>
+    <Description>Conversation routing and store implementations for the BotNexus Gateway.</Description>
   </PropertyGroup>
 
   <ItemGroup>
