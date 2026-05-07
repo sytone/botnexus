@@ -145,4 +145,34 @@ public class UpdateCommandTests
             Directory.Delete(tempDir, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task Update_WhenCancelledBeforeGitPull_ReturnsCancelledExitCodeAndSkipsGatewaySteps()
+    {
+        var pm = Substitute.For<IGatewayProcessManager>();
+        var cmd = new UpdateCommand(pm);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var tempDir = Path.Combine(Path.GetTempPath(), $"botnexus-update-cancel-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var exitCode = await cmd.ExecuteAsync(
+                repoRoot: tempDir,
+                home: tempDir,
+                port: 5005,
+                verbose: false,
+                cancellationToken: cts.Token);
+
+            exitCode.ShouldBe(130);
+            await pm.DidNotReceive().StopAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>());
+            await pm.DidNotReceive().StartAsync(Arg.Any<GatewayStartOptions>(), Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
 }

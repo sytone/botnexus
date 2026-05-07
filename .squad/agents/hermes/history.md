@@ -36,6 +36,7 @@
 - 2026-05-04: Gateway decoupling audit found direct test coupling concentrated in InProcessIsolationStrategy constructor wiring tests (tests\BotNexus.Gateway.Tests\InProcessIsolationStrategyTests.cs, ToolHookWiringTests.cs, Agents\SubAgentIntegrationTests.cs, PlatformConfigAgentSourceTests.cs); these should shift to DI/extension-loader-backed tool registration seams instead of hardcoded strategy composition.
 - 2026-05-04: DI registration coverage for gateway startup is currently broad but shallow (IsolationStrategyRegistrationTests.cs, PlatformConfigurationTests.cs) and lacks assertions for runtime extension assembly scanning outcomes (IAgentTool/ICommandContributor registrations).
 - 2026-05-04: Coverage gap: no gateway-level tests verify graceful degradation when skills/mcp/mcpinvoke/web extensions are absent or fail load; add extension-loader + in-process tool availability integration tests to prevent regressions during runtime discovery refactors.
+- 2026-05-07: CLI update regression coverage now lives in `tests\BotNexus.Cli.Tests\Commands\UpdateCommandTests.cs` and should assert three pull-phase guarantees: non-zero pull failures short-circuit before stop/start, canceled pull paths short-circuit before stop/start, and slow pull completion must happen before gateway stop is attempted.
 
 
 ## 2026-05-04 — Gateway Decoupling Test Audit
