@@ -569,18 +569,20 @@ Memory consolidation is the process of distilling daily notes into long-term mem
 
 - **Interval**: Configurable via `MemoryConsolidationIntervalHours` (default: 24)
 - **Mechanism**: Cron service — runs as a `maintenance` job with `consolidate-memory` action (see [Cron and Scheduling Guide](../cron-and-scheduling.md))
-- **Manual**: Via `memory_save(content, target="memory")`
+- **Manual**: Not yet available — Wave 5 consolidation will provide a dedicated mechanism
 
 ### Consolidation Process
 
-Consolidation combines manual and tool-assisted approaches:
+Consolidation is a **future capability** (Wave 5). During normal turns, `MEMORY.md` is read-only — only daily notes under `memory/` are writable via `memory_save`.
 
-1. Agent reviews daily notes via `memory_get(file="{yesterday}")` or `memory_search()`
-2. Agent identifies patterns and learnings from daily notes
-3. Agent saves durable learnings to long-term memory: `memory_save(content=learning, file_path="../MEMORY.md")` or directly edits `MEMORY.md`
+When consolidation is implemented, the planned flow is:
+
+1. A dedicated consolidation agent reviews daily notes via `memory_get(file="{yesterday}")` or `memory_search()`
+2. The consolidation agent identifies patterns and durable learnings
+3. The consolidation agent writes updated content to `MEMORY.md` (using a privileged write path not available during normal turns)
 4. The auto-generated `AGENTS.md` template reminds agents to use `MEMORY.md` for stable facts and `memory/YYYY-MM-DD.md` for active work context
 
-**Example Consolidation**:
+**Example of what consolidation will produce**:
 ```text
 Daily Notes (memory/2026-04-02.md):
 User prioritizes concise summaries, max 100 words
@@ -588,7 +590,7 @@ Architecture has 17 projects with clean inversion
 Build command: dotnet build BotNexus.slnx
 Confirmed user timezone is Pacific Time
 
-Consolidation → agent appends to MEMORY.md:
+Consolidation → MEMORY.md updated by consolidation agent:
 - Pattern: User prefers concise summaries (max 100 words) before detail
 - User timezone is Pacific Time
 ```
