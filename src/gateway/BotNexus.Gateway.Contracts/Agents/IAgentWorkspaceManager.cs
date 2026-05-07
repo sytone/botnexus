@@ -22,6 +22,15 @@ public interface IAgentWorkspaceManager
     Task SaveMemoryAsync(string agentName, string content, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Appends a memory entry to a specific markdown file under the agent memory root.
+    /// </summary>
+    /// <param name="agentName">The agent identifier.</param>
+    /// <param name="filePath">Relative path within memory root, or null for today's daily note.</param>
+    /// <param name="content">The content to append.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task SaveMemoryAsync(string agentName, string? filePath, string content, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Gets the absolute workspace path for an agent.
     /// </summary>
     /// <param name="agentName">The agent identifier.</param>

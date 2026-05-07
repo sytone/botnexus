@@ -121,6 +121,7 @@ public static class AgentConfigMerger
         return new MemoryAgentConfig
         {
             Enabled = PickBool("enabled", defaults.Enabled, agent.Enabled, agentMemObj),
+            Path = PickNullableString("path", defaults.Path, agent.Path, agentMemObj),
             Indexing = PickString("indexing", defaults.Indexing, agent.Indexing, agentMemObj),
             Search = MergeMemorySearch(defaults.Search, agent.Search, agentMemObj),
         };
@@ -311,6 +312,7 @@ public static class AgentConfigMerger
     private static MemoryAgentConfig CloneMemory(MemoryAgentConfig src) => new()
     {
         Enabled = src.Enabled,
+        Path = src.Path,
         Indexing = src.Indexing,
         Search = src.Search is null ? null : CloneMemorySearch(src.Search),
     };

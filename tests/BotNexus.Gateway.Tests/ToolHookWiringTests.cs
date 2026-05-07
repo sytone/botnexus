@@ -189,6 +189,9 @@ public sealed class ToolHookWiringTests
         public Task SaveMemoryAsync(string agentName, string content, CancellationToken ct = default)
             => Task.CompletedTask;
 
+        public Task SaveMemoryAsync(string agentName, string? filePath, string content, CancellationToken ct = default)
+            => Task.CompletedTask;
+
         public string GetWorkspacePath(string agentName) => AppContext.BaseDirectory;
     }
 

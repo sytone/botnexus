@@ -128,6 +128,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // Initialize asynchronously — don't block handle creation.
             // Memory tools work immediately; the store initializes in the background.
             _ = memoryStore.InitializeAsync(CancellationToken.None);
+            tools.Add(new MemorySaveTool(_workspaceManager, descriptor.AgentId, descriptor.Memory.Path));
             tools.Add(new MemorySearchTool(memoryStore, descriptor.Memory));
             tools.Add(new MemoryGetTool(memoryStore));
             tools.Add(new MemoryStoreTool(memoryStore, descriptor.AgentId));

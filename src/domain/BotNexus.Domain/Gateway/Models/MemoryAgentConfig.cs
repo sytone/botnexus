@@ -11,6 +11,11 @@ public sealed class MemoryAgentConfig
     public bool Enabled { get; set; }
 
     /// <summary>
+    /// Gets or sets the optional memory root or file override path.
+    /// </summary>
+    public string? Path { get; set; }
+
+    /// <summary>
     /// Gets or sets the indexing.
     /// </summary>
     public string Indexing { get; set; } = "auto";

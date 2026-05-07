@@ -627,6 +627,9 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         public Task SaveMemoryAsync(string agentName, string content, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
 
+        public Task SaveMemoryAsync(string agentName, string? filePath, string content, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
         public string GetWorkspacePath(string agentName)
             => _workspacePath;
     }
