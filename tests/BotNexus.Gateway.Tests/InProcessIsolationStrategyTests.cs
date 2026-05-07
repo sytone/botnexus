@@ -231,6 +231,58 @@ public sealed class InProcessIsolationStrategyTests
     }
 
     [Fact]
+    public async Task CreateAsync_WithMemoryEnabled_ExposesMemorySaveAsCanonicalAgentTool()
+    {
+        var strategy = CreateStrategyWithRegisteredModel();
+        var descriptor = CreateDescriptor() with
+        {
+            Memory = new MemoryAgentConfig { Enabled = true }
+        };
+
+        var handle = await strategy.CreateAsync(
+            descriptor,
+            new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-memory-canonical") });
+        var tools = GetTools(handle);
+
+        tools.ShouldContain(t => string.Equals(t.Name, "memory_save", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithMemoryEnabled_DoesNotExposeSeparateMemoryStoreTool()
+    {
+        var strategy = CreateStrategyWithRegisteredModel();
+        var descriptor = CreateDescriptor() with
+        {
+            Memory = new MemoryAgentConfig { Enabled = true }
+        };
+
+        var handle = await strategy.CreateAsync(
+            descriptor,
+            new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-memory-no-store") });
+        var tools = GetTools(handle);
+
+        tools.ShouldNotContain(t => string.Equals(t.Name, "memory_store", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithMemoryEnabled_AgentFacingToolDescriptionsAvoidMemoryStoreTerminology()
+    {
+        var strategy = CreateStrategyWithRegisteredModel();
+        var descriptor = CreateDescriptor() with
+        {
+            Memory = new MemoryAgentConfig { Enabled = true }
+        };
+
+        var handle = await strategy.CreateAsync(
+            descriptor,
+            new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-memory-description") });
+        var tools = GetTools(handle);
+
+        foreach (var tool in tools)
+            tool.Definition.Description.ShouldNotContain("memory store", Case.Insensitive);
+    }
+
+    [Fact]
     public async Task CreateAsync_WhenDescriptorSpecifiesToolTimeout_PropagatesToAgentOptions()
     {
         var strategy = CreateStrategyWithRegisteredModel();

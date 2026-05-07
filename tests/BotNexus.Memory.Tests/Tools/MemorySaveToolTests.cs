@@ -7,6 +7,32 @@ namespace BotNexus.Memory.Tests.Tools;
 public sealed class MemorySaveToolTests
 {
     [Fact]
+    public async Task PrepareArgumentsAsync_WithContentOnly_KeepsLegacyContract()
+    {
+        var workspaceManager = new SpyWorkspaceManager();
+        var tool = new MemorySaveTool(workspaceManager, "farnsworth");
+
+        var prepared = await tool.PrepareArgumentsAsync(
+            new Dictionary<string, object?> { ["content"] = "legacy content-only payload" });
+
+        prepared.Count.ShouldBe(1);
+        prepared.ShouldContainKey("content");
+        prepared["content"].ShouldBe("legacy content-only payload");
+        prepared.ShouldNotContainKey("file_path");
+    }
+
+    [Fact]
+    public void Definition_UsesCanonicalMemorySaveNamingWithoutMemoryStoreTerminology()
+    {
+        var workspaceManager = new SpyWorkspaceManager();
+        var tool = new MemorySaveTool(workspaceManager, "farnsworth");
+
+        tool.Name.ShouldBe("memory_save");
+        tool.Definition.Name.ShouldBe("memory_save");
+        tool.Definition.Description.ShouldNotContain("memory store", Case.Insensitive);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_WithContentOnly_DelegatesToWorkspaceManagerWithNullFilePath()
     {
         var workspaceManager = new SpyWorkspaceManager();
