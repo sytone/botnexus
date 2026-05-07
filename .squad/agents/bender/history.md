@@ -153,3 +153,9 @@
 - Removed `IsRunning`/`FollowUpAsync` branching in `DefaultSubAgentManager.OnCompletedAsync`; parent wake now always uses `_dispatcher.DispatchAsync` so completion delivery is serialized via the session queue.
 - Added wake-delivery telemetry in `GatewayTelemetry`: `SubAgentWakeDispatched` and `SubAgentWakeDeliveryFailed`, and instrumented success/failure paths in `OnCompletedAsync`.
 - Updated sub-agent wake tests to reflect always-dispatch semantics and verified `SubAgentCompletionWake` test suite passes (8/8).
+
+### 2026-05-07 — CLI update git-pull cancellation handling
+- UpdateCommand.RunGitPullAsync now drains redirected stdout/stderr while waiting, preventing git pull deadlocks when verbose output is off.
+- Added explicit cancellation handling: cancelled pulls return exit code 130, kill the git process tree best-effort, and skip gateway stop/start.
+- Failure output now surfaces the first useful stderr/stdout line instead of only A task was canceled..
+- Tests: tests/BotNexus.Cli.Tests/Commands/UpdateCommandTests.cs adds cancellation coverage for ExecuteAsync.

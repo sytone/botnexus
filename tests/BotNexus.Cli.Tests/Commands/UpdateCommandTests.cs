@@ -23,6 +23,13 @@ public class UpdateCommandTests
             => Task.FromResult(0);
     }
 
+    private sealed class GitPullStepProbeCommand(IGatewayProcessManager processManager)
+        : UpdateCommand(processManager)
+    {
+        public Task<int> RunGitPullStepForTestAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
+            => RunGitPullStepAsync(repoRoot, verbose, cancellationToken);
+    }
+
     private static UpdateCommand BuildCommand()
     {
         var pm = Substitute.For<IGatewayProcessManager>();
@@ -169,6 +176,32 @@ public class UpdateCommandTests
             exitCode.ShouldBe(130);
             await pm.DidNotReceive().StopAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>());
             await pm.DidNotReceive().StartAsync(Arg.Any<GatewayStartOptions>(), Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunGitPullStepAsync_WhenCancellationRequested_ReturnsCancelledExitCode()
+    {
+        var pm = Substitute.For<IGatewayProcessManager>();
+        var cmd = new GitPullStepProbeCommand(pm);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var tempDir = Path.Combine(Path.GetTempPath(), $"botnexus-update-git-cancel-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var exitCode = await cmd.RunGitPullStepForTestAsync(
+                repoRoot: tempDir,
+                verbose: false,
+                cancellationToken: cts.Token);
+
+            exitCode.ShouldBe(130);
         }
         finally
         {
