@@ -77,6 +77,19 @@ public sealed class BotNexusHomeTests
     }
 
     [Fact]
+    public void GetAgentDirectory_ScaffoldedAgentsTemplate_IncludesMinimalMemoryInstructions()
+    {
+        var fs = new MockFileSystem();
+        var home = new BotNexusHome(fs, HomePath);
+
+        var path = home.GetAgentDirectory("newbie");
+        var agentsContent = fs.File.ReadAllText(Path.Combine(path, "workspace", "AGENTS.md"));
+
+        agentsContent.ShouldContain("memory/YYYY-MM-DD.md");
+        agentsContent.ShouldContain("MEMORY.md");
+    }
+
+    [Fact]
     public void GetAgentDirectory_WhenLegacyLayoutExists_MigratesFilesToWorkspace()
     {
         var fs = new MockFileSystem();

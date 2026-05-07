@@ -179,3 +179,42 @@
 **Action:** Fix 4 pre-existing failures before merge. Hermes or designee will write the 4 new tests.
 
 ---
+
+## 2026-05-07 — OpenClaw Memory Wave 1 Remediation (Core Implementation)
+
+**Role:** Core seams mapping and remediation lead  
+**Branch:** feature/openclaw-memory-alignment  
+**Status:** ✅ COMPLETE — Approved by Leela, validated by Hermes  
+
+**Assignment:** Remediate two blocking issues from Bender's initial implementation after Leela rejection (per strict lockout protocol).
+
+**Remediation Work (Commit 58d03d13):**
+
+**B1 Resolution: MemorySaveTool delegates to IAgentWorkspaceManager**
+- Added memoryPathOverride parameter to SaveMemoryAsync overload signatures
+- Expanded FileAgentWorkspaceManager to handle override-aware path resolution via ResolveMemoryRoot
+- Collapsed MemorySaveTool.ExecuteAsync to ~15 lines: pure delegation to workspace manager
+- Eliminated all filesystem operations from MemorySaveTool (File.Append, Directory.Create, Path.* calls)
+- All path resolution, traversal validation, file writing logic now exclusively in FileAgentWorkspaceManager
+- Added XML doc comments to all three SaveMemoryAsync overloads explaining legacy/new/override semantics
+
+**B2 Resolution: Dead daily-note loading path (Option A)**
+- Removed DailyMemoryNote record from Contracts (zero references confirmed)
+- Removed AgentWorkspace.RecentMemoryNotes property (zero references confirmed)
+- Removed FileAgentWorkspaceManager.LoadRecentDailyNotesAsync dead code (zero references confirmed)
+- Single canonical daily-note loading: WorkspaceContextBuilder.LoadRecentDailyMemoryFilesAsync (override-aware via ResolveMemoryRoot)
+- Added test coverage for override-path daily memory loading in WorkspaceContextBuilderTests
+
+**Additional Quality Fixes:**
+- Path safety: EnsureWithinRoot validates both override and filePath against workspace boundaries
+- Wave 1 scope: No premature abstractions or future-wave features
+- Public API: All new SaveMemoryAsync overloads documented with contract semantics
+- Dependency boundaries: Memory (MemorySaveTool) depends on Contracts interface only, not implementation
+
+**Leela Re-Review:** ✅ APPROVED (both blocking issues cleanly resolved)
+
+**Hermes Validation:** ✅ APPROVE (no change-related test failures in Wave 1 scope)
+
+**Outcomes:**
+- Wave 1 memory alignment ready for merge
+- Carried three non-blocking conditions to Wave 2 (C1: DateTime consistency, C2: ContextFileOrdering tests, C3: 4000-char budget)

@@ -199,3 +199,37 @@ The project follows a consistent pattern for documenting CLI features and proces
 - Implementation team to scope 5-wave plan against backlog
 - Documentation team to prioritize high-priority docs
 - Design team to finalize migration strategy for existing SQLite memories
+## 2026-05-07 — OpenClaw Memory Wave 1 Documentation (Documentation Engineer)
+
+**Role:** Doc targets mapping, implementation landing docs  
+**Branch:** feature/openclaw-memory-alignment  
+**Status:** ✅ COMPLETE — Docs aligned, batch update planned post-merge  
+
+**Decisions Issued:**
+
+1. **kif-memory-doc-targets.md:** Proposed doc update map for Wave 1 memory alignment
+   - 5 docs requiring updates (workspace-and-memory, configuration guides, agents guide, session stores, system flows)
+   - 4 stale reference categories identified (file-only assumptions, SQLite-primary claims, flush mentions)
+   - Acceptance criteria checklist for docs consistency
+
+2. **kif-memory-wave1-docs.md:** Identified ambiguity between \memory_save\ tool boundaries and AGENTS.md guidance
+   - Tool confines writes to \memory/\ subdirectory via EnsureWithinRoot guard
+   - Template guidance said "Append to MEMORY.md" but tool blocks path traversal
+   - Escalated to Leela for decision
+
+**Decision Outcome (Leela's leela-memory-tool-scope.md): Option A accepted**
+- \memory_save\ is daily-note-only; MEMORY.md is read-only during normal turns
+- No production code changes needed (current tool behavior is intended)
+- AGENTS.md template wording updated to clarify Wave 1 scope (Memory Notes section added)
+- Consolidation writes to MEMORY.md deferred to Wave 5 (dreaming)
+
+**Documentation Scope Finalized:**
+- AGENTS.md template: ✅ Updated with correct Wave 1 guidance
+- workspace-and-memory.md: Pending post-merge batch update
+- configuration docs: Pending post-merge batch update
+- Other docs: Pending per checklist (session stores, system flows, agents guide)
+
+**Outcomes:**
+- Wave 1 ship-ready with accurate, minimal AGENTS.md guidance
+- Doc update map prepared for post-merge batch update (no changes before code lands to avoid drift)
+- Clear separation maintained: Wave 1 is daily authoring only; consolidation is future work

@@ -26,7 +26,7 @@ public static class ContextFileOrdering
         ArgumentNullException.ThrowIfNull(contextFiles);
 
         return contextFiles
-            .OrderBy(file => DefaultOrder.TryGetValue(GetBasename(file.Path), out var order) ? order : int.MaxValue)
+            .OrderBy(file => GetOrder(file.Path))
             .ThenBy(file => GetBasename(file.Path), StringComparer.Ordinal)
             .ThenBy(file => NormalizePath(file.Path), StringComparer.Ordinal)
             .ToList();
@@ -58,5 +58,27 @@ public static class ContextFileOrdering
         var normalizedPath = NormalizePath(pathValue);
         var segments = normalizedPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
         return (segments.LastOrDefault() ?? normalizedPath).ToLowerInvariant();
+    }
+
+    private static int GetOrder(string path)
+    {
+        if (DefaultOrder.TryGetValue(GetBasename(path), out var order))
+            return order;
+
+        return IsDailyMemoryNote(path) ? 75 : int.MaxValue;
+    }
+
+    private static bool IsDailyMemoryNote(string path)
+    {
+        var normalized = NormalizePath(path);
+        if (!normalized.StartsWith("memory/", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var basename = GetBasename(path);
+        if (!basename.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var datePart = basename[..^3];
+        return DateOnly.TryParseExact(datePart, "yyyy-MM-dd", out _);
     }
 }
