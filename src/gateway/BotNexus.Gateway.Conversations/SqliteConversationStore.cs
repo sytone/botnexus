@@ -7,7 +7,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 
-namespace BotNexus.Gateway.Sessions;
+namespace BotNexus.Gateway.Conversations;
 
 /// <summary>
 /// SQLite-backed conversation store for persistent gateway conversations.

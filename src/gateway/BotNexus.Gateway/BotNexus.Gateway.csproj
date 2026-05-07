@@ -13,6 +13,7 @@
     <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
+    <ProjectReference Include="..\BotNexus.Gateway.Conversations\BotNexus.Gateway.Conversations.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway.Sessions\BotNexus.Gateway.Sessions.csproj" />
     <ProjectReference Include="..\BotNexus.Tools\BotNexus.Tools.csproj" />
     <ProjectReference Include="..\BotNexus.Memory\BotNexus.Memory.csproj" />

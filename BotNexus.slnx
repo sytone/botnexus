@@ -25,6 +25,7 @@
     <Project Path="src/gateway/BotNexus.Cli/BotNexus.Cli.csproj" />
     <Project Path="src/gateway/BotNexus.Cron/BotNexus.Cron.csproj" />
     <Project Path="src/gateway/BotNexus.Gateway.Abstractions/BotNexus.Gateway.Abstractions.csproj" />
+    <Project Path="src/gateway/BotNexus.Gateway.Conversations/BotNexus.Gateway.Conversations.csproj" />
     <Project Path="src/gateway/BotNexus.Gateway.Contracts/BotNexus.Gateway.Contracts.csproj" />
     <Project Path="src/gateway/BotNexus.Gateway/BotNexus.Gateway.csproj" />
     <Project Path="src/gateway/BotNexus.Gateway.Api/BotNexus.Gateway.Api.csproj" />
@@ -55,6 +56,7 @@
     <Project Path="tests/BotNexus.CodingAgent.Tests/BotNexus.CodingAgent.Tests.csproj" />
     <Project Path="tests/BotNexus.Cron.Tests/BotNexus.Cron.Tests.csproj" />
     <Project Path="tests/BotNexus.Extensions.WebTools.Tests/BotNexus.Extensions.WebTools.Tests.csproj" />
+    <Project Path="tests/BotNexus.Gateway.Conversations.Tests/BotNexus.Gateway.Conversations.Tests.csproj" />
     <Project Path="tests/BotNexus.Gateway.ConversationTests/BotNexus.Gateway.ConversationTests.csproj" />
     <Project Path="tests/BotNexus.Gateway.Tests/BotNexus.Gateway.Tests.csproj" />
     <Project Path="tests/BotNexus.Sessions.Common.Tests/BotNexus.Sessions.Common.Tests.csproj" />
