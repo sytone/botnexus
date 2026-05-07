@@ -63,6 +63,50 @@
 
 ---
 
+### Leela Decision: AGENTS.md Memory Tool Naming & Portability (2025-05-07)
+
+**Decision Date:** 2025-05-07  
+**Decided By:** Leela (Lead/Architect)  
+**Status:** Implemented
+
+**User Directive:** Sytone requested root AGENTS.md be updated to reflect that BotNexus runs on Windows and Linux, and to clarify the confusing "memory save" vs "memory store" tool terminology.
+
+**Context:** PR #179 established that `memory_save` is the single agent-facing tool for writing memory. The codebase also uses terms like "memory store" and "store_memory" in different contexts (Copilot CLI built-in, internal indexing). Root AGENTS.md had no memory guidance and no explicit portability statement.
+
+**Decisions:**
+
+1. **Agent-Facing Tool Name: `memory_save`**
+   - Single canonical tool name is **`memory_save`**
+   - It writes append-only daily notes to `memory/YYYY-MM-DD.md`
+   - `MEMORY.md` is **read-only** during normal turns — loaded at session start for long-term context
+   - Future consolidation ("dreaming") updates `MEMORY.md` from daily notes automatically
+   - SQLite indexes, search state, and external `store_memory` primitives are **implementation details** — never referenced in agent-facing docs
+
+2. **Platform Statement — Added to root AGENTS.md**
+   - New "Platform / Runtime" section at top of document
+   - States: "BotNexus runs on **Windows and Linux**. All guidance applies to both platforms unless explicitly noted otherwise."
+   - References cross-platform path handling section
+
+3. **Memory Tool Naming — Added to root AGENTS.md**
+   - New "Memory Tool Naming" section after "Code Practices"
+   - Clarifies `memory_save` appends to `memory/YYYY-MM-DD.md` (append-only)
+   - `MEMORY.md` is read-only during turns
+   - Consolidation updates `MEMORY.md` automatically — agents never write directly
+   - Prohibits surface use of "memory store", "store_memory", SQLite in agent-facing docs
+   - Distinguishes external Copilot CLI `store_memory` as separate mechanism
+
+**Rationale:**
+- **Single canonical name** eliminates "save vs store" ambiguity
+- **Explicit prohibition** of "memory store" in agent docs prevents future confusion
+- **Platform statement** up front anchors doc for contributors, prevents OS-specific assumptions
+
+**Implementation:**
+- **Kif** added both sections to root AGENTS.md per exact wording
+- Left per-agent template `src/gateway/BotNexus.Gateway/Templates/AGENTS.md` untouched (already correct)
+- Committed as 851a6509: `docs(agents): add platform statement and memory tool naming guidance`
+
+---
+
 ### 1.1 Folder Structure Convention
 
 ```
