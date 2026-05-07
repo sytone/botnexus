@@ -1,6 +1,6 @@
 # 📋 Planning Index
 
-> Auto-maintained by Nova's daily planning maintenance. Last updated: 2026-04-23
+> Auto-maintained by Nova's daily planning maintenance. Last updated: 2026-05-07
 
 ## 🐛 Bugs
 
@@ -31,12 +31,12 @@
 
 ## 🔧 Improvements
 
-### 🟡 Medium
+### 🟠 High
+- [BotNexus OpenClaw Memory Model Alignment](botnexus-openclaw-memory-alignment/design-spec.md) — `planning`
 - [CLI multi-instance support via --source/--target](improvement-cli-multi-instance/design-spec.md) — `in-progress`
 - [Dynamic Configuration Reload](improvement-dynamic-config-reload/design-spec.md) — `in-progress`
-- [Memory Persistence Lifecycle](improvement-memory-lifecycle/design-spec.md) — `draft` 📄
-
 ### 🟡 Medium
+- [Memory Persistence Lifecycle](improvement-memory-lifecycle/design-spec.md) — `draft` 📄
 - [Skills Extension — Expose Base Path on Load](improvement-skills-path-resolution/design-spec.md) — `draft`
 - [Blazor Configuration UI — C/D: Locations + Per-Agent](improvement-blazor-configuration-ui/design-spec.md) — `partially-delivered`
 
