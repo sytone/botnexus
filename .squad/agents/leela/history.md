@@ -99,3 +99,42 @@ Farnsworth has implemented your recommendation to decouple Gateway from compile-
 **What This Enables:** Your remaining recommendations (Agent.Abstractions extraction, Copilot OAuth decoupling) are now better positioned to succeed. Build is green, no new test failures.
 
 ---
+
+## 2026-05-07 — Conversation Routing Architecture Design Review (Lead)
+
+**Status:** ✅ Complete — decision approved, ready for implementation  
+**Session:** Design review for conversation routing bug + architectural decoupling
+
+**Your Role:** Lead/Architect. Root cause analysis, architectural decision, wave breakdown.
+
+**Bug Root Cause:**
+`GatewayHub.ResolveOrCreateSessionAsync` (line 582-632) always calls `IConversationRouter.ResolveInboundAsync` with `conversationId: null`, regardless of what the client sends. This causes:
+1. Hub resolves to default conversation's session (Session A) and subscribes client to `session:A` group
+2. GatewayHost re-routes using actual `conversationId` → processes on Session B
+3. Response goes to `session:B` group — client isn't listening → appears as "only responds on default"
+
+**Architectural Issues Identified:**
+1. **Dual routing**: Both GatewayHub and GatewayHost independently call `IConversationRouter` — two owners for one concern
+2. **Session pre-resolution**: Hub resolves session before dispatch; GatewayHost may redirect to different session
+3. **SignalR group subscription timing**: Client subscribes before final session is known
+
+**Decisions Made:**
+1. **Phase 1 (Bender, 1h):** Pass `conversationId` through `GatewayHub.ResolveOrCreateSessionAsync` — fixes the immediate bug
+2. **Phase 2 (Farnsworth, 3h):** Remove `IConversationRouter` dependency from GatewayHub entirely. Add `DispatchResult` return type to `IChannelDispatcher.DispatchAsync`. Hub becomes a pure event relay.
+3. **Phase 3:** No changes needed for Telegram/TUI — already correctly dispatch via `ChannelAdapterBase`
+
+**Key File Paths:**
+- Bug location: `src/extensions/BotNexus.Extensions.Channels.SignalR/GatewayHub.cs:582-594`
+- Correct routing: `src/gateway/BotNexus.Gateway/GatewayHost.cs:261-280`
+- Conversation router: `src/gateway/BotNexus.Gateway.Conversations/DefaultConversationRouter.cs:32-63`
+- Client send: `src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Services/AgentInteractionService.cs:36-73`
+- SignalR response delivery: `src/extensions/BotNexus.Extensions.Channels.SignalR/SignalRChannelAdapter.cs:43-109`
+
+**Learnings:**
+- Conversation project extraction (previous decision) was completed — `BotNexus.Gateway.Conversations` exists with stores + router
+- The `BotNexus.Gateway.Conversations` project exists and has proper contracts in `Gateway.Contracts/Conversations/`
+- When explicit `conversationId` is used in `DefaultConversationRouter`, the `OriginatingBinding` is null (direct path doesn't resolve bindings)
+- User has 5 conversations for quill agent in SQLite store (`sessions.db`)
+- `GatewayEventHandler` on client side uses `ResolveConversationId` which falls back to `ActiveConversationId` — this masks the bug since events from the wrong session can't be mapped
+
+---
