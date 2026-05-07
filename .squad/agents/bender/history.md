@@ -184,3 +184,39 @@
 - Foundation for Farnsworth's clean fix (58d03d13)
 
 **Learning:** Strict rejection protocol ensures architectural rigor — rejected work delegates to fresh implementer, prevents scope drift from remediation.
+---
+
+## 2026-05-07 — Conversation Project Extraction: Implementation
+
+**Status:** ✅ Complete (Leela design → Bender implementation → Hermes QA → Nibbler consistency → PR merged)  
+**Session:** Conversation project refactor orchestration  
+**Coordination:** With Leela (design), Hermes (QA), Nibbler (consistency)  
+
+**Your Role:** Runtime Developer. Implemented Leela's architectural decision.
+
+**Deliverables:**
+- Created `src\gateway\BotNexus.Gateway.Conversations` project structure
+- Created `tests\BotNexus.Gateway.Conversations.Tests` test project
+- Moved 4 runtime classes from Gateway.Sessions/Gateway:
+  - InMemoryConversationStore
+  - FileConversationStore
+  - SqliteConversationStore
+  - DefaultConversationRouter
+- Moved 7 conversation-focused test files from Gateway.Tests
+- Updated all namespaces to `BotNexus.Gateway.Conversations`
+- Updated project references in solution
+- Updated DI wiring in `GatewayServiceCollectionExtensions`
+- Added shared `TestOptionsMonitor` to new test project via linked compile include
+
+**Validation:**
+- Full solution build: ✅ Green (0 errors)
+- Targeted validation passed: Leela's verification checklist complete
+- Test count: BotNexus.Gateway.Conversations.Tests 66/66 passing
+- No circular project dependencies
+- Dependency graph correct
+
+**Commit:** `1aca5967` (implementation complete)
+
+**PR:** https://github.com/sytone/botnexus/pull/178
+
+---
