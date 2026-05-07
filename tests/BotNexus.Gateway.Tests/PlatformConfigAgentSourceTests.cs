@@ -807,6 +807,86 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         descriptor.ToolIds.ShouldBe(["read", "write"]);
     }
 
+    [Fact]
+    public async Task LoadAsync_WithAgentToolTimeoutSeconds_PreservesTimeoutForRuntimeWiring()
+    {
+        var config = JsonSerializer.Deserialize<PlatformConfig>(
+            """
+            {
+              "Agents": {
+                "assistant": {
+                  "Provider": "copilot",
+                  "Model": "gpt-4.1",
+                  "Enabled": true,
+                  "ToolTimeoutSeconds": 9
+                }
+              }
+            }
+            """)!;
+
+        var source = new PlatformConfigAgentSource(
+            new TestOptionsMonitor<PlatformConfig>(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>());
+
+        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
+
+        ReadToolTimeoutSeconds(descriptor).ShouldBe(9);
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithDefaultsToolTimeoutSeconds_InheritsTimeoutWhenAgentOmitsOverride()
+    {
+        var config = JsonSerializer.Deserialize<PlatformConfig>(
+            """
+            {
+              "Agents": {
+                "defaults": {
+                  "ToolTimeoutSeconds": 11
+                },
+                "assistant": {
+                  "Provider": "copilot",
+                  "Model": "gpt-4.1",
+                  "Enabled": true
+                }
+              }
+            }
+            """)!;
+
+        var source = new PlatformConfigAgentSource(
+            new TestOptionsMonitor<PlatformConfig>(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>());
+
+        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
+
+        ReadToolTimeoutSeconds(descriptor).ShouldBe(11);
+    }
+
+    private static int? ReadToolTimeoutSeconds(AgentDescriptor descriptor)
+    {
+        var timeoutProperty = descriptor.GetType().GetProperty("ToolTimeoutSeconds", BindingFlags.Public | BindingFlags.Instance);
+        if (timeoutProperty?.GetValue(descriptor) is int seconds)
+        {
+            return seconds;
+        }
+
+        if (!descriptor.Metadata.TryGetValue("toolTimeoutSeconds", out var raw) || raw is null)
+        {
+            return null;
+        }
+
+        return raw switch
+        {
+            int value => value,
+            long value => checked((int)value),
+            JsonElement { ValueKind: JsonValueKind.Number } jsonNumber when jsonNumber.TryGetInt32(out var value) => value,
+            JsonElement { ValueKind: JsonValueKind.String } jsonString when int.TryParse(jsonString.GetString(), out var value) => value,
+            string value when int.TryParse(value, out var parsed) => parsed,
+            _ => null
+        };
+    }
+
     private sealed class StubLocationResolver(IReadOnlyDictionary<string, string> paths) : ILocationResolver
     {
         private readonly IReadOnlyDictionary<string, string> _paths = paths;

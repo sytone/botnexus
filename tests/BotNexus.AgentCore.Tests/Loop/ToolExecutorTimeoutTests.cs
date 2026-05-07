@@ -131,6 +131,37 @@ public sealed class ToolExecutorTimeoutTests
         results[0].Result.Content[0].Value.ShouldContain("timed out");
     }
 
+    [Fact]
+    public async Task HangingTool_EmitsToolExecutionEndEvent_AsError()
+    {
+        var tool = CreateTool("hang", async ct =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(30), ct);
+            return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "done")]);
+        });
+
+        var config = TestHelpers.CreateTestConfig(toolTimeout: TimeSpan.FromMilliseconds(100));
+        var context = new AgentContext(null, [], [tool]);
+        var assistant = CreateAssistant("tc-event", "hang");
+        var events = new List<AgentEvent>();
+
+        _ = await ToolExecutor.ExecuteAsync(
+            context,
+            assistant,
+            config,
+            evt =>
+            {
+                events.Add(evt);
+                return Task.CompletedTask;
+            },
+            CancellationToken.None);
+
+        var timeoutEnd = events.OfType<ToolExecutionEndEvent>().ShouldHaveSingleItem();
+        timeoutEnd.ToolName.ShouldBe("hang");
+        timeoutEnd.IsError.ShouldBeTrue();
+        timeoutEnd.Result.Content[0].Value.ShouldContain("timed out");
+    }
+
     private static AssistantAgentMessage CreateAssistant(string id, string toolName)
     {
         return new AssistantAgentMessage(

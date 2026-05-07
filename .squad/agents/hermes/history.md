@@ -383,3 +383,17 @@
 **Next Step:** Implement 4 new tests + fix 4 pre-existing failures before merge.
 
 ---
+## 2026-05-07 — Issue #24 timeout regression test pass (Hermes)
+
+- Added failing Gateway regression tests for missing timeout configuration plumbing:
+  - `InProcessIsolationStrategyTests.CreateAsync_WhenDescriptorSpecifiesToolTimeout_PropagatesToAgentOptions`
+  - `PlatformConfigAgentSourceTests.LoadAsync_WithAgentToolTimeoutSeconds_PreservesTimeoutForRuntimeWiring`
+  - `PlatformConfigAgentSourceTests.LoadAsync_WithDefaultsToolTimeoutSeconds_InheritsTimeoutWhenAgentOmitsOverride`
+- Added passing AgentCore regression test for structured timeout end-event emission:
+  - `ToolExecutorTimeoutTests.HangingTool_EmitsToolExecutionEndEvent_AsError`
+- Verified existing timeout recovery coverage remains in place:
+  - `ToolExecutorTimeoutTests.HangingTool_TimesOut_ReturnsErrorResult`
+  - `ToolExecutorTimeoutTests.AfterTimeout_NextToolCallSucceeds`
+- Outcome: AgentCore timeout behavior passes; gateway timeout config wiring tests fail (expected, highlights issue #24 gap).
+
+---

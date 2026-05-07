@@ -16,6 +16,7 @@ using BotNexus.Tools;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Registry;
+using BotNexus.Agent.Core.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.IO.Abstractions;
@@ -229,6 +230,26 @@ public sealed class InProcessIsolationStrategyTests
         tools.ShouldContain(t => string.Equals(t.Name, "read", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public async Task CreateAsync_WhenDescriptorSpecifiesToolTimeout_PropagatesToAgentOptions()
+    {
+        var strategy = CreateStrategyWithRegisteredModel();
+        var descriptor = CreateDescriptor() with
+        {
+            Metadata = new Dictionary<string, object?>
+            {
+                ["toolTimeoutSeconds"] = 7
+            }
+        };
+
+        var handle = await strategy.CreateAsync(
+            descriptor,
+            new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-timeout") });
+
+        var options = GetAgentOptions(handle);
+        options.ToolTimeout.ShouldBe(TimeSpan.FromSeconds(7));
+    }
+
     private static InProcessIsolationStrategy CreateStrategyWithRegisteredModel(
         IReadOnlyList<IAgentToolContributor>? contributors = null)
     {
@@ -285,6 +306,18 @@ public sealed class InProcessIsolationStrategyTests
         var agent = agentField!.GetValue(handle) as BotNexus.Agent.Core.Agent;
         agent.ShouldNotBeNull();
         return agent!.State.Tools;
+    }
+
+    private static AgentOptions GetAgentOptions(IAgentHandle handle)
+    {
+        var agentField = handle.GetType().GetField("_agent", BindingFlags.Instance | BindingFlags.NonPublic);
+        agentField.ShouldNotBeNull();
+        var agent = agentField!.GetValue(handle) as BotNexus.Agent.Core.Agent;
+        agent.ShouldNotBeNull();
+
+        var optionsField = typeof(BotNexus.Agent.Core.Agent).GetField("_options", BindingFlags.Instance | BindingFlags.NonPublic);
+        optionsField.ShouldNotBeNull();
+        return optionsField!.GetValue(agent).ShouldBeOfType<AgentOptions>();
     }
 
     private sealed class PassthroughContextBuilder : IContextBuilder
