@@ -33,6 +33,8 @@
 ## Learnings
 - 2026-04-20: Repro tests for sub-agent wake delivery should assert both dispatch metadata (messageType=subagent-completion) and stream-event channel capabilities; race-condition coverage needs explicit fallback-to-dispatch expectations when IsRunning flips during follow-up enqueue.
 
+- 2026-05-07: Cross-platform test portability (PR #179 CI fix) — all test fixture paths must use `Path.Combine()` and platform-aware path construction, not hardcoded backslash separators. WorkspaceContextBuilder tests were Linux-failing due to `"C:\\workspace\\..."` paths in config setup. Apply this pattern everywhere gateway tests initialize file paths or mock filesystem structures. Gateway workspace memory path tests now pass cross-platform.
+
 - 2026-05-04: Gateway decoupling audit found direct test coupling concentrated in InProcessIsolationStrategy constructor wiring tests (tests\BotNexus.Gateway.Tests\InProcessIsolationStrategyTests.cs, ToolHookWiringTests.cs, Agents\SubAgentIntegrationTests.cs, PlatformConfigAgentSourceTests.cs); these should shift to DI/extension-loader-backed tool registration seams instead of hardcoded strategy composition.
 - 2026-05-04: DI registration coverage for gateway startup is currently broad but shallow (IsolationStrategyRegistrationTests.cs, PlatformConfigurationTests.cs) and lacks assertions for runtime extension assembly scanning outcomes (IAgentTool/ICommandContributor registrations).
 - 2026-05-04: Coverage gap: no gateway-level tests verify graceful degradation when skills/mcp/mcpinvoke/web extensions are absent or fail load; add extension-loader + in-process tool availability integration tests to prevent regressions during runtime discovery refactors.
