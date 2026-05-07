@@ -8,6 +8,7 @@
 ## Core Context
 
 **Phases 1-11 Complete, Phase 12 Wave 1 Initiated.** Build green, 337 tests passing. Bender leads runtime architecture: session lifecycle, queueing, channel dispatch. Phase 12 Wave 1 assignments: Auth bypass fix (P0), WebUI channel adapter, rate limiting, correlation IDs, Telegram steering, SQLite store. Key recent: dynamic extension loader, Telegram Bot API implementation, streaming/thinking support. Active on gateway sprint: session reconnection, suspend/resume, TUI steering, bounded queueing.
+- **PR #179 (2026-05-07): Memory tool surface fix — Removed MemoryStoreTool from gateway production exposure. Consolidated to memory_save, memory_search, memory_get per AGENTS.md. Commit: 7a4785a6**
 
 ---
 

@@ -18,6 +18,7 @@
 - DIP fix: GatewayWebSocketHandler now uses IGatewayWebSocketChannelAdapter interface
 - OpenAPI spec export
 - Comprehensive integration tests (39 new tests in Sprint 7A)
+- **PR #179 (2026-05-07): Memory tool surface fix — Approved deletion of MemoryStoreTool; consolidated to canonical tools (memory_save, memory_search, memory_get). Commit: 44788462**
 
 **Carried Findings (Sprint 7B):**
 - `Path.HasExtension` auth bypass in `GatewayAuthMiddleware`

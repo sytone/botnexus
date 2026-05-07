@@ -18,6 +18,7 @@
 - Probe Testing (2026-04-14): Parser coverage (Serilog + JSONL readers, temp files for real conditions)
 - Extension-Contributed Commands Wave 1 (2026-04-15): CommandRegistry + CommandModel tests; 10/10 passing
 - **Current:** Read-Only Sub-Agent Session View Wave 2 Testing (2026-04-20): 22 new unit tests for SessionType, IsReadOnly, ViewSubAgentAsync, and ChatPanel read-only UI; 92/92 BlazorClient tests passing ✅
+- **PR #179 (2026-05-07): Memory tool surface fix — Added guard coverage for memory_save content schema validation. 64 tests passing. Cross-platform path handling verified. Commit: 553eaf24**
 
 **Test Discipline Enforced:**
 - Always update tests when APIs change (no exceptions)
