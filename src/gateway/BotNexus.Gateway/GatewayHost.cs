@@ -11,6 +11,7 @@ using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Conversations;
+using BotNexus.Gateway.Dispatching;
 using AgentId = BotNexus.Domain.Primitives.AgentId;
 using ChannelKey = BotNexus.Domain.Primitives.ChannelKey;
 using MessageRole = BotNexus.Domain.Primitives.MessageRole;
@@ -18,7 +19,6 @@ using ParticipantType = BotNexus.Domain.Primitives.ParticipantType;
 using SessionId = BotNexus.Domain.Primitives.SessionId;
 using SessionParticipant = BotNexus.Domain.Primitives.SessionParticipant;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
-using ConversationId = BotNexus.Domain.Primitives.ConversationId;
 using SessionType = BotNexus.Domain.Primitives.SessionType;
 using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Sessions;
@@ -50,6 +50,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
     private readonly IOptionsMonitor<CompactionOptions> _compactionOptions;
     private readonly ILogger<GatewayHost> _logger;
     private readonly IMediaPipeline? _mediaPipeline;
+    private readonly IConversationDispatcher? _conversationDispatcher;
     private readonly IConversationRouter? _conversationRouter;
     private readonly SessionLifecycleEvents? _sessionLifecycleEvents;
     private readonly ConcurrentDictionary<string, SessionQueueState> _sessionQueues = new(StringComparer.OrdinalIgnoreCase);
@@ -66,6 +67,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         int sessionQueueCapacity = DefaultSessionQueueCapacity,
         SessionLifecycleEvents? sessionLifecycleEvents = null,
         IMediaPipeline? mediaPipeline = null,
+        IConversationDispatcher? conversationDispatcher = null,
         IConversationRouter? conversationRouter = null)
     {
         _supervisor = supervisor;
@@ -77,6 +79,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         _compactionOptions = compactionOptions;
         _logger = logger;
         _mediaPipeline = mediaPipeline;
+        _conversationDispatcher = conversationDispatcher;
         _conversationRouter = conversationRouter;
         _sessionLifecycleEvents = sessionLifecycleEvents;
         SessionQueueCapacity = Math.Max(sessionQueueCapacity, 1);
@@ -254,12 +257,31 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             using var getOrCreateActivity = GatewayDiagnostics.Source.StartActivity("session.get_or_create", ActivityKind.Internal);
             getOrCreateActivity?.SetTag("botnexus.session.id", sessionId);
             getOrCreateActivity?.SetTag("botnexus.agent.id", agentId);
-            // Stamp ConversationId on the session when a conversation router is available.
-            // Without this call Session.ConversationId remains null, breaking GatewayEventHandler routing.
-            ConversationId? resolvedConversationId = null;
-            ChannelBinding? originatingBinding = null;
-            if (_conversationRouter is not null)
+            var resolvedSource = new ChannelSource(
+                message.ChannelType,
+                message.ChannelAddress,
+                message.SenderId,
+                message.ThreadId,
+                message.BindingId,
+                DisplayPrefix: null);
+            ConversationSessionResolution? resolution = null;
+            if (_conversationDispatcher is not null)
             {
+                var dispatchResult = await _conversationDispatcher.DispatchAsync(
+                    InboundMessageContext.FromInboundMessage(AgentId.From(agentId), message),
+                    cancellationToken);
+                sessionId = dispatchResult.Resolution.SessionId.Value;
+                resolution = dispatchResult.Resolution;
+                resolvedSource = dispatchResult.Source;
+                message = message with
+                {
+                    BindingId = message.BindingId ?? resolvedSource.BindingId,
+                    ThreadId = message.ThreadId ?? resolvedSource.ThreadId
+                };
+            }
+            else if (_conversationRouter is not null)
+            {
+                // Back-compat path while runtime callers migrate to dispatcher injection.
                 var routingResult = await _conversationRouter.ResolveInboundAsync(
                     AgentId.From(agentId),
                     message.ChannelType,
@@ -268,15 +290,28 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     conversationId: message.ConversationId,
                     cancellationToken);
                 sessionId = routingResult.SessionId.Value;
-                resolvedConversationId = routingResult.Conversation.ConversationId;
-
-                // OriginatingBinding carries ThreadId, BindingId, and DisplayPrefix for the inbound
-                // channel address — used below to stamp outbound responses and fan-out exclusion.
-                // This replaces the duplicate lookup that was added as the #123 hotfix workaround.
-                originatingBinding = routingResult.OriginatingBinding;
-                // Stamp BindingId on the message for fan-out exclusion (replaces #123 hotfix workaround)
-                if (message.BindingId is null && originatingBinding is not null)
-                    message = message with { BindingId = originatingBinding.BindingId };
+                var originatingBinding = routingResult.OriginatingBinding;
+                resolvedSource = originatingBinding is null
+                    ? resolvedSource
+                    : resolvedSource with
+                    {
+                        BindingId = originatingBinding.BindingId,
+                        ThreadId = originatingBinding.ThreadId,
+                        DisplayPrefix = originatingBinding.DisplayPrefix
+                    };
+                resolution = new ConversationSessionResolution(
+                    routingResult.Conversation.ConversationId,
+                    routingResult.SessionId,
+                    IsNewConversation: false,
+                    IsNewSession: routingResult.IsNewSession,
+                    OriginatingBindingId: resolvedSource.BindingId,
+                    ThreadId: resolvedSource.ThreadId,
+                    DisplayPrefix: resolvedSource.DisplayPrefix);
+                message = message with
+                {
+                    BindingId = message.BindingId ?? resolvedSource.BindingId,
+                    ThreadId = message.ThreadId ?? resolvedSource.ThreadId
+                };
             }
 
             var existingSessionTask = _sessions.GetAsync(SessionId.From(sessionId), cancellationToken);
@@ -290,9 +325,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     new KeyValuePair<string, object?>("botnexus.channel.type", message.ChannelType));
             }
             session.ChannelType ??= message.ChannelType;
-            // Stamp ConversationId from router when not already set on the session object
-            if (resolvedConversationId.HasValue && session.Session.ConversationId is null)
-                session.Session.ConversationId = resolvedConversationId.Value;
+            // Stamp ConversationId from dispatch resolution when not already set on the session object.
+            if (resolution is not null && session.Session.ConversationId is null)
+                session.Session.ConversationId = resolution.ConversationId;
             session.CallerId ??= message.SenderId;
             session.SessionType = ResolveSessionType(session, message);
             EnsureCallerParticipant(session, message.SenderId);
@@ -391,9 +426,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
 
                 if (resolvedChannel is { SupportsStreaming: true } channel)
                 {
-                    // Capture the originating binding for the lambda closure so the
+                    // Capture the resolved source for the lambda closure so the
                     // streaming conversationId includes the ThreadId (fixes #125).
-                    var streamingBinding = originatingBinding;
+                    var streamingSource = resolvedSource;
                     await StreamingSessionHelper.ProcessAndSaveAsync(
                         handle.StreamAsync(message.Content, cancellationToken),
                         session,
@@ -417,8 +452,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                                 // For channels like Telegram that support forum topics, the
                                 // bare chatId is not enough — we encode threadId into the key
                                 // so the adapter can split them apart (fixes #125).
-                                var streamConversationId = streamingBinding?.ThreadId is not null
-                                    ? $"{message.ChannelAddress}:{streamingBinding.ThreadId}"
+                                var streamConversationId = streamingSource.ThreadId is not null
+                                    ? $"{message.ChannelAddress}:{streamingSource.ThreadId}"
                                     : message.ChannelAddress.Value;
 
                                 if (channel is IStreamEventChannelAdapter streamEventChannel)
@@ -450,9 +485,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                             SessionId = sessionId,
                             // Binding-aware fields from originating binding fix #126:
                             // ensure replies go to the correct thread/topic and carry decoration.
-                            ThreadId = originatingBinding?.ThreadId ?? message.ThreadId,
-                            BindingId = originatingBinding?.BindingId,
-                            DisplayPrefix = originatingBinding?.DisplayPrefix
+                            ThreadId = resolvedSource.ThreadId ?? message.ThreadId,
+                            BindingId = resolvedSource.BindingId,
+                            DisplayPrefix = resolvedSource.DisplayPrefix
                         }, cancellationToken);
                     }
 

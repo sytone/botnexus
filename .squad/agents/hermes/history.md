@@ -31,6 +31,8 @@
 ---
 
 ## Learnings
+- 2026-05-07: SQLite file-backed session-store tests can intermittently fail Windows cleanup with "file in use" unless test connection strings disable pooling (`SqliteConnectionStringBuilder.Pooling = false`) and test teardown clears pools before deleting DB files.
+- 2026-05-07: Added broader dispatching regression coverage at gateway/session boundaries: default routing with null conversationId, explicit non-default session isolation, and originating binding metadata (ThreadId/BindingId/DisplayPrefix) preservation on outbound sends.
 - 2026-05-07: Added SignalR conversation routing regressions that assert explicit conversationId resolves a distinct session (not the default portal session) and preserves conversation stamping on the resolved session.
 - 2026-04-20: Repro tests for sub-agent wake delivery should assert both dispatch metadata (messageType=subagent-completion) and stream-event channel capabilities; race-condition coverage needs explicit fallback-to-dispatch expectations when IsRunning flips during follow-up enqueue.
 
@@ -38,6 +40,27 @@
 - 2026-05-04: DI registration coverage for gateway startup is currently broad but shallow (IsolationStrategyRegistrationTests.cs, PlatformConfigurationTests.cs) and lacks assertions for runtime extension assembly scanning outcomes (IAgentTool/ICommandContributor registrations).
 - 2026-05-04: Coverage gap: no gateway-level tests verify graceful degradation when skills/mcp/mcpinvoke/web extensions are absent or fail load; add extension-loader + in-process tool availability integration tests to prevent regressions during runtime discovery refactors.
 
+
+## 2026-05-07T22:05:56Z — Dispatcher Routing Regression Coverage (Test Strategy)
+
+**Status:** ✅ Complete  
+**Session:** Dispatching Cleanup Wave — Phase 2 test expansion  
+
+**Coverage Added:**
+- Non-default conversation isolation from default paths
+- Default fallback when conversationId omitted (null → binding-based resolution)
+- Originating channel binding metadata preservation (ThreadId, BindingId, DisplayPrefix)
+- Tests added/updated in GatewayHostTests, SignalRHubTests, SignalRThreadRoutingTests
+- **Result:** 42/42 targeted tests passing
+
+**Cross-team Context:**
+- Farnsworth created `BotNexus.Gateway.Dispatching` contracts + adapter ✅
+- Bender integrated dispatcher into gateway runtime paths ✅
+- Leela approved all architectural decisions (✅ APPROVED)
+
+**Follow-up:** Unit tests for `DefaultConversationDispatcher` edge cases once contracts stabilize.
+
+---
 
 ## 2026-05-04 — Gateway Decoupling Test Audit
 

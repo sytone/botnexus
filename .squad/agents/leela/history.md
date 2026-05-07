@@ -7,25 +7,39 @@
 
 ## Core Context
 
-**Phases 1-7A Complete. Full Design Review Complete. Phase 12 Extension-Commands Design Review Complete (Grade: B+).** Build green (0 errors), 276 tests passing (up from 264), Full Review grade A-. Core systems operational:
-- Agent registry, supervisor, cross-agent calling with recursion guard + depth limits + timeout
-- WebSocket (with reconnect replay + sequence IDs), TUI (with steering), Telegram channel adapters
-- File and in-memory session stores (configurable via platform config)
-- Session suspend/resume, paginated history, bounded message queuing with backpressure
-- OAuth + API key auth
-- Provider abstraction: OpenAI, Anthropic, Copilot
-- WebUI dashboard with thinking/tool display, reconnection, activity feed
-- DIP fix: GatewayWebSocketHandler now uses IGatewayWebSocketChannelAdapter interface
-- OpenAPI spec export
-- Comprehensive integration tests (39 new tests in Sprint 7A)
+**Summary of Prior Work (2026-04-01 to 2026-05-07):**
+- **Phases 1-7A Complete. Full Design Review Complete. Phase 12 Extension-Commands Grade B+.** Build green (0 errors), 276-337 tests passing. Core systems: Agent registry/supervisor/cross-agent calling, WebSocket/TUI/Telegram channel adapters, file + in-memory session stores, suspend/resume, paginated history, bounded queueing, OAuth + API key auth, OpenAI/Anthropic/Copilot providers, WebUI dashboard, OpenAPI spec.
+- **Carried Findings (Sprint 7B):** `Path.HasExtension` auth bypass, StreamAsync task leak, SessionHistoryResponse extraction, GatewaySession SRP monitoring.
+- **Sub-Agent Completion Wake Bug Analysis (2026-07-22):** `InternalChannelAdapter` lacks `IStreamEventChannelAdapter` interface. Race window between follow-up drain and status transition. Correct wake mechanism: `DispatchAsync` (not `IsRunning` branch). CronTrigger creates ephemeral sessions.
+- **Gateway Decoupling (Farnsworth Signal):** Implemented `IAgentToolContributor` runtime contract. Removed compile-time extension references. Dependency direction restored.
+- **Conversation Routing Phase 1 Design Review:** Root cause analysis (Hub always passes null conversationId). Dual routing issue identified. Phase 1 fix (pass conversationId through Hub). Phase 2 plan (remove router from Hub, pure relay).
+- **Active Stream:** Extension commands, gateway lifecycle management, unified config + agent directory architecture, provider filtering, model allowlists.
 
-**Carried Findings (Sprint 7B):**
-- `Path.HasExtension` auth bypass in `GatewayAuthMiddleware`
-- StreamAsync background task leak in providers
-- SessionHistoryResponse should move to Abstractions.Models
-- Monitor GatewaySession SRP — extract replay buffer if it grows further
+---
 
-**Phase 7 Focus:** Resilience (reconnection, pagination, queueing), channel consolidation, test hardening, observability.
+## Session History
+
+**Status:** ✅ Complete — **APPROVED**  
+**Session:** Broader dispatching cleanup (Phase 2) comprehensive architectural review  
+
+**Review Scope:** 
+- Farnsworth: Dispatching layer contracts + adapter
+- Hermes: Dispatcher routing regression coverage
+- Bender: Gateway runtime rewire via dispatcher
+
+**Review Findings:**
+1. ✅ **Architecture** — Hub acts as event relay; proper separation of concerns
+2. ✅ **Dependency Direction** — SignalR → Dispatching → Conversations → Contracts → Domain (correct inbound flow)
+3. ✅ **Contracts** — All justified, no over-abstraction; `IConversationDispatcher` single-method, well-motivated
+4. ✅ **Behavior Preservation** — Non-default routing + default fallback both working; channel metadata preserved
+5. ✅ **Test Adequacy** — Unit + integration + real-impl; 44/44 gateway tests + Conversations.Tests passing
+6. ✅ **Incremental Compatibility** — Back-compat fallback in GatewayHost for non-dispatcher callers
+
+**Advisory Notes (Non-Blocking):**
+- Remove pre-existing `[Obsolete]` on `JoinSession`/`LeaveSession` (repo convention: delete dead code)
+- Consider focused unit tests for `DefaultConversationDispatcher` edge cases (null handling, missing store entries)
+
+**Verdict: APPROVED — Ship it.**
 
 ---
 
@@ -150,3 +164,16 @@ Farnsworth has implemented your recommendation to decouple Gateway from compile-
 - **Also Extracted:** Separate decision for conversation project extraction (user request; no bug link)
 - **Deliverables:** Design spec + Phase 1/2 breakdown in decisions.md
 - **Wave Plan:** Bender Phase 1 → Hermes Phase 1 tests → Farnsworth Phase 2 → Hermes Phase 2 tests
+
+## Learnings
+
+### Phase 1 Routing Review (2026-05-07)
+
+- When a hub method has an optional parameter that is forwarded to a routing layer, always verify the parameter is actually passed — default values silently mask bugs when callers provide non-null.
+- Integration test assertions should match the *intended* behavior, not the *observed* (buggy) behavior. The original `ShouldBe(defaultSessionId)` was documenting the bug as if it were spec.
+
+### Phase 2 Dispatching Cleanup Review (2026-05-08)
+
+- A single-method orchestration interface (`IConversationDispatcher`) is the right seam between transport adapters and conversation/session resolution — it prevents dual-routing bugs without over-abstracting.
+- When a hub retains a dependency on a lower-level interface (`IConversationRouter`) solely for lifecycle cleanup (disconnect muting), document why it's acceptable rather than silently coupling. Extract to a dedicated lifecycle interface if the usage grows.
+- Back-compat paths (`else if router is not null`) in hosts are acceptable during incremental migration but should have a tracking item for removal once all callers inject the new contract.

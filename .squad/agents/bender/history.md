@@ -7,11 +7,19 @@
 
 ## Core Context
 
-**Phases 1-11 Complete, Phase 12 Wave 1 Initiated.** Build green, 337 tests passing. Bender leads runtime architecture: session lifecycle, queueing, channel dispatch. Phase 12 Wave 1 assignments: Auth bypass fix (P0), WebUI channel adapter, rate limiting, correlation IDs, Telegram steering, SQLite store. Key recent: dynamic extension loader, Telegram Bot API implementation, streaming/thinking support. Active on gateway sprint: session reconnection, suspend/resume, TUI steering, bounded queueing.
+**Summary of Prior Work (2026-04-01 to 2026-05-07):**
+- **Phase 11 Extension Loading:** `IExtensionLoader` interface, `AssemblyLoadContextExtensionLoader`, `botnexus-extension.json` manifest discovery integrated into Gateway startup. Commits: 40a1588, aa7ac5e, b1aff30.
+- **Telegram Bot API:** `TelegramBotApiClient` HTTP wrapper, long polling, streaming edits with markdown/thinking/tool formatting. `TelegramOptions` (BotToken, polling intervals). SupportsStreaming=true for buffered delta flushing. 3 commits: d5035ab, a8f71a5, 4b2bffd.
+- **WebSocket Channel + Activity Stream:** `BotNexus.Channels.WebSocket` adapter with /ws dispatch. `IStreamEventChannelAdapter` contract. `/ws/activity` endpoint with `IActivityBroadcaster` subscriptions.
+- **Session Lifecycle & Control:** `GatewayWebSocketHandler` (one socket per session, sequence tracking, bounded replay). `SessionsController` PATCH suspend/resume. Per-session bounded queues via `System.Threading.Channels`. `TuiChannelAdapter` steering.
+- **MCP Server Graceful Initialization (P0 Fix):** Per-server try/catch in `McpServerManager.StartServersAsync`, skip failed servers with warnings. MCP servers are optional dependencies.
+- **Cross-Agent Session Scoping:** `DefaultAgentCommunicator` with registry validation, deterministic session IDs, async-local recursion prevention. `TuiChannelAdapter` event rendering.
+- **Phase 12 Sub-Agent Foundation (W2+W3):** `DefaultSubAgentManager` orchestrator. `SubAgentSpawnTool`, `SubAgentListTool`, `SubAgentManageTool` with recursion prevention, timeout enforcement, ownership checks.
+- **Active Stream:** Multi-session WebUI model, session store + manager (LRU eviction), SignalR event handler rewrites, paginated history.
 
 ---
 
-## Archived Entries (2026-04-06 to 2026-04-10)
+## Session History
 
 **Phase 11 Extension Loading:**
 - IExtensionLoader interface, AssemblyLoadContextExtensionLoader, botnexus-extension.json manifest discovery integrated into Gateway startup
@@ -40,6 +48,26 @@
 **Cross-Agent Session Scoping:**
 - DefaultAgentCommunicator: registry validation, deterministic session IDs ({source}::cross::{target}), async-local call-path tracking rejects recursive chains
 - TuiChannelAdapter: IStreamEventChannelAdapter implementation, thinking/tool/error event rendering
+
+---
+
+## 2026-05-07T22:05:56Z — Gateway Runtime Rewire via Dispatcher (Runtime Dev)
+
+**Status:** ✅ Complete  
+**Session:** Dispatching Cleanup Wave — Phase 2 runtime integration  
+
+**Implementation:**
+- Rewired `GatewayHost` and `GatewayHub` inbound resolution to use `IConversationDispatcher`
+- Hub now delegates to dispatcher via `ResolveOrCreateSessionAsync`, preserves router for lifecycle (disconnect/mute)
+- Outbound metadata routing: `BindingId`, `ThreadId`, `DisplayPrefix` preserved in response pipeline
+- **Result:** 44/44 gateway tests passing + Conversations.Tests passing
+
+**Key Design:** Keep `IConversationRouter` in `GatewayHub` (only for `MuteBindingByAddressAsync` on disconnect). Lifecycle operations orthogonal to pure dispatch resolution — cleaner separation.
+
+**Cross-team Context:**
+- Farnsworth created dispatcher contracts + adapter ✅
+- Hermes expanded routing regression coverage (42/42 ✅)
+- Leela approved phase 2 cleanup (✅ APPROVED)
 
 ---
 
@@ -170,3 +198,15 @@ ull)
 - **Result:** Non-default conversations now resolve to target session at hub time; SignalR group subscription aligns with gateway routing
 - **Test Status:** Targeted SignalR routing tests pass; full suite blocked by unrelated baseline failures (pre-existing)
 - **Risk:** LOW — existing conversation router path used by GatewayHost; we're just exposing it to GatewayHub
+
+
+### 2026-05-07 — Dispatcher rewire slice (GatewayHost + SignalR Hub)
+- Rewired inbound session/conversation resolution in GatewayHost to use IConversationDispatcher.DispatchAsync(InboundMessageContext) and removed direct ResolveInboundAsync usage from runtime processing.
+- Preserved outbound routing metadata (BindingId, ThreadId, DisplayPrefix) via dispatcher ChannelSource so replies and stream routing keep thread/topic affinity.
+- Rewired GatewayHub session resolution to call IConversationDispatcher instead of directly calling IConversationRouter.
+- Kept IConversationRouter in GatewayHub only for disconnect-time binding muting (MuteBindingByAddressAsync) since that operation is outside inbound dispatch resolution.
+- Validation: dotnet build BotNexus.slnx --nologo --tl:off passed; targeted tests for GatewayHostTests, SignalRHubTests, and SignalRThreadRoutingTests passed (44/44).
+
+### 2026-05-07 — MCP stdio send error normalization
+- `StdioMcpTransport` now checks process exit before writes and normalizes `IOException`/`ObjectDisposedException` into clear `InvalidOperationException` messages with exit code context.
+- Windows-specific `cmd echo` behavior made the stderr/stdout robustness test brittle; switched that test helper to PowerShell stdout/stderr emission for deterministic JSON output.

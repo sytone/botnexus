@@ -14940,3 +14940,179 @@ public interface IConversationDispatcher
   - `tests/BotNexus.Gateway.Dispatching.Tests/`
   - targeted updates in `tests/BotNexus.Gateway.Tests` and `tests/BotNexus.ConversationTests`
 
+
+---
+
+## Dispatching Cleanup Wave (2026-05-07)
+# Farnsworth Decision — Dispatching Layer First Slice (2026-05-07)
+
+## Decision
+
+Introduce a new `src/gateway/BotNexus.Gateway.Dispatching` project now, with contract-first dispatching APIs and a minimal adapter implementation:
+
+- `ChannelSource`
+- `InboundMessageContext`
+- `ConversationSessionResolution`
+- `DispatchResult`
+- `IConversationDispatcher`
+- `DefaultConversationDispatcher`
+
+Register `IConversationDispatcher` in `GatewayServiceCollectionExtensions` while keeping existing `GatewayHost` conversation-routing behavior unchanged for this slice.
+
+## Why
+
+This creates a concrete integration seam for the planned GatewayHub/GatewayHost transport relay rewire without colliding with in-flight work. It preserves current runtime behavior while establishing the dependency direction from design (`Domain → Contracts → Conversations → Dispatching → Gateway`).
+
+## Notes
+
+- `DefaultConversationDispatcher` currently adapts existing router/store contracts (`IConversationRouter`, `IConversationStore`) to avoid broad refactor churn.
+- New-conversation detection is inferred via pre-resolution store lookup to supply explicit newness flags in `ConversationSessionResolution`.
+
+---
+
+# Hermes Decision — Dispatcher Routing Regression Scope
+
+- **Date:** 2026-05-07
+- **Decision:** Since the new `BotNexus.Gateway.Dispatching` contracts are present but not yet stable/consumable in test flow, coverage was expanded at stable gateway/session boundaries (`GatewayHub` + `GatewayHost`) instead of binding tests to evolving internals.
+- **Added coverage focus:**
+  - Explicit non-default `conversationId` remains isolated from default conversation/session paths.
+  - Default routing path still resolves correctly when `conversationId` is omitted.
+  - Originating channel binding metadata (`ThreadId`, `BindingId`, `DisplayPrefix`) is preserved through routing and applied to outbound messages.
+- **Follow-up after Farnsworth lands stable dispatching contracts:** add focused unit tests directly against dispatching contracts/dispatcher components in `BotNexus.Gateway.Dispatching`.
+
+---
+
+# Decision: Keep disconnect binding mute on IConversationRouter while routing via IConversationDispatcher
+
+Date: 2026-05-07
+Owner: Bender
+
+## Context
+We rewired inbound conversation/session resolution in GatewayHost and GatewayHub to use IConversationDispatcher so runtime hosts act more like transport relays. However, SignalR disconnect handling currently needs to mute stale bindings by channel address.
+
+## Decision
+Use IConversationDispatcher for all inbound routing resolution paths, but keep IConversationRouter injected in GatewayHub specifically for MuteBindingByAddressAsync during disconnect cleanup.
+
+## Rationale
+- IConversationDispatcher owns inbound resolve orchestration and keeps host/hub decoupled from router/store coupling.
+- Disconnect muting is a conversation maintenance operation, not inbound dispatch resolution, and is currently exposed only on router contracts.
+- This keeps cleanup incremental without expanding dispatcher scope in this slice.
+
+## Impact
+- Runtime paths now route through dispatcher abstraction.
+- Existing stale-binding self-healing behavior remains intact.
+- Future cleanup can evaluate whether mute/list operations should also be abstracted behind a dispatching-management contract.
+
+---
+
+# Decision: Dispatching Cleanup — Reviewer Gate
+
+**Date:** 2026-05-08  
+**Author:** Leela (Lead/Architect)  
+**Status:** APPROVED  
+**Scope:** Gateway conversation/dispatching architectural cleanup (Phase 2)
+
+## Summary
+
+The conversation/dispatching cleanup — implemented by Farnsworth (Dispatching project, GatewayHost integration), Hermes (tests), and Bender (GatewayHub relay refactor) — passes reviewer gate.
+
+## Review Criteria & Findings
+
+### 1. Architecture: Hub as Event Relay ✅
+
+GatewayHub now delegates all conversation/session resolution to `IConversationDispatcher` via `ResolveOrCreateSessionAsync`. Message dispatch goes through `IChannelDispatcher` (GatewayHost). Hub no longer owns routing decisions — it subscribes the client to the resolved session group and fires-and-forgets the dispatch. Correct separation.
+
+### 2. Dependency Direction & Project Naming ✅
+
+```
+SignalR Extension → Gateway.Dispatching → Gateway.Conversations → Gateway.Contracts → Domain
+```
+
+Extensions depend inward. `Gateway.Dispatching` is correctly positioned as an orchestration adapter between transport layers and the conversation/session resolution internals. Project naming follows `BotNexus.Gateway.{Concern}` convention.
+
+### 3. Contract Justification ✅
+
+- `IConversationDispatcher` — single-method interface, justified by the need to decouple transports from `IConversationRouter` + `IConversationStore` internals.
+- `InboundMessageContext` — immutable record capturing all dispatch inputs. The `FromInboundMessage` factory preserves ConversationId propagation.
+- `ChannelSource` — normalized source identity; used by both resolution and outbound response routing.
+- `ConversationSessionResolution` — replaces ad-hoc tuple/multi-variable returns in GatewayHost.
+- `DispatchResult` — thin composition record. No over-abstraction detected.
+
+### 4. Behavior Preservation ✅
+
+- Non-default conversation routing: `RequestedConversationId` flows from hub → dispatcher → router → session resolution.
+- Default fallback: Null conversationId triggers binding-based resolution (verified by tests).
+- Source channel/binding metadata: `OriginatingBinding` enrichment preserved in both dispatcher and back-compat router paths in GatewayHost (lines 260-314).
+
+### 5. Test Adequacy ✅
+
+- Unit tests: Mock `IConversationDispatcher` verifying targeted vs default routing, cross-connection session sharing, auto-creation, whitespace normalization.
+- Integration tests: End-to-end SignalR → conversation API → dispatcher verification with `RecordingDispatcher`.
+- Real-impl test: `SignalR_SameAgent_MultipleConnections_ShareConversation` uses `DefaultConversationDispatcher` + `DefaultConversationRouter` with `InMemoryConversationStore`.
+- 44/44 gateway tests + Conversations.Tests passing.
+
+### 6. Incremental Compatibility: `IConversationRouter` in GatewayHub ✅ (Acceptable)
+
+Retained solely for `MuteBindingByAddressAsync` on disconnect (line 514). This is a lifecycle cleanup concern orthogonal to dispatch — moving it to the dispatcher would force a side-effect contract onto what should be a pure resolution interface. Acceptable transitional coupling. Future work may extract a dedicated `IBindingLifecycleManager` if muting logic grows.
+
+### 7. Back-compat Path in GatewayHost ✅
+
+GatewayHost (lines 282-314) retains an `else if (_conversationRouter is not null)` fallback for callers not yet injecting `IConversationDispatcher`. Both paths produce identical `ConversationSessionResolution` and `ChannelSource` shapes. Safe incremental migration.
+
+## Advisory Notes (Non-Blocking)
+
+1. **`[Obsolete]` on `JoinSession`/`LeaveSession`:** Violates repo convention ("No `[Obsolete]` Attributes — delete dead code"). These appear pre-existing and are outside the cleanup scope, but should be removed in a follow-up once clients confirm they no longer call them.
+
+2. **No dedicated test project for `Gateway.Dispatching`:** The `DefaultConversationDispatcher` logic is exercised through hub tests and integration tests. Acceptable given the project's thin adapter nature, but a focused unit test for `DefaultConversationDispatcher` edge cases (null conversationId, missing store entries) would strengthen the safety net.
+
+## Verdict
+
+**APPROVED.** Ship it.
+
+---
+
+### Worktree Instruction Clarification
+
+**Date:** 2026-05-08  
+**What:** Corrected worktree directive — worktrees are allowed when explicitly requested  
+**Why:** Prior "no worktrees" guidance in copilot-instructions.md conflicted with agent guidance in AGENTS.md that recommended worktrees. User clarified: worktrees should be allowed when requested; do not forbid them globally, and do not refuse a user-requested worktree.
+
+**Changes Made:**
+- `.github/copilot-instructions.md` — Updated Git Workflow section to allow worktrees when explicitly requested
+- `AGENTS.md` — Aligned Git Workflow section to state worktrees may be used when requested (removed "Always use" mandate)
+- Removed incorrect directive inbox file
+
+**Team Memory:** Worktrees are a valid tool when the user explicitly asks for them. Do not create automatically, but do not refuse when requested.
+
+---
+
+# Decision: Conversation Routing Phase 1 — Review Gate
+
+**Date:** 2026-05-07
+**Author:** Leela (Lead/Architect)
+**Status:** APPROVED
+
+## Verdict
+
+**APPROVED** — Phase 1 conversation routing fix by Bender (GatewayHub.cs) and Hermes (tests).
+
+## Rationale
+
+1. **Correctness:** The fix passes conversationId through to ResolveOrCreateSessionAsync, directly addressing the root cause (null was always passed, forcing default-conversation resolution). The normalization (Trim() + whitespace→null) is defensive and appropriate.
+
+2. **Narrowness:** Change is surgical — two call sites in SendMessageCore and the private method signature. No new interfaces, no new dependencies, no behavioral change when conversationId is null (default path preserved).
+
+3. **Default-path safety:** Existing tests (SendMessage_WithAgentAndChannelType_RoutesToExistingSession) exercise the null-conversationId path and continue to pass. The conversationId = null default parameter in ResolveOrCreateSessionAsync ensures all other callers (e.g., Subscribe, OnConnectedAsync) are unaffected.
+
+4. **Test adequacy:**
+   - Unit test (GatewayHub_SendMessage_WithConversationId_ResolvesConversationSession) isolates the mock router behavior — verifies the hub passes the conversation ID to the router and returns the correct session.
+   - Integration test (SignalRThreadRoutingTests) updated from ShouldBe (wrong assertion reflecting the bug) to ShouldNotBe with additional session-store verification of distinct ConversationIds. Good.
+   - All 18 filtered tests pass green.
+
+5. **Risk:** Low. The only behavioral change is when conversationId != null, which was already broken (resolving to wrong session). Phase 2 (full decoupling) remains correctly scoped for Farnsworth.
+
+## Follow-up Notes
+
+- Phase 2 remains: remove IConversationRouter from GatewayHub entirely (Farnsworth).
+- Consider adding a whitespace-only conversationId test case (edge case for the Trim normalization).
+
