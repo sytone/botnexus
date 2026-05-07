@@ -14,6 +14,18 @@
 - **Gateway Decoupling (Farnsworth Signal):** Implemented `IAgentToolContributor` runtime contract. Removed compile-time extension references. Dependency direction restored.
 - **Conversation Routing Phase 1 Design Review:** Root cause analysis (Hub always passes null conversationId). Dual routing issue identified. Phase 1 fix (pass conversationId through Hub). Phase 2 plan (remove router from Hub, pure relay).
 - **Active Stream:** Extension commands, gateway lifecycle management, unified config + agent directory architecture, provider filtering, model allowlists.
+**Phases 1-7A Complete. Full Design Review Complete. Phase 12 Extension-Commands Design Review Complete (Grade: B+).** Build green (0 errors), 276 tests passing (up from 264), Full Review grade A-. Core systems operational:
+- Agent registry, supervisor, cross-agent calling with recursion guard + depth limits + timeout
+- WebSocket (with reconnect replay + sequence IDs), TUI (with steering), Telegram channel adapters
+- File and in-memory session stores (configurable via platform config)
+- Session suspend/resume, paginated history, bounded message queuing with backpressure
+- OAuth + API key auth
+- Provider abstraction: OpenAI, Anthropic, Copilot
+- WebUI dashboard with thinking/tool display, reconnection, activity feed
+- DIP fix: GatewayWebSocketHandler now uses IGatewayWebSocketChannelAdapter interface
+- OpenAPI spec export
+- Comprehensive integration tests (39 new tests in Sprint 7A)
+- **PR #179 (2026-05-07): Memory tool surface fix — Approved deletion of MemoryStoreTool; consolidated to canonical tools (memory_save, memory_search, memory_get). Commit: 44788462**
 
 ---
 
@@ -177,3 +189,24 @@ Farnsworth has implemented your recommendation to decouple Gateway from compile-
 - A single-method orchestration interface (`IConversationDispatcher`) is the right seam between transport adapters and conversation/session resolution — it prevents dual-routing bugs without over-abstracting.
 - When a hub retains a dependency on a lower-level interface (`IConversationRouter`) solely for lifecycle cleanup (disconnect muting), document why it's acceptable rather than silently coupling. Extract to a dedicated lifecycle interface if the usage grows.
 - Back-compat paths (`else if router is not null`) in hosts are acceptable during incremental migration but should have a tracking item for removal once all callers inject the new contract.
+## 2026-05-07 — OpenClaw Memory Wave 1 Alignment (Lead/Architect)
+
+**Role:** Design leadership and gating decisions  
+**Branch:** feature/openclaw-memory-alignment  
+**Status:** ✅ COMPLETE — GO for merge  
+
+**Decisions Issued:**
+1. Wave 1 scope slice (contracts 1A, tool 1B, context 1C, tests 1D)
+2. Architecture review of Bender's initial implementation — **REJECTED** (two blocking issues: B1 MemorySaveTool reimplemented filesystem logic, B2 dead DailyMemoryNote contract)
+3. Remediation oversight — Farnsworth assigned B1/B2; delivered 58d03d13
+4. Re-review of Farnsworth remediation — **APPROVED** (both issues resolved cleanly)
+5. Tool scope decision (Option A: daily-note-only, MEMORY.md read-only, consolidation deferred to Wave 5)
+6. Final readiness gate — **GO for merge** (all blocking issues resolved, 61 Memory tests pass, 6 Prompts tests pass, Wave 1 gateway tests pass)
+
+**Key Outcomes:**
+- All prior blockers resolved: B1 (pure delegation), B2 (dead code removed), spec contradiction (Phase 2b aligned)
+- Non-blocking conditions C1–C3 carried to Wave 2 backlog (DateTime consistency, ContextFileOrdering tests, 4000-char budget)
+- Full test suite feasibility confirmed (pre-existing failures only, no Wave 1 regressions)
+- Strict rejection protocol enforced: Bender locked out, Farnsworth delegated remediation, all fixes validated
+
+**Recommendation:** Squash-merge to main; archive planning spec folder.

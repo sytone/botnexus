@@ -18,6 +18,7 @@
 - Probe Testing (2026-04-14): Parser coverage (Serilog + JSONL readers, temp files for real conditions)
 - Extension-Contributed Commands Wave 1 (2026-04-15): CommandRegistry + CommandModel tests; 10/10 passing
 - **Current:** Read-Only Sub-Agent Session View Wave 2 Testing (2026-04-20): 22 new unit tests for SessionType, IsReadOnly, ViewSubAgentAsync, and ChatPanel read-only UI; 92/92 BlazorClient tests passing ✅
+- **PR #179 (2026-05-07): Memory tool surface fix — Added guard coverage for memory_save content schema validation. 64 tests passing. Cross-platform path handling verified. Commit: 553eaf24**
 
 **Test Discipline Enforced:**
 - Always update tests when APIs change (no exceptions)
@@ -35,6 +36,8 @@
 - 2026-05-07: Added broader dispatching regression coverage at gateway/session boundaries: default routing with null conversationId, explicit non-default session isolation, and originating binding metadata (ThreadId/BindingId/DisplayPrefix) preservation on outbound sends.
 - 2026-05-07: Added SignalR conversation routing regressions that assert explicit conversationId resolves a distinct session (not the default portal session) and preserves conversation stamping on the resolved session.
 - 2026-04-20: Repro tests for sub-agent wake delivery should assert both dispatch metadata (messageType=subagent-completion) and stream-event channel capabilities; race-condition coverage needs explicit fallback-to-dispatch expectations when IsRunning flips during follow-up enqueue.
+
+- 2026-05-07: Cross-platform test portability (PR #179 CI fix) — all test fixture paths must use `Path.Combine()` and platform-aware path construction, not hardcoded backslash separators. WorkspaceContextBuilder tests were Linux-failing due to `"C:\\workspace\\..."` paths in config setup. Apply this pattern everywhere gateway tests initialize file paths or mock filesystem structures. Gateway workspace memory path tests now pass cross-platform.
 
 - 2026-05-04: Gateway decoupling audit found direct test coupling concentrated in InProcessIsolationStrategy constructor wiring tests (tests\BotNexus.Gateway.Tests\InProcessIsolationStrategyTests.cs, ToolHookWiringTests.cs, Agents\SubAgentIntegrationTests.cs, PlatformConfigAgentSourceTests.cs); these should shift to DI/extension-loader-backed tool registration seams instead of hardcoded strategy composition.
 - 2026-05-04: DI registration coverage for gateway startup is currently broad but shallow (IsolationStrategyRegistrationTests.cs, PlatformConfigurationTests.cs) and lacks assertions for runtime extension assembly scanning outcomes (IAgentTool/ICommandContributor registrations).
@@ -118,3 +121,39 @@
   - SignalRThreadRoutingTests.SignalRHub_NewConversation_GetsItsOwnSession (strengthened): expanded assertions to check both dispatched metadata AND resolved session identity + conversation store persistence
 - **Test Status:** Targeted SignalR routing tests pass; full suite blocked by unrelated baseline failures
 - **Coverage:** Session resolution behavior, conversation stamp persistence, non-default conversation isolation
+## 2026-05-07 — OpenClaw Memory Wave 1 QA & Validation (QA/Test Coverage)
+
+**Role:** Test coverage, validation, final QA verdict  
+**Branch:** feature/openclaw-memory-alignment  
+**Status:** ✅ APPROVE — Ready for merge  
+
+**QA Activities:**
+
+**Initial Validation (Post-Bender):**
+- Reviewed diff: e21e9e38..494804c8
+- Executed targeted Wave 1 tests: FileAgentWorkspaceManagerTests, WorkspaceContextBuilderTests, PlatformConfigAgentSourceTests, InProcessIsolationStrategyTests, ToolHookWiringTests, SubAgentIntegrationTests
+- Found change-related failures: SystemPromptBuilderSnapshotTests (3 failures from AGENTS.md changes), WorkspaceContextBuilderTests ordering instability
+- Pre-existing unrelated failures: SqliteSessionStoreConversationIdTests file lock cleanup
+
+**Remediation Validation (Post-Farnsworth 58d03d13):**
+- Full test execution results:
+  - BotNexus.Memory.Tests: ✅ 61 pass
+  - BotNexus.Prompts.Tests: ✅ 6 pass
+  - Wave 1 targeted Gateway classes: ✅ all pass
+  - Full BotNexus.Gateway.Tests: ❌ 7 pre-existing failures (outside Wave 1 scope)
+  - Full solution suite: ❌ pre-existing failures only (CodingAgent timeouts, MCP flake, snapshot drift, file locks)
+
+**Coverage Assignments (From Leela Conditions):**
+- **N1 (now C2):** Missing ContextFileOrdering_DailyNoteTests — coverage exists in Prompts and WorkspaceContextBuilder tests (ordering, deterministic sequencing)
+- **N3 (now C1):** DateTime consistency (DateTime.Now vs DateTime.UtcNow) — flagged as Wave 2 carry-forward
+- **N4 (now C3):** 4000-char daily note budget not enforced — tracked for Wave 2 backlog
+
+**Final Verdict:** ✅ **APPROVE**
+- No change-related test failures in Wave 1 targeted scope
+- Material coverage exists for modified areas (WorkspaceContextBuilder, FileAgentWorkspaceManager, MemorySaveTool delegation, ToolHookWiring)
+- Full suite feasibility verified (pre-existing failures documented and isolated)
+- Ready for merge
+
+**Outcomes:**
+- Wave 1 memory alignment validated and approved
+- Three non-blocking conditions (C1–C3) carried to Wave 2 backlog

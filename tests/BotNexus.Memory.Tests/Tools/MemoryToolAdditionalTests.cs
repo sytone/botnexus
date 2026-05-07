@@ -1,5 +1,7 @@
 using System.Text.Json;
 using BotNexus.Agent.Core.Types;
+using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Memory.Tests.TestInfrastructure;
 using BotNexus.Memory.Tools;
 
@@ -8,10 +10,9 @@ namespace BotNexus.Memory.Tests.Tools;
 public sealed class MemoryToolAdditionalTests
 {
     [Fact]
-    public async Task MemoryStoreTool_PrepareArguments_MissingContent_Throws()
+    public async Task MemorySaveTool_PrepareArguments_MissingContent_Throws()
     {
-        await using var context = await MemoryStoreTestContext.CreateAsync();
-        var tool = new MemoryStoreTool(context.Store, "agent-a");
+        var tool = new MemorySaveTool(new SpyWorkspaceManager(), "agent-a");
 
         var act = () => tool.PrepareArgumentsAsync(new Dictionary<string, object?>());
 
@@ -19,45 +20,42 @@ public sealed class MemoryToolAdditionalTests
     }
 
     [Fact]
-    public async Task MemoryStoreTool_StoresSpecialCharacters()
+    public async Task MemorySaveTool_StoresSpecialCharacters()
     {
-        await using var context = await MemoryStoreTestContext.CreateAsync();
-        var tool = new MemoryStoreTool(context.Store, "agent-a");
+        var workspaceManager = new SpyWorkspaceManager();
+        var tool = new MemorySaveTool(workspaceManager, "agent-a");
         var payload = "special chars ; | ` \" ' and emoji 😀";
 
-        var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?> { ["content"] = payload });
-        var id = GetText(result).Split(' ')[3];
-        var stored = await context.Store.GetByIdAsync(id);
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?> { ["content"] = payload });
 
-        stored.ShouldNotBeNull();
-        stored!.Content.ShouldBe(payload);
+        workspaceManager.SaveCalls.Count.ShouldBe(1);
+        workspaceManager.SaveCalls.Single().Content.ShouldBe(payload);
     }
 
     [Fact]
-    public async Task MemoryStoreTool_DuplicateContent_CreatesDistinctEntries()
+    public async Task MemorySaveTool_DuplicateContent_CreatesDistinctAppends()
     {
-        await using var context = await MemoryStoreTestContext.CreateAsync();
-        var tool = new MemoryStoreTool(context.Store, "agent-a");
+        var workspaceManager = new SpyWorkspaceManager();
+        var tool = new MemorySaveTool(workspaceManager, "agent-a");
         var args = new Dictionary<string, object?> { ["content"] = "duplicate payload" };
 
-        var first = await tool.ExecuteAsync("call-1", args);
-        var second = await tool.ExecuteAsync("call-2", args);
+        await tool.ExecuteAsync("call-1", args);
+        await tool.ExecuteAsync("call-2", args);
 
-        var firstId = GetText(first).Split(' ')[3];
-        var secondId = GetText(second).Split(' ')[3];
-        firstId.ShouldNotBe(secondId);
+        workspaceManager.SaveCalls.Count.ShouldBe(2);
+        workspaceManager.SaveCalls[0].Content.ShouldBe("duplicate payload");
+        workspaceManager.SaveCalls[1].Content.ShouldBe("duplicate payload");
     }
 
     [Fact]
-    public async Task MemoryStoreTool_PrepareArguments_InvalidExpiresInDays_Throws()
+    public async Task MemorySaveTool_PrepareArguments_IgnoresLegacyStoreArguments()
     {
-        await using var context = await MemoryStoreTestContext.CreateAsync();
-        var tool = new MemoryStoreTool(context.Store, "agent-a");
+        var tool = new MemorySaveTool(new SpyWorkspaceManager(), "agent-a");
+        var prepared = await tool.PrepareArgumentsAsync(
+            new Dictionary<string, object?> { ["content"] = "x", ["expiresInDays"] = "not-a-number", ["tags"] = new[] { "legacy" } });
 
-        var act = () => tool.PrepareArgumentsAsync(
-            new Dictionary<string, object?> { ["content"] = "x", ["expiresInDays"] = "not-a-number" });
-
-        await act.ShouldThrowAsync<ArgumentException>();
+        prepared.Count.ShouldBe(1);
+        prepared["content"].ShouldBe("x");
     }
 
     [Fact]
@@ -162,4 +160,39 @@ public sealed class MemoryToolAdditionalTests
 
     private static string GetText(AgentToolResult result)
         => result.Content.Single(content => content.Type == AgentToolContentType.Text).Value;
+
+    private sealed class SpyWorkspaceManager : IAgentWorkspaceManager
+    {
+        public List<SaveMemoryCall> SaveCalls { get; } = [];
+
+        public Task<AgentWorkspace> LoadWorkspaceAsync(string agentName, CancellationToken ct = default)
+            => Task.FromResult(new AgentWorkspace(agentName, Soul: string.Empty, Identity: string.Empty, User: string.Empty, Memory: string.Empty));
+
+        public Task SaveMemoryAsync(string agentName, string content, CancellationToken ct = default)
+        {
+            SaveCalls.Add(new SaveMemoryCall(agentName, null, content, null));
+            return Task.CompletedTask;
+        }
+
+        public Task SaveMemoryAsync(string agentName, string? filePath, string content, CancellationToken ct = default)
+        {
+            SaveCalls.Add(new SaveMemoryCall(agentName, filePath, content, null));
+            return Task.CompletedTask;
+        }
+
+        public Task SaveMemoryAsync(
+            string agentName,
+            string? filePath,
+            string content,
+            string? memoryPathOverride,
+            CancellationToken ct = default)
+        {
+            SaveCalls.Add(new SaveMemoryCall(agentName, filePath, content, memoryPathOverride));
+            return Task.CompletedTask;
+        }
+
+        public string GetWorkspacePath(string agentName) => $@"C:\agents\{agentName}\workspace";
+    }
+
+    private sealed record SaveMemoryCall(string AgentName, string? FilePath, string Content, string? MemoryPathOverride);
 }

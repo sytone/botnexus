@@ -128,7 +128,7 @@ Agents are defined in the `agents` section, keyed by agent ID.
       "enabled": true,
       "memory": {
         "enabled": true,
-        "maxEntries": 100
+        "path": "memory"
       },
       "soul": {
         "enabled": true,
@@ -184,7 +184,9 @@ Agents are defined in the `agents` section, keyed by agent ID.
 | `maxConcurrentSessions` | int | `0` | Max concurrent sessions (0 = unlimited) |
 | `enabled` | bool | `true` | Enable/disable this agent |
 | `memory.enabled` | bool | `false` | Enable memory system for this agent |
-| `memory.maxEntries` | int | `100` | Max memory entries to retain |
+| `memory.path` | string | `memory` | Memory root directory relative to agent workspace. Daily notes (`YYYY-MM-DD.md`) are written here |
+| `memory.indexing` | string | `auto` | Memory indexing mode |
+| `memory.search.defaultTopK` | int | `10` | Default number of search results |
 | `soul.enabled` | bool | `false` | Enable soul session (persistent agent identity) |
 | `soul.idleTimeoutMinutes` | int | `30` | Idle timeout for soul sessions |
 | `sessionAccess.level` | string | `own` | Session access: `own`, `allowlist`, or `all` |

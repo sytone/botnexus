@@ -1,5 +1,9 @@
 # Agent Guidelines for BotNexus
 
+## Platform / Runtime
+
+BotNexus runs on **Windows and Linux**. All code, tests, scripts, and documentation must be portable across both platforms. Do not assume a single OS — CI runs on both, and developer machines vary.
+
 ## Document Ownership
 
 Some docs have a YAML front-matter header indicating ownership:
@@ -144,6 +148,13 @@ When testing shell execution, ensure commands work on both `bash` and `pwsh`:
 - Use `RuntimeInformation.IsOSPlatform()` for platform-specific test branches if unavoidable
 - Prefer cross-platform commands (pwsh `Write-Output` works everywhere pwsh is installed)
 - Never hardcode `cmd.exe` or `/bin/bash` paths in tests — use the ShellTool abstraction
+
+### Memory Tool Naming
+
+- The agent-facing tool for persisting notes is **`memory_save`**. Do not call it "memory store."
+- `memory_save` appends daily notes to `memory/YYYY-MM-DD.md`.
+- `MEMORY.md` is **read-only** during normal turns; it is written only by future consolidation/dreaming processes.
+- Terms like "memory store", "index", and "SQLite" refer to internal implementation details — do not surface them in agent-facing docs or tool descriptions.
 
 ### Never Guess Time
 

@@ -12,7 +12,7 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
 {
     private const string BootstrapFileName = "BOOTSTRAP.md";
     private static readonly string[] DefaultPromptFiles =
-        ["AGENTS.md", "SOUL.md", "TOOLS.md", "BOOTSTRAP.md", "IDENTITY.md", "USER.md"];
+        ["AGENTS.md", "SOUL.md", "TOOLS.md", "BOOTSTRAP.md", "IDENTITY.md", "USER.md", "MEMORY.md"];
     private readonly IAgentWorkspaceManager _workspaceManager;
     private readonly IFileSystem _fileSystem;
     private readonly IHookDispatcher? _hookDispatcher;
@@ -39,7 +39,12 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
 
         var workspacePath = ResolveWorkspaceDirectory(_workspaceManager.GetWorkspacePath(descriptor.AgentId));
         var promptFiles = ResolvePromptFiles(descriptor);
-        var contextFiles = await LoadContextFilesAsync(_fileSystem, workspacePath, promptFiles, cancellationToken);
+        var contextFiles = (await LoadContextFilesAsync(_fileSystem, workspacePath, promptFiles, cancellationToken)).ToList();
+        if (descriptor.SystemPromptFiles.Count == 0 && string.IsNullOrWhiteSpace(descriptor.SystemPromptFile))
+        {
+            var recentMemoryFiles = await LoadRecentDailyMemoryFilesAsync(_fileSystem, workspacePath, descriptor.Memory?.Path, cancellationToken);
+            contextFiles.AddRange(recentMemoryFiles);
+        }
 
         var prompt = SystemPromptBuilder.Build(new SystemPromptParams
         {
@@ -127,6 +132,65 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             return [descriptor.SystemPromptFile];
 
         return DefaultPromptFiles;
+    }
+
+    private static async Task<IReadOnlyList<ContextFile>> LoadRecentDailyMemoryFilesAsync(
+        IFileSystem fileSystem,
+        string workspacePath,
+        string? memoryPathOverride,
+        CancellationToken cancellationToken)
+    {
+        var memoryRoot = ResolveMemoryRoot(fileSystem, workspacePath, memoryPathOverride);
+        if (!fileSystem.Directory.Exists(memoryRoot))
+            return [];
+
+        var today = DateTime.Now.Date;
+        var targetNames = new HashSet<string>(StringComparer.Ordinal)
+        {
+            today.ToString("yyyy-MM-dd"),
+            today.AddDays(-1).ToString("yyyy-MM-dd")
+        };
+
+        var files = fileSystem.Directory.GetFiles(memoryRoot, "*.md")
+            .Select(path => new
+            {
+                FullPath = path,
+                Name = fileSystem.Path.GetFileNameWithoutExtension(path),
+                RelativePath = fileSystem.Path.GetRelativePath(workspacePath, path).Replace('\\', '/')
+            })
+            .Where(file => targetNames.Contains(file.Name))
+            .OrderByDescending(file => file.Name, StringComparer.Ordinal)
+            .ThenBy(file => file.RelativePath, StringComparer.Ordinal)
+            .ToList();
+
+        List<ContextFile> result = [];
+        foreach (var file in files)
+        {
+            var content = await fileSystem.File.ReadAllTextAsync(file.FullPath, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(content))
+                result.Add(new ContextFile(file.RelativePath, content.Trim()));
+        }
+
+        return result;
+    }
+
+    private static string ResolveMemoryRoot(IFileSystem fileSystem, string workspacePath, string? memoryPathOverride)
+    {
+        var relative = string.IsNullOrWhiteSpace(memoryPathOverride)
+            ? "memory"
+            : memoryPathOverride.Trim().Replace('\\', '/');
+        if (relative.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+            relative = fileSystem.Path.GetDirectoryName(relative) ?? "memory";
+
+        var memoryRoot = fileSystem.Path.GetFullPath(fileSystem.Path.Combine(workspacePath, relative));
+        var workspaceFullPath = fileSystem.Path.GetFullPath(workspacePath);
+        var workspacePrefix = workspaceFullPath.TrimEnd(fileSystem.Path.DirectorySeparatorChar, fileSystem.Path.AltDirectorySeparatorChar)
+            + fileSystem.Path.DirectorySeparatorChar;
+        if (!memoryRoot.StartsWith(workspacePrefix, StringComparison.OrdinalIgnoreCase) &&
+            !memoryRoot.Equals(workspaceFullPath, StringComparison.OrdinalIgnoreCase))
+            return fileSystem.Path.Combine(workspacePath, "memory");
+
+        return memoryRoot;
     }
 
     private static bool IsPathUnderWorkspace(string workspacePath, string filePath)
