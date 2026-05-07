@@ -194,6 +194,43 @@ public sealed class WorkspaceContextBuilderTests
         }
     }
 
+    [Fact]
+    public async Task BuildSystemPromptAsync_DefaultPrompt_WithFileOverride_UsesOverrideDirectoryForRecentDailyFiles()
+    {
+        var todayFileName = $"{DateTime.Now:yyyy-MM-dd}.md";
+        var workspacePath = CreateWorkspace(
+            ("AGENTS.md", "AGENTS"),
+            ("SOUL.md", "SOUL"),
+            ("TOOLS.md", "TOOLS"),
+            ("BOOTSTRAP.md", "BOOTSTRAP"),
+            ("IDENTITY.md", "IDENTITY"),
+            ("USER.md", "USER"),
+            ($@"journals\{todayFileName}", "FILE OVERRIDE TODAY"),
+            ($@"memory\{todayFileName}", "DEFAULT MEMORY SHOULD NOT LOAD"));
+        try
+        {
+            var manager = new StubWorkspaceManager(workspacePath);
+            var builder = new WorkspaceContextBuilder(manager, _fileSystem);
+
+            var result = await builder.BuildSystemPromptAsync(new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("farnsworth"),
+                DisplayName = "Farnsworth",
+                ModelId = "test-model",
+                ApiProvider = "test-provider",
+                Memory = new MemoryAgentConfig { Enabled = true, Path = "journals\\daily.md" }
+            });
+
+            result.ShouldContain("FILE OVERRIDE TODAY");
+            result.ShouldNotContain("DEFAULT MEMORY SHOULD NOT LOAD");
+            result.ShouldContain($"## journals/{todayFileName}");
+        }
+        finally
+        {
+            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
+        }
+    }
+
     private sealed class StubWorkspaceManager : IAgentWorkspaceManager
     {
         private readonly string _workspacePath;

@@ -46,6 +46,28 @@ public sealed class MemorySaveToolTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_WithFilePathAndOverride_DelegatesBothValuesToWorkspaceManager()
+    {
+        var workspaceManager = new SpyWorkspaceManager();
+        var tool = new MemorySaveTool(workspaceManager, "farnsworth", memoryPathOverride: "journals");
+
+        await tool.ExecuteAsync(
+            "call-override",
+            new Dictionary<string, object?>
+            {
+                ["content"] = "explicit path note",
+                ["file_path"] = "handoff.md"
+            });
+
+        workspaceManager.SaveCalls.Count.ShouldBe(1);
+        var call = workspaceManager.SaveCalls.Single();
+        call.AgentName.ShouldBe("farnsworth");
+        call.FilePath.ShouldBe("handoff.md");
+        call.Content.ShouldBe("explicit path note");
+        call.MemoryPathOverride.ShouldBe("journals");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_DoesNotUseWorkspacePathWhenSavingMemory()
     {
         var workspaceManager = new SpyWorkspaceManager { ThrowOnGetWorkspacePath = true };
