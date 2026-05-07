@@ -5,7 +5,7 @@ type: improvement
 priority: high
 status: in-progress
 created: 2026-04-10
-updated: 2026-04-10
+updated: 2026-05-07
 author: nova
 tags: [memory, compaction, persistence, dreaming]
 depends_on: [feature-subagent-spawning]
@@ -114,8 +114,9 @@ Add to AGENTS.md or make it a habit:
 
 #### 2b. End-of-Conversation Persistence
 When detecting conversation is winding down (user says goodbye, long gap, etc.):
-- Write session summary to daily notes
-- Update MEMORY.md if significant long-term items were discussed
+- Write session summary to daily notes (`memory/YYYY-MM-DD.md`)
+- Do **not** write to `MEMORY.md` — it is read-only during normal turns
+- Long-term consolidation into `MEMORY.md` is deferred to Phase 4 (Dreaming)
 
 #### 2c. Memory Section in System Prompt
 Enhance the system prompt (via AGENTS.md) with explicit memory guidance:
