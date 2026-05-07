@@ -83,3 +83,30 @@
 - Outcome: AgentCore timeout behavior passes; gateway timeout config wiring tests fail (expected, highlights issue #24 gap).
 
 ---
+
+## 2026-05-07 — Conversation Project Extraction: QA & Validation
+
+**Status:** ✅ Complete (Test validation passed, approved for merge)  
+**Session:** Conversation project refactor orchestration  
+**Coordination:** With Leela (design), Bender (implementation), Nibbler (consistency)  
+
+**Your Role:** Quality Assurance. Test validation and coverage verification.
+
+**Test Validation Results:**
+- **BotNexus.Gateway.Conversations.Tests:** 66/66 passing ✅
+- **BotNexus.Gateway.ConversationTests:** 9/9 passing ✅
+- **Focused Gateway conversation coverage:** 62/62 passing ✅
+
+**Scope Verification:**
+- Confirmed all 7 conversation-focused test files moved from Gateway.Tests to new project ✅
+- Confirmed store/router unit tests correctly isolated ✅
+- No test regressions in moved behavior ✅
+
+**Notes:**
+- SqliteSessionStoreConversationIdTests file-lock failures observed (outside moved scope, pre-existing issue)
+- Test naming conventions respected (Method_Condition_ExpectedBehavior)
+- All assertions aligned with Leela's design contracts
+
+**Status:** Approved for code review and merge
+
+---

@@ -7,6 +7,31 @@
 
 ## Core Context
 
+## 2026-05-07 — Conversation Project Extraction: Architectural Design Review
+
+**Status:** ✅ Complete (Design Approved, Implementation Complete)  
+**Session:** Conversation project refactor orchestration  
+**Coordination:** With Bender (implementation), Hermes (QA), Nibbler (consistency)  
+
+**Your Role:** Lead Architect. Reran architecture review from fresh baseline, produced comprehensive design decision.
+
+**Decision:** Extract 3 conversation stores (InMemory, File, Sqlite) + DefaultConversationRouter from Gateway.Sessions/Gateway into dedicated BotNexus.Gateway.Conversations project. Keep contracts in Gateway.Contracts (dependency inversion), domain models in Domain. New test project: BotNexus.Gateway.Conversations.Tests.
+
+**Key Architectural Decisions:**
+- **Dependency graph:** Domain ← Contracts ← Gateway.Conversations ← Gateway (host)
+- **No circular deps:** Gateway.Conversations and Gateway.Sessions are siblings
+- **Contracts stay:** IConversationStore/IConversationRouter remain in Gateway.Contracts
+- **Domain stays:** Conversation models remain in Domain
+- **DI root unchanged:** GatewayServiceCollectionExtensions continues concrete registration
+
+**Risk Mitigation Table:** Documented 6 risks (all LOW-MEDIUM, all mitigated including SQLite coupling, shared database file, DI registration, namespace break, router interface dependency, test helper sharing).
+
+**Verification Checklist Provided:** Build, tests, namespace validation, project references, circular dependency checks.
+
+**Commit:** `d8552f1f` (design decision)
+
+---
+
 **Phases 1-7A Complete. Full Design Review Complete. Phase 12 Extension-Commands Design Review Complete (Grade: B+).** Build green (0 errors), 276 tests passing (up from 264), Full Review grade A-. Core systems operational:
 - Agent registry, supervisor, cross-agent calling with recursion guard + depth limits + timeout
 - WebSocket (with reconnect replay + sequence IDs), TUI (with steering), Telegram channel adapters

@@ -77,3 +77,37 @@
 
 - Sub-agent completion delivery mechanism changed from `FollowUpAsync` (queue-based) to `DispatchAsync` (channel-based). Feature docs lagged behind. Always check feature-level docs when the delivery mechanism changes — they drift faster than code.
 - Archived specs should NOT be updated to reflect post-delivery changes — they represent the design at the time of the decision.
+
+---
+
+## 2026-05-07 — Conversation Project Extraction: Consistency Review
+
+**Status:** ✅ Complete (Post-work consistency review approved, ready for merge)  
+**Session:** Conversation project refactor orchestration  
+**Coordination:** With Leela (design), Bender (implementation), Hermes (QA)  
+
+**Your Role:** Consistency Reviewer. Scanned for stale references and documentation updates.
+
+**Stale References Found & Fixed:**
+1. **README.md** (top-level) — Updated project architecture section to reference new BotNexus.Gateway.Conversations project
+2. **src\gateway\README.md** — Updated gateway project structure docs to include Conversations project boundary
+3. **docs\planning\feature-conversation-topics\design-review.md** — Updated active planning docs to reflect new project layout
+
+**Consistency Verified ✅:**
+- Project structure matches docs ✅
+- Namespace alignment (BotNexus.Gateway.Conversations) consistent across code, comments, and docs ✅
+- No orphaned references to old conversation store locations ✅
+- Test project creation/location documented correctly ✅
+
+**Non-Blocking Future Cleanup (noted but not in scope):**
+- Heavy test references in shared test helpers
+- Shared test helper linking patterns (low priority, can batch with future refactors)
+
+**Commit:** `ef58f4f3` (consistency fixes)
+
+**Overall Grade: Good**
+- 3 documentation stale reference issues found and fixed
+- Code-to-docs alignment verified
+- Ready for PR merge
+
+---
