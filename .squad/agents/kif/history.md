@@ -48,6 +48,44 @@
 ✅ Matched existing endpoint section format
 ✅ Followed response JSON style conventions
 ✅ HTTP header and error response table format
+
+---
+
+## 2026-05-08 — OpenClaw Memory Alignment — Design Questions Resolution (Documentation Engineer)
+
+**Status:** ✅ Complete  
+**Activity:** Recorded design decisions; updated spec; committed changes
+
+**Context:** Six open design questions in the OpenClaw Memory Alignment spec. Coordinator walked Sytone through options. Leela prepared decision guide. Sytone selected resolutions. You recorded and committed.
+
+**Work Completed:**
+
+1. **Decision Document:** Created `.squad/decisions/inbox/kif-openclaw-memory-resolved-questions.md`
+   - Structured format (table + implications per wave)
+   - Metadata: date (2026-05-08), decider (Sytone), recorder (Kif), spec reference
+
+2. **Design Spec Update:** Updated `docs/planning/botnexus-openclaw-memory-alignment/design-spec.md`
+   - Integrated all six resolutions into §7
+   - Ensured implications are clear for implementers across all five waves
+
+3. **Git Commits:**
+   - `bbe3df93`: docs(planning): resolve open questions in OpenClaw memory alignment spec
+   - `39bf3315`: docs(planning): fix incorrect date in resolved decisions section
+
+**Decisions Recorded:**
+
+| # | Topic | Decision |
+|---|-------|----------|
+| 1 | Daily notes format | Plain Markdown only |
+| 2 | Storage path | Default canonical + per-agent override |
+| 3 | Embedding provider | Optional; local + cloud abstraction |
+| 4 | Consolidation trigger | Automatic schedule + manual override |
+| 5 | Index rebuild / cache | <30s rebuild; hash-based SQLite cache |
+| 6 | AGENTS.md generation | Minimal instructions (3–5 lines) |
+
+**Next Steps:** Scribe merged decision inbox to canonical decisions.md (2026-05-07T16:05:40Z).
+
+
 ✅ Reflects design-spec.md architecture
 
 ---

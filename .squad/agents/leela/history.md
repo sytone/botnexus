@@ -29,6 +29,33 @@
 
 ---
 
+## 2026-05-08 — OpenClaw Memory Alignment — Design Questions Resolution (Architect)
+
+**Status:** ✅ Complete  
+**Activity:** Prepared decision guide for OpenClaw Memory Alignment spec
+
+**Context:** Six open design questions in the OpenClaw Memory Alignment spec were walked through with Sytone (Product Owner). Your role: architected decision guide, framed options, analyzed trade-offs. Sytone selected all six resolutions. Kif recorded to canonical decisions.md.
+
+**Decisions Approved:**
+
+1. **Daily notes format:** Plain Markdown only (no YAML frontmatter)
+2. **Storage path:** Default canonical + optional per-agent override in config
+3. **Embedding provider:** Optional; local + cloud behind `IEmbeddingProvider` abstraction
+4. **Consolidation trigger:** Automatic schedule (cron) + manual override
+5. **Index rebuild / cache:** <30s FTS rebuild; embeddings cached by content hash in SQLite
+6. **AGENTS.md generation:** Minimal memory instructions (3–5 lines); details in tool descriptions
+
+**Implications for Your Next Phase:**
+
+- Waves 1-5 are now constrained by these decisions
+- Wave 1 must use plain Markdown for note creation; no YAML injection
+- Wave 3 memory search must degrade gracefully when no `IEmbeddingProvider` is registered
+- Consolidation service needs both cron (automatic) and CLI trigger (manual override)
+
+**Next Steps:** Coordinate with implementation agents (Fry, Hermes, Bender) to schedule Wave 1 kickoff.
+
+
+
 ## 2026-07-28 — Gateway Detached Process Design Review (Lead)
 
 **Status:** ✅ Complete  
