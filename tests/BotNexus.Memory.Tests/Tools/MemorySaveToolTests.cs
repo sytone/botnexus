@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Memory.Tools;
+using System.Text.Json;
 
 namespace BotNexus.Memory.Tests.Tools;
 
@@ -30,6 +31,20 @@ public sealed class MemorySaveToolTests
         tool.Name.ShouldBe("memory_save");
         tool.Definition.Name.ShouldBe("memory_save");
         tool.Definition.Description.ShouldNotContain("memory store", Case.Insensitive);
+    }
+
+    [Fact]
+    public void Definition_RequiresContentForLegacyContentOnlyCalls()
+    {
+        var workspaceManager = new SpyWorkspaceManager();
+        var tool = new MemorySaveTool(workspaceManager, "farnsworth");
+
+        var required = tool.Definition.Parameters.GetProperty("required")
+            .EnumerateArray()
+            .Select(static node => node.GetString())
+            .ToArray();
+
+        required.ShouldContain("content");
     }
 
     [Fact]
