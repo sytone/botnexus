@@ -948,11 +948,11 @@ Configured agents:
 
 ---
 
-## memory/daily/2026-04-02.md
+## memory/2026-04-02.md
 
-[09:15] Reviewed workspace and memory architecture
-[10:30] Documented system prompt assembly process
-[14:00] Discussed memory consolidation strategy
+Reviewed workspace and memory architecture
+Documented system prompt assembly process
+Discussed memory consolidation strategy
 ```
 
 ---
@@ -969,9 +969,8 @@ When an agent workspace doesn't exist yet, the system initializes it automatical
 
 2. **Initialization Steps** (in `AgentWorkspace.InitializeAsync()`)
    - Create agent workspace directory: `~/.botnexus/agents/{agentName}/`
-   - Create memory directories:
+   - Create memory directory:
      - `~/.botnexus/agents/{agentName}/memory/`
-     - `~/.botnexus/agents/{agentName}/memory/daily/`
    - Create bootstrap files if missing:
      - `SOUL.md` (with placeholder comment)
      - `IDENTITY.md` (with placeholder comment)
