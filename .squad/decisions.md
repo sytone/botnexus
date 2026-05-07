@@ -16153,3 +16153,80 @@ Result:
 - Keep `scripts/botnexus-sync.sh` out of this test commit; unrelated local file.
 - Branch is safe to cherry-pick or merge on top of Farnsworth’s feature branch.
 
+
+---
+
+## Issue #24: Tool Timeout Configuration (2026-05-07)
+
+**Decision Date:** 2026-05-07  
+**Multi-Agent Delivery:** Phase 1 Complete  
+**Lead:** Leela (Architecture Review)  
+**Status:** Approved for Merge
+
+### Context
+
+Issue #24 requires configurable tool execution timeouts with structured error recovery and optional auto-cancellation. Multi-agent work split across design review, test contracts, runtime implementation, and consistency verification.
+
+### Decisions
+
+#### 1. Hermes Test Strategy Decision
+For issue #24, QA locked in three regression contracts before runtime implementation:
+1. Platform config must preserve per-agent and defaults-level ToolTimeoutSeconds for descriptor/runtime wiring.
+2. In-process agent creation must propagate configured timeout into AgentOptions.ToolTimeout.
+3. AgentCore timeout behavior keeps passing contracts for structured timeout error + continued execution after timeout.
+
+**Rationale:** The runtime timeout behavior is partially implemented in AgentCore, but gateway config-to-runtime wiring is currently missing. These tests separate already-working behavior from missing plumbing so implementation can land safely without regressing existing timeout handling.
+
+#### 2. Bender Runtime Wiring Decision
+Runtime timeout wiring will use gents[*].toolTimeoutSeconds (and gents.defaults.toolTimeoutSeconds) as the canonical config path, flow that value into descriptor metadata key 	oolTimeoutSeconds, and let InProcessIsolationStrategy translate it into AgentOptions.ToolTimeout.
+
+**Rationale:**
+- Keeps runtime wiring minimal and compatible without expanding descriptor contract surface.
+- Preserves defaults inheritance behavior even when tests construct PlatformConfig directly by adding an inline gents.defaults fallback in PlatformConfigAgentSource.
+- Adds structured diagnostics in strategy when timeout metadata is invalid so timeout misconfiguration is observable during runtime debugging.
+
+#### 3. Leela Architecture Review Approval
+**Approved.** Bender's implementation is correct, minimal, and well-bounded. The config→descriptor→runtime wiring is clean and the scope is appropriate for a "must-have #1" fix (configurable tool timeout with structured error recovery).
+
+**Review Summary:**
+- **Config Contract (✅ Clean):** Nullable int, backward-compatible, zero-config default. AgentConfigMerger.MergeToolTimeoutSeconds follows existing merge pattern.
+- **Runtime Boundaries (✅ Sound):** Config flows via metadata → InProcessIsolationStrategy.ResolveToolTimeout() → AgentOptions.ToolTimeout. Metadata-bag approach avoids expanding descriptor contract surface.
+- **SOLID Compliance (✅ No over-abstraction):** No new interfaces or abstractions. InProcessIsolationStrategy owns metadata translation.
+- **Tests (✅ Adequate):** 3 new tests for config wiring + defaults inheritance + event emission. All 24 issue-related tests pass.
+- **Logging & Error Handling (✅ Good):** Debug log on success, Warning log on invalid metadata. Graceful fallback to AgentCore's 120s default.
+
+**Observations (Non-Blocking):**
+1. **Metadata bag as config carrier** — Workable today but if more runtime options flow through metadata, consider first-class fields on AgentDescriptor in future cleanup.
+2. **Out-of-scope follow-ups** — Stuck-turn detection, user cancel, auto-cancel, UI health badges tracked separately as Phase 2.
+3. **ExtractInlineAgentDefaults coverage** — Extracts ToolIds, ToolTimeoutSeconds, Memory, Heartbeat, FileAccess. Future defaults fields will need mirroring; consider a TODO.
+
+**Verdict:** APPROVED — merge when CI is green.
+
+### Deliverables
+
+| Item | Status |
+|------|--------|
+| Config model extension | ✅ Complete |
+| Descriptor metadata flow | ✅ Complete |
+| Runtime strategy implementation | ✅ Complete |
+| Test coverage (3 new tests) | ✅ Complete |
+| All 24 issue-related tests | ✅ Passing |
+| Code review (Leela approval) | ✅ Complete |
+
+### Phase 1 Coverage
+
+- **Requirement #1:** Configurable timeout per config — ✅
+- **Requirement #2:** Descriptor wiring — ✅
+- **Requirement #3:** Runtime propagation — ✅
+- **Requirement #8:** Structured logging — ✅
+- **Requirement #4 (Stuck-turn detection):** Follow-up
+- **Requirement #5 (User cancel):** Follow-up
+- **Requirement #6 (Auto-cancel):** Follow-up
+- **Requirement #9 (UI health badge):** Follow-up
+
+### PR & Status
+
+- **Branch:** ix/24-tool-timeouts
+- **PR:** https://github.com/sytone/botnexus/pull/177
+- **Status:** Ready for merge (awaiting CI)
+
