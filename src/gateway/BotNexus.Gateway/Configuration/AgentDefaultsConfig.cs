@@ -11,6 +11,11 @@ public sealed class AgentDefaultsConfig
     /// <summary>Default tool IDs inherited by agents that do not explicitly set their own toolIds.</summary>
     public List<string>? ToolIds { get; set; }
 
+    /// <summary>
+    /// Default per-tool timeout (seconds) inherited by agents that do not explicitly set their own timeout.
+    /// </summary>
+    public int? ToolTimeoutSeconds { get; set; }
+
     /// <summary>Default memory configuration inherited by agents.</summary>
     public MemoryAgentConfig? Memory { get; set; }
 

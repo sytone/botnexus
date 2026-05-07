@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Linq;
+using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core;
 using BotNexus.Agent.Core.Configuration;
@@ -295,7 +296,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             GenerationSettings: new SimpleStreamOptions(),
             SteeringMode: QueueMode.All,
             FollowUpMode: QueueMode.All,
-            SessionId: context.SessionId);
+            SessionId: context.SessionId,
+            ToolTimeout: ResolveToolTimeout(descriptor));
 
         var agent = new BotNexus.Agent.Core.Agent(options);
         IAgentHandle handle = new InProcessAgentHandle(
@@ -331,6 +333,45 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             string value when bool.TryParse(value, out var parsed) => parsed,
             _ => false
         };
+    }
+
+    private TimeSpan? ResolveToolTimeout(AgentDescriptor descriptor)
+    {
+        if (!descriptor.Metadata.TryGetValue("toolTimeoutSeconds", out var raw) || raw is null)
+            return null;
+
+        if (TryConvertPositiveSeconds(raw, out var seconds))
+        {
+            _logger.LogDebug("Applying tool timeout for '{AgentId}': {ToolTimeoutSeconds}s", descriptor.AgentId, seconds);
+            return TimeSpan.FromSeconds(seconds);
+        }
+
+        _logger.LogWarning(
+            "Ignoring invalid tool timeout metadata for '{AgentId}'. Expected positive seconds but got '{ToolTimeoutSecondsRaw}'.",
+            descriptor.AgentId,
+            raw);
+        return null;
+    }
+
+    private static bool TryConvertPositiveSeconds(object raw, out int seconds)
+    {
+        seconds = 0;
+        var parsed = raw switch
+        {
+            int value => value,
+            long value when value <= int.MaxValue => (int)value,
+            double value when value <= int.MaxValue && value == Math.Truncate(value) => (int)value,
+            string value when int.TryParse(value, out var parsedValue) => parsedValue,
+            JsonElement { ValueKind: JsonValueKind.Number } jsonNumber when jsonNumber.TryGetInt32(out var parsedValue) => parsedValue,
+            JsonElement { ValueKind: JsonValueKind.String } jsonString when int.TryParse(jsonString.GetString(), out var parsedValue) => parsedValue,
+            _ => -1
+        };
+
+        if (parsed <= 0)
+            return false;
+
+        seconds = parsed;
+        return true;
     }
 
     private static (SessionAccessLevel level, IReadOnlyList<string>? allowedAgents) ResolveSessionAccess(AgentDescriptor descriptor)
