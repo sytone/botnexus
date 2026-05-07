@@ -69,7 +69,7 @@ Design specs and bug specs live in `docs/planning/`. Each item is a folder conta
 
 ## Git Workflow
 
-**Always use worktrees for independent branches.** Never work directly on `main` and never branch off a feature branch for independent work.
+**Worktrees may be used for independent branches when requested.** When a user asks for a worktree, use it. Do not create a worktree automatically without explicit user request.
 
 ```bash
 # Create a worktree for new work (N = GitHub issue number)
