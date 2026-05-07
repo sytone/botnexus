@@ -3,7 +3,7 @@ id: improvement-memory-lifecycle
 title: "Memory Persistence Lifecycle"
 type: improvement
 priority: high
-status: draft
+status: in-progress
 created: 2026-04-10
 updated: 2026-04-10
 author: nova
