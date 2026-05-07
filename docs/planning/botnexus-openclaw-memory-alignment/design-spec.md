@@ -5,7 +5,7 @@ type: improvement
 priority: high
 status: planning
 created: 2026-05-07
-updated: 2026-05-07
+updated: 2026-05-08
 author: Kif (Documentation Engineer)
 tags: [memory, architecture, openclaw, migration, data-portability]
 depends_on: [improvement-memory-lifecycle]
@@ -313,29 +313,68 @@ memory_search(query) runs embedding + keyword search
 
 ---
 
-## 7. Open Questions for Sytone to Review
+## 7. Resolved Design Decisions
 
-1. **Embedding Provider**: Should embeddings be optional at launch? Which provider(s) to support in Wave 3?
-   - Local (Ollama, LiteLLM) — lower cost, offline capable
-   - Cloud (OpenAI, Anthropic embeddings) — higher quality, but API dependencies
+The following questions were raised during planning and resolved by Sytone (2026-05-08).
 
-2. **Daily Notes Format**: Should daily notes use YAML frontmatter (for topics, sentiment, keywords)?
-   - Pro: Structured metadata enables better indexing
-   - Con: Added complexity; free-form markdown is simpler for agents
+### 7.1 Daily notes format
 
-3. **Consolidation Trigger**: Should dreaming (Wave 5) be:
-   - Automatic (weekly cron job)?
-   - Manual (admin trigger)?
-   - Agent-initiated (agent asks to consolidate)?
+**Decision:** Plain Markdown only. No YAML frontmatter requirement.
 
-4. **File Storage Path**: Confirm ~/.botnexus/agents/{name}/memory/ is the canonical location?
-   - Should it be configurable per agent (multi-workspace support)?
+**Rationale:** Agents write free-form Markdown — no frontmatter schema to validate, no parsing overhead. Structured headings (see §3.4) provide sufficient organization. Indexing relies on content, not metadata fields.
 
-5. **Index Rebuild Cost**: Is < 30s rebuild time per agent acceptable for initial launches?
-   - Should we cache embeddings across sessions to avoid re-computing?
+### 7.2 File storage path
 
-6. **Scope**: Should this alignment also update AGENTS.md generation to include memory authoring instructions?
-   - How detailed should memory instructions be?
+**Decision:** Default canonical path (`~/.botnexus/agents/{name}/memory/`) plus optional per-agent override in agent config.
+
+**Rationale:** A single default keeps setup simple for most deployments. Per-agent overrides allow multi-workspace scenarios (e.g., an agent whose memory lives in a project repository). Config example:
+
+```jsonc
+// In agent definition within config.json
+{
+  "memoryPath": null  // null → default; set to override (absolute path or relative to workspace)
+}
+```
+
+### 7.3 Embedding provider
+
+**Decision:** Embeddings are optional. Support both local (e.g., Ollama) and cloud (e.g., OpenAI) providers behind an `IEmbeddingProvider` abstraction.
+
+**Rationale:** Not every deployment has GPU resources or API keys. The system must function with FTS-only search when no embedding provider is configured. Abstraction allows swapping providers without changing calling code.
+
+### 7.4 Consolidation/dreaming trigger
+
+**Decision:** Automatic schedule (configurable cron, e.g., weekly) plus manual override (CLI command or system action).
+
+**Rationale:** Automatic ensures consolidation happens without user intervention. Manual override covers one-off cleanups, testing, and user preference to consolidate after a heavy workload. Agent-initiated consolidation is out of scope for now — complexity without clear benefit.
+
+### 7.5 Index rebuild cost and embedding cache
+
+**Decision:** < 30 seconds per agent is acceptable for full FTS rebuild. Cache embeddings by content hash in SQLite to avoid recomputation.
+
+**Rationale:** Re-indexing text into FTS is fast. Embedding generation is the expensive part — caching by content hash means unchanged chunks never re-embed, even after a full index rebuild. Schema:
+
+```sql
+-- embedding_cache table
+content_hash TEXT PRIMARY KEY,  -- SHA-256 of chunk text
+embedding    BLOB,              -- serialized float vector
+model        TEXT,              -- provider + model name (for invalidation on model change)
+created_at   TEXT               -- ISO 8601 timestamp
+```
+
+### 7.6 AGENTS.md memory instructions
+
+**Decision:** Include minimal memory authoring instructions in generated AGENTS.md. Detailed contract and tool signatures stay in tool descriptions (where the agent sees them at invocation time).
+
+**Rationale:** AGENTS.md is read by humans and tooling, not just the agent. Keeping it concise avoids prompt bloat. Example addition:
+
+```markdown
+## Memory
+
+This agent stores daily notes in `memory/YYYY-MM-DD.md` (append-only).
+Long-term consolidated memory lives in `MEMORY.md`.
+Use the `memory_save` and `memory_search` tools during sessions.
+```
 
 ---
 
@@ -344,10 +383,12 @@ memory_search(query) runs embedding + keyword search
 ### Wave 1: File-First Authoring
 - [ ] Agent receives memory instructions in system prompt
 - [ ] `memory_save(file_path, content)` tool accepts file path parameter
-- [ ] Daily note file (memory/YYYY-MM-DD.md) is created on first agent turn
+- [ ] Daily note file (memory/YYYY-MM-DD.md) is created on first agent turn as plain Markdown (no YAML frontmatter)
 - [ ] Agent can write to daily note and read it back in next turn
 - [ ] Backward-compat: `memory_save(content)` still works (redirects to current date file)
 - [ ] Agent context includes MEMORY.md + recent daily notes (last 7 days)
+- [ ] Memory path resolves from per-agent override if configured, otherwise uses default canonical path
+- [ ] Generated AGENTS.md includes minimal memory authoring instructions (3–5 lines)
 - [ ] Unit tests for file append, context loading, tool parameter parsing pass
 
 ### Wave 2: File-Based Indexing
@@ -359,13 +400,15 @@ memory_search(query) runs embedding + keyword search
 - [ ] Index rebuild < 30s per agent
 - [ ] Unit tests for chunking, FTS indexing, search quality pass
 
-### Wave 3: Embedding-Backed Search
-- [ ] `IEmbeddingProvider` interface implemented for chosen provider
-- [ ] Embeddings generated and stored for all file chunks
-- [ ] Hybrid `memory_search()` returns keyword + semantic results
+### Wave 3: Embedding-Backed Search (Optional)
+- [ ] `IEmbeddingProvider` abstraction supports both local and cloud providers
+- [ ] Embeddings generated and stored for all file chunks when a provider is configured
+- [ ] Hybrid `memory_search()` returns keyword + semantic results when embeddings available
+- [ ] System functions correctly with FTS-only search when no embedding provider is configured
 - [ ] Semantic search latency < 500ms for typical query
-- [ ] Embedding fallback: if provider unavailable, search uses FTS-only (no errors)
-- [ ] Embeddings table can be rebuilt in < 2 minutes per agent
+- [ ] Embedding fallback: if provider unavailable at runtime, search degrades to FTS-only (no errors)
+- [ ] Embeddings cached by content hash in SQLite; unchanged chunks are never re-embedded
+- [ ] Full embedding rebuild (cache-miss scenario) completes in < 2 minutes per agent
 
 ### Wave 4: Pre-Compaction Flush
 - [ ] Session token counter tracks % of max tokens
@@ -378,6 +421,7 @@ memory_search(query) runs embedding + keyword search
 
 ### Wave 5: Optional Consolidation
 - [ ] `memory_consolidate(agent_name)` system action reads past week's daily notes
+- [ ] Consolidation runs on automatic schedule (configurable cron) and via manual override
 - [ ] Consolidation summarizes and appends to MEMORY.md
 - [ ] Old daily files archived or deleted (configurable)
 - [ ] Re-indexing completes post-consolidation
@@ -394,12 +438,11 @@ memory_search(query) runs embedding + keyword search
 
 ## 9. Next Steps
 
-1. **Sytone Review**: Address open questions (embedding provider, daily format, consolidation trigger)
-2. **Implementation Kickoff**: Squad assigns Wave 1 to developer(s); Kif updates documentation
-3. **Spec Refinement**: Iterate on tech debt, edge cases, schema changes
-4. **ADR**: Consider proposing ADR for "Markdown-first memory model" as architectural decision
-5. **Proof of Concept**: Implement Wave 1 in isolated branch; validate agent behavior with test suite
-6. **Phased Rollout**: Deploy waves incrementally; gather feedback after each wave
+1. **Implementation Kickoff**: Squad assigns Wave 1 to developer(s); Kif updates documentation
+2. **Spec Refinement**: Iterate on tech debt, edge cases, schema changes
+3. **ADR**: Consider proposing ADR for "Markdown-first memory model" as architectural decision
+4. **Proof of Concept**: Implement Wave 1 in isolated branch; validate agent behavior with test suite
+5. **Phased Rollout**: Deploy waves incrementally; gather feedback after each wave
 
 ---
 
@@ -414,6 +457,6 @@ memory_search(query) runs embedding + keyword search
 
 **Document Metadata**:
 - **Created**: 2026-05-07 (Kif, Documentation Engineer)
-- **Last Updated**: 2026-05-07
+- **Last Updated**: 2026-05-08
 - **Reviewers**: Sytone (Product), Leela (Architecture), Bender (Backend)
-- **Status**: Ready for review and planning discussion
+- **Status**: Open questions resolved; ready for implementation planning
