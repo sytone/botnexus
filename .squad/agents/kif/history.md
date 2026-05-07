@@ -233,3 +233,12 @@ The project follows a consistent pattern for documenting CLI features and proces
 - Wave 1 ship-ready with accurate, minimal AGENTS.md guidance
 - Doc update map prepared for post-merge batch update (no changes before code lands to avoid drift)
 - Clear separation maintained: Wave 1 is daily authoring only; consolidation is future work
+
+---
+
+## PR #182 Merge Update — 2026-05-07
+
+**Action:** Merged origin/main into docs/openclaw-memory-alignment-planning to resolve dirty mergeable state.
+**Conflict:** docs/planning/INDEX.md — Memory Persistence Lifecycle listed as both High/in-progress (main) and Medium/draft (PR branch). Resolved by keeping High/in-progress, removing stale duplicate.
+**Build:** Succeeded. Pre-existing test failures on main (snapshot tests, StdioTransport robustness, SqliteSessionStore ConversationId) confirmed not introduced by this merge.
+**Outcome:** PR #182 is now up to date with main and mergeable.
