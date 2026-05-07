@@ -26,22 +26,28 @@ public sealed class FileAgentWorkspaceManager : IAgentWorkspaceManager
         var identity = await ReadFileOrEmptyAsync(Path.Combine(workspacePath, "IDENTITY.md"), cancellationToken);
         var user = await ReadFileOrEmptyAsync(Path.Combine(workspacePath, "USER.md"), cancellationToken);
         var memory = await ReadFileOrEmptyAsync(Path.Combine(workspacePath, "MEMORY.md"), cancellationToken);
-
-        var recentNotes = await LoadRecentDailyNotesAsync(workspacePath, cancellationToken);
-        return new AgentWorkspace(agentName.Trim(), soul, identity, user, memory, recentNotes);
+        return new AgentWorkspace(agentName.Trim(), soul, identity, user, memory);
     }
 
     public async Task SaveMemoryAsync(string agentName, string content, CancellationToken cancellationToken = default)
-        => await SaveMemoryAsync(agentName, filePath: null, content, cancellationToken);
+        => await SaveMemoryAsync(agentName, filePath: null, content, memoryPathOverride: null, cancellationToken);
 
     public async Task SaveMemoryAsync(string agentName, string? filePath, string content, CancellationToken cancellationToken = default)
+        => await SaveMemoryAsync(agentName, filePath, content, memoryPathOverride: null, cancellationToken);
+
+    public async Task SaveMemoryAsync(
+        string agentName,
+        string? filePath,
+        string content,
+        string? memoryPathOverride,
+        CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(agentName);
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
 
         var workspacePath = GetWorkspacePath(agentName);
-        var memoryRoot = _fileSystem.Path.GetFullPath(_fileSystem.Path.Combine(workspacePath, MemoryDirectoryName));
-        var targetPath = ResolveMemoryPath(memoryRoot, filePath);
+        var (memoryRoot, defaultTargetPath) = ResolveMemoryRoot(workspacePath, memoryPathOverride);
+        var targetPath = ResolveMemoryPath(memoryRoot, defaultTargetPath, filePath);
         var targetDirectory = _fileSystem.Path.GetDirectoryName(targetPath);
         if (!string.IsNullOrWhiteSpace(targetDirectory))
             _fileSystem.Directory.CreateDirectory(targetDirectory);
@@ -67,46 +73,35 @@ public sealed class FileAgentWorkspaceManager : IAgentWorkspaceManager
         return await _fileSystem.File.ReadAllTextAsync(path, cancellationToken);
     }
 
-    private async Task<IReadOnlyList<DailyMemoryNote>> LoadRecentDailyNotesAsync(string workspacePath, CancellationToken cancellationToken)
+    private (string MemoryRoot, string? DefaultTargetPath) ResolveMemoryRoot(string workspacePath, string? memoryPathOverride)
     {
-        var memoryRoot = _fileSystem.Path.Combine(workspacePath, MemoryDirectoryName);
-        if (!_fileSystem.Directory.Exists(memoryRoot))
-            return [];
+        var workspaceFullPath = _fileSystem.Path.GetFullPath(workspacePath);
+        var relativePath = string.IsNullOrWhiteSpace(memoryPathOverride)
+            ? MemoryDirectoryName
+            : memoryPathOverride.Trim().Replace('\\', '/');
+        if (_fileSystem.Path.IsPathRooted(relativePath))
+            throw new ArgumentException("memory.path must be workspace-relative.", nameof(memoryPathOverride));
 
-        var today = DateTime.Now.Date;
-        var targetDates = new HashSet<string>(StringComparer.Ordinal)
+        var overrideFullPath = _fileSystem.Path.GetFullPath(_fileSystem.Path.Combine(workspaceFullPath, relativePath));
+        EnsureWithinRoot(workspaceFullPath, overrideFullPath, nameof(memoryPathOverride), "memory.path must remain within the workspace.");
+
+        if (overrideFullPath.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
         {
-            today.ToString("yyyy-MM-dd"),
-            today.AddDays(-1).ToString("yyyy-MM-dd")
-        };
-
-        var candidates = _fileSystem.Directory.GetFiles(memoryRoot, "*.md")
-            .Select(path => new
-            {
-                FullPath = path,
-                FileName = _fileSystem.Path.GetFileNameWithoutExtension(path),
-                DisplayPath = $"memory/{_fileSystem.Path.GetFileName(path)}"
-            })
-            .Where(x => targetDates.Contains(x.FileName))
-            .OrderByDescending(x => x.FileName, StringComparer.Ordinal)
-            .ToList();
-
-        List<DailyMemoryNote> notes = [];
-        foreach (var candidate in candidates)
-        {
-            var content = await _fileSystem.File.ReadAllTextAsync(candidate.FullPath, cancellationToken);
-            if (!string.IsNullOrWhiteSpace(content))
-                notes.Add(new DailyMemoryNote(candidate.DisplayPath, content.Trim()));
+            var fileDirectory = _fileSystem.Path.GetDirectoryName(overrideFullPath);
+            var memoryRoot = string.IsNullOrWhiteSpace(fileDirectory)
+                ? _fileSystem.Path.Combine(workspaceFullPath, MemoryDirectoryName)
+                : fileDirectory;
+            return (memoryRoot, overrideFullPath);
         }
 
-        return notes;
+        return (overrideFullPath, defaultTargetPath: null);
     }
 
-    private string ResolveMemoryPath(string memoryRoot, string? filePath)
+    private string ResolveMemoryPath(string memoryRoot, string? defaultTargetPath, string? filePath)
     {
         _fileSystem.Directory.CreateDirectory(memoryRoot);
         if (string.IsNullOrWhiteSpace(filePath))
-            return _fileSystem.Path.Combine(memoryRoot, $"{DateTime.Now:yyyy-MM-dd}.md");
+            return defaultTargetPath ?? _fileSystem.Path.Combine(memoryRoot, $"{DateTime.UtcNow:yyyy-MM-dd}.md");
 
         if (_fileSystem.Path.IsPathRooted(filePath))
             throw new ArgumentException("file_path must be relative to the memory root.", nameof(filePath));
@@ -119,12 +114,18 @@ public sealed class FileAgentWorkspaceManager : IAgentWorkspaceManager
         }
 
         var resolved = _fileSystem.Path.GetFullPath(_fileSystem.Path.Combine(memoryRoot, normalized));
-        var memoryPrefix = memoryRoot.TrimEnd(_fileSystem.Path.DirectorySeparatorChar, _fileSystem.Path.AltDirectorySeparatorChar)
-            + _fileSystem.Path.DirectorySeparatorChar;
-        if (!resolved.StartsWith(memoryPrefix, StringComparison.OrdinalIgnoreCase) &&
-            !resolved.Equals(memoryRoot, StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("file_path must remain within the memory root.", nameof(filePath));
-
+        EnsureWithinRoot(memoryRoot, resolved, nameof(filePath), "file_path must remain within the memory root.");
         return resolved;
+    }
+
+    private void EnsureWithinRoot(string root, string path, string parameterName, string message)
+    {
+        var prefix = root.TrimEnd(_fileSystem.Path.DirectorySeparatorChar, _fileSystem.Path.AltDirectorySeparatorChar)
+            + _fileSystem.Path.DirectorySeparatorChar;
+        if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
+            !path.Equals(root, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(message, parameterName);
+        }
     }
 }

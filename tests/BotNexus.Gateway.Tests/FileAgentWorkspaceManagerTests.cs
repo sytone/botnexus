@@ -47,7 +47,7 @@ public sealed class FileAgentWorkspaceManagerTests : IDisposable
         await _workspaceManager.SaveMemoryAsync("farnsworth", "second line");
 
         var workspacePath = _workspaceManager.GetWorkspacePath("farnsworth");
-        var dailyMemoryPath = Path.Combine(workspacePath, "memory", $"{DateTime.Now:yyyy-MM-dd}.md");
+        var dailyMemoryPath = Path.Combine(workspacePath, "memory", $"{DateTime.UtcNow:yyyy-MM-dd}.md");
         var content = await _fileSystem.File.ReadAllTextAsync(dailyMemoryPath);
 
         content.ShouldContain("first line");
@@ -77,6 +77,23 @@ public sealed class FileAgentWorkspaceManagerTests : IDisposable
         var handoffPath = Path.Combine(_workspaceManager.GetWorkspacePath("farnsworth"), "memory", "handoff.md");
         var content = await _fileSystem.File.ReadAllTextAsync(handoffPath);
         content.ShouldContain("first handoff entry");
+    }
+
+    [Fact]
+    public async Task SaveMemoryAsync_WithMemoryPathOverride_AppendsToOverrideLocation()
+    {
+        await _workspaceManager.SaveMemoryAsync(
+            "farnsworth",
+            filePath: null,
+            content: "override entry",
+            memoryPathOverride: @"journals\notes.md",
+            cancellationToken: CancellationToken.None);
+
+        var workspacePath = _workspaceManager.GetWorkspacePath("farnsworth");
+        var overrideFilePath = Path.Combine(workspacePath, "journals", "notes.md");
+        _fileSystem.File.Exists(overrideFilePath).ShouldBeTrue();
+        var content = await _fileSystem.File.ReadAllTextAsync(overrideFilePath);
+        content.ShouldContain("override entry");
     }
 
     public void Dispose()

@@ -146,6 +146,54 @@ public sealed class WorkspaceContextBuilderTests
         }
     }
 
+    [Fact]
+    public async Task BuildSystemPromptAsync_DefaultPrompt_LoadsRecentDailyMemoryFilesFromOverridePathInDeterministicOrder()
+    {
+        var todayFileName = $"{DateTime.Now:yyyy-MM-dd}.md";
+        var yesterdayFileName = $"{DateTime.Now.AddDays(-1):yyyy-MM-dd}.md";
+        var workspacePath = CreateWorkspace(
+            ("AGENTS.md", "AGENTS"),
+            ("SOUL.md", "SOUL"),
+            ("TOOLS.md", "TOOLS"),
+            ("BOOTSTRAP.md", "BOOTSTRAP"),
+            ("IDENTITY.md", "IDENTITY"),
+            ("USER.md", "USER"),
+            ("MEMORY.md", "LONG-TERM MEMORY"),
+            ($@"journals\{todayFileName}", "OVERRIDE TODAY"),
+            ($@"journals\{yesterdayFileName}", "OVERRIDE YESTERDAY"),
+            ($@"memory\{todayFileName}", "DEFAULT MEMORY SHOULD NOT LOAD"));
+        try
+        {
+            var manager = new StubWorkspaceManager(workspacePath);
+            var builder = new WorkspaceContextBuilder(manager, _fileSystem);
+
+            var result = await builder.BuildSystemPromptAsync(new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("farnsworth"),
+                DisplayName = "Farnsworth",
+                ModelId = "test-model",
+                ApiProvider = "test-provider",
+                Memory = new MemoryAgentConfig { Enabled = true, Path = "journals" }
+            });
+
+            result.ShouldContain("LONG-TERM MEMORY");
+            result.ShouldContain("OVERRIDE TODAY");
+            result.ShouldContain("OVERRIDE YESTERDAY");
+            result.ShouldNotContain("DEFAULT MEMORY SHOULD NOT LOAD");
+
+            var memoryIndex = result.IndexOf("## MEMORY.md", StringComparison.Ordinal);
+            var todayIndex = result.IndexOf($"## journals/{todayFileName}", StringComparison.Ordinal);
+            var yesterdayIndex = result.IndexOf($"## journals/{yesterdayFileName}", StringComparison.Ordinal);
+            memoryIndex.ShouldBeGreaterThanOrEqualTo(0);
+            yesterdayIndex.ShouldBeGreaterThan(memoryIndex);
+            todayIndex.ShouldBeGreaterThan(yesterdayIndex);
+        }
+        finally
+        {
+            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
+        }
+    }
+
     private sealed class StubWorkspaceManager : IAgentWorkspaceManager
     {
         private readonly string _workspacePath;
@@ -162,6 +210,14 @@ public sealed class WorkspaceContextBuilderTests
             => Task.CompletedTask;
 
         public Task SaveMemoryAsync(string agentName, string? filePath, string content, CancellationToken ct = default)
+            => Task.CompletedTask;
+
+        public Task SaveMemoryAsync(
+            string agentName,
+            string? filePath,
+            string content,
+            string? memoryPathOverride,
+            CancellationToken ct = default)
             => Task.CompletedTask;
 
         public string GetWorkspacePath(string agentName)

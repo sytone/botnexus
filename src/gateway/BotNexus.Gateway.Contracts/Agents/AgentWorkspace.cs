@@ -13,15 +13,13 @@ public sealed record AgentWorkspace
     /// <param name="Identity">The content from <c>IDENTITY.md</c>, if present.</param>
     /// <param name="User">The content from <c>USER.md</c>, if present.</param>
     /// <param name="Memory">The content from <c>MEMORY.md</c>, if present.</param>
-    /// <param name="RecentMemoryNotes">Recent daily memory notes in deterministic order.</param>
-    public AgentWorkspace(string AgentName, string? Soul, string? Identity, string? User, string? Memory, IReadOnlyList<DailyMemoryNote>? RecentMemoryNotes = null)
+    public AgentWorkspace(string AgentName, string? Soul, string? Identity, string? User, string? Memory)
     {
         this.AgentName = AgentName;
         this.Soul = Soul;
         this.Identity = Identity;
         this.User = User;
         this.Memory = Memory;
-        this.RecentMemoryNotes = RecentMemoryNotes ?? [];
     }
 
     /// <summary>The agent identifier associated with this workspace.</summary>
@@ -38,14 +36,4 @@ public sealed record AgentWorkspace
 
     /// <summary>The content from <c>MEMORY.md</c>, if present.</summary>
     public string? Memory { get; init; }
-
-    /// <summary>Recent daily memory note files loaded for prompt context.</summary>
-    public IReadOnlyList<DailyMemoryNote> RecentMemoryNotes { get; init; } = [];
 }
-
-/// <summary>
-/// Represents a daily memory note loaded from the memory directory.
-/// </summary>
-/// <param name="Path">Workspace-relative note path, such as <c>memory/2026-05-07.md</c>.</param>
-/// <param name="Content">The note contents.</param>
-public sealed record DailyMemoryNote(string Path, string Content);
