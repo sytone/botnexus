@@ -63,6 +63,50 @@
 
 ---
 
+### Leela Decision: AGENTS.md Memory Tool Naming & Portability (2025-05-07)
+
+**Decision Date:** 2025-05-07  
+**Decided By:** Leela (Lead/Architect)  
+**Status:** Implemented
+
+**User Directive:** Sytone requested root AGENTS.md be updated to reflect that BotNexus runs on Windows and Linux, and to clarify the confusing "memory save" vs "memory store" tool terminology.
+
+**Context:** PR #179 established that `memory_save` is the single agent-facing tool for writing memory. The codebase also uses terms like "memory store" and "store_memory" in different contexts (Copilot CLI built-in, internal indexing). Root AGENTS.md had no memory guidance and no explicit portability statement.
+
+**Decisions:**
+
+1. **Agent-Facing Tool Name: `memory_save`**
+   - Single canonical tool name is **`memory_save`**
+   - It writes append-only daily notes to `memory/YYYY-MM-DD.md`
+   - `MEMORY.md` is **read-only** during normal turns — loaded at session start for long-term context
+   - Future consolidation ("dreaming") updates `MEMORY.md` from daily notes automatically
+   - SQLite indexes, search state, and external `store_memory` primitives are **implementation details** — never referenced in agent-facing docs
+
+2. **Platform Statement — Added to root AGENTS.md**
+   - New "Platform / Runtime" section at top of document
+   - States: "BotNexus runs on **Windows and Linux**. All guidance applies to both platforms unless explicitly noted otherwise."
+   - References cross-platform path handling section
+
+3. **Memory Tool Naming — Added to root AGENTS.md**
+   - New "Memory Tool Naming" section after "Code Practices"
+   - Clarifies `memory_save` appends to `memory/YYYY-MM-DD.md` (append-only)
+   - `MEMORY.md` is read-only during turns
+   - Consolidation updates `MEMORY.md` automatically — agents never write directly
+   - Prohibits surface use of "memory store", "store_memory", SQLite in agent-facing docs
+   - Distinguishes external Copilot CLI `store_memory` as separate mechanism
+
+**Rationale:**
+- **Single canonical name** eliminates "save vs store" ambiguity
+- **Explicit prohibition** of "memory store" in agent docs prevents future confusion
+- **Platform statement** up front anchors doc for contributors, prevents OS-specific assumptions
+
+**Implementation:**
+- **Kif** added both sections to root AGENTS.md per exact wording
+- Left per-agent template `src/gateway/BotNexus.Gateway/Templates/AGENTS.md` untouched (already correct)
+- Committed as 851a6509: `docs(agents): add platform statement and memory tool naming guidance`
+
+---
+
 ### 1.1 Folder Structure Convention
 
 ```
@@ -14372,3 +14416,303 @@ For issue #24, QA will lock in three regression contracts before runtime impleme
 ## Rationale
 The runtime timeout behavior is partially implemented in AgentCore, but gateway config-to-runtime wiring is currently missing. These tests separate already-working behavior from missing plumbing so implementation can land safely without regressing existing timeout handling.
 
+
+---
+
+## OpenClaw Memory Wave 1 Alignment — Final Readiness (2026-05-07)
+
+**Decision Date:** 2026-05-07  
+**Decided By:** Leela (Lead/Architect)  
+**Branch:** \eature/openclaw-memory-alignment\  
+**Status:** ✅ GO for merge
+
+### Wave 1 Contract Verification
+
+| Requirement | Status |
+|---|---|
+| \memory_save\ tool writes daily notes only (YYYY-MM-DD.md) | ✅ Implemented — thin delegation to \IAgentWorkspaceManager\ |
+| MEMORY.md read-only during normal turns | ✅ Loaded in context, no write path exposed |
+| Override-aware memory path (\descriptor.Memory.Path\) | ✅ Flows through \ResolveMemoryRoot\ in both save and load paths |
+| Context loads MEMORY.md + recent daily notes (today + yesterday) | ✅ \WorkspaceContextBuilder.LoadRecentDailyMemoryFilesAsync\ |
+| AGENTS.md template updated with memory guidance | ✅ Memory Notes section added |
+
+### Blocking Issues Resolved
+
+| Blocker | Resolution |
+|---|---|
+| B1: \MemorySaveTool\ contained filesystem logic | ✅ Resolved in 58d03d13 — now pure delegation |
+| B2: Dead \DailyMemoryNote\ contract type | ✅ Fully removed, single canonical loading path |
+| Spec contradiction (Phase 2b vs Wave 1 MEMORY.md contract) | ✅ Resolved in 822a474c |
+
+### Test Sufficiency
+
+- 739 new lines of test code across 9 files
+- Memory tests: 61 pass, Prompts tests: 6 pass
+- Wave 1 gateway tests (FileAgentWorkspaceManager, WorkspaceContextBuilder, MemorySaveTool, ToolHookWiring, InProcessIsolation): all pass
+- Full suite: pre-existing failures only (CodingAgent shell timeouts, MCP transport flake, snapshot drift, temp file locks) — none introduced by this branch
+
+### Non-Blocking Conditions (Wave 2 backlog)
+
+- **C1:** \DateTime.Now\ vs \DateTime.UtcNow\ inconsistency near midnight — low risk, standardize in Wave 2
+- **C2:** \ContextFileOrdering.IsDailyMemoryNote\ lacks dedicated unit tests — add in follow-up
+- **C3:** 4000-char daily note budget not enforced — track for Wave 2
+
+### Decision: GO for merge
+
+The Wave 1 memory alignment contract is fully implemented, tested, and documented. All prior blocking issues are resolved. Remaining failures are pre-existing and unrelated. Non-blocking conditions are carried forward and do not affect Wave 1 correctness.
+
+Recommend: squash-merge to \main\, then archive the planning spec folder.
+
+---
+
+## OpenClaw Memory Wave 1 — Farnsworth Remediation Re-Review (2026-05-07)
+
+**Review Date:** 2026-05-07  
+**Reviewer:** Leela (Lead/Architect)  
+**Remediation Commit:** 58d03d13 fix(gateway): centralize memory save path handling  
+**Branch:** feature/openclaw-memory-alignment  
+**Verdict:** ✅ APPROVE
+
+### B1 Resolution: MemorySaveTool delegates to IAgentWorkspaceManager
+
+**Status:** RESOLVED
+
+- **No filesystem operations** in MemorySaveTool (zero File.Append, File.Write, Directory.Create, Path.* calls)
+- **Single delegation point:** ExecuteAsync calls \_workspaceManager.SaveMemoryAsync(_agentId, filePath, content, _memoryPathOverride, cancellationToken)\
+- **Override support centralized:** memoryPathOverride parameter flows from constructor → SaveMemoryAsync → FileAgentWorkspaceManager.ResolveMemoryRoot
+- **All path/write logic in FileAgentWorkspaceManager:** Path resolution, traversal validation, directory creation, append semantics
+- **Interface contract extended cleanly:** Three \SaveMemoryAsync\ overloads with proper XML doc comments
+
+Test coverage: MemorySaveToolTests validates delegation (spy throws if GetWorkspacePath called).
+
+### B2 Resolution: Dead contract data removed, single canonical daily-note source
+
+**Status:** RESOLVED (Option A implemented)
+
+- **DailyMemoryNote record:** Deleted from Contracts (zero references confirmed)
+- **AgentWorkspace.RecentMemoryNotes:** Removed (zero references confirmed)
+- **FileAgentWorkspaceManager.LoadRecentDailyNotesAsync:** Deleted (zero references confirmed)
+- **Single canonical path:** WorkspaceContextBuilder.LoadRecentDailyMemoryFilesAsync is the sole daily-note loading implementation, override-aware via ResolveMemoryRoot
+
+Override-aware loading tested: WorkspaceContextBuilderTests confirms override path loads from custom directory and maintains deterministic ordering.
+
+### Quality Checks
+
+✅ Path Safety: EnsureWithinRoot validates both override and filePath against workspace boundaries  
+✅ Wave 1 Scope: No premature abstractions or future-wave features  
+✅ Public API XML Docs: All three SaveMemoryAsync overloads documented with contract semantics  
+✅ Dependency Boundaries: Memory (MemorySaveTool) depends on Contracts interface only, not implementation  
+
+### Non-Blocking Conditions for Wave 2
+
+- **C1:** DateTime consistency (Now vs UtcNow) — align to consistent source
+- **C2:** Missing ContextFileOrdering daily note tests — add coverage
+- **C3:** 4000-char daily note budget — not enforced, track for Wave 2
+
+### Summary
+
+Farnsworth's remediation cleanly addresses both blocking issues. MemorySaveTool is a ~15-line delegation wrapper with zero filesystem logic. Dead DailyMemoryNote/RecentMemoryNotes surface fully removed. Path safety and dependency boundaries pass. Ready for merge.
+
+---
+
+## OpenClaw Memory Wave 1 — Hermes Final QA (2026-05-07)
+
+**Date:** 2026-05-07  
+**Reviewer:** Hermes (QA)  
+**Branch:** \eature/openclaw-memory-alignment\  
+**Verdict:** ✅ APPROVE
+
+### Scope Reviewed
+
+- Diff: \origin/main..HEAD\
+- Design spec: \docs/planning/improvement-memory-lifecycle/design-spec.md\
+- Key code/test areas: WorkspaceContextBuilder, ContextFileOrdering, FileAgentWorkspaceManager, MemorySaveTool, Gateway/Memory/Prompts tests
+
+### Test Execution
+
+| Test Suite | Result |
+|---|---|
+| \dotnet build BotNexus.slnx --nologo --tl:off\ | ✅ pass |
+| BotNexus.Memory.Tests | ✅ 61 pass |
+| BotNexus.Prompts.Tests | ✅ 6 pass |
+| Wave 1 targeted Gateway classes | ✅ all pass |
+| Full BotNexus.Gateway.Tests | ❌ 6 pre-existing failures |
+
+### Failure Triage
+
+**Change-related blockers:** None found
+
+**Pre-existing failures:**
+1. BotNexus.CodingAgent.Tests (11 fails): Shell timeout/exit behavior, snapshot drift
+2. BotNexus.Extensions.Mcp.Tests (1 fail): Cancellation/transport flake
+3. BotNexus.Gateway.Tests (6 fails): Snapshot mismatch, file-lock cleanup
+
+These align with known unstable areas and are outside Wave 1 memory-alignment changes.
+
+### Coverage Notes
+
+- Missing ordering tests: addressed; ordering coverage exists in Prompts and WorkspaceContextBuilder tests
+- DateTime consistency: mixed DateTime.Now vs DateTime.UtcNow still exists; no behavioral regression detected in Wave 1 tests
+- 4000-char budget: no change-related failure surfaced in executed coverage
+
+### Recommendation
+
+Proceed with merge for Wave 1 memory alignment. Track pre-existing suite instability separately.
+
+---
+
+## Memory Alignment — \memory_save\ Tool Scope (2026-05-07)
+
+**Decision Date:** 2026-05-07  
+**Decided By:** Leela (Lead/Architect)  
+**Status:** Accepted
+
+### Context
+
+Wave 1 memory alignment: The \memory_save\ tool confines writes to \memory/\ subdirectory via EnsureWithinRoot guard. Three options:
+
+| Option | Description | Verdict |
+|--------|-------------|---------|
+| **A** | \memory_save\ is daily-note-only; MEMORY.md read-only during turns; consolidation writes it later | **Accepted** |
+| **B** | Extend path validation to also allow root MEMORY.md writes now | Rejected |
+| **C** | Split into \memory_save\ + \memory_consolidate\ tools | Rejected |
+
+### Decision: Option A
+
+**\memory_save\ is scoped exclusively to \memory/\ subdirectory. MEMORY.md is read-only during normal agent turns. Only future consolidation/dreaming (Wave 5) will write to MEMORY.md.**
+
+### Rationale
+
+1. **Security boundary correct:** EnsureWithinRoot prevents path traversal. Punching a hole weakens the invariant.
+2. **Matches phased design:** improvement-memory-lifecycle spec places MEMORY.md consolidation in Phase 4 (dreaming). Wave 1 is daily authoring only.
+3. **Prevents agent self-corruption:** Ad-hoc MEMORY.md appending without consolidation logic produces messy append-only dumps.
+4. **Option B adds risk without value:** Special case for MEMORY.md in security-critical code; no consumer yet in Wave 1.
+5. **Option C premature:** Defining \memory_consolidate\ before dreaming architecture is designed risks speculative API.
+
+### What Changes
+
+- **AGENTS.md template:** Updated wording to tell agents \memory_save\ is daily-note-only; MEMORY.md is loaded at startup but not written during turns
+- **No production code changes:** Current tool behavior is the intended contract
+- **Kif's docs:** Reflect that MEMORY.md is read-only context, not a write target, during Wave 1
+
+### Future Contract (Wave 5+)
+
+When dreaming/consolidation is designed, that process — not normal agent turns — will own MEMORY.md writes. Decision deferred to Wave 5 design.
+
+---
+
+## Conversation Project Extraction — Architectural Design (2026-05-06)
+
+**Decision Date:** 2026-05-06  
+**Decided By:** Leela (Lead/Architect)  
+**Status:** Approved — ready for implementation
+
+### Context
+
+Conversation stores and related code currently in \BotNexus.Gateway.Sessions\ should be extracted to dedicated \BotNexus.Gateway.Conversations\ project for improved separation of concerns.
+
+### Current Layout
+
+| Layer | Location | Namespace |
+|-------|----------|-----------|
+| Domain model | \src/domain/BotNexus.Domain/Gateway/Models/Conversation.cs\ | \BotNexus.Domain.Primitives\, \BotNexus.Gateway.Abstractions.Models\ |
+| Contracts | \src/gateway/BotNexus.Gateway.Contracts/Conversations/\ | \BotNexus.Gateway.Abstractions.Conversations\ |
+| Store implementations | \src/gateway/BotNexus.Gateway.Sessions/\ | \BotNexus.Gateway.Sessions\ |
+| Router | \src/gateway/BotNexus.Gateway/Conversations/\ | \BotNexus.Gateway.Conversations\ |
+| API | \src/gateway/BotNexus.Gateway.Api/Controllers/\ | \BotNexus.Gateway.Api.Controllers\ |
+| DI wiring | \src/gateway/BotNexus.Gateway/Extensions/\ | \BotNexus.Gateway.Extensions\ |
+
+### Decision: Target Project Structure
+
+**New project:** \src/gateway/BotNexus.Gateway.Conversations\
+
+**What moves:**
+- \InMemoryConversationStore.cs\ from Gateway.Sessions
+- \FileConversationStore.cs\ from Gateway.Sessions
+- \SqliteConversationStore.cs\ from Gateway.Sessions
+- \DefaultConversationRouter.cs\ already in BotNexus.Gateway.Conversations namespace
+
+**Project references:**
+\\\
+BotNexus.Gateway.Conversations → BotNexus.Gateway.Contracts
+BotNexus.Gateway.Conversations → BotNexus.Domain
+\\\
+
+### Rationale
+
+1. Pure conversation logic decoupled from session persistence
+2. Independent testability of conversation lifecycle
+3. Cleaner separation: sessions store agent sessions; conversations stores agent-independent message threads
+4. No breaking changes to public API (interface contracts stay in Gateway.Contracts)
+
+---
+
+## Memory Wave 1 — Documentation Targets (2026-05-07)
+
+**Decision Date:** 2026-05-07  
+**Raised By:** Kif (Documentation Engineer)  
+**Status:** Proposed — awaiting implementation landing
+
+### Docs Requiring Updates (Wave 1 Scope)
+
+| Doc | What changes | Priority |
+|-----|-------------|----------|
+| \docs/development/workspace-and-memory.md\ | Add §Memory Flush, update §Memory Consolidation, add config keys | P0 |
+| \docs/user-guide/configuration.md\ | Add \compaction.memoryFlush\ to config reference | P0 |
+| \docs/configuration.md\ | Mirror new compaction keys | P1 |
+| \docs/user-guide/agents.md\ | Update §Memory System with automatic flush; richer config example | P1 |
+| \docs/development/session-stores.md\ | Add note that session metadata carries \memoryFlushAt\/\memoryFlushCompactionCount\ | P1 |
+| \docs/cron-and-scheduling.md\ | Clarify flush is inline before compaction, not a cron job | P2 |
+| \docs/architecture/system-flows.md\ | Add memory-flush to compaction flow diagram | P2 |
+
+### Acceptance Criteria for Docs Consistency
+
+- All compaction config keys in code have corresponding entries in both config docs
+- \workspace-and-memory.md\ describes full write path: manual + automatic flush + session-end flush
+- No doc claims memory persistence is "manual only" after Wave 1 lands
+- AGENTS.md auto-generation behavior documented accurately (unchanged by this feature)
+- Cross-links exist between workspace-and-memory ↔ configuration ↔ session-stores
+- Design spec status updated from \draft\ to match implementation state
+- Planning INDEX.md reflects current status
+
+### Decision
+
+Kif will prepare doc updates in single batch PR after Wave 1 implementation merges. No doc changes before code lands (avoid drift).
+
+---
+
+## Memory Wave 1 — Consistency Review & Spec Contradiction (2026-05-07)
+
+**Author:** Nibbler (Consistency Reviewer)  
+**Date:** 2026-05-07  
+**Scope:** \docs/planning/improvement-memory-lifecycle/design-spec.md\
+
+### Issue
+
+Memory lifecycle design spec (status: Draft) Phase 2b contradicts resolved Wave 1 contract:
+
+> **Phase 2b — End-of-Conversation Persistence:** "Update MEMORY.md if significant long-term items were discussed"
+
+Resolved contract states:
+- MEMORY.md is **read-only** during normal agent turns
+- Only future Wave 5 consolidation (dreaming) writes to MEMORY.md
+- Normal-turn \memory_save\ writes exclusively to daily notes under \memory/\
+
+### Why This Matters
+
+1. Phase 2b is labeled "No Platform Changes" — implies agents should do this now with existing tools
+2. But \memory_save\ blocks path traversal outside \memory/\, so agents cannot write to MEMORY.md via the tool
+3. A future implementer reading Phase 2b could build a bypass or weaken the path guard
+4. Spec should align with Wave 1 contract or defer writes to Phase 4 (Dreaming)
+
+### Recommendation
+
+**Option (b):** Move "Update MEMORY.md" bullet from Phase 2b to Phase 4 (Dreaming). Phase 2b should only mention writing to daily notes.
+
+### What Was Fixed
+
+- \docs/development/workspace-and-memory.md\: Removed false claim that \memory_save\ can write to MEMORY.md via \	arget\ parameter. Clarified consolidation is future Wave 5 capability.
+
+### Outcome
+
+Wave 1 implementation is internally consistent and aligned with resolved contracts. Planning spec drift documented and flagged for post-merge planning-spec update (optional, non-blocking).

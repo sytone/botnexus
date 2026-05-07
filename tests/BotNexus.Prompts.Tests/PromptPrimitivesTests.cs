@@ -21,6 +21,28 @@ public sealed class PromptPrimitivesTests
     }
 
     [Fact]
+    public void ContextFileOrdering_PrioritizesMemorySummaryThenDailyMemoryNotes()
+    {
+        var files = new List<ContextFile>
+        {
+            new("memory/2024-05-07.md", "older"),
+            new("docs/README.md", "readme"),
+            new("MEMORY.md", "long-term"),
+            new("memory/2024-05-08.md", "today")
+        };
+
+        var ordered = ContextFileOrdering.SortForPrompt(files);
+
+        ordered.Select(f => f.Path).ShouldBe(new[]
+        {
+            "MEMORY.md",
+            "memory/2024-05-07.md",
+            "memory/2024-05-08.md",
+            "docs/README.md"
+        });
+    }
+
+    [Fact]
     public void ToolNameRegistry_ResolvesCanonicalToolNames()
     {
         var registry = new ToolNameRegistry(["Read", "exec"]);
