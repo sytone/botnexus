@@ -14372,3 +14372,70 @@ For issue #24, QA will lock in three regression contracts before runtime impleme
 ## Rationale
 The runtime timeout behavior is partially implemented in AgentCore, but gateway config-to-runtime wiring is currently missing. These tests separate already-working behavior from missing plumbing so implementation can land safely without regressing existing timeout handling.
 
+
+---
+
+
+# Decision: Handle update git pull cancellation explicitly
+
+## Context
+Users saw otnexus update fail with git pull error: A task was canceled. followed by a generic hint. The failure provided no actionable detail and could leave uncertainty about whether cancellation was user-driven or runtime-induced.
+
+## Decision
+In src/gateway/BotNexus.Cli/Commands/UpdateCommand.cs:
+- Treat cancellation as a first-class outcome (xit code 130) instead of generic failure.
+- Best-effort kill the git process tree on cancellation to avoid orphaned pull operations.
+- Drain redirected git stdout/stderr during execution and surface first useful failure line on non-zero exit.
+
+## Impact
+otnexus update now reports clear cancellation semantics and more actionable pull failures while keeping gateway stop/start untouched when pull does not succeed.
+
+
+---
+
+
+# Hermes Decision — update git pull regression tests (2026-05-07)
+
+## Decision
+
+Treat `botnexus update` pull-stage behavior as a strict quality gate:
+
+1. If git pull fails (non-zero), update must return that non-zero code and must **not** stop/start the gateway.
+2. If git pull is canceled, update must return non-zero and must **not** stop/start the gateway.
+3. If git pull is slow, update must wait for pull completion before stop is attempted.
+
+## Why
+
+The reported user failure (`git pull error: A task was canceled`) is in the pull stage, so restart logic should never execute on that path.  
+These tests prevent regression where partial update flow manipulates gateway state after pull-stage errors/cancellation.
+
+## Test Path
+
+- `tests\BotNexus.Cli.Tests\Commands\UpdateCommandTests.cs`
+
+---
+
+
+# Leela Decision — update git pull cancellation review (2026-07-29)
+
+## Decision
+
+**APPROVED** — The `fix/update-pull-cancel` branch correctly addresses the reported `botnexus update` cancellation failure.
+
+## Key Points
+
+1. **Cancellation is no longer masked as a generic failure.** `OperationCanceledException` gets its own catch block returning exit code 130 with a clear "Update cancelled" message.
+2. **Process cleanup on cancel is correct.** `proc.Kill(entireProcessTree: true)` prevents orphaned git processes.
+3. **Stream draining avoids deadlock.** `Task.WhenAll(stdout, stderr, WaitForExit)` is the correct pattern — never call `WaitForExit` before draining redirected streams.
+4. **Gateway sequencing is safe.** Pull failure returns early before any stop/start, so a cancelled pull never touches gateway state.
+5. **`GitPullResult` record struct is the right scope.** Private to UpdateCommand — no need for wider abstraction.
+
+## Follow-Up (non-blocking)
+
+`FirstNonEmptyLine` should split on `['\r', '\n']` instead of `Environment.NewLine` to handle git's mixed line-ending output on Windows. Low priority — only affects diagnostic display.
+
+## Affects
+
+- `src/gateway/BotNexus.Cli/Commands/UpdateCommand.cs`
+- `tests/BotNexus.Cli.Tests/Commands/UpdateCommandTests.cs`
+
