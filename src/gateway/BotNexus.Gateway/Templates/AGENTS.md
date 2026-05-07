@@ -12,5 +12,6 @@ _Multi-agent coordination notes._
 
 ## Memory Notes
 
-- Append durable summaries to `MEMORY.md` when you learn stable, long-term facts.
-- Append day-specific notes to `memory/YYYY-MM-DD.md` for active work context.
+- Use `memory_save` to record notes — writes go to `memory/YYYY-MM-DD.md` daily files.
+- `MEMORY.md` is loaded at session start for long-term context but is read-only during turns.
+- Future consolidation (dreaming) will update `MEMORY.md` from daily notes automatically.
