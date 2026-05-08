@@ -564,9 +564,11 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
 
         await using var connection = await CreateStartedConnection(factory, cts.Token);
         const string sessionId = "steer-session";
-        await connection.InvokeAsync("Steer", TestAgentId, sessionId, "course correction", cts.Token);
+        var result = await connection.InvokeAsync<JsonElement>("Steer", TestAgentId, sessionId, "course correction", cts.Token);
 
         dispatcher.Messages.ShouldHaveSingleItem();
+        result.GetProperty("sessionId").GetString().ShouldBe(sessionId);
+        dispatcher.Messages[0].SessionId.ShouldBe(sessionId);
         dispatcher.Messages[0].Metadata["messageType"].ShouldBe("steer");
         dispatcher.Messages[0].Metadata["control"].ShouldBe("steer");
     }
@@ -941,4 +943,3 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }
-
