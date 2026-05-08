@@ -220,6 +220,11 @@
 **PR:** https://github.com/sytone/botnexus/pull/178
 
 ---
+### 2026-05-07 — CLI update git-pull cancellation handling
+- UpdateCommand.RunGitPullAsync now drains redirected stdout/stderr while waiting, preventing git pull deadlocks when verbose output is off.
+- Added explicit cancellation handling: cancelled pulls return exit code 130, kill the git process tree best-effort, and skip gateway stop/start.
+- Failure output now surfaces the first useful stderr/stdout line instead of only A task was canceled..
+- Tests: tests/BotNexus.Cli.Tests/Commands/UpdateCommandTests.cs adds cancellation coverage for ExecuteAsync.
 ### 2026-05-07 — SignalR conversation routing fix (Phase 1)
 - Fixed `GatewayHub.SendMessageCore` to normalize and pass client `conversationId` into `ResolveOrCreateSessionAsync`, so session resolution uses the same conversation context as dispatch.
 - Updated `GatewayHub.ResolveOrCreateSessionAsync` to forward `conversationId` into `IConversationRouter.ResolveInboundAsync` instead of always forcing `null`.
@@ -282,6 +287,9 @@ ull)
 - Used dedicated worktree `Q:\repos\botnexus-pr-185` for PR branch `refactor/gateway-conversations`.
 - Fetched `origin/main` and `origin/refactor/gateway-conversations`, then merged `origin/main` into the PR branch with no conflicts.
 - Verified runtime stability with solution build: `dotnet build BotNexus.slnx --nologo --tl:off` (pass, warnings only).
+### 2026-05-07 — PR #181 mainline merge refresh
+- Synced `fix/update-pull-cancel` with `origin/main` in dedicated worktree `Q:\repos\botnexus-pr-181`; merge applied cleanly with no content conflicts.
+- Verified compile baseline after merge (`dotnet build BotNexus.slnx --nologo --tl:off`) before push.
 ---
 
 ## 2026-05-07 — Conversation Project Extraction: Implementation

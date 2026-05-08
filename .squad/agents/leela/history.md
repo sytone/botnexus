@@ -178,6 +178,31 @@ Farnsworth has implemented your recommendation to decouple Gateway from compile-
 
 ---
 
+## 2026-07-29 — Update Command Git Pull Cancellation Fix Review (Lead)
+
+**Status:** ✅ APPROVED  
+**Branch:** `fix/update-pull-cancel`  
+**Commits reviewed:** `f8c91eb6` (tests), `dad0de5b` (fix)
+
+**Root Cause:** `RunGitPullAsync` previously caught all exceptions with a generic handler, including `OperationCanceledException` from `WaitForExitAsync(ct)`. This surfaced as the confusing "git pull error: A task was canceled" message.
+
+**What Changed:**
+1. Introduced `GitPullResult` record struct to distinguish cancellation from genuine failures.
+2. Added explicit `OperationCanceledException` catch with `proc.Kill(entireProcessTree: true)` cleanup.
+3. Drains stdout/stderr via `Task.WhenAll` before checking exit code — avoids classic stream-deadlock.
+4. Surfaces first non-empty stderr/stdout line as actionable failure detail instead of raw exception messages.
+5. Returns exit code 130 (Unix SIGINT convention) on cancellation.
+
+**Architecture Assessment:**
+- Gateway stop/start sequencing is correct: pull fails → early return → gateway untouched.
+- `GitPullResult` is appropriately scoped as a private record struct — no need for wider visibility.
+- Test subclasses (`NoOpPreStopUpdateCommand`, `GitPullStepProbeCommand`) are a clean pattern for testing protected virtual methods without spawning real processes.
+
+**Minor Note (non-blocking):** `FirstNonEmptyLine` splits on `Environment.NewLine` (`\r\n` on Windows), but git sometimes emits `\n`-only output. Would be more robust as `text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)`. Not blocking because `.Trim()` handles stray `\r` and the result is only used for diagnostic display.
+
+**Test Coverage:** 7 tests pass. Two new tests cover the exact regression path (pre-cancel and pull-step cancel). Coverage is focused and sufficient for the fix scope.
+
+---
 ## 2026-05-07 — Conversation Routing Architecture Design Review (Lead)
 
 **Status:** ✅ Complete — decision approved, ready for implementation  

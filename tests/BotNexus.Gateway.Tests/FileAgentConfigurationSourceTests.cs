@@ -333,9 +333,10 @@ public sealed class FileAgentConfigurationSourceTests : IDisposable
         Directory.CreateDirectory(watchDirectory);
         var source = new FileAgentConfigurationSource(watchDirectory, new ListLogger<FileAgentConfigurationSource>(), new FileSystem());
         var callback = new TaskCompletionSource<IReadOnlyList<AgentDescriptor>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        IDisposable? watcher = null;
         try
         {
-            using var watcher = source.Watch(descriptors => callback.TrySetResult(descriptors));
+            watcher = source.Watch(descriptors => callback.TrySetResult(descriptors));
 
             var configPath = Path.Combine(watchDirectory, "agent-a.json");
             File.WriteAllText(
@@ -349,7 +350,7 @@ public sealed class FileAgentConfigurationSourceTests : IDisposable
                 }
                 """);
             await Task.Delay(100);
-            File.AppendAllText(configPath, Environment.NewLine);
+            await AppendAllTextWithRetryAsync(configPath, Environment.NewLine);
 
             var completed = await Task.WhenAny(callback.Task, Task.Delay(TimeSpan.FromSeconds(10)));
 
@@ -359,8 +360,20 @@ public sealed class FileAgentConfigurationSourceTests : IDisposable
         }
         finally
         {
-            if (Directory.Exists(watchDirectory))
-                Directory.Delete(watchDirectory, recursive: true);
+            watcher?.Dispose();
+            for (var i = 0; i < 3; i++)
+            {
+                try
+                {
+                    if (Directory.Exists(watchDirectory))
+                        Directory.Delete(watchDirectory, recursive: true);
+                    break;
+                }
+                catch (IOException) when (i < 2)
+                {
+                    await Task.Delay(100);
+                }
+            }
         }
     }
 
@@ -376,6 +389,7 @@ public sealed class FileAgentConfigurationSourceTests : IDisposable
                 _fileSystem.Directory.Delete(_directoryPath, recursive: true);
                 return;
             }
+
             catch (IOException) when (i < 2)
             {
                 Thread.Sleep(100);
@@ -383,6 +397,22 @@ public sealed class FileAgentConfigurationSourceTests : IDisposable
             catch
             {
                 break;
+            }
+        }
+    }
+
+    private static async Task AppendAllTextWithRetryAsync(string path, string content)
+    {
+        for (var i = 0; i < 5; i++)
+        {
+            try
+            {
+                File.AppendAllText(path, content);
+                return;
+            }
+            catch (IOException) when (i < 4)
+            {
+                await Task.Delay(100);
             }
         }
     }
@@ -415,4 +445,3 @@ public sealed class FileAgentConfigurationSourceTests : IDisposable
         }
     }
 }
-
