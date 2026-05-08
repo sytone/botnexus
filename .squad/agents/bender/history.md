@@ -184,6 +184,11 @@
 - Added wake-delivery telemetry in `GatewayTelemetry`: `SubAgentWakeDispatched` and `SubAgentWakeDeliveryFailed`, and instrumented success/failure paths in `OnCompletedAsync`.
 - Updated sub-agent wake tests to reflect always-dispatch semantics and verified `SubAgentCompletionWake` test suite passes (8/8).
 
+### 2026-05-07 — CLI update git-pull cancellation handling
+- UpdateCommand.RunGitPullAsync now drains redirected stdout/stderr while waiting, preventing git pull deadlocks when verbose output is off.
+- Added explicit cancellation handling: cancelled pulls return exit code 130, kill the git process tree best-effort, and skip gateway stop/start.
+- Failure output now surfaces the first useful stderr/stdout line instead of only A task was canceled..
+- Tests: tests/BotNexus.Cli.Tests/Commands/UpdateCommandTests.cs adds cancellation coverage for ExecuteAsync.
 ### 2026-05-07 — SignalR conversation routing fix (Phase 1)
 - Fixed `GatewayHub.SendMessageCore` to normalize and pass client `conversationId` into `ResolveOrCreateSessionAsync`, so session resolution uses the same conversation context as dispatch.
 - Updated `GatewayHub.ResolveOrCreateSessionAsync` to forward `conversationId` into `IConversationRouter.ResolveInboundAsync` instead of always forcing `null`.
@@ -241,6 +246,10 @@ ull)
 - Foundation for Farnsworth's clean fix (58d03d13)
 
 **Learning:** Strict rejection protocol ensures architectural rigor — rejected work delegates to fresh implementer, prevents scope drift from remediation.
+
+### 2026-05-07 — PR #181 mainline merge refresh
+- Synced `fix/update-pull-cancel` with `origin/main` in dedicated worktree `Q:\repos\botnexus-pr-181`; merge applied cleanly with no content conflicts.
+- Verified compile baseline after merge (`dotnet build BotNexus.slnx --nologo --tl:off`) before push.
 ---
 
 ## 2026-05-07 — Conversation Project Extraction: Implementation

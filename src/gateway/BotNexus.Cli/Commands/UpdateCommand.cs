@@ -11,6 +11,7 @@ namespace BotNexus.Cli.Commands;
 /// </summary>
 internal class UpdateCommand
 {
+    private const int CancelledExitCode = 130;
     private readonly IGatewayProcessManager _processManager;
 
     public UpdateCommand(IGatewayProcessManager processManager)
@@ -74,6 +75,8 @@ internal class UpdateCommand
             stopResult = await _processManager.StopAsync(home, cancellationToken);
         }
 
+        stopResult ??= new GatewayStopResult(false, "no result");
+
         if (!stopResult.Success)
             AnsiConsole.MarkupLine($"[yellow]\u26a0[/] Could not stop gateway ({Markup.Escape(stopResult.Message ?? "not running")}). Continuing anyway.");
         else
@@ -115,7 +118,7 @@ internal class UpdateCommand
         // Step 1: git pull
         string beforeSha;
         string afterSha;
-        int pullResult;
+        GitPullResult pullResult;
         int commitCount;
 
         if (interactive)
@@ -123,7 +126,7 @@ internal class UpdateCommand
             string capturedBeforeSha = string.Empty;
             string capturedAfterSha = string.Empty;
             int capturedCount = 0;
-            int capturedPullResult = 0;
+            GitPullResult capturedPullResult = new(1, null, false);
 
             await AnsiConsole.Status()
                 .Spinner(Spinner.Known.Dots)
@@ -132,7 +135,7 @@ internal class UpdateCommand
                 {
                     capturedBeforeSha = GetCommitSha(repoRoot);
                     capturedPullResult = await RunGitPullAsync(repoRoot, verbose, cancellationToken);
-                    if (capturedPullResult == 0)
+                    if (capturedPullResult.ExitCode == 0)
                     {
                         capturedAfterSha = GetCommitSha(repoRoot);
                         if (capturedBeforeSha != capturedAfterSha)
@@ -150,16 +153,27 @@ internal class UpdateCommand
             AnsiConsole.MarkupLine("[blue][[update]][/] Checking for updates...");
             beforeSha = GetCommitSha(repoRoot);
             pullResult = await RunGitPullAsync(repoRoot, verbose, cancellationToken);
-            afterSha = pullResult == 0 ? GetCommitSha(repoRoot) : string.Empty;
+            afterSha = pullResult.ExitCode == 0 ? GetCommitSha(repoRoot) : string.Empty;
             commitCount = 0;
-            if (pullResult == 0 && beforeSha != afterSha)
+            if (pullResult.ExitCode == 0 && beforeSha != afterSha)
                 commitCount = await CountCommitsBetweenAsync(repoRoot, beforeSha, afterSha, cancellationToken);
         }
 
-        if (pullResult != 0)
+        if (pullResult.WasCanceled)
         {
-            AnsiConsole.MarkupLine("[red]✗[/] git pull failed. Check network or repo path.");
-            return pullResult;
+            AnsiConsole.MarkupLine("[yellow]⚠[/] Update cancelled.");
+            return CancelledExitCode;
+        }
+
+        if (pullResult.ExitCode != 0)
+        {
+            AnsiConsole.MarkupLine("[red]✗[/] git pull failed.");
+            if (!string.IsNullOrWhiteSpace(pullResult.FailureDetail))
+                AnsiConsole.MarkupLine($"[dim]{Markup.Escape(pullResult.FailureDetail)}[/]");
+            else
+                AnsiConsole.MarkupLine("[yellow]⚠[/] Check network, auth, or repo path.");
+
+            return pullResult.ExitCode;
         }
 
         if (beforeSha == afterSha)
@@ -282,6 +296,8 @@ internal class UpdateCommand
             startResult = await _processManager.StartAsync(options, cancellationToken);
         }
 
+        startResult ??= new GatewayStartResult(false, null, "no result");
+
         if (startResult.Success && startResult.Pid.HasValue)
         {
             AnsiConsole.MarkupLine($"[green]✓[/] Gateway started (PID [yellow]{startResult.Pid.Value}[/])");
@@ -313,8 +329,9 @@ internal class UpdateCommand
         }
     }
 
-    private static async Task<int> RunGitPullAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
+    private static async Task<GitPullResult> RunGitPullAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
     {
+        Process? proc = null;
         try
         {
             var psi = new ProcessStartInfo
@@ -327,16 +344,50 @@ internal class UpdateCommand
                 CreateNoWindow = true
             };
 
-            using var proc = Process.Start(psi);
-            if (proc is null) return 1;
+            proc = Process.Start(psi);
+            if (proc is null)
+                return new GitPullResult(1, "Failed to start git process.", false);
 
-            await proc.WaitForExitAsync(cancellationToken);
-            return proc.ExitCode;
+            var stdoutTask = verbose
+                ? Task.FromResult(string.Empty)
+                : proc.StandardOutput.ReadToEndAsync(cancellationToken);
+            var stderrTask = verbose
+                ? Task.FromResult(string.Empty)
+                : proc.StandardError.ReadToEndAsync(cancellationToken);
+
+            await Task.WhenAll(stdoutTask, stderrTask, proc.WaitForExitAsync(cancellationToken));
+
+            if (proc.ExitCode == 0)
+                return new GitPullResult(0, null, false);
+
+            var stderr = await stderrTask;
+            var stdout = await stdoutTask;
+            var details = FirstNonEmptyLine(stderr) ?? FirstNonEmptyLine(stdout);
+            return new GitPullResult(proc.ExitCode, details, false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            if (proc is { HasExited: false })
+            {
+                try
+                {
+                    proc.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // Best-effort kill to avoid orphaned git processes.
+                }
+            }
+
+            return new GitPullResult(CancelledExitCode, null, true);
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] git pull error: {Markup.Escape(ex.Message)}");
-            return 1;
+            return new GitPullResult(1, ex.Message, false);
+        }
+        finally
+        {
+            proc?.Dispose();
         }
     }
 
@@ -392,6 +443,20 @@ internal class UpdateCommand
 
     private static string Short(string sha) => sha.Length >= 7 ? sha[..7] : sha;
 
+    private static string? FirstNonEmptyLine(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return null;
+
+        foreach (var line in text.Split(Environment.NewLine))
+        {
+            if (!string.IsNullOrWhiteSpace(line))
+                return line.Trim();
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// Checks if a TCP port is available for binding. Mirrors ServeCommand.IsPortAvailable.
     /// Used to verify the port is free before starting the new gateway process.
@@ -427,4 +492,6 @@ internal class UpdateCommand
             return false;
         }
     }
+
+    private readonly record struct GitPullResult(int ExitCode, string? FailureDetail, bool WasCanceled);
 }

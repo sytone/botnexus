@@ -51,6 +51,7 @@
 - 2026-05-04: Gateway decoupling audit found direct test coupling concentrated in InProcessIsolationStrategy constructor wiring tests (tests\BotNexus.Gateway.Tests\InProcessIsolationStrategyTests.cs, ToolHookWiringTests.cs, Agents\SubAgentIntegrationTests.cs, PlatformConfigAgentSourceTests.cs); these should shift to DI/extension-loader-backed tool registration seams instead of hardcoded strategy composition.
 - 2026-05-04: DI registration coverage for gateway startup is currently broad but shallow (IsolationStrategyRegistrationTests.cs, PlatformConfigurationTests.cs) and lacks assertions for runtime extension assembly scanning outcomes (IAgentTool/ICommandContributor registrations).
 - 2026-05-04: Coverage gap: no gateway-level tests verify graceful degradation when skills/mcp/mcpinvoke/web extensions are absent or fail load; add extension-loader + in-process tool availability integration tests to prevent regressions during runtime discovery refactors.
+- 2026-05-07: CLI update regression coverage now lives in `tests\BotNexus.Cli.Tests\Commands\UpdateCommandTests.cs` and should assert three pull-phase guarantees: non-zero pull failures short-circuit before stop/start, canceled pull paths short-circuit before stop/start, and slow pull completion must happen before gateway stop is attempted.
 
 
 ## 2026-05-07T22:05:56Z — Dispatcher Routing Regression Coverage (Test Strategy)
@@ -167,6 +168,22 @@
 - Wave 1 memory alignment validated and approved
 - Three non-blocking conditions (C1–C3) carried to Wave 2 backlog
 
+## 2026-05-07 — PR #181 readiness check (Hermes)
+- Worktree verified: Q:\repos\botnexus-pr-181 on fix/update-pull-cancel.
+- Sync check: origin/fix/update-pull-cancel = 7af8876c (HEAD), includes Bender validation commit; branch contains origin/main (5f18e5c).
+- CI check (gh pr checks 181 at 2026-05-07 17:20 -07:00): 6 successful, 2 skipped, 2 pending, 0 failing/cancelled.
+- Pending checks: CI/build-and-test (pull_request) and CodeQL Advanced/Analyze (csharp) (pull_request).
+- Action: no local fix applied because no failing checks were reported.
+
+## 2026-05-07 — PR #181 CI failure fix (Hermes)
+- Re-checked PR #181 after merge-update push `7af8876c`; `CI/build-and-test` failed in GitHub Actions run `25529315685` (job `74931887564`).
+- Failure diagnosis: snapshot assertions were OS/path sensitive; Linux CI output (`Ubuntu 24.04.4 LTS`, `/tmp/repo*`) mismatched Windows-authored snapshot values.
+- Fix applied: normalized environment/path-variant lines in snapshot test comparers:
+  - `tests/BotNexus.CodingAgent.Tests/SystemPromptBuilderSnapshotTests.cs`
+  - `tests/BotNexus.Gateway.Tests/Agents/SystemPromptBuilderSnapshotTests.cs`
+- Verification:
+  - Targeted suites passed (`BotNexus.CodingAgent.Tests`, `BotNexus.Gateway.Tests`).
+  - Full validation passed: `dotnet build BotNexus.slnx --nologo --tl:off` and `dotnet test BotNexus.slnx --nologo --tl:off`.
 ## 2026-05-07 — PR #180 Readiness Verification (Hermes)
 
 - Synced and verified branch ancestry: HEAD b1e08a0d contains origin/main (5f18e5c), and remote PR branch points at b1e08a0d.
@@ -211,3 +228,15 @@
 **Status:** Approved for code review and merge
 
 ---
+## 2026-05-07 — PR #181 main refresh + full validation (Hermes)
+- Worktree: Q:\repos\botnexus-pr-181 on fix/update-pull-cancel.
+- Merged latest origin/main into branch (merge commit b899e6cd).
+- Validation: dotnet build BotNexus.slnx --nologo --tl:off ✅, dotnet test BotNexus.slnx --nologo --tl:off ✅.
+- No PR-caused or merge-caused failures found locally; ready to push merge refresh and monitor PR checks.
+
+## 2026-05-08 — PR #181 refresh-2 merge + validation (Hermes)
+- Reused worktree `Q:\repos\botnexus-pr-181`, fetched `origin/main` and `origin/fix/update-pull-cancel`, and merged latest `origin/main` with conflict resolution in four test files.
+- Full validation passed after merge conflict fixes:
+  - `dotnet build BotNexus.slnx --nologo --tl:off` ✅
+  - `dotnet test BotNexus.slnx --nologo --tl:off` ✅
+- Branch is ready to push and re-check GitHub PR checks.
