@@ -1,12 +1,19 @@
 using System.Runtime.Loader;
 using System.Text.Json;
+using BotNexus.Gateway.Abstractions.Activity;
+using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Extensions;
 using BotNexus.Gateway.Abstractions.Hooks;
+using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Dispatching;
 using BotNexus.Gateway.Extensions;
 using BotNexus.Gateway.Hooks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using System.IO.Abstractions;
 
 namespace BotNexus.Gateway.Tests.Extensions;
@@ -163,6 +170,57 @@ public sealed class ExtensionLoaderTests : IDisposable
         discovered.ShouldNotContain(x => x.Manifest.Id == "missing-entry");
     }
 
+    [Fact]
+    public async Task LoadAsync_SignalRExtension_HubType_ActivatesFromBuiltProvider()
+    {
+        var extensionDirectory = Path.Combine(_rootPath, "signalr-extension");
+        Directory.CreateDirectory(extensionDirectory);
+        CopySignalRExtensionArtifacts(extensionDirectory);
+
+        await File.WriteAllTextAsync(Path.Combine(extensionDirectory, "botnexus-extension.json"), JsonSerializer.Serialize(new ExtensionManifest
+        {
+            Id = "botnexus-signalr",
+            Name = "SignalR Channel",
+            Version = "1.0.0",
+            EntryAssembly = "BotNexus.Extensions.Channels.SignalR.dll",
+            ExtensionTypes = ["channel", "endpoint-contributor"]
+        }));
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton(Mock.Of<IAgentSupervisor>());
+        services.AddSingleton(Mock.Of<IAgentRegistry>());
+        services.AddSingleton(Mock.Of<ISessionStore>());
+        services.AddSingleton(Mock.Of<IChannelDispatcher>());
+        services.AddSingleton(Mock.Of<IActivityBroadcaster>());
+        services.AddSingleton(Mock.Of<ISessionCompactor>());
+        services.AddSingleton(Mock.Of<ISessionWarmupService>());
+        services.AddSingleton(Mock.Of<IConversationDispatcher>());
+        services.AddSingleton(Mock.Of<IConversationRouter>());
+        services.AddSingleton<Microsoft.Extensions.Options.IOptionsMonitor<CompactionOptions>>(
+            new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()));
+
+        var loader = CreateLoader(services);
+        var discovered = await loader.DiscoverAsync(_rootPath);
+        var loadResult = await loader.LoadAsync(discovered.Single(x => x.Manifest.Id == "botnexus-signalr"));
+
+        loadResult.Success.ShouldBeTrue(loadResult.Error);
+
+        var endpointContributor = services
+            .Where(descriptor => descriptor.ServiceType == typeof(IEndpointContributor))
+            .Select(descriptor => descriptor.ImplementationType)
+            .LastOrDefault(type => type?.Assembly.GetName().Name == "BotNexus.Extensions.Channels.SignalR");
+
+        endpointContributor.ShouldNotBeNull("dynamic SignalR extension should register endpoint contributors from the extension assembly");
+
+        var hubType = endpointContributor!.Assembly.GetType("BotNexus.Extensions.Channels.SignalR.GatewayHub");
+        hubType.ShouldNotBeNull("GatewayHub should be loadable from the dynamic SignalR extension assembly");
+
+        using var provider = services.BuildServiceProvider();
+
+        Should.NotThrow(() => ActivatorUtilities.CreateInstance(provider, hubType!));
+    }
+
     private static AssemblyLoadContextExtensionLoader CreateLoader(IServiceCollection services)
         => new(services, new HookDispatcher(), NullLogger<AssemblyLoadContextExtensionLoader>.Instance, new FileSystem());
 
@@ -178,6 +236,42 @@ public sealed class ExtensionLoaderTests : IDisposable
             return fallback;
 
         throw new FileNotFoundException("Unable to locate BotNexus.Extensions.Channels.Telegram.dll for extension loader tests.");
+    }
+
+    private static void CopySignalRExtensionArtifacts(string destinationDirectory)
+    {
+        var sourceDirectory = ResolveSignalRExtensionSourceDirectory();
+        var filesToCopy = new[]
+        {
+            "BotNexus.Extensions.Channels.SignalR.dll",
+            "BotNexus.Extensions.Channels.SignalR.pdb",
+            "BotNexus.Extensions.Channels.SignalR.deps.json",
+            "BotNexus.Gateway.Dispatching.dll",
+            "BotNexus.Gateway.Dispatching.pdb",
+            "BotNexus.Gateway.Dispatching.deps.json"
+        };
+
+        foreach (var fileName in filesToCopy)
+        {
+            var sourcePath = Path.Combine(sourceDirectory, fileName);
+            if (!File.Exists(sourcePath))
+                continue;
+
+            File.Copy(sourcePath, Path.Combine(destinationDirectory, fileName), overwrite: true);
+        }
+    }
+
+    private static string ResolveSignalRExtensionSourceDirectory()
+    {
+        if (File.Exists(Path.Combine(AppContext.BaseDirectory, "BotNexus.Extensions.Channels.SignalR.dll")))
+            return AppContext.BaseDirectory;
+
+        var root = FindRepositoryRoot();
+        var fallback = Path.Combine(root, "src", "extensions", "BotNexus.Extensions.Channels.SignalR", "bin", "Debug", "net10.0");
+        if (File.Exists(Path.Combine(fallback, "BotNexus.Extensions.Channels.SignalR.dll")))
+            return fallback;
+
+        throw new DirectoryNotFoundException("Unable to locate SignalR extension build output for extension loader tests.");
     }
 
     private static string FindRepositoryRoot()

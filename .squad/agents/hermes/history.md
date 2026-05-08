@@ -41,6 +41,7 @@
 - Ready to push refreshed branch and re-check PR checks.
 
 ## Learnings
+- 2026-05-08: Dynamic SignalR extension loading can fail hub DI even when the host registers `IConversationDispatcher` if the extension resolves a separate `BotNexus.Gateway.Dispatching` assembly identity; guard with activation tests that load extension artifacts from disk.
 - 2026-05-07: SQLite file-backed session-store tests can intermittently fail Windows cleanup with "file in use" unless test connection strings disable pooling (`SqliteConnectionStringBuilder.Pooling = false`) and test teardown clears pools before deleting DB files.
 - 2026-05-07: Added broader dispatching regression coverage at gateway/session boundaries: default routing with null conversationId, explicit non-default session isolation, and originating binding metadata (ThreadId/BindingId/DisplayPrefix) preservation on outbound sends.
 - 2026-05-07: Added SignalR conversation routing regressions that assert explicit conversationId resolves a distinct session (not the default portal session) and preserves conversation stamping on the resolved session.
