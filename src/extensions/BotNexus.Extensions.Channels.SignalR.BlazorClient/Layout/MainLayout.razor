@@ -376,8 +376,17 @@
         if (!string.IsNullOrEmpty(agentId))
         {
             Store.ActiveAgentId = agentId;
-            if (Store.GetAgent(agentId) is { } agent && agent.UnreadCount > 0)
-                agent.UnreadCount = 0;
+            if (Store.GetAgent(agentId) is { } agent)
+            {
+                if (agent.UnreadCount > 0)
+                    agent.UnreadCount = 0;
+
+                // SeedConversations auto-selects a default conversation, but its
+                // history is only loaded for the very first agent during portal init.
+                // Trigger history loading now so the user sees messages immediately.
+                if (agent.ActiveConversationId is not null)
+                    await Interaction.SelectConversationAsync(agentId, agent.ActiveConversationId);
+            }
             Store.NotifyChanged();
 
             if (_isMobile)
