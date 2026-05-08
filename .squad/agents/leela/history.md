@@ -7,6 +7,31 @@
 
 ## Core Context
 
+## 2026-05-07 — Conversation Project Extraction: Architectural Design Review
+
+**Status:** ✅ Complete (Design Approved, Implementation Complete)  
+**Session:** Conversation project refactor orchestration  
+**Coordination:** With Bender (implementation), Hermes (QA), Nibbler (consistency)  
+
+**Your Role:** Lead Architect. Reran architecture review from fresh baseline, produced comprehensive design decision.
+
+**Decision:** Extract 3 conversation stores (InMemory, File, Sqlite) + DefaultConversationRouter from Gateway.Sessions/Gateway into dedicated BotNexus.Gateway.Conversations project. Keep contracts in Gateway.Contracts (dependency inversion), domain models in Domain. New test project: BotNexus.Gateway.Conversations.Tests.
+
+**Key Architectural Decisions:**
+- **Dependency graph:** Domain ← Contracts ← Gateway.Conversations ← Gateway (host)
+- **No circular deps:** Gateway.Conversations and Gateway.Sessions are siblings
+- **Contracts stay:** IConversationStore/IConversationRouter remain in Gateway.Contracts
+- **Domain stays:** Conversation models remain in Domain
+- **DI root unchanged:** GatewayServiceCollectionExtensions continues concrete registration
+
+**Risk Mitigation Table:** Documented 6 risks (all LOW-MEDIUM, all mitigated including SQLite coupling, shared database file, DI registration, namespace break, router interface dependency, test helper sharing).
+
+**Verification Checklist Provided:** Build, tests, namespace validation, project references, circular dependency checks.
+
+**Commit:** `d8552f1f` (design decision)
+
+---
+
 **Phases 1-7A Complete. Full Design Review Complete. Phase 12 Extension-Commands Design Review Complete (Grade: B+).** Build green (0 errors), 276 tests passing (up from 264), Full Review grade A-. Core systems operational:
 - Agent registry, supervisor, cross-agent calling with recursion guard + depth limits + timeout
 - WebSocket (with reconnect replay + sequence IDs), TUI (with steering), Telegram channel adapters
@@ -29,6 +54,33 @@
 **Phase 7 Focus:** Resilience (reconnection, pagination, queueing), channel consolidation, test hardening, observability.
 
 ---
+
+## 2026-05-08 — OpenClaw Memory Alignment — Design Questions Resolution (Architect)
+
+**Status:** ✅ Complete  
+**Activity:** Prepared decision guide for OpenClaw Memory Alignment spec
+
+**Context:** Six open design questions in the OpenClaw Memory Alignment spec were walked through with Sytone (Product Owner). Your role: architected decision guide, framed options, analyzed trade-offs. Sytone selected all six resolutions. Kif recorded to canonical decisions.md.
+
+**Decisions Approved:**
+
+1. **Daily notes format:** Plain Markdown only (no YAML frontmatter)
+2. **Storage path:** Default canonical + optional per-agent override in config
+3. **Embedding provider:** Optional; local + cloud behind `IEmbeddingProvider` abstraction
+4. **Consolidation trigger:** Automatic schedule (cron) + manual override
+5. **Index rebuild / cache:** <30s FTS rebuild; embeddings cached by content hash in SQLite
+6. **AGENTS.md generation:** Minimal memory instructions (3–5 lines); details in tool descriptions
+
+**Implications for Your Next Phase:**
+
+- Waves 1-5 are now constrained by these decisions
+- Wave 1 must use plain Markdown for note creation; no YAML injection
+- Wave 3 memory search must degrade gracefully when no `IEmbeddingProvider` is registered
+- Consolidation service needs both cron (automatic) and CLI trigger (manual override)
+
+**Next Steps:** Coordinate with implementation agents (Fry, Hermes, Bender) to schedule Wave 1 kickoff.
+
+
 
 ## 2026-07-28 — Gateway Detached Process Design Review (Lead)
 
@@ -126,6 +178,40 @@ Farnsworth has implemented your recommendation to decouple Gateway from compile-
 **Test Coverage:** 7 tests pass. Two new tests cover the exact regression path (pre-cancel and pull-step cancel). Coverage is focused and sufficient for the fix scope.
 
 ---
+---
+
+## 2026-05-07 — OpenClaw Memory Model Architecture Assessment (Team Coordination)
+
+**Status:** ✓ Assessment complete, merged to decisions.md
+
+**Context:** Sytone requested BotNexus team to research OpenClaw memory model for migration compatibility.
+
+**Your Contribution:**
+- Architecture assessment: OpenClaw treats Markdown as authoritative; SQLite/embeddings are derived indexes
+- Gap analysis identified 8 major divergences (primary authoring surface, file-based tools, daily notes path, daily notes loading, embeddings, memory flush, dreaming, conversation indexing, AGENTS.md, memory_get)
+- Proposed 5-wave implementation plan with detailed scope and file/project impacts
+- Wave 1: File-first authoring + daily load + replace memory_store
+- Wave 2: File-based indexing (rebuild SQLite from MEMORY.md + memory/*.md)
+- Wave 3: Embeddings hybrid search
+- Wave 4: Pre-compaction memory flush
+- Wave 5: Memory instructions + dreaming
+- Migration path documented (backward compatibility for Wave 1, data export before Wave 2 cutover)
+
+**Kif's Parallel Work:**
+- Comprehensive research on OpenClaw's memory model and system prompts
+- Documentation roadmap with priority tiers
+- Design insights and recommendations
+
+**Team Coordination:**
+- Both research outputs merged into decisions.md (2026-05-07 section)
+- Orchestration log created: .squad/orchestration-log/2026-05-07T15-17-40Z-memory-architecture-research.md
+- Session log created: .squad/log/2026-05-07T15-17-40Z-openclaw-memory-research.md
+- Inbox decision files deleted after merge
+
+**Next Steps:**
+- Implementation team to scope 5-wave plan against backlog (Wave 1-4 are priority)
+- Architecture team to finalize Wave 1 contracts
+- Migration strategy: export existing SQLite memories to memory/ files before Wave 2 cutover
 ## 2026-05-07 — OpenClaw Memory Wave 1 Alignment (Lead/Architect)
 
 **Role:** Design leadership and gating decisions  
