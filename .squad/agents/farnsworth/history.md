@@ -248,3 +248,15 @@
 - Created dedicated worktree at `Q:\repos\botnexus-pr-184`, fetched `origin/main` + `origin/fix/24-tool-timeouts`, and merged main into the PR branch.
 - Resolved conflicts by preserving mainline archive content in `.squad/decisions-archive.md` and retaining both memory-tool guard tests and tool-timeout coverage in `InProcessIsolationStrategyTests`.
 - Validation: `dotnet build BotNexus.slnx --nologo --tl:off` succeeded in the PR worktree.
+## 2026-05-07T19:34-07:00 — PR #184 readiness refresh (fix/24-tool-timeouts)
+
+- Synced ix/24-tool-timeouts with latest origin/main in dedicated worktree Q:\repos\botnexus-pr-184.
+- Validation in worktree: dotnet build BotNexus.slnx --nologo --tl:off passed.
+- Full dotnet test BotNexus.slnx --nologo --tl:off failed with baseline failures that also reproduce on main in current environment; no PR-specific fix committed in this refresh.
+- gh pr checks 184 currently reports no checks on head branch.
+
+## 2026-05-08T10:22-07:00 — PR #184 readiness refresh 2 (fix/24-tool-timeouts)
+
+- Synced ix/24-tool-timeouts with latest origin/main in dedicated worktree Q:\repos\botnexus-pr-184.
+- Full validation in worktree: dotnet build BotNexus.slnx --nologo --tl:off ✅, dotnet test BotNexus.slnx --nologo --tl:off ✅.
+- gh pr checks 184 reviewed after push to confirm current check state.
