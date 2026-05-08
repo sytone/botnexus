@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Conversations;
+using BotNexus.Gateway.Dispatching;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Hooks;
@@ -130,6 +131,7 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<ISessionStore, InMemorySessionStore>();
         services.TryAddSingleton<IConversationStore, InMemoryConversationStore>();
         services.TryAddSingleton<IConversationRouter, DefaultConversationRouter>();
+        services.TryAddSingleton<IConversationDispatcher, DefaultConversationDispatcher>();
         services.AddSingleton<InternalChannelAdapter>();
         services.AddSingleton<IChannelAdapter>(serviceProvider => serviceProvider.GetRequiredService<InternalChannelAdapter>());
         services.AddSingleton<ISessionCompactor, LlmSessionCompactor>();

@@ -12,6 +12,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
     <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Channels\BotNexus.Gateway.Channels.csproj" />
+    <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Dispatching\BotNexus.Gateway.Dispatching.csproj" />
     <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\BotNexus.Extensions.Channels.SignalR.BlazorClient\BotNexus.Extensions.Channels.SignalR.BlazorClient.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>

@@ -31,7 +31,19 @@
 
 ---
 
+## 2026-05-07 — PR #180 Refresh Merge + Validation (Hermes)
+
+- Reused dedicated worktree `Q:\repos\botnexus-pr-180` on branch `refactor/conversation-dispatching-layer` tracking `origin/refactor/conversation-dispatching-layer`.
+- Fetched latest refs and merged `origin/main` into the PR branch via merge commit `8c0995b0`.
+- Full validation after merge:
+  - `dotnet build BotNexus.slnx --nologo --tl:off` ✅
+  - `dotnet test BotNexus.slnx --nologo --tl:off` ✅ (0 failed; E2E project skipped tests by design in current run)
+- Ready to push refreshed branch and re-check PR checks.
+
 ## Learnings
+- 2026-05-07: SQLite file-backed session-store tests can intermittently fail Windows cleanup with "file in use" unless test connection strings disable pooling (`SqliteConnectionStringBuilder.Pooling = false`) and test teardown clears pools before deleting DB files.
+- 2026-05-07: Added broader dispatching regression coverage at gateway/session boundaries: default routing with null conversationId, explicit non-default session isolation, and originating binding metadata (ThreadId/BindingId/DisplayPrefix) preservation on outbound sends.
+- 2026-05-07: Added SignalR conversation routing regressions that assert explicit conversationId resolves a distinct session (not the default portal session) and preserves conversation stamping on the resolved session.
 - 2026-04-20: Repro tests for sub-agent wake delivery should assert both dispatch metadata (messageType=subagent-completion) and stream-event channel capabilities; race-condition coverage needs explicit fallback-to-dispatch expectations when IsRunning flips during follow-up enqueue.
 
 - 2026-05-07: Cross-platform test portability (PR #179 CI fix) — all test fixture paths must use `Path.Combine()` and platform-aware path construction, not hardcoded backslash separators. WorkspaceContextBuilder tests were Linux-failing due to `"C:\\workspace\\..."` paths in config setup. Apply this pattern everywhere gateway tests initialize file paths or mock filesystem structures. Gateway workspace memory path tests now pass cross-platform.
@@ -40,6 +52,27 @@
 - 2026-05-04: DI registration coverage for gateway startup is currently broad but shallow (IsolationStrategyRegistrationTests.cs, PlatformConfigurationTests.cs) and lacks assertions for runtime extension assembly scanning outcomes (IAgentTool/ICommandContributor registrations).
 - 2026-05-04: Coverage gap: no gateway-level tests verify graceful degradation when skills/mcp/mcpinvoke/web extensions are absent or fail load; add extension-loader + in-process tool availability integration tests to prevent regressions during runtime discovery refactors.
 
+
+## 2026-05-07T22:05:56Z — Dispatcher Routing Regression Coverage (Test Strategy)
+
+**Status:** ✅ Complete  
+**Session:** Dispatching Cleanup Wave — Phase 2 test expansion  
+
+**Coverage Added:**
+- Non-default conversation isolation from default paths
+- Default fallback when conversationId omitted (null → binding-based resolution)
+- Originating channel binding metadata preservation (ThreadId, BindingId, DisplayPrefix)
+- Tests added/updated in GatewayHostTests, SignalRHubTests, SignalRThreadRoutingTests
+- **Result:** 42/42 targeted tests passing
+
+**Cross-team Context:**
+- Farnsworth created `BotNexus.Gateway.Dispatching` contracts + adapter ✅
+- Bender integrated dispatcher into gateway runtime paths ✅
+- Leela approved all architectural decisions (✅ APPROVED)
+
+**Follow-up:** Unit tests for `DefaultConversationDispatcher` edge cases once contracts stabilize.
+
+---
 
 ## 2026-05-04 — Gateway Decoupling Test Audit
 
@@ -87,6 +120,16 @@
 
 ---
 
+
+### 2026-05-07 — Phase 1 Regression Coverage: Conversation Routing Tests
+
+- **Task:** Add regression tests for Phase 1 bug fix; verify session resolution behavior (not just metadata)
+- **Test Philosophy:** Prior bug manifested in session resolution returning default even when metadata was correct; metadata-only assertions insufficient
+- **Tests Added:**
+  - SignalRHubTests.GatewayHub_SendMessage_WithConversationId_ResolvesConversationSession: verify explicit conversationId resolves target conversation's session
+  - SignalRThreadRoutingTests.SignalRHub_NewConversation_GetsItsOwnSession (strengthened): expanded assertions to check both dispatched metadata AND resolved session identity + conversation store persistence
+- **Test Status:** Targeted SignalR routing tests pass; full suite blocked by unrelated baseline failures
+- **Coverage:** Session resolution behavior, conversation stamp persistence, non-default conversation isolation
 ## 2026-05-07 — OpenClaw Memory Wave 1 QA & Validation (QA/Test Coverage)
 
 **Role:** Test coverage, validation, final QA verdict  
@@ -123,6 +166,25 @@
 **Outcomes:**
 - Wave 1 memory alignment validated and approved
 - Three non-blocking conditions (C1–C3) carried to Wave 2 backlog
+
+## 2026-05-07 — PR #180 Readiness Verification (Hermes)
+
+- Synced and verified branch ancestry: HEAD b1e08a0d contains origin/main (5f18e5c), and remote PR branch points at b1e08a0d.
+- Full local validation passed in worktree (dotnet build BotNexus.slnx --nologo --tl:off, dotnet test BotNexus.slnx --nologo --tl:off).
+- CI check status currently shows one failing check (CI / build-and-test), with failure log indicating snapshot assertions in SystemPromptBuilderSnapshotTests; locally re-running those snapshot tests and full CI command sequence succeeded.
+- Readiness call: no safe PR-scoped code fix identified from reproducible local evidence; report as CI instability/non-repro in this environment.
+
+## 2026-05-08 — PR #180 CI Snapshot Portability Fix (Hermes)
+
+- Verified worktree branch `refactor/conversation-dispatching-layer` is up to date with `origin/refactor/conversation-dispatching-layer` and contains `origin/main`.
+- Inspected CI attempt 1 and rerun attempt 2: both failed in `build-and-test` on `ubuntu-latest` with snapshot mismatches in:
+  - `BotNexus.CodingAgent.Tests.SystemPromptBuilderSnapshotTests.Build_GitAndToolContributions_MatchesSnapshot`
+  - `BotNexus.Gateway.Tests.Agents.SystemPromptBuilderSnapshotTests.Build_FullMode_MatchesSnapshot`
+  - `...Build_MinimalMode_MatchesSnapshot`
+  - `...Build_NoTools_MatchesSnapshot`
+- Root cause: snapshots asserted machine/OS-specific lines (Windows OS description and absolute workspace/docs paths), while CI renders Linux values (`Ubuntu 24.04.4 LTS`, `/tmp/...`).
+- Applied minimal safe test-only normalization in snapshot helpers to canonicalize volatile lines before compare.
+- Validation: targeted test projects passed; full `dotnet build BotNexus.slnx --nologo --tl:off` and `dotnet test BotNexus.slnx --nologo --tl:off` passed locally.
 ## 2026-05-07 — Conversation Project Extraction: QA & Validation
 
 **Status:** ✅ Complete (Test validation passed, approved for merge)  

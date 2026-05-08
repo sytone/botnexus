@@ -2,6 +2,7 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Data.Sqlite;
 
 namespace BotNexus.Gateway.Tests.Sessions;
 
@@ -16,11 +17,16 @@ public sealed class SqliteSessionStoreConversationIdTests : IDisposable
     public SqliteSessionStoreConversationIdTests()
     {
         _dbPath = Path.Combine(Path.GetTempPath(), $"botnexus-tests-{Guid.NewGuid():N}.db");
-        _connectionString = $"Data Source={_dbPath}";
+        _connectionString = new SqliteConnectionStringBuilder
+        {
+            DataSource = _dbPath,
+            Pooling = false
+        }.ToString();
     }
 
     public void Dispose()
     {
+        SqliteConnection.ClearAllPools();
         if (File.Exists(_dbPath))
             File.Delete(_dbPath);
     }
