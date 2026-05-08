@@ -128,8 +128,8 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     }
 
     /// <summary>Steer an in-progress agent response.</summary>
-    public async Task<SendMessageResult> SteerAsync(string agentId, string sessionId, string content)
-        => await _connection!.InvokeAsync<SendMessageResult>("Steer", agentId, sessionId, content);
+    public async Task<SendMessageResult> SteerAsync(string agentId, string sessionId, string content, string? conversationId)
+        => await _connection!.InvokeAsync<SendMessageResult>("Steer", agentId, sessionId, content, conversationId);
 
     /// <summary>Send a follow-up message into an existing session.</summary>
     public async Task FollowUpAsync(string agentId, string sessionId, string content)

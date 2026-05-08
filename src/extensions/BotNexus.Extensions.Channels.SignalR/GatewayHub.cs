@@ -336,7 +336,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <param name="sessionId">The session id.</param>
     /// <param name="content">The content.</param>
     /// <returns>The steer result.</returns>
-    public async Task<SendMessageResult> Steer(AgentId agentId, SessionId sessionId, string content)
+    public async Task<SendMessageResult> Steer(AgentId agentId, SessionId sessionId, string content, string? conversationId)
     {
         var typedAgentId = NormalizeAgentId(agentId);
         var typedSessionId = NormalizeSessionId(sessionId);
@@ -348,6 +348,8 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         await SubscribeInternalAsync(typedSessionId);
 
         var connectionId = Context.ConnectionId;
+        var normalizedConversationId = string.IsNullOrWhiteSpace(conversationId) ? null : conversationId.Trim();
+
         _ = SafeDispatchAsync(
             () => _dispatcher.DispatchAsync(
                 new InboundMessage
@@ -358,6 +360,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                     SessionId = typedSessionId.Value,
                     TargetAgentId = typedAgentId.Value,
                     Content = content,
+                    ConversationId = normalizedConversationId,
                     Metadata = new Dictionary<string, object?>
                     {
                         ["messageType"] = "steer",

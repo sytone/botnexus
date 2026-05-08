@@ -366,13 +366,32 @@ public sealed class SignalRHubTests
 
         var hub = CreateHub(dispatcher: dispatcher.Object, connectionId: "conn-1");
 
-        var result = await hub.Steer("agent-a", requestedSessionId, "nudge");
+        var result = await hub.Steer("agent-a", requestedSessionId, "nudge", null);
 
         result.SessionId.ShouldBe(requestedSessionId);
         dispatched.ShouldNotBeNull();
         dispatched!.SessionId.ShouldBe(requestedSessionId);
+        dispatched.ConversationId.ShouldBeNull();
         dispatched.Metadata["messageType"].ShouldBe("steer");
         dispatched.Metadata["control"].ShouldBe("steer");
+    }
+
+    [Fact]
+    public async Task GatewayHub_Steer_SetsConversationIdOnDispatchedMessage()
+    {
+        InboundMessage? dispatched = null;
+
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(value => value.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<InboundMessage, CancellationToken>((m, _) => dispatched = m)
+            .Returns(Task.CompletedTask);
+
+        var hub = CreateHub(dispatcher: dispatcher.Object, connectionId: "conn-1");
+
+        var result = await hub.Steer("agent-a", "sess-1", "nudge", "conv-42");
+
+        dispatched.ShouldNotBeNull();
+        dispatched!.ConversationId.ShouldBe("conv-42");
     }
 
     [Fact]

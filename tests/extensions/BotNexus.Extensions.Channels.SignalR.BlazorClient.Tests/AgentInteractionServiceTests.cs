@@ -159,4 +159,64 @@ public sealed class AgentInteractionServiceTests
         var messages = agent.Conversations["conv-1"].Messages;
         Assert.Equal(5, messages.Count);
     }
+
+    // ── Steering tests ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task SteerAsync_skips_when_agent_has_no_session()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        // No SessionId, no ActiveConversationSessionId
+        Assert.Null(agent.ActiveConversationSessionId);
+
+        await _service.SteerAsync("agent-1", "redirect me");
+
+        // No local message should be appended because SteerAsync bails early
+        Assert.Null(agent.ActiveConversationId);
+    }
+
+    [Fact]
+    public async Task SteerAsync_appends_steering_prefix_to_local_messages()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.SessionId = "sess-1";
+        agent.ActiveConversationId = "conv-1";
+        agent.Conversations["conv-1"] = new ConversationState
+        {
+            ConversationId = "conv-1",
+            Title = "Test conv",
+            ActiveSessionId = "sess-1"
+        };
+
+        // SteerAsync will fail on the hub call (no connection) and append an error,
+        // but the user steering message should be appended first.
+        await _service.SteerAsync("agent-1", "redirect me");
+
+        var conv = agent.Conversations["conv-1"];
+        Assert.True(conv.Messages.Count >= 1);
+        Assert.Equal("User", conv.Messages[0].Role);
+        Assert.Equal("🔀 redirect me", conv.Messages[0].Content);
+    }
+
+    [Fact]
+    public async Task SteerAsync_appends_error_on_hub_failure()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.SessionId = "sess-1";
+        agent.ActiveConversationId = "conv-1";
+        agent.Conversations["conv-1"] = new ConversationState
+        {
+            ConversationId = "conv-1",
+            Title = "Test conv",
+            ActiveSessionId = "sess-1"
+        };
+
+        await _service.SteerAsync("agent-1", "redirect me");
+
+        var conv = agent.Conversations["conv-1"];
+        // First message is the user steering, second is the error
+        Assert.Equal(2, conv.Messages.Count);
+        Assert.Equal("Error", conv.Messages[1].Role);
+        Assert.Contains("Steer failed", conv.Messages[1].Content);
+    }
 }

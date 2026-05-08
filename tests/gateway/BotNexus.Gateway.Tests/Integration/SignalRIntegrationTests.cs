@@ -564,11 +564,38 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
 
         await using var connection = await CreateStartedConnection(factory, cts.Token);
         const string sessionId = "steer-session";
-        var result = await connection.InvokeAsync<JsonElement>("Steer", TestAgentId, sessionId, "course correction", cts.Token);
+        string? conversationId = null;
+        var result = await connection.InvokeAsync<JsonElement>("Steer", TestAgentId, sessionId, "course correction", conversationId, cts.Token);
 
         dispatcher.Messages.ShouldHaveSingleItem();
         result.GetProperty("sessionId").GetString().ShouldBe(sessionId);
         dispatcher.Messages[0].SessionId.ShouldBe(sessionId);
+        dispatcher.Messages[0].ConversationId.ShouldBeNull();
+        dispatcher.Messages[0].Metadata["messageType"].ShouldBe("steer");
+        dispatcher.Messages[0].Metadata["control"].ShouldBe("steer");
+    }
+
+    [Fact]
+    public async Task Hub_Steer_SetsConversationIdWhenProvided()
+    {
+        var dispatcher = new RecordingDispatcher();
+        await using var factory = CreateTestFactory(services =>
+        {
+            services.RemoveAll<IChannelDispatcher>();
+            services.AddSingleton<IChannelDispatcher>(dispatcher);
+        });
+        using var cts = CreateTimeout();
+        await RegisterAgentAsync(factory, cts.Token);
+
+        await using var connection = await CreateStartedConnection(factory, cts.Token);
+        const string sessionId = "steer-session";
+        const string conversationId = "conv-42";
+        var result = await connection.InvokeAsync<JsonElement>("Steer", TestAgentId, sessionId, "course correction", conversationId, cts.Token);
+
+        dispatcher.Messages.ShouldHaveSingleItem();
+        result.GetProperty("sessionId").GetString().ShouldBe(sessionId);
+        dispatcher.Messages[0].SessionId.ShouldBe(sessionId);
+        dispatcher.Messages[0].ConversationId.ShouldBe("conv-42");
         dispatcher.Messages[0].Metadata["messageType"].ShouldBe("steer");
         dispatcher.Messages[0].Metadata["control"].ShouldBe("steer");
     }
