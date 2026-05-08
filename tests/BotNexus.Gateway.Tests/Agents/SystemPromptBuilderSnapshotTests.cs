@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using BotNexus.Gateway.Agents;
 
 namespace BotNexus.Gateway.Tests.Agents;
@@ -124,7 +125,13 @@ public sealed class SystemPromptBuilderSnapshotTests
         normalized.ShouldBe(expected);
     }
 
-    private static string Normalize(string value) => value.Replace("\r\n", "\n").Replace('\r', '\n').TrimEnd('\n');
+    private static string Normalize(string value)
+    {
+        var normalized = value.Replace("\r\n", "\n").Replace('\r', '\n').TrimEnd('\n');
+        normalized = Regex.Replace(normalized, @"^Your working directory is: .*$", "Your working directory is: <workspace>", RegexOptions.Multiline);
+        normalized = Regex.Replace(normalized, @"^BotNexus docs: .*$", "BotNexus docs: <docs-path>", RegexOptions.Multiline);
+        return normalized;
+    }
 
     private static string FindRepositoryRoot()
     {

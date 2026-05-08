@@ -157,3 +157,22 @@
 **Outcomes:**
 - Wave 1 memory alignment validated and approved
 - Three non-blocking conditions (C1–C3) carried to Wave 2 backlog
+
+## 2026-05-07 — PR #180 Readiness Verification (Hermes)
+
+- Synced and verified branch ancestry: HEAD b1e08a0d contains origin/main (5f18e5c), and remote PR branch points at b1e08a0d.
+- Full local validation passed in worktree (dotnet build BotNexus.slnx --nologo --tl:off, dotnet test BotNexus.slnx --nologo --tl:off).
+- CI check status currently shows one failing check (CI / build-and-test), with failure log indicating snapshot assertions in SystemPromptBuilderSnapshotTests; locally re-running those snapshot tests and full CI command sequence succeeded.
+- Readiness call: no safe PR-scoped code fix identified from reproducible local evidence; report as CI instability/non-repro in this environment.
+
+## 2026-05-08 — PR #180 CI Snapshot Portability Fix (Hermes)
+
+- Verified worktree branch `refactor/conversation-dispatching-layer` is up to date with `origin/refactor/conversation-dispatching-layer` and contains `origin/main`.
+- Inspected CI attempt 1 and rerun attempt 2: both failed in `build-and-test` on `ubuntu-latest` with snapshot mismatches in:
+  - `BotNexus.CodingAgent.Tests.SystemPromptBuilderSnapshotTests.Build_GitAndToolContributions_MatchesSnapshot`
+  - `BotNexus.Gateway.Tests.Agents.SystemPromptBuilderSnapshotTests.Build_FullMode_MatchesSnapshot`
+  - `...Build_MinimalMode_MatchesSnapshot`
+  - `...Build_NoTools_MatchesSnapshot`
+- Root cause: snapshots asserted machine/OS-specific lines (Windows OS description and absolute workspace/docs paths), while CI renders Linux values (`Ubuntu 24.04.4 LTS`, `/tmp/...`).
+- Applied minimal safe test-only normalization in snapshot helpers to canonicalize volatile lines before compare.
+- Validation: targeted test projects passed; full `dotnet build BotNexus.slnx --nologo --tl:off` and `dotnet test BotNexus.slnx --nologo --tl:off` passed locally.
