@@ -2,6 +2,76 @@
 
 ## Active Decisions
 
+### 2026-05-06T18:12:51-07:00: User Directive — Conversation Project Extraction
+
+**By:** Sytone (via Copilot)  
+**What:** Conversation stores and code related to conversations should be in the gateway conversation namespace. Keep this clean and better abstracted by creating `src\gateway\BotNexus.Gateway.Conversations` and moving conversation store/object tests into `tests\BotNexus.Gateway.Conversations.Tests`.  
+**Why:** User request — captured for team memory
+
+---
+
+### Conversation Project Extraction — Architectural Design Review
+
+**Decision Date:** 2026-05-06  
+**Decided By:** Leela (Lead/Architect)  
+**Status:** Approved
+
+**Context:** User directive: conversation stores and related code currently live in `BotNexus.Gateway.Sessions` alongside session stores. They should be extracted to a dedicated `BotNexus.Gateway.Conversations` project to improve separation of concerns and make conversation lifecycle independently testable.
+
+**Decision:** Extract 3 conversation stores (InMemory, File, Sqlite) + DefaultConversationRouter from Gateway.Sessions/Gateway into new BotNexus.Gateway.Conversations. Keep contracts in Gateway.Contracts, domain models in Domain. Dependency direction preserved.
+
+**Key points:**
+- **New project:** `BotNexus.Gateway.Conversations` with namespace `BotNexus.Gateway.Conversations`
+- **What moves:** InMemoryConversationStore, FileConversationStore, SqliteConversationStore, DefaultConversationRouter
+- **What stays:** IConversationStore/IConversationRouter (in Contracts), Domain models, API layer, DI root
+- **Project references:** Gateway.Conversations → Gateway.Contracts, Domain (no circular deps with Gateway.Sessions)
+- **Tests:** 7 conversation-focused tests move from Gateway.Tests → new test project
+
+**Rationale:**
+1. Separation of concerns — conversation lifecycle independent of session stores
+2. Dependency inversion — contracts stay at abstraction layer
+3. Clear ownership — conversations project owns its stores and router
+4. Bounded risk — no architectural changes, single-file DI update
+
+**Risks (all mitigated):**
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| SQLite coupling in SqliteSessionStore | MEDIUM | Takes IConversationStore interface; DI container resolves it. No compile-time coupling. |
+| Shared SQLite database file | MEDIUM | Independent tables and schemas. Runtime config concern, no code change. |
+| DI registration uses concrete types | LOW | Composition root already references Gateway.Sessions. Normal pattern. |
+| Namespace change | LOW | All consumers reference interface via Contracts/DI. Single file update. |
+| DefaultConversationRouter depends on ISessionStore | LOW | Takes interface from Contracts. No project coupling. |
+| Test helper sharing | LOW | Check at implementation; extract or duplicate if needed. |
+
+---
+
+### Bender Decision: Conversation Project Refactor Implementation
+
+**Date:** 2026-05-06  
+**Status:** Implemented
+
+Implemented Leela's boundary decision by extracting conversation runtime code into `BotNexus.Gateway.Conversations` and moving conversation store/router tests into `BotNexus.Gateway.Conversations.Tests`.
+
+**Completed:**
+- Created `src\gateway\BotNexus.Gateway.Conversations` project
+- Created `tests\BotNexus.Gateway.Conversations.Tests` test project
+- Moved 4 runtime classes: InMemoryConversationStore, FileConversationStore, SqliteConversationStore, DefaultConversationRouter
+- Moved 7 conversation-focused test files
+- Updated all namespaces and project references
+- Updated DI wiring in GatewayServiceCollectionExtensions
+- Added shared TestOptionsMonitor to new test project via linked compile
+- Full solution build succeeded
+- BotNexus.Gateway.Conversations.Tests: 66/66 passing
+
+**Key callouts:**
+- GatewayServiceCollectionExtensions remains composition root with concrete registration
+- BotNexus.Gateway.Tests keeps integration/API/E2E-adjacent tests
+- Targeted validation passed (Leela checklist)
+
+**PR:** https://github.com/sytone/botnexus/pull/178
+
+---
+
 ### Leela Design Review: bug-blazor-autoscroll (2026-04-20)
 
 **Decision Date:** 2026-04-20  
