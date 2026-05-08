@@ -2,6 +2,76 @@
 
 ## Active Decisions
 
+### 2026-05-06T18:12:51-07:00: User Directive — Conversation Project Extraction
+
+**By:** Sytone (via Copilot)  
+**What:** Conversation stores and code related to conversations should be in the gateway conversation namespace. Keep this clean and better abstracted by creating `src\gateway\BotNexus.Gateway.Conversations` and moving conversation store/object tests into `tests\BotNexus.Gateway.Conversations.Tests`.  
+**Why:** User request — captured for team memory
+
+---
+
+### Conversation Project Extraction — Architectural Design Review
+
+**Decision Date:** 2026-05-06  
+**Decided By:** Leela (Lead/Architect)  
+**Status:** Approved
+
+**Context:** User directive: conversation stores and related code currently live in `BotNexus.Gateway.Sessions` alongside session stores. They should be extracted to a dedicated `BotNexus.Gateway.Conversations` project to improve separation of concerns and make conversation lifecycle independently testable.
+
+**Decision:** Extract 3 conversation stores (InMemory, File, Sqlite) + DefaultConversationRouter from Gateway.Sessions/Gateway into new BotNexus.Gateway.Conversations. Keep contracts in Gateway.Contracts, domain models in Domain. Dependency direction preserved.
+
+**Key points:**
+- **New project:** `BotNexus.Gateway.Conversations` with namespace `BotNexus.Gateway.Conversations`
+- **What moves:** InMemoryConversationStore, FileConversationStore, SqliteConversationStore, DefaultConversationRouter
+- **What stays:** IConversationStore/IConversationRouter (in Contracts), Domain models, API layer, DI root
+- **Project references:** Gateway.Conversations → Gateway.Contracts, Domain (no circular deps with Gateway.Sessions)
+- **Tests:** 7 conversation-focused tests move from Gateway.Tests → new test project
+
+**Rationale:**
+1. Separation of concerns — conversation lifecycle independent of session stores
+2. Dependency inversion — contracts stay at abstraction layer
+3. Clear ownership — conversations project owns its stores and router
+4. Bounded risk — no architectural changes, single-file DI update
+
+**Risks (all mitigated):**
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| SQLite coupling in SqliteSessionStore | MEDIUM | Takes IConversationStore interface; DI container resolves it. No compile-time coupling. |
+| Shared SQLite database file | MEDIUM | Independent tables and schemas. Runtime config concern, no code change. |
+| DI registration uses concrete types | LOW | Composition root already references Gateway.Sessions. Normal pattern. |
+| Namespace change | LOW | All consumers reference interface via Contracts/DI. Single file update. |
+| DefaultConversationRouter depends on ISessionStore | LOW | Takes interface from Contracts. No project coupling. |
+| Test helper sharing | LOW | Check at implementation; extract or duplicate if needed. |
+
+---
+
+### Bender Decision: Conversation Project Refactor Implementation
+
+**Date:** 2026-05-06  
+**Status:** Implemented
+
+Implemented Leela's boundary decision by extracting conversation runtime code into `BotNexus.Gateway.Conversations` and moving conversation store/router tests into `BotNexus.Gateway.Conversations.Tests`.
+
+**Completed:**
+- Created `src\gateway\BotNexus.Gateway.Conversations` project
+- Created `tests\BotNexus.Gateway.Conversations.Tests` test project
+- Moved 4 runtime classes: InMemoryConversationStore, FileConversationStore, SqliteConversationStore, DefaultConversationRouter
+- Moved 7 conversation-focused test files
+- Updated all namespaces and project references
+- Updated DI wiring in GatewayServiceCollectionExtensions
+- Added shared TestOptionsMonitor to new test project via linked compile
+- Full solution build succeeded
+- BotNexus.Gateway.Conversations.Tests: 66/66 passing
+
+**Key callouts:**
+- GatewayServiceCollectionExtensions remains composition root with concrete registration
+- BotNexus.Gateway.Tests keeps integration/API/E2E-adjacent tests
+- Targeted validation passed (Leela checklist)
+
+**PR:** https://github.com/sytone/botnexus/pull/178
+
+---
+
 ### Leela Design Review: bug-blazor-autoscroll (2026-04-20)
 
 **Decision Date:** 2026-04-20  
@@ -9710,627 +9780,6 @@ No new external dependencies beyond `Cronos`. `Microsoft.Data.Sqlite` is already
 
 # MCP Extension Design for BotNexus
 
-**Decision Date:** 2026-04-07  
-**Decided By:** Leela (Lead/Architect)  
-**Status:** Proposed
-
-## 1. Architecture Overview
-
-### What is MCP?
-
-Model Context Protocol (MCP) is an open standard that enables AI applications to connect to external tool servers. MCP servers expose:
-- **Tools**: Executable functions (e.g., database queries, API calls)
-- **Resources**: Data sources (e.g., file contents, API responses)
-- **Prompts**: Reusable templates for LLM interactions
-
-### How MCP Fits Into BotNexus
-
-BotNexus uses an extension model where extensions are discovered via `botnexus-extension.json` manifests and loaded into isolated `AssemblyLoadContext` instances. The MCP extension follows this pattern:
-
-```
-extensions/
-└── mcp/
-    └── BotNexus.Extensions.Mcp/
-        ├── botnexus-extension.json
-        ├── BotNexus.Extensions.Mcp.dll
-        └── (dependencies)
-```
-
-**Key integration point:** The MCP extension creates `IAgentTool` implementations dynamically at agent session start, wrapping MCP server tools so they appear as native BotNexus tools.
-
-### High-Level Data Flow
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         BotNexus Agent Session                       │
-├─────────────────────────────────────────────────────────────────────┤
-│  Agent calls tool "github_search_repositories"                      │
-│       ↓                                                             │
-│  ToolRegistry resolves to McpBridgedTool                           │
-│       ↓                                                             │
-│  McpBridgedTool.ExecuteAsync(...)                                  │
-│       ↓                                                             │
-│  McpClient.CallToolAsync("search_repositories", args)              │
-│       ↓                                                             │
-│  JSON-RPC over stdio or HTTP                                       │
-│       ↓                                                             │
-│  MCP Server (e.g., @modelcontextprotocol/server-github)            │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-## 2. Component Breakdown
-
-### Core Interfaces
-
-```csharp
-/// <summary>
-/// Factory for creating MCP clients from configuration.
-/// </summary>
-public interface IMcpClientFactory
-{
-    Task<IMcpClient> CreateAsync(McpServerConfig config, CancellationToken ct);
-}
-
-/// <summary>
-/// Represents a connection to an MCP server.
-/// </summary>
-public interface IMcpClient : IAsyncDisposable
-{
-    string ServerId { get; }
-    McpServerCapabilities Capabilities { get; }
-    
-    Task InitializeAsync(CancellationToken ct);
-    Task<IReadOnlyList<McpToolDefinition>> ListToolsAsync(CancellationToken ct);
-    Task<IReadOnlyList<McpResource>> ListResourcesAsync(CancellationToken ct);
-    Task<McpToolResult> CallToolAsync(string name, JsonElement args, CancellationToken ct);
-    Task<McpResourceContent> ReadResourceAsync(string uri, CancellationToken ct);
-}
-
-/// <summary>
-/// Manages MCP server connections for an agent session.
-/// </summary>
-public interface IMcpSessionManager : IAsyncDisposable
-{
-    Task<IReadOnlyList<IAgentTool>> InitializeServersAsync(
-        McpExtensionConfig config, 
-        CancellationToken ct);
-    Task ShutdownAsync(CancellationToken ct);
-}
-```
-
-### Extension Entry Point
-
-```csharp
-/// <summary>
-/// Hook handler that initializes MCP servers when an agent session starts.
-/// </summary>
-public sealed class McpSessionInitHookHandler 
-    : IHookHandler<BeforePromptBuildEvent, BeforePromptBuildResult>
-{
-    // On first prompt build, initialize MCP servers from agent's ExtensionConfig
-}
-```
-
-### Component Layout
-
-```
-BotNexus.Extensions.Mcp/
-├── McpExtensionConfig.cs        # Configuration model
-├── Transport/
-│   ├── IMcpTransport.cs         # Transport abstraction
-│   ├── StdioMcpTransport.cs     # stdio subprocess transport
-│   └── HttpSseMcpTransport.cs   # HTTP/SSE transport
-├── Client/
-│   ├── McpClient.cs             # JSON-RPC client implementation
-│   ├── McpClientFactory.cs      # Creates clients from config
-│   └── McpProtocol.cs           # JSON-RPC message types
-├── Tools/
-│   ├── McpBridgedTool.cs        # IAgentTool wrapper for MCP tools
-│   └── McpToolFactory.cs        # Creates bridged tools
-├── Session/
-│   ├── McpSessionManager.cs     # Per-session server lifecycle
-│   └── McpSessionInitHookHandler.cs # Hook integration
-└── botnexus-extension.json
-```
-
-## 3. Transport Layer
-
-MCP defines two transport mechanisms. We implement both.
-
-### stdio Transport
-
-The client spawns the MCP server as a subprocess and communicates via stdin/stdout.
-
-```csharp
-public sealed class StdioMcpTransport : IMcpTransport
-{
-    private readonly Process _process;
-    private readonly StreamWriter _writer;
-    private readonly StreamReader _reader;
-    
-    public async Task SendAsync(JsonRpcMessage message, CancellationToken ct)
-    {
-        var json = JsonSerializer.Serialize(message);
-        await _writer.WriteLineAsync(json);
-        await _writer.FlushAsync();
-    }
-    
-    public async Task<JsonRpcMessage> ReceiveAsync(CancellationToken ct)
-    {
-        var line = await _reader.ReadLineAsync(ct);
-        return JsonSerializer.Deserialize<JsonRpcMessage>(line);
-    }
-}
-```
-
-**Process Management:**
-- Use `ProcessStartInfo` with `RedirectStandardInput/Output/Error`
-- Inherit environment variables, merge with config-specified `env`
-- Set working directory if specified
-- Kill process tree on dispose
-
-### HTTP/SSE Transport (Streamable HTTP)
-
-For remote MCP servers that use HTTP endpoints.
-
-```csharp
-public sealed class HttpSseMcpTransport : IMcpTransport
-{
-    private readonly HttpClient _httpClient;
-    private readonly string _endpoint;
-    private string? _sessionId;
-    
-    public async Task SendAsync(JsonRpcMessage message, CancellationToken ct)
-    {
-        var request = new HttpRequestMessage(HttpMethod.Post, _endpoint)
-        {
-            Content = JsonContent.Create(message),
-            Headers = {
-                { "Accept", "application/json, text/event-stream" }
-            }
-        };
-        
-        if (_sessionId is not null)
-            request.Headers.Add("Mcp-Session-Id", _sessionId);
-            
-        var response = await _httpClient.SendAsync(request, ct);
-        // Handle SSE or JSON response
-    }
-}
-```
-
-**Session Management:**
-- Store `Mcp-Session-Id` from `InitializeResult` response
-- Include in all subsequent requests
-- Handle 404 by re-initializing
-
-## 4. Tool Bridging
-
-MCP tools become `IAgentTool` instances that agents can call natively.
-
-### McpBridgedTool
-
-```csharp
-public sealed class McpBridgedTool : IAgentTool
-{
-    private readonly IMcpClient _client;
-    private readonly McpToolDefinition _definition;
-    
-    // Prefix tool names to avoid collisions: "github_search_repositories"
-    public string Name => $"{_client.ServerId}_{_definition.Name}";
-    
-    public string Label => _definition.Name;
-    
-    public Tool Definition => new(
-        Name,
-        _definition.Description ?? "",
-        _definition.InputSchema);
-    
-    public async Task<AgentToolResult> ExecuteAsync(
-        string toolCallId,
-        IReadOnlyDictionary<string, object?> arguments,
-        CancellationToken ct,
-        AgentToolUpdateCallback? onUpdate = null)
-    {
-        var result = await _client.CallToolAsync(
-            _definition.Name, 
-            JsonSerializer.SerializeToElement(arguments), 
-            ct);
-        
-        return ConvertToAgentToolResult(result);
-    }
-}
-```
-
-### Tool Name Prefixing
-
-MCP servers may expose tools with common names like `search` or `read`. To prevent collisions:
-- Prefix all MCP tool names with their server ID: `github_search_repositories`
-- The original tool name is preserved in the `Label` property
-- Agents reference tools by the prefixed name
-
-### Schema Translation
-
-MCP uses JSON Schema for tool parameters. BotNexus `Tool.Parameters` is a `JsonElement`, so we can pass through directly without translation.
-
-## 5. Resource Bridging
-
-MCP resources are data sources that provide context. Options:
-
-**Option A: Resource Tool**
-Expose a `{serverId}_read_resource` tool that agents can call to read MCP resources.
-
-**Option B: Context Injection (via Hook)**
-During prompt build, inject relevant resource contents into the system prompt.
-
-**Recommendation:** Start with Option A (Resource Tool) — it's simpler and gives agents explicit control. Option B can be added later as an optimization.
-
-```csharp
-public sealed class McpResourceTool : IAgentTool
-{
-    public string Name => $"{_serverId}_read_resource";
-    
-    public Tool Definition => new(Name, "Read a resource from the MCP server", ...);
-    
-    public async Task<AgentToolResult> ExecuteAsync(...)
-    {
-        var uri = arguments["uri"]?.ToString();
-        var content = await _client.ReadResourceAsync(uri, ct);
-        return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, content.Text)]);
-    }
-}
-```
-
-## 6. Configuration Model
-
-### Per-Agent Extension Config
-
-Agents configure MCP servers in their `extensions` block:
-
-```json
-{
-  "agentId": "my-agent",
-  "extensions": {
-    "botnexus-mcp": {
-      "servers": {
-        "github": {
-          "command": "npx",
-          "args": ["-y", "@modelcontextprotocol/server-github"],
-          "env": {
-            "GITHUB_TOKEN": "${env:GITHUB_TOKEN}"
-          }
-        },
-        "filesystem": {
-          "url": "http://localhost:3000/mcp"
-        }
-      },
-      "toolPrefix": true,
-      "resourceTools": true
-    }
-  }
-}
-```
-
-### Config Classes
-
-```csharp
-public sealed class McpExtensionConfig
-{
-    /// <summary>MCP servers to connect to, keyed by server ID.</summary>
-    public Dictionary<string, McpServerConfig> Servers { get; set; } = new();
-    
-    /// <summary>Whether to prefix tool names with server ID. Default: true.</summary>
-    public bool ToolPrefix { get; set; } = true;
-    
-    /// <summary>Whether to expose resource read tools. Default: true.</summary>
-    public bool ResourceTools { get; set; } = true;
-}
-
-public sealed class McpServerConfig
-{
-    // stdio transport
-    public string? Command { get; set; }
-    public List<string>? Args { get; set; }
-    public Dictionary<string, string>? Env { get; set; }
-    public string? WorkingDirectory { get; set; }
-    
-    // HTTP transport
-    public string? Url { get; set; }
-    public Dictionary<string, string>? Headers { get; set; }
-    
-    /// <summary>Timeout for initialization in milliseconds. Default: 30000.</summary>
-    public int InitTimeoutMs { get; set; } = 30_000;
-    
-    /// <summary>Timeout for tool calls in milliseconds. Default: 60000.</summary>
-    public int CallTimeoutMs { get; set; } = 60_000;
-}
-```
-
-### Environment Variable Substitution
-
-Support `${env:VAR_NAME}` syntax for secrets:
-- Resolved at server start time
-- Prevents secrets from being stored in config files
-- Pattern: `${env:NAME}` or `${env:NAME:-default}`
-
-## 7. Lifecycle Management
-
-### Server Start
-
-MCP servers start when an agent session begins:
-
-1. `InProcessIsolationStrategy.CreateAsync` is called
-2. Hook handler reads `ExtensionConfig["botnexus-mcp"]`
-3. `McpSessionManager.InitializeServersAsync` spawns/connects to servers
-4. Each server goes through MCP initialization handshake
-5. Tools are listed and wrapped as `McpBridgedTool` instances
-6. Bridged tools are returned and added to the agent's tool list
-
-### Server Stop
-
-MCP servers stop when the agent session ends:
-
-1. `IAgentHandle.DisposeAsync` is called
-2. `McpSessionManager.ShutdownAsync` is invoked
-3. For stdio: Send graceful shutdown, wait briefly, then kill process tree
-4. For HTTP: Send `DELETE` to endpoint with session ID (optional)
-5. Dispose all transports and clients
-
-### Restart/Reconnect
-
-For resilience:
-- **stdio:** If process exits unexpectedly, optionally restart on next tool call
-- **HTTP:** If connection fails, retry with exponential backoff
-- Configure via `maxRetries` and `retryDelayMs` in server config
-
-## 8. Error Handling
-
-### Transport Errors
-
-```csharp
-public abstract class McpTransportException : Exception
-{
-    public string ServerId { get; }
-}
-
-public class McpConnectionFailedException : McpTransportException { }
-public class McpTimeoutException : McpTransportException { }
-public class McpProcessExitedException : McpTransportException 
-{
-    public int ExitCode { get; }
-}
-```
-
-### Tool Call Errors
-
-MCP tool calls can fail in several ways:
-
-1. **Transport failure:** Connection lost, process died
-   - Return error tool result with connection error message
-   - Optionally trigger reconnect
-
-2. **JSON-RPC error:** Server returns error response
-   - Return error tool result with MCP error message and code
-
-3. **Timeout:** Server doesn't respond in time
-   - Return error tool result indicating timeout
-   - Don't kill the server (it may be doing valid work)
-
-4. **Invalid response:** Server returns malformed data
-   - Return error tool result with parse error
-
-### Error Result Format
-
-```csharp
-var errorResult = new AgentToolResult(
-    [new AgentToolContent(AgentToolContentType.Text, $"MCP error: {message}")],
-    details: new McpToolCallDetails(
-        ServerId: serverId,
-        ToolName: toolName,
-        Error: errorCode,
-        ErrorMessage: message
-    ));
-```
-
-## 9. Security
-
-### Tool Policy Integration
-
-MCP tools must respect the existing tool policy system:
-
-```csharp
-public sealed class McpToolPolicyHookHandler 
-    : IHookHandler<BeforeToolCallEvent, BeforeToolCallResult>
-{
-    private readonly IToolPolicyProvider _policyProvider;
-    
-    public async ValueTask<BeforeToolCallResult?> HandleAsync(
-        BeforeToolCallEvent @event, 
-        CancellationToken ct)
-    {
-        // Check if this is an MCP tool (has server prefix)
-        if (!IsMcpTool(@event.ToolName))
-            return null;
-            
-        var riskLevel = _policyProvider.GetRiskLevel(@event.ToolName);
-        if (riskLevel == ToolRiskLevel.Dangerous)
-        {
-            // Delegate to approval system
-        }
-        
-        return null;
-    }
-}
-```
-
-### Default Policy for MCP Tools
-
-| Tool Pattern | Risk Level | Requires Approval |
-|--------------|------------|-------------------|
-| `*_read_*`, `*_list_*`, `*_search_*` | Safe | No |
-| `*_write_*`, `*_create_*`, `*_update_*`, `*_delete_*` | Moderate | No |
-| `*_exec*`, `*_run*`, `*_shell*` | Dangerous | Yes |
-
-### Server Sandboxing
-
-For stdio servers:
-- **Do not** run as elevated user
-- Consider process isolation (future: container support)
-- Limit environment variables passed through
-
-For HTTP servers:
-- Validate TLS certificates (unless localhost)
-- Respect authentication requirements
-- Don't store secrets in config files
-
-## 10. Testing Strategy
-
-### Unit Tests
-
-| Component | Test Focus |
-|-----------|------------|
-| `McpProtocol` | JSON-RPC serialization/deserialization |
-| `StdioMcpTransport` | Message framing, newline handling |
-| `HttpSseMcpTransport` | Request formatting, session headers |
-| `McpClient` | Initialization handshake, tool listing |
-| `McpBridgedTool` | Argument translation, result mapping |
-| `McpExtensionConfig` | Config parsing, env var substitution |
-
-### Integration Tests
-
-| Scenario | Approach |
-|----------|----------|
-| stdio server lifecycle | Spawn real `echo` or test server, verify tool calls |
-| HTTP server lifecycle | Use in-memory test server with SSE support |
-| Tool policy enforcement | Configure dangerous tool, verify approval flow |
-| Error handling | Kill server mid-call, verify graceful degradation |
-
-### Test Fixtures
-
-Create a minimal test MCP server in C#:
-
-```csharp
-public sealed class TestMcpServer
-{
-    public static async Task Main()
-    {
-        // Read JSON-RPC from stdin, write to stdout
-        // Support: initialize, tools/list, tools/call
-    }
-}
-```
-
-## 11. Implementation Plan
-
-### Phase 1: Core Infrastructure (Farnsworth)
-
-**Dependencies:** None  
-**Estimated effort:** 3-5 days
-
-1. Create extension project structure
-2. Implement `McpExtensionConfig` and parsing
-3. Implement `McpProtocol` (JSON-RPC types)
-4. Implement `StdioMcpTransport`
-5. Implement `McpClient` with initialization and `tools/list`
-6. Unit tests for all components
-
-**Deliverable:** Extension that can connect to stdio MCP servers and list tools.
-
-### Phase 2: Tool Bridging (Farnsworth)
-
-**Dependencies:** Phase 1  
-**Estimated effort:** 2-3 days
-
-1. Implement `McpBridgedTool`
-2. Implement `McpToolFactory`
-3. Implement `tools/call` in `McpClient`
-4. Integration with `InProcessIsolationStrategy`
-5. End-to-end test with real MCP server (e.g., filesystem)
-
-**Deliverable:** Agents can call MCP tools.
-
-### Phase 3: HTTP Transport (Fry)
-
-**Dependencies:** Phase 1  
-**Estimated effort:** 2-3 days
-
-1. Implement `HttpSseMcpTransport`
-2. SSE response parsing
-3. Session management (`Mcp-Session-Id`)
-4. Tests with mock HTTP server
-
-**Deliverable:** Extension supports remote MCP servers.
-
-### Phase 4: Lifecycle & Error Handling (Farnsworth)
-
-**Dependencies:** Phase 2, Phase 3  
-**Estimated effort:** 2-3 days
-
-1. Implement `McpSessionManager`
-2. Server start/stop/restart logic
-3. Error handling and timeout management
-4. Implement `McpSessionInitHookHandler`
-5. Integration tests for lifecycle scenarios
-
-**Deliverable:** Robust server lifecycle management.
-
-### Phase 5: Security Integration (Bender)
-
-**Dependencies:** Phase 4  
-**Estimated effort:** 1-2 days
-
-1. Implement `McpToolPolicyHookHandler`
-2. Default policy configuration
-3. Environment variable substitution
-4. Security documentation
-
-**Deliverable:** MCP tools respect tool policies.
-
-### Phase 6: Resources (Optional, Fry)
-
-**Dependencies:** Phase 2  
-**Estimated effort:** 1-2 days
-
-1. Implement `resources/list` in `McpClient`
-2. Implement `resources/read` in `McpClient`
-3. Implement `McpResourceTool`
-4. Tests
-
-**Deliverable:** Agents can read MCP resources.
-
-## 12. Team Assignment
-
-| Phase | Owner | Reviewer |
-|-------|-------|----------|
-| Phase 1: Core Infrastructure | Farnsworth | Leela |
-| Phase 2: Tool Bridging | Farnsworth | Leela |
-| Phase 3: HTTP Transport | Fry | Farnsworth |
-| Phase 4: Lifecycle | Farnsworth | Leela |
-| Phase 5: Security | Bender | Leela |
-| Phase 6: Resources | Fry | Farnsworth |
-| Documentation | Amy | Leela |
-| Test coverage review | Hermes | Leela |
-
-## Open Questions
-
-1. **Prompt injection via MCP tools?** — Should we sanitize tool results from MCP servers? Current approach: treat MCP servers as trusted (they're explicitly configured by the admin).
-
-2. **Dynamic tool discovery?** — MCP supports `notifications/tools/list_changed`. Should we re-list tools when this fires? Defer to future enhancement.
-
-3. **MCP Prompts primitive?** — MCP servers can expose prompt templates. Should we bridge these? Defer — prompts are less common than tools.
-
-4. **Sampling support?** — MCP servers can request LLM completions via `sampling/create`. This inverts the client-server relationship. Defer to future phase.
-
-## References
-
-- [MCP Specification](https://modelcontextprotocol.io/specification/latest)
-- [MCP Architecture Concepts](https://modelcontextprotocol.io/docs/concepts/architecture)
-- [BotNexus Extension Loader](src/gateway/BotNexus.Gateway/Extensions/AssemblyLoadContextExtensionLoader.cs)
-- [IAgentTool Interface](src/agent/BotNexus.Agent.Core/Tools/IAgentTool.cs)
-- [OpenClaw MCP Implementation](reference — TypeScript implementation for patterns)
-
-# Memory System Feature Spec — Architectural Review & Implementation Plan
-
 **Decision Date:** 2026-04-09  
 **Author:** Leela (Lead/Architect)  
 **Requested by:** Jon Bullen  
@@ -11964,46 +11413,6 @@ Spec assessment: APPROVED with modifications. The 4-wave phased approach is corr
 ---
 
 ## Hermes Flaky Test Fixes (2026-04-02)
-
-**Decision Date:** 2026-04-02  
-**Decided By:** Hermes (Tester)  
-**Status:** Implemented  
-
-### Context
-
-Four critical flaky test areas intermittently failing due to tight timing assumptions, race-prone cancellation timing, fixed sleeps around async process lifecycle.
-
-### Decision
-
-- Replace fixed Task.Delay(...) with polling-based waits (up to 5 seconds, short intervals) for process status/output/termination assertions
-- Use CI-safe timing thresholds (< 1500ms for parallel tool execution tests)
-- Make cancellation sequencing explicit for "completed before cancellation" tests
-- Make process-spawning helpers cross-platform: cmd.exe /c on Windows, /bin/bash -lc on non-Windows
-- Relax tail-output line count checks to behavioral assertions (preserve intent, reduce brittleness)
-
-### Impact
-
-Behavioral test intent preserved while removing brittle timing assumptions. Removes intermittent failures under load or on slower CI hosts.
-
----
-
-## Hermes Reliability Fixes — Phase 2 (2026-04-02)
-
-**Decision Date:** 2026-04-02  
-**Decided By:** Hermes (Tester)  
-**Status:** Implemented  
-
-### Changes
-
-- Standardized flaky test waits in AgentTests to 10 seconds for CI tolerance
-- Standardized temp-directory cleanup across Gateway/Skills tests with retry on transient IOException locks
-- Aligned Gateway integration test classes to [Collection("IntegrationTests")] to prevent parallel resource conflicts
-- Introduced [Collection("EnvironmentTests")] in StdioTransportTests to serialize environment-variable mutation tests
-- Added SqliteConnection.ClearAllPools() consistency in MemoryStoreTests cleanup path
-
----
-
-## Web Search Copilot Integration Uses MCP (2026-04-09)
 
 **Decision Date:** 2026-04-09  
 **Decided By:** Farnsworth (Platform Dev)  
@@ -14494,6 +13903,518 @@ The runtime timeout behavior is partially implemented in AgentCore, but gateway 
 
 
 ---
+
+### Conversation Project Extraction — Architectural Design Review
+
+**Decision Date:** 2026-05-06  
+**Decided By:** Leela (Lead/Architect)  
+**Status:** Approved — ready for implementation  
+
+---
+
+## Context
+
+User directive: conversation stores and related code currently live in `BotNexus.Gateway.Sessions` alongside session stores. They should be extracted to a dedicated `BotNexus.Gateway.Conversations` project to improve separation of concerns and make conversation lifecycle independently testable.
+
+## Current Layout
+
+| Layer | Where conversations live today | Namespace |
+|-------|-------------------------------|-----------|
+| **Domain model** | `src/domain/BotNexus.Domain/Gateway/Models/Conversation.cs`, `ConversationEnums.cs`, `ConversationId.cs` | `BotNexus.Domain.Primitives`, `BotNexus.Gateway.Abstractions.Models` |
+| **Contracts** | `src/gateway/BotNexus.Gateway.Contracts/Conversations/` — `IConversationStore`, `IConversationRouter`, `ConversationSummary` | `BotNexus.Gateway.Abstractions.Conversations` |
+| **Store implementations** | `src/gateway/BotNexus.Gateway.Sessions/` — `InMemoryConversationStore`, `FileConversationStore`, `SqliteConversationStore` | `BotNexus.Gateway.Sessions` |
+| **Router** | `src/gateway/BotNexus.Gateway/Conversations/DefaultConversationRouter.cs` | `BotNexus.Gateway.Conversations` |
+| **API** | `src/gateway/BotNexus.Gateway.Api/Controllers/ConversationsController.cs`, `ConversationDtos.cs` | `BotNexus.Gateway.Api.Controllers` |
+| **DI wiring** | `src/gateway/BotNexus.Gateway/Extensions/GatewayServiceCollectionExtensions.cs` — `ConfigureConversationStore()` + default registrations | `BotNexus.Gateway.Extensions` |
+
+**Tests:**
+- `tests/BotNexus.Gateway.Tests/InMemoryConversationStoreTests.cs`
+- `tests/BotNexus.Gateway.Tests/SqliteConversationStoreTests.cs`
+- `tests/BotNexus.Gateway.Tests/Conversations/` — 5 routing/binding test files
+- `tests/BotNexus.Gateway.ConversationTests/` — 1 routing scenario file (references Gateway + Sessions)
+- `tests/BotNexus.ConversationTests/` — Integration/E2E tests (REST + SignalR, live gateway fixture)
+
+---
+
+## Decision: Target Project Structure
+
+### 1. What moves to `src/gateway/BotNexus.Gateway.Conversations`
+
+| File | Current location | Notes |
+|------|-----------------|-------|
+| `InMemoryConversationStore.cs` | Gateway.Sessions | Pure conversation logic, no session coupling |
+| `FileConversationStore.cs` | Gateway.Sessions | Pure conversation logic, uses IFileSystem |
+| `SqliteConversationStore.cs` | Gateway.Sessions | Pure conversation logic, own SQLite schema |
+| `DefaultConversationRouter.cs` | Gateway/Conversations/ | Already in `BotNexus.Gateway.Conversations` namespace |
+
+**New project namespace:** `BotNexus.Gateway.Conversations`
+
+**New project references:**
+```
+BotNexus.Gateway.Conversations → BotNexus.Gateway.Contracts  (for IConversationStore, IConversationRouter, ISessionStore)
+BotNexus.Gateway.Conversations → BotNexus.Domain             (for primitives)
+```
+
+**Package references (moved from Gateway.Sessions):**
+- `Microsoft.Data.Sqlite` — needed by SqliteConversationStore
+- `Microsoft.Extensions.Logging.Abstractions` — needed by all stores
+- `TestableIO.System.IO.Abstractions.Wrappers` — needed by FileConversationStore
+
+### 2. What stays where it is
+
+| Item | Location | Reason |
+|------|----------|--------|
+| `IConversationStore`, `IConversationRouter`, `ConversationSummary` | **Gateway.Contracts** | Contracts live at the abstraction layer — correct placement. Moving them down into the implementation project would invert the dependency. |
+| `Conversation`, `ConversationStatus`, `BindingMode`, `ThreadingMode`, `ChannelBinding` | **Domain** | Domain models belong in Domain. Not conversation-store concerns. |
+| `ConversationId` | **Domain.Primitives** | Value-type primitive, shared across the stack. |
+| `ConversationsController`, `ConversationDtos` | **Gateway.Api** | API surface stays in the API project. References `IConversationStore` via Contracts. No change needed. |
+| `ConfigureConversationStore()` in `GatewayServiceCollectionExtensions` | **Gateway** | DI composition root stays in the Gateway host. It will need a new `using` for the new namespace + a new `<ProjectReference>` to `BotNexus.Gateway.Conversations`. |
+| `SessionStoreBase`, `InMemorySessionStore`, `FileSessionStore`, `SqliteSessionStore`, `SessionCompaction`, etc. | **Gateway.Sessions** | Pure session concerns, remain as-is. |
+
+### 3. What moves to `tests/BotNexus.Gateway.Conversations.Tests`
+
+| Test file | Current location | Reason to move |
+|-----------|-----------------|----------------|
+| `InMemoryConversationStoreTests.cs` | Gateway.Tests | Unit tests for moved class |
+| `SqliteConversationStoreTests.cs` | Gateway.Tests | Unit tests for moved class |
+| `Conversations/DefaultConversationRouterTests.cs` | Gateway.Tests | Unit tests for moved class |
+| `Conversations/FanOutBindingAwareTests.cs` | Gateway.Tests | Tests conversation binding fan-out |
+| `Conversations/MultiChannelFanOutTests.cs` | Gateway.Tests | Tests conversation multi-channel |
+| `Conversations/ThreadIdRoutingTests.cs` | Gateway.Tests | Tests conversation thread routing |
+| `Conversations/GatewayHostBindingRoutingTests.cs` | Gateway.Tests | Tests conversation routing through host — **review at implementation time** whether this is integration-level or can move |
+
+**Tests that stay:**
+| Test location | Reason |
+|---------------|--------|
+| `BotNexus.Gateway.ConversationTests/` | Already a separate project; tests conversation routing scenarios using the full Gateway. Keep separate as integration tests. |
+| `BotNexus.ConversationTests/` | E2E tests with live gateway fixture (REST + SignalR). Not unit tests. |
+| `BotNexus.Gateway.Tests/FanOutStaleBindingTests.cs` | Tests GatewayHost stale-binding recovery, not conversation store logic. |
+| `BotNexus.Gateway.Tests/GatewayHostTests.cs` | Tests the host, references conversations peripherally. |
+
+### 4. Project Reference Changes
+
+**Gateway.Sessions (loses conversation code, gets simpler):**
+- Remove: `Microsoft.Data.Sqlite` stays only if `SqliteSessionStore` needs it (it does — keep it)
+- No new references needed
+
+**BotNexus.Gateway (composition root):**
+- Add: `<ProjectReference>` to `BotNexus.Gateway.Conversations`
+- Add `using BotNexus.Gateway.Conversations;` in `GatewayServiceCollectionExtensions.cs`
+- Remove: `using BotNexus.Gateway.Sessions;` for conversation store types
+
+**BotNexus.Gateway.Conversations.Tests:**
+- References: `BotNexus.Gateway.Conversations`, `BotNexus.Gateway.Contracts`, `BotNexus.Domain`
+- Test-infra: `xunit`, `Shouldly`, `Moq`, `Microsoft.NET.Test.Sdk`, `Microsoft.Data.Sqlite` (for SQLite store tests), `TestableIO.System.IO.Abstractions.TestingHelpers`
+
+**Dependency graph after refactor:**
+```
+Domain ← Contracts ← Gateway.Conversations ← Gateway (host)
+                    ↖ Gateway.Sessions       ↗
+                    ↖ Gateway.Api            ↗
+```
+
+No circular dependencies. `Gateway.Conversations` and `Gateway.Sessions` are siblings — neither references the other.
+
+### 5. Risks and Mitigations
+
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| **SQLite coupling: `SqliteSessionStore` takes `IConversationStore?`** for orphan migration | MEDIUM | The constructor takes the interface, not the concrete class. The DI container resolves it. No compile-time coupling to the conversations project. **Safe.** |
+| **Shared SQLite database file (`sessions.sqlite`)** for both session and conversation stores | MEDIUM | `SqliteConversationStore` and `SqliteSessionStore` share the same connection string but have independent tables. Each manages its own schema. This is a runtime config concern, not a project-structure concern. No code change needed. |
+| **DI registration in `GatewayServiceCollectionExtensions.cs` uses concrete types** (`InMemoryConversationStore`, `FileConversationStore`, `SqliteConversationStore`) | LOW | The composition root (Gateway project) already references Gateway.Sessions for session stores. It will now also reference Gateway.Conversations for conversation stores. This is normal — DI registration is a composition concern. |
+| **Namespace break: store classes move from `BotNexus.Gateway.Sessions` to `BotNexus.Gateway.Conversations`** | LOW | All consumers reference `IConversationStore` (in Contracts namespace) via DI. Only `GatewayServiceCollectionExtensions.cs` references concrete types — single file to update. |
+| **`DefaultConversationRouter` depends on `ISessionStore`** | LOW | It takes the interface from Contracts. The new project references Contracts, which defines `ISessionStore`. No coupling to Gateway.Sessions project. |
+| **Test helper/fixture sharing** | LOW | If `SqliteConversationStoreTests` has test helpers shared with session store tests, extract to a shared test-infra project or duplicate. Check at implementation time. |
+
+### 6. Recommended Commit Staging
+
+| Commit | Scope | Description |
+|--------|-------|-------------|
+| 1 | `chore(conversations)` | Create `BotNexus.Gateway.Conversations` project with csproj, add to solution |
+| 2 | `refactor(conversations)` | Move `InMemoryConversationStore`, `FileConversationStore`, `SqliteConversationStore` from Gateway.Sessions → Gateway.Conversations. Update namespaces. |
+| 3 | `refactor(conversations)` | Move `DefaultConversationRouter` from Gateway → Gateway.Conversations (namespace already matches). Update Gateway csproj references. |
+| 4 | `refactor(gateway)` | Update `GatewayServiceCollectionExtensions.cs` usings and Gateway.csproj to reference the new project. Remove Gateway.Sessions reference from Gateway.csproj if no longer needed (unlikely — session stores still there). |
+| 5 | `test(conversations)` | Create `BotNexus.Gateway.Conversations.Tests` project. Move conversation store + router tests. |
+| 6 | `test(conversations)` | Verify full test suite passes. No test deletions — all tests migrate. |
+
+**Each commit must build green and pass all tests.** Commits 2 and 3 can potentially be combined if the changeset is small enough to review atomically.
+
+---
+
+## Verification Checklist (for implementing agent)
+
+- [ ] `dotnet build BotNexus.slnx --nologo --tl:off` — zero errors
+- [ ] `dotnet test BotNexus.slnx --nologo --tl:off` — zero failures, same test count
+- [ ] No `using BotNexus.Gateway.Sessions;` in any file that only needs conversation types
+- [ ] `IConversationStore` / `IConversationRouter` remain in `BotNexus.Gateway.Contracts` (not moved)
+- [ ] `Conversation` model remains in `BotNexus.Domain` (not moved)
+- [ ] No circular project references
+- [ ] Gateway.Conversations does not reference Gateway.Sessions
+- [ ] Gateway.Sessions does not reference Gateway.Conversations
+
+
+---
+
+## 2026-05-07: OpenClaw Memory Model Research & Architecture Assessment
+
+### 2026-05-07T08:10:59-07:00: User Directive
+**By:** Sytone (via Copilot)  
+**What:** BotNexus memory should follow a path similar to OpenClaw to simplify migration: agents store daily information in `memory/YYYY-MM-DD.md`, durable memories go in `MEMORY.md` in the agent workspace, and searchable memory should be processed from those files into a store, likely using embeddings, instead of treating `memory_store` SQLite writes as the primary authoring path.  
+**Why:** User request — captured for team memory
+
+---
+
+### 2026-05-07T08:14:27-07:00: Kif Research Report — OpenClaw Memory Model Documentation
+
+**By:** Kif (Research Specialist)  
+**Requested by:** Sytone  
+**Status:** Research complete  
+**Deliverable:** Comprehensive OpenClaw memory model analysis
+
+#### Key Findings
+
+**1. OpenClaw's User-Facing Memory Model**
+- **MEMORY.md** — Long-term durable facts, preferences, decisions (manually edited or promoted via dreaming)
+- **memory/YYYY-MM-DD.md** — Daily running context, observations, specific conversations (auto-created per day; today + yesterday auto-loaded)
+- **DREAMS.md** — Dream Diary + grounded historical backfill for human review (written by dreaming subsystem)
+- **memory/.dreams/** — Machine state (recall store, phase signals, checkpoints); not user-edited
+
+**Key insight:** Users see only Markdown files. No database, no hidden state visible to the agent.
+
+**2. Memory Tools (OpenClaw)**
+- **memory_search** — Semantic + keyword hybrid search across memory files
+- **memory_get** — Read specific memory file or line range
+- Search uses embedding-based retrieval (OpenAI, Anthropic, etc.) but falls back to keyword matching
+
+**3. Memory Lifecycle (Pre-Compaction Flush)**
+Before compaction summarizes a conversation, OpenClaw runs a hidden background turn where:
+1. Agent is reminded to save important context to memory files
+2. Agent writes to `memory/YYYY-MM-DD.md` or `MEMORY.md`
+3. Compaction proceeds normally
+4. Memory files are re-indexed
+
+**4. Dreaming Consolidation System**
+- Runs on scheduled cron job (default: 3 AM daily)
+- Ingests short-term signals from daily notes
+- Scores candidates using 6 weighted signals: frequency (0.24), relevance (0.30), query diversity (0.15), recency (0.15), consolidation (0.10), conceptual richness (0.06)
+- Promotes qualified items into MEMORY.md
+- Writes human-readable diary entries to DREAMS.md
+- Machine state lives in `memory/.dreams/`
+
+**5. Commitments System (Inferred Follow-Ups)**
+- After an agent reply, hidden background pass looks for future check-in opportunities
+- Example: user mentions "interview tomorrow" → system infers "check in after interview"
+- Stored locally with agent ID, session, due window, suggested check-in text
+- Delivered via heartbeat when due
+- Scoped to exact agent + channel context
+
+**6. Active Memory Plugin**
+- Optional recall sub-agent that runs **before** main reply
+- Searches memory using available tools; surfaces relevant context without main agent having to ask
+- Runs in bounded time window (default 15 seconds)
+- Does not expose raw XML tags to users
+
+**7. BotNexus Current State**
+- Already has file infrastructure: MEMORY.md, memory/daily/YYYY-MM-DD.md, SOUL.md, IDENTITY.md, USER.md
+- Existing memory persistence spec: `docs/planning/improvement-memory-lifecycle/design-spec.md`
+- Missing: Dreaming/consolidation (mentioned in spec but not shipped), Commitments (not in BotNexus), Active Memory plugin, Agent instructions for memory usage
+
+**8. Naming & Structure Parallels**
+
+| Naming | OpenClaw | BotNexus |
+|--------|----------|---------|
+| Long-term memory | MEMORY.md | MEMORY.md ✓ **same** |
+| Daily notes | memory/YYYY-MM-DD.md | memory/daily/YYYY-MM-DD.md — **nested under /daily/** |
+| Consolidation output | DREAMS.md | Mentioned in spec, not yet documented |
+| Machine state | memory/.dreams/ | No equivalent documented |
+
+**Migration friction:** BotNexus uses `memory/daily/` instead of `memory/` for daily notes. Could alias for familiarity, or document the difference clearly.
+
+**9. Recommended Documentation Updates**
+
+**High Priority (Align with OpenClaw):**
+1. **`docs/development/workspace-and-memory.md`** — Add section on Dreaming (consolidation trigger, scoring signals, diary output), Commitments (inferred follow-ups, heartbeat delivery), daily notes location difference, user guidance
+2. **`docs/user-guide/agents.md`** (System Prompt Files section) — Add explicit reference to memory loading at startup, link to memory model doc, example of agent using memory tools
+3. **New doc: `docs/concepts/memory.md`** — Plain-language user guide for memory, how agents write memory, when to use MEMORY.md vs daily notes, memory search usage
+
+**Medium Priority:**
+4. **`docs/development/agent-execution.md`** — Add memory flush hook before compaction, document pre-compaction prompt behavior
+5. **`docs/configuration.md`** — Document dreaming config section (if/when shipped), commitments config
+
+**Low Priority (Future, Post-MVP):**
+6. **`docs/concepts/dreaming.md`** — Mirror OpenClaw's dreaming docs
+7. **`docs/concepts/commitments.md`** — Mirror OpenClaw's commitments docs
+8. **`docs/concepts/active-memory.md`** — Mirror OpenClaw's active memory plugin docs
+
+**10. Agent Instruction Patterns**
+OpenClaw's root AGENTS.md contains minimal telegraph-style rules; BotNexus should adopt similar: verify sources/tests before answering, cite file paths consistently, no absolute paths.
+
+#### Key Design Insights for Migration
+1. **Simplicity Over Formality** — Plain Markdown, not special YAML frontmatter or binary formats
+2. **Explicit Boundaries** — Clear separation of MEMORY.md (curated), daily notes (ephemeral), DREAMS.md (consolidation)
+3. **Consolidation is Optional** — Dreaming is opt-in; most agents don't need it immediately
+4. **Proactive Recall Adds UX** — Active Memory plugin improves recall feel
+5. **Commitments are Niche** — Solve specific use case; not critical for MVP memory migration
+
+#### Immediate Next Steps
+1. ✓ Research complete
+2. Add **Memory Concepts** doc (`docs/concepts/memory.md`)
+3. Update **`docs/development/workspace-and-memory.md`** with dreaming section reference
+4. Add **daily notes usage example** to `docs/user-guide/agents.md`
+
+---
+
+### 2026-05-07T08:14:27-07:00: Leela Architecture Assessment — Memory Model Alignment with OpenClaw
+
+**By:** Leela (Lead/Architect)  
+**Requested by:** Sytone  
+**Status:** Assessment complete — no code changes made  
+**Impact:** High — foundational to agent continuity and migration compatibility
+
+#### Executive Summary
+
+OpenClaw implements a **Markdown-first, file-authoritative** memory model where SQLite/embeddings are derived indexes (rebuildable). BotNexus treats SQLite `memory_store` as the primary authoring surface — a fundamental architectural divergence with implications for portability, data lock-in, and migration compatibility.
+
+**Design Principle: Markdown files are the source of truth; SQLite/embeddings are derived indexes.**
+
+This matches OpenClaw and preserves migration compatibility. It also means:
+- Agents can be migrated between platforms by copying their workspace directory
+- Memory is human-readable, editable, and version-controllable
+- The index can always be rebuilt from files
+- No data is trapped in a database that only tooling can access
+
+#### 1. How OpenClaw Tells Agents to Author Memory
+
+OpenClaw's memory model is **Markdown-first, file-authoritative**:
+
+| Layer | File | Purpose | Loaded when |
+|-------|------|---------|-------------|
+| Daily notes | memory/YYYY-MM-DD.md | Raw logs, observations, running context | Today + yesterday auto-loaded at session start |
+| Long-term | MEMORY.md | Curated durable facts, decisions, preferences | Every main/DM session start |
+| Dreams | DREAMS.md (optional) | Dreaming sweep summaries for human review | On demand |
+
+**Key AGENTS.md instructions to agents:**
+- "You wake up fresh each session. These files are your continuity."
+- Daily notes go in `memory/YYYY-MM-DD.md` — raw logs of what happened.
+- MEMORY.md is curated long-term memory — distilled essence, not raw logs.
+- "Mental notes don't survive session restarts. Files do." — explicit rule against relying on in-session state.
+- MEMORY.md is **only loaded in main sessions** (security: personal context doesn't leak to group chats)
+- During heartbeats, agents periodically review daily files and promote insights to MEMORY.md
+
+**Pre-compaction memory flush** — Before compaction, the platform injects a special turn telling the agent to write durable memories to `memory/YYYY-MM-DD.md`. APPEND only — never overwrite existing entries. MEMORY.md, SOUL.md, AGENTS.md, TOOLS.md, DREAMS.md are **read-only during flush**.
+
+**Bottom line:** Agents author memory by writing Markdown files. The files are the source of truth. There is no `memory_store` tool that writes directly to a database.
+
+#### 2. How OpenClaw Processes Memory Files into Searchable Storage
+
+**Indexing Pipeline:**
+1. **Source files:** MEMORY.md + memory/*.md are the primary corpus
+2. **Chunking:** Files are split into ~400-token chunks with 80-token overlap
+3. **SQLite database:** Per-agent at ~/.openclaw/memory/<agentId>.sqlite
+4. **FTS5 full-text index:** BM25 scoring for keyword search
+5. **Embedding vectors:** Stored as BLOB columns; computed via configurable provider (OpenAI, Gemini, Voyage, Mistral, Ollama, local GGUF)
+6. **Hybrid search:** Vector similarity (0.7 weight) + BM25 keyword (0.3 weight) combined, with optional MMR diversity and temporal decay (30-day half-life)
+7. **File watching:** Changes to memory files trigger debounced reindex (1.5s)
+8. **Auto-reindex:** When embedding provider/model/chunking config changes, full rebuild
+
+**Search Tools (agent-facing):**
+- memory_search — semantic/hybrid search across indexed memory. **No memory_store tool exists.**
+- memory_get — exact file/line range read from memory files
+
+**Key insight:** SQLite is purely derived state. The Markdown files are authoritative. The database is rebuilt from files at any time. Embeddings are used — they are real and central to search quality.
+
+#### 3. How BotNexus Currently Handles Memory
+
+**Current Architecture:**
+
+| Component | Location | What it does |
+|-----------|----------|--------------|
+| MemoryStoreTool | BotNexus.Memory/Tools/MemoryStoreTool.cs | Agent tool memory_store — writes directly to SQLite |
+| MemorySearchTool | BotNexus.Memory/Tools/MemorySearchTool.cs | Agent tool memory_search — FTS5 keyword search over SQLite |
+| MemoryGetTool | BotNexus.Memory/Tools/MemoryGetTool.cs | Agent tool memory_get — retrieve by ID or session |
+| SqliteMemoryStore | BotNexus.Memory/SqliteMemoryStore.cs | Per-agent SQLite database with FTS5 |
+| MemoryIndexer | BotNexus.Memory/MemoryIndexer.cs | Hosted service — indexes session conversation turns into SQLite on session close |
+| FileAgentWorkspaceManager | BotNexus.Gateway/Agents/FileAgentWorkspaceManager.cs | Loads SOUL.md, IDENTITY.md, USER.md, MEMORY.md from workspace |
+| AgentWorkspace | BotNexus.Gateway.Contracts/Agents/AgentWorkspace.cs | Record holding workspace file contents |
+| Workspace docs | docs/development/workspace-and-memory.md | Documents the intended layout including memory/daily/ |
+
+**What BotNexus Gets Right (aligned with OpenClaw):**
+- ✅ Workspace file structure: SOUL.md, IDENTITY.md, USER.md, MEMORY.md
+- ✅ MEMORY.md loaded into system prompt every session
+- ✅ Daily notes layout documented: memory/daily/YYYY-MM-DD.md
+- ✅ Per-agent SQLite with FTS5
+- ✅ Temporal decay in search (30-day half-life)
+- ✅ Design spec exists for memory flush lifecycle
+
+**Where BotNexus Diverges (gaps):**
+
+| Gap | BotNexus Today | OpenClaw Target |
+|-----|---------------|-----------------|
+| **Primary authoring surface** | memory_store tool writes directly to SQLite. SQLite is the source of truth. | Agents write Markdown files. SQLite is derived from files. |
+| **No file-based memory tools** | memory_store takes content string → SQLite row. No tool writes to memory/YYYY-MM-DD.md. | No memory_store tool at all. Agents use workspace file tools (write, edit) to author memory/YYYY-MM-DD.md. |
+| **Daily notes path** | Documented as memory/daily/YYYY-MM-DD.md (extra daily/ segment). | memory/YYYY-MM-DD.md (flat under memory/). |
+| **Daily notes not auto-loaded** | Only MEMORY.md loaded at session start. Daily notes exist but aren't injected into context. | Today + yesterday's daily notes auto-loaded into context. |
+| **No embeddings** | Embedding column exists in schema but is always null. Search is FTS5-only. | Hybrid search with embeddings is central. Multiple providers supported. |
+| **No memory flush** | Design spec written but not implemented. No pre-compaction flush turn. | Automatic pre-compaction flush is on by default. |
+| **No dreaming** | Not implemented. Design spec acknowledges it as Phase 4. | Optional but mature. Three-phase consolidation with scoring gates. |
+| **MemoryIndexer indexes conversations** | Indexes user/assistant turn pairs from session history into SQLite. | No equivalent — OpenClaw indexes file contents, not conversation turns directly. |
+| **AGENTS.md is auto-generated** | Lists configured agents (model, role). No memory instructions. | Contains detailed memory authoring instructions. |
+| **memory_get retrieves by ID/session** | Returns SQLite rows by ID or session. | Reads file contents by path and line range. |
+
+#### 4. Target Architecture
+
+`
+Agent Workspace (authoritative)
+├── MEMORY.md                     ← durable long-term memory (agent-curated)
+├── memory/
+│   ├── 2026-05-07.md            ← daily notes (agent-authored, append-only)
+│   ├── 2026-05-06.md
+│   └── ...
+└── DREAMS.md                     ← (future) dreaming summaries
+
+SQLite Index (derived, rebuildable)
+├── Per-agent: ~/.botnexus/memory/<agentId>.sqlite
+├── FTS5 full-text index over chunked file content
+├── Embedding vectors (when provider configured)
+└── Rebuilt on demand or on file change
+`
+
+**Key Architectural Decisions:**
+
+1. **Remove memory_store tool.** Agents should not write directly to SQLite. They write to files using existing workspace file tools (or a thin wrapper that targets memory/YYYY-MM-DD.md).
+
+2. **Repurpose MemoryIndexer to index files, not conversations.** Instead of indexing session turn pairs, it should chunk and index MEMORY.md + memory/*.md — the same corpus OpenClaw uses.
+
+3. **Add embedding support.** The Embedding column already exists. Add a configurable embedding provider abstraction (start with OpenAI text-embedding-3-small, then Ollama/local). Hybrid search = vector + FTS5.
+
+4. **Auto-load daily notes into context.** FileAgentWorkspaceManager.LoadWorkspaceAsync should also load today's and yesterday's memory/YYYY-MM-DD.md files.
+
+5. **Fix daily notes path.** Change from memory/daily/YYYY-MM-DD.md to memory/YYYY-MM-DD.md to match OpenClaw convention.
+
+6. **Implement pre-compaction memory flush.** The design spec already exists at docs/planning/improvement-memory-lifecycle/design-spec.md. This is the highest-value platform feature — it prevents memory loss.
+
+7. **Add memory instructions to AGENTS.md (or system prompt).** BotNexus's auto-generated AGENTS.md currently lists agents but has no memory authoring guidance. Add OpenClaw-style instructions telling agents how and when to write to memory files.
+
+8. **Repurpose memory_get to read files.** Instead of SQLite row lookup, it should read from MEMORY.md or memory/*.md by path and optional line range — matching OpenClaw's memory_get.
+
+#### 5. Staged Implementation Plan
+
+**Wave 1: Foundation (file-first memory model)**
+- **Scope:** Make Markdown files the primary authoring and reading surface
+- **Files/projects affected:**
+  - BotNexus.Memory/Tools/MemoryStoreTool.cs — remove or replace with tool that appends to memory/YYYY-MM-DD.md
+  - BotNexus.Memory/Tools/MemoryGetTool.cs — rewrite to read from workspace files by path/line range
+  - BotNexus.Gateway/Agents/FileAgentWorkspaceManager.cs — add daily notes loading (today + yesterday)
+  - BotNexus.Gateway.Contracts/Agents/AgentWorkspace.cs — add DailyNotes property
+  - docs/development/workspace-and-memory.md — update path from memory/daily/ to memory/
+  - BotNexus.Gateway.Prompts/ — inject daily notes into system prompt context
+  - Tests: migrate MemoryStoreToolTests, add FileAgentWorkspaceManager daily notes tests
+
+**Wave 2: File-based indexing**
+- **Scope:** Rebuild SQLite index from files instead of conversation turns
+- **Files/projects affected:**
+  - BotNexus.Memory/MemoryIndexer.cs — rewrite to scan MEMORY.md + memory/*.md, chunk into ~400-token segments, insert into SQLite
+  - BotNexus.Memory/SqliteMemoryStore.cs — adapt schema for file-sourced chunks (add path, start_line, end_line columns; remove session_id, turn_index)
+  - BotNexus.Memory/Models/MemoryEntry.cs — update fields
+  - BotNexus.Memory/MemorySearchFilter.cs — update filter options
+  - File watcher: add FileSystemWatcher on workspace memory/ directory for debounced reindex
+  - CLI: update botnexus memory backfill to reindex from files
+  - Tests: rewrite MemoryIndexerTests, SqliteMemoryStoreExtendedTests
+
+**Wave 3: Embedding support**
+- **Scope:** Add vector search alongside FTS5
+- **New files/projects:**
+  - BotNexus.Memory/Embeddings/IEmbeddingProvider.cs — abstraction
+  - BotNexus.Memory/Embeddings/OpenAiEmbeddingProvider.cs — first implementation
+  - BotNexus.Memory/Embeddings/OllamaEmbeddingProvider.cs — local option
+  - BotNexus.Memory/SqliteMemoryStore.cs — hybrid search: combine cosine similarity with BM25
+  - BotNexus.Domain/Gateway/Models/MemoryAgentConfig.cs — add embedding provider config
+  - docs/botnexus-config.schema.json — extend schema
+  - Tests: embedding provider tests, hybrid search tests
+
+**Wave 4: Pre-compaction memory flush**
+- **Scope:** Implement the already-designed memory flush from improvement-memory-lifecycle spec
+- **Files/projects affected:**
+  - BotNexus.Gateway/ — compaction pipeline integration point
+  - New: MemoryFlushService or integration into existing compaction flow
+  - Flush prompt injection (modeled on OpenClaw's flush-plan.ts)
+  - Config: gateway.compaction.memoryFlush settings
+  - Tests: flush trigger tests, safety guard tests
+
+**Wave 5: Memory instructions and dreaming (future)**
+- **Scope:** Agent-facing instructions and optional consolidation
+- Add memory authoring instructions to system prompt (either via AGENTS.md generation or prompt pipeline)
+- Dreaming: periodic cron-based consolidation of daily notes → MEMORY.md
+- DREAMS.md output for human review
+
+**Migration Path:**
+- Wave 1 is backward-compatible: existing SQLite data remains but is no longer the primary write path
+- Wave 2 rebuilds the index from files — any existing SQLite memories from memory_store that aren't backed by files will be lost. Migration step: export existing SQLite entries to memory/ files before cutting over
+- Waves 3-5 are additive
+
+#### 6. Rationale for File-First Architecture
+
+1. **Migration compatibility** — Files are portable across platforms; SQLite is not
+2. **Human readability** — Memory is editable, reviewable, version-controllable
+3. **Data portability** — No lock-in to a platform or tool ecosystem
+4. **Index robustness** — Derived state can always be rebuilt from files
+5. **Clarity** — Agents understand they're writing files, not database tables
+6. **Alignment with OpenClaw** — Establishes shared architecture patterns for future integrations
+
+---
+
+## Summary of 2026-05-07 OpenClaw Memory Research
+
+**Key Decision:** BotNexus memory architecture should transition from **SQLite-primary to Markdown-primary**, mirroring OpenClaw's model for migration compatibility and data portability.
+
+**Immediate Actions:**
+1. Merge Kif's research findings and Leela's architecture assessment into team decisions
+2. Update documentation: workspace-and-memory.md, create concepts/memory.md, update user-guide/agents.md
+3. Scope 5-wave implementation plan against backlog (priority: Wave 1-4)
+4. Plan migration strategy for existing SQLite memories
+
+**Design Principle:** Markdown files are the source of truth; SQLite/embeddings are derived, rebuildable indexes.
+
+---
+
+### Sytone: OpenClaw Memory Alignment — Design Questions Resolution (2026-05-08)
+
+**Decision Date:** 2026-05-08  
+**Decided By:** Sytone (Product Owner)  
+**Recorded By:** Kif (Documentation Engineer)  
+**Spec:** `docs/planning/botnexus-openclaw-memory-alignment/design-spec.md` §7  
+**Status:** Approved, awaiting implementation
+
+**Context:** Six open design questions in the OpenClaw Memory Alignment spec were walked through with product owner. Leela prepared decision guide. Sytone selected resolutions.
+
+**Decisions:**
+
+| # | Topic | Decision |
+|---|-------|----------|
+| 1 | Daily notes format | Plain Markdown only — no YAML frontmatter requirement |
+| 2 | File storage path | Default canonical path + optional per-agent override in config |
+| 3 | Embedding provider | Embeddings optional; support local + cloud behind `IEmbeddingProvider` abstraction |
+| 4 | Consolidation trigger | Automatic schedule (cron) + manual override; no agent-initiated |
+| 5 | Index rebuild / embedding cache | < 30s FTS rebuild acceptable; cache embeddings by content hash in SQLite |
+| 6 | AGENTS.md generation | Minimal memory authoring instructions (3–5 lines); detailed contract stays in tool descriptions |
+
+**Implications for Implementers:**
+
+- **Wave 1**: Daily note creation must not inject YAML frontmatter. Memory path resolver must check agent config for override before falling back to default.
+- **Wave 2**: FTS index rebuild target is 30s. Embedding cache table should be created in Wave 2 schema even if embeddings aren't used until Wave 3.
+- **Wave 3**: `IEmbeddingProvider` is optional at DI registration. All search paths must degrade gracefully to FTS-only when no provider is registered.
+- **Wave 5**: Consolidation service needs both a cron trigger (configurable interval) and a CLI/system-action manual trigger.
+- **AGENTS.md template**: Keep memory section ≤ 5 lines. Do not duplicate tool parameter docs.
+
+**Rationale:**
+
+1. **Plain Markdown only** — Simplifies note creation, reduces parser complexity, aligns with existing agent daily log format
+2. **Config-driven path override** — Enables per-agent customization (e.g., shared team memory path) while maintaining defaults for standard deployment
+3. **Optional embedding provider** — Reduces core dependencies; allows gradual enablement; degrades gracefully to FTS-only for lean installations
+4. **Scheduled + manual consolidation** — Automatic cron handles routine consolidation; manual override enables on-demand consolidation for high-value sessions
+5. **30s FTS target with hash-based cache** — Balances performance (sub-5s rebuild for small indices, <30s for large) with disk efficiency (no duplicate embeddings)
+6. **Minimal AGENTS.md** — Reduces cognitive load; detailed API reference lives in tool descriptions and function signatures
+
 
 ## OpenClaw Memory Wave 1 Alignment — Final Readiness (2026-05-07)
 
