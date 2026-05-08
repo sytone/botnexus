@@ -139,3 +139,29 @@ Initial setup complete.
 
 **Next Steps:** Production deployment readiness, Sprint 7 planning for P2 items.
 
+### 2026-05-07 — Issue Prioritization & Conversation Project Extraction
+
+**Overview:** Leela completed backlog prioritization review and submitted architectural design decision for conversation project extraction.
+
+**Backlog Prioritization (2026-05-07T15:06:00Z):**
+- Reviewed 14 open issues, 0 open PRs
+- Recommended priority sequence: #127 (fan-out root cause) → #128 (fan-out adapter follow-up) → #99 (E2E test confidence)
+- Noted dependency: #115 precedes #112
+- Deferred older backlog enhancements pending capacity
+
+**Conversation Project Extraction Decision (2026-05-06):**
+- Status: Approved — ready for implementation
+- Scope: Extract conversation stores (`InMemoryConversationStore`, `FileConversationStore`, `SqliteConversationStore`) and router from `BotNexus.Gateway.Sessions` to new project `BotNexus.Gateway.Conversations`
+- Maintains separation of concerns; conversation lifecycle independently testable
+- Dependency graph after refactor: `Domain ← Contracts ← Gateway.Conversations ← Gateway (host)` with sibling `Gateway.Sessions` (no circular refs)
+- 6-commit staging plan: project creation → store migration → router migration → DI updates → test project creation → verification
+- Risk mitigations documented for SQLite coupling, shared DB, namespace breaks, test fixture sharing
+- Decision merged to `squad/decisions.md` (decision item: "Conversation Project Extraction — Architectural Design Review")
+
+**Cross-Agent Updates:**
+- Decision merged from `decisions/inbox/` to canonical `decisions.md` (deduplication complete)
+- Scribe logged orchestration evidence: `orchestration-log/2026-05-07T15-06-00Z-leela.md`
+- Scribe logged session summary: `log/2026-05-07T15-06-00Z-open-issue-prioritization.md`
+
+**Session Context:** Prioritization and architecture only — no implementation started. Ready for implementing agent (likely Fry or developer-assistant) to begin fan-out root cause work (#127).
+

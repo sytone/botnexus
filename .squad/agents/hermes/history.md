@@ -31,6 +31,15 @@
 
 ---
 
+## 2026-05-07 — PR #180 Refresh Merge + Validation (Hermes)
+
+- Reused dedicated worktree `Q:\repos\botnexus-pr-180` on branch `refactor/conversation-dispatching-layer` tracking `origin/refactor/conversation-dispatching-layer`.
+- Fetched latest refs and merged `origin/main` into the PR branch via merge commit `8c0995b0`.
+- Full validation after merge:
+  - `dotnet build BotNexus.slnx --nologo --tl:off` ✅
+  - `dotnet test BotNexus.slnx --nologo --tl:off` ✅ (0 failed; E2E project skipped tests by design in current run)
+- Ready to push refreshed branch and re-check PR checks.
+
 ## Learnings
 - 2026-05-07: SQLite file-backed session-store tests can intermittently fail Windows cleanup with "file in use" unless test connection strings disable pooling (`SqliteConnectionStringBuilder.Pooling = false`) and test teardown clears pools before deleting DB files.
 - 2026-05-07: Added broader dispatching regression coverage at gateway/session boundaries: default routing with null conversationId, explicit non-default session isolation, and originating binding metadata (ThreadId/BindingId/DisplayPrefix) preservation on outbound sends.
@@ -176,3 +185,29 @@
 - Root cause: snapshots asserted machine/OS-specific lines (Windows OS description and absolute workspace/docs paths), while CI renders Linux values (`Ubuntu 24.04.4 LTS`, `/tmp/...`).
 - Applied minimal safe test-only normalization in snapshot helpers to canonicalize volatile lines before compare.
 - Validation: targeted test projects passed; full `dotnet build BotNexus.slnx --nologo --tl:off` and `dotnet test BotNexus.slnx --nologo --tl:off` passed locally.
+## 2026-05-07 — Conversation Project Extraction: QA & Validation
+
+**Status:** ✅ Complete (Test validation passed, approved for merge)  
+**Session:** Conversation project refactor orchestration  
+**Coordination:** With Leela (design), Bender (implementation), Nibbler (consistency)  
+
+**Your Role:** Quality Assurance. Test validation and coverage verification.
+
+**Test Validation Results:**
+- **BotNexus.Gateway.Conversations.Tests:** 66/66 passing ✅
+- **BotNexus.Gateway.ConversationTests:** 9/9 passing ✅
+- **Focused Gateway conversation coverage:** 62/62 passing ✅
+
+**Scope Verification:**
+- Confirmed all 7 conversation-focused test files moved from Gateway.Tests to new project ✅
+- Confirmed store/router unit tests correctly isolated ✅
+- No test regressions in moved behavior ✅
+
+**Notes:**
+- SqliteSessionStoreConversationIdTests file-lock failures observed (outside moved scope, pre-existing issue)
+- Test naming conventions respected (Method_Condition_ExpectedBehavior)
+- All assertions aligned with Leela's design contracts
+
+**Status:** Approved for code review and merge
+
+---

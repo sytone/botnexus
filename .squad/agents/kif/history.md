@@ -48,6 +48,44 @@
 ✅ Matched existing endpoint section format
 ✅ Followed response JSON style conventions
 ✅ HTTP header and error response table format
+
+---
+
+## 2026-05-08 — OpenClaw Memory Alignment — Design Questions Resolution (Documentation Engineer)
+
+**Status:** ✅ Complete  
+**Activity:** Recorded design decisions; updated spec; committed changes
+
+**Context:** Six open design questions in the OpenClaw Memory Alignment spec. Coordinator walked Sytone through options. Leela prepared decision guide. Sytone selected resolutions. You recorded and committed.
+
+**Work Completed:**
+
+1. **Decision Document:** Created `.squad/decisions/inbox/kif-openclaw-memory-resolved-questions.md`
+   - Structured format (table + implications per wave)
+   - Metadata: date (2026-05-08), decider (Sytone), recorder (Kif), spec reference
+
+2. **Design Spec Update:** Updated `docs/planning/botnexus-openclaw-memory-alignment/design-spec.md`
+   - Integrated all six resolutions into §7
+   - Ensured implications are clear for implementers across all five waves
+
+3. **Git Commits:**
+   - `bbe3df93`: docs(planning): resolve open questions in OpenClaw memory alignment spec
+   - `39bf3315`: docs(planning): fix incorrect date in resolved decisions section
+
+**Decisions Recorded:**
+
+| # | Topic | Decision |
+|---|-------|----------|
+| 1 | Daily notes format | Plain Markdown only |
+| 2 | Storage path | Default canonical + per-agent override |
+| 3 | Embedding provider | Optional; local + cloud abstraction |
+| 4 | Consolidation trigger | Automatic schedule + manual override |
+| 5 | Index rebuild / cache | <30s rebuild; hash-based SQLite cache |
+| 6 | AGENTS.md generation | Minimal instructions (3–5 lines) |
+
+**Next Steps:** Scribe merged decision inbox to canonical decisions.md (2026-05-07T16:05:40Z).
+
+
 ✅ Reflects design-spec.md architecture
 
 ---
@@ -154,6 +192,37 @@ The project follows a consistent pattern for documenting CLI features and proces
 
 **Orchestration Log:** `.squad/orchestration-log/2026-04-20T19-04-00Z-kif.md`
 
+---
+
+## 2026-05-07 — OpenClaw Memory Model Research (Team Coordination)
+
+**Status:** ✓ Research complete, merged to decisions.md
+
+**Context:** Sytone requested BotNexus team to research OpenClaw memory model for migration compatibility.
+
+**Your Contribution:**
+- Comprehensive research on OpenClaw's user-facing memory model, system prompts, agent initialization
+- Documented dreaming consolidation system (6 weighted scoring signals), commitments, active memory plugin
+- BotNexus current state assessment: memory infrastructure exists but gaps include dreaming, commitments, embedding support, daily notes auto-loading
+- Recommended documentation roadmap: high-priority updates to workspace-and-memory.md, new concepts/memory.md, user-guide/agents.md updates
+- Identified key design insights: simplicity over formality, explicit boundaries, consolidation optional, proactive recall adds UX
+
+**Leela's Parallel Work:**
+- Architecture assessment identifying 8 gaps between BotNexus and OpenClaw
+- Proposed 5-wave implementation plan (file-first authoring, file-based indexing, embeddings, pre-compaction flush, dreaming)
+- Key principle: Markdown files are source of truth; SQLite/embeddings are derived indexes
+- Migration compatibility and data portability as design drivers
+
+**Team Coordination:**
+- Both research outputs merged into decisions.md (2026-05-07 section)
+- Orchestration log created: .squad/orchestration-log/2026-05-07T15-17-40Z-memory-architecture-research.md
+- Session log created: .squad/log/2026-05-07T15-17-40Z-openclaw-memory-research.md
+- Inbox decision files deleted after merge
+
+**Next Steps:**
+- Implementation team to scope 5-wave plan against backlog
+- Documentation team to prioritize high-priority docs
+- Design team to finalize migration strategy for existing SQLite memories
 ## 2026-05-07 — OpenClaw Memory Wave 1 Documentation (Documentation Engineer)
 
 **Role:** Doc targets mapping, implementation landing docs  
@@ -188,3 +257,12 @@ The project follows a consistent pattern for documenting CLI features and proces
 - Wave 1 ship-ready with accurate, minimal AGENTS.md guidance
 - Doc update map prepared for post-merge batch update (no changes before code lands to avoid drift)
 - Clear separation maintained: Wave 1 is daily authoring only; consolidation is future work
+
+---
+
+## PR #182 Merge Update — 2026-05-07
+
+**Action:** Merged origin/main into docs/openclaw-memory-alignment-planning to resolve dirty mergeable state.
+**Conflict:** docs/planning/INDEX.md — Memory Persistence Lifecycle listed as both High/in-progress (main) and Medium/draft (PR branch). Resolved by keeping High/in-progress, removing stale duplicate.
+**Build:** Succeeded. Pre-existing test failures on main (snapshot tests, StdioTransport robustness, SqliteSessionStore ConversationId) confirmed not introduced by this merge.
+**Outcome:** PR #182 is now up to date with main and mergeable.
