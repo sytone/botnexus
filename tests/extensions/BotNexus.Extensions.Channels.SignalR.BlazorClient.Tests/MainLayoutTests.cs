@@ -191,4 +191,30 @@ public sealed class MainLayoutTests : IDisposable
         var activeConv = cut.Find(".conversation-list-item-btn.active");
         Assert.NotNull(activeConv);
     }
+
+    [Fact]
+    public void Switching_agent_triggers_history_load_for_active_conversation()
+    {
+        // Arrange: two agents, each with a default conversation auto-selected via SeedConversations
+        _store.SeedAgents([
+            new AgentSummary("a-1", "Alpha"),
+            new AgentSummary("a-2", "Beta")
+        ]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-1", "a-1", "Default", true, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        _store.SeedConversations("a-2", [
+            new ConversationSummaryDto("c-2", "a-2", "Default", true, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        _store.ActiveAgentId = "a-1";
+
+        var cut = RenderLayout();
+
+        // Act: switch to agent a-2 via dropdown
+        var dropdown = cut.Find(".agent-dropdown-select");
+        dropdown.Change("a-2");
+
+        // Assert: SelectConversationAsync was called for Beta's auto-selected conversation
+        _interaction.Received(1).SelectConversationAsync("a-2", "c-2");
+    }
 }
