@@ -135,3 +135,28 @@
 - Conditional input area (full hide, cleaner UX)
 
 **Build & Test Status:** ✅ All tests passing
+
+---
+
+## 2026-05-08 — Conversation History Disappears After UI Refresh
+
+**Status:** ✅ Fixed  
+**Commit:** dba21e89  
+
+**Your Role:** Web Dev (investigation + fix)
+
+**Root Cause:** The history API returns entries in chronological order with `offset=0` giving the oldest entries. Both `PortalLoadService.InitializeAsync` and `AgentInteractionService.LoadConversationHistoryAsync` requested `limit=200, offset=0`. For conversations with >200 entries (e.g., 272), the most recent messages fell beyond the 200-entry page boundary and were never loaded. After a UI refresh, users saw old messages but not their latest exchange.
+
+**Validated by:** Probing the live gateway API at `http://localhost:5005/api/conversations/{id}/history`. Default conversation had 272 entries; limit=200,offset=0 returned entries 0-199 (oldest), missing today's messages at positions 262-272. With offset=72, the latest messages appeared correctly.
+
+**Fix:**
+1. **PortalLoadService.cs** — After initial GetHistoryAsync call, check if `totalCount > limit`. If so, re-fetch with `offset = totalCount - limit` to get the tail page.
+2. **AgentInteractionService.cs** — Same tail-fetch pattern in `LoadConversationHistoryAsync`.
+3. **AgentInteractionServiceTests.cs** — Added 2 tests: one verifying the two-step fetch for long conversations, one verifying single fetch for short ones.
+
+**Key Learning:**
+- The conversation history API uses forward-only pagination (offset from oldest). When loading for display, always compute the tail offset to show the most recent entries.
+- Probing the live API directly was key to diagnosing this — the frontend code looked correct in isolation.
+
+**Recommendation for Bender:**
+- Consider adding a server-side option to the history API (e.g., `order=desc` or `anchor=latest`) so the client can request the newest entries without a probe call. This would eliminate the extra HTTP round-trip for long conversations.

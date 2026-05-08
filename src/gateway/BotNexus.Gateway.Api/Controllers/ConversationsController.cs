@@ -208,7 +208,10 @@ public sealed class ConversationsController : ControllerBase
     /// </summary>
     /// <param name="conversationId">The conversation identifier.</param>
     /// <param name="limit">Maximum number of entries to return (default 50, max 200).</param>
-    /// <param name="offset">Zero-based offset into the full entry list.</param>
+    /// <param name="offset">
+    /// Zero-based offset from the most recent entry. <c>offset=0</c> returns the latest page,
+    /// larger offsets page backwards into older history.
+    /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Paginated history response, or 404 if conversation not found.</returns>
     [HttpGet("{conversationId}/history")]
@@ -281,7 +284,22 @@ public sealed class ConversationsController : ControllerBase
         }
 
         var totalCount = allEntries.Count;
-        var page = allEntries.Skip(offset).Take(boundedLimit).ToList();
+        List<ConversationHistoryEntry> page;
+        if (offset >= totalCount)
+        {
+            page = [];
+        }
+        else
+        {
+            // Page from newest entries so refreshes include the latest turns even when
+            // conversations have more than one page of history.
+            var take = Math.Min(boundedLimit, totalCount - offset);
+            var startIndex = Math.Max(0, totalCount - offset - take);
+            page = allEntries
+                .Skip(startIndex)
+                .Take(take)
+                .ToList();
+        }
 
         return Ok(new ConversationHistoryResponse(
             ConversationId: conversationId,
