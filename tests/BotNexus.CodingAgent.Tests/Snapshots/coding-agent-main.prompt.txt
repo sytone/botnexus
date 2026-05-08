@@ -1,8 +1,8 @@
 ﻿You are a coding assistant with access to tools for reading, writing, and editing files, and executing shell commands.
 
 ## Environment
-- OS: Ubuntu 24.04.4 LTS
-- Working directory: /tmp/repo
+- OS: Microsoft Windows 10.0.26200
+- Working directory: C:/Users/jobullen/AppData/Local/Temp/repo
 - Git branch: feature/unify-prompts
 - Git status: M src/file.cs
 - Package manager: pnpm
@@ -43,4 +43,4 @@ Use search tools first.
 ## Custom Instructions
 Focus on minimal diffs.
 Current date/time: 2026-04-12T14:30:00.0000000+00:00
-Current working directory: /tmp/repo
+Current working directory: C:/Users/jobullen/AppData/Local/Temp/repo

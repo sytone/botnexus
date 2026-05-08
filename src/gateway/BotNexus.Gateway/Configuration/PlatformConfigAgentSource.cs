@@ -166,6 +166,7 @@ public sealed class PlatformConfigAgentSource(
         return new MemoryAgentConfig
         {
             Enabled = memoryConfig.Enabled,
+            Path = memoryConfig.Path,
             Indexing = memoryConfig.Indexing,
             Search = memoryConfig.Search is null
                 ? null

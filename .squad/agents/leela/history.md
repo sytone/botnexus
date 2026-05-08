@@ -18,6 +18,7 @@
 - DIP fix: GatewayWebSocketHandler now uses IGatewayWebSocketChannelAdapter interface
 - OpenAPI spec export
 - Comprehensive integration tests (39 new tests in Sprint 7A)
+- **PR #179 (2026-05-07): Memory tool surface fix — Approved deletion of MemoryStoreTool; consolidated to canonical tools (memory_save, memory_search, memory_get). Commit: 44788462**
 
 **Carried Findings (Sprint 7B):**
 - `Path.HasExtension` auth bypass in `GatewayAuthMiddleware`
@@ -125,3 +126,24 @@ Farnsworth has implemented your recommendation to decouple Gateway from compile-
 **Test Coverage:** 7 tests pass. Two new tests cover the exact regression path (pre-cancel and pull-step cancel). Coverage is focused and sufficient for the fix scope.
 
 ---
+## 2026-05-07 — OpenClaw Memory Wave 1 Alignment (Lead/Architect)
+
+**Role:** Design leadership and gating decisions  
+**Branch:** feature/openclaw-memory-alignment  
+**Status:** ✅ COMPLETE — GO for merge  
+
+**Decisions Issued:**
+1. Wave 1 scope slice (contracts 1A, tool 1B, context 1C, tests 1D)
+2. Architecture review of Bender's initial implementation — **REJECTED** (two blocking issues: B1 MemorySaveTool reimplemented filesystem logic, B2 dead DailyMemoryNote contract)
+3. Remediation oversight — Farnsworth assigned B1/B2; delivered 58d03d13
+4. Re-review of Farnsworth remediation — **APPROVED** (both issues resolved cleanly)
+5. Tool scope decision (Option A: daily-note-only, MEMORY.md read-only, consolidation deferred to Wave 5)
+6. Final readiness gate — **GO for merge** (all blocking issues resolved, 61 Memory tests pass, 6 Prompts tests pass, Wave 1 gateway tests pass)
+
+**Key Outcomes:**
+- All prior blockers resolved: B1 (pure delegation), B2 (dead code removed), spec contradiction (Phase 2b aligned)
+- Non-blocking conditions C1–C3 carried to Wave 2 backlog (DateTime consistency, ContextFileOrdering tests, 4000-char budget)
+- Full test suite feasibility confirmed (pre-existing failures only, no Wave 1 regressions)
+- Strict rejection protocol enforced: Bender locked out, Farnsworth delegated remediation, all fixes validated
+
+**Recommendation:** Squash-merge to main; archive planning spec folder.

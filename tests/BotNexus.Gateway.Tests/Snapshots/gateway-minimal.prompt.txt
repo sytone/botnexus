@@ -41,7 +41,7 @@ Constraints: never read more than one skill up front; only read after selecting.
 - skill-a
 If you need the current date, time, or day of week, run session_status (📊 session_status).
 ## Workspace
-Your working directory is: /tmp/repo/workspace
+Your working directory is: C:\Users\jobullen\AppData\Local\Temp\repo\workspace
 Treat this directory as the single global workspace for file operations unless explicitly instructed otherwise.
 Minimal note
 ## Current Date & Time

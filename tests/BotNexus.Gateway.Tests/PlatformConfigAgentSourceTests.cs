@@ -627,6 +627,17 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         public Task SaveMemoryAsync(string agentName, string content, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
 
+        public Task SaveMemoryAsync(string agentName, string? filePath, string content, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task SaveMemoryAsync(
+            string agentName,
+            string? filePath,
+            string content,
+            string? memoryPathOverride,
+            CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
         public string GetWorkspacePath(string agentName)
             => _workspacePath;
     }
@@ -772,6 +783,40 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         descriptor.Memory.ShouldNotBeNull();
         descriptor.Memory!.Enabled.ShouldBeTrue();
         descriptor.Memory.Indexing.ShouldBe("semantic");
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithAgentMemoryPathOverride_MapsPathOnDescriptorMemoryConfig()
+    {
+        var config = JsonSerializer.Deserialize<PlatformConfig>(
+            """
+            {
+              "Agents": {
+                "assistant": {
+                  "Provider": "copilot",
+                  "Model": "gpt-4.1",
+                  "Enabled": true,
+                  "Memory": {
+                    "Enabled": true,
+                    "Indexing": "auto",
+                    "Path": "memory/custom-notes.md"
+                  }
+                }
+              }
+            }
+            """)!;
+
+        var source = new PlatformConfigAgentSource(
+            new TestOptionsMonitor<PlatformConfig>(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>());
+
+        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
+
+        descriptor.Memory.ShouldNotBeNull();
+        var pathProperty = descriptor.Memory!.GetType().GetProperty("Path");
+        pathProperty.ShouldNotBeNull("Wave 1 requires per-agent memory path override support.");
+        pathProperty!.GetValue(descriptor.Memory)?.ToString().ShouldBe("memory/custom-notes.md");
     }
 
     [Fact]

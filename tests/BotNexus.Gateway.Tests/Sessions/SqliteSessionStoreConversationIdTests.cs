@@ -21,8 +21,32 @@ public sealed class SqliteSessionStoreConversationIdTests : IDisposable
 
     public void Dispose()
     {
-        if (File.Exists(_dbPath))
+        if (!File.Exists(_dbPath))
+            return;
+
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            try
+            {
+                File.Delete(_dbPath);
+                return;
+            }
+            catch (IOException)
+            {
+                if (attempt >= 4)
+                    break;
+                Thread.Sleep(50);
+            }
+        }
+
+        try
+        {
             File.Delete(_dbPath);
+        }
+        catch (IOException)
+        {
+            // Cleanup best effort; locking can linger briefly after async DB operations on Windows.
+        }
     }
 
     private SqliteSessionStore CreateStore()
