@@ -75,6 +75,8 @@ internal class UpdateCommand
             stopResult = await _processManager.StopAsync(home, cancellationToken);
         }
 
+        stopResult ??= new GatewayStopResult(false, "no result");
+
         if (!stopResult.Success)
             AnsiConsole.MarkupLine($"[yellow]\u26a0[/] Could not stop gateway ({Markup.Escape(stopResult.Message ?? "not running")}). Continuing anyway.");
         else
@@ -293,6 +295,8 @@ internal class UpdateCommand
             AnsiConsole.MarkupLine("[blue][[update]][/] Starting gateway...");
             startResult = await _processManager.StartAsync(options, cancellationToken);
         }
+
+        startResult ??= new GatewayStartResult(false, null, "no result");
 
         if (startResult.Success && startResult.Pid.HasValue)
         {

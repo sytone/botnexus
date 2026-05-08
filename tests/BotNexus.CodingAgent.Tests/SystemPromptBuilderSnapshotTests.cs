@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 using BotNexus.CodingAgent;
 
 namespace BotNexus.CodingAgent.Tests;
@@ -63,7 +64,14 @@ public sealed class SystemPromptBuilderSnapshotTests
         normalized.ShouldBe(expected);
     }
 
-    private static string Normalize(string value) => value.Replace("\r\n", "\n").Replace('\r', '\n').TrimEnd('\n');
+    private static string Normalize(string value)
+    {
+        var normalized = value.Replace("\r\n", "\n").Replace('\r', '\n');
+        normalized = Regex.Replace(normalized, @"(?m)^- OS: .+$", "- OS: <OS>");
+        normalized = Regex.Replace(normalized, @"(?m)^- Working directory: .+$", "- Working directory: <WORKING_DIRECTORY>");
+        normalized = Regex.Replace(normalized, @"(?m)^Current working directory: .+$", "Current working directory: <WORKING_DIRECTORY>");
+        return normalized.TrimEnd('\n');
+    }
 
     private static string FindRepositoryRoot()
     {

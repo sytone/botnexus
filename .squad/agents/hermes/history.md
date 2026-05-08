@@ -124,3 +124,20 @@
 **Outcomes:**
 - Wave 1 memory alignment validated and approved
 - Three non-blocking conditions (C1–C3) carried to Wave 2 backlog
+
+## 2026-05-07 — PR #181 readiness check (Hermes)
+- Worktree verified: Q:\repos\botnexus-pr-181 on fix/update-pull-cancel.
+- Sync check: origin/fix/update-pull-cancel = 7af8876c (HEAD), includes Bender validation commit; branch contains origin/main (5f18e5c).
+- CI check (gh pr checks 181 at 2026-05-07 17:20 -07:00): 6 successful, 2 skipped, 2 pending, 0 failing/cancelled.
+- Pending checks: CI/build-and-test (pull_request) and CodeQL Advanced/Analyze (csharp) (pull_request).
+- Action: no local fix applied because no failing checks were reported.
+
+## 2026-05-07 — PR #181 CI failure fix (Hermes)
+- Re-checked PR #181 after merge-update push `7af8876c`; `CI/build-and-test` failed in GitHub Actions run `25529315685` (job `74931887564`).
+- Failure diagnosis: snapshot assertions were OS/path sensitive; Linux CI output (`Ubuntu 24.04.4 LTS`, `/tmp/repo*`) mismatched Windows-authored snapshot values.
+- Fix applied: normalized environment/path-variant lines in snapshot test comparers:
+  - `tests/BotNexus.CodingAgent.Tests/SystemPromptBuilderSnapshotTests.cs`
+  - `tests/BotNexus.Gateway.Tests/Agents/SystemPromptBuilderSnapshotTests.cs`
+- Verification:
+  - Targeted suites passed (`BotNexus.CodingAgent.Tests`, `BotNexus.Gateway.Tests`).
+  - Full validation passed: `dotnet build BotNexus.slnx --nologo --tl:off` and `dotnet test BotNexus.slnx --nologo --tl:off`.
