@@ -15503,3 +15503,54 @@ Resolved contract states:
 ### Outcome
 
 Wave 1 implementation is internally consistent and aligned with resolved contracts. Planning spec drift documented and flagged for post-merge planning-spec update (optional, non-blocking).
+---
+
+### Fry Decision: Conversation History Tail-Fetch Pattern
+
+**Date:** 2026-05-08  
+**Status:** Implemented
+
+When loading conversation history for display, both `PortalLoadService` and `AgentInteractionService` now perform a tail-fetch: if the API reports `totalCount > limit`, a second request is made with `offset = totalCount - limit` to retrieve the newest entries.
+
+**Why:** The history API paginates chronologically from offset 0 (oldest first). Long conversations (>200 entries) had their most recent messages cut off after UI refresh.
+
+**Trade-off:** One extra HTTP call for conversations exceeding 200 entries. Acceptable for correctness.
+
+**Backend recommendation for Bender:** Add server-side `order=desc` or `anchor=latest` parameter to the history API so clients can request newest entries in a single call.
+
+
+---
+
+# Hermes Decision — Conversation History Refresh Regression Coverage
+
+## Decision
+Add and keep targeted regression coverage on conversation-history paging semantics at the controller/API layer.
+
+## Why
+User-visible refresh loss can happen when history APIs return oldest entries by default while the UI asks for `offset=0, limit=200` after reload. Regression tests must assert latest-page semantics and backward paging offsets for long conversations.
+
+## Test Location
+- `tests/BotNexus.Gateway.Tests/ConversationsControllerHistoryTests.cs`
+
+## Scenarios
+1. `offset=0` returns the latest page for long conversations.
+2. Non-zero offset pages backward from the newest window.
+
+
+---
+
+# Bender Decision — Conversation history refresh pagination
+
+## Context
+Users reported that fresh Quill turns appeared live but vanished after UI refresh. Runtime investigation showed conversation history persistence was intact, but /api/conversations/{id}/history paged from oldest entries.
+
+## Decision
+Treat offset as "from newest" for conversation history pagination and return the latest page by default (offset=0). Keep entries in chronological order within the returned page.
+
+## Why
+The Blazor client loads limit=200, offset=0 on refresh. Oldest-first paging drops newest turns when a conversation has more than 200 entries, which presents as data loss even though persistence succeeded.
+
+## Impact
+- UI refresh now consistently includes the latest turns for long conversations.
+- Existing callers can still page backward by increasing offset.
+

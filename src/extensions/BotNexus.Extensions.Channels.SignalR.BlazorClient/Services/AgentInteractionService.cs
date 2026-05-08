@@ -387,7 +387,19 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         try
         {
-            var response = await _restClient.GetHistoryAsync(conversationId, limit: 200);
+            const int historyLimit = 200;
+            var response = await _restClient.GetHistoryAsync(conversationId, limit: historyLimit);
+
+            // The API returns entries in chronological order starting from offset 0.
+            // When totalCount exceeds the limit, the first page contains the oldest
+            // entries and the most recent messages are beyond the page boundary.
+            // Re-fetch from the tail so users see their latest conversation.
+            if (response is not null && response.TotalCount > historyLimit)
+            {
+                var tailOffset = response.TotalCount - historyLimit;
+                response = await _restClient.GetHistoryAsync(conversationId, limit: historyLimit, offset: tailOffset);
+            }
+
             if (response?.Entries is { Count: > 0 })
             {
                 // Replace any cache-rendered messages with fresh server data

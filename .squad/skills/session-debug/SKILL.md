@@ -150,3 +150,8 @@ python .squad/skills/session-debug/log-search.py "SubscribeAll" --level ERR
 ## Confidence
 
 Level: `high` — Based on production debugging of real session issues (commits 28a0329, 5d4bf4f, 0fa175a).
+
+## History paging regression check
+
+When UI refresh loses recent turns, verify /api/conversations/{conversationId}/history semantics first: offset=0 must return the newest page, and positive offsets must page backward from newest history.
+

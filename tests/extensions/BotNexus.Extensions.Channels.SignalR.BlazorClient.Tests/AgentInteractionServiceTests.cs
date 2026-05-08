@@ -84,4 +84,93 @@ public sealed class AgentInteractionServiceTests
         Assert.Equal("System", messages[0].Role);
         Assert.False(agent.Conversations["conv-1"].HistoryLoaded);
     }
+
+    // ── History tail-fetch tests ──────────────────────────────────────────
+
+    [Fact]
+    public async Task SelectConversation_loads_history_from_tail_when_totalCount_exceeds_limit()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.Conversations["conv-1"] = new ConversationState
+        {
+            ConversationId = "conv-1",
+            Title = "Long conv",
+            HistoryLoaded = false
+        };
+
+        // First call returns oldest 200 of 272 total
+        var firstPage = new ConversationHistoryResponseDto(
+            "conv-1", TotalCount: 272, Offset: 0, Limit: 200,
+            Entries: Enumerable.Range(0, 200).Select(i => new ConversationHistoryEntryDto
+            {
+                Kind = "message",
+                SessionId = "s1",
+                Role = "user",
+                Content = $"old-{i}",
+                Timestamp = DateTimeOffset.UtcNow.AddMinutes(-300 + i)
+            }).ToList());
+
+        // Second call returns latest 200 from offset 72
+        var tailPage = new ConversationHistoryResponseDto(
+            "conv-1", TotalCount: 272, Offset: 72, Limit: 200,
+            Entries: Enumerable.Range(72, 200).Select(i => new ConversationHistoryEntryDto
+            {
+                Kind = "message",
+                SessionId = "s1",
+                Role = i >= 270 ? "user" : "assistant",
+                Content = $"msg-{i}",
+                Timestamp = DateTimeOffset.UtcNow.AddMinutes(-300 + i)
+            }).ToList());
+
+        _restClient.GetHistoryAsync("conv-1", 200, 0, Arg.Any<CancellationToken>())
+            .Returns(firstPage);
+        _restClient.GetHistoryAsync("conv-1", 200, 72, Arg.Any<CancellationToken>())
+            .Returns(tailPage);
+
+        await _service.SelectConversationAsync("agent-1", "conv-1");
+
+        // Should have made two REST calls: first page + tail page
+        await _restClient.Received(1).GetHistoryAsync("conv-1", 200, 0, Arg.Any<CancellationToken>());
+        await _restClient.Received(1).GetHistoryAsync("conv-1", 200, 72, Arg.Any<CancellationToken>());
+
+        // Messages should come from the tail page (most recent)
+        var messages = agent.Conversations["conv-1"].Messages;
+        Assert.Equal(200, messages.Count);
+        Assert.Equal("msg-72", messages[0].Content);
+        Assert.Equal("msg-271", messages[^1].Content);
+    }
+
+    [Fact]
+    public async Task SelectConversation_uses_single_fetch_when_totalCount_within_limit()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.Conversations["conv-1"] = new ConversationState
+        {
+            ConversationId = "conv-1",
+            Title = "Short conv",
+            HistoryLoaded = false
+        };
+
+        var response = new ConversationHistoryResponseDto(
+            "conv-1", TotalCount: 5, Offset: 0, Limit: 200,
+            Entries: Enumerable.Range(0, 5).Select(i => new ConversationHistoryEntryDto
+            {
+                Kind = "message",
+                SessionId = "s1",
+                Role = "user",
+                Content = $"msg-{i}",
+                Timestamp = DateTimeOffset.UtcNow.AddMinutes(i)
+            }).ToList());
+
+        _restClient.GetHistoryAsync("conv-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(response);
+
+        await _service.SelectConversationAsync("agent-1", "conv-1");
+
+        // Only one REST call needed
+        await _restClient.Received(1).GetHistoryAsync("conv-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+
+        var messages = agent.Conversations["conv-1"].Messages;
+        Assert.Equal(5, messages.Count);
+    }
 }
