@@ -786,6 +786,37 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadAsync_WithMemoryEnabledAndPromptInjectionOmitted_DefaultsPromptInjectionToFull()
+    {
+        var config = JsonSerializer.Deserialize<PlatformConfig>(
+            """
+            {
+              "Agents": {
+                "assistant": {
+                  "Provider": "copilot",
+                  "Model": "gpt-4.1",
+                  "Enabled": true,
+                  "Memory": {
+                    "Enabled": true,
+                    "Indexing": "auto"
+                  }
+                }
+              }
+            }
+            """)!;
+
+        var source = new PlatformConfigAgentSource(
+            new TestOptionsMonitor<PlatformConfig>(config),
+            _configDirectory,
+            new ListLogger<PlatformConfigAgentSource>());
+
+        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
+
+        descriptor.Memory.ShouldNotBeNull();
+        GetPromptInjection(descriptor.Memory!).ShouldBe("full");
+    }
+
+    [Fact]
     public async Task LoadAsync_WithAgentMemoryPathOverride_MapsPathOnDescriptorMemoryConfig()
     {
         var config = JsonSerializer.Deserialize<PlatformConfig>(
@@ -877,6 +908,13 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
 
         ReadToolTimeoutSeconds(descriptor).ShouldBe(9);
+    }
+
+    private static string GetPromptInjection(MemoryAgentConfig config)
+    {
+        var property = typeof(MemoryAgentConfig).GetProperty("PromptInjection");
+        property.ShouldNotBeNull("MemoryAgentConfig.PromptInjection should exist for memory prompt-injection behavior.");
+        return property!.GetValue(config)?.ToString() ?? string.Empty;
     }
 
     [Fact]

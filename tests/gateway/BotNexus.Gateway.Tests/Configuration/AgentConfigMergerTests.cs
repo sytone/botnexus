@@ -10,6 +10,13 @@ namespace BotNexus.Gateway.Tests.Configuration;
 /// </summary>
 public sealed class AgentConfigMergerTests
 {
+    [Fact]
+    public void MemoryAgentConfig_DefaultPromptInjection_IsFull()
+    {
+        var memory = new MemoryAgentConfig();
+        GetPromptInjection(memory).ShouldBe("full");
+    }
+
     // -------------------------------------------------------------------------
     // Memory merge — full inherit (scenario 3)
     // -------------------------------------------------------------------------
@@ -90,6 +97,51 @@ public sealed class AgentConfigMergerTests
         result.Memory.ShouldNotBeNull();
         result.Memory!.Indexing.ShouldBe("manual");        // agent override wins
         result.Memory.Enabled.ShouldBeTrue();              // inherited from defaults
+    }
+
+    [Fact]
+    public void Merge_AgentOmitsMemoryPromptInjection_InheritsDefaults()
+    {
+        var defaultsMemory = new MemoryAgentConfig { Enabled = true, Indexing = "auto" };
+        SetPromptInjection(defaultsMemory, "full");
+        var defaults = new AgentDefaultsConfig
+        {
+            Memory = defaultsMemory
+        };
+        var agent = new AgentDefinitionConfig
+        {
+            Provider = "copilot",
+            Model = "gpt-4.1",
+            Memory = new MemoryAgentConfig { Enabled = true, Indexing = "auto" }
+        };
+        var raw = JsonDocument.Parse("""{"provider":"copilot","model":"gpt-4.1","memory":{"enabled":true}}""").RootElement;
+
+        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+
+        result.Memory.ShouldNotBeNull();
+        GetPromptInjection(result.Memory!).ShouldBe("full");
+    }
+
+    [Fact]
+    public void Merge_AgentOverridesMemoryPromptInjection_UsesAgentValue()
+    {
+        var defaultsMemory = new MemoryAgentConfig { Enabled = true, Indexing = "auto" };
+        SetPromptInjection(defaultsMemory, "full");
+        var agentMemory = new MemoryAgentConfig { Enabled = true, Indexing = "auto" };
+        SetPromptInjection(agentMemory, "summary");
+        var defaults = new AgentDefaultsConfig { Memory = defaultsMemory };
+        var agent = new AgentDefinitionConfig
+        {
+            Provider = "copilot",
+            Model = "gpt-4.1",
+            Memory = agentMemory
+        };
+        var raw = JsonDocument.Parse("""{"provider":"copilot","model":"gpt-4.1","memory":{"promptInjection":"summary"}}""").RootElement;
+
+        var result = AgentConfigMerger.Merge(defaults, agent, raw);
+
+        result.Memory.ShouldNotBeNull();
+        GetPromptInjection(result.Memory!).ShouldBe("summary");
     }
 
     // -------------------------------------------------------------------------
@@ -333,6 +385,7 @@ public sealed class AgentConfigMergerTests
     public void MergeMemory_DefaultsOnlyNoAgentKey_ReturnsCloneOfDefaults()
     {
         var defaults = new MemoryAgentConfig { Enabled = true, Indexing = "auto" };
+        SetPromptInjection(defaults, "full");
         var agentObj = JsonDocument.Parse("""{"provider":"copilot"}""").RootElement;
 
         var result = AgentConfigMerger.MergeMemory(defaults, null, agentObj);
@@ -340,6 +393,7 @@ public sealed class AgentConfigMergerTests
         result.ShouldNotBeNull();
         result!.Enabled.ShouldBeTrue();
         result.Indexing.ShouldBe("auto");
+        GetPromptInjection(result).ShouldBe("full");
         result.ShouldNotBeSameAs(defaults);  // must be a clone
     }
 
@@ -354,5 +408,19 @@ public sealed class AgentConfigMergerTests
         result.ShouldNotBeNull();
         result!.Enabled.ShouldBeTrue();
         result.IntervalMinutes.ShouldBe(15);
+    }
+
+    private static void SetPromptInjection(MemoryAgentConfig config, string value)
+    {
+        var property = typeof(MemoryAgentConfig).GetProperty("PromptInjection");
+        property.ShouldNotBeNull("MemoryAgentConfig.PromptInjection should exist for memory prompt-injection merge behavior.");
+        property!.SetValue(config, value);
+    }
+
+    private static string GetPromptInjection(MemoryAgentConfig config)
+    {
+        var property = typeof(MemoryAgentConfig).GetProperty("PromptInjection");
+        property.ShouldNotBeNull("MemoryAgentConfig.PromptInjection should exist for memory prompt-injection merge behavior.");
+        return property!.GetValue(config)?.ToString() ?? string.Empty;
     }
 }

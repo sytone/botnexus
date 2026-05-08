@@ -190,6 +190,67 @@ public sealed class EffectiveAgentConfigEndpointTests : IDisposable
         payload.Sources.ShouldContainKeyAndValue("memory.enabled", "agent");
     }
 
+    [Fact]
+    public async Task GetEffectiveAgentConfig_AgentInheritsMemoryPromptInjection_SourceIsInherited()
+    {
+        var path = WriteConfig("""
+        {
+          "agents": {
+            "defaults": {
+              "memory": {
+                "enabled": true,
+                "promptInjection": "full"
+              }
+            },
+            "bot-inherits-prompt-injection": {
+              "displayName": "Inheritor",
+              "model": "gpt-4o",
+              "memory": { "enabled": true }
+            }
+          }
+        }
+        """);
+
+        await using var factory = CreateFactory(path);
+        using var client = factory.CreateClient();
+
+        var payload = await GetEffective(client, "bot-inherits-prompt-injection");
+
+        payload.Sources.ShouldContainKeyAndValue("memory.promptInjection", "inherited");
+    }
+
+    [Fact]
+    public async Task GetEffectiveAgentConfig_AgentOverridesMemoryPromptInjection_SourceIsAgent()
+    {
+        var path = WriteConfig("""
+        {
+          "agents": {
+            "defaults": {
+              "memory": {
+                "enabled": true,
+                "promptInjection": "full"
+              }
+            },
+            "bot-overrides-prompt-injection": {
+              "displayName": "Overrider",
+              "model": "gpt-4o",
+              "memory": {
+                "enabled": true,
+                "promptInjection": "summary"
+              }
+            }
+          }
+        }
+        """);
+
+        await using var factory = CreateFactory(path);
+        using var client = factory.CreateClient();
+
+        var payload = await GetEffective(client, "bot-overrides-prompt-injection");
+
+        payload.Sources.ShouldContainKeyAndValue("memory.promptInjection", "agent");
+    }
+
     // ──────────────────────────────────────────────────────────────────────
     //  Scenario 5 — Unknown agentId → 404
     // ──────────────────────────────────────────────────────────────────────

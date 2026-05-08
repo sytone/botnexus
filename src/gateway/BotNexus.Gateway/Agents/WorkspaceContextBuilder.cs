@@ -11,8 +11,11 @@ namespace BotNexus.Gateway.Agents;
 public sealed class WorkspaceContextBuilder : IContextBuilder
 {
     private const string BootstrapFileName = "BOOTSTRAP.md";
+    private const string MemoryFileName = "MEMORY.md";
+    private const string MemoryPromptInjectionNone = "none";
+    private const string MemoryPromptInjectionFull = "full";
     private static readonly string[] DefaultPromptFiles =
-        ["AGENTS.md", "SOUL.md", "TOOLS.md", "BOOTSTRAP.md", "IDENTITY.md", "USER.md", "MEMORY.md"];
+        ["AGENTS.md", "SOUL.md", "TOOLS.md", "BOOTSTRAP.md", "IDENTITY.md", "USER.md", MemoryFileName];
     private readonly IAgentWorkspaceManager _workspaceManager;
     private readonly IFileSystem _fileSystem;
     private readonly IHookDispatcher? _hookDispatcher;
@@ -38,12 +41,16 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         ArgumentNullException.ThrowIfNull(descriptor);
 
         var workspacePath = ResolveWorkspaceDirectory(_workspaceManager.GetWorkspacePath(descriptor.AgentId));
-        var promptFiles = ResolvePromptFiles(descriptor);
+        var memoryPromptInjection = ResolveMemoryPromptInjection(descriptor.Memory?.PromptInjection);
+        var promptFiles = ResolvePromptFiles(descriptor, includeMemoryFile: !IsMemoryPromptInjectionNone(memoryPromptInjection));
         var contextFiles = (await LoadContextFilesAsync(_fileSystem, workspacePath, promptFiles, cancellationToken)).ToList();
         if (descriptor.SystemPromptFiles.Count == 0 && string.IsNullOrWhiteSpace(descriptor.SystemPromptFile))
         {
-            var recentMemoryFiles = await LoadRecentDailyMemoryFilesAsync(_fileSystem, workspacePath, descriptor.Memory?.Path, cancellationToken);
-            contextFiles.AddRange(recentMemoryFiles);
+            if (!IsMemoryPromptInjectionNone(memoryPromptInjection))
+            {
+                var recentMemoryFiles = await LoadRecentDailyMemoryFilesAsync(_fileSystem, workspacePath, descriptor.Memory?.Path, cancellationToken);
+                contextFiles.AddRange(recentMemoryFiles);
+            }
         }
 
         var prompt = SystemPromptBuilder.Build(new SystemPromptParams
@@ -63,6 +70,7 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             HeartbeatPrompt = descriptor.Heartbeat?.Enabled == true
                 ? descriptor.Heartbeat.Prompt ?? "Read HEARTBEAT.md if it exists and execute any pending tasks. If nothing needs attention, reply HEARTBEAT_OK."
                 : null,
+            MemoryPromptInjection = memoryPromptInjection,
             PromptMode = PromptMode.Full
         });
 
@@ -123,16 +131,39 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         catch (UnauthorizedAccessException) { }
     }
 
-    private static IReadOnlyList<string> ResolvePromptFiles(AgentDescriptor descriptor)
+    private static IReadOnlyList<string> ResolvePromptFiles(AgentDescriptor descriptor, bool includeMemoryFile)
     {
         if (descriptor.SystemPromptFiles.Count > 0)
-            return descriptor.SystemPromptFiles;
+            return FilterMemoryFiles(descriptor.SystemPromptFiles, includeMemoryFile);
 
         if (!string.IsNullOrWhiteSpace(descriptor.SystemPromptFile))
-            return [descriptor.SystemPromptFile];
+            return includeMemoryFile || !IsMemoryPromptFile(descriptor.SystemPromptFile) ? [descriptor.SystemPromptFile] : [];
 
-        return DefaultPromptFiles;
+        return includeMemoryFile ? DefaultPromptFiles : FilterMemoryFiles(DefaultPromptFiles, includeMemoryFile);
     }
+
+    private static IReadOnlyList<string> FilterMemoryFiles(IReadOnlyList<string> promptFiles, bool includeMemoryFile)
+    {
+        if (includeMemoryFile)
+            return promptFiles;
+
+        return promptFiles.Where(static file => !IsMemoryPromptFile(file)).ToList();
+    }
+
+    private static bool IsMemoryPromptFile(string? promptFile) =>
+        !string.IsNullOrWhiteSpace(promptFile) &&
+        Path.GetFileName(promptFile).Equals(MemoryFileName, StringComparison.OrdinalIgnoreCase);
+
+    private static string ResolveMemoryPromptInjection(string? promptInjection)
+    {
+        if (string.IsNullOrWhiteSpace(promptInjection))
+            return MemoryPromptInjectionFull;
+
+        return promptInjection.Trim();
+    }
+
+    private static bool IsMemoryPromptInjectionNone(string promptInjection) =>
+        promptInjection.Equals(MemoryPromptInjectionNone, StringComparison.OrdinalIgnoreCase);
 
     private static async Task<IReadOnlyList<ContextFile>> LoadRecentDailyMemoryFilesAsync(
         IFileSystem fileSystem,

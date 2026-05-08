@@ -43,12 +43,16 @@ public sealed record SystemPromptParams
     public string? OwnerIdentity { get; init; }
     public bool ReasoningTagHint { get; init; }
     public string? ReasoningLevel { get; init; }
+    public string? MemoryPromptInjection { get; init; }
 }
 
 public static class SystemPromptBuilder
 {
     private const string SilentReplyToken = "NO_REPLY";
     private const string SystemPromptCacheBoundary = "\n<!-- BOTNEXUS_CACHE_BOUNDARY -->\n";
+    private const string MemoryPromptInjectionFull = "full";
+    private const string MemoryPromptInjectionSummary = "summary";
+    private const string MemoryPromptInjectionNone = "none";
 
         public static string Build(SystemPromptParams @params)
     {
@@ -109,7 +113,10 @@ public static class SystemPromptBuilder
             .Add(new LambdaPromptSection(30, static context => buildOverridablePromptSection(null, buildExecutionBiasSection(GetGatewayData(context).IsMinimal))))
             .Add(new LambdaPromptSection(40, BuildSafetyAndCliSection))
             .Add(new LambdaPromptSection(50, static context => buildSkillsSection(GetGatewayData(context).Parameters.SkillsPrompt, GetGatewayData(context).ReadToolName)))
-            .Add(new LambdaPromptSection(60, static context => buildMemorySection(GetGatewayData(context).IsMinimal, GetGatewayData(context).NormalizedTools)))
+            .Add(new LambdaPromptSection(60, static context => buildMemorySection(
+                GetGatewayData(context).IsMinimal,
+                GetGatewayData(context).Parameters.MemoryPromptInjection,
+                GetGatewayData(context).NormalizedTools)))
             .Add(new LambdaPromptSection(70, BuildSelfUpdateSection, static context => GetGatewayData(context).HasGateway && !GetGatewayData(context).IsMinimal))
             .Add(new LambdaPromptSection(80, BuildModelAliasesSection))
             .Add(new LambdaPromptSection(90, BuildWorkspaceSection))
@@ -196,12 +203,40 @@ public static class SystemPromptBuilder
 
     public static IReadOnlyList<string> buildMemorySection(bool isMinimal, IReadOnlySet<string> availableTools)
     {
-        _ = availableTools;
+        return buildMemorySection(isMinimal, null, availableTools);
+    }
+
+    public static IReadOnlyList<string> buildMemorySection(bool isMinimal, string? promptInjectionMode, IReadOnlySet<string> availableTools)
+    {
         if (isMinimal)
             return [];
 
-        // TODO: Memory plugin prompt injection not yet implemented.
-        return [];
+        var mode = NormalizeMemoryPromptInjection(promptInjectionMode);
+        if (string.Equals(mode, MemoryPromptInjectionNone, StringComparison.Ordinal))
+            return [];
+
+        if (string.Equals(mode, MemoryPromptInjectionSummary, StringComparison.Ordinal))
+        {
+            return
+            [
+                "## Memory",
+                "Memory context is a snapshot loaded at session start and does not auto-refresh during this turn.",
+                BuildMemoryWriteGuidance(availableTools),
+                "Durable memory writes become available in future sessions after persistence.",
+                ""
+            ];
+        }
+
+        return
+        [
+            "## Memory",
+            "Memory context in this prompt is frozen at session start; do not assume memory files changed unless a new session starts.",
+            BuildMemoryWriteGuidance(availableTools),
+            "Use `MEMORY.md` as long-lived consolidated context and `memory/YYYY-MM-DD.md` as append-only daily notes.",
+            "Do not rewrite prior memory notes in-place during normal turns; append durable updates instead.",
+            "Durable memory writes appear in subsequent sessions after persistence and prompt rebuild.",
+            ""
+        ];
     }
 
     public static IReadOnlyList<string> buildUserIdentitySection(string? ownerLine, bool isMinimal)
@@ -622,6 +657,22 @@ public static class SystemPromptBuilder
     private static IReadOnlyList<string> NormalizePromptCapabilityIds(IEnumerable<string> capabilities)
         => PromptText.NormalizeCapabilityIds(capabilities);
 
+    private static string NormalizeMemoryPromptInjection(string? promptInjectionMode)
+    {
+        if (string.IsNullOrWhiteSpace(promptInjectionMode))
+            return MemoryPromptInjectionFull;
+
+        var normalized = promptInjectionMode.Trim().ToLowerInvariant();
+        return normalized is MemoryPromptInjectionSummary or MemoryPromptInjectionNone
+            ? normalized
+            : MemoryPromptInjectionFull;
+    }
+
+    private static string BuildMemoryWriteGuidance(IReadOnlySet<string> availableTools) =>
+        availableTools.Contains("memory_save")
+            ? "Use `memory_save` for durable memory writes."
+            : "Use the runtime's memory-write capability for durable memory writes when available.";
+
     private static bool IsDynamicContextFile(string pathValue) =>
         ContextFileOrdering.IsDynamic(pathValue);
 
@@ -631,4 +682,3 @@ public static class SystemPromptBuilder
     private static string GetContextFileBasename(string pathValue)
         => ContextFileOrdering.GetBasename(pathValue);
 }
-

@@ -38,7 +38,8 @@ public static class ContextFileOrdering
     /// <param name="pathValue">The path value.</param>
     /// <returns>The is dynamic result.</returns>
     public static bool IsDynamic(string pathValue) =>
-        string.Equals(GetBasename(pathValue), "heartbeat.md", StringComparison.Ordinal);
+        string.Equals(GetBasename(pathValue), "heartbeat.md", StringComparison.Ordinal) ||
+        IsDailyMemoryNote(pathValue);
 
     /// <summary>
     /// Executes normalize path.
