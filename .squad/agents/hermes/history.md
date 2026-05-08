@@ -167,3 +167,8 @@
 **Status:** Approved for code review and merge
 
 ---
+## 2026-05-07 — PR #181 main refresh + full validation (Hermes)
+- Worktree: Q:\repos\botnexus-pr-181 on fix/update-pull-cancel.
+- Merged latest origin/main into branch (merge commit b899e6cd).
+- Validation: dotnet build BotNexus.slnx --nologo --tl:off ✅, dotnet test BotNexus.slnx --nologo --tl:off ✅.
+- No PR-caused or merge-caused failures found locally; ready to push merge refresh and monitor PR checks.
