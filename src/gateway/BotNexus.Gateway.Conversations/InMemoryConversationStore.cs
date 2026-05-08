@@ -3,7 +3,7 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 
-namespace BotNexus.Gateway.Sessions;
+namespace BotNexus.Gateway.Conversations;
 
 /// <summary>
 /// In-memory conversation store for development and testing.

@@ -1,8 +1,8 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
-using BotNexus.Gateway.Sessions;
+using BotNexus.Gateway.Conversations;
 
-namespace BotNexus.Gateway.Tests;
+namespace BotNexus.Gateway.Conversations.Tests;
 
 /// <summary>
 /// Unit tests for <see cref="InMemoryConversationStore"/>.
@@ -219,3 +219,4 @@ public sealed class InMemoryConversationStoreTests
         summaries[0].AgentId.ShouldBe("summary-agent");
     }
 }
+

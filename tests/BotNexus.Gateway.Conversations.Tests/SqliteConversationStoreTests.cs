@@ -1,10 +1,10 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
-using BotNexus.Gateway.Sessions;
+using BotNexus.Gateway.Conversations;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace BotNexus.Gateway.Tests;
+namespace BotNexus.Gateway.Conversations.Tests;
 
 /// <summary>
 /// Unit tests for <see cref="SqliteConversationStore"/>.
@@ -348,3 +348,4 @@ public sealed class SqliteConversationStoreTests
         }
     }
 }
+

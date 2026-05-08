@@ -8,6 +8,7 @@
 ## Core Context
 
 **Phases 1-11 Complete, Phase 12 Wave 1 Initiated.** Build green, 337 tests passing. Bender leads runtime architecture: session lifecycle, queueing, channel dispatch. Phase 12 Wave 1 assignments: Auth bypass fix (P0), WebUI channel adapter, rate limiting, correlation IDs, Telegram steering, SQLite store. Key recent: dynamic extension loader, Telegram Bot API implementation, streaming/thinking support. Active on gateway sprint: session reconnection, suspend/resume, TUI steering, bounded queueing.
+- **PR #179 (2026-05-07): Memory tool surface fix — Removed MemoryStoreTool from gateway production exposure. Consolidated to memory_save, memory_search, memory_get per AGENTS.md. Commit: 7a4785a6**
 
 ---
 
@@ -196,3 +197,32 @@
 
 **Orchestration Log:** .squad/orchestration-log/2026-05-07T01-07-16Z-bender.md
 
+## 2026-05-07 — OpenClaw Memory Wave 1 Initial Implementation (Runtime Implementation)
+
+**Role:** Runtime seams mapping and initial Wave 1 delivery  
+**Branch:** feature/openclaw-memory-alignment  
+**Status:** REJECTED (blocking issues B1, B2) → Remediated by Farnsworth  
+
+**Initial Implementation (Commits e21e9e38, 494804c8):**
+- Wave 1 contracts fully implemented (1A): memory_save tool, context loading, config mapping
+- Runtime tool delivery (1B): memory_save with daily-note routing
+- Gateway context wiring (1C): MEMORY.md + recent notes integration
+- Test coverage (1D, partial): 739 new lines across 9 files
+
+**Architecture Assessment (Leela Review):**
+- ✅ Scope correctness: No premature Wave 2/3 abstractions
+- ✅ Path safety: EnsureWithinRoot guard, cross-platform handling, traversal validation
+- ❌ **B1 (HIGH severity):** MemorySaveTool reimplemented filesystem logic instead of delegating through workspace manager (DIP + DRY violation)
+- ❌ **B2 (HIGH severity):** Daily note loading duplicated with behavioral divergence; DailyMemoryNote + RecentMemoryNotes are dead code
+
+**Rejection Outcome (Leela's leela-memory-wave1-review.md):**
+- **REJECT** — both blocking issues require remediation before merge
+- Strict lockout protocol applied: Bender cannot revise rejected work
+- Remediation delegated to Farnsworth
+
+**Contribution Legacy:**
+- Initial scope was correct for Wave 1
+- Path safety design and traversal validation concepts carried forward to remediation
+- Foundation for Farnsworth's clean fix (58d03d13)
+
+**Learning:** Strict rejection protocol ensures architectural rigor — rejected work delegates to fresh implementer, prevents scope drift from remediation.

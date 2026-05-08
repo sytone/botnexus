@@ -211,12 +211,15 @@ Files are concatenated in the order specified. Paths are relative to `~/.botnexu
 
 **Default Load Order** (if `systemPromptFiles` is empty):
 
-1. `AGENTS.md` — Multi-agent patterns
+1. `AGENTS.md` — Multi-agent patterns and memory guidance
 2. `SOUL.md` — Personality and values
 3. `TOOLS.md` — Tool usage guidelines
 4. `BOOTSTRAP.md` — Initialization
 5. `IDENTITY.md` — Role and expertise
 6. `USER.md` — User preferences
+7. `MEMORY.md` — Long-term distilled memory
+
+Recent daily memory notes (`memory/{today}.md` and `memory/{yesterday}.md`) are also auto-loaded when using the default prompt file list.
 
 ### Tool Assignment
 
@@ -312,12 +315,18 @@ Enable persistent memory across sessions:
 {
   "memory": {
     "enabled": true,
-    "maxEntries": 100
+    "path": "memory"
   }
 }
 ```
 
-Memory allows agents to recall information from previous conversations.
+When enabled, agents get a `memory_save` tool that writes plain Markdown notes:
+
+- **Daily notes** (`memory/YYYY-MM-DD.md`): Call `memory_save(content)` to append to today's daily note
+- **Specific files**: Call `memory_save(content, file_path="topic.md")` to append to a named file under the memory root
+- **Durable memory** (`MEMORY.md`): Consolidated long-term facts, loaded into every session
+
+The `path` setting overrides the default memory directory (default: `memory/` under the agent workspace). Today's and yesterday's daily notes are automatically included in the system prompt.
 
 ### Soul Sessions
 
@@ -601,7 +610,7 @@ Remove an agent by:
 2. Removing its JSON file from `~/.botnexus/agents/`
 3. Configuration reload applies changes
 
-Session history is preserved in `~/.botnexus/sessions.sqlite`.
+Session history is preserved in `~/.botnexus/sessions.sqlite` (session data only — agent memory is stored as workspace Markdown files).
 
 ---
 

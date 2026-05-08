@@ -286,6 +286,7 @@ src/
 │   ├── BotNexus.Gateway.Abstractions        # Gateway contracts and interfaces
 │   ├── BotNexus.Gateway.Contracts           # Shared DTOs
 │   ├── BotNexus.Gateway.Sessions            # Session persistence
+│   ├── BotNexus.Gateway.Conversations       # Conversation persistence and routing
 │   ├── BotNexus.Gateway.Channels            # Channel adapter base classes
 │   └── BotNexus.Cli                         # CLI tool (botnexus command)
 ├── extensions/
