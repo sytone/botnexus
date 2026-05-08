@@ -220,3 +220,8 @@
 - Foundation for Farnsworth's clean fix (58d03d13)
 
 **Learning:** Strict rejection protocol ensures architectural rigor — rejected work delegates to fresh implementer, prevents scope drift from remediation.
+
+## 2026-05-07 16:53 — PR #185 Merge Refresh
+- Used dedicated worktree `Q:\repos\botnexus-pr-185` for PR branch `refactor/gateway-conversations`.
+- Fetched `origin/main` and `origin/refactor/gateway-conversations`, then merged `origin/main` into the PR branch with no conflicts.
+- Verified runtime stability with solution build: `dotnet build BotNexus.slnx --nologo --tl:off` (pass, warnings only).
