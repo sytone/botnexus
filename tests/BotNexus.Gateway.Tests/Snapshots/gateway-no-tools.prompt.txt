@@ -38,7 +38,7 @@ To manage the Gateway daemon service (start/stop/restart):
 - botnexus gateway restart
 If unsure, ask the user to run `botnexus help` (or `botnexus gateway --help`) and paste the output.
 ## Workspace
-Your working directory is: /tmp/repo/workspace
+Your working directory is: C:\Users\jobullen\AppData\Local\Temp\repo\workspace
 Treat this directory as the single global workspace for file operations unless explicitly instructed otherwise.
 ## Workspace Files (injected)
 These user-editable files are loaded by BotNexus and included below in Project Context.

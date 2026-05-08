@@ -63,12 +63,12 @@ Prefer aliases when specifying model overrides; full provider/model is also acce
 - smart => gpt-5
 If you need the current date, time, or day of week, run session_status (📊 session_status).
 ## Workspace
-Your working directory is: /tmp/repo/workspace
+Your working directory is: C:\Users\jobullen\AppData\Local\Temp\repo\workspace
 Treat this directory as the single global workspace for file operations unless explicitly instructed otherwise.
 Note one
 Note two
 ## Documentation
-BotNexus docs: /tmp/repo/docs
+BotNexus docs: C:\Users\jobullen\AppData\Local\Temp\repo\docs
 Mirror: https://docs.botnexus.ai
 Source: https://github.com/botnexus/botnexus
 Community: https://discord.com/invite/clawd

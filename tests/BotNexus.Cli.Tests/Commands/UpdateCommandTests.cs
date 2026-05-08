@@ -124,6 +124,10 @@ public class UpdateCommandTests
     public async Task Update_with_non_git_directory_returns_nonzero()
     {
         var pm = Substitute.For<IGatewayProcessManager>();
+        pm.StopAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(new GatewayStopResult(true, null));
+        pm.StartAsync(Arg.Any<GatewayStartOptions>(), Arg.Any<CancellationToken>())
+            .Returns(new GatewayStartResult(false, null, "not expected in this test"));
         var cmd = new UpdateCommand(pm);
 
         var tempDir = Path.Combine(Path.GetTempPath(), $"botnexus-update-test-{Guid.NewGuid():N}");

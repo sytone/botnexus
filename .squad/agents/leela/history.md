@@ -7,6 +7,13 @@
 
 ## Core Context
 
+**Summary of Prior Work (2026-04-01 to 2026-05-07):**
+- **Phases 1-7A Complete. Full Design Review Complete. Phase 12 Extension-Commands Grade B+.** Build green (0 errors), 276-337 tests passing. Core systems: Agent registry/supervisor/cross-agent calling, WebSocket/TUI/Telegram channel adapters, file + in-memory session stores, suspend/resume, paginated history, bounded queueing, OAuth + API key auth, OpenAI/Anthropic/Copilot providers, WebUI dashboard, OpenAPI spec.
+- **Carried Findings (Sprint 7B):** `Path.HasExtension` auth bypass, StreamAsync task leak, SessionHistoryResponse extraction, GatewaySession SRP monitoring.
+- **Sub-Agent Completion Wake Bug Analysis (2026-07-22):** `InternalChannelAdapter` lacks `IStreamEventChannelAdapter` interface. Race window between follow-up drain and status transition. Correct wake mechanism: `DispatchAsync` (not `IsRunning` branch). CronTrigger creates ephemeral sessions.
+- **Gateway Decoupling (Farnsworth Signal):** Implemented `IAgentToolContributor` runtime contract. Removed compile-time extension references. Dependency direction restored.
+- **Conversation Routing Phase 1 Design Review:** Root cause analysis (Hub always passes null conversationId). Dual routing issue identified. Phase 1 fix (pass conversationId through Hub). Phase 2 plan (remove router from Hub, pure relay).
+- **Active Stream:** Extension commands, gateway lifecycle management, unified config + agent directory architecture, provider filtering, model allowlists.
 ## 2026-05-07 — Conversation Project Extraction: Architectural Design Review
 
 **Status:** ✅ Complete (Design Approved, Implementation Complete)  
@@ -45,13 +52,31 @@
 - Comprehensive integration tests (39 new tests in Sprint 7A)
 - **PR #179 (2026-05-07): Memory tool surface fix — Approved deletion of MemoryStoreTool; consolidated to canonical tools (memory_save, memory_search, memory_get). Commit: 44788462**
 
-**Carried Findings (Sprint 7B):**
-- `Path.HasExtension` auth bypass in `GatewayAuthMiddleware`
-- StreamAsync background task leak in providers
-- SessionHistoryResponse should move to Abstractions.Models
-- Monitor GatewaySession SRP — extract replay buffer if it grows further
+---
 
-**Phase 7 Focus:** Resilience (reconnection, pagination, queueing), channel consolidation, test hardening, observability.
+## Session History
+
+**Status:** ✅ Complete — **APPROVED**  
+**Session:** Broader dispatching cleanup (Phase 2) comprehensive architectural review  
+
+**Review Scope:** 
+- Farnsworth: Dispatching layer contracts + adapter
+- Hermes: Dispatcher routing regression coverage
+- Bender: Gateway runtime rewire via dispatcher
+
+**Review Findings:**
+1. ✅ **Architecture** — Hub acts as event relay; proper separation of concerns
+2. ✅ **Dependency Direction** — SignalR → Dispatching → Conversations → Contracts → Domain (correct inbound flow)
+3. ✅ **Contracts** — All justified, no over-abstraction; `IConversationDispatcher` single-method, well-motivated
+4. ✅ **Behavior Preservation** — Non-default routing + default fallback both working; channel metadata preserved
+5. ✅ **Test Adequacy** — Unit + integration + real-impl; 44/44 gateway tests + Conversations.Tests passing
+6. ✅ **Incremental Compatibility** — Back-compat fallback in GatewayHost for non-dispatcher callers
+
+**Advisory Notes (Non-Blocking):**
+- Remove pre-existing `[Obsolete]` on `JoinSession`/`LeaveSession` (repo convention: delete dead code)
+- Consider focused unit tests for `DefaultConversationDispatcher` edge cases (null handling, missing store entries)
+
+**Verdict: APPROVED — Ship it.**
 
 ---
 
@@ -183,6 +208,69 @@ Farnsworth has implemented your recommendation to decouple Gateway from compile-
 
 **Orchestration Log:** .squad/orchestration-log/2026-05-07T01-07-16Z-leela.md
 
+## 2026-05-07 — Conversation Routing Architecture Design Review (Lead)
+
+**Status:** ✅ Complete — decision approved, ready for implementation  
+**Session:** Design review for conversation routing bug + architectural decoupling
+
+**Your Role:** Lead/Architect. Root cause analysis, architectural decision, wave breakdown.
+
+**Bug Root Cause:**
+`GatewayHub.ResolveOrCreateSessionAsync` (line 582-632) always calls `IConversationRouter.ResolveInboundAsync` with `conversationId: null`, regardless of what the client sends. This causes:
+1. Hub resolves to default conversation's session (Session A) and subscribes client to `session:A` group
+2. GatewayHost re-routes using actual `conversationId` → processes on Session B
+3. Response goes to `session:B` group — client isn't listening → appears as "only responds on default"
+
+**Architectural Issues Identified:**
+1. **Dual routing**: Both GatewayHub and GatewayHost independently call `IConversationRouter` — two owners for one concern
+2. **Session pre-resolution**: Hub resolves session before dispatch; GatewayHost may redirect to different session
+3. **SignalR group subscription timing**: Client subscribes before final session is known
+
+**Decisions Made:**
+1. **Phase 1 (Bender, 1h):** Pass `conversationId` through `GatewayHub.ResolveOrCreateSessionAsync` — fixes the immediate bug
+2. **Phase 2 (Farnsworth, 3h):** Remove `IConversationRouter` dependency from GatewayHub entirely. Add `DispatchResult` return type to `IChannelDispatcher.DispatchAsync`. Hub becomes a pure event relay.
+3. **Phase 3:** No changes needed for Telegram/TUI — already correctly dispatch via `ChannelAdapterBase`
+
+**Key File Paths:**
+- Bug location: `src/extensions/BotNexus.Extensions.Channels.SignalR/GatewayHub.cs:582-594`
+- Correct routing: `src/gateway/BotNexus.Gateway/GatewayHost.cs:261-280`
+- Conversation router: `src/gateway/BotNexus.Gateway.Conversations/DefaultConversationRouter.cs:32-63`
+- Client send: `src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Services/AgentInteractionService.cs:36-73`
+- SignalR response delivery: `src/extensions/BotNexus.Extensions.Channels.SignalR/SignalRChannelAdapter.cs:43-109`
+
+**Learnings:**
+- Conversation project extraction (previous decision) was completed — `BotNexus.Gateway.Conversations` exists with stores + router
+- The `BotNexus.Gateway.Conversations` project exists and has proper contracts in `Gateway.Contracts/Conversations/`
+- When explicit `conversationId` is used in `DefaultConversationRouter`, the `OriginatingBinding` is null (direct path doesn't resolve bindings)
+- User has 5 conversations for quill agent in SQLite store (`sessions.db`)
+- `GatewayEventHandler` on client side uses `ResolveConversationId` which falls back to `ActiveConversationId` — this masks the bug since events from the wrong session can't be mapped
+
+---
+
+### 2026-05-07 — Conversation Routing Architecture Design Review
+
+- **Role:** Design ceremony lead; architectural oversight for conversation routing bug
+- **Issue:** Non-default conversations receive no response; agent always replies on default conversation
+- **Root Cause:** Dual routing mismatch in GatewayHub (passes conversationId: null → default session) vs GatewayHost (passes correct conversationId → target session); client subscribes to wrong SignalR group
+- **Decision:** Two-phase fix:
+  - **Phase 1 (Bender):** Pass conversationId through GatewayHub to conversation router (low-risk hotfix)
+  - **Phase 2 (Farnsworth):** Extract conversation/routing layer into BotNexus.Gateway.Dispatching, decouple GatewayHub dependencies (architectural cleanup)
+- **Also Extracted:** Separate decision for conversation project extraction (user request; no bug link)
+- **Deliverables:** Design spec + Phase 1/2 breakdown in decisions.md
+- **Wave Plan:** Bender Phase 1 → Hermes Phase 1 tests → Farnsworth Phase 2 → Hermes Phase 2 tests
+
+## Learnings
+
+### Phase 1 Routing Review (2026-05-07)
+
+- When a hub method has an optional parameter that is forwarded to a routing layer, always verify the parameter is actually passed — default values silently mask bugs when callers provide non-null.
+- Integration test assertions should match the *intended* behavior, not the *observed* (buggy) behavior. The original `ShouldBe(defaultSessionId)` was documenting the bug as if it were spec.
+
+### Phase 2 Dispatching Cleanup Review (2026-05-08)
+
+- A single-method orchestration interface (`IConversationDispatcher`) is the right seam between transport adapters and conversation/session resolution — it prevents dual-routing bugs without over-abstracting.
+- When a hub retains a dependency on a lower-level interface (`IConversationRouter`) solely for lifecycle cleanup (disconnect muting), document why it's acceptable rather than silently coupling. Extract to a dedicated lifecycle interface if the usage grows.
+- Back-compat paths (`else if router is not null`) in hosts are acceptable during incremental migration but should have a tracking item for removal once all callers inject the new contract.
 ---
 
 ## 2026-05-07 — OpenClaw Memory Model Architecture Assessment (Team Coordination)

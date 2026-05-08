@@ -2,7 +2,7 @@
 
 ## Git Workflow
 
-- **No worktrees.** Do not use `git worktree` in this repo. Work directly on the current branch. Skip the `worktree` skill entirely.
+- **Worktrees are allowed when explicitly requested.** If a user asks you to create or use a worktree, do so. Otherwise, work directly on the current branch without creating a worktree.
 
 ## Dev Environment
 
