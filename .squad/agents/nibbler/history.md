@@ -77,6 +77,37 @@
 
 - Sub-agent completion delivery mechanism changed from `FollowUpAsync` (queue-based) to `DispatchAsync` (channel-based). Feature docs lagged behind. Always check feature-level docs when the delivery mechanism changes — they drift faster than code.
 - Archived specs should NOT be updated to reflect post-delivery changes — they represent the design at the time of the decision.
+## 2026-05-07T01:07:16Z — Issue #24 Tool Timeout Configuration: Consistency Review (Reviewer)
+
+**Status:** ✅ Complete — Documentation Verified  
+**Role:** Consistency Reviewer  
+**PR:** https://github.com/sytone/botnexus/pull/177
+
+**Scope:** Consistency audit routed to Nibbler because config/runtime contract changed. Verifies documentation alignment and catches downstream drift.
+
+**Your Work:**
+1. **Config Reference Documentation:**
+   - Updated .squad/decisions.md to document ToolTimeoutSeconds config reference
+   - Documented config path: gents[*].toolTimeoutSeconds + gents.defaults.toolTimeoutSeconds
+   - Commit: 0668e38c
+
+2. **Session Store Documentation Verification:**
+   - Reviewed session-store related docs from earlier work
+   - User clarified earlier session-store docs commit was intentional
+   - Restored documentation commit d13f1c07
+
+3. **Cross-Agent Sync Check:**
+   - Verified no other agents affected by config contract changes
+   - Confirmed metadata-bag approach doesn't require updates elsewhere
+   - Minimal surface area change (only timeout metadata key added)
+
+**Key Findings:**
+- Documentation kept in sync with implementation
+- No drift between code and recorded decisions
+- Future cleanup opportunity: if more options flow through metadata, consider first-class AgentDescriptor fields
+
+**Orchestration Log:** .squad/orchestration-log/2026-05-07T01-07-16Z-nibbler.md
+
 
 ---
 

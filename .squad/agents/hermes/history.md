@@ -147,6 +147,35 @@
 **Status:** Approved for code review and merge
 
 ---
+## 2026-05-07T01:07:16Z — Issue #24 Tool Timeout Configuration: QA Lead (Tester)
+
+**Status:** ✅ Complete — Test Contracts Verified  
+**Role:** Tester / QA Lead  
+**PR:** https://github.com/sytone/botnexus/pull/177
+
+**Scope:** QA leadership for Issue #24 multi-agent Phase 1 delivery. Hermes routed to lock test contracts before Bender implementation and verify coverage after.
+
+**Your Work:**
+1. **TDD Test Contracts (Pre-Implementation):**
+   - Locked 3 regression contracts before implementation started
+   - Contract 1: Platform config preserves per-agent + defaults ToolTimeoutSeconds
+   - Contract 2: In-process agent creation propagates timeout into AgentOptions.ToolTimeout
+   - Contract 3: AgentCore timeout behavior keeps passing (structured error + continued execution)
+
+2. **Targeted Test Implementation (Commit d54e18d6):**
+   - 3 new regression tests: config wiring, defaults inheritance, event emission
+   - Coverage for PlatformConfig → AgentDescriptor.Metadata → AgentOptions
+   - All 24 issue-related tests passing (9 AgentCore + 15 Gateway)
+
+3. **QA Verification (Post-Implementation):**
+   - Approved minimal implementation scope
+   - Validated all 24 targeted tests passing
+   - Noted unrelated baseline failures (pre-existing, outside touched files)
+
+**Test Philosophy Applied:** Unit tests for config logic, integration tests for propagation, reflection-based tests preserve production API shape.
+
+**Orchestration Log:** .squad/orchestration-log/2026-05-07T01-07-16Z-hermes.md
+
 
 ### 2026-05-07 — Phase 1 Regression Coverage: Conversation Routing Tests
 

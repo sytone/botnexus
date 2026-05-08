@@ -220,6 +220,48 @@
 **PR:** https://github.com/sytone/botnexus/pull/178
 
 ---
+## 2026-05-07T01:07:16Z — Issue #24 Tool Timeout Configuration: Runtime Implementation (Runtime Dev)
+
+**Status:** ✅ Complete — Implementation Ready for Merge  
+**Role:** Runtime Dev / Implementation Engineer  
+**PR:** https://github.com/sytone/botnexus/pull/177
+
+**Scope:** Multi-agent Phase 1 delivery. Bender routed to wire configurable timeouts from platform config through descriptor metadata into agent runtime options.
+
+**Your Work:**
+1. **Config Model Extension:**
+   - Added nullable int? fields to AgentDefinitionConfig.ToolTimeoutSeconds
+   - Added nullable int? fields to AgentDefaultsConfig.ToolTimeoutSeconds
+   - Implements backward-compatible zero-config defaults
+
+2. **Merger & Inheritance:**
+   - Added MergeToolTimeoutSeconds() to AgentConfigMerger
+   - Follows existing merge pattern: explicit agent value → fallthrough to defaults
+   - Consistent with MergeToolIds precedent
+
+3. **Descriptor Metadata Flow:**
+   - Updated PlatformConfigAgentSource to extract timeout from config
+   - Inline gents.defaults fallback for test configs bypassing deserialization
+   - Metadata key: Metadata["toolTimeoutSeconds"]
+
+4. **Runtime Strategy Implementation:**
+   - Added ResolveToolTimeout() in InProcessIsolationStrategy
+   - TryConvertPositiveSeconds() defensive conversion for JSON types (int, long, double, string, JsonElement)
+   - Invalid values logged (Warning) + graceful fallback to AgentCore 120s default
+   - Debug log on successful application with agent ID and seconds
+
+5. **Test Coverage (Commit ff0ce8cc):**
+   - 3 regression tests: per-agent config, defaults inheritance, timeout event emission
+   - All 24 issue-related tests passing (targeted + full AgentCore/Gateway suite)
+   - Full build green during implementation
+
+**Key Decisions Implemented:**
+- Metadata-bag approach minimizes descriptor contract surface expansion
+- Defensive JSON conversion handles all realistic types
+- Logging structured for runtime diagnostics
+
+**Orchestration Log:** .squad/orchestration-log/2026-05-07T01-07-16Z-bender.md
+
 ### 2026-05-07 — CLI update git-pull cancellation handling
 - UpdateCommand.RunGitPullAsync now drains redirected stdout/stderr while waiting, preventing git pull deadlocks when verbose output is off.
 - Added explicit cancellation handling: cancelled pulls return exit code 130, kill the git process tree best-effort, and skip gateway stop/start.
