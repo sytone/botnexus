@@ -260,3 +260,9 @@
 - Synced fix/24-tool-timeouts with latest origin/main in dedicated worktree Q:\repos\botnexus-pr-184.
 - Full validation in worktree: dotnet build BotNexus.slnx --nologo --tl:off ✅, dotnet test BotNexus.slnx --nologo --tl:off ✅.
 - gh pr checks 184 reviewed after push to confirm current check state.
+
+## 2026-05-08T10:59-07:00 — PR #184 conflict refresh after PR #181 merge
+
+- Reused dedicated worktree `Q:\repos\botnexus-pr-184`, fetched `origin/main` and `origin/fix/24-tool-timeouts`, and merged latest main into the PR branch.
+- Merge completed without manual conflict edits; retained merged updates in CLI timeout handling and related gateway/session test coverage.
+- Full validation in worktree passed: `dotnet build BotNexus.slnx --nologo --tl:off` and `dotnet test BotNexus.slnx --nologo --tl:off`.

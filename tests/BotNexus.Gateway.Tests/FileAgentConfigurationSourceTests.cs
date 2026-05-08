@@ -333,9 +333,10 @@ public sealed class FileAgentConfigurationSourceTests : IDisposable
         Directory.CreateDirectory(watchDirectory);
         var source = new FileAgentConfigurationSource(watchDirectory, new ListLogger<FileAgentConfigurationSource>(), new FileSystem());
         var callback = new TaskCompletionSource<IReadOnlyList<AgentDescriptor>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        IDisposable? watcher = null;
         try
         {
-            using var watcher = source.Watch(descriptors => callback.TrySetResult(descriptors));
+            watcher = source.Watch(descriptors => callback.TrySetResult(descriptors));
 
             var configPath = Path.Combine(watchDirectory, "agent-a.json");
             File.WriteAllText(
@@ -359,8 +360,20 @@ public sealed class FileAgentConfigurationSourceTests : IDisposable
         }
         finally
         {
-            if (Directory.Exists(watchDirectory))
-                Directory.Delete(watchDirectory, recursive: true);
+            watcher?.Dispose();
+            for (var i = 0; i < 3; i++)
+            {
+                try
+                {
+                    if (Directory.Exists(watchDirectory))
+                        Directory.Delete(watchDirectory, recursive: true);
+                    break;
+                }
+                catch (IOException) when (i < 2)
+                {
+                    await Task.Delay(100);
+                }
+            }
         }
     }
 
@@ -415,4 +428,3 @@ public sealed class FileAgentConfigurationSourceTests : IDisposable
         }
     }
 }
-
