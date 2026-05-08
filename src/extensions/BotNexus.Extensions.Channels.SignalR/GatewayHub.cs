@@ -4,6 +4,7 @@ using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Dispatching;
 using AgentId = BotNexus.Domain.Primitives.AgentId;
 using ChannelKey = BotNexus.Domain.Primitives.ChannelKey;
 using ParticipantType = BotNexus.Domain.Primitives.ParticipantType;
@@ -35,6 +36,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     private readonly IActivityBroadcaster _activity;
     private readonly ISessionCompactor _compactor;
     private readonly ISessionWarmupService _warmup;
+    private readonly IConversationDispatcher _conversationDispatcher;
     private readonly IConversationRouter _conversationRouter;
     private readonly IOptionsMonitor<CompactionOptions> _compactionOptions;
     private readonly ILogger<GatewayHub> _logger;
@@ -47,6 +49,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         IActivityBroadcaster activity,
         ISessionCompactor compactor,
         ISessionWarmupService warmup,
+        IConversationDispatcher conversationDispatcher,
         IConversationRouter conversationRouter,
         IOptionsMonitor<CompactionOptions> compactionOptions,
         ILogger<GatewayHub> logger)
@@ -58,6 +61,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         _activity = activity;
         _compactor = compactor;
         _warmup = warmup;
+        _conversationDispatcher = conversationDispatcher;
         _conversationRouter = conversationRouter;
         _compactionOptions = compactionOptions;
         _logger = logger;
@@ -181,9 +185,13 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         var typedChannelType = NormalizeChannelKey(channelType);
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
 
-        // Always resolve via the simple binding path (agentId as address, null thread).
-        // The ConversationId on the dispatched message will direct the router to the right conversation.
-        var session = await ResolveOrCreateSessionAsync(typedAgentId, typedChannelType);
+        var normalizedConversationId = string.IsNullOrWhiteSpace(conversationId)
+            ? null
+            : conversationId.Trim();
+
+        // Resolve/create the session using the same conversation context as the inbound message
+        // so non-default conversations stay aligned between hub subscriptions and gateway routing.
+        var session = await ResolveOrCreateSessionAsync(typedAgentId, typedChannelType, normalizedConversationId);
         await SubscribeInternalAsync(session.SessionId);
 
         var connectionId = Context.ConnectionId;
@@ -191,7 +199,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             typedAgentId, typedChannelType, session.SessionId, connectionId, content.Length > 50 ? content[..50] + "..." : content);
 
         _ = SafeDispatchAsync(
-            () => DispatchMessageAsync(typedAgentId, session.SessionId, content, "message", connectionId, conversationId),
+            () => DispatchMessageAsync(typedAgentId, session.SessionId, content, "message", connectionId, normalizedConversationId),
             typedAgentId,
             session.SessionId);
 
@@ -579,21 +587,34 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             Context.ConnectionAborted);
     }
 
-    private async Task<GatewaySession> ResolveOrCreateSessionAsync(AgentId agentId, ChannelKey channelType)
+    private async Task<GatewaySession> ResolveOrCreateSessionAsync(
+        AgentId agentId,
+        ChannelKey channelType,
+        string? conversationId = null)
     {
-        // Conversation-first routing: resolve/create via IConversationRouter.
+        // Conversation-first routing: resolve/create via IConversationDispatcher.
         // Use agentId as the channel address so every connection from the same agent
         // routes to the same portal conversation, regardless of SignalR connection ID.
         var channelAddress = ChannelAddress.From(agentId.Value);
-        var routingResult = await _conversationRouter.ResolveInboundAsync(
+        var context = new InboundMessageContext(
             agentId,
-            channelType,
-            channelAddress,
-            threadId: null,
-            conversationId: null,
-            Context.ConnectionAborted);
+            new InboundMessage
+            {
+                ChannelType = channelType,
+                ChannelAddress = channelAddress,
+                SenderId = Context.ConnectionId,
+                TargetAgentId = agentId.Value,
+                Content = string.Empty,
+                ConversationId = conversationId
+            },
+            new ChannelSource(
+                channelType,
+                channelAddress,
+                Context.ConnectionId),
+            conversationId);
+        var dispatchResult = await _conversationDispatcher.DispatchAsync(context, Context.ConnectionAborted);
 
-        var session = await _sessions.GetOrCreateAsync(routingResult.SessionId, agentId, Context.ConnectionAborted);
+        var session = await _sessions.GetOrCreateAsync(dispatchResult.Resolution.SessionId, agentId, Context.ConnectionAborted);
 
         var needsSave = false;
         if (session.Status == SessionStatus.Expired)

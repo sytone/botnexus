@@ -127,10 +127,10 @@ public sealed class SystemPromptBuilderSnapshotTests
 
     private static string Normalize(string value)
     {
-        var normalized = value.Replace("\r\n", "\n").Replace('\r', '\n');
-        normalized = Regex.Replace(normalized, @"(?m)^Your working directory is: .+$", "Your working directory is: <WORKSPACE_DIR>");
-        normalized = Regex.Replace(normalized, @"(?m)^BotNexus docs: .+$", "BotNexus docs: <DOCS_DIR>");
-        return normalized.TrimEnd('\n');
+        var normalized = value.Replace("\r\n", "\n").Replace('\r', '\n').TrimEnd('\n');
+        normalized = Regex.Replace(normalized, @"^Your working directory is: .*$", "Your working directory is: <workspace>", RegexOptions.Multiline);
+        normalized = Regex.Replace(normalized, @"^BotNexus docs: .*$", "BotNexus docs: <docs-path>", RegexOptions.Multiline);
+        return normalized;
     }
 
     private static string FindRepositoryRoot()

@@ -66,11 +66,11 @@ public sealed class SystemPromptBuilderSnapshotTests
 
     private static string Normalize(string value)
     {
-        var normalized = value.Replace("\r\n", "\n").Replace('\r', '\n');
-        normalized = Regex.Replace(normalized, @"(?m)^- OS: .+$", "- OS: <OS>");
-        normalized = Regex.Replace(normalized, @"(?m)^- Working directory: .+$", "- Working directory: <WORKING_DIRECTORY>");
-        normalized = Regex.Replace(normalized, @"(?m)^Current working directory: .+$", "Current working directory: <WORKING_DIRECTORY>");
-        return normalized.TrimEnd('\n');
+        var normalized = value.Replace("\r\n", "\n").Replace('\r', '\n').TrimEnd('\n');
+        normalized = Regex.Replace(normalized, @"^- OS: .*$", "- OS: <os>", RegexOptions.Multiline);
+        normalized = Regex.Replace(normalized, @"^- Working directory: .*$", "- Working directory: <working-directory>", RegexOptions.Multiline);
+        normalized = Regex.Replace(normalized, @"^Current working directory: .*$", "Current working directory: <working-directory>", RegexOptions.Multiline);
+        return normalized;
     }
 
     private static string FindRepositoryRoot()

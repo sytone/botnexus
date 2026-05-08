@@ -1,11 +1,16 @@
 using BotNexus.Extensions.Mcp.Protocol;
 using BotNexus.Extensions.Mcp.Transport;
+using System.Diagnostics;
+using System.Reflection;
 using System.Runtime.InteropServices;
 
 namespace BotNexus.Extensions.Mcp.Tests.Transport;
 
 public sealed class StdioTransportRobustnessTests
 {
+    private static string EscapeForPowerShellSingleQuotedString(string value)
+        => value.Replace("'", "''", StringComparison.Ordinal);
+
     // Cross-platform shell helpers
     private static (string FileName, string[] Args) ExitShell(int code)
         => OperatingSystem.IsWindows()
@@ -19,7 +24,11 @@ public sealed class StdioTransportRobustnessTests
 
     private static (string FileName, string[] Args) EchoStderrThenJson(string stderr, string json)
         => OperatingSystem.IsWindows()
-            ? ("powershell", ["-NoProfile", "-Command", $"[Console]::Error.WriteLine('{stderr}'); [Console]::Out.WriteLine('{json}')"])
+            ? ("powershell", [
+                "-NoProfile",
+                "-Command",
+                $"[Console]::Error.WriteLine('{EscapeForPowerShellSingleQuotedString(stderr)}'); Write-Output '{EscapeForPowerShellSingleQuotedString(json)}'"
+            ])
             : ("/bin/sh", ["-c", $"echo '{stderr}' >&2; printf '%s\\n' '{json}'"]);
 
     private static (string FileName, string[] Args) SleepThenEchoJson(int ms, string json)
@@ -31,6 +40,17 @@ public sealed class StdioTransportRobustnessTests
         => OperatingSystem.IsWindows()
             ? ("powershell", ["-NoProfile", "-Command", "Start-Sleep -Seconds 60; exit 1"])
             : ("/bin/sh", ["-c", "sleep 60; exit 1"]);
+
+    private static async Task WaitForTransportProcessExitAsync(StdioMcpTransport transport, TimeSpan timeout)
+    {
+        var processField = typeof(StdioMcpTransport).GetField("_process", BindingFlags.NonPublic | BindingFlags.Instance);
+        processField.ShouldNotBeNull();
+
+        var process = processField.GetValue(transport).ShouldBeOfType<Process>();
+        using var cts = new CancellationTokenSource(timeout);
+        await process.WaitForExitAsync(cts.Token);
+        process.HasExited.ShouldBeTrue();
+    }
 
     [Fact]
     [Trait("Category", "Security")]
@@ -95,26 +115,11 @@ public sealed class StdioTransportRobustnessTests
         var (file, args) = ExitShell(0);
         var transport = new StdioMcpTransport(file, args);
         await transport.ConnectAsync();
-        await Task.Delay(50);
+        await WaitForTransportProcessExitAsync(transport, TimeSpan.FromSeconds(2));
 
         var act = () => transport.SendAsync(new JsonRpcRequest { Id = 1, Method = "tools/list" });
-        // On Windows: write to a dead process stdin does not throw (buffered/ignored).
-        // On Linux: write raises IOException (broken pipe). Both are valid current behavior.
-        if (OperatingSystem.IsWindows())
-        {
-            try
-            {
-                await act();
-            }
-            catch (IOException)
-            {
-                // Windows can intermittently surface IOException when stdin pipe closes before buffered write.
-            }
-        }
-        else
-        {
-            await act.ShouldThrowAsync<Exception>();
-        }
+        var ex = await act.ShouldThrowAsync<InvalidOperationException>();
+        ex.Message.ShouldContain("exited");
         await transport.DisposeAsync();
     }
 
@@ -126,26 +131,11 @@ public sealed class StdioTransportRobustnessTests
         var (file, args) = ExitShell(0);
         var transport = new StdioMcpTransport(file, args);
         await transport.ConnectAsync();
-        await Task.Delay(50);
+        await WaitForTransportProcessExitAsync(transport, TimeSpan.FromSeconds(2));
 
         var act = () => transport.SendNotificationAsync(new JsonRpcNotification { Method = "notifications/initialized" });
-        // On Windows: write to a dead process stdin does not throw (buffered/ignored).
-        // On Linux: write raises IOException (broken pipe). Both are valid current behavior.
-        if (OperatingSystem.IsWindows())
-        {
-            try
-            {
-                await act();
-            }
-            catch (IOException)
-            {
-                // Windows can intermittently surface IOException when stdin pipe closes before buffered write.
-            }
-        }
-        else
-        {
-            await act.ShouldThrowAsync<Exception>();
-        }
+        var ex = await act.ShouldThrowAsync<InvalidOperationException>();
+        ex.Message.ShouldContain("exited");
         await transport.DisposeAsync();
     }
 }

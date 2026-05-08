@@ -3,9 +3,11 @@ using ThreadId = BotNexus.Domain.Primitives.ThreadId;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Dispatching;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -506,6 +508,85 @@ public sealed class GatewayHostTests
     }
 
     [Fact]
+    public async Task DispatchAsync_WithOriginatingBinding_PreservesSourceMetadataOnOutboundMessage()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+
+        var handle = CreatePromptHandle("agent-a", "session-target", "reply");
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(BotNexus.Domain.Primitives.AgentId.From("agent-a"), BotNexus.Domain.Primitives.SessionId.From("session-target"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var sessions = new InMemorySessionStore();
+        var sourceBinding = new ChannelBinding
+        {
+            BindingId = BotNexus.Domain.Primitives.BindingId.From("binding-source"),
+            ChannelType = BotNexus.Domain.Primitives.ChannelKey.From("telegram"),
+            ChannelAddress = ChannelAddress.From("chat-42"),
+            ThreadId = ThreadId.From("42"),
+            DisplayPrefix = "[topic] ",
+            Mode = BindingMode.Interactive
+        };
+        var conversation = new BotNexus.Gateway.Abstractions.Models.Conversation
+        {
+            ConversationId = BotNexus.Domain.Primitives.ConversationId.From("conv-target"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+            ChannelBindings = [sourceBinding]
+        };
+        var conversationRouter = new Mock<IConversationRouter>();
+        conversationRouter.Setup(r => r.GetOutboundBindingsAsync(
+                BotNexus.Domain.Primitives.SessionId.From("session-target"),
+                sourceBinding.BindingId,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        var conversationDispatcher = new Mock<IConversationDispatcher>();
+        conversationDispatcher.Setup(d => d.DispatchAsync(
+                It.IsAny<InboundMessageContext>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((InboundMessageContext context, CancellationToken _) => new DispatchResult(
+                context,
+                new ChannelSource(
+                    sourceBinding.ChannelType,
+                    sourceBinding.ChannelAddress,
+                    context.Source.SenderId,
+                    sourceBinding.ThreadId,
+                    sourceBinding.BindingId,
+                    sourceBinding.DisplayPrefix),
+                new ConversationSessionResolution(
+                    conversation.ConversationId,
+                    BotNexus.Domain.Primitives.SessionId.From("session-target"),
+                    false,
+                    false,
+                    sourceBinding.BindingId,
+                    sourceBinding.ThreadId,
+                    sourceBinding.DisplayPrefix)));
+
+        var channel = CreateChannelAdapter("telegram", supportsStreaming: false);
+        await using var host = CreateHost(
+            supervisor.Object,
+            router.Object,
+            sessions,
+            new RecordingActivityBroadcaster(),
+            CreateChannelManager(channel.Object),
+            conversationDispatcher: conversationDispatcher.Object,
+            conversationRouter: conversationRouter.Object);
+
+        await host.DispatchAsync(CreateMessage("hello", channelType: "telegram", conversationId: "chat-42"));
+
+        channel.Verify(c => c.SendAsync(
+                It.Is<OutboundMessage>(m =>
+                    m.ChannelType == BotNexus.Domain.Primitives.ChannelKey.From("telegram") &&
+                    m.SessionId == "session-target" &&
+                    m.ThreadId == ThreadId.From("42") &&
+                    m.BindingId == sourceBinding.BindingId &&
+                    m.DisplayPrefix == "[topic] "),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
     public async Task GatewayHost_AutoCompaction_TriggersWhenAboveThreshold()
     {
         var router = new Mock<IMessageRouter>();
@@ -810,7 +891,9 @@ public sealed class GatewayHostTests
         IChannelManager channelManager,
         int sessionQueueCapacity = 64,
         ISessionCompactor? compactor = null,
-        IOptionsMonitor<CompactionOptions>? compactionOptions = null)
+        IOptionsMonitor<CompactionOptions>? compactionOptions = null,
+        IConversationDispatcher? conversationDispatcher = null,
+        IConversationRouter? conversationRouter = null)
         => new(
             supervisor,
             router,
@@ -820,7 +903,9 @@ public sealed class GatewayHostTests
             compactor ?? Mock.Of<ISessionCompactor>(),
             compactionOptions ?? new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
             NullLogger<GatewayHost>.Instance,
-            sessionQueueCapacity);
+            sessionQueueCapacity,
+            conversationDispatcher: conversationDispatcher,
+            conversationRouter: conversationRouter);
 
     private static InboundMessage CreateMessage(
         string content,
@@ -886,17 +971,19 @@ public sealed class GatewayHostTests
             ConversationId = expectedConvId,
             AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a"),
         };
-        var convRouter = new Mock<BotNexus.Gateway.Abstractions.Conversations.IConversationRouter>();
-        convRouter
-            .Setup(r => r.ResolveInboundAsync(
-                It.IsAny<BotNexus.Domain.Primitives.AgentId>(),
-                It.IsAny<BotNexus.Domain.Primitives.ChannelKey>(),
-                It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(),
-                It.IsAny<BotNexus.Domain.Primitives.ThreadId?>(),
-                It.IsAny<string?>(),
+        var conversationDispatcher = new Mock<IConversationDispatcher>();
+        conversationDispatcher
+            .Setup(d => d.DispatchAsync(
+                It.IsAny<InboundMessageContext>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new BotNexus.Gateway.Abstractions.Conversations.ConversationRoutingResult(
-                conversation, expectedSessionId, false));
+            .ReturnsAsync((InboundMessageContext context, CancellationToken _) => new DispatchResult(
+                context,
+                context.Source,
+                new ConversationSessionResolution(
+                    conversation.ConversationId,
+                    expectedSessionId,
+                    false,
+                    false)));
 
         var channel = CreateChannelAdapter("web", supportsStreaming: false);
         await using var host = new GatewayHost(
@@ -908,17 +995,12 @@ public sealed class GatewayHostTests
             Mock.Of<ISessionCompactor>(),
             new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
             NullLogger<GatewayHost>.Instance,
-            conversationRouter: convRouter.Object);
+            conversationDispatcher: conversationDispatcher.Object);
 
         await host.DispatchAsync(CreateMessage("hello", channelType: "web", conversationId: "addr-1"));
-
-        convRouter.Verify(r => r.ResolveInboundAsync(
-            It.IsAny<BotNexus.Domain.Primitives.AgentId>(),
-            It.IsAny<BotNexus.Domain.Primitives.ChannelKey>(),
-            It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(),
-            It.IsAny<BotNexus.Domain.Primitives.ThreadId?>(),
-            It.IsAny<string?>(),
-            It.IsAny<CancellationToken>()), Times.AtLeastOnce, "IConversationRouter.ResolveInboundAsync must be called");
+        conversationDispatcher.Verify(d => d.DispatchAsync(
+            It.IsAny<InboundMessageContext>(),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce, "IConversationDispatcher.DispatchAsync must be called");
 
         var savedSession = await sessions.GetAsync(expectedSessionId, CancellationToken.None);
         savedSession.ShouldNotBeNull();

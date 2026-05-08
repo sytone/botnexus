@@ -110,12 +110,22 @@ public sealed class StdioMcpTransport : IMcpTransport
         ct.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        if (_writer is null)
-            throw new InvalidOperationException("Transport is not connected.");
+        EnsureCanWrite();
 
         var json = JsonSerializer.Serialize(message, JsonContext.Default.JsonRpcRequest);
-        await _writer.WriteLineAsync(json.AsMemory(), ct).ConfigureAwait(false);
-        await _writer.FlushAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await _writer!.WriteLineAsync(json.AsMemory(), ct).ConfigureAwait(false);
+            await _writer.FlushAsync(ct).ConfigureAwait(false);
+        }
+        catch (IOException ex)
+        {
+            throw CreateClosedPipeException(ex);
+        }
+        catch (ObjectDisposedException ex)
+        {
+            throw CreateClosedPipeException(ex);
+        }
     }
 
     /// <inheritdoc />
@@ -124,12 +134,22 @@ public sealed class StdioMcpTransport : IMcpTransport
         ct.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        if (_writer is null)
-            throw new InvalidOperationException("Transport is not connected.");
+        EnsureCanWrite();
 
         var json = JsonSerializer.Serialize(message, JsonContext.Default.JsonRpcNotification);
-        await _writer.WriteLineAsync(json.AsMemory(), ct).ConfigureAwait(false);
-        await _writer.FlushAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await _writer!.WriteLineAsync(json.AsMemory(), ct).ConfigureAwait(false);
+            await _writer.FlushAsync(ct).ConfigureAwait(false);
+        }
+        catch (IOException ex)
+        {
+            throw CreateClosedPipeException(ex);
+        }
+        catch (ObjectDisposedException ex)
+        {
+            throw CreateClosedPipeException(ex);
+        }
     }
 
     /// <inheritdoc />
@@ -223,6 +243,29 @@ public sealed class StdioMcpTransport : IMcpTransport
         }
         catch (OperationCanceledException) { }
         catch (IOException) { }
+    }
+
+    private void EnsureCanWrite()
+    {
+        if (_writer is null || _process is null)
+            throw new InvalidOperationException("Transport is not connected.");
+
+        if (_process.HasExited)
+            throw new InvalidOperationException($"MCP server process exited with code {_process.ExitCode}; cannot send on closed stdin.");
+    }
+
+    private InvalidOperationException CreateClosedPipeException(Exception innerException)
+    {
+        if (_process is not null && _process.HasExited)
+        {
+            return new InvalidOperationException(
+                $"MCP server process exited with code {_process.ExitCode}; cannot send on closed stdin.",
+                innerException);
+        }
+
+        return new InvalidOperationException(
+            "MCP server stdin pipe is closed; unable to send message.",
+            innerException);
     }
 
     private void TryKillProcess()

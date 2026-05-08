@@ -7,29 +7,36 @@
 
 ## Core Context
 
-**Phases 1-11 Complete, Phase 12 Wave 1 Initiated.** Build green, 337 tests passing. Farnsworth owns platform configuration, session store, cross-agent guardrails. Phase 12 Wave 1 assignments: 3 API endpoints (type move, channels, extensions), CLI command decomposition, config schema + path resolver. Key recent: config versioning, dynamic extension loader foundation, Telegram setup. Active on gateway sprint: session store abstraction, cross-agent timeout, history pagination.
+**Summary of Prior Work (2026-04-01 to 2026-05-07):**
+- **Phase 11 Config & Schema:** Extracted `IConfigPathResolver`/`ConfigPathResolver` from CLI (supports bracket array indexing). JSON schema generation via `PlatformConfigSchema` with key-casing normalization. CLI schema command for auto-generating `docs/botnexus-config.schema.json`. 23 new tests; 891 total passing.
+- **Phase 11 CLI Decomposition:** Refactored `Program.cs` into thin DI wiring with extracted command handlers. Cross-platform reliability: TCP port pre-checks, SkipBuild/SkipTests flags.
+- **Phase 12 Sub-Agent Foundation (W1+W2+W3+W4):** `ISubAgentManager` abstraction with spawn/list/kill lifecycle. `DefaultSubAgentManager` singleton with recursion prevention, concurrency limits. REST endpoints, WebSocket event emissions, tool registry security scoping. Commits: f57b157, 25c8876, c75a033.
+- **Phase 12 Extension Commands (W1+W2):** `ICommandContributor` interface + `CommandRegistry`. Command palette integration, built-in commands (/help, /status, /agents, /new). DI registered in Program.cs. 10 unit tests.
+- **Phase 12 Gateway Lifecycle (W2):** `GatewayCommand` with detached/attached modes, start/stop/status commands, health checking. Cross-platform safety on Windows via PID file management.
+- **Probe Tool:** Built standalone tools/BotNexus.Probe with Minimal API, streamed Serilog/JSONL, dual-mode CLI, SQLite session DB ingestion, correlation endpoints.
+- **Active Stream:** Config filtering (providers.enabled, models allowlist, agent.allowedModels), unified config.json + agent directory architecture, workspace/data subdirectory migration.
 
 ---
 
-## Archived Entries (2026-04-06 to 2026-04-09)
+## 2026-05-07T22:05:56Z — Dispatching Layer Implementation & Phase 2 Approval (Platform Dev)
 
-**Phase 11 Config & Schema Work:**
-- Extracted IConfigPathResolver/ConfigPathResolver from CLI reflection logic (supports bracket array indexing)
-- JSON schema generation via PlatformConfigSchema with key-casing normalization
-- CLI schema command for docs/botnexus-config.schema.json generation
-- Commit: e57eae1; 23 new tests; 891 total tests passing
+**Status:** ✅ Complete  
+**Session:** Dispatching Cleanup Wave — broader phase 2 implementation  
 
-**Phase 11 CLI Decomposition:**
-- Refactored Program.cs into thin DI wiring with extracted command handlers
-- Cross-platform reliability: TCP port pre-checks, SkipBuild/SkipTests flags
+**Outcome:** Led creation of `BotNexus.Gateway.Dispatching` project with contract-first API:
+- `IConversationDispatcher` interface + `DefaultConversationDispatcher` adapter
+- `ChannelSource`, `InboundMessageContext`, `ConversationSessionResolution`, `DispatchResult` contracts
+- DI registration in `GatewayServiceCollectionExtensions`
+- Preserves existing behavior while establishing dispatch orchestration seam
+- Solution build passed; targeted tests passing; full pre-commit blocked by unrelated baseline failures
 
-**Phase 12 Sub-Agent Foundation (W1+W2+W3+W4):**
-- ISubAgentManager abstraction with spawn/list/kill lifecycle
-- DefaultSubAgentManager singleton with recursion prevention, concurrency limits
-- REST endpoints, WebSocket event emissions, tool registry security scoping
-- Commits: f57b157 (W1), 25c8876 (W2+3 DI), c75a033 (W4 REST)
+**Cross-team Context:** 
+- Hermes expanded dispatcher routing test coverage (42/42 ✅)
+- Bender rewired gateway runtime paths through dispatcher (44/44 gateway tests ✅)
+- Leela reviewed entire cleanup wave and approved all architectural decisions (✅ APPROVED)
 
 ---
+
 ## 2026-04-10T16:30Z — Sub-Agent Spawning Feature: Waves 1 + 2 + 4 (Platform Dev)
 
 **Status:** ✅ Complete  
@@ -76,6 +83,8 @@
 - 2026-04-15 (Wave 2): CLI command structure uses System.CommandLine with DI-injected command classes. Singleton registration is appropriate for stateless command classes and for services that maintain shared state (e.g., `IGatewayProcessManager` with PID file tracking). When `UseShellExecute = true` (required for detached Windows processes), environment variables cannot be set on `ProcessStartInfo` — use command-line arguments instead (e.g., `--urls`, `--environment`).
 - 2026-04-15: System.CommandLine `Command` objects cannot be added to two parents — call `.Build()` twice on the command builder to get two separate instances when registering in multiple command trees (e.g., `gateway` at top-level and as `serve gateway` subcommand).
 - 2026-04-20 (Wave 2): `InternalChannelAdapter` must implement `IStreamEventChannelAdapter` to preserve full `AgentStreamEvent` delivery through `GatewayHost`; without it, non-delta lifecycle events are dropped and only delta fallback can be used.
+- 2026-05-07: Phase 2 conversation extraction should introduce a dedicated conversation dispatch layer that owns inbound resolution/session binding and returns a dispatch result, leaving GatewayHost/GatewayHub as transport relays only.
+- 2026-05-07: Implemented `BotNexus.Gateway.Dispatching` with `IConversationDispatcher` + contract records and a `DefaultConversationDispatcher` adapter over `IConversationRouter`/`IConversationStore`, and registered it in DI as the handoff seam for transport rewiring.
 
 
 ## 2026-04-15 — Extension-Contributed Commands Implementation, Wave 1 (Platform Dev)
@@ -180,6 +189,21 @@
 
 ---
 
+
+### 2026-05-07 — Phase 2 Design: Conversation Routing Layer Extraction
+
+- **Task:** Design Phase 2 architectural extraction (non-blocking after Phase 1 merge)
+- **Scope:** New layer BotNexus.Gateway.Dispatching to own end-to-end message dispatch orchestration and resolve conversation/session routing deterministically
+- **Key Contracts:**
+  - IConversationDispatcher: orchestrator interface (DispatchAsync returns DispatchResult)
+  - DispatchResult: resolved session/conversation + metadata (binding, thread, display prefix, newness flags)
+  - InboundMessageContext: full context for inbound dispatch (agent, channel, payload, conversation/session hints)
+  - ChannelSource: channel identity + thread/binding metadata
+  - ConversationSessionResolution: resolved conversation/session + newness flags
+- **Dependency Graph:** Domain → Contracts → Conversations → Dispatching → Gateway/Extensions (no circular dependencies)
+- **Migration Sequence:** 6 steps (contract-first, safe, non-conflicting with Phase 1)
+- **Risk Matrix:** 5 primary risks identified + Hermes test coverage mitigations documented
+- **Status:** Design complete; implementation scheduled for Wave 3 after Phase 1 merge
 ## 2026-05-07 — OpenClaw Memory Wave 1 Remediation (Core Implementation)
 
 **Role:** Core seams mapping and remediation lead  
