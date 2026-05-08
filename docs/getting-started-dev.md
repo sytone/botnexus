@@ -126,7 +126,7 @@ Use `dev-loop.ps1` for the edit → build → test → run cycle:
 dotnet test BotNexus.slnx --nologo --tl:off
 
 # Specific test project
-dotnet test tests\BotNexus.Gateway.Tests
+dotnet test tests\gateway\BotNexus.Gateway.Tests
 
 # Specific test by name
 dotnet test BotNexus.slnx --filter "FullyQualifiedName~MyTestName"

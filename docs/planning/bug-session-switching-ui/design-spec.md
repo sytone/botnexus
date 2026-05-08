@@ -219,7 +219,7 @@ Jon confirmed on 2026-04-10: switching from Nova -> assistant session, the UI vi
 
 ### Layer 1: Extend SignalR Integration Tests (C#)
 
-Extend `tests/BotNexus.Gateway.Tests/Integration/SignalRIntegrationTests.cs` using existing patterns (`RecordingDispatcher`, `WebApplicationFactory`, `CreateStartedConnection`).
+Extend `tests/gateway/BotNexus.Gateway.Tests/Integration/SignalRIntegrationTests.cs` using existing patterns (`RecordingDispatcher`, `WebApplicationFactory`, `CreateStartedConnection`).
 
 These validate the server contract. Some already exist — add edge cases:
 

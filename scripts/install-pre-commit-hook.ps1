@@ -29,7 +29,7 @@ echo "✅ Build succeeded."
 echo "🧪 Pre-commit: Running Gateway tests..."
 
 # Run Gateway tests (fast feedback loop)
-dotnet test tests/BotNexus.Gateway.Tests --nologo --verbosity minimal --tl:off --no-build
+dotnet test tests/gateway/BotNexus.Gateway.Tests --nologo --verbosity minimal --tl:off --no-build
 
 if [ $? -ne 0 ]; then
     echo "❌ Tests failed. Fix failing tests before committing."

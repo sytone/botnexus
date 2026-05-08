@@ -1,5 +1,21 @@
 # Agent Guidelines — Tests
 
+## Test Folder Structure
+
+Test projects mirror the `src/` folder structure. Project-specific tests live under matching buckets:
+
+```
+tests/
+  agent/            ← mirrors src/agent/
+  domain/           ← mirrors src/domain/
+  extensions/       ← mirrors src/extensions/
+  gateway/          ← mirrors src/gateway/
+```
+
+Each test project folder and `.csproj` name must end in **`.Tests`** (e.g., `BotNexus.Gateway.Tests`, `BotNexus.Domain.Tests`).
+
+Cross-cutting test projects (E2E, integration, conformance, conversation) remain at the `tests/` root until they have a clear single-bucket home.
+
 ## Assertion Library
 
 This project uses **Shouldly** (BSD-2-Clause) for test assertions. **Do not add FluentAssertions** — it was removed due to its non-open-source license.

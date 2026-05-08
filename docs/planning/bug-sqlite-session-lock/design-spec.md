@@ -67,4 +67,4 @@ Agent C: SaveAsync → waits on _lock → BLOCKED behind Agent B
 ## Files to Change
 
 - `src/gateway/BotNexus.Gateway.Sessions/SqliteSessionStore.cs` — primary fix
-- Tests in `tests/BotNexus.Gateway.Tests/Sessions/` — concurrency test coverage
+- Tests in `tests/gateway/BotNexus.Gateway.Tests/Sessions/` — concurrency test coverage
