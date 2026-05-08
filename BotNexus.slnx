@@ -26,6 +26,7 @@
     <Project Path="src/gateway/BotNexus.Cron/BotNexus.Cron.csproj" />
     <Project Path="src/gateway/BotNexus.Gateway.Abstractions/BotNexus.Gateway.Abstractions.csproj" />
     <Project Path="src/gateway/BotNexus.Gateway.Conversations/BotNexus.Gateway.Conversations.csproj" />
+    <Project Path="src/gateway/BotNexus.Gateway.Dispatching/BotNexus.Gateway.Dispatching.csproj" />
     <Project Path="src/gateway/BotNexus.Gateway.Contracts/BotNexus.Gateway.Contracts.csproj" />
     <Project Path="src/gateway/BotNexus.Gateway/BotNexus.Gateway.csproj" />
     <Project Path="src/gateway/BotNexus.Gateway.Api/BotNexus.Gateway.Api.csproj" />

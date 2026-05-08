@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Conversations;
+using BotNexus.Gateway.Dispatching;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Extensions.Channels.SignalR;
 using Microsoft.AspNetCore.Http.Features;
@@ -151,6 +152,80 @@ public sealed class SignalRHubTests
     }
 
     [Fact]
+    public async Task GatewayHub_SendMessage_WithConversationId_ResolvesConversationSession()
+    {
+        const string defaultSessionId = "session-default";
+        const string targetSessionId = "session-target";
+        const string targetConversationId = "conv-target";
+
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(value => value.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var conversationDispatcher = new Mock<IConversationDispatcher>();
+        conversationDispatcher.Setup(value => value.DispatchAsync(
+                It.Is<InboundMessageContext>(context => context.RequestedConversationId == targetConversationId),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((InboundMessageContext context, CancellationToken _) => new DispatchResult(
+                context,
+                context.Source,
+                new ConversationSessionResolution(
+                    BotNexus.Domain.Primitives.ConversationId.From(targetConversationId),
+                    BotNexus.Domain.Primitives.SessionId.From(targetSessionId),
+                    false,
+                    false)));
+
+        conversationDispatcher.Setup(value => value.DispatchAsync(
+                It.Is<InboundMessageContext>(context => context.RequestedConversationId == null),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((InboundMessageContext context, CancellationToken _) => new DispatchResult(
+                context,
+                context.Source,
+                new ConversationSessionResolution(
+                    BotNexus.Domain.Primitives.ConversationId.From("conv-default"),
+                    BotNexus.Domain.Primitives.SessionId.From(defaultSessionId),
+                    false,
+                    false)));
+
+        var hub = CreateHub(dispatcher: dispatcher.Object, conversationDispatcher: conversationDispatcher.Object, connectionId: "conn-1");
+
+        var result = await hub.SendMessage("agent-a", "signalr", "hello targeted", targetConversationId);
+
+        result.SessionId.ShouldBe(targetSessionId,
+            "explicit conversation routing should resolve the conversation session instead of the default portal session");
+    }
+
+    [Fact]
+    public async Task GatewayHub_SendMessage_WithoutConversationId_UsesDefaultConversationSession()
+    {
+        const string defaultSessionId = "session-default";
+
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(value => value.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var conversationDispatcher = new Mock<IConversationDispatcher>();
+        conversationDispatcher.Setup(value => value.DispatchAsync(
+                It.Is<InboundMessageContext>(context => context.RequestedConversationId == null),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((InboundMessageContext context, CancellationToken _) => new DispatchResult(
+                context,
+                context.Source,
+                new ConversationSessionResolution(
+                    BotNexus.Domain.Primitives.ConversationId.From("conv-default"),
+                    BotNexus.Domain.Primitives.SessionId.From(defaultSessionId),
+                    false,
+                    false)));
+
+        var hub = CreateHub(dispatcher: dispatcher.Object, conversationDispatcher: conversationDispatcher.Object, connectionId: "conn-1");
+
+        var result = await hub.SendMessage("agent-a", "signalr", "hello default");
+
+        result.SessionId.ShouldBe(defaultSessionId,
+            "when no conversationId is supplied, hub routing should still return the default conversation session");
+    }
+
+    [Fact]
     public async Task SignalR_SameAgent_MultipleConnections_ShareConversation()
     {
         // Two different SignalR connection IDs for the same agent should land
@@ -166,6 +241,8 @@ public sealed class SignalRHubTests
         dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
+        var conversationDispatcher = new DefaultConversationDispatcher(router, conversationStore);
+
         // Two hubs with different connection IDs but same underlying stores/router
         var hub1 = new GatewayHub(
             Mock.Of<IAgentSupervisor>(),
@@ -175,6 +252,7 @@ public sealed class SignalRHubTests
             Mock.Of<IActivityBroadcaster>(),
             Mock.Of<ISessionCompactor>(),
             Mock.Of<ISessionWarmupService>(),
+            conversationDispatcher,
             router,
             new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
             NullLogger<GatewayHub>.Instance)
@@ -192,6 +270,7 @@ public sealed class SignalRHubTests
             Mock.Of<IActivityBroadcaster>(),
             Mock.Of<ISessionCompactor>(),
             Mock.Of<ISessionWarmupService>(),
+            conversationDispatcher,
             router,
             new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
             NullLogger<GatewayHub>.Instance)
@@ -353,15 +432,16 @@ public sealed class SignalRHubTests
         ISessionCompactor? compactor = null,
         ISessionWarmupService? warmup = null,
         IOptionsMonitor<CompactionOptions>? compactionOptions = null,
-        IConversationRouter? conversationRouter = null,
+        IConversationDispatcher? conversationDispatcher = null,
         string connectionId = "conn-test")
     {
         var sessionStore = sessions ?? new InMemorySessionStore();
         var convStore = new InMemoryConversationStore();
-        var router = conversationRouter ?? new DefaultConversationRouter(
+        var router = new DefaultConversationRouter(
             convStore,
             sessionStore,
             NullLogger<DefaultConversationRouter>.Instance);
+        var dispatcherForHub = conversationDispatcher ?? new DefaultConversationDispatcher(router, convStore);
 
         var hub = new GatewayHub(
             supervisor ?? Mock.Of<IAgentSupervisor>(),
@@ -371,6 +451,7 @@ public sealed class SignalRHubTests
             activity ?? Mock.Of<IActivityBroadcaster>(),
             compactor ?? Mock.Of<ISessionCompactor>(),
             warmup ?? Mock.Of<ISessionWarmupService>(),
+            dispatcherForHub,
             router,
             compactionOptions ?? new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
             NullLogger<GatewayHub>.Instance)

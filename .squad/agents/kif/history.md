@@ -90,6 +90,30 @@
 
 ---
 
+---
+
+## 2026-05-08 — Worktree Instruction Clarification
+
+**Status:** ✅ Complete  
+**Scope:** Documentation instruction alignment
+
+**Context:** Prior instructions contained conflicting guidance on git worktrees:
+- `.github/copilot-instructions.md` forbade worktrees globally ("No worktrees")
+- `AGENTS.md` mandated worktrees for independent work ("Always use worktrees")
+
+User clarified the correct policy: worktrees are allowed when explicitly requested, but not created automatically.
+
+**Changes:**
+- ✅ `.github/copilot-instructions.md` — Updated Git Workflow section: "Worktrees are allowed when explicitly requested. If a user asks you to create or use a worktree, do so. Otherwise, work directly on the current branch without creating a worktree."
+- ✅ `AGENTS.md` — Updated Git Workflow section: "Worktrees may be used for independent branches when requested. When a user asks for a worktree, use it. Do not create a worktree automatically without explicit user request."
+- ✅ Removed incorrect directive: `.squad/decisions/inbox/copilot-directive-2026-05-07T19-58-08Z.md`
+- ✅ Created corrected directive: `.squad/decisions/inbox/kif-worktree-instructions.md`
+- ✅ Committed: `docs(instructions): allow requested worktrees` (main c1ab3710)
+
+**Key Learning:** Instruction conflict resolution requires reading both target files to identify contradictions before updating. The agent guidance AGENTS.md and Copilot instructions file had been pointing in opposite directions on a critical workflow pattern.
+
+---
+
 ## Learnings
 
 ### BotNexus Documentation Patterns (Phase 12 Wave 4)
