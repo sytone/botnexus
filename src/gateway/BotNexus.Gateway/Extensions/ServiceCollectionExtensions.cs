@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Abstractions.Extensions;
 using BotNexus.Gateway.Abstractions.Hooks;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Dispatching;
 using BotNexus.Gateway.Hooks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -14,6 +15,11 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddExtensionLoading(this IServiceCollection services)
     {
+        // Extension endpoint contributors (for example SignalR GatewayHub) are activated from the host DI container.
+        // Ensure conversation dispatching is available even in hosts that compose extension loading without
+        // the full AddBotNexusGateway() registration path.
+        services.TryAddSingleton<IConversationDispatcher, DefaultConversationDispatcher>();
+
         services.TryAddSingleton<IExtensionLoader>(serviceProvider =>
             new AssemblyLoadContextExtensionLoader(
                 services,

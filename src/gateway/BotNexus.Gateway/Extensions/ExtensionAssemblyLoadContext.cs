@@ -14,6 +14,7 @@ internal sealed class ExtensionAssemblyLoadContext : AssemblyLoadContext
         "BotNexus.Domain",
         "BotNexus.Agent.Providers.Core",
         "BotNexus.Gateway.Abstractions",
+        "BotNexus.Gateway.Dispatching",
         "BotNexus.Gateway.Contracts",
         "Microsoft.Extensions.DependencyInjection.Abstractions",
         "Microsoft.Extensions.Logging.Abstractions",

@@ -328,3 +328,8 @@ ull)
 **PR:** https://github.com/sytone/botnexus/pull/178
 
 ---
+
+## Learnings
+### 2026-05-08 — Extension-loading hosts need dispatcher fallback for lazy hub activation
+- SignalR GatewayHub activates lazily when a client connects, so missing IConversationDispatcher may hide until runtime even if extension load succeeds.
+- Registering IConversationDispatcher -> DefaultConversationDispatcher in AddExtensionLoading() creates a safe fallback for hosts that compose extension loading outside AddBotNexusGateway().
