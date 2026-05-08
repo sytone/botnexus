@@ -147,6 +147,87 @@ public sealed class WorkspaceContextBuilderTests
     }
 
     [Fact]
+    public async Task BuildSystemPromptAsync_DefaultPrompt_WithMemoryPromptInjectionNone_SkipsMemorySummaryAndRecentDailyFiles()
+    {
+        var todayFileName = $"{DateTime.Now:yyyy-MM-dd}.md";
+        var yesterdayFileName = $"{DateTime.Now.AddDays(-1):yyyy-MM-dd}.md";
+        var workspacePath = CreateWorkspace(
+            ("AGENTS.md", "AGENTS"),
+            ("SOUL.md", "SOUL"),
+            ("TOOLS.md", "TOOLS"),
+            ("BOOTSTRAP.md", "BOOTSTRAP"),
+            ("IDENTITY.md", "IDENTITY"),
+            ("USER.md", "USER"),
+            ("MEMORY.md", "LONG-TERM MEMORY"),
+            (Path.Combine("memory", todayFileName), "TODAY MEMORY ENTRY"),
+            (Path.Combine("memory", yesterdayFileName), "YESTERDAY MEMORY ENTRY"));
+        try
+        {
+            var manager = new StubWorkspaceManager(workspacePath);
+            var builder = new WorkspaceContextBuilder(manager, _fileSystem);
+            var memoryConfig = new MemoryAgentConfig { Enabled = true };
+            SetPromptInjection(memoryConfig, "none");
+
+            var result = await builder.BuildSystemPromptAsync(new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("farnsworth"),
+                DisplayName = "Farnsworth",
+                ModelId = "test-model",
+                ApiProvider = "test-provider",
+                Memory = memoryConfig
+            });
+
+            result.ShouldContain("AGENTS");
+            result.ShouldNotContain("LONG-TERM MEMORY");
+            result.ShouldNotContain("TODAY MEMORY ENTRY");
+            result.ShouldNotContain("YESTERDAY MEMORY ENTRY");
+        }
+        finally
+        {
+            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task BuildSystemPromptAsync_DefaultPrompt_WithMemoryEnabledAndPromptInjectionOmitted_PreservesFullMemoryBehavior()
+    {
+        var todayFileName = $"{DateTime.Now:yyyy-MM-dd}.md";
+        var yesterdayFileName = $"{DateTime.Now.AddDays(-1):yyyy-MM-dd}.md";
+        var workspacePath = CreateWorkspace(
+            ("AGENTS.md", "AGENTS"),
+            ("SOUL.md", "SOUL"),
+            ("TOOLS.md", "TOOLS"),
+            ("BOOTSTRAP.md", "BOOTSTRAP"),
+            ("IDENTITY.md", "IDENTITY"),
+            ("USER.md", "USER"),
+            ("MEMORY.md", "LONG-TERM MEMORY"),
+            (Path.Combine("memory", todayFileName), "TODAY MEMORY ENTRY"),
+            (Path.Combine("memory", yesterdayFileName), "YESTERDAY MEMORY ENTRY"));
+        try
+        {
+            var manager = new StubWorkspaceManager(workspacePath);
+            var builder = new WorkspaceContextBuilder(manager, _fileSystem);
+
+            var result = await builder.BuildSystemPromptAsync(new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("farnsworth"),
+                DisplayName = "Farnsworth",
+                ModelId = "test-model",
+                ApiProvider = "test-provider",
+                Memory = new MemoryAgentConfig { Enabled = true }
+            });
+
+            result.ShouldContain("LONG-TERM MEMORY");
+            result.ShouldContain("TODAY MEMORY ENTRY");
+            result.ShouldContain("YESTERDAY MEMORY ENTRY");
+        }
+        finally
+        {
+            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task BuildSystemPromptAsync_DefaultPrompt_LoadsRecentDailyMemoryFilesFromOverridePathInDeterministicOrder()
     {
         var todayFileName = $"{DateTime.Now:yyyy-MM-dd}.md";
@@ -280,5 +361,12 @@ public sealed class WorkspaceContextBuilderTests
         }
 
         return workspacePath;
+    }
+
+    private static void SetPromptInjection(MemoryAgentConfig config, string mode)
+    {
+        var property = typeof(MemoryAgentConfig).GetProperty("PromptInjection");
+        property.ShouldNotBeNull("MemoryAgentConfig.PromptInjection should exist for memory prompt-injection behavior.");
+        property!.SetValue(config, mode);
     }
 }

@@ -37,8 +37,14 @@ To manage the Gateway daemon service (start/stop/restart):
 - botnexus gateway stop
 - botnexus gateway restart
 If unsure, ask the user to run `botnexus help` (or `botnexus gateway --help`) and paste the output.
+## Memory
+Memory context in this prompt is frozen at session start; do not assume memory files changed unless a new session starts.
+Use the runtime's memory-write capability for durable memory writes when available.
+Use `MEMORY.md` as long-lived consolidated context and `memory/YYYY-MM-DD.md` as append-only daily notes.
+Do not rewrite prior memory notes in-place during normal turns; append durable updates instead.
+Durable memory writes appear in subsequent sessions after persistence and prompt rebuild.
 ## Workspace
-Your working directory is: C:\Users\jobullen\AppData\Local\Temp\repo\workspace
+Your working directory is: <workspace>
 Treat this directory as the single global workspace for file operations unless explicitly instructed otherwise.
 ## Workspace Files (injected)
 These user-editable files are loaded by BotNexus and included below in Project Context.

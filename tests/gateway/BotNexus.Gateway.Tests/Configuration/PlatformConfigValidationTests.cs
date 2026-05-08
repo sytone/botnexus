@@ -1,4 +1,5 @@
 using System.Text.Json;
+using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Options;
 
@@ -1664,6 +1665,67 @@ public sealed class PlatformConfigValidationTests
             });
     }
 
+    [Theory]
+    [InlineData("full")]
+    [InlineData("summary")]
+    [InlineData("none")]
+    public async Task Validate_MemoryPromptInjection_AllowsSupportedValues(string promptInjection)
+    {
+        await WithConfigFileAsync(
+            $$"""
+            {
+              "providers": {
+                "copilot": { "apiKey": "provider-key" }
+              },
+              "agents": {
+                "assistant": {
+                  "provider": "copilot",
+                  "model": "gpt-4.1",
+                  "memory": {
+                    "enabled": true,
+                    "promptInjection": "{{promptInjection}}"
+                  }
+                }
+              }
+            }
+            """,
+            async configPath =>
+            {
+                var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
+                PlatformConfigLoader.Validate(config).ShouldBeEmpty();
+                var memory = config.Agents!["assistant"].Memory.ShouldNotBeNull();
+                GetPromptInjection(memory).ShouldBe(promptInjection);
+            });
+    }
+
+    [Fact]
+    public async Task Validate_MemoryPromptInjection_InvalidValue_ThrowsValidationError()
+    {
+        await WithConfigFileAsync(
+            """
+            {
+              "providers": {
+                "copilot": { "apiKey": "provider-key" }
+              },
+              "agents": {
+                "assistant": {
+                  "provider": "copilot",
+                  "model": "gpt-4.1",
+                  "memory": {
+                    "enabled": true,
+                    "promptInjection": "verbose"
+                  }
+                }
+              }
+            }
+            """,
+            async configPath =>
+            {
+                var ex = await Should.ThrowAsync<OptionsValidationException>(() => PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: true));
+                ex.Failures.ShouldContain("agents.assistant.memory.promptInjection must be one of: full, summary, none.");
+            });
+    }
+
     private static Task WithProviderConfigAsync(string providerKey, string providerJson, Action<PlatformConfig> assertConfig)
         => WithConfigFileAsync(
             $$"""
@@ -1708,5 +1770,12 @@ public sealed class PlatformConfigValidationTests
     {
         var exception = Record.Exception(() => JsonSerializer.Serialize(config));
         exception.ShouldBeNull();
+    }
+
+    private static string GetPromptInjection(MemoryAgentConfig config)
+    {
+        var property = typeof(MemoryAgentConfig).GetProperty("PromptInjection");
+        property.ShouldNotBeNull("MemoryAgentConfig.PromptInjection should exist for memory prompt-injection validation.");
+        return property!.GetValue(config)?.ToString() ?? string.Empty;
     }
 }

@@ -24,6 +24,11 @@ public sealed class MemoryAgentConfig
     /// Gets or sets the search.
     /// </summary>
     public MemorySearchAgentConfig? Search { get; set; }
+
+    /// <summary>
+    /// Gets or sets prompt-memory injection mode: <c>full</c>, <c>summary</c>, or <c>none</c>.
+    /// </summary>
+    public string? PromptInjection { get; set; } = "full";
 }
 
 /// <summary>

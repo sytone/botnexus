@@ -482,6 +482,12 @@ public static class PlatformConfigLoader
                 errors.Add($"agents.{agentId}.provider is required (example: 'copilot').");
             if (string.IsNullOrWhiteSpace(agentConfig.Model))
                 errors.Add($"agents.{agentId}.model is required (example: 'gpt-4.1').");
+
+            if (!string.IsNullOrWhiteSpace(agentConfig.Memory?.PromptInjection) &&
+                !IsValidMemoryPromptInjection(agentConfig.Memory.PromptInjection))
+            {
+                errors.Add($"agents.{agentId}.memory.promptInjection must be one of: full, summary, none.");
+            }
         }
     }
 
@@ -508,6 +514,12 @@ public static class PlatformConfigLoader
             // indexing must be non-empty if explicitly set to something other than default
             if (defaults.Memory.Indexing is not null && string.IsNullOrWhiteSpace(defaults.Memory.Indexing))
                 errors.Add($"{prefix}.memory.indexing must be a non-empty string if specified.");
+
+            if (!string.IsNullOrWhiteSpace(defaults.Memory.PromptInjection) &&
+                !IsValidMemoryPromptInjection(defaults.Memory.PromptInjection))
+            {
+                errors.Add($"{prefix}.memory.promptInjection must be one of: full, summary, none.");
+            }
         }
 
         // heartbeat
@@ -537,6 +549,11 @@ public static class PlatformConfigLoader
                 errors.Add($"{fieldPath}[{i}] must be a non-empty string.");
         }
     }
+
+    private static bool IsValidMemoryPromptInjection(string value) =>
+        value.Equals("full", StringComparison.OrdinalIgnoreCase) ||
+        value.Equals("summary", StringComparison.OrdinalIgnoreCase) ||
+        value.Equals("none", StringComparison.OrdinalIgnoreCase);
 
     private static void ValidateApiKeys(Dictionary<string, ApiKeyConfig>? apiKeys, List<string> errors)
     {

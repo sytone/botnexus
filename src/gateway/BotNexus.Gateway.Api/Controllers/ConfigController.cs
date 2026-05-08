@@ -168,6 +168,7 @@ public sealed class ConfigController : ControllerBase
         var agentMemObj = GetNestedObject(rawElement, "memory");
         sources["memory.enabled"] = ResolveBoolSource("enabled", defaults?.Memory?.Enabled, agent.Memory?.Enabled, agentMemObj, agent.Memory is null);
         sources["memory.indexing"] = ResolveStringSource("indexing", defaults?.Memory?.Indexing, agent.Memory?.Indexing, agentMemObj, agent.Memory is null);
+        sources["memory.promptInjection"] = ResolveStringSource("promptInjection", defaults?.Memory?.PromptInjection, agent.Memory?.PromptInjection, agentMemObj, agent.Memory is null);
 
         // heartbeat.*
         var agentHbObj = GetNestedObject(rawElement, "heartbeat");

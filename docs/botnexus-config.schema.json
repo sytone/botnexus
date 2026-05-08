@@ -792,6 +792,14 @@
         "indexing": {
           "type": "string"
         },
+        "promptInjection": {
+          "type": "string",
+          "enum": [
+            "full",
+            "summary",
+            "none"
+          ]
+        },
         "search": {
           "oneOf": [
             {
