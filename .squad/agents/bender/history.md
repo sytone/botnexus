@@ -333,3 +333,7 @@ ull)
 ### 2026-05-08 — Extension-loading hosts need dispatcher fallback for lazy hub activation
 - SignalR GatewayHub activates lazily when a client connects, so missing IConversationDispatcher may hide until runtime even if extension load succeeds.
 - Registering IConversationDispatcher -> DefaultConversationDispatcher in AddExtensionLoading() creates a safe fallback for hosts that compose extension loading outside AddBotNexusGateway().
+
+### 2026-05-08 — Conversation history refresh must page from newest entries
+- Root cause for "message disappears after refresh" was pagination anchored to oldest entries in `ConversationsController.GetHistory`; with long histories (>200), refresh loaded only old turns and omitted latest user/assistant turns.
+- Fix pattern: keep chronological order inside each page, but compute the page window from the tail (`offset` from newest) so `limit=200&offset=0` always includes the newest turns.
