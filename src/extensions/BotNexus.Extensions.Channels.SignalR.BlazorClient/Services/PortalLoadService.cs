@@ -74,7 +74,20 @@ public sealed class PortalLoadService : IPortalLoadService
                 {
                     _store.SetActiveConversation(selectedAgentId, selectedConversation.ConversationId);
 
-                    var history = await _restClient.GetHistoryAsync(selectedConversation.ConversationId, 200, 0, cancellationToken);
+                    const int historyLimit = 200;
+                    var history = await _restClient.GetHistoryAsync(selectedConversation.ConversationId, historyLimit, 0, cancellationToken);
+
+                    // The API returns entries in chronological order starting from offset.
+                    // When totalCount exceeds the limit, the first page contains the oldest
+                    // entries and the most recent messages are beyond the page boundary.
+                    // Re-fetch from the tail so users see their latest conversation.
+                    if (history is not null && history.TotalCount > historyLimit)
+                    {
+                        var tailOffset = history.TotalCount - historyLimit;
+                        history = await _restClient.GetHistoryAsync(
+                            selectedConversation.ConversationId, historyLimit, tailOffset, cancellationToken);
+                    }
+
                     if (history?.Entries is { Count: > 0 })
                     {
                         foreach (var entry in history.Entries)
