@@ -318,3 +318,10 @@ ull)
 **PR:** https://github.com/sytone/botnexus/pull/178
 
 ---
+
+## 2026-05-08 10:27 — PR #185 refresh (round 2)
+- Reused dedicated worktree Q:\repos\botnexus-pr-185; no main-checkout edits.
+- Synced origin/main + origin/refactor/gateway-conversations, merged latest origin/main into PR branch with no manual conflict resolution.
+- Validation passed: dotnet build BotNexus.slnx --nologo --tl:off and dotnet test BotNexus.slnx --nologo --tl:off.
+- gh pr checks 185 currently reports no checks for this branch.
+
