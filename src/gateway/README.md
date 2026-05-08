@@ -888,7 +888,7 @@ wscat -c "ws://localhost:5005/ws?agent=test-agent&session=test-session-1"
 
 ### Run Tests
 ```bash
-dotnet test tests/BotNexus.Gateway.Api.Tests/BotNexus.Gateway.Api.Tests.csproj
+dotnet test tests/gateway/BotNexus.Gateway.Tests/BotNexus.Gateway.Tests.csproj
 ```
 
 ## File Structure

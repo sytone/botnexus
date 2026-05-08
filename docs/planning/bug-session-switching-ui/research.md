@@ -240,6 +240,6 @@ Capture the intended session at switch time, queue any sends during the gap, rep
 | WebUI JS | `src/BotNexus.WebUI/wwwroot/app.js` | All client-side session state + switching |
 | SignalR Hub | `src/gateway/BotNexus.Gateway.Api/Hubs/GatewayHub.cs` | Server-side hub (stateless, routes by params) |
 | Channel Adapter | `src/gateway/BotNexus.Gateway.Api/Hubs/SignalRChannelAdapter.cs` | Sends events to session groups |
-| Hub Unit Tests | `tests/BotNexus.Gateway.Tests/SignalRHubTests.cs` | Existing hub unit tests |
-| Integration Tests | `tests/BotNexus.Gateway.Tests/Integration/SignalRIntegrationTests.cs` | Existing SignalR integration tests |
+| Hub Unit Tests | `tests/gateway/BotNexus.Gateway.Tests/SignalRHubTests.cs` | Existing hub unit tests |
+| Integration Tests | `tests/gateway/BotNexus.Gateway.Tests/Integration/SignalRIntegrationTests.cs` | Existing SignalR integration tests |
 | WebUI Project | `src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/` | Blazor Server app with chat and configuration |

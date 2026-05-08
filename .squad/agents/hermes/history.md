@@ -31,6 +31,7 @@
 
 ---
 
+- 2026-05-08: When renaming test projects, preserve friend-assembly compatibility by keeping legacy `AssemblyName` if production internals are exposed via `InternalsVisibleTo` (e.g., AgentCore and Skills tests).
 ## 2026-05-07 — PR #180 Refresh Merge + Validation (Hermes)
 
 - Reused dedicated worktree `Q:\repos\botnexus-pr-180` on branch `refactor/conversation-dispatching-layer` tracking `origin/refactor/conversation-dispatching-layer`.

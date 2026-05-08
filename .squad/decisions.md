@@ -11334,6 +11334,148 @@ This is unacceptable behavior — optional dependencies shouldn't be able to kil
 - MCP endpoint resolved as \{base}/mcp\ with fallback to \https://api.githubcopilot.com/mcp\
 
 **Technical Details:**
+
+---
+
+## Test Folder Restructure (2026-05-08)
+
+**Decision Date:** 2026-05-08  
+**Decided By:** Hermes (CI/Test Lead), Kif (Docs), Nibbler (Reference Management)  
+**Status:** Implemented  
+**Commit:** 615b9e51  
+**PR:** #186
+
+### Context
+
+Test projects were organized without clear structure, making it difficult for developers to understand which tests covered which source areas. This created onboarding friction and made test discovery harder.
+
+### Decision
+
+Restructure test projects to mirror source organization:
+- **Bucketed layout:** `tests/agent/`, `tests/domain/`, `tests/extensions/`, `tests/gateway/` parallel to `src/agent/`, `src/domain/`, `src/extensions/`, `src/gateway/`
+- **Standardized naming:** All test projects end in `.Tests` (e.g., `BotNexus.Gateway.Tests`)
+- **Cross-cutting tests remain at root:** Conversation tests, E2E tests, Integration tests, provider conformance, coding agent tests stay at `tests/` level
+- **Preserved assembly name compatibility:** Internal assembly names retained where production code uses `InternalsVisibleTo` (e.g., `BotNexus.AgentCore.Tests`, `BotNexus.Skills.Tests`)
+- **Documentation:** Kif updated `tests/AGENTS.md` with folder structure guidance and naming conventions
+- **Reference updates:** Nibbler fixed all stale paths in scripts (`install-pre-commit-hook.ps1`, `dev-loop.ps1`), docs (`getting-started-dev.md`, `cli-wizard.md`, `src/gateway/README.md`), and `.squad/` skills
+
+### Rationale
+
+1. **Clarity** — Test location immediately tells developers which source bucket is being tested
+2. **Scalability** — New contributors can find tests without hunting
+3. **Consistency** — Aligned structure reduces cognitive load
+4. **Buildability** — Mirrored structure makes incremental builds and CI targeting easier
+
+### Validation
+
+- `dotnet build BotNexus.slnx --nologo --tl:off` — ✅ Passed
+- `dotnet test BotNexus.slnx --nologo --tl:off` — ✅ Passed (rerun after Windows file-lock transient)
+- All cross-references verified post-merge
+- No API changes; existing test behavior preserved
+
+### Related Files
+
+- `BotNexus.slnx` (project references updated)
+- `tests/AGENTS.md` (new folder structure documented)
+- `scripts/install-pre-commit-hook.ps1`, `scripts/dev-loop.ps1` (path updates)
+- `docs/getting-started-dev.md`, `docs/development/cli-wizard.md` (path updates)
+- `src/gateway/README.md` (test references updated)
+- All `.squad/` skills and active planning docs (reference synchronization)
+
+### Commitment
+
+Future test additions will follow this bucketed layout. Existing cross-cutting tests remain at root level. No breaking changes to test APIs or infrastructure.
+
+---
+
+## PR #184 Conflict Resolution (2026-05-07)
+
+**Decision Date:** 2026-05-07  
+**Decided By:** Farnsworth (Platform Dev)  
+**Status:** Implemented  
+**Context:** PR #184 (`fix/24-tool-timeouts`) required merge sync after PR #181 landed
+
+### Decisions
+
+1. **Reused dedicated worktree:** No edits in main checkout; used `Q:\repos\botnexus-pr-184` for isolation
+2. **Merge strategy:** Fetched `origin/main` and `origin/fix/24-tool-timeouts`, merged `origin/main` into branch cleanly
+3. **Conflict resolution:**
+   - `.squad/decisions-archive.md` — Accepted `origin/main` content (preserves canonical archive history)
+   - `tests/BotNexus.Gateway.Tests/InProcessIsolationStrategyTests.cs` — Kept both test sets (memory-tool regression tests from main + PR #184 timeout propagation coverage)
+4. **Validation:** Full build and test suite passed post-merge
+5. **Outcome:** Branch refreshed and ready for GitHub checks on updated head
+
+### Rationale
+
+- Mainline archive is authoritative for decision history
+- Keeping both test suites preserves platform guardrails while retaining new feature verification
+
+---
+
+## PR #181 Merge Refresh (2026-05-07)
+
+**Decision Date:** 2026-05-07  
+**Decided By:** Hermes (CI/Test Lead)  
+**Status:** Implemented  
+**Context:** PR #181 (`fix/update-pull-cancel`) required merge refresh against latest main
+
+### Decision
+
+Merge `origin/main` into `fix/update-pull-cancel`, validate with full build and test suite before push.
+
+### Evidence
+
+- Merge completed cleanly (commit b899e6cd)
+- Full validation passed:
+  - `dotnet build BotNexus.slnx --nologo --tl:off`
+  - `dotnet test BotNexus.slnx --nologo --tl:off`
+- Branch ready for GitHub PR checks
+
+### Outcome
+
+Branch is merge-refreshed and locally green. Pushing enabled next steps.
+
+---
+
+## Memory Tool Boundary (PR #179, Committed with boundary decision ea24971b)
+
+**Original Boundary Decision Date:** Earlier  
+**Review Date:** 2025-07-09  
+**Reviewer:** Leela (Lead/Architect)  
+**Status:** Approved & Implemented  
+**Related Commits:** ea24971b (boundary), 7a4785a6 (fix), 553eaf24 (fix)
+
+### Summary
+
+Memory tool surface clarification: `memory_save` is the exclusive agent-facing write tool. `MemoryStoreTool` (`memory_store`) was deleted because structured persistence should happen internally only.
+
+### Boundary Decision (ea24971b)
+
+| Axis | Definition |
+|------|-----------|
+| **Agent write tool** | `memory_save` (append markdown notes) — singular, no alternatives |
+| **Agent read tools** | `memory_search` (semantic search), `memory_get` (retrieve by ID/session) |
+| **Internal persistence** | `IMemoryStore` (SQLite) — not agent-invocable; used by read path and future consolidation |
+| **No tools named** | `memory_store`, `memory_index` — these are implementation details |
+
+### Implementation (7a4785a6, 553eaf24)
+
+- **Deleted:** `MemoryStoreTool.cs` (167 lines)
+- **Updated:** `InProcessIsolationStrategy.cs` — no longer registers `MemoryStoreTool`
+- **Tests:** `MemoryStoreToolTests.cs` migrated (not deleted) — rewritten as integration tests verifying `memory_save` + internal ingestion achieve persistent storage
+- **Guard tests added:** Prevent accidental re-introduction without preserving compatibility
+
+### Verification (Leela Review)
+
+- ✅ No remaining references to `memory_store` in production code
+- ✅ `MemorySaveTool` is the sole write path
+- ✅ Guard tests prevent regression
+- ✅ `AGENTS.md` already reflects correct terminology
+- ✅ Only acceptable references: guard test names and archived planning docs
+
+### Commitment
+
+Agents now have unambiguous memory write semantics. Future structured persistence (embedding, consolidation, dreaming) writes internally to `IMemoryStore` — never via agent-facing tool. If future needs require agents to write tagged entries, extend `memory_save`'s schema rather than reintroducing a separate tool.**Technical Details:**
 - Uses \HttpSseMcpTransport\ + \McpClient\ for MCP communication
 - Invokes \web_search\ tool on Copilot MCP endpoint
 - Leverages \GatewayAuthManager\ for token resolution and refresh

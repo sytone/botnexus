@@ -296,7 +296,7 @@ src/gateway/BotNexus.Cli/
       ConfirmStep.cs         # Yes/no prompt
       CheckStep.cs           # Non-interactive logic gate
       ActionStep.cs          # Async work step
-tests/BotNexus.Cli.Tests/
+tests/gateway/BotNexus.Cli.Tests/
   Wizard/
     WizardContextTests.cs
     WizardRunnerTests.cs

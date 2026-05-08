@@ -25,5 +25,5 @@ Wire BotNexus Gateway so in-process agents can call LLM providers with platform-
 ## Verification
 
 - `dotnet build --nologo`
-- `dotnet test tests\BotNexus.Gateway.Tests --nologo`
+- `dotnet test tests\gateway\BotNexus.Gateway.Tests --nologo`
 - smoke run: `dotnet run --project src\gateway\BotNexus.Gateway.Api` (verify startup, then stop)

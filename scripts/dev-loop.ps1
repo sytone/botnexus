@@ -21,7 +21,7 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $solutionPath = Join-Path $repoRoot "BotNexus.slnx"
 $cliProject = Join-Path $repoRoot "src\gateway\BotNexus.Cli\BotNexus.Cli.csproj"
-$gatewayTestsPath = Join-Path $repoRoot "tests\BotNexus.Gateway.Tests"
+$gatewayTestsPath = Join-Path $repoRoot "tests\gateway\BotNexus.Gateway.Tests"
 
 Push-Location $repoRoot
 try {

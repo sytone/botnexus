@@ -10,5 +10,5 @@ Stabilize live integration tests that run through `GatewayHost` where downstream
 4. Otherwise, enforce strict assertions on channel output, session history, router/supervisor invocations, and stream assembly.
 
 ## References
-- `tests/BotNexus.Gateway.Tests/Integration/CopilotIntegrationTests.cs`
+- `tests/gateway/BotNexus.Gateway.Tests/Integration/CopilotIntegrationTests.cs`
 - `src/gateway/BotNexus.Gateway/GatewayHost.cs`
