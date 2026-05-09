@@ -93,6 +93,22 @@ public sealed class SqliteCronStoreTests
     }
 
     [Fact]
+    public async Task CreateAsync_PersistsModelField()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        var job = CronStoreTestContext.CreateJob("job-1") with
+        {
+            Model = "openai/gpt-4.1"
+        };
+
+        await context.Store.CreateAsync(job);
+        var loaded = await context.Store.GetAsync("job-1");
+
+        loaded.ShouldNotBeNull();
+        loaded!.Model.ShouldBe("openai/gpt-4.1");
+    }
+
+    [Fact]
     public async Task DeleteAsync_RemovesJob()
     {
         await using var context = await CronStoreTestContext.CreateAsync();

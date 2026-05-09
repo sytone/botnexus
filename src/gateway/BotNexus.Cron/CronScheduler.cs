@@ -109,7 +109,7 @@ public sealed class CronScheduler(
     private async Task<CronRun> RunActionAsync(CronJob job, CronTriggerType triggerType, DateTimeOffset triggeredAt, CancellationToken ct)
     {
         var run = await _cronStore.RecordRunStartAsync(job.Id, ct).ConfigureAwait(false);
-        var action = ResolveAction(job.ActionType);
+        var action = ResolveAction(NormalizeActionType(job.ActionType));
 
         try
         {
@@ -205,6 +205,28 @@ public sealed class CronScheduler(
                 string.IsNullOrWhiteSpace(configuredJob.Schedule) ||
                 string.IsNullOrWhiteSpace(configuredJob.ActionType))
             {
+                _logger.LogWarning(
+                    "Skipping configured cron job '{JobId}' due to missing required fields (schedule/actionType).",
+                    jobId);
+                continue;
+            }
+
+            var normalizedActionType = NormalizeActionType(configuredJob.ActionType);
+            if (!_actions.ContainsKey(normalizedActionType))
+            {
+                _logger.LogWarning(
+                    "Skipping configured cron job '{JobId}' because action type '{ActionType}' is not registered.",
+                    jobId,
+                    configuredJob.ActionType);
+                continue;
+            }
+
+            if (string.Equals(normalizedActionType, "agent-prompt", StringComparison.OrdinalIgnoreCase)
+                && (string.IsNullOrWhiteSpace(configuredJob.AgentId) || string.IsNullOrWhiteSpace(configuredJob.Message)))
+            {
+                _logger.LogWarning(
+                    "Skipping configured cron job '{JobId}' because agent-prompt jobs require both agentId and message.",
+                    jobId);
                 continue;
             }
 
@@ -216,9 +238,10 @@ public sealed class CronScheduler(
                     Id = jobId,
                     Name = configuredJob.Name ?? jobId,
                     Schedule = configuredJob.Schedule,
-                    ActionType = configuredJob.ActionType,
+                    ActionType = normalizedActionType,
                     AgentId = configuredJob.AgentId,
                     Message = configuredJob.Message,
+                    Model = configuredJob.Model,
                     WebhookUrl = configuredJob.WebhookUrl,
                     ShellCommand = configuredJob.ShellCommand,
                     Enabled = configuredJob.Enabled,
@@ -236,9 +259,10 @@ public sealed class CronScheduler(
             {
                 Name = configuredJob.Name ?? existing.Name,
                 Schedule = configuredJob.Schedule,
-                ActionType = configuredJob.ActionType,
+                ActionType = normalizedActionType,
                 AgentId = configuredJob.AgentId,
                 Message = configuredJob.Message,
+                Model = configuredJob.Model,
                 WebhookUrl = configuredJob.WebhookUrl,
                 ShellCommand = configuredJob.ShellCommand,
                 Enabled = configuredJob.Enabled,
@@ -250,5 +274,13 @@ public sealed class CronScheduler(
 
             await _cronStore.UpdateAsync(merged, ct).ConfigureAwait(false);
         }
+    }
+
+    private static string NormalizeActionType(string? actionType)
+    {
+        if (string.Equals(actionType, "agent-chat", StringComparison.OrdinalIgnoreCase))
+            return "agent-prompt";
+
+        return actionType?.Trim() ?? string.Empty;
     }
 }

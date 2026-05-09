@@ -1,5 +1,6 @@
 using BotNexus.Cron;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Api.Controllers;
 
@@ -11,7 +12,11 @@ namespace BotNexus.Gateway.Api.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
-public sealed class CronController(ICronStore store, CronScheduler scheduler) : ControllerBase
+public sealed class CronController(
+    ICronStore store,
+    CronScheduler scheduler,
+    IOptionsMonitor<CronOptions> cronOptions,
+    ILogger<CronController> logger) : ControllerBase
 {
     /// <summary>Lists cron jobs.</summary>
     /// <summary>
@@ -21,7 +26,47 @@ public sealed class CronController(ICronStore store, CronScheduler scheduler) : 
     /// <returns>The list result.</returns>
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<CronJob>>> List(CancellationToken cancellationToken)
-        => Ok(await store.ListAsync(ct: cancellationToken));
+    {
+        var persisted = await store.ListAsync(ct: cancellationToken);
+        var merged = persisted.ToDictionary(job => job.Id, StringComparer.OrdinalIgnoreCase);
+        var configuredJobs = cronOptions.CurrentValue?.Jobs;
+        if (configuredJobs is not null)
+        {
+            foreach (var (jobId, configured) in configuredJobs)
+            {
+                if (merged.ContainsKey(jobId))
+                    continue;
+
+                if (string.IsNullOrWhiteSpace(jobId)
+                    || string.IsNullOrWhiteSpace(configured.Schedule)
+                    || string.IsNullOrWhiteSpace(configured.ActionType))
+                {
+                    continue;
+                }
+
+                merged[jobId] = new CronJob
+                {
+                    Id = jobId,
+                    Name = configured.Name ?? jobId,
+                    Schedule = configured.Schedule,
+                    ActionType = NormalizeActionType(configured.ActionType),
+                    AgentId = configured.AgentId,
+                    Message = configured.Message,
+                    Model = configured.Model,
+                    WebhookUrl = configured.WebhookUrl,
+                    ShellCommand = configured.ShellCommand,
+                    Enabled = configured.Enabled,
+                    System = configured.System,
+                    TimeZone = configured.TimeZone,
+                    CreatedBy = configured.CreatedBy,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    Metadata = configured.Metadata
+                };
+            }
+        }
+
+        return Ok(merged.Values.OrderByDescending(job => job.CreatedAt).ToList());
+    }
 
     /// <summary>Gets a cron job by identifier.</summary>
     /// <summary>
@@ -50,10 +95,12 @@ public sealed class CronController(ICronStore store, CronScheduler scheduler) : 
         var toCreate = request with
         {
             Id = string.IsNullOrWhiteSpace(request.Id) ? Guid.NewGuid().ToString("N") : request.Id,
+            ActionType = NormalizeActionType(request.ActionType),
             CreatedAt = request.CreatedAt == default ? DateTimeOffset.UtcNow : request.CreatedAt
         };
 
         var created = await store.CreateAsync(toCreate, cancellationToken);
+        logger.LogInformation("Cron job created via API: {JobId} ({ActionType})", created.Id, created.ActionType);
         return CreatedAtAction(nameof(Get), new { jobId = created.Id }, created);
     }
 
@@ -75,10 +122,13 @@ public sealed class CronController(ICronStore store, CronScheduler scheduler) : 
         var updated = request with
         {
             Id = jobId,
+            ActionType = NormalizeActionType(request.ActionType),
             CreatedAt = existing.CreatedAt
         };
 
-        return Ok(await store.UpdateAsync(updated, cancellationToken));
+        var saved = await store.UpdateAsync(updated, cancellationToken);
+        logger.LogInformation("Cron job updated via API: {JobId} ({ActionType})", saved.Id, saved.ActionType);
+        return Ok(saved);
     }
 
     /// <summary>Deletes a cron job.</summary>
@@ -92,6 +142,7 @@ public sealed class CronController(ICronStore store, CronScheduler scheduler) : 
     public async Task<IActionResult> Delete(string jobId, CancellationToken cancellationToken)
     {
         await store.DeleteAsync(jobId, cancellationToken);
+        logger.LogInformation("Cron job deleted via API: {JobId}", jobId);
         return NoContent();
     }
 
@@ -129,5 +180,13 @@ public sealed class CronController(ICronStore store, CronScheduler scheduler) : 
             return NotFound();
 
         return Ok(await store.GetRunHistoryAsync(jobId, limit, cancellationToken));
+    }
+
+    private static string NormalizeActionType(string? actionType)
+    {
+        if (string.Equals(actionType, "agent-chat", StringComparison.OrdinalIgnoreCase))
+            return "agent-prompt";
+
+        return actionType?.Trim() ?? string.Empty;
     }
 }

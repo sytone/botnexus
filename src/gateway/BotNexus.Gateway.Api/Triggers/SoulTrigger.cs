@@ -39,7 +39,11 @@ public sealed class SoulTrigger(
     /// <param name="prompt">The prompt.</param>
     /// <param name="ct">The ct.</param>
     /// <returns>The create session async result.</returns>
-    public async Task<SessionId> CreateSessionAsync(AgentId agentId, string prompt, CancellationToken ct = default)
+    public async Task<SessionId> CreateSessionAsync(
+        AgentId agentId,
+        string prompt,
+        CancellationToken ct = default,
+        InternalTriggerRequest? request = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
 
@@ -54,7 +58,18 @@ public sealed class SoulTrigger(
         var session = await sessions.GetOrCreateAsync(sessionId, agentId, ct).ConfigureAwait(false);
         InitializeSoulSession(session, agentId, soulDate);
 
+        if (string.IsNullOrWhiteSpace(request?.ModelOverride))
+            session.Metadata.Remove("modelOverride");
+        else
+            session.Metadata["modelOverride"] = request!.ModelOverride;
+
+        if (string.IsNullOrWhiteSpace(request?.CronJobId))
+            session.Metadata.Remove("cronJobId");
+        else
+            session.Metadata["cronJobId"] = request!.CronJobId;
+
         session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = prompt });
+        await sessions.SaveAsync(session, ct).ConfigureAwait(false);
         var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);
         var response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
         session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });

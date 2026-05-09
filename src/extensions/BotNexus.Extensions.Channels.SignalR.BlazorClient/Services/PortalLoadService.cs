@@ -59,6 +59,34 @@ public sealed class PortalLoadService : IPortalLoadService
             });
             await Task.WhenAll(conversationTasks);
 
+            var sessions = await _restClient.GetSessionsAsync(cancellationToken: cancellationToken);
+            foreach (var session in sessions)
+                _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType);
+
+            foreach (var group in sessions
+                         .Where(s => string.Equals(s.SessionType, "cron", StringComparison.OrdinalIgnoreCase))
+                         .GroupBy(s => s.AgentId))
+            {
+                var agent = _store.GetAgent(group.Key);
+                if (agent is null) continue;
+
+                foreach (var session in group)
+                {
+                    var conversationId = $"cron-session:{session.SessionId}";
+                    agent.Conversations[conversationId] = new ConversationState
+                    {
+                        ConversationId = conversationId,
+                        Title = $"Cron · {session.SessionId[..Math.Min(8, session.SessionId.Length)]}",
+                        Status = session.Status ?? "Active",
+                        ActiveSessionId = session.SessionId,
+                        CreatedAt = session.CreatedAt ?? DateTimeOffset.UtcNow,
+                        UpdatedAt = session.UpdatedAt ?? DateTimeOffset.UtcNow,
+                        IsVirtualSession = true,
+                        VirtualSessionKind = "cron"
+                    };
+                }
+            }
+
             var selectedAgentId = agents.OrderBy(a => a.DisplayName).FirstOrDefault()?.AgentId;
             if (selectedAgentId is not null)
             {

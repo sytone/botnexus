@@ -15,7 +15,7 @@ public sealed class CronControllerTests
         var store = new FakeCronStore();
         await store.CreateAsync(CreateJob("job-1"));
         await store.CreateAsync(CreateJob("job-2"));
-        var controller = CreateController(store, new RecordingAction());
+        var controller = CreateController(store, new RecordingAction(), new CronOptions());
 
         var result = await controller.List(CancellationToken.None);
 
@@ -29,7 +29,7 @@ public sealed class CronControllerTests
     {
         var store = new FakeCronStore();
         await store.CreateAsync(CreateJob("job-1"));
-        var controller = CreateController(store, new RecordingAction());
+        var controller = CreateController(store, new RecordingAction(), new CronOptions());
 
         var result = await controller.Get("job-1", CancellationToken.None);
 
@@ -42,7 +42,7 @@ public sealed class CronControllerTests
     public async Task Create_ReturnsCreated()
     {
         var store = new FakeCronStore();
-        var controller = CreateController(store, new RecordingAction());
+        var controller = CreateController(store, new RecordingAction(), new CronOptions());
         var request = CreateJob(string.Empty) with { Id = string.Empty };
 
         var result = await controller.Create(request, CancellationToken.None);
@@ -58,7 +58,7 @@ public sealed class CronControllerTests
     {
         var store = new FakeCronStore();
         await store.CreateAsync(CreateJob("job-1"));
-        var controller = CreateController(store, new RecordingAction());
+        var controller = CreateController(store, new RecordingAction(), new CronOptions());
 
         var result = await controller.Delete("job-1", CancellationToken.None);
 
@@ -72,7 +72,7 @@ public sealed class CronControllerTests
         var action = new RecordingAction();
         var store = new FakeCronStore();
         await store.CreateAsync(CreateJob("job-1", actionType: action.ActionType));
-        var controller = CreateController(store, action);
+        var controller = CreateController(store, action, new CronOptions());
 
         var result = await controller.Run("job-1", CancellationToken.None);
 
@@ -82,7 +82,58 @@ public sealed class CronControllerTests
         action.ExecutionCount.ShouldBe(1);
     }
 
-    private static CronController CreateController(FakeCronStore store, ICronAction action)
+    [Fact]
+    public async Task List_IncludesConfiguredJobs_AndNormalizesAgentChat()
+    {
+        var store = new FakeCronStore();
+        var options = new CronOptions
+        {
+            Jobs = new Dictionary<string, ConfiguredCronJob>
+            {
+                ["config-job"] = new()
+                {
+                    Name = "Configured Job",
+                    Schedule = "*/5 * * * *",
+                    ActionType = "agent-chat",
+                    AgentId = "agent-a",
+                    Message = "hello",
+                    Model = "openai/gpt-4.1",
+                    Enabled = true
+                }
+            }
+        };
+        var controller = CreateController(store, new RecordingAction(), options);
+
+        var result = await controller.List(CancellationToken.None);
+
+        var jobs = (result.Result as OkObjectResult)?.Value as IReadOnlyList<CronJob>;
+        jobs.ShouldNotBeNull();
+        var configured = jobs!.Single(job => job.Id == "config-job");
+        configured.ActionType.ShouldBe("agent-prompt");
+        configured.Model.ShouldBe("openai/gpt-4.1");
+    }
+
+    [Fact]
+    public async Task Create_NormalizesAgentChat_AndPersistsModel()
+    {
+        var store = new FakeCronStore();
+        var controller = CreateController(store, new RecordingAction(), new CronOptions());
+        var request = CreateJob(string.Empty) with
+        {
+            Id = string.Empty,
+            ActionType = "agent-chat",
+            Model = "openai/gpt-4.1"
+        };
+
+        var result = await controller.Create(request, CancellationToken.None);
+
+        var created = (result.Result as CreatedAtActionResult)?.Value as CronJob;
+        created.ShouldNotBeNull();
+        created!.ActionType.ShouldBe("agent-prompt");
+        created.Model.ShouldBe("openai/gpt-4.1");
+    }
+
+    private static CronController CreateController(FakeCronStore store, ICronAction action, CronOptions options)
     {
         var scheduler = new CronScheduler(
             store,
@@ -90,7 +141,7 @@ public sealed class CronControllerTests
             new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
             new StaticOptionsMonitor<CronOptions>(new CronOptions()),
             NullLogger<CronScheduler>.Instance);
-        return new CronController(store, scheduler);
+        return new CronController(store, scheduler, new StaticOptionsMonitor<CronOptions>(options), NullLogger<CronController>.Instance);
     }
 
     private static CronJob CreateJob(string id, string actionType = "agent-prompt")

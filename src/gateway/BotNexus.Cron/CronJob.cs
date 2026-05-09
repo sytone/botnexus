@@ -8,6 +8,7 @@ public sealed record CronJob
     public required string ActionType { get; init; }
     public string? AgentId { get; init; }
     public string? Message { get; init; }
+    public string? Model { get; init; }
     public string? WebhookUrl { get; init; }
     public string? ShellCommand { get; init; }
     public bool Enabled { get; init; } = true;

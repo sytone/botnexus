@@ -99,6 +99,7 @@ builder.Services.Configure<CronOptions>(options =>
                 ActionType = pair.Value.ActionType,
                 AgentId = pair.Value.AgentId,
                 Message = pair.Value.Message,
+                Model = ResolveCronModel(pair.Value),
                 WebhookUrl = pair.Value.WebhookUrl,
                 ShellCommand = pair.Value.ShellCommand,
                 Enabled = pair.Value.Enabled,
@@ -107,6 +108,24 @@ builder.Services.Configure<CronOptions>(options =>
             },
             StringComparer.OrdinalIgnoreCase);
 });
+
+static string? ResolveCronModel(CronJobConfig config)
+{
+    if (!string.IsNullOrWhiteSpace(config.Model))
+        return config.Model;
+
+    if (config.Metadata is null)
+        return null;
+
+    var metadataModel = config.Metadata
+        .FirstOrDefault(pair => string.Equals(pair.Key, "model", StringComparison.OrdinalIgnoreCase))
+        .Value;
+
+    return string.IsNullOrWhiteSpace(metadataModel)
+        ? null
+        : metadataModel;
+}
+
 builder.Services.AddExtensionLoading();
 builder.Services.AddSignalR();
 builder.Services.AddBotNexusGatewayApi();

@@ -1,24 +1,25 @@
 @using System.Text.Json.Nodes
 
-@{ var cron = GetObject(Config, "cron"); }
+@{ var cron = GetObjectCaseInsensitive(Config, "cron"); }
 
-<BoolField Label="Enabled" Value="@GetBool(cron, "enabled")" ValueChanged="@(v => SetNestedBool("cron", "enabled", v))" />
-<NumberField Label="Tick Interval (seconds)" Value="@GetNullableInt(cron, "tickIntervalSeconds")" ValueChanged="@(v => SetNestedNum("cron", "tickIntervalSeconds", v))" />
+<BoolField Label="Enabled" Value="@GetBoolCaseInsensitive(cron, "enabled")" ValueChanged="@(v => SetNestedBoolCaseInsensitive("cron", "enabled", v))" />
+<NumberField Label="Tick Interval (seconds)" Value="@GetNullableInt(cron, "tickIntervalSeconds")" ValueChanged="@(v => SetNestedNumCaseInsensitive("cron", "tickIntervalSeconds", v))" />
 
-<DictionarySection Title="Jobs" SectionPath="cron.jobs" Entries="@GetDict(cron, "jobs")"
-                   OnAddEntry="@((string key) => AddNestedDictEntry("cron", "jobs", key))"
-                   OnDeleteEntry="@((string key) => DeleteNestedDictEntry("cron", "jobs", key))">
+<DictionarySection Title="Jobs" SectionPath="cron.jobs" Entries="@GetDictCaseInsensitive(cron, "jobs")"
+                   OnAddEntry="@((string key) => AddNestedDictEntryCaseInsensitive("cron", "jobs", key))"
+                   OnDeleteEntry="@((string key) => DeleteNestedDictEntryCaseInsensitive("cron", "jobs", key))">
     <EntryTemplate Context="entry">
-        <TextField Label="Job Name" Value="@GetStr(entry.Value, "name")" ValueChanged="@(v => SetCronJobField(entry.Key, "name", v))" />
-        <TextField Label="Schedule (cron)" Value="@GetStr(entry.Value, "schedule")" ValueChanged="@(v => SetCronJobField(entry.Key, "schedule", v))" />
-        <SelectField Label="Action Type" Value="@GetStr(entry.Value, "actionType")" ValueChanged="@(v => SetCronJobField(entry.Key, "actionType", v))"
-                     Options="@(new[] { "agent-chat", "webhook", "shell" })" />
-        <TextField Label="Agent ID" Value="@GetStr(entry.Value, "agentId")" ValueChanged="@(v => SetCronJobField(entry.Key, "agentId", v))" />
-        <TextField Label="Message" Value="@GetStr(entry.Value, "message")" ValueChanged="@(v => SetCronJobField(entry.Key, "message", v))" />
-        <TextField Label="Webhook URL" Value="@GetStr(entry.Value, "webhookUrl")" ValueChanged="@(v => SetCronJobField(entry.Key, "webhookUrl", v))" />
-        <TextField Label="Shell Command" Value="@GetStr(entry.Value, "shellCommand")" ValueChanged="@(v => SetCronJobField(entry.Key, "shellCommand", v))" />
-        <BoolField Label="Enabled" Value="@GetBool(entry.Value, "enabled")" ValueChanged="@(v => SetCronJobBool(entry.Key, "enabled", v))" />
-        <TextField Label="Created By" Value="@GetStr(entry.Value, "createdBy")" ValueChanged="@(v => SetCronJobField(entry.Key, "createdBy", v))" />
+        <TextField Label="Job Name" Value="@GetStrCaseInsensitive(entry.Value, "name")" ValueChanged="@(v => SetCronJobFieldCaseInsensitive(entry.Key, "name", v))" />
+        <TextField Label="Schedule (cron)" Value="@GetStrCaseInsensitive(entry.Value, "schedule")" ValueChanged="@(v => SetCronJobFieldCaseInsensitive(entry.Key, "schedule", v))" />
+        <SelectField Label="Action Type" Value="@GetStrCaseInsensitive(entry.Value, "actionType")" ValueChanged="@(v => SetCronJobFieldCaseInsensitive(entry.Key, "actionType", v))"
+                     Options="@(new[] { "agent-prompt", "agent-chat", "webhook", "shell" })" />
+        <TextField Label="Agent ID" Value="@GetStrCaseInsensitive(entry.Value, "agentId")" ValueChanged="@(v => SetCronJobFieldCaseInsensitive(entry.Key, "agentId", v))" />
+        <TextField Label="Target Model" Value="@GetCronModel(entry.Value)" ValueChanged="@(v => SetCronModel(entry.Key, v))" />
+        <TextField Label="Message" Value="@GetStrCaseInsensitive(entry.Value, "message")" ValueChanged="@(v => SetCronJobFieldCaseInsensitive(entry.Key, "message", v))" />
+        <TextField Label="Webhook URL" Value="@GetStrCaseInsensitive(entry.Value, "webhookUrl")" ValueChanged="@(v => SetCronJobFieldCaseInsensitive(entry.Key, "webhookUrl", v))" />
+        <TextField Label="Shell Command" Value="@GetStrCaseInsensitive(entry.Value, "shellCommand")" ValueChanged="@(v => SetCronJobFieldCaseInsensitive(entry.Key, "shellCommand", v))" />
+        <BoolField Label="Enabled" Value="@GetBoolCaseInsensitive(entry.Value, "enabled")" ValueChanged="@(v => SetCronJobBoolCaseInsensitive(entry.Key, "enabled", v))" />
+        <TextField Label="Created By" Value="@GetStrCaseInsensitive(entry.Value, "createdBy")" ValueChanged="@(v => SetCronJobFieldCaseInsensitive(entry.Key, "createdBy", v))" />
     </EntryTemplate>
 </DictionarySection>
 
@@ -28,18 +29,33 @@
 
     private void MarkDirty() => OnChanged.InvokeAsync();
 
-    private static JsonObject? GetObject(JsonObject? parent, string key) => parent?[key] as JsonObject;
-
-    private static string GetStr(JsonObject? obj, string key)
+    private static JsonObject? GetObjectCaseInsensitive(JsonObject? parent, string key)
     {
-        var node = obj?[key];
+        if (parent is null) return null;
+        if (parent[key] is JsonObject exact) return exact;
+        var matched = parent.FirstOrDefault(kv => string.Equals(kv.Key, key, StringComparison.OrdinalIgnoreCase));
+        return matched.Value as JsonObject;
+    }
+
+    private static string? ResolveKey(JsonObject? obj, string key)
+    {
+        if (obj is null) return null;
+        if (obj.ContainsKey(key)) return key;
+        return obj.FirstOrDefault(kv => string.Equals(kv.Key, key, StringComparison.OrdinalIgnoreCase)).Key;
+    }
+
+    private static string GetStrCaseInsensitive(JsonObject? obj, string key)
+    {
+        var resolvedKey = ResolveKey(obj, key);
+        var node = resolvedKey is null ? null : obj?[resolvedKey];
         if (node is JsonValue jv) { var raw = jv.ToString(); return raw == "***" ? "" : raw; }
         return "";
     }
 
-    private static bool GetBool(JsonObject? obj, string key)
+    private static bool GetBoolCaseInsensitive(JsonObject? obj, string key)
     {
-        if (obj?[key] is JsonValue jv && jv.TryGetValue<bool>(out var b)) return b;
+        var resolvedKey = ResolveKey(obj, key);
+        if (resolvedKey is not null && obj?[resolvedKey] is JsonValue jv && jv.TryGetValue<bool>(out var b)) return b;
         return false;
     }
 
@@ -49,15 +65,16 @@
         return null;
     }
 
-    private static Dictionary<string, JsonObject?> GetDict(JsonObject? obj, string key)
+    private static Dictionary<string, JsonObject?> GetDictCaseInsensitive(JsonObject? obj, string key)
     {
-        if (obj?[key] is JsonObject dict) return dict.ToDictionary(kv => kv.Key, kv => kv.Value as JsonObject);
+        var resolvedKey = ResolveKey(obj, key);
+        if (resolvedKey is not null && obj?[resolvedKey] is JsonObject dict) return dict.ToDictionary(kv => kv.Key, kv => kv.Value as JsonObject);
         return new();
     }
 
     private void SetNestedBool(string section, string key, bool value)
     {
-        EnsureObject(section);
+        EnsureObjectCaseInsensitive(section);
         var obj = Config![section] as JsonObject;
         if (obj is null) return;
         obj[key] = value;
@@ -66,58 +83,121 @@
 
     private void SetNestedNum(string section, string key, int? value)
     {
-        EnsureObject(section);
+        EnsureObjectCaseInsensitive(section);
         var obj = Config![section] as JsonObject;
         if (obj is null) return;
         obj[key] = value.HasValue ? JsonValue.Create(value.Value) : null;
         MarkDirty();
     }
 
-    private void SetCronJobField(string jobKey, string field, string? value)
+    private void SetNestedBoolCaseInsensitive(string section, string key, bool value)
     {
-        var cron = Config?["cron"] as JsonObject;
-        var jobs = cron?["jobs"] as JsonObject;
-        var job = jobs?[jobKey] as JsonObject;
-        if (job is null) return;
-        job[field] = string.IsNullOrEmpty(value) ? null : value;
+        EnsureObjectCaseInsensitive(section);
+        var sectionKey = ResolveKey(Config, section) ?? section;
+        var obj = Config?[sectionKey] as JsonObject;
+        if (obj is null) return;
+        var resolvedKey = ResolveKey(obj, key) ?? key;
+        obj[resolvedKey] = value;
         MarkDirty();
     }
 
-    private void SetCronJobBool(string jobKey, string field, bool value)
+    private void SetNestedNumCaseInsensitive(string section, string key, int? value)
     {
-        var cron = Config?["cron"] as JsonObject;
-        var jobs = cron?["jobs"] as JsonObject;
-        var job = jobs?[jobKey] as JsonObject;
-        if (job is null) return;
-        job[field] = value;
+        EnsureObjectCaseInsensitive(section);
+        var sectionKey = ResolveKey(Config, section) ?? section;
+        var obj = Config?[sectionKey] as JsonObject;
+        if (obj is null) return;
+        var resolvedKey = ResolveKey(obj, key) ?? key;
+        obj[resolvedKey] = value.HasValue ? JsonValue.Create(value.Value) : null;
         MarkDirty();
     }
 
-    private void AddNestedDictEntry(string section, string dict, string key)
+    private void SetCronJobFieldCaseInsensitive(string jobKey, string field, string? value)
+    {
+        var cron = GetObjectCaseInsensitive(Config, "cron");
+        var jobs = GetObjectCaseInsensitive(cron, "jobs");
+        var job = jobs?[jobKey] as JsonObject;
+        if (job is null) return;
+        var key = ResolveKey(job, field) ?? field;
+        job[key] = string.IsNullOrEmpty(value) ? null : value;
+        MarkDirty();
+    }
+
+    private void SetCronJobBoolCaseInsensitive(string jobKey, string field, bool value)
+    {
+        var cron = GetObjectCaseInsensitive(Config, "cron");
+        var jobs = GetObjectCaseInsensitive(cron, "jobs");
+        var job = jobs?[jobKey] as JsonObject;
+        if (job is null) return;
+        var key = ResolveKey(job, field) ?? field;
+        job[key] = value;
+        MarkDirty();
+    }
+
+    private void AddNestedDictEntryCaseInsensitive(string section, string dict, string key)
     {
         if (Config is null || string.IsNullOrWhiteSpace(key)) return;
-        EnsureObject(section);
-        var parent = Config[section] as JsonObject;
+        EnsureObjectCaseInsensitive(section);
+        var sectionKey = ResolveKey(Config, section) ?? section;
+        var parent = Config[sectionKey] as JsonObject;
         if (parent is null) return;
-        if (parent[dict] is not JsonObject dictObj) { dictObj = new JsonObject(); parent[dict] = dictObj; }
+        var dictKey = ResolveKey(parent, dict) ?? dict;
+        if (parent[dictKey] is not JsonObject dictObj) { dictObj = new JsonObject(); parent[dictKey] = dictObj; }
         dictObj[key] = new JsonObject();
         MarkDirty();
         StateHasChanged();
     }
 
-    private void DeleteNestedDictEntry(string section, string dict, string key)
+    private void DeleteNestedDictEntryCaseInsensitive(string section, string dict, string key)
     {
-        var parent = Config?[section] as JsonObject;
-        var dictObj = parent?[dict] as JsonObject;
+        var parent = GetObjectCaseInsensitive(Config, section);
+        var dictObj = GetObjectCaseInsensitive(parent, dict);
         if (dictObj is null) return;
         dictObj.Remove(key);
         MarkDirty();
         StateHasChanged();
     }
 
-    private void EnsureObject(string key)
+    private void EnsureObjectCaseInsensitive(string key)
     {
         if (Config is null) return;
-        if (Config[key] is not JsonObject) Config[key] = new JsonObject();
+        var resolvedKey = ResolveKey(Config, key) ?? key;
+        if (Config[resolvedKey] is not JsonObject) Config[resolvedKey] = new JsonObject();
+    }
+
+    private static string GetCronModel(JsonObject? job)
+    {
+        var model = GetStrCaseInsensitive(job, "model");
+        if (!string.IsNullOrWhiteSpace(model))
+            return model;
+
+        var metadata = ResolveKey(job, "metadata") is { } metadataKey
+            ? job?[metadataKey] as JsonObject
+            : null;
+
+        return GetStrCaseInsensitive(metadata, "model");
+    }
+
+    private void SetCronModel(string jobKey, string? value)
+    {
+        var cron = GetObjectCaseInsensitive(Config, "cron");
+        var jobs = GetObjectCaseInsensitive(cron, "jobs");
+        var job = jobs?[jobKey] as JsonObject;
+        if (job is null) return;
+
+        var modelKey = ResolveKey(job, "model") ?? "model";
+        job[modelKey] = string.IsNullOrWhiteSpace(value) ? null : value;
+
+        if (ResolveKey(job, "metadata") is { } metadataKeyName
+            && job[metadataKeyName] is JsonObject metadata)
+        {
+            if (ResolveKey(metadata, "model") is { } metadataModelKey)
+                metadata.Remove(metadataModelKey);
+
+            if (metadata.Count == 0)
+                job[metadataKeyName] = null;
+        }
+
+        MarkDirty();
     }
 }

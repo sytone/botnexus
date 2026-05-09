@@ -134,7 +134,65 @@ public sealed class SoulTriggerTests
         todaySession.History.ShouldContain(entry => entry.Role == MessageRole.User && entry.Content == "new soul prompt");
         todaySession.History.ShouldContain(entry => entry.Role == MessageRole.Assistant && entry.Content == "Today response");
         sessions.Verify(s => s.SaveAsync(previousSession, It.IsAny<CancellationToken>()), Times.Once);
-        sessions.Verify(s => s.SaveAsync(todaySession, It.IsAny<CancellationToken>()), Times.Once);
+        sessions.Verify(s => s.SaveAsync(todaySession, It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task CreateSessionAsync_SameDay_ReusesSoulSessionId()
+    {
+        var agentId = AgentId.From("agent-a");
+        var now = new DateTimeOffset(2026, 1, 10, 8, 0, 0, TimeSpan.Zero);
+        var soulDate = new DateOnly(2026, 1, 10);
+        var expectedSessionId = SessionId.ForSoul(agentId, soulDate);
+
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(r => r.Get(agentId)).Returns(CreateDescriptor(agentId, new SoulAgentConfig
+        {
+            Timezone = "UTC",
+            DayBoundary = "06:00"
+        }));
+
+        var session = new GatewaySession
+        {
+            SessionId = expectedSessionId,
+            AgentId = agentId
+        };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.ListAsync(agentId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        sessions.Setup(s => s.GetOrCreateAsync(expectedSessionId, agentId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "response" });
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(agentId, expectedSessionId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var trigger = new SoulTrigger(
+            supervisor.Object,
+            registry.Object,
+            sessions.Object,
+            NullLogger<SoulTrigger>.Instance,
+            new FixedTimeProvider(now));
+
+        var first = await trigger.CreateSessionAsync(
+            agentId,
+            "first prompt",
+            request: new BotNexus.Gateway.Abstractions.Triggers.InternalTriggerRequest
+            {
+                CronJobId = "job-1",
+                ModelOverride = "openai/gpt-4.1"
+            });
+        var second = await trigger.CreateSessionAsync(agentId, "second prompt");
+
+        first.ShouldBe(expectedSessionId);
+        second.ShouldBe(expectedSessionId);
+        session.Metadata["soulDate"].ShouldBe("2026-01-10");
+        sessions.Verify(s => s.GetOrCreateAsync(expectedSessionId, agentId, It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
     private static AgentDescriptor CreateDescriptor(AgentId agentId, SoulAgentConfig soul)

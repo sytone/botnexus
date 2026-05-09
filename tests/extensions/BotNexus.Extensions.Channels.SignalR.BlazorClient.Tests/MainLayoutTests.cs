@@ -193,6 +193,24 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
+    public void Virtual_cron_conversation_shows_badge_and_hides_archive_button()
+    {
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-1", "a-1", "General", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        _store.ActiveAgentId = "a-1";
+        var conv = _store.GetAgent("a-1")!.Conversations["c-1"];
+        conv.IsVirtualSession = true;
+        conv.VirtualSessionKind = "cron";
+
+        var cut = RenderLayout();
+
+        Assert.Contains("Cron", cut.Markup);
+        Assert.Empty(cut.FindAll(".conversation-archive-btn"));
+    }
+
+    [Fact]
     public void Switching_agent_triggers_history_load_for_active_conversation()
     {
         // Arrange: two agents, each with a default conversation auto-selected via SeedConversations

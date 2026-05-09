@@ -82,3 +82,33 @@ public sealed class ConversationHistoryEntryDto
     [JsonPropertyName("reason")]
     public string? Reason { get; init; }
 }
+
+public sealed record SessionHistoryResponseDto(
+    [property: JsonPropertyName("offset")] int Offset,
+    [property: JsonPropertyName("limit")] int Limit,
+    [property: JsonPropertyName("totalCount")] int TotalCount,
+    [property: JsonPropertyName("entries")] IReadOnlyList<SessionHistoryEntryDto> Entries);
+
+public sealed class SessionHistoryEntryDto
+{
+    [JsonPropertyName("role")]
+    public string? Role { get; init; }
+
+    [JsonPropertyName("content")]
+    public string? Content { get; init; }
+
+    [JsonPropertyName("timestamp")]
+    public DateTimeOffset Timestamp { get; init; }
+
+    [JsonPropertyName("toolName")]
+    public string? ToolName { get; init; }
+
+    [JsonPropertyName("toolCallId")]
+    public string? ToolCallId { get; init; }
+
+    [JsonPropertyName("toolArgs")]
+    public string? ToolArgs { get; init; }
+
+    [JsonPropertyName("toolIsError")]
+    public bool ToolIsError { get; init; }
+}

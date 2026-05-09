@@ -160,6 +160,81 @@ public sealed class AgentInteractionServiceTests
         Assert.Equal(5, messages.Count);
     }
 
+    [Fact]
+    public async Task RefreshConversationsAsync_AddsVirtualCronConversationRows()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        _restClient.GetConversationsAsync("agent-1", Arg.Any<CancellationToken>())
+            .Returns([
+                new ConversationSummaryDto(
+                    "conv-1",
+                    "agent-1",
+                    "General",
+                    false,
+                    "Active",
+                    null,
+                    0,
+                    DateTimeOffset.UtcNow.AddHours(-1),
+                    DateTimeOffset.UtcNow.AddMinutes(-5))
+            ]);
+        _restClient.GetSessionsAsync("agent-1", Arg.Any<CancellationToken>())
+            .Returns([
+                new SessionSummary(
+                    "cron:job-1:20260508010101:abc123",
+                    "agent-1",
+                    "cron",
+                    "cron",
+                    "Active",
+                    2,
+                    false,
+                    DateTimeOffset.UtcNow.AddMinutes(-10),
+                    DateTimeOffset.UtcNow.AddMinutes(-1))
+            ]);
+
+        await _service.RefreshConversationsAsync("agent-1");
+
+        var cronConversation = agent.Conversations["cron-session:cron:job-1:20260508010101:abc123"];
+        Assert.True(cronConversation.IsVirtualSession);
+        Assert.Equal("cron", cronConversation.VirtualSessionKind);
+        Assert.Equal("cron:job-1:20260508010101:abc123", cronConversation.ActiveSessionId);
+    }
+
+    [Fact]
+    public async Task SelectConversation_ForVirtualCronConversation_LoadsSessionHistory()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.Conversations["cron-session:cron:job-1:run"] = new ConversationState
+        {
+            ConversationId = "cron-session:cron:job-1:run",
+            Title = "Cron session",
+            IsVirtualSession = true,
+            VirtualSessionKind = "cron",
+            ActiveSessionId = "cron:job-1:run",
+            HistoryLoaded = false
+        };
+
+        _restClient.GetSessionHistoryAsync("cron:job-1:run", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new SessionHistoryResponseDto(
+                0,
+                200,
+                1,
+                [
+                    new SessionHistoryEntryDto
+                    {
+                        Role = "assistant",
+                        Content = "Cron execution complete",
+                        Timestamp = DateTimeOffset.UtcNow
+                    }
+                ]));
+
+        await _service.SelectConversationAsync("agent-1", "cron-session:cron:job-1:run");
+
+        await _restClient.Received(1).GetSessionHistoryAsync("cron:job-1:run", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+        var messages = agent.Conversations["cron-session:cron:job-1:run"].Messages;
+        Assert.Single(messages);
+        Assert.Equal("Cron execution complete", messages[0].Content);
+    }
+
     // ── Steering tests ────────────────────────────────────────────────────
 
     [Fact]

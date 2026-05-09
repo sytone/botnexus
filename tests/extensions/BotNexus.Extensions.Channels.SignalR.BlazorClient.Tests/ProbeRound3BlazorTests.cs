@@ -198,6 +198,71 @@ public sealed class ProbeRound3BlazorTests : IDisposable
     }
 
     [Fact]
+    public void CronConfigPanel_ReadsMixedCaseConfig_AndShowsAgentPromptOption()
+    {
+        var config = new JsonObject
+        {
+            ["Cron"] = new JsonObject
+            {
+                ["Enabled"] = true,
+                ["Jobs"] = new JsonObject
+                {
+                    ["daily-summary"] = new JsonObject
+                    {
+                        ["Name"] = "Daily summary",
+                        ["Schedule"] = "0 9 * * *",
+                        ["ActionType"] = "agent-chat",
+                        ["AgentId"] = "assistant",
+                        ["Message"] = "Summarize"
+                    }
+                }
+            }
+        };
+
+        var cut = _ctx.Render<CronConfigPanel>(p => p
+            .Add(c => c.Config, config)
+            .Add(c => c.OnChanged, Microsoft.AspNetCore.Components.EventCallback.Empty));
+
+        Assert.Contains("Daily summary", cut.Markup);
+        Assert.Contains("agent-prompt", cut.Markup);
+    }
+
+    [Fact]
+    public void CronConfigPanel_ModelMetadataField_PreservesMetadataModelValue()
+    {
+        var config = new JsonObject
+        {
+            ["cron"] = new JsonObject
+            {
+                ["jobs"] = new JsonObject
+                {
+                    ["daily-summary"] = new JsonObject
+                    {
+                        ["name"] = "Daily summary",
+                        ["schedule"] = "0 9 * * *",
+                        ["actionType"] = "agent-prompt",
+                        ["metadata"] = new JsonObject
+                        {
+                            ["model"] = "openai/gpt-4.1"
+                        }
+                    }
+                }
+            }
+        };
+
+        var cut = _ctx.Render<CronConfigPanel>(p => p
+            .Add(c => c.Config, config)
+            .Add(c => c.OnChanged, Microsoft.AspNetCore.Components.EventCallback.Empty));
+
+        cut.Markup.ShouldNotBeNullOrWhiteSpace();
+        var model = ((config["cron"] as JsonObject)?["jobs"] as JsonObject)?["daily-summary"]?
+            .AsObject()["metadata"]?
+            .AsObject()["model"]?
+            .GetValue<string>();
+        model.ShouldBe("openai/gpt-4.1");
+    }
+
+    [Fact]
     public void ProvidersConfigPanel_WithExistingProvider_RendersProviderEntry()
     {
         var providerEntry = new JsonObject

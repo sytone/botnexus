@@ -1,7 +1,10 @@
 using System.Reflection;
+using BotNexus.Cron.Actions;
 using BotNexus.Cron.Tests.TestInfrastructure;
+using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace BotNexus.Cron.Tests;
@@ -65,6 +68,23 @@ public sealed class CronSchedulerTests
     }
 
     [Fact]
+    public async Task Scheduler_RecordsRunSessionId_WhenActionCreatesSession()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        var action = new SessionRecordingAction("test-action", "cron:job-1:session-1");
+        var job = CronStoreTestContext.CreateJob("job-1", actionType: "test-action");
+        await context.Store.CreateAsync(job);
+        var scheduler = CreateScheduler(context.Store, [action]);
+
+        var run = await scheduler.RunNowAsync("job-1");
+
+        run.Status.ShouldBe("ok");
+        run.SessionId.ShouldBe("cron:job-1:session-1");
+        var history = await context.Store.GetRunHistoryAsync("job-1");
+        history.ShouldHaveSingleItem().SessionId.ShouldBe("cron:job-1:session-1");
+    }
+
+    [Fact]
     public async Task Scheduler_RecordsErrorOnFailure()
     {
         await using var context = await CronStoreTestContext.CreateAsync();
@@ -84,6 +104,26 @@ public sealed class CronSchedulerTests
         var entry = history.ShouldHaveSingleItem();
         entry.Status.ShouldBe("error");
         entry.Error.ShouldBe("boom");
+    }
+
+    [Fact]
+    public async Task Scheduler_WebhookAction_RecordsError_NotSilentSuccess()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        var job = CronStoreTestContext.CreateJob("job-1", actionType: "webhook") with
+        {
+            WebhookUrl = "https://example.test/hook"
+        };
+        await context.Store.CreateAsync(job);
+        var scheduler = CreateScheduler(context.Store, [new WebhookAction()]);
+
+        var run = await scheduler.RunNowAsync("job-1");
+
+        run.Status.ShouldBe("error");
+        run.Error.ShouldNotBeNull();
+        run.Error!.ToLowerInvariant().ShouldContain("not implemented");
+        var history = await context.Store.GetRunHistoryAsync("job-1");
+        history.ShouldHaveSingleItem().Status.ShouldBe("error");
     }
 
     [Fact]
@@ -414,6 +454,69 @@ public sealed class CronSchedulerTests
     }
 
     [Fact]
+    public async Task Scheduler_SyncConfiguredJobs_NormalizesAgentChatAndPersistsModel()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        var logger = new ListLogger<CronScheduler>();
+        var options = new CronOptions
+        {
+            Jobs = new Dictionary<string, ConfiguredCronJob>
+            {
+                ["config-job"] = new()
+                {
+                    Name = "Config Prompt Job",
+                    Schedule = "*/5 * * * *",
+                    ActionType = "agent-chat",
+                    AgentId = "agent-a",
+                    Message = "hello",
+                    Model = "openai/gpt-4.1",
+                    Enabled = true
+                }
+            }
+        };
+        var scheduler = CreateScheduler(context.Store, [new RecordingAction("agent-prompt")], options, logger);
+
+        await InvokeSyncConfiguredJobsAsync(scheduler, options);
+
+        var stored = await context.Store.GetAsync("config-job");
+        stored.ShouldNotBeNull();
+        stored!.ActionType.ShouldBe("agent-prompt");
+        stored.Model.ShouldBe("openai/gpt-4.1");
+    }
+
+    [Fact]
+    public async Task Scheduler_SyncConfiguredJobs_InvalidJobs_AreSkippedWithWarnings()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        var logger = new ListLogger<CronScheduler>();
+        var options = new CronOptions
+        {
+            Jobs = new Dictionary<string, ConfiguredCronJob>
+            {
+                ["missing-required"] = new()
+                {
+                    ActionType = "agent-prompt",
+                    AgentId = "agent-a"
+                },
+                ["unknown-action"] = new()
+                {
+                    Schedule = "*/5 * * * *",
+                    ActionType = "unknown",
+                    AgentId = "agent-a",
+                    Message = "test"
+                }
+            }
+        };
+        var scheduler = CreateScheduler(context.Store, [new RecordingAction("agent-prompt")], options, logger);
+
+        await InvokeSyncConfiguredJobsAsync(scheduler, options);
+
+        (await context.Store.ListAsync()).ShouldBeEmpty();
+        logger.Messages.ShouldContain(message => message.Contains("Skipping configured cron job 'missing-required'", StringComparison.Ordinal));
+        logger.Messages.ShouldContain(message => message.Contains("Skipping configured cron job 'unknown-action'", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Scheduler_CreateWithInvalidSchedule_SetsNullNextRunAt()
     {
         await using var context = await CronStoreTestContext.CreateAsync();
@@ -432,7 +535,11 @@ public sealed class CronSchedulerTests
         action.ExecutionCount.ShouldBe(0);
     }
 
-    private static CronScheduler CreateScheduler(ICronStore store, IEnumerable<ICronAction> actions)
+    private static CronScheduler CreateScheduler(
+        ICronStore store,
+        IEnumerable<ICronAction> actions,
+        CronOptions? options = null,
+        ILogger<CronScheduler>? logger = null)
     {
         var services = new ServiceCollection().BuildServiceProvider();
         var scopeFactory = services.GetRequiredService<IServiceScopeFactory>();
@@ -440,8 +547,8 @@ public sealed class CronSchedulerTests
             store,
             actions,
             scopeFactory,
-            new StaticOptionsMonitor<CronOptions>(new CronOptions { Enabled = true, TickIntervalSeconds = 1 }),
-            NullLogger<CronScheduler>.Instance);
+            new StaticOptionsMonitor<CronOptions>(options ?? new CronOptions { Enabled = true, TickIntervalSeconds = 1 }),
+            logger ?? NullLogger<CronScheduler>.Instance);
     }
 
     private static async Task InvokeProcessTickAsync(CronScheduler scheduler)
@@ -449,7 +556,16 @@ public sealed class CronSchedulerTests
         var method = typeof(CronScheduler).GetMethod("ProcessTickAsync", BindingFlags.NonPublic | BindingFlags.Instance);
         method.ShouldNotBeNull();
         var task = method!.Invoke(scheduler, [CancellationToken.None]) as Task;
-        task.ShouldNotBeNull();
+        Assert.NotNull(task);
+        await task!;
+    }
+
+    private static async Task InvokeSyncConfiguredJobsAsync(CronScheduler scheduler, CronOptions options)
+    {
+        var method = typeof(CronScheduler).GetMethod("SyncConfiguredJobsAsync", BindingFlags.NonPublic | BindingFlags.Instance);
+        method.ShouldNotBeNull();
+        var task = method!.Invoke(scheduler, [options, CancellationToken.None]) as Task;
+        Assert.NotNull(task);
         await task!;
     }
 
@@ -473,10 +589,37 @@ public sealed class CronSchedulerTests
             => throw new InvalidOperationException(message);
     }
 
+    private sealed class SessionRecordingAction(string actionType, string sessionId) : ICronAction
+    {
+        public string ActionType => actionType;
+
+        public Task ExecuteAsync(CronExecutionContext context, CancellationToken cancellationToken = default)
+        {
+            context.RecordSessionId(SessionId.From(sessionId));
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class StaticOptionsMonitor<T>(T currentValue) : IOptionsMonitor<T>
     {
         public T CurrentValue { get; } = currentValue;
         public T Get(string? name) => CurrentValue;
         public IDisposable? OnChange(Action<T, string?> listener) => null;
+    }
+
+    private sealed class ListLogger<T> : ILogger<T>
+    {
+        public List<string> Messages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+            => Messages.Add(formatter(state, exception));
     }
 }

@@ -116,6 +116,10 @@
                                                 {
                                                     <span class="conversation-default-badge">Default</span>
                                                 }
+                                                @if (conversation.IsVirtualSession)
+                                                {
+                                                    <span class="conversation-default-badge">Cron</span>
+                                                }
                                             </span>
 
                                             <span class="conversation-list-item-meta">
@@ -130,7 +134,7 @@
                                                 </span>
                                             </span>
                                         </button>
-                                        @if (!conversation.IsDefault)
+                                        @if (!conversation.IsDefault && !conversation.IsVirtualSession)
                                         {
                                             <button class="conversation-archive-btn"
                                                     title="Archive conversation"
@@ -281,6 +285,9 @@
             if (PortalLoad.IsReady)
                 await LoadGatewayInfoAsync();
 
+            if (Store.ActiveAgentId is { Length: > 0 } activeAgentId)
+                await Interaction.RefreshConversationsAsync(activeAgentId);
+
             StateHasChanged();
         }
     }
@@ -375,6 +382,7 @@
         var agentId = e.Value?.ToString();
         if (!string.IsNullOrEmpty(agentId))
         {
+            await Interaction.RefreshConversationsAsync(agentId);
             Store.ActiveAgentId = agentId;
             if (Store.GetAgent(agentId) is { } agent)
             {

@@ -54,7 +54,15 @@ public sealed class AgentPromptAction : ICronAction
                     : "Cron internal trigger is not registered.");
 
         var sessionId = await trigger
-            .CreateSessionAsync(AgentId.From(agentId), message, cancellationToken)
+            .CreateSessionAsync(
+                AgentId.From(agentId),
+                message,
+                cancellationToken,
+                new InternalTriggerRequest
+                {
+                    CronJobId = context.Job.Id,
+                    ModelOverride = context.Job.Model
+                })
             .ConfigureAwait(false);
 
         context.RecordSessionId(sessionId);

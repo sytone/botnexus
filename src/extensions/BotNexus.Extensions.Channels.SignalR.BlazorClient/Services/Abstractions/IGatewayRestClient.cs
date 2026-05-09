@@ -28,6 +28,18 @@ public interface IGatewayRestClient
         string conversationId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>GET /api/sessions?agentId={agentId}</summary>
+    Task<IReadOnlyList<SessionSummary>> GetSessionsAsync(
+        string? agentId = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>GET /api/sessions/{sessionId}/history?limit={limit}&amp;offset={offset}</summary>
+    Task<SessionHistoryResponseDto?> GetSessionHistoryAsync(
+        string sessionId,
+        int limit = 50,
+        int offset = 0,
+        CancellationToken cancellationToken = default);
+
     /// <summary>POST /api/conversations</summary>
     Task<ConversationResponseDto?> CreateConversationAsync(
         CreateConversationRequestDto request,

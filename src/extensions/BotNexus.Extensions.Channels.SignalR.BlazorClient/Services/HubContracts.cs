@@ -98,6 +98,7 @@ public sealed record SessionSummary(
     [property: JsonPropertyName("sessionId")] string SessionId,
     [property: JsonPropertyName("agentId")] string AgentId,
     [property: JsonPropertyName("channelType")] string? ChannelType,
+    [property: JsonPropertyName("sessionType")] string? SessionType,
     [property: JsonPropertyName("status")] string? Status,
     [property: JsonPropertyName("messageCount")] int MessageCount,
     [property: JsonPropertyName("isInteractive")] bool IsInteractive = true,

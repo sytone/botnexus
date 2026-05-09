@@ -36,6 +36,7 @@ public sealed class CronTool(
                 "timeZone": { "type": "string", "description": "IANA timezone name for the schedule (e.g. 'America/Los_Angeles', 'Europe/London', 'Asia/Tokyo'). When set, the cron expression is interpreted in this timezone (including DST adjustments). Defaults to UTC if omitted." },
                 "agentId": { "type": "string", "description": "Target agent (for create, defaults to calling agent)." },
                 "message": { "type": "string", "description": "Prompt message (for create/update)." },
+                "model": { "type": "string", "description": "Optional model override for agent-prompt jobs. Supports model-id or provider/model-id." },
                 "enabled": { "type": "boolean", "description": "Whether the job is enabled." }
               },
               "required": ["action"]
@@ -62,6 +63,7 @@ public sealed class CronTool(
         CopyString(arguments, prepared, "timeZone");
         CopyString(arguments, prepared, "agentId");
         CopyString(arguments, prepared, "message");
+        CopyString(arguments, prepared, "model");
 
         if (arguments.TryGetValue("enabled", out var enabled) && enabled is not null)
             prepared["enabled"] = ReadBool(enabled, "enabled");
@@ -122,6 +124,7 @@ public sealed class CronTool(
             ActionType = "agent-prompt",
             AgentId = ReadString(arguments, "agentId") ?? _agentId,
             Message = ReadString(arguments, "message"),
+            Model = ReadString(arguments, "model"),
             Enabled = arguments.TryGetValue("enabled", out var enabled) && enabled is bool boolEnabled ? boolEnabled : true,
             TimeZone = timeZone,
             CreatedBy = _agentId,
@@ -150,6 +153,7 @@ public sealed class CronTool(
             Schedule = newSchedule,
             TimeZone = newTimeZone,
             Message = ReadString(arguments, "message") ?? existing.Message,
+            Model = ReadString(arguments, "model") ?? existing.Model,
             AgentId = ReadString(arguments, "agentId") ?? existing.AgentId,
             Enabled = arguments.TryGetValue("enabled", out var enabled) && enabled is bool boolEnabled ? boolEnabled : existing.Enabled
         };
