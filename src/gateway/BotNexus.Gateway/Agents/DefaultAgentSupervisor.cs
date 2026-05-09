@@ -43,8 +43,10 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
         activity?.SetTag("botnexus.session.id", sessionId);
         activity?.SetTag("botnexus.correlation.id", System.Diagnostics.Activity.Current?.TraceId.ToString());
 
-        var descriptor = _registry.Get(agentId)
+        var baseDescriptor = _registry.Get(agentId)
             ?? throw new KeyNotFoundException($"Agent '{agentId}' is not registered.");
+        var existingSession = await _sessionStore.GetAsync(sessionId, cancellationToken);
+        var descriptor = ResolveDescriptorForSession(baseDescriptor, existingSession);
         var key = AgentSessionKey.From(agentId, sessionId);
         Task<(AgentInstance Instance, IAgentHandle Handle, AgentDescriptor Descriptor)> creationTask;
         TaskCompletionSource<(AgentInstance Instance, IAgentHandle Handle, AgentDescriptor Descriptor)>? creationCompletion = null;
@@ -88,7 +90,7 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
 
         try
         {
-            var created = await CreateEntryAsync(descriptor, sessionId, key, cancellationToken);
+            var created = await CreateEntryAsync(descriptor, sessionId, key, existingSession, cancellationToken);
             lock (_sync)
             {
                 _pendingCreates.Remove(key);
@@ -202,6 +204,7 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
         AgentDescriptor descriptor,
         SessionId sessionId,
         AgentSessionKey key,
+        GatewaySession? existingSession,
         CancellationToken cancellationToken)
     {
         var descriptorErrors = AgentDescriptorValidator.Validate(descriptor, _strategies.Keys);
@@ -218,7 +221,6 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
         }
 
         IReadOnlyList<SessionEntry> priorHistory = [];
-        var existingSession = await _sessionStore.GetAsync(sessionId, cancellationToken);
         if (existingSession?.History.Count > 0)
         {
             priorHistory = existingSession.History;
@@ -243,6 +245,62 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
         };
 
         return (instance, handle, descriptor);
+    }
+
+    private AgentDescriptor ResolveDescriptorForSession(AgentDescriptor descriptor, GatewaySession? session)
+    {
+        if (session is null
+            || !TryGetMetadataString(session, "modelOverride", out var rawOverride)
+            || string.IsNullOrWhiteSpace(rawOverride))
+        {
+            return descriptor;
+        }
+
+        var trimmed = rawOverride.Trim();
+        var provider = descriptor.ApiProvider;
+        var model = trimmed;
+        var separator = trimmed.IndexOf('/');
+        if (separator > 0 && separator < trimmed.Length - 1)
+        {
+            provider = trimmed[..separator];
+            model = trimmed[(separator + 1)..];
+        }
+
+        if (descriptor.AllowedModelIds.Count > 0
+            && !descriptor.AllowedModelIds.Contains(model, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Session '{session.SessionId}' requested model '{model}', but it is not allowed for agent '{descriptor.AgentId}'.");
+        }
+
+        if (string.Equals(provider, descriptor.ApiProvider, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(model, descriptor.ModelId, StringComparison.OrdinalIgnoreCase))
+        {
+            return descriptor;
+        }
+
+        _logger.LogInformation(
+            "Applying per-session model override for agent '{AgentId}' session '{SessionId}': {Provider}/{Model}",
+            descriptor.AgentId,
+            session.SessionId,
+            provider,
+            model);
+
+        return descriptor with
+        {
+            ApiProvider = provider,
+            ModelId = model
+        };
+    }
+
+    private static bool TryGetMetadataString(GatewaySession session, string key, out string value)
+    {
+        value = string.Empty;
+        if (!session.Metadata.TryGetValue(key, out var raw) || raw is null)
+            return false;
+
+        value = raw.ToString() ?? string.Empty;
+        return !string.IsNullOrWhiteSpace(value);
     }
 
     private async Task DisposeHandleAsync(IAgentHandle handle)

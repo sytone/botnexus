@@ -14,7 +14,10 @@ public static class CronServiceCollectionExtensions
         services.TryAddSingleton<ICronStore>(sp =>
         {
             var rootPath = ResolveRootPath(sp);
-            return new SqliteCronStore(Path.Combine(rootPath, "cron.sqlite"), new FileSystem());
+            return new SqliteCronStore(
+                Path.Combine(rootPath, "cron.sqlite"),
+                new FileSystem(),
+                sp.GetService<Microsoft.Extensions.Logging.ILogger<SqliteCronStore>>());
         });
         services.TryAddSingleton<HeartbeatCronProvisioner>();
         services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<HeartbeatCronProvisioner>());

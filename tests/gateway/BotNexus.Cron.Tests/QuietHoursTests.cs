@@ -35,7 +35,7 @@ public sealed class QuietHoursTests
 
         await action.ExecuteAsync(context);
 
-        trigger.Verify(value => value.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        trigger.Verify(value => value.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()), Times.Never);
         context.SessionId.ShouldBeNull();
     }
 
@@ -55,7 +55,7 @@ public sealed class QuietHoursTests
         var sessionId = SessionId.From("cron:heartbeat:run-1");
 
         trigger.SetupGet(value => value.Type).Returns(TriggerType.Cron);
-        trigger.Setup(value => value.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        trigger.Setup(value => value.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()))
             .ReturnsAsync(sessionId);
         registry.Setup(value => value.Get(AgentId.From("agent-a"))).Returns(descriptor);
 
@@ -67,7 +67,7 @@ public sealed class QuietHoursTests
 
         await action.ExecuteAsync(context);
 
-        trigger.Verify(value => value.CreateSessionAsync(AgentId.From("agent-a"), "Ping from heartbeat", It.IsAny<CancellationToken>()), Times.Once);
+        trigger.Verify(value => value.CreateSessionAsync(AgentId.From("agent-a"), "Ping from heartbeat", It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()), Times.Once);
         context.SessionId.ShouldBe(sessionId.Value);
     }
 

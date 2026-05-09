@@ -91,8 +91,13 @@ public sealed class ClientStateStore : IClientStateStore
 
         // Remove conversations no longer in the list
         var incomingIds = incoming.Select(d => d.ConversationId).ToHashSet();
-        foreach (var id in agent.Conversations.Keys.Where(k => !incomingIds.Contains(k)).ToList())
+        foreach (var id in agent.Conversations
+                     .Where(kv => !incomingIds.Contains(kv.Key) && !kv.Value.IsVirtualSession)
+                     .Select(kv => kv.Key)
+                     .ToList())
+        {
             agent.Conversations.Remove(id);
+        }
 
         // Auto-select a conversation if none is selected
         if (agent.ActiveConversationId is null && agent.Conversations.Count > 0)

@@ -18,6 +18,7 @@ public interface IAgentInteractionService
     Task RenameConversationAsync(string agentId, string? conversationId, string newTitle);
     Task ArchiveConversationAsync(string agentId, string conversationId);
     Task RefreshAgentsAsync();
+    Task RefreshConversationsAsync(string agentId);
     Task ViewSubAgentAsync(SubAgentInfo subAgent);
     void ClearLocalMessages(string agentId);
 }

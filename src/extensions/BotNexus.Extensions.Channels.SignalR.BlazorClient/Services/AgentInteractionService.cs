@@ -313,6 +313,11 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
     }
 
+    public async Task RefreshConversationsAsync(string agentId)
+    {
+        await RefreshConversationsForAgentAsync(agentId);
+    }
+
     public async Task ViewSubAgentAsync(SubAgentInfo subAgent)
     {
         var subAgentId = subAgent.SubAgentId;
@@ -387,6 +392,32 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         try
         {
+            if (conv.IsVirtualSession && conv.ActiveSessionId is { Length: > 0 } sessionId)
+            {
+                const int virtualHistoryLimit = 200;
+                var sessionResponse = await _restClient.GetSessionHistoryAsync(sessionId, limit: virtualHistoryLimit);
+                conv.Messages.Clear();
+                if (sessionResponse?.Entries is { Count: > 0 })
+                {
+                    foreach (var entry in sessionResponse.Entries)
+                    {
+                        var role = MapRole(entry.Role ?? "system");
+                        conv.Messages.Add(new ChatMessage(role, entry.Content ?? string.Empty, entry.Timestamp)
+                        {
+                            ToolName = entry.ToolName,
+                            ToolCallId = entry.ToolCallId,
+                            ToolArgs = entry.ToolArgs,
+                            ToolIsError = entry.ToolIsError,
+                            IsToolCall = entry.ToolName is not null,
+                            ToolResult = entry.ToolName is not null ? entry.Content : null
+                        });
+                    }
+                }
+
+                conv.HistoryLoaded = true;
+                return;
+            }
+
             const int historyLimit = 200;
             var response = await _restClient.GetHistoryAsync(conversationId, limit: historyLimit);
 
@@ -512,8 +543,21 @@ public sealed class AgentInteractionService : IAgentInteractionService
     {
         try
         {
-            var list = await _restClient.GetConversationsAsync(agentId);
+            var listTask = _restClient.GetConversationsAsync(agentId);
+            var sessionsTask = _restClient.GetSessionsAsync(agentId);
+            await Task.WhenAll(listTask, sessionsTask);
+
+            var list = listTask.Result;
             _store.SeedConversations(agentId, list);
+
+            var agent = _store.GetAgent(agentId);
+            if (agent is not null)
+                MergeVirtualCronSessions(agent, sessionsTask.Result);
+
+            foreach (var session in sessionsTask.Result)
+                _store.RegisterSession(session.AgentId, session.SessionId, session.ChannelType, session.SessionType);
+
+            _store.NotifyChanged();
         }
         catch (Exception ex)
         {
@@ -552,4 +596,48 @@ public sealed class AgentInteractionService : IAgentInteractionService
         "system" => "System",
         _ => role
     };
+
+    private static void MergeVirtualCronSessions(AgentState agent, IReadOnlyList<SessionSummary> sessions)
+    {
+        var cronSessions = sessions
+            .Where(s => string.Equals(s.SessionType, "cron", StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(s => $"cron-session:{s.SessionId}", s => s, StringComparer.Ordinal);
+
+        foreach (var key in agent.Conversations
+                     .Where(kv => kv.Value.IsVirtualSession &&
+                                  string.Equals(kv.Value.VirtualSessionKind, "cron", StringComparison.OrdinalIgnoreCase) &&
+                                  !cronSessions.ContainsKey(kv.Key))
+                     .Select(kv => kv.Key)
+                     .ToList())
+        {
+            agent.Conversations.Remove(key);
+        }
+
+        foreach (var (conversationId, session) in cronSessions)
+        {
+            var title = $"Cron · {session.SessionId[..Math.Min(8, session.SessionId.Length)]}";
+            if (agent.Conversations.TryGetValue(conversationId, out var existing))
+            {
+                existing.Title = title;
+                existing.ActiveSessionId = session.SessionId;
+                existing.Status = session.Status ?? "Active";
+                existing.UpdatedAt = session.UpdatedAt ?? existing.UpdatedAt;
+                existing.IsVirtualSession = true;
+                existing.VirtualSessionKind = "cron";
+                continue;
+            }
+
+            agent.Conversations[conversationId] = new ConversationState
+            {
+                ConversationId = conversationId,
+                Title = title,
+                Status = session.Status ?? "Active",
+                ActiveSessionId = session.SessionId,
+                CreatedAt = session.CreatedAt ?? DateTimeOffset.UtcNow,
+                UpdatedAt = session.UpdatedAt ?? DateTimeOffset.UtcNow,
+                IsVirtualSession = true,
+                VirtualSessionKind = "cron"
+            };
+        }
+    }
 }

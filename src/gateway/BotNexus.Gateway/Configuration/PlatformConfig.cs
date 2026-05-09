@@ -301,6 +301,9 @@ public sealed class CronJobConfig
     /// <summary>Prompt message for agent prompt jobs.</summary>
     public string? Message { get; set; }
 
+    /// <summary>Optional model override for agent prompt jobs.</summary>
+    public string? Model { get; set; }
+
     /// <summary>Webhook destination URL for webhook jobs.</summary>
     public string? WebhookUrl { get; set; }
 

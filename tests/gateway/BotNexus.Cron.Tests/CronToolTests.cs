@@ -30,6 +30,27 @@ public sealed class CronToolTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_List_SurfacesModelField()
+    {
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        store.Setup(value => value.ListAsync(null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                CreateJob("job-1", createdBy: "agent-a") with
+                {
+                    Model = "openai/gpt-4.1"
+                }
+            ]);
+        var tool = new CronTool(store.Object, scheduler, "agent-a");
+
+        var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?> { ["action"] = "list" });
+        var jobs = JsonSerializer.Deserialize<List<CronJobDto>>(ReadText(result), JsonOptions);
+
+        jobs.ShouldNotBeNull();
+        jobs!.ShouldHaveSingleItem().Model.ShouldBe("openai/gpt-4.1");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Create_CreatesJob()
     {
         var store = new Mock<ICronStore>();
@@ -45,13 +66,15 @@ public sealed class CronToolTests
             ["action"] = "create",
             ["name"] = "Daily summary",
             ["schedule"] = "*/5 * * * *",
-            ["message"] = "Summarize status"
+            ["message"] = "Summarize status",
+            ["model"] = "openai/gpt-4.1"
         });
 
         created.ShouldNotBeNull();
         created!.ActionType.ShouldBe("agent-prompt");
         created.CreatedBy.ShouldBe("agent-a");
         created.AgentId.ShouldBe("agent-a");
+        created.Model.ShouldBe("openai/gpt-4.1");
         ReadText(result).ShouldContain("Daily summary");
     }
 
@@ -274,6 +297,34 @@ public sealed class CronToolTests
         saved!.NextRunAt.ShouldBeNull("invalid schedule should null out NextRunAt");
     }
 
+    [Fact]
+    public async Task ExecuteAsync_Update_UpdatesModel()
+    {
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        var existingJob = CreateJob("job-1", createdBy: "agent-a") with
+        {
+            Model = "copilot/gpt-4o-mini"
+        };
+        store.Setup(value => value.GetAsync("job-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingJob);
+        CronJob? saved = null;
+        store.Setup(value => value.UpdateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
+            .Callback<CronJob, CancellationToken>((job, _) => saved = job)
+            .ReturnsAsync((CronJob job, CancellationToken _) => job);
+        var tool = new CronTool(store.Object, scheduler, "agent-a");
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "update",
+            ["jobId"] = "job-1",
+            ["model"] = "openai/gpt-4.1"
+        });
+
+        saved.ShouldNotBeNull();
+        saved!.Model.ShouldBe("openai/gpt-4.1");
+    }
+
     private static CronScheduler CreateScheduler()
     {
         var store = new Mock<ICronStore>().Object;
@@ -314,6 +365,7 @@ public sealed class CronToolTests
     private sealed class CronJobDto
     {
         public string Id { get; set; } = string.Empty;
+        public string? Model { get; set; }
     }
 
     private sealed class StaticOptionsMonitor<T>(T currentValue) : IOptionsMonitor<T>

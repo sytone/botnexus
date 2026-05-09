@@ -72,6 +72,34 @@ public sealed class GatewayRestClient : IGatewayRestClient
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<SessionSummary>> GetSessionsAsync(
+        string? agentId = null,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        var query = string.IsNullOrWhiteSpace(agentId)
+            ? string.Empty
+            : $"?agentId={Uri.EscapeDataString(agentId)}";
+        var result = await _http.GetFromJsonAsync<List<SessionSummary>>(
+            $"{_apiBaseUrl}sessions{query}",
+            cancellationToken);
+        return result as IReadOnlyList<SessionSummary> ?? [];
+    }
+
+    /// <inheritdoc />
+    public async Task<SessionHistoryResponseDto?> GetSessionHistoryAsync(
+        string sessionId,
+        int limit = 50,
+        int offset = 0,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        return await _http.GetFromJsonAsync<SessionHistoryResponseDto>(
+            $"{_apiBaseUrl}sessions/{Uri.EscapeDataString(sessionId)}/history?limit={limit}&offset={offset}",
+            cancellationToken);
+    }
+
+    /// <inheritdoc />
     public async Task<ConversationResponseDto?> CreateConversationAsync(
         CreateConversationRequestDto request,
         CancellationToken cancellationToken = default)

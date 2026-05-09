@@ -997,6 +997,43 @@ public sealed class PlatformConfigValidationTests
             });
 
     [Fact]
+    public Task Validate_CronJobWithModelAndAgentChat_BindsFields()
+        => WithConfigFileAsync(
+            """
+            {
+              "cron": {
+                "jobs": {
+                  "daily-summary": {
+                    "schedule": "0 9 * * *",
+                    "actionType": "agent-chat",
+                    "agentId": "assistant",
+                    "message": "Summarize the day",
+                    "model": "openai/gpt-4.1"
+                  }
+                }
+              },
+              "providers": {
+                "copilot": { "apiKey": "test-key" }
+              },
+              "agents": {
+                "assistant": {
+                  "provider": "copilot",
+                  "model": "gpt-4.1"
+                }
+              }
+            }
+            """,
+            async configPath =>
+            {
+                var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
+                PlatformConfigLoader.Validate(config).ShouldBeEmpty();
+                config.Cron!.Jobs.ShouldContainKey("daily-summary");
+                var job = config.Cron.Jobs["daily-summary"];
+                job.ActionType.ShouldBe("agent-chat");
+                job.Model.ShouldBe("openai/gpt-4.1");
+            });
+
+    [Fact]
     public Task Validate_NoCronSection_NoErrors()
         => WithConfigFileAsync(
             """

@@ -183,6 +183,12 @@ public sealed class ConversationState
     /// <summary>When the conversation was last updated.</summary>
     public DateTimeOffset UpdatedAt { get; set; }
 
+    /// <summary>True when this is a virtual read-only session row (for example, cron).</summary>
+    public bool IsVirtualSession { get; set; }
+
+    /// <summary>Virtual session kind label (for example, "cron"). Null for normal conversations.</summary>
+    public string? VirtualSessionKind { get; set; }
+
     // ── History flags ────────────────────────────────────────────────────────
 
     /// <summary>Whether the latest page of history has been loaded.</summary>
