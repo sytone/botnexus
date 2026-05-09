@@ -62,28 +62,65 @@ public sealed class AgentPromptAction : ICronAction
 
     private static bool IsInQuietHours(QuietHoursConfig config, string timezoneId)
     {
+        var tz = ResolveTimeZone(timezoneId);
+        var localNow = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, tz);
+        var currentTime = localNow.TimeOfDay;
+
+        if (!TimeSpan.TryParse(config.Start, out var start) ||
+            !TimeSpan.TryParse(config.End, out var end))
+            return false;
+
+        if (start <= end)
+            return currentTime >= start && currentTime < end;
+
+        return currentTime >= start || currentTime < end;
+    }
+
+    private static TimeZoneInfo ResolveTimeZone(string timezoneId)
+    {
+        if (string.IsNullOrWhiteSpace(timezoneId) ||
+            timezoneId.Equals("UTC", StringComparison.OrdinalIgnoreCase))
+            return TimeZoneInfo.Utc;
+
         try
         {
-            var tz = TimeZoneInfo.FindSystemTimeZoneById(timezoneId);
-            var localNow = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, tz);
-            var currentTime = localNow.TimeOfDay;
-
-            if (!TimeSpan.TryParse(config.Start, out var start) ||
-                !TimeSpan.TryParse(config.End, out var end))
-                return false;
-
-            if (start <= end)
-                return currentTime >= start && currentTime < end;
-
-            return currentTime >= start || currentTime < end;
+            return TimeZoneInfo.FindSystemTimeZoneById(timezoneId);
         }
         catch (TimeZoneNotFoundException)
         {
-            return false;
         }
         catch (InvalidTimeZoneException)
         {
-            return false;
         }
+
+        if (TimeZoneInfo.TryConvertWindowsIdToIanaId(timezoneId, out var ianaTimeZone))
+        {
+            try
+            {
+                return TimeZoneInfo.FindSystemTimeZoneById(ianaTimeZone);
+            }
+            catch (TimeZoneNotFoundException)
+            {
+            }
+            catch (InvalidTimeZoneException)
+            {
+            }
+        }
+
+        if (TimeZoneInfo.TryConvertIanaIdToWindowsId(timezoneId, out var windowsTimeZone))
+        {
+            try
+            {
+                return TimeZoneInfo.FindSystemTimeZoneById(windowsTimeZone);
+            }
+            catch (TimeZoneNotFoundException)
+            {
+            }
+            catch (InvalidTimeZoneException)
+            {
+            }
+        }
+
+        return TimeZoneInfo.Utc;
     }
 }
