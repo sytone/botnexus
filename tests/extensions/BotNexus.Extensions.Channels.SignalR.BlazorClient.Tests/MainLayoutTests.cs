@@ -249,6 +249,46 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
+    public void Internal_conversations_are_not_rendered_as_selectable_conversation_rows()
+    {
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-1", "a-1", "General", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
+            new ConversationSummaryDto("internal:sub-1", "a-1", "Internal routing thread", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        _store.ActiveAgentId = "a-1";
+
+        var cut = RenderLayout();
+
+        Assert.Single(cut.FindAll(".conversation-list-item-btn"));
+    }
+
+    [Fact]
+    public void Clicking_sub_agent_row_routes_to_read_only_sub_agent_view()
+    {
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-1", "a-1", "General", true, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        _store.ActiveAgentId = "a-1";
+        _store.GetAgent("a-1")!.SubAgents["sub-1"] = new SubAgentInfo
+        {
+            SubAgentId = "sub-1",
+            Name = "Scout",
+            Task = "Inspect repository",
+            Status = "Running",
+            StartedAt = DateTimeOffset.UtcNow
+        };
+
+        var cut = RenderLayout();
+
+        cut.Find(".agent-session-item").Click();
+
+        _interaction.Received(1).ViewSubAgentAsync(
+            Arg.Is<SubAgentInfo>(s => s.SubAgentId == "sub-1"));
+    }
+
+    [Fact]
     public void Read_only_agent_hides_new_conversation_button()
     {
         _store.SeedAgents([new AgentSummary("sub-1", "Subagent")]);

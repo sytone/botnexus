@@ -281,4 +281,104 @@ public sealed class GatewayEventHandlerTests
         Assert.Contains(conversationOneMessages, content => content.Contains("Sub-agent completed", StringComparison.Ordinal));
         Assert.DoesNotContain(conversationTwoMessages, content => content.Contains("Sub-agent completed", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void HandleSubAgentFailed_routes_failure_to_originating_conversation_when_active_switches()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.Conversations["conv-2"] = new ConversationState
+        {
+            ConversationId = "conv-2",
+            Title = "Conversation 2",
+            ActiveSessionId = "sess-2"
+        };
+        _store.RegisterSession("agent-1", "sess-2");
+
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _handler.HandleSubAgentSpawned(new SubAgentEventPayload(
+            SessionId: "sess-1",
+            SubAgentId: "sub-2",
+            Name: "Hermes worker",
+            Task: "Run checks",
+            Model: "gpt-5-mini",
+            Archetype: "general-purpose",
+            Status: "Running",
+            StartedAt: DateTimeOffset.UtcNow,
+            CompletedAt: null,
+            TurnsUsed: 0,
+            ResultSummary: null,
+            TimedOut: false));
+
+        _store.SetActiveConversation("agent-1", "conv-2");
+
+        _handler.HandleSubAgentFailed(new SubAgentEventPayload(
+            SessionId: "sess-1",
+            SubAgentId: "sub-2",
+            Name: "Hermes worker",
+            Task: "Run checks",
+            Model: "gpt-5-mini",
+            Archetype: "general-purpose",
+            Status: "Failed",
+            StartedAt: DateTimeOffset.UtcNow.AddMinutes(-1),
+            CompletedAt: DateTimeOffset.UtcNow,
+            TurnsUsed: 1,
+            ResultSummary: "Tool call failed",
+            TimedOut: false));
+
+        var conversationOneMessages = agent.Conversations["conv-1"].Messages.Select(m => m.Content).ToList();
+        var conversationTwoMessages = agent.Conversations["conv-2"].Messages.Select(m => m.Content).ToList();
+
+        Assert.Contains(conversationOneMessages, content => content.Contains("Sub-agent failed", StringComparison.Ordinal));
+        Assert.DoesNotContain(conversationTwoMessages, content => content.Contains("Sub-agent failed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void HandleSubAgentKilled_routes_killed_notice_to_originating_conversation_when_active_switches()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.Conversations["conv-2"] = new ConversationState
+        {
+            ConversationId = "conv-2",
+            Title = "Conversation 2",
+            ActiveSessionId = "sess-2"
+        };
+        _store.RegisterSession("agent-1", "sess-2");
+
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _handler.HandleSubAgentSpawned(new SubAgentEventPayload(
+            SessionId: "sess-1",
+            SubAgentId: "sub-3",
+            Name: "Hermes worker",
+            Task: "Run checks",
+            Model: "gpt-5-mini",
+            Archetype: "general-purpose",
+            Status: "Running",
+            StartedAt: DateTimeOffset.UtcNow,
+            CompletedAt: null,
+            TurnsUsed: 0,
+            ResultSummary: null,
+            TimedOut: false));
+
+        _store.SetActiveConversation("agent-1", "conv-2");
+
+        _handler.HandleSubAgentKilled(new SubAgentEventPayload(
+            SessionId: "sess-1",
+            SubAgentId: "sub-3",
+            Name: "Hermes worker",
+            Task: "Run checks",
+            Model: "gpt-5-mini",
+            Archetype: "general-purpose",
+            Status: "Killed",
+            StartedAt: DateTimeOffset.UtcNow.AddMinutes(-1),
+            CompletedAt: DateTimeOffset.UtcNow,
+            TurnsUsed: 1,
+            ResultSummary: null,
+            TimedOut: false));
+
+        var conversationOneMessages = agent.Conversations["conv-1"].Messages.Select(m => m.Content).ToList();
+        var conversationTwoMessages = agent.Conversations["conv-2"].Messages.Select(m => m.Content).ToList();
+
+        Assert.Contains(conversationOneMessages, content => content.Contains("Sub-agent killed", StringComparison.Ordinal));
+        Assert.DoesNotContain(conversationTwoMessages, content => content.Contains("Sub-agent killed", StringComparison.Ordinal));
+    }
 }

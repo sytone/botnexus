@@ -110,24 +110,129 @@ public sealed class SubAgentIntegrationTests
         subAgentToolNames.ShouldNotContain("manage_subagent");
     }
 
+    [Fact]
+    public async Task SpawnCompletion_StopsChildHandleAndCleansWorkspace()
+    {
+        var registry = CreateRegistry();
+        var childHandle = new Mock<IAgentHandle>();
+        childHandle.SetupGet(h => h.AgentId).Returns("parent-agent");
+        childHandle.SetupGet(h => h.SessionId).Returns("child-session");
+        childHandle.SetupGet(h => h.IsRunning).Returns(true);
+        childHandle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "done" });
+
+        var supervisor = CreateSupervisor(childHandle.Object);
+        supervisor.Setup(s => s.StopAsync(It.IsAny<BotNexus.Domain.Primitives.AgentId>(), It.IsAny<BotNexus.Domain.Primitives.SessionId>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var workspaceManager = new Mock<IAgentWorkspaceManager>();
+        workspaceManager.Setup(w => w.TryCleanupWorkspace(It.IsAny<string>())).Returns(true);
+
+        var manager = CreateManager(supervisor.Object, registry.Object, workspaceManager: workspaceManager.Object);
+        var spawned = await manager.SpawnAsync(CreateSpawnRequest());
+
+        await Task.Delay(100);
+        var completed = await manager.GetAsync(spawned.SubAgentId);
+
+        completed.ShouldNotBeNull();
+        completed!.Status.ShouldBe(SubAgentStatus.Completed);
+        supervisor.Verify(s => s.StopAsync(
+                It.IsAny<BotNexus.Domain.Primitives.AgentId>(),
+                completed.ChildSessionId,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+        workspaceManager.Verify(w => w.TryCleanupWorkspace(It.IsAny<string>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SpawnFailure_CleansWorkspace()
+    {
+        var registry = CreateRegistry();
+        var supervisor = CreateSupervisor(CreateFailingHandle().Object);
+        supervisor.Setup(s => s.StopAsync(It.IsAny<BotNexus.Domain.Primitives.AgentId>(), It.IsAny<BotNexus.Domain.Primitives.SessionId>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var workspaceManager = new Mock<IAgentWorkspaceManager>();
+        workspaceManager.Setup(w => w.TryCleanupWorkspace(It.IsAny<string>())).Returns(true);
+
+        var manager = CreateManager(supervisor.Object, registry.Object, workspaceManager: workspaceManager.Object);
+        var spawned = await manager.SpawnAsync(CreateSpawnRequest());
+
+        await WaitUntilAsync(
+            async () => (await manager.GetAsync(spawned.SubAgentId))?.Status == SubAgentStatus.Failed,
+            TimeSpan.FromSeconds(2));
+        await WaitUntilAsync(
+            () => Task.FromResult(workspaceManager.Invocations.Count > 0),
+            TimeSpan.FromSeconds(2));
+
+        workspaceManager.Verify(w => w.TryCleanupWorkspace(It.IsAny<string>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SpawnTimeout_CleansWorkspace()
+    {
+        var registry = CreateRegistry();
+        var supervisor = CreateSupervisor(CreateHangingHandle().Object);
+        supervisor.Setup(s => s.StopAsync(It.IsAny<BotNexus.Domain.Primitives.AgentId>(), It.IsAny<BotNexus.Domain.Primitives.SessionId>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var workspaceManager = new Mock<IAgentWorkspaceManager>();
+        workspaceManager.Setup(w => w.TryCleanupWorkspace(It.IsAny<string>())).Returns(true);
+
+        var manager = CreateManager(supervisor.Object, registry.Object, workspaceManager: workspaceManager.Object);
+        var spawned = await manager.SpawnAsync(CreateSpawnRequest(timeoutSeconds: 1));
+
+        await WaitUntilAsync(
+            async () => (await manager.GetAsync(spawned.SubAgentId))?.Status == SubAgentStatus.TimedOut,
+            TimeSpan.FromSeconds(3));
+        await WaitUntilAsync(
+            () => Task.FromResult(workspaceManager.Invocations.Count > 0),
+            TimeSpan.FromSeconds(2));
+
+        workspaceManager.Verify(w => w.TryCleanupWorkspace(It.IsAny<string>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Kill_CleansWorkspace()
+    {
+        var registry = CreateRegistry();
+        var supervisor = CreateSupervisor(CreateHangingHandle().Object);
+        supervisor.Setup(s => s.StopAsync(It.IsAny<BotNexus.Domain.Primitives.AgentId>(), It.IsAny<BotNexus.Domain.Primitives.SessionId>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var workspaceManager = new Mock<IAgentWorkspaceManager>();
+        workspaceManager.Setup(w => w.TryCleanupWorkspace(It.IsAny<string>())).Returns(true);
+
+        var manager = CreateManager(supervisor.Object, registry.Object, workspaceManager: workspaceManager.Object);
+        var spawned = await manager.SpawnAsync(CreateSpawnRequest());
+
+        var killed = await manager.KillAsync(spawned.SubAgentId, spawned.ParentSessionId);
+
+        killed.ShouldBeTrue();
+        workspaceManager.Verify(w => w.TryCleanupWorkspace(It.IsAny<string>()), Times.Once);
+    }
+
     private static DefaultSubAgentManager CreateManager(
         IAgentSupervisor supervisor,
         IAgentRegistry registry,
-        GatewayOptions? options = null)
+        GatewayOptions? options = null,
+        IAgentWorkspaceManager? workspaceManager = null)
         => new(
             supervisor,
             registry,
             new Mock<IActivityBroadcaster>().Object,
             new Mock<IChannelDispatcher>().Object,
             new TestOptionsMonitor<GatewayOptions>(options ?? new GatewayOptions()),
-            NullLogger<DefaultSubAgentManager>.Instance);
+            NullLogger<DefaultSubAgentManager>.Instance,
+            workspaceManager);
 
-    private static SubAgentSpawnRequest CreateSpawnRequest()
+    private static SubAgentSpawnRequest CreateSpawnRequest(int timeoutSeconds = 600)
         => new()
         {
             ParentAgentId = BotNexus.Domain.Primitives.AgentId.From("parent-agent"),
             ParentSessionId = BotNexus.Domain.Primitives.SessionId.From("parent-session"),
-            Task = "Investigate flaky test"
+            Task = "Investigate flaky test",
+            TimeoutSeconds = timeoutSeconds
         };
 
     private static Mock<IAgentRegistry> CreateRegistry()
@@ -170,6 +275,31 @@ public sealed class SubAgentIntegrationTests
                 return new AgentResponse { Content = "never" };
             });
         return handle;
+    }
+
+    private static Mock<IAgentHandle> CreateFailingHandle()
+    {
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.AgentId).Returns("parent-agent");
+        handle.SetupGet(h => h.SessionId).Returns("child-session");
+        handle.SetupGet(h => h.IsRunning).Returns(false);
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("boom"));
+        return handle;
+    }
+
+    private static async Task WaitUntilAsync(Func<Task<bool>> condition, TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow.Add(timeout);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (await condition())
+                return;
+
+            await Task.Delay(25);
+        }
+
+        throw new TimeoutException("Condition was not met before timeout.");
     }
 
     private static InProcessIsolationStrategy CreateStrategy()
