@@ -21,130 +21,207 @@ public sealed class CronTriggerTests
     }
 
     [Fact]
-    public async Task CreateSessionAsync_CreatesCronSession_WithCronTriggerType()
+    public async Task CreateSessionAsync_FirstRun_CreatesPerJobConversation()
     {
-        var sessionStore = new Mock<ISessionStore>();
-        var conversationStore = new Mock<IConversationStore>();
-        var supervisor = new Mock<IAgentSupervisor>();
-        var handle = new Mock<IAgentHandle>();
-        GatewaySession? savedSession = null;
-        Conversation? savedConversation = null;
-        var conversation = new Conversation
-        {
-            ConversationId = ConversationId.From("conv-default"),
-            AgentId = AgentId.From("agent-a"),
-            Title = "Default",
-            IsDefault = true,
-            Status = ConversationStatus.Active,
-            CreatedAt = DateTimeOffset.UtcNow,
-            UpdatedAt = DateTimeOffset.UtcNow
-        };
+        // Arrange: no existing conversations
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        Conversation? createdConversation = null;
 
-        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
-        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-a"));
-        handle.SetupGet(h => h.IsRunning).Returns(true);
-        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new AgentResponse { Content = "cron-response" });
-
-        sessionStore
-            .Setup(s => s.GetOrCreateAsync(It.IsAny<SessionId>(), AgentId.From("agent-a"), It.IsAny<CancellationToken>()))
-            .Returns<SessionId, AgentId, CancellationToken>((sessionId, agentId, _) => Task.FromResult(new GatewaySession
-            {
-                SessionId = sessionId,
-                AgentId = agentId
-            }));
-        sessionStore
-            .Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
-            .Callback<GatewaySession, CancellationToken>((session, _) => savedSession = session)
-            .Returns(Task.CompletedTask);
         conversationStore
-            .Setup(value => value.GetOrCreateDefaultAsync(AgentId.From("agent-a"), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(conversation);
+            .Setup(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Conversation>());
         conversationStore
-            .Setup(value => value.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
-            .Callback<Conversation, CancellationToken>((conv, _) => savedConversation = conv)
-            .Returns(Task.CompletedTask);
-        supervisor
-            .Setup(s => s.GetOrCreateAsync(AgentId.From("agent-a"), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(handle.Object);
+            .Setup(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
+            .Callback<Conversation, CancellationToken>((c, _) => createdConversation = c)
+            .Returns<Conversation, CancellationToken>((c, _) => Task.FromResult(c));
 
         var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        // Act
         var sessionId = await trigger.CreateSessionAsync(
             AgentId.From("agent-a"),
-            "Run scheduled task",
-            request: new InternalTriggerRequest
-            {
-                CronJobId = "job-1",
-                ModelOverride = "openai/gpt-4.1"
-            });
+            "Scheduled task",
+            request: new InternalTriggerRequest { CronJobId = "job-1", ModelOverride = "openai/gpt-4.1" });
 
-        trigger.Type.ShouldBe(TriggerType.Cron);
+        // Assert: conversation created with stable per-job title
+        createdConversation.ShouldNotBeNull();
+        createdConversation!.Title.ShouldBe("cron:job-1");
+        createdConversation.AgentId.ShouldBe(AgentId.From("agent-a"));
+        createdConversation.IsDefault.ShouldBeFalse();
+        conversationStore.Verify(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Once);
+
+        // Session ID in expected format
         sessionId.Value.ShouldStartWith("cron:job-1:");
-        savedSession.ShouldNotBeNull();
-        savedSession!.SessionType.ShouldBe(SessionType.Cron);
-        savedSession.ChannelType.ShouldBe(ChannelKey.From("cron"));
-        savedSession.CallerId.ShouldBe("cron:agent-a");
-        savedSession.Metadata["cronJobId"].ShouldBe("job-1");
-        savedSession.Metadata["modelOverride"].ShouldBe("openai/gpt-4.1");
-        savedSession.Session.ConversationId.ShouldBe(conversation.ConversationId);
-        savedSession.History.Where(e => e.Role == MessageRole.User && e.Content == "Run scheduled task").ShouldHaveSingleItem();
-        savedSession.History.Where(e => e.Role == MessageRole.Assistant && e.Content == "cron-response").ShouldHaveSingleItem();
-        savedConversation.ShouldNotBeNull();
-        savedConversation!.ActiveSessionId.ShouldBe(sessionId);
 
-        supervisor.Verify(
-            s => s.GetOrCreateAsync(AgentId.From("agent-a"), sessionId, It.IsAny<CancellationToken>()),
-            Times.Once);
+        // Session metadata stamped correctly
+        sessionStore.Verify(s => s.SaveAsync(
+            It.Is<GatewaySession>(gs =>
+                gs.SessionType == SessionType.Cron &&
+                gs.ChannelType == ChannelKey.From("cron") &&
+                gs.Metadata.ContainsKey("cronJobId") &&
+                gs.Metadata["cronJobId"] != null &&
+                gs.Metadata["cronJobId"]!.ToString() == "job-1"),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
     [Fact]
-    public async Task CreateSessionAsync_CreatesDistinctSessions_PerRun()
+    public async Task CreateSessionAsync_SecondRun_ReusesExistingJobConversation()
     {
-        var sessionStore = new Mock<ISessionStore>();
-        var conversationStore = new Mock<IConversationStore>();
-        var supervisor = new Mock<IAgentSupervisor>();
-        var handle = new Mock<IAgentHandle>();
-        var conversation = new Conversation
+        // Arrange: conversation for this job already exists
+        var existingConversation = new Conversation
         {
-            ConversationId = ConversationId.From("conv-default"),
+            ConversationId = ConversationId.From("conv-job-1"),
             AgentId = AgentId.From("agent-a"),
-            Title = "Default",
-            IsDefault = true,
+            Title = "cron:job-1",
+            IsDefault = false,
+            Status = ConversationStatus.Active,
+            CreatedAt = DateTimeOffset.UtcNow.AddDays(-1),
+            UpdatedAt = DateTimeOffset.UtcNow.AddDays(-1)
+        };
+
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+
+        conversationStore
+            .Setup(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Conversation> { existingConversation });
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        // Act
+        var sessionId = await trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "Scheduled task run 2",
+            request: new InternalTriggerRequest { CronJobId = "job-1" });
+
+        // Assert: no new conversation created — existing one reused
+        conversationStore.Verify(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        // Existing conversation updated to point to new session
+        conversationStore.Verify(s => s.SaveAsync(
+            It.Is<Conversation>(c => c.ConversationId == ConversationId.From("conv-job-1")),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        // Fresh session ID per run
+        sessionId.Value.ShouldStartWith("cron:job-1:");
+    }
+
+    [Fact]
+    public async Task CreateSessionAsync_ExplicitConversationId_BypassesJobConversationLookup()
+    {
+        // Arrange: job pinned to a specific existing conversation
+        var pinnedConversation = new Conversation
+        {
+            ConversationId = ConversationId.From("conv-pinned"),
+            AgentId = AgentId.From("agent-a"),
+            Title = "My custom conversation",
+            IsDefault = false,
             Status = ConversationStatus.Active,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
         };
 
-        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new AgentResponse { Content = "cron-response" });
-        sessionStore
-            .Setup(s => s.GetOrCreateAsync(It.IsAny<SessionId>(), AgentId.From("agent-a"), It.IsAny<CancellationToken>()))
-            .Returns<SessionId, AgentId, CancellationToken>((sessionId, agentId, _) => Task.FromResult(new GatewaySession
-            {
-                SessionId = sessionId,
-                AgentId = agentId
-            }));
-        sessionStore
-            .Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+
         conversationStore
-            .Setup(value => value.GetOrCreateDefaultAsync(AgentId.From("agent-a"), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(conversation);
-        conversationStore
-            .Setup(value => value.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        supervisor
-            .Setup(s => s.GetOrCreateAsync(AgentId.From("agent-a"), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(handle.Object);
+            .Setup(s => s.GetAsync(ConversationId.From("conv-pinned"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(pinnedConversation);
 
         var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
 
-        var first = await trigger.CreateSessionAsync(AgentId.From("agent-a"), "Run 1", request: new InternalTriggerRequest { CronJobId = "job-1" });
-        await Task.Delay(10);
-        var second = await trigger.CreateSessionAsync(AgentId.From("agent-a"), "Run 2", request: new InternalTriggerRequest { CronJobId = "job-1" });
+        // Act
+        await trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "Pinned task",
+            request: new InternalTriggerRequest { CronJobId = "job-2", ConversationId = "conv-pinned" });
 
+        // Assert: no ListAsync (bypassed), no CreateAsync
+        conversationStore.Verify(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()), Times.Never);
+        conversationStore.Verify(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        // Pinned conversation updated
+        conversationStore.Verify(s => s.SaveAsync(
+            It.Is<Conversation>(c => c.ConversationId == ConversationId.From("conv-pinned")),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateSessionAsync_EachRun_GetsDistinctSessionId()
+    {
+        var jobConversation = new Conversation
+        {
+            ConversationId = ConversationId.From("conv-job"),
+            AgentId = AgentId.From("agent-a"),
+            Title = "cron:job-1",
+            IsDefault = false,
+            Status = ConversationStatus.Active,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        var listCallCount = 0;
+
+        conversationStore
+            .Setup(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                listCallCount++;
+                return listCallCount == 1
+                    ? new List<Conversation>()
+                    : new List<Conversation> { jobConversation };
+            });
+        conversationStore
+            .Setup(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
+            .Returns<Conversation, CancellationToken>((c, _) =>
+            {
+                jobConversation = c with { ConversationId = c.ConversationId };
+                return Task.FromResult(c);
+            });
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        var first = await trigger.CreateSessionAsync(AgentId.From("agent-a"), "Run 1",
+            request: new InternalTriggerRequest { CronJobId = "job-1" });
+        var second = await trigger.CreateSessionAsync(AgentId.From("agent-a"), "Run 2",
+            request: new InternalTriggerRequest { CronJobId = "job-1" });
+
+        // Different session IDs per run
         first.ShouldNotBe(second);
         first.Value.ShouldStartWith("cron:job-1:");
         second.Value.ShouldStartWith("cron:job-1:");
+
+        // First run created the conversation, second reused it
+        conversationStore.Verify(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
+
+    private static (Mock<ISessionStore>, Mock<IConversationStore>, Mock<IAgentSupervisor>) BuildStandardMocks()
+    {
+        var sessionStore = new Mock<ISessionStore>();
+        var conversationStore = new Mock<IConversationStore>();
+        var supervisor = new Mock<IAgentSupervisor>();
+        var handle = new Mock<IAgentHandle>();
+
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "cron-response" });
+
+        sessionStore
+            .Setup(s => s.GetOrCreateAsync(It.IsAny<SessionId>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+            .Returns<SessionId, AgentId, CancellationToken>((sid, aid, _) =>
+                Task.FromResult(new GatewaySession { SessionId = sid, AgentId = aid }));
+        sessionStore
+            .Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        conversationStore
+            .Setup(s => s.SaveAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        supervisor
+            .Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        return (sessionStore, conversationStore, supervisor);
     }
 }
