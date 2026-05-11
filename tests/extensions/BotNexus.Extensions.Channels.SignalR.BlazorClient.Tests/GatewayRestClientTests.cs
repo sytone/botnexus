@@ -135,6 +135,31 @@ public sealed class GatewayRestClientTests
     }
 
     [Fact]
+    public async Task DeleteSessionAsync_encodes_colons_in_cron_session_id()
+    {
+        var (client, handler) = CreateClient();
+        const string sessionId = "cron:20260509002033:6f2f84a4f1634ff492a4fec212872c54";
+        handler.SetResponse(Uri.EscapeDataString(sessionId), "{}");
+
+        var success = await client.DeleteSessionAsync(sessionId);
+
+        success.ShouldBeTrue();
+        handler.LastRequestUrl.ShouldContain("/api/sessions/");
+        handler.LastRequestUrl.ShouldContain(Uri.EscapeDataString(sessionId));
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_returns_false_on_404()
+    {
+        var (client, _) = CreateClient();
+        // No response registered — handler returns 404
+
+        var success = await client.DeleteSessionAsync("cron:nonexistent:id");
+
+        success.ShouldBeFalse();
+    }
+
+    [Fact]
     public void Configure_not_called_throws_on_request()
     {
         var client = new GatewayRestClient(new HttpClient());
