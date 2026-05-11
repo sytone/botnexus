@@ -193,7 +193,7 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
-    public void Virtual_cron_conversation_shows_badge_and_hides_archive_button()
+    public void Virtual_cron_conversation_shows_badge_and_close_button()
     {
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.SeedConversations("a-1", [
@@ -207,7 +207,70 @@ public sealed class MainLayoutTests : IDisposable
         var cut = RenderLayout();
 
         Assert.Contains("Cron", cut.Markup);
+        var archiveBtn = cut.Find(".conversation-archive-btn");
+        Assert.Contains("✕", archiveBtn.TextContent);
+        Assert.Contains("Close conversation", archiveBtn.GetAttribute("title"));
+    }
+
+    [Fact]
+    public void Non_default_conversation_shows_archive_button()
+    {
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-1", "a-1", "My Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        _store.ActiveAgentId = "a-1";
+
+        var cut = RenderLayout();
+
+        var archiveBtn = cut.Find(".conversation-archive-btn");
+        Assert.Contains("🗑️", archiveBtn.TextContent);
+        Assert.Contains("Archive conversation", archiveBtn.GetAttribute("title"));
+    }
+
+    [Fact]
+    public void Default_conversation_hides_archive_button()
+    {
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-1", "a-1", "Default", true, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        _store.ActiveAgentId = "a-1";
+
+        var cut = RenderLayout();
+
         Assert.Empty(cut.FindAll(".conversation-archive-btn"));
+    }
+
+    [Fact]
+    public void Sidebar_scroll_region_exists_within_nav()
+    {
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.ActiveAgentId = "a-1";
+
+        var cut = RenderLayout();
+
+        // Scroll region should be present inside the sidebar nav
+        cut.Find(".sidebar-scroll-region");
+    }
+
+    [Fact]
+    public void Configuration_and_agents_links_are_outside_scroll_region()
+    {
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.ActiveAgentId = "a-1";
+
+        var cut = RenderLayout();
+
+        // The configuration and agents links should be siblings of the scroll region, not children
+        var scrollRegion = cut.Find(".sidebar-scroll-region");
+        Assert.DoesNotContain("Configuration", scrollRegion.TextContent);
+        Assert.DoesNotContain("Agents", scrollRegion.TextContent);
+
+        // But they should exist in the sidebar nav
+        var nav = cut.Find(".sidebar-nav");
+        Assert.Contains("Configuration", nav.TextContent);
+        Assert.Contains("Agents", nav.TextContent);
     }
 
     [Fact]
