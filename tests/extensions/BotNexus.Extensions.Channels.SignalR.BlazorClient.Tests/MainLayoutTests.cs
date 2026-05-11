@@ -213,6 +213,26 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
+    public void Virtual_internal_conversation_is_hidden_from_user_conversation_list()
+    {
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-1", "a-1", "General", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
+            new ConversationSummaryDto("c-2", "a-1", "Internal sub-agent", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        _store.ActiveAgentId = "a-1";
+
+        var internalConversation = _store.GetAgent("a-1")!.Conversations["c-2"];
+        internalConversation.IsVirtualSession = true;
+        internalConversation.VirtualSessionKind = "internal";
+
+        var cut = RenderLayout();
+
+        Assert.Contains("General", cut.Markup);
+        Assert.DoesNotContain("Internal sub-agent", cut.Markup);
+    }
+
+    [Fact]
     public void Non_default_conversation_shows_archive_button()
     {
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
