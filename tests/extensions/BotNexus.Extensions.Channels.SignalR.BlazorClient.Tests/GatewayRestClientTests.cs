@@ -123,40 +123,17 @@ public sealed class GatewayRestClientTests
     }
 
     [Fact]
-    public async Task DeleteSessionAsync_calls_delete_session_endpoint()
+    public async Task ArchiveConversationAsync_encodes_cron_session_colon_id()
     {
         var (client, handler) = CreateClient();
-        handler.SetResponse("/api/sessions/s1", "{}");
+        const string conversationId = "cron-session:cron:20260509002033:6f2f84a4f1634ff492a4fec212872c54";
+        handler.SetResponse(Uri.EscapeDataString(conversationId), "{}");
 
-        var success = await client.DeleteSessionAsync("s1");
-
-        success.ShouldBeTrue();
-        handler.LastRequestUrl.ShouldContain("/api/sessions/s1");
-    }
-
-    [Fact]
-    public async Task DeleteSessionAsync_encodes_colons_in_cron_session_id()
-    {
-        var (client, handler) = CreateClient();
-        const string sessionId = "cron:20260509002033:6f2f84a4f1634ff492a4fec212872c54";
-        handler.SetResponse(Uri.EscapeDataString(sessionId), "{}");
-
-        var success = await client.DeleteSessionAsync(sessionId);
+        var success = await client.ArchiveConversationAsync(conversationId);
 
         success.ShouldBeTrue();
-        handler.LastRequestUrl.ShouldContain("/api/sessions/");
-        handler.LastRequestUrl.ShouldContain(Uri.EscapeDataString(sessionId));
-    }
-
-    [Fact]
-    public async Task DeleteSessionAsync_returns_false_on_404()
-    {
-        var (client, _) = CreateClient();
-        // No response registered — handler returns 404
-
-        var success = await client.DeleteSessionAsync("cron:nonexistent:id");
-
-        success.ShouldBeFalse();
+        handler.LastRequestUrl.ShouldContain("/api/conversations/");
+        handler.LastRequestUrl.ShouldContain(Uri.EscapeDataString(conversationId));
     }
 
     [Fact]

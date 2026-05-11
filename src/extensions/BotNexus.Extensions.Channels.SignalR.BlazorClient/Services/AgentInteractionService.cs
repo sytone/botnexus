@@ -260,18 +260,11 @@ public sealed class AgentInteractionService : IAgentInteractionService
             if (_featureFlags?.ConversationHistoryCache == true && _cache is not null)
                 await _cache.InvalidateAsync(conversationId);
 
-            // Virtual cron sessions are projections from session data, not real conversations.
-            // Route cleanup to DELETE /api/sessions/{sessionId} instead of conversations.
-            var isVirtualCron = conversation.IsVirtualSession &&
-                                string.Equals(conversation.VirtualSessionKind, "cron", StringComparison.OrdinalIgnoreCase);
-            var success = isVirtualCron
-                ? await DeleteVirtualCronSessionAsync(conversation)
-                : await _restClient.ArchiveConversationAsync(conversationId);
-
-            // Older UI projections may surface legacy cron-session IDs without virtual flags.
-            // If archive returns 404/false, fall back to session cleanup using the encoded session ID.
-            if (!success && TryResolveLegacyCronSessionId(conversation, out var legacySessionId))
-                success = await _restClient.DeleteSessionAsync(legacySessionId);
+            // All conversation cleanup — including virtual cron projections — routes through
+            // DELETE /api/conversations/{conversationId}. The backend handles cron-session: IDs
+            // idempotently (returns 204 even if no backing session exists), preserving session
+            // records while hiding the conversation from the sidebar.
+            var success = await _restClient.ArchiveConversationAsync(conversationId);
 
             if (!success)
             {
@@ -612,41 +605,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         _ => role
     };
 
-    /// <summary>
-    /// Deletes the backing session for a virtual cron conversation projection.
-    /// Returns false if the session ID is missing (stale orphan).
-    /// </summary>
-    private async Task<bool> DeleteVirtualCronSessionAsync(ConversationState conversation)
-    {
-        if (string.IsNullOrEmpty(conversation.ActiveSessionId))
-        {
-            // Stale orphan — no backing session to delete. Treat as success
-            // so the virtual row is removed from the sidebar.
-            return true;
-        }
 
-        return await _restClient.DeleteSessionAsync(conversation.ActiveSessionId);
-    }
-
-    private static bool TryResolveLegacyCronSessionId(ConversationState conversation, out string sessionId)
-    {
-        if (!string.IsNullOrWhiteSpace(conversation.ActiveSessionId))
-        {
-            sessionId = conversation.ActiveSessionId;
-            return true;
-        }
-
-        const string prefix = "cron-session:";
-        if (conversation.ConversationId.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
-            conversation.ConversationId.Length > prefix.Length)
-        {
-            sessionId = conversation.ConversationId[prefix.Length..];
-            return true;
-        }
-
-        sessionId = string.Empty;
-        return false;
-    }
 
     private static void MergeVirtualCronSessions(AgentState agent, IReadOnlyList<SessionSummary> sessions)
     {
