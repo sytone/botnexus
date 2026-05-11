@@ -53,6 +53,7 @@ public static class SystemPromptBuilder
     private const string MemoryPromptInjectionFull = "full";
     private const string MemoryPromptInjectionSummary = "summary";
     private const string MemoryPromptInjectionNone = "none";
+    private const bool IncludeReplyTagsSectionByDefault = false;
 
         public static string Build(SystemPromptParams @params)
     {
@@ -124,7 +125,7 @@ public static class SystemPromptBuilder
             .Add(new LambdaPromptSection(110, static context => buildUserIdentitySection(GetGatewayData(context).Parameters.OwnerIdentity, GetGatewayData(context).IsMinimal)))
             .Add(new LambdaPromptSection(120, static context => buildTimeSection(GetGatewayData(context).Parameters.UserTimezone)))
             .Add(new LambdaPromptSection(130, static _ => ["## Workspace Files (injected)", "These user-editable files are loaded by BotNexus and included below in Project Context.", string.Empty]))
-            .Add(new LambdaPromptSection(140, static context => buildReplyTagsSection(GetGatewayData(context).IsMinimal)))
+            .Add(new LambdaPromptSection(140, static context => buildReplyTagsSection(GetGatewayData(context).IsMinimal), static _ => IncludeReplyTagsSectionByDefault))
             .Add(new LambdaPromptSection(150, static context => buildMessagingSection(GetGatewayData(context).IsMinimal, GetGatewayData(context).NormalizedTools, GetGatewayData(context).RuntimeChannel, GetGatewayData(context).InlineButtonsEnabled)))
             .Add(new LambdaPromptSection(160, static context => buildVoiceSection(GetGatewayData(context).IsMinimal, GetGatewayData(context).Parameters.TtsHint)))
             .Add(new LambdaPromptSection(170, BuildReasoningSection, static context => GetGatewayData(context).Parameters.ReasoningTagHint))
