@@ -265,7 +265,18 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 message.BindingId,
                 DisplayPrefix: null);
             ConversationSessionResolution? resolution = null;
-            if (_conversationDispatcher is not null)
+            var isInternalWakeMessage =
+                message.ChannelType.Equals(ChannelKey.From("internal")) &&
+                !string.IsNullOrWhiteSpace(message.SessionId);
+
+            if (isInternalWakeMessage)
+            {
+                // Internal sub-agent wake-ups target an already-known parent session.
+                // Routing them through conversation resolution creates synthetic internal
+                // conversations and can misroute the user-visible response stream.
+                sessionId = message.SessionId!;
+            }
+            else if (_conversationDispatcher is not null)
             {
                 var dispatchResult = await _conversationDispatcher.DispatchAsync(
                     InboundMessageContext.FromInboundMessage(AgentId.From(agentId), message),
