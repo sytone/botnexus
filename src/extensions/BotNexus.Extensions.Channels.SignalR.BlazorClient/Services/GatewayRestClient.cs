@@ -140,13 +140,4 @@ public sealed class GatewayRestClient : IGatewayRestClient
             $"{_apiBaseUrl}conversations/{Uri.EscapeDataString(conversationId)}", ct);
         return response.IsSuccessStatusCode;
     }
-
-    /// <inheritdoc />
-    public async Task<bool> DeleteSessionAsync(string sessionId, CancellationToken ct = default)
-    {
-        EnsureConfigured();
-        var response = await _http.DeleteAsync(
-            $"{_apiBaseUrl}sessions/{Uri.EscapeDataString(sessionId)}", ct);
-        return response.IsSuccessStatusCode;
-    }
 }

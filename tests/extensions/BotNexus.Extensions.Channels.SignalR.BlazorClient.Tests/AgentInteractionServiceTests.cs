@@ -236,7 +236,7 @@ public sealed class AgentInteractionServiceTests
     }
 
     [Fact]
-    public async Task ArchiveConversationAsync_ForVirtualCronConversation_ArchivesConversationAndRemovesConversation()
+    public async Task ArchiveConversationAsync_ForVirtualCronConversation_ArchivesConversationNotSession()
     {
         var agent = _store.GetAgent("agent-1")!;
         agent.Conversations["conv-1"] = new ConversationState
@@ -263,10 +263,113 @@ public sealed class AgentInteractionServiceTests
 
         await _service.ArchiveConversationAsync("agent-1", "cron-session:cron:job-1:run");
 
+        // Must route through conversation archive (not session deletion) to preserve session records
         await _restClient.Received(1).ArchiveConversationAsync("cron-session:cron:job-1:run", Arg.Any<CancellationToken>());
-        await _restClient.DidNotReceive().DeleteSessionAsync("cron:job-1:run", Arg.Any<CancellationToken>());
         agent.Conversations.ContainsKey("cron-session:cron:job-1:run").ShouldBeFalse();
         agent.ActiveConversationId.ShouldBe("conv-1");
+    }
+
+    [Fact]
+    public async Task ArchiveConversationAsync_ForVirtualCronWithColonsInId_ArchivesWithEncodedConversationId()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        const string sessionId = "cron:20260509002033:6f2f84a4f1634ff492a4fec212872c54";
+        var cronKey = $"cron-session:{sessionId}";
+
+        agent.Conversations[cronKey] = new ConversationState
+        {
+            ConversationId = cronKey,
+            Title = "Cron · cron:202",
+            IsVirtualSession = true,
+            VirtualSessionKind = "cron",
+            ActiveSessionId = sessionId,
+            HistoryLoaded = true
+        };
+        _store.SetActiveConversation("agent-1", cronKey);
+
+        _restClient.ArchiveConversationAsync(cronKey, Arg.Any<CancellationToken>())
+            .Returns(true);
+
+        await _service.ArchiveConversationAsync("agent-1", cronKey);
+
+        // Calls conversations endpoint with full cron-session:... ID, not sessions endpoint
+        await _restClient.Received(1).ArchiveConversationAsync(cronKey, Arg.Any<CancellationToken>());
+        agent.Conversations.ContainsKey(cronKey).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ArchiveConversationAsync_ForStaleOrphanCron_CallsConversationArchive()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        const string cronKey = "cron-session:cron:stale:orphan";
+        agent.Conversations[cronKey] = new ConversationState
+        {
+            ConversationId = cronKey,
+            Title = "Cron · stale",
+            IsVirtualSession = true,
+            VirtualSessionKind = "cron",
+            ActiveSessionId = null, // stale — no backing session
+            HistoryLoaded = false
+        };
+
+        // Backend returns 204 for cron-session: IDs with missing backing sessions
+        _restClient.ArchiveConversationAsync(cronKey, Arg.Any<CancellationToken>())
+            .Returns(true);
+
+        await _service.ArchiveConversationAsync("agent-1", cronKey);
+
+        // Stale orphans still call the conversations endpoint (backend handles idempotently)
+        await _restClient.Received(1).ArchiveConversationAsync(cronKey, Arg.Any<CancellationToken>());
+        agent.Conversations.ContainsKey(cronKey).ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData("cron:20260509002033:6f2f84a4f1634ff492a4fec212872c54")]
+    [InlineData("cron:20260510001608:c7fe67628e3142a1894974d22bb998a8")]
+    public async Task ArchiveConversationAsync_ForLegacyCronProjection_UsesConversationArchive(string sessionId)
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        var cronKey = $"cron-session:{sessionId}";
+        agent.Conversations[cronKey] = new ConversationState
+        {
+            ConversationId = cronKey,
+            Title = "Legacy cron projection",
+            IsDefault = false,
+            // Legacy projection: no virtual flags and no active session linkage in local state.
+            ActiveSessionId = null,
+            HistoryLoaded = false
+        };
+
+        _restClient.ArchiveConversationAsync(cronKey, Arg.Any<CancellationToken>())
+            .Returns(true);
+
+        await _service.ArchiveConversationAsync("agent-1", cronKey);
+
+        // Legacy projections now route through conversation archive (backend returns 204 for virtual cron IDs)
+        await _restClient.Received(1).ArchiveConversationAsync(cronKey, Arg.Any<CancellationToken>());
+        agent.Conversations.ContainsKey(cronKey).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ArchiveConversationAsync_ForNormalConversation_StillUsesConversationArchive()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.Conversations["conv-normal"] = new ConversationState
+        {
+            ConversationId = "conv-normal",
+            Title = "Normal conversation",
+            IsDefault = false,
+            HistoryLoaded = true
+        };
+        _store.SetActiveConversation("agent-1", "conv-normal");
+
+        _restClient.ArchiveConversationAsync("conv-normal", Arg.Any<CancellationToken>())
+            .Returns(true);
+
+        await _service.ArchiveConversationAsync("agent-1", "conv-normal");
+
+        await _restClient.Received(1).ArchiveConversationAsync("conv-normal", Arg.Any<CancellationToken>());
+        agent.Conversations.ContainsKey("conv-normal").ShouldBeFalse();
     }
 
     // ── Steering tests ────────────────────────────────────────────────────

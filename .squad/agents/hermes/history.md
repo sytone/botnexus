@@ -40,3 +40,5 @@
 - Coverage gap: no gateway-level tests verify graceful degradation when extensions are absent or fail load.
 - CLI update regression coverage must assert pull failures short-circuit before stop/start.
 - Sub-agent wake delivery tests should assert both dispatch metadata and stream-event channel capabilities.
+- [CORRECTED] Legacy cron cleanup regressions must assert Blazor uses DELETE /api/conversations/{cron-session-id} (archive path only) and never falls back to session deletion; gateway must preserve/seal session history for linked/orphan projections.
+

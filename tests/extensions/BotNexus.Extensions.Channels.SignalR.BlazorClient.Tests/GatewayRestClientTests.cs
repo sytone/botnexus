@@ -123,15 +123,17 @@ public sealed class GatewayRestClientTests
     }
 
     [Fact]
-    public async Task DeleteSessionAsync_calls_delete_session_endpoint()
+    public async Task ArchiveConversationAsync_encodes_cron_session_colon_id()
     {
         var (client, handler) = CreateClient();
-        handler.SetResponse("/api/sessions/s1", "{}");
+        const string conversationId = "cron-session:cron:20260509002033:6f2f84a4f1634ff492a4fec212872c54";
+        handler.SetResponse(Uri.EscapeDataString(conversationId), "{}");
 
-        var success = await client.DeleteSessionAsync("s1");
+        var success = await client.ArchiveConversationAsync(conversationId);
 
         success.ShouldBeTrue();
-        handler.LastRequestUrl.ShouldContain("/api/sessions/s1");
+        handler.LastRequestUrl.ShouldContain("/api/conversations/");
+        handler.LastRequestUrl.ShouldContain(Uri.EscapeDataString(conversationId));
     }
 
     [Fact]
