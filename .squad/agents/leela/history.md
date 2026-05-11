@@ -32,3 +32,7 @@
 - Strict rejection protocol: rejected work delegates to fresh implementer, prevents scope drift.
 - Metadata-bag approach minimizes descriptor contract surface; future options may justify first-class fields.
 - PID recycling mitigated by process name check; hard kill acceptable for console apps on Windows.
+
+## Learnings
+
+- 2026-07-29: Team reskill pass reduced cold-loaded context from ~197KB to ~59KB (70%). Charter trimming: remove Collaboration, Voice, verbose Model, boilerplate Boundaries. History summarization: distill session entries into Core Context + high-signal Learnings only.
