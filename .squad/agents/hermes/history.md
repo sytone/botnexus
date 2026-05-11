@@ -275,3 +275,21 @@
 
 
 - 2026-05-11: Conversation cleanup QA coverage now verifies cron virtual conversation cleanup uses session deletion, conversation archive closes active sessions, and archived conversations can be reopened with existing channel bindings.
+
+---
+
+## 2026-05-11 — Conversation Cleanup Regression Coverage
+
+**Status:** ✅ Delivered  
+**Commit:** 05427604 `fix(conversations): support cron cleanup and session closure`  
+**Team Coordination:** Fry (UI), Bender (runtime)
+
+**Test Coverage Added:**
+1. Gateway conversation cleanup — archiving closes active sessions, clears ActiveSessionId
+2. Session deletion — properly removes conversation associations for cron cleanup
+3. Conversation routing — archived conversations reopen on next activity with bindings preserved
+4. Blazor client — cleanup affordances route correctly through API
+
+**Cross-Agent Alignment:**
+- Verified Bender's archive/close semantics match test expectations
+- Confirmed Fry's UI affordances work correctly with backend API contracts

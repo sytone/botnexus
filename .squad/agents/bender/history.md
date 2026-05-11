@@ -341,3 +341,23 @@ ull)
 - Conversation delete/cleanup is implemented as archive/close semantics, not hard-delete.
 - Archiving now clears ActiveSessionId so the next inbound trigger starts a fresh session instead of reusing stale runtime state.
 - Router reopens archived conversations when a bound channel speaks again (or explicit conversationId is used), preserving multi-channel bindings and enabling cron/channel resumes after cleanup.
+
+---
+
+## 2026-05-11 — Conversation Cleanup: Archive/Close Recoverability & Session Linkage
+
+**Status:** ✅ Delivered  
+**Commit:** 90c6f955 `fix(gateway): reopen archived conversations after cleanup`  
+**Team Coordination:** Fry (UI), Hermes (tests)
+
+**Runtime Semantics Delivered:**
+1. DELETE /api/conversations/{id} now treated as close/archive (not hard-delete)
+2. Close operation clears ActiveSessionId for fresh session creation on next activity
+3. Archived conversations reopen automatically when:
+   - Inbound activity matches an existing channel binding
+   - Conversation explicitly addressed by ID
+4. Channel bindings preserved across close/reopen cycle (critical for cron continuity)
+
+**Cross-Agent Alignment:**
+- Fry's UI close button uses same API with appropriate messaging
+- Hermes wrote comprehensive tests for session cleanup and binding preservation

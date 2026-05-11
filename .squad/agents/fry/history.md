@@ -160,3 +160,50 @@
 
 **Recommendation for Bender:**
 - Consider adding a server-side option to the history API (e.g., `order=desc` or `anchor=latest`) so the client can request the newest entries without a probe call. This would eliminate the extra HTTP round-trip for long conversations.
+
+---
+
+## Learnings
+
+### 2026-05-08 — Conversation Cleanup UI Fix
+
+**Status:** ✅ Delivered
+**Commit:** 223896f8
+
+**Issues Fixed:**
+1. **Sidebar scroll overflow** — Long conversation lists pushed Configuration and Agents nav links off-screen. Root cause: nav items inside `.sidebar-nav` lacked `flex-shrink: 0`, so they collapsed when the scroll region grew. Fixed by adding `flex-shrink: 0` to `.sidebar-nav-item` and `.sidebar-subnav` direct children of `.sidebar-nav`.
+
+2. **Cron conversation cleanup** — Cron (virtual session) conversations had no delete/close button due to a `!conversation.IsVirtualSession` guard on the archive button. Removed the guard, allowing cron conversations to be closed. Close uses the same `ArchiveConversationAsync` API — the next cron trigger will reopen the conversation automatically.
+
+**Key Design Choices:**
+- **Contextual labels:** Cron conversations show ✕ with "Close conversation — reopens on next trigger" tooltip; regular conversations show 🗑️ with "Archive conversation" tooltip. The confirmation dialog also differs.
+- **Same API, different UX:** Both close (cron) and archive (regular) use `DELETE /api/conversations/{id}` on the backend. The distinction is purely in the UI wording to set correct user expectations.
+- **flex-shrink: 0 for pinned nav items:** When using a scrollable flex region inside a flex column, items that must remain visible need explicit `flex-shrink: 0`. This is the standard pattern for sidebars with scroll regions.
+
+**Tests Added:**
+- `Virtual_cron_conversation_shows_badge_and_close_button` — Verifies ✕ icon and tooltip text
+- `Non_default_conversation_shows_archive_button` — Verifies 🗑️ icon and tooltip
+- `Default_conversation_hides_archive_button` — No close/archive for default conversations
+- `Sidebar_scroll_region_exists_within_nav` — Structural check
+- `Configuration_and_agents_links_are_outside_scroll_region` — Ensures nav links aren't inside scroll area
+
+**Build & Tests:** ✅ 144 Blazor tests passing, 0 failures
+
+---
+
+## 2026-05-11 — Conversation Cleanup UI: Sidebar Scroll + Cron Close Affordance
+
+**Status:** ✅ Delivered  
+**Commit:** 223896f8 `fix(blazor): fix sidebar scroll and enable cron conversation cleanup`  
+**Team Coordination:** Bender (runtime), Hermes (tests)
+
+**Your Deliverables:**
+1. Sidebar scroll overflow — long conversation lists no longer push Configuration/Agents nav links off-screen
+2. Cron conversation close button — ✕ icon with "Close conversation — reopens on next trigger" tooltip
+3. Test coverage — sidebar structure tests + cron close affordance tests
+
+**Key Design Pattern:** `flex-shrink: 0` on pinned nav items inside scrollable flex regions
+
+**Cross-Agent Alignment:**
+- Bender confirmed backend supports reopen semantics without code changes
+- Hermes verified test coverage for session cleanup and conversation reopening

@@ -2,6 +2,69 @@
 
 ## Active Decisions
 
+### 2026-05-11 — Fry: Cron Conversations Are Closable via the Same Archive API
+
+**Author:** Fry (Web Dev)  
+**Date:** 2026-05-08  
+**Scope:** BlazorClient UI + API contract  
+**Status:** Implemented
+
+**Context:** Cron (virtual session) conversations previously had no UI affordance for cleanup — the archive button was hidden for them. Users with many cron conversations couldn't clean up the sidebar.
+
+**Decision:**
+- **Cron conversations can now be closed** using the same `DELETE /api/conversations/{id}` endpoint used for archiving regular conversations.
+- The UI shows a **close button (✕)** for cron conversations with a tooltip: "Close conversation — reopens on next trigger".
+- Regular conversations keep the **archive button (🗑️)** with existing semantics.
+- Default conversations remain protected — no close or archive button.
+
+**Rationale:**
+- The backend already handles reopening archived default conversations (`GetOrCreateDefaultAsync` checks for archived defaults). Cron conversations follow the same reopening pattern when the next trigger fires.
+- No backend changes required — the existing archive/close semantics work for both conversation types.
+- Differentiating the label (close vs archive) sets correct user expectations about permanence.
+
+**Impact:**
+- **Bender:** No backend changes needed. The `DELETE` endpoint works for cron conversations already.
+- **Hermes:** Old test `Virtual_cron_conversation_shows_badge_and_hides_archive_button` replaced with new tests verifying the close button is shown.
+
+---
+
+### 2026-05-11 — Bender: Conversation cleanup uses close+reopen lifecycle
+
+**Author:** Bender (Runtime Dev)  
+**Date:** 2026-05-11  
+**Scope:** Gateway conversations, cron trigger continuity, multi-channel bindings  
+**Status:** Implemented
+
+**Decision:**
+DELETE /api/conversations/{id} remains a soft-delete/archive operation and is treated as **close conversation** semantics. Closing now clears ActiveSessionId so subsequent activity creates a fresh session. Archived conversations may be reopened automatically when inbound activity matches an existing binding or the conversation is explicitly addressed by ID.
+
+**Rationale:**
+Hard-deleting conversations breaks cron and bound-channel continuity. Reopening archived conversations preserves existing bindings, so a cleaned-up conversation can naturally reappear across attached channels when activity resumes.
+
+**Runtime Effects:**
+- Archived conversation is hidden from active summaries.
+- Close operation clears active session linkage.
+- First inbound message after close reactivates the archived conversation and creates/rebinds a fresh active session.
+
+---
+
+### 2026-05-11 — Hermes: Conversation Cleanup Test Strategy
+
+**Author:** Hermes (Tester)  
+**Date:** 2026-05-11  
+**Status:** Implemented
+
+**Decision:** Treat cron virtual conversation cleanup as **session lifecycle** (DELETE /api/sessions/{id}) instead of conversation archive.
+
+**Why:** Cron rows in the Blazor sidebar are virtual projections from session summaries; archiving by conversation ID cannot remove them reliably.
+
+**Test Impact:**
+- Blazor client tests verify cleanup affordance remains available for cron rows and routes through session deletion.
+- Gateway tests verify archiving a conversation closes its active session and clears active session linkage.
+- Existing router tests continue to validate archived conversations reopen on subsequent inbound activity with bindings preserved.
+
+---
+
 ### 2026-05-06T18:12:51-07:00: User Directive — Conversation Project Extraction
 
 **By:** Sytone (via Copilot)  
