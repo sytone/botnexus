@@ -485,24 +485,29 @@ public sealed class AgentInteractionService : IAgentInteractionService
     private async Task LoadSubAgentHistoryAsync(string subAgentId)
     {
         // Sub-agents use session history endpoint, not conversation history
-        // For now create a stub conversation to hold messages
         var agent = _store.GetAgent(subAgentId);
         if (agent is null) return;
 
         // Create a virtual conversation for the sub-agent session
-        const string convId = "subagent-session";
-        if (!agent.Conversations.ContainsKey(convId))
+        var convId = $"subagent-session:{subAgentId}";
+        if (!agent.Conversations.TryGetValue(convId, out var conv))
         {
-            agent.Conversations[convId] = new ConversationState
+            conv = new ConversationState
             {
                 ConversationId = convId,
                 Title = "Sub-agent session",
+                Status = "Active",
+                ActiveSessionId = subAgentId,
+                IsVirtualSession = true,
+                VirtualSessionKind = "subagent",
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow,
                 HistoryLoaded = false
             };
-            agent.ActiveConversationId = convId;
+            agent.Conversations[convId] = conv;
         }
 
-        var conv = agent.Conversations[convId];
+        agent.ActiveConversationId = convId;
         if (conv.HistoryLoaded || conv.IsLoadingHistory) return;
 
         conv.IsLoadingHistory = true;
@@ -510,11 +515,12 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         try
         {
-            // Use session history endpoint
-            var response = await _restClient.GetHistoryAsync(subAgentId, limit: 50);
+            // Use session history endpoint for sub-agent session transcripts.
+            var response = await _restClient.GetSessionHistoryAsync(subAgentId, limit: 50);
+            conv.Messages.Clear();
             if (response?.Entries is { Count: > 0 })
             {
-                foreach (var entry in response.Entries.Where(e => e.Kind != "boundary"))
+                foreach (var entry in response.Entries)
                 {
                     conv.Messages.Add(new ChatMessage(
                         MapRole(entry.Role ?? "system"),
@@ -523,6 +529,9 @@ public sealed class AgentInteractionService : IAgentInteractionService
                     {
                         ToolName = entry.ToolName,
                         ToolCallId = entry.ToolCallId,
+                        ToolArgs = entry.ToolArgs,
+                        ToolIsError = entry.ToolIsError,
+                        ToolResult = entry.ToolName is not null ? entry.Content : null,
                         IsToolCall = entry.ToolName is not null
                     });
                 }

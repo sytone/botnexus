@@ -84,12 +84,15 @@
                         <div class="agent-conversation-list">
                             <div class="agent-conversation-list-header">
                                 <span class="agent-conversation-list-title">Conversations</span>
-                                <button class="conversation-new-btn"
-                                        @onclick="() => CreateConversationAsync(activeAgent.AgentId)"
-                                        title="Start a new conversation">
-                                    <span class="conversation-new-btn-icon">+</span>
-                                    <span class="conversation-new-btn-label">New</span>
-                                </button>
+                                @if (!activeAgent.IsReadOnly)
+                                {
+                                    <button class="conversation-new-btn"
+                                            @onclick="() => CreateConversationAsync(activeAgent.AgentId)"
+                                            title="Start a new conversation">
+                                        <span class="conversation-new-btn-icon">+</span>
+                                        <span class="conversation-new-btn-label">New</span>
+                                    </button>
+                                }
                             </div>
 
                             @if (activeAgent.IsLoadingConversations)
@@ -117,9 +120,9 @@
                                                 {
                                                     <span class="conversation-default-badge">Default</span>
                                                 }
-                                                @if (conversation.IsVirtualSession)
+                                                @if (GetVirtualConversationBadge(conversation) is { } badge)
                                                 {
-                                                    <span class="conversation-default-badge">Cron</span>
+                                                    <span class="conversation-default-badge">@badge</span>
                                                 }
                                             </span>
 
@@ -135,7 +138,7 @@
                                                 </span>
                                             </span>
                                         </button>
-                                        @if (!conversation.IsDefault)
+                                        @if (!conversation.IsDefault && !activeAgent.IsReadOnly)
                                         {
                                             <button class="conversation-archive-btn"
                                                     title="@(conversation.IsVirtualSession ? "Close conversation — reopens on next trigger" : "Archive conversation")"
@@ -153,11 +156,12 @@
                                 .Where(s => s.Status is "Running" or "Completed"))
                             {
                                 <div class="agent-session-item @(IsSubAgentActive(sub) ? "active" : "")"
-                                     @onclick="() => ViewSubAgentAsync(sub)"
-                                     style="cursor: pointer;"
-                                     title="@sub.Task">
+                                      @onclick="() => ViewSubAgentAsync(sub)"
+                                      style="cursor: pointer;"
+                                      title="@($"{sub.Task} (read-only)")">
                                     <span>@SubAgentIcon(sub.Status)</span>
                                     <span>@(sub.Name ?? sub.SubAgentId[..Math.Min(8, sub.SubAgentId.Length)])</span>
+                                    <span class="conversation-default-badge">Read-only</span>
                                     @if (sub.Archetype is not null)
                                     {
                                         <span class="sub-agent-archetype">@sub.Archetype</span>
@@ -411,8 +415,35 @@
     };
 
     private static bool IsUserFacingConversation(ConversationState conversation)
-        => !(conversation.IsVirtualSession &&
-             string.Equals(conversation.VirtualSessionKind, "internal", StringComparison.OrdinalIgnoreCase));
+    {
+        // Current contracts expose only conversationId + virtual kind. To hide internal runtime
+        // threads safely we filter known internal IDs ("internal:*") and internal virtual kinds.
+        // Backend contract needed for full fidelity: explicit conversation visibility
+        // (e.g., user-facing | inspectable-readonly | internal-hidden).
+        if (conversation.ConversationId.StartsWith("internal:", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (conversation.IsVirtualSession &&
+            string.Equals(conversation.VirtualSessionKind, "internal", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static string? GetVirtualConversationBadge(ConversationState conversation)
+    {
+        if (!conversation.IsVirtualSession)
+            return null;
+
+        return conversation.VirtualSessionKind?.ToLowerInvariant() switch
+        {
+            "cron" => "Cron",
+            "subagent" => "Read-only",
+            _ => "Virtual"
+        };
+    }
 
     private async Task ViewSubAgentAsync(SubAgentInfo sub)
     {

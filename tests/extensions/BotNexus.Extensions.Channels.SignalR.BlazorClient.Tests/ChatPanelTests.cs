@@ -142,6 +142,27 @@ public sealed class ChatPanelTests : IDisposable
     }
 
     [Fact]
+    public void Read_only_sub_agent_view_hides_interactive_controls()
+    {
+        CreateAndSeedAgent("sub-1", "Sub Agent", isConnected: true);
+        _store.SeedConversations("sub-1", [MakeConvDto("subagent-session:sub-1", "sub-1", "Sub-agent session")]);
+        _store.SetActiveConversation("sub-1", "subagent-session:sub-1");
+
+        var agent = _store.GetAgent("sub-1")!;
+        agent.SessionType = "agent-subagent";
+        var conversation = agent.Conversations["subagent-session:sub-1"];
+        conversation.IsVirtualSession = true;
+        conversation.VirtualSessionKind = "subagent";
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "sub-1"));
+
+        cut.Find(".read-only-banner");
+        Assert.Empty(cut.FindAll(".chat-input"));
+        Assert.Empty(cut.FindAll(".new-chat-btn"));
+        Assert.Empty(cut.FindAll(".conversation-title.editable"));
+    }
+
+    [Fact]
     public void Renders_user_message_with_user_css_class()
     {
         CreateAndSeedAgent("agent-1", isConnected: true);

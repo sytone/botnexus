@@ -233,6 +233,35 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
+    public void Internal_prefix_conversation_is_hidden_from_user_conversation_list()
+    {
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-1", "a-1", "General", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
+            new ConversationSummaryDto("internal:sub-1", "a-1", "Internal routing thread", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        _store.ActiveAgentId = "a-1";
+
+        var cut = RenderLayout();
+
+        Assert.Contains("General", cut.Markup);
+        Assert.DoesNotContain("Internal routing thread", cut.Markup);
+    }
+
+    [Fact]
+    public void Read_only_agent_hides_new_conversation_button()
+    {
+        _store.SeedAgents([new AgentSummary("sub-1", "Subagent")]);
+        _store.SeedConversations("sub-1", []);
+        _store.ActiveAgentId = "sub-1";
+        _store.GetAgent("sub-1")!.SessionType = "agent-subagent";
+
+        var cut = RenderLayout();
+
+        Assert.Empty(cut.FindAll(".conversation-new-btn"));
+    }
+
+    [Fact]
     public void Non_default_conversation_shows_archive_button()
     {
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
