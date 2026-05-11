@@ -15617,3 +15617,46 @@ The Blazor client loads limit=200, offset=0 on refresh. Oldest-first paging drop
 - UI refresh now consistently includes the latest turns for long conversations.
 - Existing callers can still page backward by increasing offset.
 
+
+---
+
+### 2026-05-11T10:48:37Z: User Directive — Preserve Sessions on Conversation Cleanup
+
+**By:** Copilot (via Copilot)  
+**What:** Sessions should not be deleted when a conversation is hidden/archived; cleanup should hide/archive the conversation while preserving session records.  
+**Why:** User request — captured for team memory
+
+---
+
+### 2026-05-11T11:06:00Z: Bender Decision — Preserve Sessions When Archiving Conversations
+
+**Author:** Bender (Runtime Dev)  
+**Date:** 2026-05-11  
+**Scope:** Gateway conversations, session preservation on cleanup  
+**Status:** Implemented  
+**Commit:** 5544ee3b
+
+**Context:** User requested that conversation cleanup must not delete persisted session records. Closing/archiving conversations should hide them from active UI while preserving session history for audit/query APIs and enabling archived conversations to reopen on new activity.
+
+**Decision:** Route all cleanup through conversation archive (\DELETE /api/conversations/{id}\) and seal the active session record instead of deleting it. Do not use session deletion for conversation cleanup.
+
+**Why:** This keeps archived conversations out of active UI while preserving historical session history for audit/history APIs and allowing archived conversations to reopen on new inbound channel/cron activity.
+
+**Runtime Effects:**
+- Archived conversation is hidden from active summaries.
+- Active session is sealed (cleared of ActiveSessionId linkage).
+- Archived conversations may reopen automatically when inbound activity matches an existing binding or conversation is explicitly addressed by ID.
+
+---
+
+### 2026-05-11T11:13:00Z: Hermes Decision — Regression Test Coverage for Session Preservation
+
+**Author:** Hermes (Tester)  
+**Date:** 2026-05-11  
+**Scope:** Gateway conversation cleanup test strategy  
+**Status:** Implemented  
+**Commit:** 4a47ffc7
+
+**What:** Regression coverage now treats conversation cleanup (\DELETE /api/conversations/{id}\) as close/archive behavior that clears \ActiveSessionId\ but keeps the archived session persisted (sealed), and verifies archived conversations reopen on future inbound activity with a fresh active session.
+
+**Why:** User requirement: hidden/archived conversations should not delete persisted sessions. Tests must enforce this invariant.
