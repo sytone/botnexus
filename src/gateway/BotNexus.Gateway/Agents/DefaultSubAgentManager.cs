@@ -21,6 +21,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     private readonly IAgentRegistry _registry;
     private readonly IActivityBroadcaster _activity;
     private readonly IChannelDispatcher _dispatcher;
+    private readonly IAgentWorkspaceManager? _workspaceManager;
     private readonly IOptionsMonitor<GatewayOptions> _options;
     private readonly ILogger<DefaultSubAgentManager> _logger;
     private readonly ConcurrentDictionary<string, SubAgentInfo> _subAgents = new(StringComparer.OrdinalIgnoreCase);
@@ -36,12 +37,14 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         IActivityBroadcaster activity,
         IChannelDispatcher dispatcher,
         IOptionsMonitor<GatewayOptions> options,
-        ILogger<DefaultSubAgentManager> logger)
+        ILogger<DefaultSubAgentManager> logger,
+        IAgentWorkspaceManager? workspaceManager = null)
     {
         _supervisor = supervisor;
         _registry = registry;
         _activity = activity;
         _dispatcher = dispatcher;
+        _workspaceManager = workspaceManager;
         _options = options;
         _logger = logger;
     }
@@ -179,11 +182,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             timeoutCts.Dispose();
         }
 
-        if (_childAgentIds.TryGetValue(subAgentId, out var childAgentId))
-        {
-            await _supervisor.StopAsync(childAgentId, info.ChildSessionId, ct);
-            _registry.Unregister(childAgentId);
-        }
+        await CleanupChildAgentAsync(subAgentId, info.ChildSessionId, ct);
 
         if (!TryUpdateSubAgent(
             subAgentId,
@@ -331,8 +330,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         }
         finally
         {
-            if (_childAgentIds.TryGetValue(subAgentId, out var childAgentId))
-                _registry.Unregister(childAgentId);
+            await CleanupChildAgentAsync(subAgentId, updated.ChildSessionId, CancellationToken.None);
         }
     }
 
@@ -446,6 +444,49 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 "Failed to publish sub-agent lifecycle event '{EventName}' for sub-agent '{SubAgentId}'.",
                 eventName,
                 info.SubAgentId);
+        }
+    }
+
+    private async Task CleanupChildAgentAsync(string subAgentId, SessionId childSessionId, CancellationToken ct)
+    {
+        if (!_childAgentIds.TryRemove(subAgentId, out var childAgentId))
+            return;
+
+        try
+        {
+            await _supervisor.StopAsync(childAgentId, childSessionId, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed stopping child agent '{ChildAgentId}' for sub-agent '{SubAgentId}'.",
+                childAgentId,
+                subAgentId);
+        }
+        finally
+        {
+            _registry.Unregister(childAgentId);
+        }
+
+        if (_workspaceManager is null)
+            return;
+
+        try
+        {
+            if (_workspaceManager.TryCleanupWorkspace(childAgentId.Value))
+            {
+                _logger.LogDebug(
+                    "Cleaned up temporary workspace for child agent '{ChildAgentId}'.",
+                    childAgentId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed cleaning temporary workspace for child agent '{ChildAgentId}'.",
+                childAgentId);
         }
     }
 }
