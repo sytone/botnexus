@@ -2,6 +2,21 @@
 
 ## Active Decisions
 
+### 2026-07-29 — Team Reskill & Context Optimization (Leela)
+
+**Decision:** Performed team-wide reskill pass per `.squad/templates/skills/reskill/SKILL.md`.
+
+**Changes:**
+1. All 11 charters trimmed to minimal template (~1-2KB each). Removed: Collaboration (→ spawn prompt), Voice (→ tagline), verbose Model (→ single line), "When I'm unsure" boilerplate.
+2. 7 oversized histories (>12KB) summarized to Core Context + Learnings format (target ≤8KB).
+3. New shared skill: `.squad/skills/agent-collaboration/SKILL.md` — documents the collaboration protocol previously duplicated in every charter.
+
+**Impact:** ~70% reduction in cold-loaded context. Agent identity, domain ownership, and unique working patterns preserved.
+
+**Precedent:** Reskill should be re-run whenever total charter+history context exceeds ~80KB or when 3+ charters show new shared patterns worth extracting.
+
+---
+
 ### 2026-05-11 — Fry: Cron Conversations Are Closable via the Same Archive API
 
 **Author:** Fry (Web Dev)  
