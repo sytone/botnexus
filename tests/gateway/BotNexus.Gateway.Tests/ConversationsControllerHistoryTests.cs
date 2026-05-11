@@ -75,6 +75,69 @@ public sealed class ConversationsControllerHistoryTests
     }
 
     [Fact]
+    public async Task GetHistory_WithVirtualCronConversationId_UsesSessionHistory()
+    {
+        var sessionId = SessionId.From("cron:20260509002033:6f2f84a4f1634ff492a4fec212872c54");
+        var virtualConversationId = $"cron-session:{sessionId.Value}";
+        var sessions = new InMemorySessionStore();
+        var conversationStore = new InMemoryConversationStore();
+        var session = await sessions.GetOrCreateAsync(sessionId, AgentId.From("assistant"));
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.User,
+            Content = "cron-1",
+            Timestamp = DateTimeOffset.UtcNow.AddMinutes(-2)
+        });
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.Assistant,
+            Content = "cron-2",
+            Timestamp = DateTimeOffset.UtcNow.AddMinutes(-1)
+        });
+        await sessions.SaveAsync(session);
+
+        var controller = new ConversationsController(conversationStore, sessions);
+        var actionResult = await controller.GetHistory(virtualConversationId, limit: 200, offset: 0, CancellationToken.None);
+
+        var response = (actionResult as OkObjectResult)?.Value as ConversationHistoryResponse;
+        response.ShouldNotBeNull();
+        response!.ConversationId.ShouldBe(virtualConversationId);
+        response.TotalCount.ShouldBe(2);
+        response.Entries.Count.ShouldBe(2);
+        response.Entries[0].Kind.ShouldBe("message");
+        response.Entries[0].SessionId.ShouldBe(sessionId.Value);
+        response.Entries[0].Content.ShouldBe("cron-1");
+        response.Entries[1].Content.ShouldBe("cron-2");
+    }
+
+    [Fact]
+    public async Task GetHistory_WithVirtualCronConversationId_WhenSessionMissing_ReturnsEmpty()
+    {
+        var sessions = new InMemorySessionStore();
+        var controller = new ConversationsController(new InMemoryConversationStore(), sessions);
+        var virtualConversationId = "cron-session:cron:20260509002033:6f2f84a4f1634ff492a4fec212872c54";
+
+        var actionResult = await controller.GetHistory(virtualConversationId, limit: 200, offset: 0, CancellationToken.None);
+
+        var response = (actionResult as OkObjectResult)?.Value as ConversationHistoryResponse;
+        response.ShouldNotBeNull();
+        response!.ConversationId.ShouldBe(virtualConversationId);
+        response.TotalCount.ShouldBe(0);
+        response.Entries.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task GetHistory_WithMissingRealConversation_ReturnsNotFound()
+    {
+        var sessions = new InMemorySessionStore();
+        var controller = new ConversationsController(new InMemoryConversationStore(), sessions);
+
+        var actionResult = await controller.GetHistory("c_missing_history", limit: 200, offset: 0, CancellationToken.None);
+
+        actionResult.ShouldBeOfType<NotFoundResult>();
+    }
+
+    [Fact]
     public async Task Archive_SealsActiveSessionWithoutDeletingIt()
     {
         var conversationId = ConversationId.From("c_archive_preserve_session");

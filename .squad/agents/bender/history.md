@@ -38,3 +38,4 @@
 - `GetOrCreateDefaultAsync` retired — use ListAsync for discovery, SaveAsync for state transitions.
 - Phase 2 dispatch layer: `IConversationDispatcher` owns inbound resolution/session binding; Hub/Host become pure transport relays.
 - Old cron sidebar IDs (`cron-session:{sessionId}`) can outlive conversation links; cleanup should still return 204, sealing any existing session while leaving history intact.
+- `GET /api/conversations/{id}/history` must treat `cron-session:{sessionId}` as a virtual projection: resolve directly from session history and return empty 200 when the session is already gone so portal startup cannot fail on stale cron rows.
