@@ -130,6 +130,38 @@ public sealed class InMemoryConversationStoreTests
     }
 
     [Fact]
+    public async Task ArchiveAsync_ClearsActiveSessionId()
+    {
+        var store = new InMemoryConversationStore();
+        var conv = MakeConversation(Agent()) with
+        {
+            ActiveSessionId = SessionId.Create()
+        };
+        await store.CreateAsync(conv);
+
+        await store.ArchiveAsync(conv.ConversationId);
+
+        var loaded = await store.GetAsync(conv.ConversationId);
+        loaded.ShouldNotBeNull();
+        loaded!.ActiveSessionId.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task GetOrCreateDefaultAsync_ReactivatesArchivedDefaultConversation()
+    {
+        var store = new InMemoryConversationStore();
+        var agentId = Agent();
+        var existing = await store.GetOrCreateDefaultAsync(agentId);
+        await store.ArchiveAsync(existing.ConversationId);
+
+        var reopened = await store.GetOrCreateDefaultAsync(agentId);
+
+        reopened.ConversationId.ShouldBe(existing.ConversationId);
+        reopened.Status.ShouldBe(ConversationStatus.Active);
+        reopened.ActiveSessionId.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task ResolveByBindingAsync_MatchesOnChannelAddress()
     {
         var store = new InMemoryConversationStore();

@@ -69,6 +69,19 @@ public sealed class FileConversationStore : IConversationStore
             if (existing is not null)
                 return existing;
 
+            var archived = all
+                .Where(c => c.IsDefault && c.Status == ConversationStatus.Archived)
+                .OrderByDescending(c => c.UpdatedAt)
+                .FirstOrDefault();
+            if (archived is not null)
+            {
+                archived.Status = ConversationStatus.Active;
+                archived.ActiveSessionId = null;
+                archived.UpdatedAt = DateTimeOffset.UtcNow;
+                await WriteFileAsync(archived, ct).ConfigureAwait(false);
+                return archived;
+            }
+
             var conversation = new Conversation
             {
                 ConversationId = ConversationId.Create(),
@@ -149,7 +162,9 @@ public sealed class FileConversationStore : IConversationStore
     public async Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(AgentId? agentId = null, CancellationToken ct = default)
     {
         var all = await ListAsync(agentId, ct).ConfigureAwait(false);
-        return [.. all.Select(ToSummary)];
+        return [.. all
+            .Where(c => c.Status != ConversationStatus.Archived)
+            .Select(ToSummary)];
     }
 
     private async Task<IReadOnlyList<Conversation>> EnumerateAsync(AgentId? agentId, CancellationToken ct)

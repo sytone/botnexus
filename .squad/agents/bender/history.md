@@ -337,3 +337,7 @@ ull)
 ### 2026-05-08 — Conversation history refresh must page from newest entries
 - Root cause for "message disappears after refresh" was pagination anchored to oldest entries in `ConversationsController.GetHistory`; with long histories (>200), refresh loaded only old turns and omitted latest user/assistant turns.
 - Fix pattern: keep chronological order inside each page, but compute the page window from the tail (`offset` from newest) so `limit=200&offset=0` always includes the newest turns.
+### 2026-05-11 — Conversation cleanup semantics preserve reactivation
+- Conversation delete/cleanup is implemented as archive/close semantics, not hard-delete.
+- Archiving now clears ActiveSessionId so the next inbound trigger starts a fresh session instead of reusing stale runtime state.
+- Router reopens archived conversations when a bound channel speaks again (or explicit conversationId is used), preserving multi-channel bindings and enabling cron/channel resumes after cleanup.

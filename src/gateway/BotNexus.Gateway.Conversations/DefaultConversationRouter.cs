@@ -52,12 +52,26 @@ public sealed class DefaultConversationRouter : IConversationRouter
             }
             else
             {
+                var reactivated = false;
+                if (direct.Status == ConversationStatus.Archived)
+                {
+                    direct.Status = ConversationStatus.Active;
+                    direct.ActiveSessionId = null;
+                    reactivated = true;
+                }
+
                 var (directSessionId, directIsNew, changed) = await ResolveOrCreateSessionAsync(direct, agentId, ct);
                 if (changed)
                 {
                     direct.UpdatedAt = DateTimeOffset.UtcNow;
                     await _conversationStore.SaveAsync(direct, ct);
                 }
+                else if (reactivated)
+                {
+                    direct.UpdatedAt = DateTimeOffset.UtcNow;
+                    await _conversationStore.SaveAsync(direct, ct);
+                }
+
                 return new ConversationRoutingResult(direct, directSessionId, directIsNew);
             }
         }
@@ -67,6 +81,10 @@ public sealed class DefaultConversationRouter : IConversationRouter
             agentId, channelType, channelAddress, threadId, ct);
 
         var addedBinding = false;
+        if (conversation is null)
+        {
+            conversation = await TryReopenArchivedConversationAsync(agentId, channelType, channelAddress, threadId, ct);
+        }
         if (conversation is null)
         {
             // Every unique (channelType, channelAddress, threadId) gets its own conversation.
@@ -304,5 +322,37 @@ public sealed class DefaultConversationRouter : IConversationRouter
         }
 
         return (sessionId, isNewSession, conversationChanged);
+    }
+
+    private async Task<Conversation?> TryReopenArchivedConversationAsync(
+        AgentId agentId,
+        ChannelKey channelType,
+        ChannelAddress channelAddress,
+        ThreadId? threadId,
+        CancellationToken ct)
+    {
+        var conversations = await _conversationStore.ListAsync(agentId, ct);
+        var archived = conversations
+            .Where(c => c.Status == ConversationStatus.Archived)
+            .Where(c => c.ChannelBindings.Any(b =>
+                b.ChannelType == channelType &&
+                b.ChannelAddress == channelAddress &&
+                b.ThreadId == threadId))
+            .OrderByDescending(c => c.UpdatedAt)
+            .FirstOrDefault();
+
+        if (archived is null)
+            return null;
+
+        archived.Status = ConversationStatus.Active;
+        archived.ActiveSessionId = null;
+        archived.UpdatedAt = DateTimeOffset.UtcNow;
+        await _conversationStore.SaveAsync(archived, ct);
+
+        _logger.LogInformation(
+            "Reopened archived conversation {ConversationId} for agent={AgentId} channel={ChannelType} address={ChannelAddress} thread={ThreadId}",
+            archived.ConversationId, agentId, channelType, channelAddress, threadId);
+
+        return archived;
     }
 }

@@ -136,6 +136,52 @@ public sealed class SqliteConversationStore : IConversationStore
             if (existing is not null)
                 return existing;
         }
+        await using var archivedCommand = connection.CreateCommand();
+        archivedCommand.CommandText = """
+            SELECT id
+            FROM conversations
+            WHERE agent_id = $agentId AND is_default = 1 AND status = $status
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """;
+        archivedCommand.Parameters.AddWithValue("$agentId", agentId.Value);
+        archivedCommand.Parameters.AddWithValue("$status", ConversationStatus.Archived.ToString());
+        var archivedId = (string?)await archivedCommand.ExecuteScalarAsync(ct).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(archivedId))
+        {
+            var reopenedId = ConversationId.From(archivedId);
+            var reopenedLock = GetConversationLock(reopenedId.Value);
+            await reopenedLock.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                var updatedAt = DateTimeOffset.UtcNow;
+                await using var reopenCommand = connection.CreateCommand();
+                reopenCommand.CommandText = """
+                    UPDATE conversations
+                    SET status = $status,
+                        active_session_id = NULL,
+                        updated_at = $updatedAt
+                    WHERE id = $id
+                    """;
+                reopenCommand.Parameters.AddWithValue("$status", ConversationStatus.Active.ToString());
+                reopenCommand.Parameters.AddWithValue("$updatedAt", updatedAt.ToString("O"));
+                reopenCommand.Parameters.AddWithValue("$id", reopenedId.Value);
+                await reopenCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+
+                _cache.TryRemove(reopenedId.Value, out _);
+                var reopened = await LoadConversationAsync(connection, reopenedId, ct).ConfigureAwait(false);
+                if (reopened is not null)
+                {
+                    _cache[reopened.ConversationId.Value] = CloneConversation(reopened);
+                    return CloneConversation(reopened);
+                }
+            }
+            finally
+            {
+                reopenedLock.Release();
+            }
+        }
+
 
         var conversation = new Conversation
         {
@@ -253,6 +299,7 @@ public sealed class SqliteConversationStore : IConversationStore
             command.CommandText = """
                 UPDATE conversations
                 SET status = $status,
+                    active_session_id = NULL,
                     updated_at = $updatedAt
                 WHERE id = $id
                 """;
@@ -265,6 +312,7 @@ public sealed class SqliteConversationStore : IConversationStore
             {
                 var archived = CloneConversation(cached);
                 archived.Status = ConversationStatus.Archived;
+                archived.ActiveSessionId = null;
                 archived.UpdatedAt = updatedAt;
                 _cache[conversationId.Value] = archived;
             }

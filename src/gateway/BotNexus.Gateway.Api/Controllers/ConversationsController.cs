@@ -309,7 +309,11 @@ public sealed class ConversationsController : ControllerBase
             Entries: page));
     }
 
-    /// <summary>Archives a conversation (soft delete).</summary>
+    /// <summary>
+    /// Closes a conversation by archiving it (soft delete).
+    /// Archived conversations are hidden from active listings and can be reopened automatically
+    /// if a bound channel or explicit conversation id starts activity again.
+    /// </summary>
     [HttpDelete("{conversationId}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
