@@ -71,6 +71,7 @@ public sealed class InMemoryConversationStore : IConversationStore
             _conversations[conversationId.Value] = existing with
             {
                 Status = ConversationStatus.Archived,
+                ActiveSessionId = null,
                 UpdatedAt = DateTimeOffset.UtcNow
             };
         return Task.CompletedTask;

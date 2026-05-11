@@ -117,7 +117,7 @@ public sealed class FileConversationStore : IConversationStore
             if (conversation is null)
                 return;
             await WriteFileAsync(
-                conversation with { Status = ConversationStatus.Archived, UpdatedAt = DateTimeOffset.UtcNow },
+                conversation with { Status = ConversationStatus.Archived, ActiveSessionId = null, UpdatedAt = DateTimeOffset.UtcNow },
                 ct).ConfigureAwait(false);
         }
         finally { _lock.Release(); }

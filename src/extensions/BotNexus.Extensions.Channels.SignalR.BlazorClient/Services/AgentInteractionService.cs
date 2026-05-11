@@ -253,14 +253,21 @@ public sealed class AgentInteractionService : IAgentInteractionService
     {
         var agent = _store.GetAgent(agentId);
         if (agent is null) return;
-        if (!agent.Conversations.ContainsKey(conversationId)) return;
+        if (!agent.Conversations.TryGetValue(conversationId, out var conversation)) return;
 
         try
         {
-            var success = await _restClient.ArchiveConversationAsync(conversationId);
+            if (_featureFlags?.ConversationHistoryCache == true && _cache is not null)
+                await _cache.InvalidateAsync(conversationId);
+
+            var success = conversation.IsVirtualSession &&
+                          string.Equals(conversation.VirtualSessionKind, "cron", StringComparison.OrdinalIgnoreCase) &&
+                          conversation.ActiveSessionId is { Length: > 0 }
+                ? await _restClient.DeleteSessionAsync(conversation.ActiveSessionId)
+                : await _restClient.ArchiveConversationAsync(conversationId);
             if (!success)
             {
-                Console.Error.WriteLine($"AgentInteractionService: ArchiveConversation returned failure for {conversationId}");
+                Console.Error.WriteLine($"AgentInteractionService: Conversation cleanup returned failure for {conversationId}");
                 return;
             }
 

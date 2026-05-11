@@ -317,6 +317,10 @@ public sealed class ConversationsController : ControllerBase
     {
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
         if (conversation is null) return NotFound();
+
+        if (conversation.ActiveSessionId is { } activeSessionId)
+            await _sessions.ArchiveAsync(activeSessionId, cancellationToken);
+
         await _conversations.ArchiveAsync(ConversationId.From(conversationId), cancellationToken);
         return NoContent();
     }

@@ -28,8 +28,10 @@ public sealed class ProbeRound3GatewayTests
         Title = title
     };
 
-    private static ConversationsController CreateConvController(IConversationStore store) =>
-        new(store, new InMemorySessionStore());
+    private static ConversationsController CreateConvController(
+        IConversationStore store,
+        ISessionStore? sessionStore = null) =>
+        new(store, sessionStore ?? new InMemorySessionStore());
 
     // ══════════════════════════════════════════════════════════════════════
     // Surface 3 — Conversation rename / archive / delete
@@ -258,6 +260,27 @@ public sealed class ProbeRound3GatewayTests
         var loaded = await store.GetAsync(conv.ConversationId);
         loaded.ShouldNotBeNull();
         loaded!.Status.ShouldBe(ConversationStatus.Archived);
+    }
+
+    [Fact]
+    public async Task ConversationsController_Archive_ClosesActiveSession()
+    {
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var conv = await conversationStore.CreateAsync(MakeConversation("to-archive"));
+        var session = await sessionStore.GetOrCreateAsync("cron:job-1:run", conv.AgentId);
+        conv.ActiveSessionId = session.SessionId;
+        await conversationStore.SaveAsync(conv);
+        var controller = CreateConvController(conversationStore, sessionStore);
+
+        var result = await controller.Archive(conv.ConversationId.Value, CancellationToken.None);
+
+        result.ShouldBeOfType<NoContentResult>();
+        var reloaded = await conversationStore.GetAsync(conv.ConversationId);
+        reloaded.ShouldNotBeNull();
+        reloaded!.ActiveSessionId.ShouldBeNull();
+        var closedSession = await sessionStore.GetAsync(session.SessionId);
+        closedSession.ShouldBeNull();
     }
 
     [Fact]

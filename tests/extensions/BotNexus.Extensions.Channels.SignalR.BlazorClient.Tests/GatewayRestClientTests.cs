@@ -111,6 +111,30 @@ public sealed class GatewayRestClientTests
     }
 
     [Fact]
+    public async Task ArchiveConversationAsync_calls_delete_conversation_endpoint()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/conversations/conv1", "{}");
+
+        var success = await client.ArchiveConversationAsync("conv1");
+
+        success.ShouldBeTrue();
+        handler.LastRequestUrl.ShouldContain("/api/conversations/conv1");
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_calls_delete_session_endpoint()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/sessions/s1", "{}");
+
+        var success = await client.DeleteSessionAsync("s1");
+
+        success.ShouldBeTrue();
+        handler.LastRequestUrl.ShouldContain("/api/sessions/s1");
+    }
+
+    [Fact]
     public void Configure_not_called_throws_on_request()
     {
         var client = new GatewayRestClient(new HttpClient());

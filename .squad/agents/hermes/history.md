@@ -273,3 +273,5 @@
   - `dotnet test BotNexus.slnx --nologo --tl:off` ✅
 - Branch is ready to push and re-check GitHub PR checks.
 
+
+- 2026-05-11: Conversation cleanup QA coverage now verifies cron virtual conversation cleanup uses session deletion, conversation archive closes active sessions, and archived conversations can be reopened with existing channel bindings.
