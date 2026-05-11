@@ -59,31 +59,6 @@ public sealed class FileConversationStore : IConversationStore
     }
 
     /// <inheritdoc />
-    public async Task<Conversation> GetOrCreateDefaultAsync(AgentId agentId, CancellationToken ct = default)
-    {
-        await _lock.WaitAsync(ct).ConfigureAwait(false);
-        try
-        {
-            var all = await EnumerateAsync(agentId, ct).ConfigureAwait(false);
-            var existing = all.FirstOrDefault(c => c.IsDefault && c.Status == ConversationStatus.Active);
-            if (existing is not null)
-                return existing;
-
-            var conversation = new Conversation
-            {
-                ConversationId = ConversationId.Create(),
-                AgentId = agentId,
-                Title = "Default",
-                IsDefault = true,
-                Status = ConversationStatus.Active
-            };
-            await WriteFileAsync(conversation, ct).ConfigureAwait(false);
-            return conversation;
-        }
-        finally { _lock.Release(); }
-    }
-
-    /// <inheritdoc />
     public async Task<Conversation> CreateAsync(Conversation conversation, CancellationToken ct = default)
     {
         await _lock.WaitAsync(ct).ConfigureAwait(false);

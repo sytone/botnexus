@@ -28,27 +28,6 @@ public sealed class InMemoryConversationStore : IConversationStore
     }
 
     /// <inheritdoc />
-    public Task<Conversation> GetOrCreateDefaultAsync(AgentId agentId, CancellationToken ct = default)
-    {
-        var existing = _conversations.Values.FirstOrDefault(
-            c => c.AgentId == agentId && c.IsDefault && c.Status == ConversationStatus.Active);
-
-        if (existing is not null)
-            return Task.FromResult(existing);
-
-        var conversation = new Conversation
-        {
-            ConversationId = ConversationId.Create(),
-            AgentId = agentId,
-            Title = "Default",
-            IsDefault = true,
-            Status = ConversationStatus.Active
-        };
-        _conversations[conversation.ConversationId.Value] = conversation;
-        return Task.FromResult(conversation);
-    }
-
-    /// <inheritdoc />
     public Task<Conversation> CreateAsync(Conversation conversation, CancellationToken ct = default)
     {
         if (!_conversations.TryAdd(conversation.ConversationId.Value, conversation))

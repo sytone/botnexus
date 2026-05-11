@@ -33,20 +33,6 @@ public sealed class SqliteConversationStoreTests
     }
 
     [Fact]
-    public async Task GetOrCreateDefaultAsync_IsIdempotent()
-    {
-        using var fixture = new StoreFixture();
-        var store = fixture.CreateStore();
-
-        var first = await store.GetOrCreateDefaultAsync(Agent("agent-a"));
-        var second = await store.GetOrCreateDefaultAsync(Agent("agent-a"));
-
-        first.ConversationId.ShouldBe(second.ConversationId);
-        first.IsDefault.ShouldBeTrue();
-        first.Title.ShouldBe("Default");
-    }
-
-    [Fact]
     public async Task ListAsync_FiltersByAgentId()
     {
         using var fixture = new StoreFixture();
