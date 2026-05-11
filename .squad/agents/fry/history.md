@@ -27,5 +27,5 @@
 
 ## Learnings
 
-### 2026-05-11 — Cron Virtual Session Cleanup Must Route Through Session Deletion
-Virtual cron conversation projections (`cron-session:{sessionId}`) are UI-only constructs backed by session data, not real conversation records. Cleanup must call `DELETE /api/sessions/{sessionId}` — not `DELETE /api/conversations/{virtualId}` — or the backend returns 404. Stale orphans with no `ActiveSessionId` should be cleaned up locally without any API call. The `file.exe` URL prefix in browser dev-tools console logs was a display artifact, not a real REST base URL issue.
+### 2026-05-11 — Cron Virtual Session Cleanup Must Route Through Conversation Archive
+Virtual cron conversation projections (`cron-session:{sessionId}`) should be cleaned up via `DELETE /api/conversations/{conversationId}` (ArchiveConversationAsync), NOT `DELETE /api/sessions/{sessionId}`. The backend handles `cron-session:` prefixed IDs idempotently — returns 204 even when no backing session exists. This preserves session records/history while hiding the conversation from the sidebar. The prior approach of calling session delete was incorrect as it permanently destroyed session data. Stale orphans (no ActiveSessionId) also route through conversation archive since the backend handles them gracefully.
