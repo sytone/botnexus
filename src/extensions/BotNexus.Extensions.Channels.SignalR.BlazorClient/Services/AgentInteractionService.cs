@@ -614,8 +614,6 @@ public sealed class AgentInteractionService : IAgentInteractionService
         _ => role
     };
 
-
-
     private static void MergeVirtualCronSessions(AgentState agent, IReadOnlyList<SessionSummary> sessions)
     {
         var cronSessions = sessions
