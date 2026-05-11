@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 /// <summary>
@@ -475,6 +477,20 @@ public sealed class AgentInteractionService : IAgentInteractionService
             if (agent.ActiveConversationId == conversationId && conv.ActiveSessionId is not null)
                 agent.SessionId = conv.ActiveSessionId;
         }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound && IsVirtualCronConversation(conv))
+        {
+            Console.Error.WriteLine($"AgentInteractionService: Removed stale virtual cron conversation {conversationId} after history 404.");
+            agent.Conversations.Remove(conversationId);
+            if (agent.ActiveConversationId == conversationId)
+            {
+                var nextConversationId = agent.Conversations.Values
+                    .OrderByDescending(c => c.IsDefault)
+                    .ThenByDescending(c => c.UpdatedAt)
+                    .Select(c => c.ConversationId)
+                    .FirstOrDefault();
+                _store.SetActiveConversation(agentId, nextConversationId);
+            }
+        }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"AgentInteractionService: LoadHistory failed for {conversationId}: {ex.Message}");
@@ -614,9 +630,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
             .ToDictionary(s => $"cron-session:{s.SessionId}", s => s, StringComparer.Ordinal);
 
         foreach (var key in agent.Conversations
-                     .Where(kv => kv.Value.IsVirtualSession &&
-                                  string.Equals(kv.Value.VirtualSessionKind, "cron", StringComparison.OrdinalIgnoreCase) &&
-                                  !cronSessions.ContainsKey(kv.Key))
+                     .Where(kv => IsVirtualCronConversation(kv.Value) && !cronSessions.ContainsKey(kv.Key))
                      .Select(kv => kv.Key)
                      .ToList())
         {
@@ -650,4 +664,9 @@ public sealed class AgentInteractionService : IAgentInteractionService
             };
         }
     }
+
+    private static bool IsVirtualCronConversation(ConversationState conversation)
+        => (conversation.IsVirtualSession &&
+            string.Equals(conversation.VirtualSessionKind, "cron", StringComparison.OrdinalIgnoreCase))
+           || conversation.ConversationId.StartsWith("cron-session:", StringComparison.Ordinal);
 }

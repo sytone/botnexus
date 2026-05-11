@@ -1,3 +1,4 @@
+using System.Net;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
