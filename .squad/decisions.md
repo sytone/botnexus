@@ -15660,3 +15660,39 @@ The Blazor client loads limit=200, offset=0 on refresh. Oldest-first paging drop
 **What:** Regression coverage now treats conversation cleanup (\DELETE /api/conversations/{id}\) as close/archive behavior that clears \ActiveSessionId\ but keeps the archived session persisted (sealed), and verifies archived conversations reopen on future inbound activity with a fresh active session.
 
 **Why:** User requirement: hidden/archived conversations should not delete persisted sessions. Tests must enforce this invariant.
+
+---
+
+## Bender Runtime Decision — List/Get Conversation API Alignment (2026-05-11)
+
+**Decision Date:** 2026-05-11  
+**Decided By:** Bender (Runtime Dev)  
+**Status:** Implemented  
+**Scope:** Gateway conversation stores + cleanup regressions  
+
+**Decision:** Retire GetOrCreateDefaultAsync and align the conversation-store contract to ListAsync/GetAsync with explicit CreateAsync/SaveAsync.
+
+**Rationale:**
+- Main branch already migrated to list/get resolution; reintroducing helper-based default conversation recovery would conflict with current routing and cleanup behavior.
+- Cleanup/reopen semantics are preserved by router-driven archive discovery (ListAsync of archived bindings) and explicit reactivation save.
+- Eliminates helper complexity from store implementations (file, in-memory, SQLite).
+
+**Validation:**
+- Targeted gateway conversation and gateway test projects passed
+- Full solution build: dotnet build BotNexus.slnx --nologo --tl:off ✅
+- Full test suite: dotnet test BotNexus.slnx --nologo --tl:off ✅
+
+**Commit:** 373bb2be — ix(gateway): align cleanup branch with list-get conversation model
+
+---
+
+## User Directive — List/Get API Preference (2026-05-11)
+
+**Directive Date:** 2026-05-11  
+**Directive By:** Copilot (via User)  
+**Scope:** PR #197 conversation cleanup UI  
+
+**Directive:** Prefer ListAsync/GetAsync conversation APIs over legacy GetOrCreateDefaultAsync; PR changes must follow the newer model from main.
+
+**Rationale:** User request — captured for team memory and PR direction guidance.
+

@@ -371,3 +371,27 @@ ull)
 **Cross-Agent Alignment:**
 - Fry's UI close button uses same API with appropriate messaging
 - Hermes wrote comprehensive tests for session cleanup and binding preservation
+
+---
+
+## 2026-05-11 — List/Get Conversation API Alignment (PR #197)
+
+**Status:** ✅ Complete  
+**Spawn Mode:** background (gpt-5.3-codex)  
+**Directive:** PR #197 must follow main's replacement of GetOrCreateDefaultAsync with list/get flows  
+
+**Work Summary:**
+1. Resolved merge conflicts between fix/conversation-cleanup-ui and origin/main
+2. Removed GetOrCreateDefaultAsync from all conversation store implementations (file, in-memory, SQLite)
+3. Aligned router and cleanup logic to use ListAsync for discovery and SaveAsync for state transitions
+4. Preserved cleanup, archive, and reopen semantics without legacy helper
+
+**Validation:**
+- Targeted gateway conversation tests: ✅ passed
+- Full solution build: ✅ passed  
+- Full test suite: ✅ passed  
+
+**Commit:** 373bb2be — ix(gateway): align cleanup branch with list-get conversation model  
+
+**Post-Merge Coordinator Check:** No active code references to GetOrCreateDefaultAsync; only historical docs and Squad notes remain.
+
