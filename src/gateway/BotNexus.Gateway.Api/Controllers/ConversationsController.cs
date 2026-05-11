@@ -434,7 +434,6 @@ public sealed class ConversationsController : ControllerBase
             .Take(take)
             .ToList();
     }
-
     private static bool TryParseVirtualCronConversationId(string conversationId, out SessionId sessionId)
     {
         const string prefix = "cron-session:";
