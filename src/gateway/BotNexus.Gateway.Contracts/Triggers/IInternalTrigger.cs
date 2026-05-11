@@ -42,4 +42,10 @@ public sealed record InternalTriggerRequest
     /// Supports either "model-id" (current provider) or "provider/model-id".
     /// </summary>
     public string? ModelOverride { get; init; }
+
+    /// <summary>
+    /// Optional explicit conversation ID to route this trigger run into.
+    /// When null, the trigger determines the conversation (e.g. per-job stable conversation for cron).
+    /// </summary>
+    public string? ConversationId { get; init; }
 }

@@ -125,4 +125,49 @@ public sealed class AgentPromptActionTests
             TriggerType = CronTriggerType.Scheduled,
             Services = services
         };
+
+    [Fact]
+    public async Task ExecuteAsync_PropagatesConversationId_WhenJobHasConversationId()
+    {
+        // Verify that CronJob.ConversationId flows through to InternalTriggerRequest.ConversationId
+        var action = new AgentPromptAction();
+        var trigger = new Mock<IInternalTrigger>();
+        var registry = new Mock<IAgentRegistry>();
+        InternalTriggerRequest? capturedRequest = null;
+
+        trigger.SetupGet(value => value.Type).Returns(TriggerType.Cron);
+        trigger.Setup(value => value.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()))
+            .Callback<AgentId, string, CancellationToken, InternalTriggerRequest?>((_, _, _, request) => capturedRequest = request)
+            .ReturnsAsync(SessionId.From("cron:job-pinned:run-1"));
+
+        registry.Setup(value => value.Get(AgentId.From("agent-a"))).Returns((AgentDescriptor?)null);
+        var services = BuildServices(trigger.Object, registry.Object);
+
+        var context = new CronExecutionContext
+        {
+            Job = new CronJob
+            {
+                Id = "job-pinned",
+                Name = "Pinned conversation job",
+                Schedule = "*/1 * * * *",
+                ActionType = "agent-prompt",
+                AgentId = "agent-a",
+                Message = "Run in pinned conversation",
+                ConversationId = "conv-explicit-123",
+                CreatedAt = DateTimeOffset.UtcNow,
+                Enabled = true
+            },
+            RunId = "run-1",
+            TriggeredAt = DateTimeOffset.UtcNow,
+            TriggerType = CronTriggerType.Scheduled,
+            Services = services
+        };
+
+        await action.ExecuteAsync(context);
+
+        capturedRequest.ShouldNotBeNull();
+        capturedRequest!.ConversationId.ShouldBe("conv-explicit-123");
+        capturedRequest.CronJobId.ShouldBe("job-pinned");
+    }
+
 }

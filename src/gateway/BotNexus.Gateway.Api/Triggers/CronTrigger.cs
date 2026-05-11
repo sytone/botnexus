@@ -42,6 +42,7 @@ public sealed class CronTrigger(
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
 
+        // Each cron run gets a fresh session ID so history entries are cleanly separated by run.
         var sessionId = BuildCronSessionId(request?.CronJobId);
         var session = await sessions.GetOrCreateAsync(sessionId, agentId, ct).ConfigureAwait(false);
         session.ChannelType ??= ChannelKey.From(Type.Value);
@@ -59,10 +60,25 @@ public sealed class CronTrigger(
         else
             session.Metadata["cronJobId"] = request!.CronJobId;
 
-        var conversation = await conversations.GetOrCreateDefaultAsync(agentId, ct).ConfigureAwait(false);
+        // Resolve the conversation for this run:
+        // 1. Explicit ConversationId on the job — always use that conversation
+        // 2. Otherwise find/create a stable per-job conversation keyed by job ID
+        //    so every run of the same job lands in the same conversation.
+        Conversation conversation;
+        if (!string.IsNullOrWhiteSpace(request?.ConversationId))
+        {
+            conversation = await conversations.GetAsync(ConversationId.From(request.ConversationId), ct).ConfigureAwait(false)
+                ?? await GetOrCreateCronConversationAsync(agentId, request.CronJobId, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            conversation = await GetOrCreateCronConversationAsync(agentId, request?.CronJobId, ct).ConfigureAwait(false);
+        }
+
         if (session.Session.ConversationId is null || session.Session.ConversationId != conversation.ConversationId)
             session.Session.ConversationId = conversation.ConversationId;
 
+        // Update the conversation's active session to this run so history loads the latest.
         if (conversation.ActiveSessionId is null || conversation.ActiveSessionId != sessionId)
         {
             conversation.ActiveSessionId = sessionId;
@@ -87,6 +103,40 @@ public sealed class CronTrigger(
             request?.ModelOverride);
 
         return sessionId;
+    }
+
+    /// <summary>
+    /// Finds or creates a stable conversation for a cron job.
+    /// All runs of the same job land in the same conversation.
+    /// The conversation is identified by its title "cron:{jobId}" or "cron:unnamed" for jobs without an ID.
+    /// </summary>
+    private async Task<Conversation> GetOrCreateCronConversationAsync(AgentId agentId, string? jobId, CancellationToken ct)
+    {
+        var title = string.IsNullOrWhiteSpace(jobId)
+            ? $"cron:{agentId.Value}"
+            : $"cron:{SanitizeSessionIdPart(jobId) ?? agentId.Value}";
+
+        // Try to find an existing conversation with this title.
+        var existing = await conversations.ListAsync(agentId, ct).ConfigureAwait(false);
+        var match = existing?.FirstOrDefault(c =>
+            string.Equals(c.Title, title, StringComparison.Ordinal) &&
+            c.Status == BotNexus.Gateway.Abstractions.Models.ConversationStatus.Active);
+
+        if (match is not null)
+            return match;
+
+        // Create a new stable conversation for this job.
+        var conversation = new Conversation
+        {
+            ConversationId = ConversationId.Create(),
+            AgentId = agentId,
+            Title = title,
+            IsDefault = false
+        };
+        await conversations.CreateAsync(conversation, ct).ConfigureAwait(false);
+        logger.LogInformation("CronTrigger: created conversation '{Title}' ({ConversationId}) for job '{JobId}'.",
+            title, conversation.ConversationId, jobId);
+        return conversation;
     }
 
     private static SessionId BuildCronSessionId(string? jobId)

@@ -21,5 +21,11 @@ public sealed record CronJob
     public DateTimeOffset? NextRunAt { get; init; }
     public string? LastRunStatus { get; init; }
     public string? LastRunError { get; init; }
+    /// <summary>
+    /// Optional explicit conversation to route all runs of this job into.
+    /// When set, every run is linked to this conversation regardless of routing.
+    /// When null, a stable per-job conversation is created automatically using the job ID.
+    /// </summary>
+    public string? ConversationId { get; init; }
     public IReadOnlyDictionary<string, object?>? Metadata { get; init; }
 }

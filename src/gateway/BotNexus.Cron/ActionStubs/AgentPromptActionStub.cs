@@ -61,7 +61,8 @@ public sealed class AgentPromptAction : ICronAction
                 new InternalTriggerRequest
                 {
                     CronJobId = context.Job.Id,
-                    ModelOverride = context.Job.Model
+                    ModelOverride = context.Job.Model,
+                    ConversationId = context.Job.ConversationId
                 })
             .ConfigureAwait(false);
 
