@@ -37,3 +37,4 @@
 - Extension-loading hosts need dispatcher fallback for lazy hub activation.
 - `GetOrCreateDefaultAsync` retired — use ListAsync for discovery, SaveAsync for state transitions.
 - Phase 2 dispatch layer: `IConversationDispatcher` owns inbound resolution/session binding; Hub/Host become pure transport relays.
+- Old cron sidebar IDs (`cron-session:{sessionId}`) can outlive conversation links; cleanup should still return 204, sealing any existing session while leaving history intact.

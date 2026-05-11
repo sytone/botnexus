@@ -24,3 +24,8 @@
 4. **Component-level CSS state** — data attributes or classes for active state via component lifecycle
 
 **Test Philosophy:** Manual browser testing for scroll/layout UX; bUnit for component lifecycle; Playwright for E2E.
+
+## Learnings
+
+### 2026-05-11 — Cron Virtual Session Cleanup Must Route Through Session Deletion
+Virtual cron conversation projections (`cron-session:{sessionId}`) are UI-only constructs backed by session data, not real conversation records. Cleanup must call `DELETE /api/sessions/{sessionId}` — not `DELETE /api/conversations/{virtualId}` — or the backend returns 404. Stale orphans with no `ActiveSessionId` should be cleaned up locally without any API call. The `file.exe` URL prefix in browser dev-tools console logs was a display artifact, not a real REST base URL issue.
