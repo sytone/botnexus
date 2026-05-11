@@ -29,3 +29,6 @@
 
 ### 2026-05-11 — Cron Virtual Session Cleanup Must Route Through Conversation Archive
 Virtual cron conversation projections (`cron-session:{sessionId}`) should be cleaned up via `DELETE /api/conversations/{conversationId}` (ArchiveConversationAsync), NOT `DELETE /api/sessions/{sessionId}`. The backend handles `cron-session:` prefixed IDs idempotently — returns 204 even when no backing session exists. This preserves session records/history while hiding the conversation from the sidebar. The prior approach of calling session delete was incorrect as it permanently destroyed session data. Stale orphans (no ActiveSessionId) also route through conversation archive since the backend handles them gracefully.
+
+### 2026-05-11 — PortalLoadService Must Not Abort on Stale Cron History 404
+When loading initial history during portal startup, virtual cron-session projections must use `GetSessionHistoryAsync` (session endpoint), not `GetHistoryAsync` (conversation endpoint). If a stale cron projection returns 404, it must be removed and the service must retry with the next conversation — never allow a single 404 to abort `InitializeAsync` for all agents/conversations. The fix uses a `while` loop with fallback and catches `HttpRequestException` with 404 status specifically.
