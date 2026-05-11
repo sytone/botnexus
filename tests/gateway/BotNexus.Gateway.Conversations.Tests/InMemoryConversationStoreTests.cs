@@ -78,31 +78,6 @@ public sealed class InMemoryConversationStoreTests
     }
 
     [Fact]
-    public async Task GetOrCreateDefaultAsync_CreatesDefaultOnFirstCall()
-    {
-        var store = new InMemoryConversationStore();
-        var agentId = Agent();
-
-        var conv = await store.GetOrCreateDefaultAsync(agentId);
-
-        conv.IsDefault.ShouldBeTrue();
-        conv.Title.ShouldBe("Default");
-        conv.Status.ShouldBe(ConversationStatus.Active);
-    }
-
-    [Fact]
-    public async Task GetOrCreateDefaultAsync_IsIdempotent()
-    {
-        var store = new InMemoryConversationStore();
-        var agentId = Agent();
-
-        var first = await store.GetOrCreateDefaultAsync(agentId);
-        var second = await store.GetOrCreateDefaultAsync(agentId);
-
-        first.ConversationId.ShouldBe(second.ConversationId);
-    }
-
-    [Fact]
     public async Task SaveAsync_UpdatesExistingConversation()
     {
         var store = new InMemoryConversationStore();
@@ -147,16 +122,28 @@ public sealed class InMemoryConversationStoreTests
     }
 
     [Fact]
-    public async Task GetOrCreateDefaultAsync_ReactivatesArchivedDefaultConversation()
+    public async Task ListAndSave_ReactivatesArchivedConversation()
     {
         var store = new InMemoryConversationStore();
         var agentId = Agent();
-        var existing = await store.GetOrCreateDefaultAsync(agentId);
+        var existing = MakeConversation(agentId, "Default-like") with
+        {
+            IsDefault = true
+        };
+        await store.CreateAsync(existing);
         await store.ArchiveAsync(existing.ConversationId);
 
-        var reopened = await store.GetOrCreateDefaultAsync(agentId);
+        var archived = (await store.ListAsync(agentId))
+            .Single(c => c.ConversationId == existing.ConversationId);
+        archived.Status.ShouldBe(ConversationStatus.Archived);
+        archived.ActiveSessionId = null;
+        archived.Status = ConversationStatus.Active;
+        await store.SaveAsync(archived);
 
-        reopened.ConversationId.ShouldBe(existing.ConversationId);
+        var reopened = await store.GetAsync(existing.ConversationId);
+        reopened.ShouldNotBeNull();
+
+        reopened!.ConversationId.ShouldBe(existing.ConversationId);
         reopened.Status.ShouldBe(ConversationStatus.Active);
         reopened.ActiveSessionId.ShouldBeNull();
     }
@@ -251,4 +238,3 @@ public sealed class InMemoryConversationStoreTests
         summaries[0].AgentId.ShouldBe("summary-agent");
     }
 }
-

@@ -33,20 +33,6 @@ public sealed class SqliteConversationStoreTests
     }
 
     [Fact]
-    public async Task GetOrCreateDefaultAsync_IsIdempotent()
-    {
-        using var fixture = new StoreFixture();
-        var store = fixture.CreateStore();
-
-        var first = await store.GetOrCreateDefaultAsync(Agent("agent-a"));
-        var second = await store.GetOrCreateDefaultAsync(Agent("agent-a"));
-
-        first.ConversationId.ShouldBe(second.ConversationId);
-        first.IsDefault.ShouldBeTrue();
-        first.Title.ShouldBe("Default");
-    }
-
-    [Fact]
     public async Task ListAsync_FiltersByAgentId()
     {
         using var fixture = new StoreFixture();
@@ -109,17 +95,27 @@ public sealed class SqliteConversationStoreTests
     }
 
     [Fact]
-    public async Task GetOrCreateDefaultAsync_ReactivatesArchivedDefaultConversation()
+    public async Task ListAndSave_ReactivatesArchivedConversation()
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
+        var existing = CreateConversation(Agent("agent-default"), "Default-like");
+        existing.IsDefault = true;
+        await store.CreateAsync(existing);
 
-        var existing = await store.GetOrCreateDefaultAsync(Agent("agent-default"));
         await store.ArchiveAsync(existing.ConversationId);
 
-        var reopened = await fixture.CreateStore().GetOrCreateDefaultAsync(Agent("agent-default"));
+        var archived = (await fixture.CreateStore().ListAsync(Agent("agent-default")))
+            .Single(c => c.ConversationId == existing.ConversationId);
+        archived.Status.ShouldBe(ConversationStatus.Archived);
+        archived.ActiveSessionId = null;
+        archived.Status = ConversationStatus.Active;
+        await fixture.CreateStore().SaveAsync(archived);
 
-        reopened.ConversationId.ShouldBe(existing.ConversationId);
+        var reopened = await fixture.CreateStore().GetAsync(existing.ConversationId);
+        reopened.ShouldNotBeNull();
+
+        reopened!.ConversationId.ShouldBe(existing.ConversationId);
         reopened.Status.ShouldBe(ConversationStatus.Active);
         reopened.ActiveSessionId.ShouldBeNull();
     }
@@ -380,4 +376,3 @@ public sealed class SqliteConversationStoreTests
         }
     }
 }
-

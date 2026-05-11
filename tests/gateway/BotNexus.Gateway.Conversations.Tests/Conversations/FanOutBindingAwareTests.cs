@@ -25,7 +25,7 @@ public sealed class FanOutBindingAwareTests
         var sessionStore = new InMemorySessionStore();
         var agentId = Agent();
 
-        var conversation = await conversationStore.GetOrCreateDefaultAsync(agentId);
+        var conversation = await conversationStore.CreateAsync(new BotNexus.Gateway.Abstractions.Models.Conversation { ConversationId = BotNexus.Domain.Primitives.ConversationId.Create(), AgentId = agentId, Title = "test-conversation", IsDefault = false });
         conversation.ChannelBindings.Add(new ChannelBinding
         {
             BindingId = BindingId.From("binding-src"),

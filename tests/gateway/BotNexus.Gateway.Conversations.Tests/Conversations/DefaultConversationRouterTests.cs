@@ -70,7 +70,7 @@ public sealed class DefaultConversationRouterTests
         const string address = "conn-abc";
 
         // Pre-create a conversation with a binding
-        var existing = await conversationStore.GetOrCreateDefaultAsync(agentId);
+        var existing = await conversationStore.CreateAsync(new BotNexus.Gateway.Abstractions.Models.Conversation { ConversationId = BotNexus.Domain.Primitives.ConversationId.Create(), AgentId = agentId, Title = "test-conversation", IsDefault = false });
         existing.ChannelBindings.Add(new ChannelBinding
         {
             ChannelType = channel,
@@ -302,7 +302,7 @@ public sealed class DefaultConversationRouterTests
         var agentId = Agent();
 
         // Create conversation with two bindings — each with an explicit BindingId
-        var conversation = await conversationStore.GetOrCreateDefaultAsync(agentId);
+        var conversation = await conversationStore.CreateAsync(new BotNexus.Gateway.Abstractions.Models.Conversation { ConversationId = BotNexus.Domain.Primitives.ConversationId.Create(), AgentId = agentId, Title = "test-conversation", IsDefault = false });
         conversation.ChannelBindings.Add(new ChannelBinding { BindingId = BindingId.From("binding-tg"), ChannelType = Channel("telegram"), ChannelAddress = ChannelAddress.From("chat-A"), Mode = BindingMode.Interactive });
         conversation.ChannelBindings.Add(new ChannelBinding { BindingId = BindingId.From("binding-sr"), ChannelType = Channel("signalr"), ChannelAddress = ChannelAddress.From("conn-B"), Mode = BindingMode.Interactive });
         await conversationStore.SaveAsync(conversation);
@@ -328,7 +328,7 @@ public sealed class DefaultConversationRouterTests
         var sessionStore = new InMemorySessionStore();
         var agentId = Agent();
 
-        var conversation = await conversationStore.GetOrCreateDefaultAsync(agentId);
+        var conversation = await conversationStore.CreateAsync(new BotNexus.Gateway.Abstractions.Models.Conversation { ConversationId = BotNexus.Domain.Primitives.ConversationId.Create(), AgentId = agentId, Title = "test-conversation", IsDefault = false });
         conversation.ChannelBindings.Add(new ChannelBinding { BindingId = BindingId.From("binding-orig"), ChannelType = Channel("telegram"), ChannelAddress = ChannelAddress.From("originator"), Mode = BindingMode.Interactive });
         conversation.ChannelBindings.Add(new ChannelBinding { BindingId = BindingId.From("binding-muted"), ChannelType = Channel("signalr"), ChannelAddress = ChannelAddress.From("muted-chan"), Mode = BindingMode.Muted });
         conversation.ChannelBindings.Add(new ChannelBinding { BindingId = BindingId.From("binding-active"), ChannelType = Channel("slack"), ChannelAddress = ChannelAddress.From("active-chan"), Mode = BindingMode.Interactive });
@@ -367,7 +367,7 @@ public sealed class DefaultConversationRouterTests
         var sessionStore = new InMemorySessionStore();
         var agentId = Agent();
 
-        var conversation = await conversationStore.GetOrCreateDefaultAsync(agentId);
+        var conversation = await conversationStore.CreateAsync(new BotNexus.Gateway.Abstractions.Models.Conversation { ConversationId = BotNexus.Domain.Primitives.ConversationId.Create(), AgentId = agentId, Title = "test-conversation", IsDefault = false });
         conversation.ChannelBindings.Add(new ChannelBinding { ChannelType = Channel("telegram"), ChannelAddress = ChannelAddress.From("src"), Mode = BindingMode.Interactive });
         conversation.ChannelBindings.Add(new ChannelBinding { ChannelType = Channel("slack"), ChannelAddress = ChannelAddress.From("notify-only-chan"), Mode = BindingMode.NotifyOnly });
         await conversationStore.SaveAsync(conversation);

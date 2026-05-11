@@ -347,6 +347,11 @@ ull)
 - `DELETE /api/conversations/{id}` now seals the active session record in place (status = Sealed) before archiving the conversation, preserving historical session records for history APIs while still removing the conversation from active lists.
 - Added regression coverage that archived conversations keep session records and still hide/reopen correctly on new inbound activity.
 
+### 2026-05-11 — Retired default conversation helper in stores
+- Resolved merge conflicts by removing `GetOrCreateDefaultAsync` from file/in-memory/sqlite conversation stores and retaining the list/get + create/save contract from main.
+- Updated store tests to validate archive/reactivation via `ListAsync` + `GetAsync`/`SaveAsync`, preserving cleanup semantics without reintroducing legacy default-conversation APIs.
+- Verified gateway cleanup behavior still preserves persisted session records, clears active linkage on archive, and reopens archived conversations on subsequent inbound binding activity.
+
 ---
 
 ## 2026-05-11 — Conversation Cleanup: Archive/Close Recoverability & Session Linkage
