@@ -88,6 +88,19 @@ public sealed class SystemPromptBuilderSnapshotTests
     }
 
     [Fact]
+    public void Build_MinimalMode_DoesNotIncludeReplyTagsByDefault()
+    {
+        var prompt = SystemPromptBuilder.Build(new SystemPromptParams
+        {
+            WorkspaceDir = Path.Combine(Path.GetTempPath(), "repo", "workspace"),
+            ToolNames = ["read"],
+            PromptMode = PromptMode.Minimal
+        });
+
+        prompt.ShouldNotContain("## Reply Tags");
+    }
+
+    [Fact]
     public void Build_FullMode_MatchesSnapshot()
     {
         var prompt = SystemPromptBuilder.Build(new SystemPromptParams
