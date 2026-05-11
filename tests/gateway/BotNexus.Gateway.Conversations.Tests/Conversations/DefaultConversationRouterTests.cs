@@ -137,6 +137,79 @@ public sealed class DefaultConversationRouterTests
         result2.SessionId.ShouldBe(result1.SessionId);
     }
 
+
+    [Fact]
+    public async Task ResolveInbound_ReopensArchivedConversation_ForKnownBinding()
+    {
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var router = CreateRouter(conversationStore, sessionStore);
+        var agentId = Agent();
+        var staleSessionId = SessionId.Create();
+
+        var conversation = new Conversation
+        {
+            ConversationId = ConversationId.Create(),
+            AgentId = agentId,
+            Title = "archived",
+            Status = ConversationStatus.Archived,
+            ActiveSessionId = staleSessionId,
+            ChannelBindings =
+            [
+                new ChannelBinding
+                {
+                    ChannelType = Channel("telegram"),
+                    ChannelAddress = ChannelAddress.From("chat-restore")
+                },
+                new ChannelBinding
+                {
+                    ChannelType = Channel("signalr"),
+                    ChannelAddress = ChannelAddress.From("conn-restore")
+                }
+            ]
+        };
+        await conversationStore.CreateAsync(conversation);
+
+        var result = await router.ResolveInboundAsync(agentId, Channel("telegram"), ChannelAddress.From("chat-restore"), null);
+
+        result.Conversation.ConversationId.ShouldBe(conversation.ConversationId);
+        result.IsNewSession.ShouldBeTrue();
+        var reopened = await conversationStore.GetAsync(conversation.ConversationId);
+        reopened.ShouldNotBeNull();
+        reopened!.Status.ShouldBe(ConversationStatus.Active);
+        reopened.ChannelBindings.Count.ShouldBe(2);
+        reopened.ActiveSessionId.ShouldBe(result.SessionId);
+    }
+
+    [Fact]
+    public async Task ResolveInbound_WithExplicitArchivedConversationId_ReopensConversation()
+    {
+        var conversationStore = new InMemoryConversationStore();
+        var router = CreateRouter(conversationStore);
+        var agentId = Agent();
+
+        var conversation = new Conversation
+        {
+            ConversationId = ConversationId.Create(),
+            AgentId = agentId,
+            Title = "explicit",
+            Status = ConversationStatus.Archived
+        };
+        await conversationStore.CreateAsync(conversation);
+
+        var result = await router.ResolveInboundAsync(
+            agentId,
+            Channel("telegram"),
+            ChannelAddress.From("unused"),
+            null,
+            conversation.ConversationId.Value);
+
+        result.Conversation.ConversationId.ShouldBe(conversation.ConversationId);
+        var reopened = await conversationStore.GetAsync(conversation.ConversationId);
+        reopened.ShouldNotBeNull();
+        reopened!.Status.ShouldBe(ConversationStatus.Active);
+    }
+
     [Fact]
     public async Task ReattachBinding_MovesBindingToTargetConversation()
     {

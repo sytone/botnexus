@@ -1,5 +1,6 @@
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -63,12 +64,12 @@ public sealed class SqliteSessionStoreTests
 
         session.Metadata["version"] = 2L;
         session.Metadata["theme"] = "dark";
-        session.Status = SessionStatus.Suspended;
+        session.Status = BotNexus.Gateway.Abstractions.Models.SessionStatus.Suspended;
         await store.SaveAsync(session);
 
         var reloaded = await fixture.CreateStore().GetAsync("s1");
         reloaded.ShouldNotBeNull();
-        reloaded!.Status.ShouldBe(SessionStatus.Suspended);
+        reloaded!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Suspended);
         reloaded.ChannelType.ShouldBe(ChannelKey.From("signalr"));
         reloaded.CallerId.ShouldBe("caller-a");
         reloaded.Metadata.ShouldContainKey("version");
@@ -145,7 +146,29 @@ public sealed class SqliteSessionStoreTests
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT status FROM sessions WHERE id = 's1'";
         var status = (string?)await command.ExecuteScalarAsync();
-        status.ShouldBe(SessionStatus.Sealed.ToString());
+        status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed.ToString());
+    }
+
+    [Fact]
+    public async Task ArchiveAsync_PreservesSessionAndHistory_ForSubsequentQueries()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "keep-me" });
+        await store.SaveAsync(session);
+
+        await store.ArchiveAsync("s1");
+
+        var reloaded = await fixture.CreateStore().GetAsync("s1");
+        reloaded.ShouldNotBeNull();
+        reloaded!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
+        reloaded.History.ShouldContain(entry => entry.Content == "keep-me");
+
+        var sealedSessions = await fixture.CreateStore().ListAsync(
+            AgentId.From("agent-a"),
+            BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
+        sealedSessions.Select(s => s.SessionId.Value).ShouldContain("s1");
     }
 
     [Fact]
@@ -585,7 +608,6 @@ public sealed class SqliteSessionStoreTests
         }
     }
 }
-
 
 
 

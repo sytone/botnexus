@@ -42,6 +42,7 @@
 - Ready to push refreshed branch and re-check PR checks.
 
 ## Learnings
+- 2026-05-11: Conversation archive regression tests must assert **session sealing/persistence** (not deletion), plus conversation ActiveSessionId is cleared and archived conversations reopen to a fresh active session on next inbound activity.
 - 2026-05-08: Conversation history refresh regressions are best caught with controller-level paging tests that assert GET /api/conversations/{id}/history returns the latest page at offset=0 (not oldest), plus offset back-paging behavior for >200-entry conversations.
 - 2026-05-08: Dynamic SignalR extension loading can fail hub DI even when the host registers `IConversationDispatcher` if the extension resolves a separate `BotNexus.Gateway.Dispatching` assembly identity; guard with activation tests that load extension artifacts from disk.
 - 2026-05-07: SQLite file-backed session-store tests can intermittently fail Windows cleanup with "file in use" unless test connection strings disable pooling (`SqliteConnectionStringBuilder.Pooling = false`) and test teardown clears pools before deleting DB files.
@@ -273,3 +274,23 @@
   - `dotnet test BotNexus.slnx --nologo --tl:off` ✅
 - Branch is ready to push and re-check GitHub PR checks.
 
+
+- 2026-05-11: Conversation cleanup QA coverage now verifies cron virtual conversation cleanup uses session deletion, conversation archive closes active sessions, and archived conversations can be reopened with existing channel bindings.
+
+---
+
+## 2026-05-11 — Conversation Cleanup Regression Coverage
+
+**Status:** ✅ Delivered  
+**Commit:** 05427604 `fix(conversations): support cron cleanup and session closure`  
+**Team Coordination:** Fry (UI), Bender (runtime)
+
+**Test Coverage Added:**
+1. Gateway conversation cleanup — archiving closes active sessions, clears ActiveSessionId
+2. Session deletion — properly removes conversation associations for cron cleanup
+3. Conversation routing — archived conversations reopen on next activity with bindings preserved
+4. Blazor client — cleanup affordances route correctly through API
+
+**Cross-Agent Alignment:**
+- Verified Bender's archive/close semantics match test expectations
+- Confirmed Fry's UI affordances work correctly with backend API contracts

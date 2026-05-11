@@ -1679,6 +1679,14 @@ details[open] > .thinking-summary::before {
     overflow: hidden;
 }
 
+.sidebar-nav > .sidebar-nav-item {
+    flex-shrink: 0;
+}
+
+.sidebar-nav > .sidebar-subnav {
+    flex-shrink: 0;
+}
+
 /* Scrollable region within sidebar nav — contains agent dropdown + conversations */
 .sidebar-scroll-region {
     flex: 1;

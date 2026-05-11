@@ -58,7 +58,6 @@ public sealed class FileConversationStore : IConversationStore
         finally { _lock.Release(); }
     }
 
-    /// <inheritdoc />
     public async Task<Conversation> CreateAsync(Conversation conversation, CancellationToken ct = default)
     {
         await _lock.WaitAsync(ct).ConfigureAwait(false);
@@ -92,7 +91,7 @@ public sealed class FileConversationStore : IConversationStore
             if (conversation is null)
                 return;
             await WriteFileAsync(
-                conversation with { Status = ConversationStatus.Archived, UpdatedAt = DateTimeOffset.UtcNow },
+                conversation with { Status = ConversationStatus.Archived, ActiveSessionId = null, UpdatedAt = DateTimeOffset.UtcNow },
                 ct).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
@@ -124,7 +123,9 @@ public sealed class FileConversationStore : IConversationStore
     public async Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(AgentId? agentId = null, CancellationToken ct = default)
     {
         var all = await ListAsync(agentId, ct).ConfigureAwait(false);
-        return [.. all.Select(ToSummary)];
+        return [.. all
+            .Where(c => c.Status != ConversationStatus.Archived)
+            .Select(ToSummary)];
     }
 
     private async Task<IReadOnlyList<Conversation>> EnumerateAsync(AgentId? agentId, CancellationToken ct)

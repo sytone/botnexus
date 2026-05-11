@@ -337,3 +337,61 @@ ull)
 ### 2026-05-08 — Conversation history refresh must page from newest entries
 - Root cause for "message disappears after refresh" was pagination anchored to oldest entries in `ConversationsController.GetHistory`; with long histories (>200), refresh loaded only old turns and omitted latest user/assistant turns.
 - Fix pattern: keep chronological order inside each page, but compute the page window from the tail (`offset` from newest) so `limit=200&offset=0` always includes the newest turns.
+### 2026-05-11 — Conversation cleanup semantics preserve reactivation
+- Conversation delete/cleanup is implemented as archive/close semantics, not hard-delete.
+- Archiving now clears ActiveSessionId so the next inbound trigger starts a fresh session instead of reusing stale runtime state.
+- Router reopens archived conversations when a bound channel speaks again (or explicit conversationId is used), preserving multi-channel bindings and enabling cron/channel resumes after cleanup.
+
+### 2026-05-11 — Cleanup/archive must seal active sessions, not delete persisted history
+- Updated conversation cleanup flow to always call conversation archive and stop routing cron cleanup through session deletion.
+- `DELETE /api/conversations/{id}` now seals the active session record in place (status = Sealed) before archiving the conversation, preserving historical session records for history APIs while still removing the conversation from active lists.
+- Added regression coverage that archived conversations keep session records and still hide/reopen correctly on new inbound activity.
+
+### 2026-05-11 — Retired default conversation helper in stores
+- Resolved merge conflicts by removing `GetOrCreateDefaultAsync` from file/in-memory/sqlite conversation stores and retaining the list/get + create/save contract from main.
+- Updated store tests to validate archive/reactivation via `ListAsync` + `GetAsync`/`SaveAsync`, preserving cleanup semantics without reintroducing legacy default-conversation APIs.
+- Verified gateway cleanup behavior still preserves persisted session records, clears active linkage on archive, and reopens archived conversations on subsequent inbound binding activity.
+
+---
+
+## 2026-05-11 — Conversation Cleanup: Archive/Close Recoverability & Session Linkage
+
+**Status:** ✅ Delivered  
+**Commit:** 90c6f955 `fix(gateway): reopen archived conversations after cleanup`  
+**Team Coordination:** Fry (UI), Hermes (tests)
+
+**Runtime Semantics Delivered:**
+1. DELETE /api/conversations/{id} now treated as close/archive (not hard-delete)
+2. Close operation clears ActiveSessionId for fresh session creation on next activity
+3. Archived conversations reopen automatically when:
+   - Inbound activity matches an existing channel binding
+   - Conversation explicitly addressed by ID
+4. Channel bindings preserved across close/reopen cycle (critical for cron continuity)
+
+**Cross-Agent Alignment:**
+- Fry's UI close button uses same API with appropriate messaging
+- Hermes wrote comprehensive tests for session cleanup and binding preservation
+
+---
+
+## 2026-05-11 — List/Get Conversation API Alignment (PR #197)
+
+**Status:** ✅ Complete  
+**Spawn Mode:** background (gpt-5.3-codex)  
+**Directive:** PR #197 must follow main's replacement of GetOrCreateDefaultAsync with list/get flows  
+
+**Work Summary:**
+1. Resolved merge conflicts between fix/conversation-cleanup-ui and origin/main
+2. Removed GetOrCreateDefaultAsync from all conversation store implementations (file, in-memory, SQLite)
+3. Aligned router and cleanup logic to use ListAsync for discovery and SaveAsync for state transitions
+4. Preserved cleanup, archive, and reopen semantics without legacy helper
+
+**Validation:**
+- Targeted gateway conversation tests: ✅ passed
+- Full solution build: ✅ passed  
+- Full test suite: ✅ passed  
+
+**Commit:** 373bb2be — ix(gateway): align cleanup branch with list-get conversation model  
+
+**Post-Merge Coordinator Check:** No active code references to GetOrCreateDefaultAsync; only historical docs and Squad notes remain.
+

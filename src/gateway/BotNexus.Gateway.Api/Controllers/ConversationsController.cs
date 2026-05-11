@@ -309,7 +309,11 @@ public sealed class ConversationsController : ControllerBase
             Entries: page));
     }
 
-    /// <summary>Archives a conversation (soft delete).</summary>
+    /// <summary>
+    /// Closes a conversation by archiving it (soft delete).
+    /// Archived conversations are hidden from active listings and can be reopened automatically
+    /// if a bound channel or explicit conversation id starts activity again.
+    /// </summary>
     [HttpDelete("{conversationId}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -317,6 +321,18 @@ public sealed class ConversationsController : ControllerBase
     {
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
         if (conversation is null) return NotFound();
+
+        if (conversation.ActiveSessionId is { } activeSessionId)
+        {
+            var session = await _sessions.GetAsync(activeSessionId, cancellationToken);
+            if (session is not null)
+            {
+                session.Status = BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed;
+                session.UpdatedAt = DateTimeOffset.UtcNow;
+                await _sessions.SaveAsync(session, cancellationToken);
+            }
+        }
+
         await _conversations.ArchiveAsync(ConversationId.From(conversationId), cancellationToken);
         return NoContent();
     }

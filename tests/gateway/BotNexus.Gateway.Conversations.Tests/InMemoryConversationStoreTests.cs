@@ -105,6 +105,50 @@ public sealed class InMemoryConversationStoreTests
     }
 
     [Fact]
+    public async Task ArchiveAsync_ClearsActiveSessionId()
+    {
+        var store = new InMemoryConversationStore();
+        var conv = MakeConversation(Agent()) with
+        {
+            ActiveSessionId = SessionId.Create()
+        };
+        await store.CreateAsync(conv);
+
+        await store.ArchiveAsync(conv.ConversationId);
+
+        var loaded = await store.GetAsync(conv.ConversationId);
+        loaded.ShouldNotBeNull();
+        loaded!.ActiveSessionId.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ListAndSave_ReactivatesArchivedConversation()
+    {
+        var store = new InMemoryConversationStore();
+        var agentId = Agent();
+        var existing = MakeConversation(agentId, "Default-like") with
+        {
+            IsDefault = true
+        };
+        await store.CreateAsync(existing);
+        await store.ArchiveAsync(existing.ConversationId);
+
+        var archived = (await store.ListAsync(agentId))
+            .Single(c => c.ConversationId == existing.ConversationId);
+        archived.Status.ShouldBe(ConversationStatus.Archived);
+        archived.ActiveSessionId = null;
+        archived.Status = ConversationStatus.Active;
+        await store.SaveAsync(archived);
+
+        var reopened = await store.GetAsync(existing.ConversationId);
+        reopened.ShouldNotBeNull();
+
+        reopened!.ConversationId.ShouldBe(existing.ConversationId);
+        reopened.Status.ShouldBe(ConversationStatus.Active);
+        reopened.ActiveSessionId.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task ResolveByBindingAsync_MatchesOnChannelAddress()
     {
         var store = new InMemoryConversationStore();
@@ -194,4 +238,3 @@ public sealed class InMemoryConversationStoreTests
         summaries[0].AgentId.ShouldBe("summary-agent");
     }
 }
-

@@ -108,7 +108,6 @@ public sealed class SqliteConversationStore : IConversationStore
         return conversations;
     }
 
-    /// <inheritdoc />
     public async Task<Conversation> CreateAsync(Conversation conversation, CancellationToken ct = default)
     {
         using var activity = ActivitySource.StartActivity("conversation.create", ActivityKind.Internal);
@@ -180,6 +179,7 @@ public sealed class SqliteConversationStore : IConversationStore
             command.CommandText = """
                 UPDATE conversations
                 SET status = $status,
+                    active_session_id = NULL,
                     updated_at = $updatedAt
                 WHERE id = $id
                 """;
@@ -192,6 +192,7 @@ public sealed class SqliteConversationStore : IConversationStore
             {
                 var archived = CloneConversation(cached);
                 archived.Status = ConversationStatus.Archived;
+                archived.ActiveSessionId = null;
                 archived.UpdatedAt = updatedAt;
                 _cache[conversationId.Value] = archived;
             }

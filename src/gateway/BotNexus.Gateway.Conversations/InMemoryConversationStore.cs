@@ -27,7 +27,6 @@ public sealed class InMemoryConversationStore : IConversationStore
         return Task.FromResult(results);
     }
 
-    /// <inheritdoc />
     public Task<Conversation> CreateAsync(Conversation conversation, CancellationToken ct = default)
     {
         if (!_conversations.TryAdd(conversation.ConversationId.Value, conversation))
@@ -50,6 +49,7 @@ public sealed class InMemoryConversationStore : IConversationStore
             _conversations[conversationId.Value] = existing with
             {
                 Status = ConversationStatus.Archived,
+                ActiveSessionId = null,
                 UpdatedAt = DateTimeOffset.UtcNow
             };
         return Task.CompletedTask;

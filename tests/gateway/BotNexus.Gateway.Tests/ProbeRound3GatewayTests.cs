@@ -5,9 +5,11 @@ using BotNexus.Gateway.Abstractions.Models;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Api.Controllers;
+using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
 namespace BotNexus.Gateway.Tests;
@@ -28,8 +30,10 @@ public sealed class ProbeRound3GatewayTests
         Title = title
     };
 
-    private static ConversationsController CreateConvController(IConversationStore store) =>
-        new(store, new InMemorySessionStore());
+    private static ConversationsController CreateConvController(
+        IConversationStore store,
+        ISessionStore? sessionStore = null) =>
+        new(store, sessionStore ?? new InMemorySessionStore());
 
     // ══════════════════════════════════════════════════════════════════════
     // Surface 3 — Conversation rename / archive / delete
@@ -258,6 +262,70 @@ public sealed class ProbeRound3GatewayTests
         var loaded = await store.GetAsync(conv.ConversationId);
         loaded.ShouldNotBeNull();
         loaded!.Status.ShouldBe(ConversationStatus.Archived);
+    }
+
+    [Fact]
+    public async Task ConversationsController_Archive_ClosesActiveSession_WithoutDeletingPersistedSession()
+    {
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var conv = await conversationStore.CreateAsync(MakeConversation("to-archive"));
+        var session = await sessionStore.GetOrCreateAsync("cron:job-1:run", conv.AgentId);
+        conv.ActiveSessionId = session.SessionId;
+        await conversationStore.SaveAsync(conv);
+        var controller = CreateConvController(conversationStore, sessionStore);
+
+        var result = await controller.Archive(conv.ConversationId.Value, CancellationToken.None);
+
+        result.ShouldBeOfType<NoContentResult>();
+        var reloaded = await conversationStore.GetAsync(conv.ConversationId);
+        reloaded.ShouldNotBeNull();
+        reloaded!.ActiveSessionId.ShouldBeNull();
+        var archivedSession = await sessionStore.GetAsync(session.SessionId);
+        archivedSession.ShouldNotBeNull();
+        archivedSession!.Status.ShouldBe(GatewaySessionStatus.Sealed);
+    }
+
+    [Fact]
+    public async Task ConversationsController_Archive_HidesConversation_AndRouterReopensOnNextInboundActivity()
+    {
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var router = new DefaultConversationRouter(
+            conversationStore,
+            sessionStore,
+            NullLogger<DefaultConversationRouter>.Instance);
+        var controller = CreateConvController(conversationStore, sessionStore);
+
+        var resolved = await router.ResolveInboundAsync(
+            Agent(),
+            ChannelKey.From("telegram"),
+            ChannelAddress.From("chat-reopen"),
+            null);
+        var conversationId = resolved.Conversation.ConversationId;
+        var firstSessionId = resolved.SessionId;
+
+        var archiveResult = await controller.Archive(conversationId.Value, CancellationToken.None);
+
+        archiveResult.ShouldBeOfType<NoContentResult>();
+        var archivedConversation = await conversationStore.GetAsync(conversationId);
+        archivedConversation.ShouldNotBeNull();
+        archivedConversation!.Status.ShouldBe(ConversationStatus.Archived);
+        archivedConversation.ActiveSessionId.ShouldBeNull();
+
+        var reopened = await router.ResolveInboundAsync(
+            archivedConversation.AgentId,
+            ChannelKey.From("telegram"),
+            ChannelAddress.From("chat-reopen"),
+            null);
+        reopened.Conversation.ConversationId.ShouldBe(conversationId);
+        reopened.SessionId.ShouldNotBe(firstSessionId);
+        reopened.IsNewSession.ShouldBeTrue();
+
+        var reopenedConversation = await conversationStore.GetAsync(conversationId);
+        reopenedConversation.ShouldNotBeNull();
+        reopenedConversation!.Status.ShouldBe(ConversationStatus.Active);
+        reopenedConversation.ActiveSessionId.ShouldBe(reopened.SessionId);
     }
 
     [Fact]

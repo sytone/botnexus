@@ -79,6 +79,48 @@ public sealed class SqliteConversationStoreTests
     }
 
     [Fact]
+    public async Task ArchiveAsync_ClearsActiveSessionId()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var conversation = CreateConversation(Agent("agent-a"), "Archive with active session");
+        conversation.ActiveSessionId = SessionId.Create();
+        await store.CreateAsync(conversation);
+
+        await store.ArchiveAsync(conversation.ConversationId);
+
+        var loaded = await fixture.CreateStore().GetAsync(conversation.ConversationId);
+        loaded.ShouldNotBeNull();
+        loaded!.ActiveSessionId.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ListAndSave_ReactivatesArchivedConversation()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var existing = CreateConversation(Agent("agent-default"), "Default-like");
+        existing.IsDefault = true;
+        await store.CreateAsync(existing);
+
+        await store.ArchiveAsync(existing.ConversationId);
+
+        var archived = (await fixture.CreateStore().ListAsync(Agent("agent-default")))
+            .Single(c => c.ConversationId == existing.ConversationId);
+        archived.Status.ShouldBe(ConversationStatus.Archived);
+        archived.ActiveSessionId = null;
+        archived.Status = ConversationStatus.Active;
+        await fixture.CreateStore().SaveAsync(archived);
+
+        var reopened = await fixture.CreateStore().GetAsync(existing.ConversationId);
+        reopened.ShouldNotBeNull();
+
+        reopened!.ConversationId.ShouldBe(existing.ConversationId);
+        reopened.Status.ShouldBe(ConversationStatus.Active);
+        reopened.ActiveSessionId.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task ResolveByBindingAsync_FindsCorrectConversation()
     {
         using var fixture = new StoreFixture();
@@ -334,4 +376,3 @@ public sealed class SqliteConversationStoreTests
         }
     }
 }
-

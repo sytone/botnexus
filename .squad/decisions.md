@@ -2,6 +2,69 @@
 
 ## Active Decisions
 
+### 2026-05-11 — Fry: Cron Conversations Are Closable via the Same Archive API
+
+**Author:** Fry (Web Dev)  
+**Date:** 2026-05-08  
+**Scope:** BlazorClient UI + API contract  
+**Status:** Implemented
+
+**Context:** Cron (virtual session) conversations previously had no UI affordance for cleanup — the archive button was hidden for them. Users with many cron conversations couldn't clean up the sidebar.
+
+**Decision:**
+- **Cron conversations can now be closed** using the same `DELETE /api/conversations/{id}` endpoint used for archiving regular conversations.
+- The UI shows a **close button (✕)** for cron conversations with a tooltip: "Close conversation — reopens on next trigger".
+- Regular conversations keep the **archive button (🗑️)** with existing semantics.
+- Default conversations remain protected — no close or archive button.
+
+**Rationale:**
+- The backend already handles reopening archived default conversations (`GetOrCreateDefaultAsync` checks for archived defaults). Cron conversations follow the same reopening pattern when the next trigger fires.
+- No backend changes required — the existing archive/close semantics work for both conversation types.
+- Differentiating the label (close vs archive) sets correct user expectations about permanence.
+
+**Impact:**
+- **Bender:** No backend changes needed. The `DELETE` endpoint works for cron conversations already.
+- **Hermes:** Old test `Virtual_cron_conversation_shows_badge_and_hides_archive_button` replaced with new tests verifying the close button is shown.
+
+---
+
+### 2026-05-11 — Bender: Conversation cleanup uses close+reopen lifecycle
+
+**Author:** Bender (Runtime Dev)  
+**Date:** 2026-05-11  
+**Scope:** Gateway conversations, cron trigger continuity, multi-channel bindings  
+**Status:** Implemented
+
+**Decision:**
+DELETE /api/conversations/{id} remains a soft-delete/archive operation and is treated as **close conversation** semantics. Closing now clears ActiveSessionId so subsequent activity creates a fresh session. Archived conversations may be reopened automatically when inbound activity matches an existing binding or the conversation is explicitly addressed by ID.
+
+**Rationale:**
+Hard-deleting conversations breaks cron and bound-channel continuity. Reopening archived conversations preserves existing bindings, so a cleaned-up conversation can naturally reappear across attached channels when activity resumes.
+
+**Runtime Effects:**
+- Archived conversation is hidden from active summaries.
+- Close operation clears active session linkage.
+- First inbound message after close reactivates the archived conversation and creates/rebinds a fresh active session.
+
+---
+
+### 2026-05-11 — Hermes: Conversation Cleanup Test Strategy
+
+**Author:** Hermes (Tester)  
+**Date:** 2026-05-11  
+**Status:** Implemented
+
+**Decision:** Treat cron virtual conversation cleanup as **session lifecycle** (DELETE /api/sessions/{id}) instead of conversation archive.
+
+**Why:** Cron rows in the Blazor sidebar are virtual projections from session summaries; archiving by conversation ID cannot remove them reliably.
+
+**Test Impact:**
+- Blazor client tests verify cleanup affordance remains available for cron rows and routes through session deletion.
+- Gateway tests verify archiving a conversation closes its active session and clears active session linkage.
+- Existing router tests continue to validate archived conversations reopen on subsequent inbound activity with bindings preserved.
+
+---
+
 ### 2026-05-06T18:12:51-07:00: User Directive — Conversation Project Extraction
 
 **By:** Sytone (via Copilot)  
@@ -15553,4 +15616,83 @@ The Blazor client loads limit=200, offset=0 on refresh. Oldest-first paging drop
 ## Impact
 - UI refresh now consistently includes the latest turns for long conversations.
 - Existing callers can still page backward by increasing offset.
+
+
+---
+
+### 2026-05-11T10:48:37Z: User Directive — Preserve Sessions on Conversation Cleanup
+
+**By:** Copilot (via Copilot)  
+**What:** Sessions should not be deleted when a conversation is hidden/archived; cleanup should hide/archive the conversation while preserving session records.  
+**Why:** User request — captured for team memory
+
+---
+
+### 2026-05-11T11:06:00Z: Bender Decision — Preserve Sessions When Archiving Conversations
+
+**Author:** Bender (Runtime Dev)  
+**Date:** 2026-05-11  
+**Scope:** Gateway conversations, session preservation on cleanup  
+**Status:** Implemented  
+**Commit:** 5544ee3b
+
+**Context:** User requested that conversation cleanup must not delete persisted session records. Closing/archiving conversations should hide them from active UI while preserving session history for audit/query APIs and enabling archived conversations to reopen on new activity.
+
+**Decision:** Route all cleanup through conversation archive (\DELETE /api/conversations/{id}\) and seal the active session record instead of deleting it. Do not use session deletion for conversation cleanup.
+
+**Why:** This keeps archived conversations out of active UI while preserving historical session history for audit/history APIs and allowing archived conversations to reopen on new inbound channel/cron activity.
+
+**Runtime Effects:**
+- Archived conversation is hidden from active summaries.
+- Active session is sealed (cleared of ActiveSessionId linkage).
+- Archived conversations may reopen automatically when inbound activity matches an existing binding or conversation is explicitly addressed by ID.
+
+---
+
+### 2026-05-11T11:13:00Z: Hermes Decision — Regression Test Coverage for Session Preservation
+
+**Author:** Hermes (Tester)  
+**Date:** 2026-05-11  
+**Scope:** Gateway conversation cleanup test strategy  
+**Status:** Implemented  
+**Commit:** 4a47ffc7
+
+**What:** Regression coverage now treats conversation cleanup (\DELETE /api/conversations/{id}\) as close/archive behavior that clears \ActiveSessionId\ but keeps the archived session persisted (sealed), and verifies archived conversations reopen on future inbound activity with a fresh active session.
+
+**Why:** User requirement: hidden/archived conversations should not delete persisted sessions. Tests must enforce this invariant.
+
+---
+
+## Bender Runtime Decision — List/Get Conversation API Alignment (2026-05-11)
+
+**Decision Date:** 2026-05-11  
+**Decided By:** Bender (Runtime Dev)  
+**Status:** Implemented  
+**Scope:** Gateway conversation stores + cleanup regressions  
+
+**Decision:** Retire GetOrCreateDefaultAsync and align the conversation-store contract to ListAsync/GetAsync with explicit CreateAsync/SaveAsync.
+
+**Rationale:**
+- Main branch already migrated to list/get resolution; reintroducing helper-based default conversation recovery would conflict with current routing and cleanup behavior.
+- Cleanup/reopen semantics are preserved by router-driven archive discovery (ListAsync of archived bindings) and explicit reactivation save.
+- Eliminates helper complexity from store implementations (file, in-memory, SQLite).
+
+**Validation:**
+- Targeted gateway conversation and gateway test projects passed
+- Full solution build: dotnet build BotNexus.slnx --nologo --tl:off ✅
+- Full test suite: dotnet test BotNexus.slnx --nologo --tl:off ✅
+
+**Commit:** 373bb2be — ix(gateway): align cleanup branch with list-get conversation model
+
+---
+
+## User Directive — List/Get API Preference (2026-05-11)
+
+**Directive Date:** 2026-05-11  
+**Directive By:** Copilot (via User)  
+**Scope:** PR #197 conversation cleanup UI  
+
+**Directive:** Prefer ListAsync/GetAsync conversation APIs over legacy GetOrCreateDefaultAsync; PR changes must follow the newer model from main.
+
+**Rationale:** User request — captured for team memory and PR direction guidance.
 

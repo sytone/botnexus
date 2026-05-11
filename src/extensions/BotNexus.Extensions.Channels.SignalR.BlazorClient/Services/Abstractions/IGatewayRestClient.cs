@@ -54,6 +54,9 @@ public interface IGatewayRestClient
     /// <summary>DELETE /api/conversations/{conversationId} — soft delete (archive).</summary>
     Task<bool> ArchiveConversationAsync(string conversationId, CancellationToken ct = default);
 
+    /// <summary>DELETE /api/sessions/{sessionId} — closes/removes a session.</summary>
+    Task<bool> DeleteSessionAsync(string sessionId, CancellationToken ct = default);
+
     /// <summary>Current API base URL (set via Configure). Null if not yet configured.</summary>
     string? ApiBaseUrl { get; }
 }
