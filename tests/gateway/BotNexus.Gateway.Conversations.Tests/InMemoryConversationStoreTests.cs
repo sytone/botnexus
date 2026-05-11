@@ -78,31 +78,6 @@ public sealed class InMemoryConversationStoreTests
     }
 
     [Fact]
-    public async Task GetOrCreateDefaultAsync_CreatesDefaultOnFirstCall()
-    {
-        var store = new InMemoryConversationStore();
-        var agentId = Agent();
-
-        var conv = await store.GetOrCreateDefaultAsync(agentId);
-
-        conv.IsDefault.ShouldBeTrue();
-        conv.Title.ShouldBe("Default");
-        conv.Status.ShouldBe(ConversationStatus.Active);
-    }
-
-    [Fact]
-    public async Task GetOrCreateDefaultAsync_IsIdempotent()
-    {
-        var store = new InMemoryConversationStore();
-        var agentId = Agent();
-
-        var first = await store.GetOrCreateDefaultAsync(agentId);
-        var second = await store.GetOrCreateDefaultAsync(agentId);
-
-        first.ConversationId.ShouldBe(second.ConversationId);
-    }
-
-    [Fact]
     public async Task SaveAsync_UpdatesExistingConversation()
     {
         var store = new InMemoryConversationStore();

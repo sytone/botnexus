@@ -115,14 +115,17 @@ public sealed class SqliteSessionStoreMigrationTests : IDisposable
         // Trigger init by loading a session (any operation calls EnsureCreatedAsync).
         _ = await sessionStore2.GetAsync(SessionId.From("probe"), CancellationToken.None);
 
-        // Assert: both orphaned sessions now have the default conversation id.
-        var conv = await convStore2.GetOrCreateDefaultAsync(agentId);
+        // Assert: both orphaned sessions now have the legacy conversation id.
+        // The migration creates a "legacy:{agentId}" conversation for orphaned sessions.
+        var allConvs = await convStore2.ListAsync(agentId);
+        var conv = allConvs.FirstOrDefault(c => c.Title == $"legacy:{agentId.Value}");
+        conv.ShouldNotBeNull("Migration should have created a legacy conversation for orphaned sessions");
         var cid1 = await ReadConversationIdAsync($"Data Source={_sessionDbPath};Pooling=False", "s-orphan-1");
         var cid2 = await ReadConversationIdAsync($"Data Source={_sessionDbPath};Pooling=False", "s-orphan-2");
 
         cid1.ShouldNotBeNull();
         cid2.ShouldNotBeNull();
-        cid1.ShouldBe(conv.ConversationId.Value);
+        cid1.ShouldBe(conv!.ConversationId.Value);
         cid2.ShouldBe(conv.ConversationId.Value);
 
         // The most recently updated session should be the conversation's active session.
@@ -139,7 +142,14 @@ public sealed class SqliteSessionStoreMigrationTests : IDisposable
         var convStore = CreateConversationStore();
         var sessionStore = CreateSessionStore(convStore);
         var session = await sessionStore.GetOrCreateAsync(SessionId.From("s-clean-1"), agentId);
-        session.Session.ConversationId = (await convStore.GetOrCreateDefaultAsync(agentId)).ConversationId;
+        var tempConv = await convStore.CreateAsync(new BotNexus.Gateway.Abstractions.Models.Conversation
+        {
+            ConversationId = BotNexus.Domain.Primitives.ConversationId.Create(),
+            AgentId = agentId,
+            Title = "test-existing",
+            IsDefault = false
+        });
+        session.Session.ConversationId = tempConv.ConversationId;
         await sessionStore.SaveAsync(session);
 
         // Remember how many conversations exist before.

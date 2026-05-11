@@ -363,10 +363,20 @@ public sealed class SqliteSessionStore : SessionStoreBase
         {
             var agentId = AgentId.From(agentIdValue);
 
-            // Resolve (or create) the default conversation for this agent.
-            var conversation = await conversationStore
-                .GetOrCreateDefaultAsync(agentId, cancellationToken)
-                .ConfigureAwait(false);
+            // Find or create a named fallback conversation for orphaned sessions.
+            // Using a legacy-named conversation keeps these clearly separate from real conversations.
+            var existing = await conversationStore.ListAsync(agentId, cancellationToken).ConfigureAwait(false);
+            var legacyTitle = $"legacy:{agentIdValue}";
+            var conversation = existing.FirstOrDefault(c =>
+                    c.Title == legacyTitle &&
+                    c.Status == BotNexus.Gateway.Abstractions.Models.ConversationStatus.Active)
+                ?? await conversationStore.CreateAsync(new BotNexus.Gateway.Abstractions.Models.Conversation
+                {
+                    ConversationId = BotNexus.Domain.Primitives.ConversationId.Create(),
+                    AgentId = agentId,
+                    Title = legacyTitle,
+                    IsDefault = false
+                }, cancellationToken).ConfigureAwait(false);
 
             var convIdValue = conversation.ConversationId.Value;
 

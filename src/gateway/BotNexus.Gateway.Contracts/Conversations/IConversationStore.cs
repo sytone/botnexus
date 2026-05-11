@@ -18,25 +18,14 @@ namespace BotNexus.Gateway.Abstractions.Conversations;
 public interface IConversationStore
 {
     /// <summary>
-    /// Gets a conversation by ID, or <c>null</c> if it doesn't exist.
+    /// Gets a specific conversation by ID. Returns <c>null</c> if not found.
     /// </summary>
-    /// <param name="conversationId">The conversation identifier.</param>
-    /// <param name="ct">Cancellation token.</param>
     Task<Conversation?> GetAsync(ConversationId conversationId, CancellationToken ct = default);
 
     /// <summary>
-    /// Lists all conversations, optionally filtered by agent.
+    /// Lists all active conversations, optionally filtered by agent.
     /// </summary>
-    /// <param name="agentId">If set, only returns conversations for this agent.</param>
-    /// <param name="ct">Cancellation token.</param>
     Task<IReadOnlyList<Conversation>> ListAsync(AgentId? agentId = null, CancellationToken ct = default);
-
-    /// <summary>
-    /// Gets the default active conversation for an agent, or creates one if it doesn't exist.
-    /// </summary>
-    /// <param name="agentId">The agent identifier.</param>
-    /// <param name="ct">Cancellation token.</param>
-    Task<Conversation> GetOrCreateDefaultAsync(AgentId agentId, CancellationToken ct = default);
 
     /// <summary>
     /// Creates a new conversation. Throws if the ConversationId already exists.

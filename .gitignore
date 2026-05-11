@@ -70,3 +70,4 @@ site/**/*
 # VitePress build output and cache
 docs/.vitepress/dist/
 docs/.vitepress/cache/
+cognitive-coverage/
