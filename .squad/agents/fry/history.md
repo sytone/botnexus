@@ -24,3 +24,8 @@
 4. **Component-level CSS state** — data attributes or classes for active state via component lifecycle
 
 **Test Philosophy:** Manual browser testing for scroll/layout UX; bUnit for component lifecycle; Playwright for E2E.
+
+## Learnings
+
+### 2026-05-11 — Cron Virtual Session Cleanup Must Route Through Conversation Archive
+Virtual cron conversation projections (`cron-session:{sessionId}`) should be cleaned up via `DELETE /api/conversations/{conversationId}` (ArchiveConversationAsync), NOT `DELETE /api/sessions/{sessionId}`. The backend handles `cron-session:` prefixed IDs idempotently — returns 204 even when no backing session exists. This preserves session records/history while hiding the conversation from the sidebar. The prior approach of calling session delete was incorrect as it permanently destroyed session data. Stale orphans (no ActiveSessionId) also route through conversation archive since the backend handles them gracefully.

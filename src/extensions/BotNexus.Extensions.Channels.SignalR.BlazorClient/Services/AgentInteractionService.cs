@@ -260,7 +260,12 @@ public sealed class AgentInteractionService : IAgentInteractionService
             if (_featureFlags?.ConversationHistoryCache == true && _cache is not null)
                 await _cache.InvalidateAsync(conversationId);
 
+            // All conversation cleanup — including virtual cron projections — routes through
+            // DELETE /api/conversations/{conversationId}. The backend handles cron-session: IDs
+            // idempotently (returns 204 even if no backing session exists), preserving session
+            // records while hiding the conversation from the sidebar.
             var success = await _restClient.ArchiveConversationAsync(conversationId);
+
             if (!success)
             {
                 Console.Error.WriteLine($"AgentInteractionService: Conversation cleanup returned failure for {conversationId}");
@@ -608,6 +613,8 @@ public sealed class AgentInteractionService : IAgentInteractionService
         "system" => "System",
         _ => role
     };
+
+
 
     private static void MergeVirtualCronSessions(AgentState agent, IReadOnlyList<SessionSummary> sessions)
     {

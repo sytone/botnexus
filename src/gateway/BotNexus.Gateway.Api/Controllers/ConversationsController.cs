@@ -4,6 +4,8 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using SessionId = BotNexus.Domain.Primitives.SessionId;
+using SessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 
 namespace BotNexus.Gateway.Api.Controllers;
 
@@ -319,21 +321,36 @@ public sealed class ConversationsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult> Archive(string conversationId, CancellationToken cancellationToken)
     {
+        SessionId? virtualCronSessionId = null;
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
-        if (conversation is null) return NotFound();
-
-        if (conversation.ActiveSessionId is { } activeSessionId)
+        if (conversation is null && TryParseVirtualCronConversationId(conversationId, out var virtualSessionId))
         {
-            var session = await _sessions.GetAsync(activeSessionId, cancellationToken);
-            if (session is not null)
+            virtualCronSessionId = virtualSessionId;
+            var virtualSession = await _sessions.GetAsync(virtualSessionId, cancellationToken);
+            if (virtualSession is null)
+                return NoContent();
+
+            if (virtualSession.Session.ConversationId is { } linkedConversationId)
+                conversation = await _conversations.GetAsync(linkedConversationId, cancellationToken);
+
+            if (conversation is null)
             {
-                session.Status = BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed;
-                session.UpdatedAt = DateTimeOffset.UtcNow;
-                await _sessions.SaveAsync(session, cancellationToken);
+                await SealSessionAsync(virtualSessionId, cancellationToken);
+                return NoContent();
             }
         }
 
-        await _conversations.ArchiveAsync(ConversationId.From(conversationId), cancellationToken);
+        if (conversation is null)
+            return NotFound();
+
+        if (virtualCronSessionId.HasValue)
+            await SealSessionAsync(virtualCronSessionId.Value, cancellationToken);
+
+        if (conversation.ActiveSessionId is { } activeSessionId)
+            if (!virtualCronSessionId.HasValue || virtualCronSessionId.Value != activeSessionId)
+                await SealSessionAsync(activeSessionId, cancellationToken);
+
+        await _conversations.ArchiveAsync(conversation.ConversationId, cancellationToken);
         return NoContent();
     }
 
@@ -359,5 +376,30 @@ public sealed class ConversationsController : ControllerBase
         ThreadingMode: b.ThreadingMode.ToString(),
         DisplayPrefix: b.DisplayPrefix,
         BoundAt: b.BoundAt);
+
+    private async Task SealSessionAsync(SessionId sessionId, CancellationToken cancellationToken)
+    {
+        var session = await _sessions.GetAsync(sessionId, cancellationToken);
+        if (session is null || session.Status == SessionStatus.Sealed)
+            return;
+
+        session.Status = SessionStatus.Sealed;
+        session.UpdatedAt = DateTimeOffset.UtcNow;
+        await _sessions.SaveAsync(session, cancellationToken);
+    }
+
+    private static bool TryParseVirtualCronConversationId(string conversationId, out SessionId sessionId)
+    {
+        const string prefix = "cron-session:";
+        if (conversationId.StartsWith(prefix, StringComparison.Ordinal) &&
+            conversationId.Length > prefix.Length)
+        {
+            sessionId = SessionId.From(conversationId[prefix.Length..]);
+            return true;
+        }
+
+        sessionId = default;
+        return false;
+    }
 
 }
