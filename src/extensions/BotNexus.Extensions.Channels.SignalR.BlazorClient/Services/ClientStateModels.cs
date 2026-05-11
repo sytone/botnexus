@@ -32,6 +32,9 @@ public sealed class SubAgentInfo
     /// <summary>The task assigned to this sub-agent.</summary>
     public string Task { get; set; } = "";
 
+    /// <summary>The parent conversation where this sub-agent was started.</summary>
+    public string? OriginConversationId { get; set; }
+
     /// <summary>Current status: Running, Completed, Failed, Killed.</summary>
     public string Status { get; set; } = "Running";
 

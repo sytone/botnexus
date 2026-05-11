@@ -103,6 +103,7 @@
                             else
                             {
                                 @foreach (var conversation in activeAgent.Conversations.Values
+                                    .Where(IsUserFacingConversation)
                                     .OrderByDescending(c => c.IsDefault)
                                     .ThenByDescending(c => c.UpdatedAt))
                                 {
@@ -408,6 +409,10 @@
         "Completed" => "✅",
         _           => "🤖"
     };
+
+    private static bool IsUserFacingConversation(ConversationState conversation)
+        => !(conversation.IsVirtualSession &&
+             string.Equals(conversation.VirtualSessionKind, "internal", StringComparison.OrdinalIgnoreCase));
 
     private async Task ViewSubAgentAsync(SubAgentInfo sub)
     {
