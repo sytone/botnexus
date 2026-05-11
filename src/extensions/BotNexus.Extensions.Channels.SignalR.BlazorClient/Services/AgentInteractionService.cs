@@ -260,11 +260,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
             if (_featureFlags?.ConversationHistoryCache == true && _cache is not null)
                 await _cache.InvalidateAsync(conversationId);
 
-            var success = conversation.IsVirtualSession &&
-                          string.Equals(conversation.VirtualSessionKind, "cron", StringComparison.OrdinalIgnoreCase) &&
-                          conversation.ActiveSessionId is { Length: > 0 }
-                ? await _restClient.DeleteSessionAsync(conversation.ActiveSessionId)
-                : await _restClient.ArchiveConversationAsync(conversationId);
+            var success = await _restClient.ArchiveConversationAsync(conversationId);
             if (!success)
             {
                 Console.Error.WriteLine($"AgentInteractionService: Conversation cleanup returned failure for {conversationId}");

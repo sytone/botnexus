@@ -2,6 +2,7 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Api.Controllers;
+using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using Microsoft.AspNetCore.Mvc;
 
@@ -73,7 +74,40 @@ public sealed class ConversationsControllerHistoryTests
         response.Entries[^1].Content.ShouldBe("m-224");
     }
 
-    private static Conversation CreateConversation(ConversationId conversationId, string agentId)
+    [Fact]
+    public async Task Archive_SealsActiveSessionWithoutDeletingIt()
+    {
+        var conversationId = ConversationId.From("c_archive_preserve_session");
+        var sessionId = SessionId.From("s-archive-preserve");
+        var sessions = new InMemorySessionStore();
+        var session = await sessions.GetOrCreateAsync(sessionId, AgentId.From("quill"));
+        session.Session.ConversationId = conversationId;
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.User,
+            Content = "keep-me",
+            Timestamp = DateTimeOffset.UtcNow
+        });
+        await sessions.SaveAsync(session);
+
+        var conversationStore = new InMemoryConversationStore();
+        await conversationStore.CreateAsync(CreateConversation(conversationId, "quill", sessionId));
+        var controller = new ConversationsController(conversationStore, sessions);
+
+        var actionResult = await controller.Archive(conversationId.Value, CancellationToken.None);
+
+        actionResult.ShouldBeOfType<NoContentResult>();
+        var archivedSession = await sessions.GetAsync(sessionId);
+        archivedSession.ShouldNotBeNull();
+        archivedSession!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
+        archivedSession.History.ShouldContain(entry => entry.Content == "keep-me");
+        var archivedConversation = await conversationStore.GetAsync(conversationId);
+        archivedConversation.ShouldNotBeNull();
+        archivedConversation!.Status.ShouldBe(ConversationStatus.Archived);
+        archivedConversation.ActiveSessionId.ShouldBeNull();
+    }
+
+    private static Conversation CreateConversation(ConversationId conversationId, string agentId, SessionId? activeSessionId = null)
         => new()
         {
             ConversationId = conversationId,
@@ -81,6 +115,7 @@ public sealed class ConversationsControllerHistoryTests
             Title = "Default",
             IsDefault = true,
             Status = ConversationStatus.Active,
+            ActiveSessionId = activeSessionId,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
         };

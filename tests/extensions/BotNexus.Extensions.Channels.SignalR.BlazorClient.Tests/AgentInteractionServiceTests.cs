@@ -236,7 +236,7 @@ public sealed class AgentInteractionServiceTests
     }
 
     [Fact]
-    public async Task ArchiveConversationAsync_ForVirtualCronConversation_DeletesSessionAndRemovesConversation()
+    public async Task ArchiveConversationAsync_ForVirtualCronConversation_ArchivesConversationAndRemovesConversation()
     {
         var agent = _store.GetAgent("agent-1")!;
         agent.Conversations["conv-1"] = new ConversationState
@@ -258,13 +258,13 @@ public sealed class AgentInteractionServiceTests
         };
         _store.SetActiveConversation("agent-1", "cron-session:cron:job-1:run");
 
-        _restClient.DeleteSessionAsync("cron:job-1:run", Arg.Any<CancellationToken>())
+        _restClient.ArchiveConversationAsync("cron-session:cron:job-1:run", Arg.Any<CancellationToken>())
             .Returns(true);
 
         await _service.ArchiveConversationAsync("agent-1", "cron-session:cron:job-1:run");
 
-        await _restClient.Received(1).DeleteSessionAsync("cron:job-1:run", Arg.Any<CancellationToken>());
-        await _restClient.DidNotReceive().ArchiveConversationAsync("cron-session:cron:job-1:run", Arg.Any<CancellationToken>());
+        await _restClient.Received(1).ArchiveConversationAsync("cron-session:cron:job-1:run", Arg.Any<CancellationToken>());
+        await _restClient.DidNotReceive().DeleteSessionAsync("cron:job-1:run", Arg.Any<CancellationToken>());
         agent.Conversations.ContainsKey("cron-session:cron:job-1:run").ShouldBeFalse();
         agent.ActiveConversationId.ShouldBe("conv-1");
     }

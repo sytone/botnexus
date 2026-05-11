@@ -342,6 +342,11 @@ ull)
 - Archiving now clears ActiveSessionId so the next inbound trigger starts a fresh session instead of reusing stale runtime state.
 - Router reopens archived conversations when a bound channel speaks again (or explicit conversationId is used), preserving multi-channel bindings and enabling cron/channel resumes after cleanup.
 
+### 2026-05-11 — Cleanup/archive must seal active sessions, not delete persisted history
+- Updated conversation cleanup flow to always call conversation archive and stop routing cron cleanup through session deletion.
+- `DELETE /api/conversations/{id}` now seals the active session record in place (status = Sealed) before archiving the conversation, preserving historical session records for history APIs while still removing the conversation from active lists.
+- Added regression coverage that archived conversations keep session records and still hide/reopen correctly on new inbound activity.
+
 ---
 
 ## 2026-05-11 — Conversation Cleanup: Archive/Close Recoverability & Session Linkage

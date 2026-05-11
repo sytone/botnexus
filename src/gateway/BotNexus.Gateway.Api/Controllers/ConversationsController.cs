@@ -323,7 +323,15 @@ public sealed class ConversationsController : ControllerBase
         if (conversation is null) return NotFound();
 
         if (conversation.ActiveSessionId is { } activeSessionId)
-            await _sessions.ArchiveAsync(activeSessionId, cancellationToken);
+        {
+            var session = await _sessions.GetAsync(activeSessionId, cancellationToken);
+            if (session is not null)
+            {
+                session.Status = BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed;
+                session.UpdatedAt = DateTimeOffset.UtcNow;
+                await _sessions.SaveAsync(session, cancellationToken);
+            }
+        }
 
         await _conversations.ArchiveAsync(ConversationId.From(conversationId), cancellationToken);
         return NoContent();
