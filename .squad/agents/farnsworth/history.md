@@ -1,268 +1,30 @@
 # Project Context
 
 - **Owner:** Jon Bullen
-- **Project:** BotNexus — modular AI agent execution platform (OpenClaw-like) built in C#/.NET. Lean core with extension points for assembly-based plugins. Multiple agent execution modes (local, sandbox, container, remote). Currently focusing on local execution. SOLID patterns with vigilance against over-abstraction. Comprehensive testing (unit + E2E integration).
-- **Stack:** C# (.NET latest), modular class libraries: Core, Agent, Api, Channels (Base/Discord/Slack/Telegram), Command, Cron, Gateway, Heartbeat, Providers (Base/Anthropic/OpenAI), Session, Tools.GitHub, WebUI
+- **Project:** BotNexus — modular AI agent execution platform built in C#/.NET
+- **Stack:** C# (.NET latest), modular class libraries: Core, Agent, Api, Channels, Command, Cron, Gateway, Heartbeat, Providers, Session, Tools.GitHub, WebUI
 - **Created:** 2026-04-01
 
 ## Core Context
 
-**Summary of Prior Work (2026-04-01 to 2026-05-07):**
-- **Phase 11 Config & Schema:** Extracted `IConfigPathResolver`/`ConfigPathResolver` from CLI (supports bracket array indexing). JSON schema generation via `PlatformConfigSchema` with key-casing normalization. CLI schema command for auto-generating `docs/botnexus-config.schema.json`. 23 new tests; 891 total passing.
-- **Phase 11 CLI Decomposition:** Refactored `Program.cs` into thin DI wiring with extracted command handlers. Cross-platform reliability: TCP port pre-checks, SkipBuild/SkipTests flags.
-- **Phase 12 Sub-Agent Foundation (W1+W2+W3+W4):** `ISubAgentManager` abstraction with spawn/list/kill lifecycle. `DefaultSubAgentManager` singleton with recursion prevention, concurrency limits. REST endpoints, WebSocket event emissions, tool registry security scoping. Commits: f57b157, 25c8876, c75a033.
-- **Phase 12 Extension Commands (W1+W2):** `ICommandContributor` interface + `CommandRegistry`. Command palette integration, built-in commands (/help, /status, /agents, /new). DI registered in Program.cs. 10 unit tests.
-- **Phase 12 Gateway Lifecycle (W2):** `GatewayCommand` with detached/attached modes, start/stop/status commands, health checking. Cross-platform safety on Windows via PID file management.
-- **Probe Tool:** Built standalone tools/BotNexus.Probe with Minimal API, streamed Serilog/JSONL, dual-mode CLI, SQLite session DB ingestion, correlation endpoints.
-- **Active Stream:** Config filtering (providers.enabled, models allowlist, agent.allowedModels), unified config.json + agent directory architecture, workspace/data subdirectory migration.
+**Phases 1-12 Complete.** Farnsworth leads platform: core abstractions, provider implementations, session management, command system, API layer.
 
----
-
-## 2026-05-07T22:05:56Z — Dispatching Layer Implementation & Phase 2 Approval (Platform Dev)
-
-**Status:** ✅ Complete  
-**Session:** Dispatching Cleanup Wave — broader phase 2 implementation  
-
-**Outcome:** Led creation of `BotNexus.Gateway.Dispatching` project with contract-first API:
-- `IConversationDispatcher` interface + `DefaultConversationDispatcher` adapter
-- `ChannelSource`, `InboundMessageContext`, `ConversationSessionResolution`, `DispatchResult` contracts
-- DI registration in `GatewayServiceCollectionExtensions`
-- Preserves existing behavior while establishing dispatch orchestration seam
-- Solution build passed; targeted tests passing; full pre-commit blocked by unrelated baseline failures
-
-**Cross-team Context:** 
-- Hermes expanded dispatcher routing test coverage (42/42 ✅)
-- Bender rewired gateway runtime paths through dispatcher (44/44 gateway tests ✅)
-- Leela reviewed entire cleanup wave and approved all architectural decisions (✅ APPROVED)
-
----
-
-## 2026-04-10T16:30Z — Sub-Agent Spawning Feature: Waves 1 + 2 + 4 (Platform Dev)
-
-**Status:** ✅ Complete  
-**Commits:** f57b157 (W1), 25c8876 (W2+3 DI), c75a033 (W4 REST)
-
-**Your Role:** Platform Dev. Wave 1 abstractions, DI wiring, REST endpoints.
-
-**Wave 1 Deliverables:**
-- `ISubAgentManager` abstraction in `BotNexus.Gateway.Abstractions`
-- `SubAgentSpawnRequest`, `SubAgentInfo`, `SubAgentStatus` models
-- `SubAgentOptions` configuration class (maxConcurrentPerSession, defaultMaxTurns, etc.)
-- Integrated with existing session infrastructure (reuses `IAgentSupervisor`, session ID format preserved)
-
-**Wave 2+3 DI Work:**
-- `DefaultSubAgentManager` registered as singleton in DI
-- Sub-agent tool registration in `InProcessIsolationStrategy`
-- Recursion prevention wired: `spawn_subagent`, `list_subagents`, `manage_subagent` excluded from sub-agent sessions
-- Tool stack depth tracking for safety
-
-**Wave 4 REST Endpoints:**
-- `GET /api/agents/sub` — list active sub-agents
-- `POST /api/agents/sub` — spawn sub-agent
-- `DELETE /api/agents/sub/{id}` — kill sub-agent
-- WebSocket event emission: `subagent_spawned`, `subagent_completed`, `subagent_failed`
-
-**Integration:**
-- Tool security scoping: explicit allowlist validation against registry
-- Completion delivery: reuses existing `FollowUpAsync` message queue
-- Resource protection: `maxConcurrentPerSession` enforced per agent descriptor
-
----
-
+**Key Delivered Systems:**
+- Phase 11 Config & Schema: `IConfigPathResolver`, JSON schema generation, CLI schema command
+- Phase 11 CLI Decomposition: Program.cs refactored to thin DI wiring with extracted command handlers
+- Sub-Agent Foundation (Waves 1-4): `ISubAgentManager` abstraction, spawn/list/kill lifecycle, REST endpoints, WebSocket events, tool registry security scoping
+- Extension Commands (Waves 1-2): `ICommandContributor` interface, `CommandRegistry`, command palette integration, built-in commands
+- Gateway Lifecycle (Wave 2): `GatewayCommand` with detached/attached modes, health checking, PID management
+- Probe Tool: standalone diagnostics with Minimal API, streamed ingestion, SQLite session DB, correlation endpoints
+- Gateway Dispatching Layer: `IConversationDispatcher` + `DefaultConversationDispatcher` adapter, contract records, DI registration
+- OpenClaw Memory Wave 1 remediation (delegated from Bender rejection): pure delegation fix, dead code removal
 
 ## Learnings
 
-- 2026-04-12: Added ExistenceQuery-backed dual lookup (AgentId owner OR participant ID match) across in-memory, file, and sqlite session stores with shared filtering for time range, type, and limit.
-- 2026-04-12: Extracted SessionStoreBase to centralize ListAsync, ListByChannelAsync, and GetExistenceAsync filtering logic while keeping store-specific persistence/locking behavior in derived stores.
-- 2026-04-12: Added SessionStoreBase.ListAsync(AgentId?, SessionStatus?, CancellationToken) overload to enforce consistent status filtering for contract tests without changing ISessionStore surface.
-- **Wave 4 Completion:** DDD refactoring Wave 4 delivered. ExistenceQuery + dual-lookup implementation across 3 stores complete. All 794 gateway tests passing. Build green (0 errors, 0 warnings). Decisions merged to decisions.md. Architecture docs updated by Kif for Waves 2-3 changes.
-- 2026-04-14: Built standalone tools/BotNexus.Probe (independent .sln) with Minimal API host, streamed Serilog/JSONL ingestion, optional OTLP JSON receiver, Gateway REST+SignalR clients, and correlation endpoint /api/correlate/{id}.
-- 2026-04-14: Added Probe dual-mode entrypoint (serve + CLI) with command handlers for logs/sessions/session/correlate/files/gateway/traces/trace, JSON/text output modes, and explicit no-results exit code semantics for automation.
-- 2026-04-14: Added read-only SQLite session DB ingestion to BotNexus.Probe with shared-connection SessionDbReader (busy retry + query-only pragmas), API/CLI preference for sqlite with transparent JSONL fallback, and session counts/search/history endpoints over sqlite metadata.
-- 2026-04-14: Updated Probe sessions web UI to consume rich sqlite payloads (agent/channel/type/status filters, metadata-rich detail cards, tool/compaction history badges) while remaining compatible with legacy JSONL response shapes.
-- 2026-04-15 (Wave 2): CLI command structure uses System.CommandLine with DI-injected command classes. Singleton registration is appropriate for stateless command classes and for services that maintain shared state (e.g., `IGatewayProcessManager` with PID file tracking). When `UseShellExecute = true` (required for detached Windows processes), environment variables cannot be set on `ProcessStartInfo` — use command-line arguments instead (e.g., `--urls`, `--environment`).
-- 2026-04-15: System.CommandLine `Command` objects cannot be added to two parents — call `.Build()` twice on the command builder to get two separate instances when registering in multiple command trees (e.g., `gateway` at top-level and as `serve gateway` subcommand).
-- 2026-04-20 (Wave 2): `InternalChannelAdapter` must implement `IStreamEventChannelAdapter` to preserve full `AgentStreamEvent` delivery through `GatewayHost`; without it, non-delta lifecycle events are dropped and only delta fallback can be used.
-- 2026-05-07: Phase 2 conversation extraction should introduce a dedicated conversation dispatch layer that owns inbound resolution/session binding and returns a dispatch result, leaving GatewayHost/GatewayHub as transport relays only.
-- 2026-05-07: Implemented `BotNexus.Gateway.Dispatching` with `IConversationDispatcher` + contract records and a `DefaultConversationDispatcher` adapter over `IConversationRouter`/`IConversationStore`, and registered it in DI as the handoff seam for transport rewiring.
-
-
-## 2026-04-15 — Extension-Contributed Commands Implementation, Wave 1 (Platform Dev)
-
-**Status:** ✅ Complete  
-**Build:** Green (0 errors)
-
-**Context:** Wave 1 implementation of Extension-Contributed Commands feature. Created core contracts and command registry enabling extensions to register user-facing slash commands.
-
-**Deliverables:**
-
-### Contracts (BotNexus.Gateway.Contracts)
-- ICommandContributor interface with ExecuteAsync(CommandExecutionContext) method
-- CommandDescriptor record (name, description, category, clientSideOnly, subCommands) — serializable for API
-- CommandResult record (title, body, isError, metadata)
-- CommandExecutionContext record (input, agentId, sessionId, cancellationToken)
-
-### Gateway Commands
-- CommandRegistry class aggregating all ICommandContributor instances from DI
-- Dispatch logic: input → command name → contributor → result
-- Collision detection and error handling
-- Integration with AssemblyLoadContextExtensionLoader via DiscoverableServiceContracts
-- BuiltInCommandContributor for platform commands (/help, /status, /agents, /new)
-
-### DI Integration
-- Registration in Program.cs ServiceCollection
-- Singleton registration for CommandRegistry
-- Built-in contributor registered as ICommandContributor instance
-
-**Build Status:**
-✅ All assemblies compile without errors or warnings
-✅ 10 unit tests passing (registration, dispatch, parsing, duplicates, error handling)
-
-**Next Wave:** Wave 2 — WebUI command palette integration
-
-## 2026-04-15 — Gateway Lifecycle Management, Wave 2 (Platform Dev)
-
-**Status:** ✅ Complete  
-**Commit:** 62030e7b  
-**Build:** Green (0 errors, 0 warnings)  
-**Tests:** ✅ All 956 gateway tests passing
-
-**Context:** Wave 2 implementation of gateway lifecycle management. Integrated Bender's Wave 1 abstractions (`IGatewayProcessManager`, `IHealthChecker`) into the CLI command structure.
-
-**Deliverables:**
-
-### New Command Surface
-- Created `GatewayCommand` class with full lifecycle management:
-  - `botnexus gateway start` — detached mode (new console window), default
-  - `botnexus gateway start --attached` — foreground mode for debugging
-  - `botnexus gateway stop` — kills process, cleans PID file
-  - `botnexus gateway status` — displays state, PID, uptime with ✓/● symbols
-  - `botnexus gateway restart` — stop + start sequence
-
-### DI Integration (Program.cs)
-- Registered `IHealthChecker` → `HttpHealthChecker` (singleton, HttpClient reuse)
-- Registered `IGatewayProcessManager` → `GatewayProcessManager` (singleton, PID state consistency)
-- Registered `GatewayCommand` (singleton)
-- Added logging configuration with console output at Warning level
-
-### Refactoring
-- Refactored `ServeCommand` to delegate gateway subcommand to `GatewayCommand`
-- Exposed helper methods as public static: `DeployExtensions`, `IsPortAvailable`, `WaitForRestartOrQuitAsync`
-- Fixed unused variable warning in `GatewayProcessManager`
-
-### Technical Decisions
-- Used command-line arguments (`--urls`, `--environment`) instead of environment variables because `UseShellExecute = true` (required for Windows detached process) doesn't support `ProcessStartInfo.Environment`
-- Preserved backward compatibility: existing `serve` command continues to work
-- Attached mode delegates to the original foreground behavior from `ServeCommand`
-
-**Build Status:**
-✅ Solution builds with 0 errors, 0 warnings  
-✅ All unit tests passing (956 gateway tests, full test suite green)
-
-**Next Steps:** Integration testing, user acceptance testing of CLI surface
-- 2026-05-04: Gateway now resolves extension-contributed runtime tools through `IAgentToolContributor` (`src/gateway/BotNexus.Gateway.Contracts/Agents/IAgentToolContributor.cs`) discovered by `AssemblyLoadContextExtensionLoader`, removing compile-time Gateway references to Skills/MCP/McpInvoke/WebTools.
-- 2026-05-04: `InProcessIsolationStrategy` now aggregates extension tool contributions via DI and disposes contributor-provided session resources through `InProcessAgentHandle`, replacing hardcoded extension tool construction paths.
-- 2026-05-04: Skills hook registration moved fully to extension runtime loading (hook handlers discovered from extension assemblies), so `GatewayServiceCollectionExtensions` only wires core hooks and policy handlers.
-
-## 2026-05-04 — Architecture Review & Test Audit Results
-
-**From:** Leela + Hermes  
-**Re:** Your gateway decoupling implementation  
-**Status:** ✅ Implemented, audit in progress
-
-**Leela's Architecture Findings (related to your work):**
-- Your implementation addresses HIGH-priority issue: Gateway Hardwires Extension Projects
-- 7 additional architectural issues identified (2 HIGH, 3 MEDIUM, 2 LOW) for future phases
-- Next priority: Create Agent.Abstractions leaf package (HIGH) + Move Copilot OAuth (MEDIUM)
-- Full analysis in decisions.md
-
-**Hermes's Test Audit:**
-- 4 pre-existing test failures (pre-decoupling, not new regressions)
-- 3 tests require review (mocking, registration flow, extension loading)
-- 4 new tests needed to cover new pattern:
-  1. IAgentToolContributor discovery
-  2. AgentToolContribution context propagation
-  3. Lifecycle cleanup (resources disposed)
-  4. Runtime tool append
-
-**Action:** Fix 4 pre-existing failures before merge. Hermes or designee will write the 4 new tests.
-
----
-
-
-### 2026-05-07 — Phase 2 Design: Conversation Routing Layer Extraction
-
-- **Task:** Design Phase 2 architectural extraction (non-blocking after Phase 1 merge)
-- **Scope:** New layer BotNexus.Gateway.Dispatching to own end-to-end message dispatch orchestration and resolve conversation/session routing deterministically
-- **Key Contracts:**
-  - IConversationDispatcher: orchestrator interface (DispatchAsync returns DispatchResult)
-  - DispatchResult: resolved session/conversation + metadata (binding, thread, display prefix, newness flags)
-  - InboundMessageContext: full context for inbound dispatch (agent, channel, payload, conversation/session hints)
-  - ChannelSource: channel identity + thread/binding metadata
-  - ConversationSessionResolution: resolved conversation/session + newness flags
-- **Dependency Graph:** Domain → Contracts → Conversations → Dispatching → Gateway/Extensions (no circular dependencies)
-- **Migration Sequence:** 6 steps (contract-first, safe, non-conflicting with Phase 1)
-- **Risk Matrix:** 5 primary risks identified + Hermes test coverage mitigations documented
-- **Status:** Design complete; implementation scheduled for Wave 3 after Phase 1 merge
-## 2026-05-07 — OpenClaw Memory Wave 1 Remediation (Core Implementation)
-
-**Role:** Core seams mapping and remediation lead  
-**Branch:** feature/openclaw-memory-alignment  
-**Status:** ✅ COMPLETE — Approved by Leela, validated by Hermes  
-
-**Assignment:** Remediate two blocking issues from Bender's initial implementation after Leela rejection (per strict lockout protocol).
-
-**Remediation Work (Commit 58d03d13):**
-
-**B1 Resolution: MemorySaveTool delegates to IAgentWorkspaceManager**
-- Added memoryPathOverride parameter to SaveMemoryAsync overload signatures
-- Expanded FileAgentWorkspaceManager to handle override-aware path resolution via ResolveMemoryRoot
-- Collapsed MemorySaveTool.ExecuteAsync to ~15 lines: pure delegation to workspace manager
-- Eliminated all filesystem operations from MemorySaveTool (File.Append, Directory.Create, Path.* calls)
-- All path resolution, traversal validation, file writing logic now exclusively in FileAgentWorkspaceManager
-- Added XML doc comments to all three SaveMemoryAsync overloads explaining legacy/new/override semantics
-
-**B2 Resolution: Dead daily-note loading path (Option A)**
-- Removed DailyMemoryNote record from Contracts (zero references confirmed)
-- Removed AgentWorkspace.RecentMemoryNotes property (zero references confirmed)
-- Removed FileAgentWorkspaceManager.LoadRecentDailyNotesAsync dead code (zero references confirmed)
-- Single canonical daily-note loading: WorkspaceContextBuilder.LoadRecentDailyMemoryFilesAsync (override-aware via ResolveMemoryRoot)
-- Added test coverage for override-path daily memory loading in WorkspaceContextBuilderTests
-
-**Additional Quality Fixes:**
-- Path safety: EnsureWithinRoot validates both override and filePath against workspace boundaries
-- Wave 1 scope: No premature abstractions or future-wave features
-- Public API: All new SaveMemoryAsync overloads documented with contract semantics
-- Dependency boundaries: Memory (MemorySaveTool) depends on Contracts interface only, not implementation
-
-**Leela Re-Review:** ✅ APPROVED (both blocking issues cleanly resolved)
-
-**Hermes Validation:** ✅ APPROVE (no change-related test failures in Wave 1 scope)
-
-**Outcomes:**
-- Wave 1 memory alignment ready for merge
-- Carried three non-blocking conditions to Wave 2 (C1: DateTime consistency, C2: ContextFileOrdering tests, C3: 4000-char budget)
-
-## 2026-05-07T17:10Z — PR #184 Merge Sync (fix/24-tool-timeouts)
-
-- Created dedicated worktree at `Q:\repos\botnexus-pr-184`, fetched `origin/main` + `origin/fix/24-tool-timeouts`, and merged main into the PR branch.
-- Resolved conflicts by preserving mainline archive content in `.squad/decisions-archive.md` and retaining both memory-tool guard tests and tool-timeout coverage in `InProcessIsolationStrategyTests`.
-- Validation: `dotnet build BotNexus.slnx --nologo --tl:off` succeeded in the PR worktree.
-## 2026-05-07T19:34-07:00 — PR #184 readiness refresh (fix/24-tool-timeouts)
-
-- Synced fix/24-tool-timeouts with latest origin/main in dedicated worktree Q:\repos\botnexus-pr-184.
-- Validation in worktree: dotnet build BotNexus.slnx --nologo --tl:off passed.
-- Full dotnet test BotNexus.slnx --nologo --tl:off failed with baseline failures that also reproduce on main in current environment; no PR-specific fix committed in this refresh.
-- gh pr checks 184 currently reports no checks on head branch.
-
-## 2026-05-08T10:22-07:00 — PR #184 readiness refresh 2 (fix/24-tool-timeouts)
-
-- Synced fix/24-tool-timeouts with latest origin/main in dedicated worktree Q:\repos\botnexus-pr-184.
-- Full validation in worktree: dotnet build BotNexus.slnx --nologo --tl:off ✅, dotnet test BotNexus.slnx --nologo --tl:off ✅.
-- gh pr checks 184 reviewed after push to confirm current check state.
-
-## 2026-05-08T10:59-07:00 — PR #184 conflict refresh after PR #181 merge
-
-- Reused dedicated worktree `Q:\repos\botnexus-pr-184`, fetched `origin/main` and `origin/fix/24-tool-timeouts`, and merged latest main into the PR branch.
-- Merge completed without manual conflict edits; retained merged updates in CLI timeout handling and related gateway/session test coverage.
-- Full validation in worktree passed: `dotnet build BotNexus.slnx --nologo --tl:off` and `dotnet test BotNexus.slnx --nologo --tl:off`.
+- ExistenceQuery-backed dual lookup (AgentId owner OR participant ID) across all session stores with shared filtering.
+- SessionStoreBase centralizes ListAsync, ListByChannelAsync, and GetExistenceAsync filtering logic.
+- System.CommandLine singleton registration is appropriate for stateless command classes.
+- System.CommandLine `Command` objects cannot be added to two parents — call `.Build()` twice for dual-tree registration.
+- Phase 2 conversation dispatch: dedicated layer owns inbound resolution/session binding, returns DispatchResult; Hub/Host become transport relays.
+- `IConversationDispatcher` + `DefaultConversationDispatcher` registered in DI as the handoff seam for transport rewiring.
+- CLI cross-platform: TCP port pre-checks, SkipBuild/SkipTests flags for reliability.
