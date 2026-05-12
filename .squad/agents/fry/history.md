@@ -32,3 +32,6 @@ Virtual cron conversation projections (`cron-session:{sessionId}`) should be cle
 
 ### 2026-05-11 — PortalLoadService Must Not Abort on Stale Cron History 404
 When loading initial history during portal startup, virtual cron-session projections must use `GetSessionHistoryAsync` (session endpoint), not `GetHistoryAsync` (conversation endpoint). If a stale cron projection returns 404, it must be removed and the service must retry with the next conversation — never allow a single 404 to abort `InitializeAsync` for all agents/conversations. The fix uses a `while` loop with fallback and catches `HttpRequestException` with 404 status specifically.
+
+### 2026-07-29 — JS Interop Must Guard Against Non-DOM ElementReference
+Blazor's `ElementReference` for conditionally-rendered elements (e.g., `@if (!IsReadOnly)`) serialises as a truthy non-element object when the element is absent. JS helpers receiving ElementReferences must check `typeof element.addEventListener === 'function'` (not just `!element`) before using DOM APIs. The Blazor side should also skip the JS call entirely when the element is known to be absent, and reset any binding flags when the element may have been destroyed and recreated (e.g., read-only → interactive transitions).
