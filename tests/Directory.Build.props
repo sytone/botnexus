@@ -6,7 +6,6 @@
          This sets BOTNEXUS_HOME to a temp path so tests never touch ~/.botnexus -->
     <RunSettingsFilePath>$(MSBuildThisFileDirectory)test.runsettings</RunSettingsFilePath>
     <IsPackable>false</IsPackable>
-    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
   </PropertyGroup>
 
   <ItemGroup>
