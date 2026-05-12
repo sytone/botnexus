@@ -95,79 +95,81 @@
                                 }
                             </div>
 
-                            @if (activeAgent.IsLoadingConversations)
-                            {
-                                <div class="conversation-list-loading">Loading conversations…</div>
-                            }
-                            else if (activeAgent.Conversations.Count == 0)
-                            {
-                                <div class="conversation-list-empty">No conversations yet.</div>
-                            }
-                            else
-                            {
-                                @foreach (var conversation in activeAgent.Conversations.Values
-                                    .Where(IsUserFacingConversation)
-                                    .OrderByDescending(c => c.IsDefault)
-                                    .ThenByDescending(c => c.UpdatedAt))
+                            <div class="conversation-list-scroll">
+                                @if (activeAgent.IsLoadingConversations)
                                 {
-                                    <div class="conversation-list-item">
-                                        <button class="conversation-list-item-btn @(conversation.ConversationId == activeAgent.ActiveConversationId ? "active" : "")"
-                                                @onclick="() => SelectConversationAsync(activeAgent.AgentId, conversation.ConversationId)">
-                                            <span class="conversation-list-item-main">
-                                                <span class="conversation-list-item-title">@conversation.Title</span>
+                                    <div class="conversation-list-loading">Loading conversations…</div>
+                                }
+                                else if (activeAgent.Conversations.Count == 0)
+                                {
+                                    <div class="conversation-list-empty">No conversations yet.</div>
+                                }
+                                else
+                                {
+                                    @foreach (var conversation in activeAgent.Conversations.Values
+                                        .Where(IsUserFacingConversation)
+                                        .OrderByDescending(c => c.IsDefault)
+                                        .ThenByDescending(c => c.UpdatedAt))
+                                    {
+                                        <div class="conversation-list-item">
+                                            <button class="conversation-list-item-btn @(conversation.ConversationId == activeAgent.ActiveConversationId ? "active" : "")"
+                                                    @onclick="() => SelectConversationAsync(activeAgent.AgentId, conversation.ConversationId)">
+                                                <span class="conversation-list-item-main">
+                                                    <span class="conversation-list-item-title">@conversation.Title</span>
 
-                                                @if (conversation.IsDefault)
-                                                {
-                                                    <span class="conversation-default-badge">Default</span>
-                                                }
-                                                @if (GetVirtualConversationBadge(conversation) is { } badge)
-                                                {
-                                                    <span class="conversation-default-badge">@badge</span>
-                                                }
-                                            </span>
-
-                                            <span class="conversation-list-item-meta">
-                                                @if (conversation.UnreadCount > 0)
-                                                {
-                                                    <span class="conversation-unread-dot"
-                                                          aria-label="Unread messages"></span>
-                                                }
-
-                                                <span class="conversation-updated-at">
-                                                    @FormatConversationTimestamp(conversation.UpdatedAt)
+                                                    @if (conversation.IsDefault)
+                                                    {
+                                                        <span class="conversation-default-badge">Default</span>
+                                                    }
+                                                    @if (GetVirtualConversationBadge(conversation) is { } badge)
+                                                    {
+                                                        <span class="conversation-default-badge">@badge</span>
+                                                    }
                                                 </span>
-                                            </span>
-                                        </button>
-                                        @if (!conversation.IsDefault && !activeAgent.IsReadOnly)
-                                        {
-                                            <button class="conversation-archive-btn"
-                                                    title="@(conversation.IsVirtualSession ? "Close conversation — reopens on next trigger" : "Archive conversation")"
-                                                    @onclick:stopPropagation="true"
-                                                    @onclick="() => ArchiveConversationAsync(activeAgent.AgentId, conversation.ConversationId, conversation.Title, conversation.IsVirtualSession)">
-                                                @(conversation.IsVirtualSession ? "✕" : "🗑️")
+
+                                                <span class="conversation-list-item-meta">
+                                                    @if (conversation.UnreadCount > 0)
+                                                    {
+                                                        <span class="conversation-unread-dot"
+                                                              aria-label="Unread messages"></span>
+                                                    }
+
+                                                    <span class="conversation-updated-at">
+                                                        @FormatConversationTimestamp(conversation.UpdatedAt)
+                                                    </span>
+                                                </span>
                                             </button>
+                                            @if (!conversation.IsDefault && !activeAgent.IsReadOnly)
+                                            {
+                                                <button class="conversation-archive-btn"
+                                                        title="@(conversation.IsVirtualSession ? "Close conversation — reopens on next trigger" : "Archive conversation")"
+                                                        @onclick:stopPropagation="true"
+                                                        @onclick="() => ArchiveConversationAsync(activeAgent.AgentId, conversation.ConversationId, conversation.Title, conversation.IsVirtualSession)">
+                                                    @(conversation.IsVirtualSession ? "✕" : "🗑️")
+                                                </button>
+                                            }
+                                        </div>
+                                    }
+                                }
+
+                                @* Sub-agent sessions *@
+                                @foreach (var sub in activeAgent.SubAgents.Values
+                                    .Where(s => s.Status is "Running" or "Completed"))
+                                {
+                                    <div class="agent-session-item @(IsSubAgentActive(sub) ? "active" : "")"
+                                          @onclick="() => ViewSubAgentAsync(sub)"
+                                          style="cursor: pointer;"
+                                          title="@($"{sub.Task} (read-only)")">
+                                        <span>@SubAgentIcon(sub.Status)</span>
+                                        <span>@(sub.Name ?? sub.SubAgentId[..Math.Min(8, sub.SubAgentId.Length)])</span>
+                                        <span class="conversation-default-badge">Read-only</span>
+                                        @if (sub.Archetype is not null)
+                                        {
+                                            <span class="sub-agent-archetype">@sub.Archetype</span>
                                         }
                                     </div>
                                 }
-                            }
-
-                            @* Sub-agent sessions *@
-                            @foreach (var sub in activeAgent.SubAgents.Values
-                                .Where(s => s.Status is "Running" or "Completed"))
-                            {
-                                <div class="agent-session-item @(IsSubAgentActive(sub) ? "active" : "")"
-                                      @onclick="() => ViewSubAgentAsync(sub)"
-                                      style="cursor: pointer;"
-                                      title="@($"{sub.Task} (read-only)")">
-                                    <span>@SubAgentIcon(sub.Status)</span>
-                                    <span>@(sub.Name ?? sub.SubAgentId[..Math.Min(8, sub.SubAgentId.Length)])</span>
-                                    <span class="conversation-default-badge">Read-only</span>
-                                    @if (sub.Archetype is not null)
-                                    {
-                                        <span class="sub-agent-archetype">@sub.Archetype</span>
-                                    }
-                                </div>
-                            }
+                            </div>
                         </div>
                     }
                 }
