@@ -148,7 +148,7 @@ public sealed class LocationDto
     /// <summary>The location type (filesystem, api, mcp-server, database, remote-node).</summary>
     public string Type { get; set; } = string.Empty;
 
-    /// <summary>The path or endpoint value.</summary>
+    /// <summary>The path or endpoint value (redacted placeholder for database connection strings).</summary>
     public string? PathOrEndpoint { get; set; }
 
     /// <summary>Optional description.</summary>
@@ -159,6 +159,9 @@ public sealed class LocationDto
 
     /// <summary>Whether this location is user-defined in config.</summary>
     public bool IsUserDefined { get; set; }
+
+    /// <summary>Whether a secret value exists but is intentionally redacted from the response.</summary>
+    public bool HasConfiguredSecret { get; set; }
 }
 
 /// <summary>Request payload for creating or updating a location.</summary>

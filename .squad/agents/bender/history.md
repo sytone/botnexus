@@ -40,3 +40,4 @@
 - Old cron sidebar IDs (`cron-session:{sessionId}`) can outlive conversation links; cleanup should still return 204, sealing any existing session while leaving history intact.
 - `GET /api/conversations/{id}/history` must treat `cron-session:{sessionId}` as a virtual projection: resolve directly from session history and return empty 200 when the session is already gone so portal startup cannot fail on stale cron rows.
 - During mainline merges, keep virtual cron helpers (`GetVirtualCronHistoryAsync`, tail-based paging) when reconciling `ConversationsController` to avoid reintroducing stale-cron 404 regressions.
+- 2026-05-12: Locations API now treats database location values as secrets: all responses return '[connection string configured]' with HasConfiguredSecret=true, while create/update still persist request connection strings and blank database updates preserve existing secrets.

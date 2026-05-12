@@ -151,6 +151,136 @@ public sealed class LocationsApiIntegrationTests
         });
     }
 
+    [Fact]
+    public async Task LocationsApi_DatabaseLocations_RedactConnectionStringsAcrossResponses()
+    {
+        using var fixture = new LocationsFixture();
+        fixture.WriteDefaultConfig("""{"gateway":{"listenUrl":"http://localhost:5005"}}""");
+        const string originalSecret = "Server=db.internal;Database=botnexus;User Id=svc;Password=S3cr3t!;";
+        const string updatedSecret = "Server=db.internal;Database=botnexus;User Id=svc;Password=An0ther!;";
+
+        await fixture.WithEnvironmentAsync(async () =>
+        {
+            await using var factory = CreateTestFactory();
+            using var client = factory.CreateClient();
+
+            var createResponse = await client.PostAsJsonAsync("/api/locations", new
+            {
+                name = "db-primary",
+                type = "database",
+                value = originalSecret,
+                description = "Primary database"
+            });
+
+            createResponse.StatusCode.ShouldBe(HttpStatusCode.Created);
+            var createdBody = await createResponse.Content.ReadFromJsonAsync<JsonElement>();
+            createdBody.GetProperty("pathOrEndpoint").GetString().ShouldBe("(redacted)");
+            createdBody.GetProperty("hasConfiguredSecret").GetBoolean().ShouldBeTrue();
+            createdBody.GetRawText().ShouldNotContain(originalSecret);
+
+            var getBody = await client.GetFromJsonAsync<JsonElement>("/api/locations/db-primary");
+            getBody.GetProperty("pathOrEndpoint").GetString().ShouldBe("(redacted)");
+            getBody.GetProperty("hasConfiguredSecret").GetBoolean().ShouldBeTrue();
+            getBody.GetRawText().ShouldNotContain(originalSecret);
+
+            var listBody = await client.GetFromJsonAsync<JsonElement>("/api/locations");
+            var listed = listBody.EnumerateArray().Single(loc =>
+                string.Equals(loc.GetProperty("name").GetString(), "db-primary", StringComparison.Ordinal));
+            listed.GetProperty("pathOrEndpoint").GetString().ShouldBe("(redacted)");
+            listed.GetProperty("hasConfiguredSecret").GetBoolean().ShouldBeTrue();
+            listed.GetRawText().ShouldNotContain(originalSecret);
+
+            var updateWithoutSecret = await client.PutAsJsonAsync("/api/locations/db-primary", new
+            {
+                name = "db-primary",
+                type = "database",
+                value = "",
+                description = "Updated description"
+            });
+            updateWithoutSecret.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+            var configAfterBlankUpdate = fixture.ReadConfigJson();
+            configAfterBlankUpdate["gateway"]?["locations"]?["db-primary"]?["connectionString"]?.GetValue<string>()
+                .ShouldBe(originalSecret);
+
+            var updateWithSecret = await client.PutAsJsonAsync("/api/locations/db-primary", new
+            {
+                name = "db-primary",
+                type = "database",
+                value = updatedSecret,
+                description = "Updated description"
+            });
+            updateWithSecret.StatusCode.ShouldBe(HttpStatusCode.OK);
+            var updateBody = await updateWithSecret.Content.ReadFromJsonAsync<JsonElement>();
+            updateBody.GetProperty("pathOrEndpoint").GetString().ShouldBe("(redacted)");
+            updateBody.GetRawText().ShouldNotContain(updatedSecret);
+
+            var configAfterUpdate = fixture.ReadConfigJson();
+            configAfterUpdate["gateway"]?["locations"]?["db-primary"]?["connectionString"]?.GetValue<string>()
+                .ShouldBe(updatedSecret);
+        });
+    }
+
+
+    [Fact]
+    public async Task LocationsApi_DatabaseLocationsPersistSecrets_ButNeverEchoConnectionStrings()
+    {
+        const string secret = "Server=db.internal;Database=BotNexus;User Id=botnexus;Password=SyntheticSecret123!;";
+        const string updatedSecret = "Server=db.internal;Database=BotNexus;User Id=botnexus;Password=SyntheticSecret456!;";
+
+        using var fixture = new LocationsFixture();
+        fixture.WriteDefaultConfig("""{"gateway":{"listenUrl":"http://localhost:5005"}}""");
+
+        await fixture.WithEnvironmentAsync(async () =>
+        {
+            await using var factory = CreateTestFactory();
+            using var client = factory.CreateClient();
+
+            var createResponse = await client.PostAsJsonAsync("/api/locations", new
+            {
+                name = "db-main",
+                type = "database",
+                value = secret,
+                description = "Primary DB"
+            });
+
+            createResponse.StatusCode.ShouldBe(HttpStatusCode.Created);
+            var createBody = await createResponse.Content.ReadFromJsonAsync<JsonElement>();
+            createBody.GetProperty("pathOrEndpoint").GetString().ShouldBe("(redacted)");
+            createBody.GetProperty("hasConfiguredSecret").GetBoolean().ShouldBeTrue();
+            createBody.GetProperty("pathOrEndpoint").GetString().ShouldNotContain("SyntheticSecret123!");
+
+            var getBody = await client.GetFromJsonAsync<JsonElement>("/api/locations/db-main");
+            getBody.GetProperty("pathOrEndpoint").GetString().ShouldBe("(redacted)");
+            getBody.GetProperty("hasConfiguredSecret").GetBoolean().ShouldBeTrue();
+            getBody.GetProperty("pathOrEndpoint").GetString().ShouldNotContain("SyntheticSecret123!");
+
+            var listBody = await client.GetFromJsonAsync<JsonElement>("/api/locations");
+            var listedDb = listBody.EnumerateArray().Single(loc => loc.GetProperty("name").GetString() == "db-main");
+            listedDb.GetProperty("pathOrEndpoint").GetString().ShouldBe("(redacted)");
+            listedDb.GetProperty("hasConfiguredSecret").GetBoolean().ShouldBeTrue();
+            listedDb.GetProperty("pathOrEndpoint").GetString().ShouldNotContain("SyntheticSecret123!");
+
+            var updateResponse = await client.PutAsJsonAsync("/api/locations/db-main", new
+            {
+                name = "db-main",
+                type = "database",
+                value = updatedSecret,
+                description = "Primary DB v2"
+            });
+
+            updateResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+            var updateBody = await updateResponse.Content.ReadFromJsonAsync<JsonElement>();
+            updateBody.GetProperty("pathOrEndpoint").GetString().ShouldBe("(redacted)");
+            updateBody.GetProperty("hasConfiguredSecret").GetBoolean().ShouldBeTrue();
+            updateBody.GetProperty("pathOrEndpoint").GetString().ShouldNotContain("SyntheticSecret456!");
+
+            var configAfterUpdate = fixture.ReadConfigJson();
+            configAfterUpdate["gateway"]?["locations"]?["db-main"]?["connectionString"]?.GetValue<string>()
+                .ShouldBe(updatedSecret);
+        });
+    }
+
     private static WebApplicationFactory<Program> CreateTestFactory()
         => new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
@@ -226,3 +356,4 @@ public sealed class LocationsApiIntegrationTests
         }
     }
 }
+

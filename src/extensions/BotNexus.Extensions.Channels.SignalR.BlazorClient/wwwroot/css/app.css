@@ -2132,6 +2132,11 @@ details[open] > .thinking-summary::before {
     gap: 0.5rem;
 }
 
+.pcfg-path-value-database {
+    color: var(--error);
+    font-weight: 600;
+}
+
 /* Validation dialog */
 .validation-overlay {
     position: fixed;

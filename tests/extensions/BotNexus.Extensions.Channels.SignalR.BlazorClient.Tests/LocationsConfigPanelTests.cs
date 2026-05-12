@@ -59,11 +59,44 @@ public sealed class LocationsConfigPanelTests : IDisposable
         {
             cut.Markup.ShouldContain("workspace");
             cut.Markup.ShouldContain("gateway-api");
+            cut.Markup.ShouldContain("Q:\\repos\\workspace");
+            cut.Markup.ShouldContain("https://gateway.test");
             cut.Markup.ShouldContain("system");
         });
 
         cut.FindAll("button[title='Edit']").Count.ShouldBe(1);
         cut.FindAll("button[title='Delete']").Count.ShouldBe(1);
+    }
+
+
+    [Fact]
+    public void Database_locations_show_redacted_placeholder_and_never_render_connection_string()
+    {
+        const string syntheticSecret = "Server=db.internal;Database=BotNexus;User Id=botnexus;Password=SyntheticUiSecret123!;";
+        var handler = new FakeLocationsApiHandler(
+        [
+            new LocationDto
+            {
+                Name = "db-main",
+                Type = "database",
+                PathOrEndpoint = "(redacted)",
+                Description = "Primary DB",
+                Status = "healthy",
+                IsUserDefined = true,
+                HasConfiguredSecret = true
+            }
+        ]);
+        ConfigureServices(handler);
+
+        var cut = _ctx.Render<LocationsConfigPanel>();
+
+        cut.WaitForAssertion(() =>
+        {
+            cut.Markup.ShouldContain("db-main");
+            cut.Markup.ShouldContain("(redacted)");
+            cut.Markup.ShouldNotContain(syntheticSecret);
+            cut.Find(".pcfg-path-value-database").TextContent.ShouldContain("(redacted)");
+        });
     }
 
     [Fact]
@@ -111,6 +144,33 @@ public sealed class LocationsConfigPanelTests : IDisposable
 
         cut.WaitForAssertion(() => cut.Markup.ShouldContain("workspace-updated"));
         handler.Calls.Any(call => call.Method == HttpMethod.Put && call.Path == "/api/locations/workspace").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Edit_database_location_allows_blank_value_to_preserve_existing_secret()
+    {
+        var handler = new FakeLocationsApiHandler(
+        [
+            new LocationDto
+            {
+                Name = "db-primary",
+                Type = "database",
+                PathOrEndpoint = "(redacted)",
+                IsUserDefined = true,
+                HasConfiguredSecret = true
+            }
+        ]);
+        ConfigureServices(handler);
+        var cut = _ctx.Render<LocationsConfigPanel>();
+
+        cut.WaitForAssertion(() => cut.Markup.ShouldContain("db-primary"));
+        cut.Find("button[title='Edit']").Click();
+        cut.Find("input[placeholder='Optional description']").Change("Database config");
+        cut.Find(".pcfg-location-form .toolbar-btn.primary").Click();
+
+        cut.WaitForAssertion(() => cut.Markup.ShouldContain("Database config"));
+        var updateCall = handler.Calls.Single(call => call.Method == HttpMethod.Put && call.Path == "/api/locations/db-primary");
+        updateCall.Body.ShouldContain("\"value\":\"\"");
     }
 
     [Fact]
@@ -323,7 +383,8 @@ public sealed class LocationsConfigPanelTests : IDisposable
             PathOrEndpoint = dto.PathOrEndpoint,
             Description = dto.Description,
             Status = dto.Status,
-            IsUserDefined = dto.IsUserDefined
+            IsUserDefined = dto.IsUserDefined,
+            HasConfiguredSecret = dto.HasConfiguredSecret
         };
 
         private static readonly JsonSerializerOptions SerializerOptions = new()
@@ -333,3 +394,6 @@ public sealed class LocationsConfigPanelTests : IDisposable
         };
     }
 }
+
+
+

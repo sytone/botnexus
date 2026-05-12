@@ -208,6 +208,7 @@ public sealed class PlatformConfigService
         public string? Description { get; init; }
         public string Status { get; init; } = "unknown";
         public bool IsUserDefined { get; init; }
+        public bool HasConfiguredSecret { get; init; }
     }
 
     public sealed record UpsertLocationRequest

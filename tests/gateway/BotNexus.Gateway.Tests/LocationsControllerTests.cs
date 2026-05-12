@@ -124,6 +124,139 @@ public sealed class LocationsControllerTests : IDisposable
         badRequest.Value!.ToString().ShouldContain("Location name in payload must match route name.");
     }
 
+    [Fact]
+    public async Task DatabaseLocationResponses_RedactConnectionString_ButPersistValue()
+    {
+        var configPath = WriteConfig("""{"gateway":{"locations":{}}}""");
+        var controller = CreateController(configPath);
+        const string secret = "Host=db.internal;User Id=botnexus;Password=S3cr3t!;";
+
+        var create = await controller.Create(new UpsertLocationRequest
+        {
+            Name = "db-primary",
+            Type = "database",
+            Value = secret,
+            Description = "Main database"
+        }, CancellationToken.None);
+
+        var created = create.Result.ShouldBeOfType<CreatedAtActionResult>();
+        var createdResponse = created.Value.ShouldBeOfType<LocationResponse>();
+        createdResponse.PathOrEndpoint.ShouldBe("(redacted)");
+        createdResponse.HasConfiguredSecret.ShouldBeTrue();
+        createdResponse.PathOrEndpoint.ShouldNotBe(secret);
+
+        var get = await controller.Get("db-primary", CancellationToken.None);
+        var getResponse = get.Result.ShouldBeOfType<OkObjectResult>().Value.ShouldBeOfType<LocationResponse>();
+        getResponse.PathOrEndpoint.ShouldBe("(redacted)");
+        getResponse.HasConfiguredSecret.ShouldBeTrue();
+
+        var list = await controller.List(CancellationToken.None);
+        var listResponses = list.Result.ShouldBeOfType<OkObjectResult>().Value.ShouldBeAssignableTo<IReadOnlyList<LocationResponse>>();
+        var listedDb = listResponses.Single(location => location.Name == "db-primary");
+        listedDb.PathOrEndpoint.ShouldBe("(redacted)");
+        listedDb.HasConfiguredSecret.ShouldBeTrue();
+
+        var persisted = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
+        persisted.Gateway!.Locations!["db-primary"].ConnectionString.ShouldBe(secret);
+    }
+
+    [Fact]
+    public async Task Update_DatabaseLocation_WithBlankValue_PreservesExistingConnectionString()
+    {
+        const string originalSecret = "Server=tcp:prod.example;Database=BotNexus;User Id=bot;Password=S3cr3t!;";
+        var configPath = WriteConfig($$"""
+            {
+              "gateway": {
+                "locations": {
+                  "db-primary": {
+                    "type": "database",
+                    "connectionString": "{{originalSecret}}",
+                    "description": "Initial"
+                  }
+                }
+              }
+            }
+            """);
+        var controller = CreateController(configPath);
+
+        var update = await controller.Update("db-primary", new UpsertLocationRequest
+        {
+            Name = "db-primary",
+            Type = "database",
+            Value = "",
+            Description = "Updated description"
+        }, CancellationToken.None);
+
+        var ok = update.Result.ShouldBeOfType<OkObjectResult>();
+        var response = ok.Value.ShouldBeOfType<LocationResponse>();
+        response.PathOrEndpoint.ShouldBe("(redacted)");
+        response.HasConfiguredSecret.ShouldBeTrue();
+
+        var persisted = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
+        persisted.Gateway!.Locations!["db-primary"].ConnectionString.ShouldBe(originalSecret);
+        persisted.Gateway.Locations["db-primary"].Description.ShouldBe("Updated description");
+    }
+
+
+    [Fact]
+    public async Task DatabaseLocations_RedactConnectionStringInApiResponses_ButPersistInConfig()
+    {
+        const string secret = "Server=db.internal;Database=BotNexus;User Id=botnexus;Password=SuperSecret123!;";
+        const string updatedSecret = "Server=db.internal;Database=BotNexus;User Id=botnexus;Password=EvenMoreSecret456!;";
+
+        var configPath = WriteConfig("""{"gateway":{"locations":{}}}""");
+        var controller = CreateController(configPath);
+
+        var create = await controller.Create(new UpsertLocationRequest
+        {
+            Name = "db-main",
+            Type = "database",
+            Value = secret,
+            Description = "Primary DB"
+        }, CancellationToken.None);
+
+        var createdResult = create.Result.ShouldBeOfType<CreatedAtActionResult>();
+        var createdLocation = createdResult.Value.ShouldBeOfType<LocationResponse>();
+        createdLocation.PathOrEndpoint.ShouldBe("(redacted)");
+        createdLocation.HasConfiguredSecret.ShouldBeTrue();
+        createdLocation.PathOrEndpoint.ShouldNotContain("SuperSecret123!");
+
+        var afterCreate = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
+        afterCreate.Gateway!.Locations!["db-main"].ConnectionString.ShouldBe(secret);
+
+        var list = await controller.List(CancellationToken.None);
+        var listResult = list.Result.ShouldBeOfType<OkObjectResult>();
+        var listLocations = listResult.Value.ShouldBeAssignableTo<IReadOnlyList<LocationResponse>>();
+        var listedDb = listLocations.Single(location => location.Name == "db-main");
+        listedDb.PathOrEndpoint.ShouldBe("(redacted)");
+        listedDb.HasConfiguredSecret.ShouldBeTrue();
+        listedDb.PathOrEndpoint.ShouldNotContain("SuperSecret123!");
+
+        var get = await controller.Get("db-main", CancellationToken.None);
+        var getResult = get.Result.ShouldBeOfType<OkObjectResult>();
+        var getLocation = getResult.Value.ShouldBeOfType<LocationResponse>();
+        getLocation.PathOrEndpoint.ShouldBe("(redacted)");
+        getLocation.HasConfiguredSecret.ShouldBeTrue();
+        getLocation.PathOrEndpoint.ShouldNotContain("SuperSecret123!");
+
+        var update = await controller.Update("db-main", new UpsertLocationRequest
+        {
+            Name = "db-main",
+            Type = "database",
+            Value = updatedSecret,
+            Description = "Primary DB v2"
+        }, CancellationToken.None);
+
+        var updateResult = update.Result.ShouldBeOfType<OkObjectResult>();
+        var updatedLocation = updateResult.Value.ShouldBeOfType<LocationResponse>();
+        updatedLocation.PathOrEndpoint.ShouldBe("(redacted)");
+        updatedLocation.HasConfiguredSecret.ShouldBeTrue();
+        updatedLocation.PathOrEndpoint.ShouldNotContain("EvenMoreSecret456!");
+
+        var afterUpdate = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
+        afterUpdate.Gateway!.Locations!["db-main"].ConnectionString.ShouldBe(updatedSecret);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_rootPath))
@@ -173,3 +306,4 @@ public sealed class LocationsControllerTests : IDisposable
         public HttpClient CreateClient(string name) => new();
     }
 }
+

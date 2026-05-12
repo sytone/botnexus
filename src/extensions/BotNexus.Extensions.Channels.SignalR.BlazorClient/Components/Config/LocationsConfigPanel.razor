@@ -93,7 +93,7 @@
                     {
                         <div class="pcfg-field">
                             <label>Path / Endpoint</label>
-                            <span class="pcfg-field-value">@loc.PathOrEndpoint</span>
+                            <span class="@GetPathValueCssClass(loc)">@GetPathValueDisplay(loc)</span>
                         </div>
                     }
                     @if (!string.IsNullOrEmpty(loc.Description))
@@ -126,6 +126,7 @@
     private string _formValue = "";
     private string? _formDescription;
     private Dictionary<string, string> _formErrors = new();
+    private bool _editingDatabaseHasSecret;
 
     private string ValueLabel => _formType switch
     {
@@ -136,10 +137,16 @@
 
     private string ValuePlaceholder => _formType switch
     {
+        "database" when _editingDatabaseHasSecret => "Leave blank to keep existing connection string",
         "database" => "Data Source=...",
         "filesystem" => "/path/to/directory",
         _ => "https://..."
     };
+
+    private bool AllowBlankValueForEdit
+        => _editingName is not null
+            && string.Equals(_formType, "database", StringComparison.OrdinalIgnoreCase)
+            && _editingDatabaseHasSecret;
 
     protected override async Task OnInitializedAsync()
     {
@@ -167,6 +174,7 @@
         _formValue = "";
         _formDescription = null;
         _formErrors = new();
+        _editingDatabaseHasSecret = false;
         _showForm = true;
     }
 
@@ -175,7 +183,9 @@
         _editingName = location.Name;
         _formName = location.Name;
         _formType = location.Type;
-        _formValue = location.PathOrEndpoint ?? "";
+        _editingDatabaseHasSecret =
+            string.Equals(location.Type, "database", StringComparison.OrdinalIgnoreCase) && location.HasConfiguredSecret;
+        _formValue = _editingDatabaseHasSecret ? string.Empty : location.PathOrEndpoint ?? "";
         _formDescription = location.Description;
         _formErrors = new();
         _showForm = true;
@@ -186,6 +196,7 @@
         _showForm = false;
         _editingName = null;
         _formErrors = new();
+        _editingDatabaseHasSecret = false;
     }
 
     private bool ValidateForm()
@@ -195,7 +206,7 @@
         if (string.IsNullOrWhiteSpace(_formName))
             _formErrors["name"] = "Location name is required.";
 
-        if (string.IsNullOrWhiteSpace(_formValue))
+        if (string.IsNullOrWhiteSpace(_formValue) && !AllowBlankValueForEdit)
             _formErrors["value"] = $"{ValueLabel} is required.";
 
         return _formErrors.Count == 0;
@@ -272,6 +283,14 @@
             StateHasChanged();
         }
     }
+
+    private static string GetPathValueDisplay(LocationDto location)
+        => location.PathOrEndpoint ?? string.Empty;
+
+    private static string GetPathValueCssClass(LocationDto location)
+        => string.Equals(location.Type, "database", StringComparison.OrdinalIgnoreCase)
+            ? "pcfg-field-value pcfg-path-value-database"
+            : "pcfg-field-value";
 
     private static string StatusIcon(string status) => status switch
     {
