@@ -7,6 +7,8 @@ namespace BotNexus.Gateway.Agents;
 public sealed class FileAgentWorkspaceManager : IAgentWorkspaceManager
 {
     private const string MemoryDirectoryName = "memory";
+    private const string SubAgentMarker = "--subagent--";
+    private const string SubAgentWorkspaceDirectoryName = "botnexus-subagent-workspaces";
     private readonly BotNexusHome _botNexusHome;
     private readonly IFileSystem _fileSystem;
 
@@ -62,7 +64,35 @@ public sealed class FileAgentWorkspaceManager : IAgentWorkspaceManager
     public string GetWorkspacePath(string agentName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(agentName);
-        return Path.Combine(_botNexusHome.GetAgentDirectory(agentName.Trim()), "workspace");
+        var normalizedAgentName = agentName.Trim();
+        if (IsSubAgentAgentName(normalizedAgentName))
+            return _fileSystem.Path.Combine(GetSubAgentWorkspaceRoot(), SanitizePathSegment(normalizedAgentName), "workspace");
+
+        return Path.Combine(_botNexusHome.GetAgentDirectory(normalizedAgentName), "workspace");
+    }
+
+    public bool TryCleanupWorkspace(string agentName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(agentName);
+
+        var normalizedAgentName = agentName.Trim();
+        if (!IsSubAgentAgentName(normalizedAgentName))
+            return false;
+
+        var workspacePath = GetWorkspacePath(normalizedAgentName);
+        var workspaceRoot = _fileSystem.Path.GetDirectoryName(workspacePath);
+        if (string.IsNullOrWhiteSpace(workspaceRoot))
+            return false;
+
+        var tempRoot = _fileSystem.Path.GetFullPath(GetSubAgentWorkspaceRoot());
+        var workspaceRootFullPath = _fileSystem.Path.GetFullPath(workspaceRoot);
+        if (!IsWithinRoot(tempRoot, workspaceRootFullPath))
+            return false;
+
+        if (_fileSystem.Directory.Exists(workspaceRootFullPath))
+            _fileSystem.Directory.Delete(workspaceRootFullPath, recursive: true);
+
+        return true;
     }
 
     private async Task<string> ReadFileOrEmptyAsync(string path, CancellationToken cancellationToken)
@@ -120,12 +150,33 @@ public sealed class FileAgentWorkspaceManager : IAgentWorkspaceManager
 
     private void EnsureWithinRoot(string root, string path, string parameterName, string message)
     {
-        var prefix = root.TrimEnd(_fileSystem.Path.DirectorySeparatorChar, _fileSystem.Path.AltDirectorySeparatorChar)
-            + _fileSystem.Path.DirectorySeparatorChar;
-        if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
-            !path.Equals(root, StringComparison.OrdinalIgnoreCase))
+        if (!IsWithinRoot(root, path))
         {
             throw new ArgumentException(message, parameterName);
         }
+    }
+
+    private bool IsWithinRoot(string root, string path)
+    {
+        var prefix = root.TrimEnd(_fileSystem.Path.DirectorySeparatorChar, _fileSystem.Path.AltDirectorySeparatorChar)
+            + _fileSystem.Path.DirectorySeparatorChar;
+        return path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
+               path.Equals(root, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsSubAgentAgentName(string agentName)
+        => agentName.Contains(SubAgentMarker, StringComparison.OrdinalIgnoreCase);
+
+    private string GetSubAgentWorkspaceRoot()
+        => _fileSystem.Path.Combine(_fileSystem.Path.GetTempPath(), SubAgentWorkspaceDirectoryName);
+
+    private static string SanitizePathSegment(string value)
+    {
+        var invalidCharacters = Path.GetInvalidFileNameChars();
+        var sanitized = value;
+        foreach (var ch in invalidCharacters)
+            sanitized = sanitized.Replace(ch, '_');
+
+        return sanitized;
     }
 }

@@ -22,7 +22,14 @@
                         }
                         else
                         {
-                            <span class="conversation-title editable" @onclick="StartEditTitle" title="Click to rename">@ActiveConversationTitle</span>
+                            @if (IsReadOnly)
+                            {
+                                <span class="conversation-title">@ActiveConversationTitle</span>
+                            }
+                            else
+                            {
+                                <span class="conversation-title editable" @onclick="StartEditTitle" title="Click to rename">@ActiveConversationTitle</span>
+                            }
                             @if (ActiveConversation?.IsDefault == true)
                             {
                                 <span class="conversation-default-badge">Default</span>
@@ -50,12 +57,18 @@
             <button class="config-btn" @onclick="OpenConfig" title="Agent configuration">
                 ⚙
             </button>
-            <button class="new-chat-btn" @onclick="ConfirmNewSession" title="Start a new session in this conversation"
-                    disabled="@IsStreaming">
-                ↺ New session
-            </button>
+            @if (!IsReadOnly)
+            {
+                <button class="new-chat-btn" @onclick="ConfirmNewSession" title="Start a new session in this conversation"
+                        disabled="@IsStreaming">
+                    ↺ New session
+                </button>
+            }
         </div>
-        <SessionControls AgentId="@AgentId" />
+        @if (!IsReadOnly)
+        {
+            <SessionControls AgentId="@AgentId" />
+        }
     </header>
 
     @if (_showNewSessionConfirm)
@@ -340,6 +353,9 @@ private bool IsStreaming =>
 
     private void StartEditTitle()
     {
+        if (IsReadOnly)
+            return;
+
         _titleDraft = ActiveConversationTitle ?? "";
         _editingTitle = true;
         _ = InvokeAsync(async () =>
@@ -353,6 +369,13 @@ private bool IsStreaming =>
 
     private async Task SaveTitle()
     {
+        if (IsReadOnly)
+        {
+            _editingTitle = false;
+            StateHasChanged();
+            return;
+        }
+
         _editingTitle = false;
         var draft = _titleDraft.Trim();
         if (!string.IsNullOrWhiteSpace(draft) && draft != ActiveConversationTitle)
@@ -481,11 +504,20 @@ private bool IsStreaming =>
             await _configPanel.Open();
     }
 
-    private void ConfirmNewSession() => _showNewSessionConfirm = true;
+    private void ConfirmNewSession()
+    {
+        if (IsReadOnly)
+            return;
+
+        _showNewSessionConfirm = true;
+    }
     private void CancelNewSession() => _showNewSessionConfirm = false;
 
     private async Task DoNewSession()
     {
+        if (IsReadOnly)
+            return;
+
         _showNewSessionConfirm = false;
         await Interaction.ResetSessionAsync(AgentId);
     }

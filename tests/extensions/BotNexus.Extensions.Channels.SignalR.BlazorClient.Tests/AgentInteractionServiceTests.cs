@@ -270,6 +270,45 @@ public sealed class AgentInteractionServiceTests
     }
 
     [Fact]
+    public async Task ViewSubAgentAsync_loads_session_history_into_read_only_virtual_conversation()
+    {
+        _restClient.GetSessionHistoryAsync("sub-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new SessionHistoryResponseDto(
+                0,
+                50,
+                1,
+                [
+                    new SessionHistoryEntryDto
+                    {
+                        Role = "assistant",
+                        Content = "sub-agent result",
+                        Timestamp = DateTimeOffset.UtcNow
+                    }
+                ]));
+
+        await _service.ViewSubAgentAsync(new SubAgentInfo
+        {
+            SubAgentId = "sub-1",
+            Name = "Scout",
+            Task = "Inspect repository"
+        });
+
+        await _restClient.Received(1).GetSessionHistoryAsync("sub-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+        await _restClient.DidNotReceive().GetHistoryAsync("sub-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+
+        var subAgent = _store.GetAgent("sub-1");
+        Assert.NotNull(subAgent);
+        Assert.Equal("agent-subagent", subAgent.SessionType);
+        Assert.Equal("subagent-session:sub-1", subAgent.ActiveConversationId);
+
+        var conversation = subAgent.Conversations["subagent-session:sub-1"];
+        Assert.True(conversation.IsVirtualSession);
+        Assert.Equal("subagent", conversation.VirtualSessionKind);
+        Assert.Single(conversation.Messages);
+        Assert.Equal("sub-agent result", conversation.Messages[0].Content);
+    }
+
+    [Fact]
     public async Task ArchiveConversationAsync_ForVirtualCronWithColonsInId_ArchivesWithEncodedConversationId()
     {
         var agent = _store.GetAgent("agent-1")!;

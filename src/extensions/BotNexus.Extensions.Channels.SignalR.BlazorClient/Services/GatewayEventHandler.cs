@@ -310,13 +310,14 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     public void HandleSubAgentSpawned(SubAgentEventPayload payload)
     {
         if (!ResolveAgent(payload.SessionId, out var agentId, out var agent)) return;
-        var convId = agent!.ActiveConversationId;
+        var convId = ResolveConversationId(agentId!, agent!, payload.SessionId);
 
         agent.SubAgents[payload.SubAgentId] = new SubAgentInfo
         {
             SubAgentId = payload.SubAgentId,
             Name = payload.Name,
             Task = payload.Task,
+            OriginConversationId = convId,
             Status = "Running",
             StartedAt = payload.StartedAt,
             Model = payload.Model,
@@ -338,8 +339,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     public void HandleSubAgentCompleted(SubAgentEventPayload payload)
     {
-        if (!ResolveAgent(payload.SessionId, out var _, out var agent)) return;
-        var convId = agent!.ActiveConversationId;
+        if (!ResolveAgent(payload.SessionId, out var agentId, out var agent)) return;
+        var convId = ResolveSubAgentConversationId(agentId!, agent!, payload);
 
         if (agent.SubAgents.TryGetValue(payload.SubAgentId, out var sub))
         {
@@ -361,8 +362,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     public void HandleSubAgentFailed(SubAgentEventPayload payload)
     {
-        if (!ResolveAgent(payload.SessionId, out var _, out var agent)) return;
-        var convId = agent!.ActiveConversationId;
+        if (!ResolveAgent(payload.SessionId, out var agentId, out var agent)) return;
+        var convId = ResolveSubAgentConversationId(agentId!, agent!, payload);
 
         if (agent.SubAgents.TryGetValue(payload.SubAgentId, out var sub))
         {
@@ -384,8 +385,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     public void HandleSubAgentKilled(SubAgentEventPayload payload)
     {
-        if (!ResolveAgent(payload.SessionId, out var _, out var agent)) return;
-        var convId = agent!.ActiveConversationId;
+        if (!ResolveAgent(payload.SessionId, out var agentId, out var agent)) return;
+        var convId = ResolveSubAgentConversationId(agentId!, agent!, payload);
 
         if (agent.SubAgents.TryGetValue(payload.SubAgentId, out var sub))
         {
@@ -505,6 +506,20 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         if (_store.TryResolveConversationBySession(agentId, sessionId, out var convId))
             return convId;
         return agent.ActiveConversationId;
+    }
+
+    private string? ResolveSubAgentConversationId(string agentId, AgentState agent, SubAgentEventPayload payload)
+    {
+        if (agent.SubAgents.TryGetValue(payload.SubAgentId, out var subAgent) &&
+            !string.IsNullOrWhiteSpace(subAgent.OriginConversationId))
+        {
+            return subAgent.OriginConversationId;
+        }
+
+        if (_store.TryResolveConversationBySession(agentId, payload.SessionId, out var convId))
+            return convId;
+
+        return null;
     }
 
     // ── Hub event wiring (called when hub reconnects) ─────────────────────

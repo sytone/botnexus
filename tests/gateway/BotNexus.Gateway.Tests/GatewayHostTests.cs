@@ -587,6 +587,120 @@ public sealed class GatewayHostTests
     }
 
     [Fact]
+    public async Task DispatchAsync_InternalWakeMessage_WithSessionId_BypassesConversationDispatcher()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+
+        var handle = CreatePromptHandle("agent-a", "parent-session", "wake-ack");
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor
+            .Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                BotNexus.Domain.Primitives.SessionId.From("parent-session"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var sessions = new InMemorySessionStore();
+        var parentSession = await sessions.GetOrCreateAsync(
+            BotNexus.Domain.Primitives.SessionId.From("parent-session"),
+            BotNexus.Domain.Primitives.AgentId.From("agent-a"));
+        parentSession.Session.ConversationId = BotNexus.Domain.Primitives.ConversationId.From("conv-parent");
+        await sessions.SaveAsync(parentSession);
+
+        var conversationDispatcher = new Mock<IConversationDispatcher>();
+
+        await using var host = CreateHost(
+            supervisor.Object,
+            router.Object,
+            sessions,
+            new RecordingActivityBroadcaster(),
+            CreateChannelManager(),
+            conversationDispatcher: conversationDispatcher.Object);
+
+        await host.DispatchAsync(new InboundMessage
+        {
+            ChannelType = BotNexus.Domain.Primitives.ChannelKey.From("internal"),
+            SenderId = "subagent:test",
+            ChannelAddress = ChannelAddress.From("parent-session"),
+            SessionId = "parent-session",
+            TargetAgentId = "agent-a",
+            Content = "subagent completion wake-up",
+            Metadata = new Dictionary<string, object?> { ["messageType"] = "subagent-completion" }
+        });
+
+        conversationDispatcher.Verify(
+            d => d.DispatchAsync(It.IsAny<InboundMessageContext>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        supervisor.Verify(
+            s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                BotNexus.Domain.Primitives.SessionId.From("parent-session"),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        var reloaded = await sessions.GetAsync(BotNexus.Domain.Primitives.SessionId.From("parent-session"));
+        reloaded.ShouldNotBeNull();
+        reloaded!.History.Count.ShouldBe(2);
+        reloaded.Session.ConversationId.ShouldBe(BotNexus.Domain.Primitives.ConversationId.From("conv-parent"));
+    }
+
+    [Fact]
+    public async Task DispatchAsync_InternalWakeMessage_WithoutSessionId_UsesChannelAddressAndBypassesConversationDispatcher()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+
+        var handle = CreatePromptHandle("agent-a", "parent-session", "wake-ack");
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor
+            .Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                BotNexus.Domain.Primitives.SessionId.From("parent-session"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var sessions = new InMemorySessionStore();
+        var parentSession = await sessions.GetOrCreateAsync(
+            BotNexus.Domain.Primitives.SessionId.From("parent-session"),
+            BotNexus.Domain.Primitives.AgentId.From("agent-a"));
+        parentSession.Session.ConversationId = BotNexus.Domain.Primitives.ConversationId.From("conv-parent");
+        await sessions.SaveAsync(parentSession);
+
+        var conversationDispatcher = new Mock<IConversationDispatcher>();
+
+        await using var host = CreateHost(
+            supervisor.Object,
+            router.Object,
+            sessions,
+            new RecordingActivityBroadcaster(),
+            CreateChannelManager(),
+            conversationDispatcher: conversationDispatcher.Object);
+
+        await host.DispatchAsync(new InboundMessage
+        {
+            ChannelType = BotNexus.Domain.Primitives.ChannelKey.From("internal"),
+            SenderId = "subagent:test",
+            ChannelAddress = ChannelAddress.From("parent-session"),
+            TargetAgentId = "agent-a",
+            Content = "subagent completion wake-up",
+            Metadata = new Dictionary<string, object?> { ["messageType"] = "subagent-completion" }
+        });
+
+        conversationDispatcher.Verify(
+            d => d.DispatchAsync(It.IsAny<InboundMessageContext>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        supervisor.Verify(
+            s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                BotNexus.Domain.Primitives.SessionId.From("parent-session"),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
     public async Task GatewayHost_AutoCompaction_TriggersWhenAboveThreshold()
     {
         var router = new Mock<IMessageRouter>();
