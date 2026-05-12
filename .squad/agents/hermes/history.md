@@ -44,3 +44,4 @@
 - Portal startup regressions must protect initial history load from stale `cron-session:*` 404s by removing orphan projections and continuing to load other conversations.
 - ChatPanel hard-refresh coverage must treat stale `ActiveConversationId` values (including removed `cron-session:*`) as empty-state render paths and assert JS interop bind safety (`preventEnterSubmit` only for interactive views with valid ElementReference semantics).
 - Location security regression coverage must assert database connection strings are persisted in config but API list/get/create/update only return a redacted placeholder and `HasConfiguredSecret=true`; UI must render redacted value with sensitive styling and never echo synthetic secrets.
+- CLI location listing regressions must redact database connection-string values as (redacted) while continuing to show filesystem paths and API endpoints (assert raw secret tokens like Password= and User Id= never appear in output).
