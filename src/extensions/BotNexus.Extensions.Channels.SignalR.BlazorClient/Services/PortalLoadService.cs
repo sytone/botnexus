@@ -87,54 +87,34 @@ public sealed class PortalLoadService : IPortalLoadService
                 }
             }
 
+            foreach (var agentSummary in agents)
+            {
+                var agent = _store.GetAgent(agentSummary.AgentId);
+                if (agent is not null)
+                    ReconcileVirtualCronConversations(agent, sessions);
+            }
+
             var selectedAgentId = agents.OrderBy(a => a.DisplayName).FirstOrDefault()?.AgentId;
             if (selectedAgentId is not null)
             {
                 _store.ActiveAgentId = selectedAgentId;
 
                 var selectedAgent = _store.GetAgent(selectedAgentId);
-                var selectedConversation = selectedAgent?.Conversations.Values
-                    .OrderByDescending(c => c.IsDefault)
-                    .ThenByDescending(c => c.UpdatedAt)
-                    .FirstOrDefault();
-
-                if (selectedConversation is not null)
+                while (selectedAgent is not null)
                 {
+                    var selectedConversation = selectedAgent.Conversations.Values
+                        .OrderByDescending(c => c.IsDefault)
+                        .ThenByDescending(c => c.UpdatedAt)
+                        .FirstOrDefault();
+
+                    if (selectedConversation is null)
+                        break;
+
                     _store.SetActiveConversation(selectedAgentId, selectedConversation.ConversationId);
+                    await LoadInitialHistoryAsync(selectedAgent!, selectedConversation, cancellationToken);
 
-                    const int historyLimit = 200;
-                    var history = await _restClient.GetHistoryAsync(selectedConversation.ConversationId, historyLimit, 0, cancellationToken);
-
-                    if (history?.Entries is { Count: > 0 })
-                    {
-                        foreach (var entry in history.Entries)
-                        {
-                            if (entry.Kind == "boundary")
-                            {
-                                selectedConversation.Messages.Add(new ChatMessage("System", string.Empty, entry.Timestamp)
-                                {
-                                    Kind = "boundary",
-                                    BoundaryLabel = $"Session · {entry.Timestamp.ToLocalTime():MMM d HH:mm} · {entry.SessionId}",
-                                    BoundarySessionId = entry.SessionId
-                                });
-                            }
-                            else
-                            {
-                                var isTool = entry.ToolName is not null;
-                                selectedConversation.Messages.Add(new ChatMessage(MapRole(entry.Role ?? "system"), entry.Content ?? string.Empty, entry.Timestamp)
-                                {
-                                    ToolName = entry.ToolName,
-                                    ToolCallId = entry.ToolCallId,
-                                    ToolArgs = entry.ToolArgs,
-                                    ToolIsError = entry.ToolIsError,
-                                    ToolResult = isTool ? entry.Content : null,
-                                    IsToolCall = isTool
-                                });
-                            }
-                        }
-
-                        selectedConversation.HistoryLoaded = true;
-                    }
+                    if (selectedAgent.Conversations.ContainsKey(selectedConversation.ConversationId))
+                        break;
                 }
             }
 
@@ -160,6 +140,92 @@ public sealed class PortalLoadService : IPortalLoadService
         }
     }
 
+    /// <summary>
+    /// Loads history for the initially selected conversation. Virtual cron sessions
+    /// use the session history endpoint; real conversations use conversation history.
+    /// A 404 from a stale/deleted cron projection is handled gracefully — the projection
+    /// is removed and initialization continues.
+    /// </summary>
+    private async Task LoadInitialHistoryAsync(AgentState agent, ConversationState conversation, CancellationToken cancellationToken)
+    {
+        const int historyLimit = 200;
+
+        try
+        {
+            if (conversation.IsVirtualSession && conversation.ActiveSessionId is { Length: > 0 } sessionId)
+            {
+                var sessionHistory = await _restClient.GetSessionHistoryAsync(sessionId, historyLimit, 0, cancellationToken);
+                if (sessionHistory?.Entries is { Count: > 0 })
+                {
+                    foreach (var entry in sessionHistory.Entries)
+                    {
+                        var role = MapRole(entry.Role ?? "system");
+                        conversation.Messages.Add(new ChatMessage(role, entry.Content ?? string.Empty, entry.Timestamp)
+                        {
+                            ToolName = entry.ToolName,
+                            ToolCallId = entry.ToolCallId,
+                            ToolArgs = entry.ToolArgs,
+                            ToolIsError = entry.ToolIsError,
+                            IsToolCall = entry.ToolName is not null,
+                            ToolResult = entry.ToolName is not null ? entry.Content : null
+                        });
+                    }
+                }
+
+                conversation.HistoryLoaded = true;
+                return;
+            }
+
+            var history = await _restClient.GetHistoryAsync(conversation.ConversationId, historyLimit, 0, cancellationToken);
+            if (history?.Entries is { Count: > 0 })
+            {
+                foreach (var entry in history.Entries)
+                {
+                    if (entry.Kind == "boundary")
+                    {
+                        conversation.Messages.Add(new ChatMessage("System", string.Empty, entry.Timestamp)
+                        {
+                            Kind = "boundary",
+                            BoundaryLabel = $"Session · {entry.Timestamp.ToLocalTime():MMM d HH:mm} · {entry.SessionId}",
+                            BoundarySessionId = entry.SessionId
+                        });
+                    }
+                    else
+                    {
+                        var isTool = entry.ToolName is not null;
+                        conversation.Messages.Add(new ChatMessage(MapRole(entry.Role ?? "system"), entry.Content ?? string.Empty, entry.Timestamp)
+                        {
+                            ToolName = entry.ToolName,
+                            ToolCallId = entry.ToolCallId,
+                            ToolArgs = entry.ToolArgs,
+                            ToolIsError = entry.ToolIsError,
+                            ToolResult = isTool ? entry.Content : null,
+                            IsToolCall = isTool
+                        });
+                    }
+                }
+
+                conversation.HistoryLoaded = true;
+            }
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            // Stale virtual cron projection — the backing session/conversation no longer exists.
+            // Remove the orphaned projection so it doesn't block other conversations.
+            if (IsVirtualCronConversation(conversation))
+            {
+                agent.Conversations.Remove(conversation.ConversationId);
+                Console.Error.WriteLine(
+                    $"[PortalLoadService] Removed stale virtual cron projection '{conversation.ConversationId}' (404 from gateway).");
+            }
+            else
+            {
+                Console.Error.WriteLine(
+                    $"[PortalLoadService] History 404 for conversation '{conversation.ConversationId}': {ex.Message}");
+            }
+        }
+    }
+
     private static string MapRole(string role) => role.ToLowerInvariant() switch
     {
         "user" => "User",
@@ -169,4 +235,28 @@ public sealed class PortalLoadService : IPortalLoadService
         "system" => "System",
         _ => role
     };
+
+    private static bool IsVirtualCronConversation(ConversationState conversation)
+        => (conversation.IsVirtualSession &&
+            string.Equals(conversation.VirtualSessionKind, "cron", StringComparison.OrdinalIgnoreCase))
+           || conversation.ConversationId.StartsWith("cron-session:", StringComparison.Ordinal);
+
+    private static void ReconcileVirtualCronConversations(AgentState agent, IReadOnlyList<SessionSummary> sessions)
+    {
+        var activeCronConversations = sessions
+            .Where(s => string.Equals(s.AgentId, agent.AgentId, StringComparison.Ordinal) &&
+                        string.Equals(s.SessionType, "cron", StringComparison.OrdinalIgnoreCase))
+            .Select(s => $"cron-session:{s.SessionId}")
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var staleConversationId in agent.Conversations
+                     .Where(kv => kv.Value.IsVirtualSession &&
+                                  string.Equals(kv.Value.VirtualSessionKind, "cron", StringComparison.OrdinalIgnoreCase) &&
+                                  !activeCronConversations.Contains(kv.Key))
+                     .Select(kv => kv.Key)
+                     .ToList())
+        {
+            agent.Conversations.Remove(staleConversationId);
+        }
+    }
 }

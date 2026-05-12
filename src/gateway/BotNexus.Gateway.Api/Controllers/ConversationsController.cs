@@ -232,6 +232,8 @@ public sealed class ConversationsController : ControllerBase
             return BadRequest(new { error = "limit must be > 0." });
 
         var boundedLimit = Math.Min(limit, 200);
+        if (TryParseVirtualCronConversationId(conversationId, out var virtualSessionId))
+            return await GetVirtualCronHistoryAsync(conversationId, virtualSessionId, boundedLimit, offset, cancellationToken);
 
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
         if (conversation is null)
@@ -286,22 +288,7 @@ public sealed class ConversationsController : ControllerBase
         }
 
         var totalCount = allEntries.Count;
-        List<ConversationHistoryEntry> page;
-        if (offset >= totalCount)
-        {
-            page = [];
-        }
-        else
-        {
-            // Page from newest entries so refreshes include the latest turns even when
-            // conversations have more than one page of history.
-            var take = Math.Min(boundedLimit, totalCount - offset);
-            var startIndex = Math.Max(0, totalCount - offset - take);
-            page = allEntries
-                .Skip(startIndex)
-                .Take(take)
-                .ToList();
-        }
+        var page = PageFromNewest(allEntries, boundedLimit, offset);
 
         return Ok(new ConversationHistoryResponse(
             ConversationId: conversationId,
@@ -388,6 +375,65 @@ public sealed class ConversationsController : ControllerBase
         await _sessions.SaveAsync(session, cancellationToken);
     }
 
+    private async Task<ActionResult> GetVirtualCronHistoryAsync(
+        string virtualConversationId,
+        SessionId virtualSessionId,
+        int limit,
+        int offset,
+        CancellationToken cancellationToken)
+    {
+        var session = await _sessions.GetAsync(virtualSessionId, cancellationToken);
+        if (session is null)
+        {
+            return Ok(new ConversationHistoryResponse(
+                ConversationId: virtualConversationId,
+                TotalCount: 0,
+                Offset: offset,
+                Limit: limit,
+                Entries: []));
+        }
+
+        var allEntries = session.GetHistorySnapshot()
+            .Select(entry => new ConversationHistoryEntry
+            {
+                Kind = "message",
+                SessionId = session.SessionId.Value,
+                Role = entry.Role.ToString().ToLowerInvariant(),
+                Content = entry.Content,
+                Timestamp = entry.Timestamp,
+                ToolName = entry.ToolName,
+                ToolCallId = entry.ToolCallId,
+                ToolArgs = entry.ToolArgs,
+                ToolIsError = entry.ToolIsError
+            })
+            .ToList();
+
+        return Ok(new ConversationHistoryResponse(
+            ConversationId: virtualConversationId,
+            TotalCount: allEntries.Count,
+            Offset: offset,
+            Limit: limit,
+            Entries: PageFromNewest(allEntries, limit, offset)));
+    }
+
+    private static List<ConversationHistoryEntry> PageFromNewest(
+        IReadOnlyList<ConversationHistoryEntry> allEntries,
+        int limit,
+        int offset)
+    {
+        var totalCount = allEntries.Count;
+        if (offset >= totalCount)
+            return [];
+
+        // Page from newest entries so refreshes include the latest turns even when
+        // conversations have more than one page of history.
+        var take = Math.Min(limit, totalCount - offset);
+        var startIndex = Math.Max(0, totalCount - offset - take);
+        return allEntries
+            .Skip(startIndex)
+            .Take(take)
+            .ToList();
+    }
     private static bool TryParseVirtualCronConversationId(string conversationId, out SessionId sessionId)
     {
         const string prefix = "cron-session:";
