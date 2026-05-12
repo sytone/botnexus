@@ -48,6 +48,9 @@
                     case "channels":
                         <ChannelsConfigPanel Config="@_config" OnChanged="MarkDirty" />
                         break;
+                    case "locations":
+                        <LocationsConfigPanel />
+                        break;
                     case "world":
                         <WorldSettingsConfigPanel Config="@_config" OnChanged="MarkDirty" />
                         break;

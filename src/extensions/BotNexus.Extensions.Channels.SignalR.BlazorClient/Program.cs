@@ -19,5 +19,6 @@ builder.Services.AddScoped<GatewayInfoService>();
 builder.Services.AddScoped<FeatureFlagsService>();
 builder.Services.AddScoped<ConversationHistoryCache>();
 builder.Services.AddScoped<IUpdateStatusService, UpdateStatusService>();
+builder.Services.AddScoped<LocationsApiClient>();
 
 await builder.Build().RunAsync();
