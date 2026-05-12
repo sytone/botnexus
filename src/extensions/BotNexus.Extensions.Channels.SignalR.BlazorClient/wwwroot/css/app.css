@@ -1691,7 +1691,7 @@ details[open] > .thinking-summary::before {
 .sidebar-scroll-region {
     flex: 1;
     min-height: 0;
-    overflow-y: auto;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
 }
@@ -2468,7 +2468,18 @@ details[open] > .thinking-summary::before {
 .agent-conversation-list {
     display: flex;
     flex-direction: column;
+    flex: 1;
+    min-height: 0;
     overflow: hidden;
+}
+
+.conversation-list-scroll {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
 .agent-conversation-list-header {

@@ -363,6 +363,47 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
+    public void Conversation_list_scroll_container_wraps_conversation_rows()
+    {
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-1", "a-1", "Chat 1", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        _store.ActiveAgentId = "a-1";
+
+        var cut = RenderLayout();
+
+        var scrollContainer = cut.Find(".conversation-list-scroll");
+        Assert.Single(scrollContainer.QuerySelectorAll(".conversation-list-item-btn"));
+    }
+
+    [Fact]
+    public void Conversation_list_scroll_container_handles_many_conversations()
+    {
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations(
+            "a-1",
+            Enumerable.Range(1, 40)
+                .Select(i => new ConversationSummaryDto(
+                    $"c-{i}",
+                    "a-1",
+                    $"Chat {i}",
+                    false,
+                    "Active",
+                    null,
+                    0,
+                    DateTimeOffset.UtcNow.AddMinutes(-i),
+                    DateTimeOffset.UtcNow.AddMinutes(-i)))
+                .ToList());
+        _store.ActiveAgentId = "a-1";
+
+        var cut = RenderLayout();
+
+        var scrollContainer = cut.Find(".conversation-list-scroll");
+        Assert.Equal(40, scrollContainer.QuerySelectorAll(".conversation-list-item-btn").Length);
+    }
+
+    [Fact]
     public void Switching_agent_triggers_history_load_for_active_conversation()
     {
         // Arrange: two agents, each with a default conversation auto-selected via SeedConversations
