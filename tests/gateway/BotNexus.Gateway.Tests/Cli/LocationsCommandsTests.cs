@@ -28,6 +28,70 @@ public sealed class LocationsCommandsTests
     }
 
     [Fact]
+    public async Task LocationsList_WithDatabaseLocation_RedactsConnectionString()
+    {
+        await using var fixture = await CliTestFixture.CreateAsync("""
+            {
+              "gateway": {
+                "locations": {
+                  "analytics-db": {
+                    "type": "database",
+                    "connectionString": "Server=tcp:sql.internal,1433;Database=BotNexus;User Id=svc_analytics;Password=SuperSecret!123;Encrypt=True",
+                    "description": "Analytics database"
+                  }
+                }
+              }
+            }
+            """);
+
+        var result = await fixture.RunCliAsync("locations", "list");
+
+        result.ExitCode.ShouldBe(0);
+        result.StdOut.ShouldContain("analytics-db");
+        result.StdOut.ShouldContain("Analytics database");
+        result.StdOut.ShouldContain("(redacted)");
+        result.StdOut.ShouldNotContain("Password=SuperSecret!123");
+        result.StdOut.ShouldNotContain("Password=");
+        result.StdOut.ShouldNotContain("User Id=");
+    }
+
+    [Fact]
+    public async Task LocationsList_WithFilesystemAndApiLocations_DisplaysConfiguredValues()
+    {
+        await using var fixture = await CliTestFixture.CreateAsync();
+        var docsPath = Path.Combine(Path.GetPathRoot(fixture.RootPath)!, "docs");
+
+        await File.WriteAllTextAsync(
+            fixture.ConfigPath,
+            $$"""
+              {
+                "gateway": {
+                  "locations": {
+                    "docs": {
+                      "type": "filesystem",
+                      "path": "{{docsPath.Replace('\\', '/')}}",
+                      "description": "Documentation"
+                    },
+                    "search-api": {
+                      "type": "api",
+                      "endpoint": "https://api.example.com/v1/search",
+                      "description": "Search API"
+                    }
+                  }
+                }
+              }
+              """);
+
+        var result = await fixture.RunCliAsync("locations", "list");
+
+        result.ExitCode.ShouldBe(0);
+        result.StdOut.ShouldContain("docs");
+        result.StdOut.ShouldContain(docsPath);
+        result.StdOut.ShouldContain("search-api");
+        result.StdOut.ShouldContain("api.example.com");
+    }
+
+    [Fact]
     public async Task LocationsAddUpdateDelete_ModifiesConfig()
     {
         await using var fixture = await CliTestFixture.CreateAsync("""{"gateway":{"locations":{}}}""");

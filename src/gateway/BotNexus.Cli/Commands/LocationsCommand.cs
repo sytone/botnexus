@@ -10,6 +10,7 @@ namespace BotNexus.Cli.Commands;
 internal sealed class LocationsCommand
 {
     private static readonly string[] ValidTypes = ["filesystem", "api", "mcp-server", "database", "remote-node"];
+    private const string RedactedConnectionStringDisplay = "(redacted)";
 
     public Command Build(Option<bool> verboseOption)
     {
@@ -143,7 +144,7 @@ internal sealed class LocationsCommand
 
         foreach (var location in locations)
         {
-            var path = location.Path ?? "[dim](unset)[/]";
+            var path = ResolveSafeDisplayPath(location);
             var description = TryFindDictionaryKey(declaredLocations, location.Name, out var matchedName)
                 ? Markup.Escape(declaredLocations[matchedName].Description ?? "(declared)")
                 : "[dim](auto-derived)[/]";
@@ -560,6 +561,14 @@ internal sealed class LocationsCommand
 
     private static string PadRight(string value, int width)
         => value.Length >= width ? value : value.PadRight(width);
+
+    private static string ResolveSafeDisplayPath(Location location)
+    {
+        if (location.Type.Equals(LocationType.Database) && !string.IsNullOrWhiteSpace(location.Path))
+            return RedactedConnectionStringDisplay;
+
+        return location.Path ?? "[dim](unset)[/]";
+    }
 
     private static string? NullIfWhiteSpace(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
