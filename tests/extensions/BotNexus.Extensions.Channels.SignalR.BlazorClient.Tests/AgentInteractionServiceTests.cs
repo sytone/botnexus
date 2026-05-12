@@ -201,6 +201,57 @@ public sealed class AgentInteractionServiceTests
     }
 
     [Fact]
+    public async Task RefreshConversationsAsync_RepeatedCronRunsReuseSingleConversationKey()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        const string stableConversationId = "conv-cron-job-1";
+        const string firstRunSessionId = "cron:job-1:20260508010101:abc123";
+        const string secondRunSessionId = "cron:job-1:20260508020101:def456";
+
+        _restClient.GetConversationsAsync("agent-1", Arg.Any<CancellationToken>())
+            .Returns([
+                new ConversationSummaryDto(
+                    stableConversationId,
+                    "agent-1",
+                    "cron:job-1",
+                    false,
+                    "Active",
+                    secondRunSessionId,
+                    0,
+                    DateTimeOffset.UtcNow.AddHours(-1),
+                    DateTimeOffset.UtcNow.AddMinutes(-1))
+            ]);
+        _restClient.GetSessionsAsync("agent-1", Arg.Any<CancellationToken>())
+            .Returns([
+                new SessionSummary(
+                    firstRunSessionId,
+                    "agent-1",
+                    "cron",
+                    "cron",
+                    "Completed",
+                    12,
+                    false,
+                    DateTimeOffset.UtcNow.AddHours(-1),
+                    DateTimeOffset.UtcNow.AddMinutes(-10)),
+                new SessionSummary(
+                    secondRunSessionId,
+                    "agent-1",
+                    "cron",
+                    "cron",
+                    "Active",
+                    2,
+                    false,
+                    DateTimeOffset.UtcNow.AddMinutes(-3),
+                    DateTimeOffset.UtcNow.AddMinutes(-1))
+            ]);
+
+        await _service.RefreshConversationsAsync("agent-1");
+
+        Assert.True(agent.Conversations.ContainsKey(stableConversationId));
+        Assert.DoesNotContain(agent.Conversations.Keys, key => key.StartsWith("cron-session:", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task SelectConversation_ForVirtualCronConversation_LoadsSessionHistory()
     {
         var agent = _store.GetAgent("agent-1")!;
