@@ -632,8 +632,22 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
     private static void MergeVirtualCronSessions(AgentState agent, IReadOnlyList<SessionSummary> sessions)
     {
+        var stableCronConversationTitles = agent.Conversations.Values
+            .Where(conversation => !IsVirtualCronConversation(conversation))
+            .Select(conversation => conversation.Title)
+            .Where(title => !string.IsNullOrWhiteSpace(title) &&
+                            title.StartsWith("cron:", StringComparison.OrdinalIgnoreCase))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         var cronSessions = sessions
             .Where(s => string.Equals(s.SessionType, "cron", StringComparison.OrdinalIgnoreCase))
+            .Where(s =>
+            {
+                if (!TryGetCronConversationTitleFromSessionId(s.SessionId, out var cronConversationTitle))
+                    return true;
+
+                return !stableCronConversationTitles.Contains(cronConversationTitle);
+            })
             .ToDictionary(s => $"cron-session:{s.SessionId}", s => s, StringComparer.Ordinal);
 
         foreach (var key in agent.Conversations
@@ -676,4 +690,21 @@ public sealed class AgentInteractionService : IAgentInteractionService
         => (conversation.IsVirtualSession &&
             string.Equals(conversation.VirtualSessionKind, "cron", StringComparison.OrdinalIgnoreCase))
            || conversation.ConversationId.StartsWith("cron-session:", StringComparison.Ordinal);
+
+    private static bool TryGetCronConversationTitleFromSessionId(string sessionId, out string title)
+    {
+        title = string.Empty;
+        if (string.IsNullOrWhiteSpace(sessionId) ||
+            !sessionId.StartsWith("cron:", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var segments = sessionId.Split(':', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 4)
+            return false;
+
+        // Expected cron run format: cron:{jobId}:{yyyyMMddHHmmss}:{guid}
+        // Job ids are sanitized to [a-zA-Z0-9_-], so they do not contain ':'.
+        title = $"cron:{segments[1]}";
+        return true;
+    }
 }

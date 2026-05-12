@@ -115,28 +115,128 @@ public sealed class CronTrigger(
         var title = string.IsNullOrWhiteSpace(jobId)
             ? $"cron:{agentId.Value}"
             : $"cron:{SanitizeSessionIdPart(jobId) ?? agentId.Value}";
+        var stableConversationId = BuildCronConversationId(agentId, jobId);
 
-        // Try to find an existing conversation with this title.
+        // Prefer deterministic lookup by stable conversation id.
+        var byStableId = await conversations.GetAsync(stableConversationId, ct).ConfigureAwait(false);
+        if (byStableId is not null)
+        {
+            if (byStableId.Status == BotNexus.Gateway.Abstractions.Models.ConversationStatus.Archived)
+            {
+                byStableId.Status = BotNexus.Gateway.Abstractions.Models.ConversationStatus.Active;
+                byStableId.UpdatedAt = DateTimeOffset.UtcNow;
+                await conversations.SaveAsync(byStableId, ct).ConfigureAwait(false);
+            }
+
+            var conversationsForAgent = await conversations.ListAsync(agentId, ct).ConfigureAwait(false);
+            await NormalizeDuplicateCronConversationsAsync(agentId, title, byStableId, conversationsForAgent, ct).ConfigureAwait(false);
+            return byStableId;
+        }
+
+        // Backward-compatible lookup by title for legacy records created before stable IDs.
         var existing = await conversations.ListAsync(agentId, ct).ConfigureAwait(false);
-        var match = existing?.FirstOrDefault(c =>
-            string.Equals(c.Title, title, StringComparison.Ordinal) &&
-            c.Status == BotNexus.Gateway.Abstractions.Models.ConversationStatus.Active);
+        var titleMatches = existing
+            .Where(c => string.Equals(c.Title, title, StringComparison.Ordinal))
+            .ToList();
 
-        if (match is not null)
-            return match;
+        var canonical = titleMatches
+            .Where(c => c.Status == BotNexus.Gateway.Abstractions.Models.ConversationStatus.Active)
+            .OrderByDescending(c => c.UpdatedAt)
+            .FirstOrDefault()
+            ?? titleMatches.OrderByDescending(c => c.UpdatedAt).FirstOrDefault();
+
+        if (canonical is not null)
+        {
+            if (canonical.Status == BotNexus.Gateway.Abstractions.Models.ConversationStatus.Archived)
+            {
+                canonical.Status = BotNexus.Gateway.Abstractions.Models.ConversationStatus.Active;
+                canonical.UpdatedAt = DateTimeOffset.UtcNow;
+                await conversations.SaveAsync(canonical, ct).ConfigureAwait(false);
+            }
+
+            await NormalizeDuplicateCronConversationsAsync(agentId, title, canonical, existing, ct).ConfigureAwait(false);
+            return canonical;
+        }
 
         // Create a new stable conversation for this job.
         var conversation = new Conversation
         {
-            ConversationId = ConversationId.Create(),
+            ConversationId = stableConversationId,
             AgentId = agentId,
             Title = title,
             IsDefault = false
         };
-        await conversations.CreateAsync(conversation, ct).ConfigureAwait(false);
-        logger.LogInformation("CronTrigger: created conversation '{Title}' ({ConversationId}) for job '{JobId}'.",
-            title, conversation.ConversationId, jobId);
-        return conversation;
+        try
+        {
+            await conversations.CreateAsync(conversation, ct).ConfigureAwait(false);
+            logger.LogInformation("CronTrigger: created conversation '{Title}' ({ConversationId}) for job '{JobId}'.",
+                title, conversation.ConversationId, jobId);
+            return conversation;
+        }
+        catch (Exception ex)
+        {
+            // If another concurrent run created it first, re-resolve and continue.
+            logger.LogDebug(ex, "CronTrigger: create race for conversation '{ConversationId}', retrying lookup.", stableConversationId);
+            var resolved = await conversations.GetAsync(stableConversationId, ct).ConfigureAwait(false);
+            if (resolved is not null)
+                return resolved;
+
+            var fallback = (await conversations.ListAsync(agentId, ct).ConfigureAwait(false))
+                .FirstOrDefault(c =>
+                    string.Equals(c.Title, title, StringComparison.Ordinal) &&
+                    c.Status == BotNexus.Gateway.Abstractions.Models.ConversationStatus.Active);
+            if (fallback is not null)
+                return fallback;
+
+            throw;
+        }
+    }
+
+    private async Task NormalizeDuplicateCronConversationsAsync(
+        AgentId agentId,
+        string title,
+        Conversation canonical,
+        IReadOnlyList<Conversation> conversationsForAgent,
+        CancellationToken ct)
+    {
+        var duplicateActive = conversationsForAgent
+            .Where(c => c.Status == BotNexus.Gateway.Abstractions.Models.ConversationStatus.Active)
+            .Where(c => c.ConversationId != canonical.ConversationId)
+            .Where(c => string.Equals(c.Title, title, StringComparison.Ordinal))
+            .ToList();
+
+        if (duplicateActive.Count == 0)
+            return;
+
+        var agentSessions = await sessions.ListAsync(agentId, ct).ConfigureAwait(false);
+        foreach (var duplicate in duplicateActive)
+        {
+            foreach (var session in agentSessions.Where(s => s.Session.ConversationId == duplicate.ConversationId))
+            {
+                session.Session.ConversationId = canonical.ConversationId;
+                await sessions.SaveAsync(session, ct).ConfigureAwait(false);
+            }
+
+            await conversations.ArchiveAsync(duplicate.ConversationId, ct).ConfigureAwait(false);
+        }
+
+        var latestLinked = agentSessions
+            .Where(s => s.Session.ConversationId == canonical.ConversationId)
+            .OrderByDescending(s => s.UpdatedAt)
+            .FirstOrDefault();
+
+        if (latestLinked is not null && canonical.ActiveSessionId != latestLinked.SessionId)
+        {
+            canonical.ActiveSessionId = latestLinked.SessionId;
+            canonical.UpdatedAt = DateTimeOffset.UtcNow;
+            await conversations.SaveAsync(canonical, ct).ConfigureAwait(false);
+        }
+
+        logger.LogInformation(
+            "CronTrigger: normalized {DuplicateCount} duplicate conversation(s) for '{Title}' under canonical {ConversationId}.",
+            duplicateActive.Count,
+            title,
+            canonical.ConversationId);
     }
 
     private static SessionId BuildCronSessionId(string? jobId)
@@ -171,5 +271,12 @@ public sealed class CronTrigger(
         }
 
         return new string(buffer[..length]).Trim('-');
+    }
+
+    private static ConversationId BuildCronConversationId(AgentId agentId, string? jobId)
+    {
+        var safeAgentId = SanitizeSessionIdPart(agentId.Value) ?? "agent";
+        var safeJobId = SanitizeSessionIdPart(jobId) ?? safeAgentId;
+        return ConversationId.From($"cronconv:{safeAgentId}:{safeJobId}");
     }
 }
