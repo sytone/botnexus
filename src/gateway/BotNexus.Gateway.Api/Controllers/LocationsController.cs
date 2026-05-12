@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -16,6 +17,7 @@ namespace BotNexus.Gateway.Api.Controllers;
 [Route("api/locations")]
 public sealed class LocationsController(
     IConfiguration configuration,
+    PlatformConfigWriter configWriter,
     IAgentRegistry agentRegistry,
     IEnumerable<IIsolationStrategy> isolationStrategies,
     IHttpClientFactory httpClientFactory) : ControllerBase
@@ -121,6 +123,12 @@ public sealed class LocationsController(
     [HttpPut("{name}")]
     public async Task<ActionResult<LocationResponse>> Update(string name, [FromBody] UpsertLocationRequest request, CancellationToken cancellationToken)
     {
+        if (!string.IsNullOrWhiteSpace(request.Name)
+            && !string.Equals(request.Name.Trim(), name.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return BadRequest(new { error = "Location name in payload must match route name." });
+        }
+
         var config = await LoadConfigAsync(cancellationToken);
         var locations = config.Gateway?.Locations;
         if (locations is null || !TryFindDictionaryKey(locations, name, out var existingKey))
@@ -285,24 +293,15 @@ public sealed class LocationsController(
 
     private static LocationConfig? BuildLocationConfig(UpsertLocationRequest request, out string? error)
     {
+        var normalizedName = request.Name?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(normalizedName))
+        {
+            error = "Location name is required.";
+            return null;
+        }
+
         var type = (request.Type ?? "filesystem").Trim().ToLowerInvariant();
         var value = request.Value?.Trim();
-
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            error = "Path / endpoint / connection string is required.";
-            return null;
-        }
-
-        try
-        {
-            _ = LocationType.FromString(type);
-        }
-        catch (Exception)
-        {
-            error = $"Unsupported location type '{request.Type}'.";
-            return null;
-        }
 
         var config = new LocationConfig
         {
@@ -316,6 +315,12 @@ public sealed class LocationsController(
             config.ConnectionString = value;
         else
             config.Endpoint = value;
+
+        if (!TryValidateLocationConfig(normalizedName, config, out var validationError))
+        {
+            error = validationError;
+            return null;
+        }
 
         error = null;
         return config;
@@ -333,14 +338,119 @@ public sealed class LocationsController(
         if (errors.Count > 0)
             return string.Join(Environment.NewLine, errors);
 
-        var configPath = GetConfigPath();
-        var configDirectory = Path.GetDirectoryName(configPath) ?? PlatformConfigLoader.DefaultConfigDirectory;
-        PlatformConfigLoader.EnsureConfigDirectory(configDirectory);
-        await System.IO.File.WriteAllTextAsync(
-            configPath,
-            JsonSerializer.Serialize(config, WriteJsonOptions),
-            cancellationToken);
+        var root = await configWriter.ReadAsync(cancellationToken);
+        if (root["gateway"] is not JsonObject gatewaySection)
+        {
+            gatewaySection = new JsonObject();
+            root["gateway"] = gatewaySection;
+        }
+
+        if (config.Gateway is null)
+        {
+            gatewaySection.Remove("locations");
+        }
+        else
+        {
+            var gatewayNode = JsonSerializer.SerializeToNode(config.Gateway, WriteJsonOptions) as JsonObject ?? new JsonObject();
+            if (gatewayNode["locations"] is null)
+                gatewaySection.Remove("locations");
+            else
+                gatewaySection["locations"] = gatewayNode["locations"]!.DeepClone();
+        }
+
+        var candidateJson = root.ToJsonString(WriteJsonOptions);
+        PlatformConfig candidateConfig;
+        try
+        {
+            candidateConfig = JsonSerializer.Deserialize<PlatformConfig>(
+                candidateJson,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new PlatformConfig();
+        }
+        catch (JsonException ex)
+        {
+            return $"Invalid JSON while preparing config update: {ex.Message}";
+        }
+
+        var candidateErrors = PlatformConfigLoader.Validate(candidateConfig);
+        if (candidateErrors.Count > 0)
+            return string.Join(Environment.NewLine, candidateErrors);
+
+        await configWriter.UpdateSectionAsync("gateway", gatewaySection.DeepClone(), cancellationToken);
         return null;
+    }
+
+    private static readonly string[] ValidTypes =
+    [
+        LocationType.FileSystem.Value,
+        LocationType.Api.Value,
+        LocationType.McpServer.Value,
+        LocationType.Database.Value,
+        LocationType.RemoteNode.Value
+    ];
+
+    private static bool TryValidateLocationConfig(string name, LocationConfig locationConfig, out string error)
+    {
+        var type = string.IsNullOrWhiteSpace(locationConfig.Type)
+            ? "filesystem"
+            : locationConfig.Type.Trim();
+
+        if (type.Equals("filesystem", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(locationConfig.Path))
+            {
+                error = $"gateway.locations.{name}.path is required for filesystem locations.";
+                return false;
+            }
+
+            try
+            {
+                _ = Path.GetFullPath(locationConfig.Path);
+            }
+            catch (Exception)
+            {
+                error = $"gateway.locations.{name}.path must be a valid path.";
+                return false;
+            }
+
+            error = string.Empty;
+            return true;
+        }
+
+        if (type.Equals("api", StringComparison.OrdinalIgnoreCase)
+            || type.Equals("mcp-server", StringComparison.OrdinalIgnoreCase)
+            || type.Equals("remote-node", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(locationConfig.Endpoint))
+            {
+                error = $"gateway.locations.{name}.endpoint is required for {type} locations.";
+                return false;
+            }
+
+            if (!Uri.TryCreate(locationConfig.Endpoint, UriKind.Absolute, out var endpoint)
+                || (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps))
+            {
+                error = $"gateway.locations.{name}.endpoint must be a valid http or https absolute URL.";
+                return false;
+            }
+
+            error = string.Empty;
+            return true;
+        }
+
+        if (type.Equals("database", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(locationConfig.ConnectionString))
+            {
+                error = $"gateway.locations.{name}.connectionString is required for database locations.";
+                return false;
+            }
+
+            error = string.Empty;
+            return true;
+        }
+
+        error = $"gateway.locations.{name}.type must be one of: {string.Join(", ", ValidTypes)}.";
+        return false;
     }
 
     private string GetConfigPath()

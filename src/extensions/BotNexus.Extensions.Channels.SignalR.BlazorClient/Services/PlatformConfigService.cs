@@ -108,6 +108,77 @@ public sealed class PlatformConfigService
         }
     }
 
+    /// <summary>List all resolved locations.</summary>
+    public async Task<List<LocationItem>?> ListLocationsAsync()
+    {
+        try
+        {
+            return await _http.GetFromJsonAsync<List<LocationItem>>("/api/locations", s_jsonOptions);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Create a location definition.</summary>
+    public async Task<(bool Success, string? Error, LocationItem? Location)> CreateLocationAsync(UpsertLocationRequest request)
+    {
+        return await SendLocationAsync(HttpMethod.Post, "/api/locations", request);
+    }
+
+    /// <summary>Update a location definition.</summary>
+    public async Task<(bool Success, string? Error, LocationItem? Location)> UpdateLocationAsync(string name, UpsertLocationRequest request)
+    {
+        return await SendLocationAsync(HttpMethod.Put, $"/api/locations/{Uri.EscapeDataString(name)}", request);
+    }
+
+    /// <summary>Delete a location definition.</summary>
+    public async Task<(bool Success, string? Error)> DeleteLocationAsync(string name)
+    {
+        try
+        {
+            var response = await _http.DeleteAsync($"/api/locations/{Uri.EscapeDataString(name)}");
+            if (response.IsSuccessStatusCode)
+                return (true, null);
+
+            var body = await response.Content.ReadAsStringAsync();
+            return (false, $"HTTP {(int)response.StatusCode}: {body}");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    private async Task<(bool Success, string? Error, LocationItem? Location)> SendLocationAsync(
+        HttpMethod method,
+        string url,
+        UpsertLocationRequest request)
+    {
+        try
+        {
+            using var message = new HttpRequestMessage(method, url)
+            {
+                Content = JsonContent.Create(request, options: s_jsonOptions)
+            };
+
+            using var response = await _http.SendAsync(message);
+            if (!response.IsSuccessStatusCode)
+            {
+                var body = await response.Content.ReadAsStringAsync();
+                return (false, $"HTTP {(int)response.StatusCode}: {body}", null);
+            }
+
+            var location = await response.Content.ReadFromJsonAsync<LocationItem>(s_jsonOptions);
+            return (true, null, location);
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message, null);
+        }
+    }
+
     /// <summary>Validate the config file.</summary>
     public async Task<ConfigValidationResult?> ValidateAsync()
     {
@@ -127,5 +198,23 @@ public sealed class PlatformConfigService
         public string? ConfigPath { get; init; }
         public List<string> Warnings { get; init; } = [];
         public List<string> Errors { get; init; } = [];
+    }
+
+    public sealed record LocationItem
+    {
+        public string Name { get; init; } = string.Empty;
+        public string Type { get; init; } = string.Empty;
+        public string? PathOrEndpoint { get; init; }
+        public string? Description { get; init; }
+        public string Status { get; init; } = "unknown";
+        public bool IsUserDefined { get; init; }
+    }
+
+    public sealed record UpsertLocationRequest
+    {
+        public string Name { get; init; } = string.Empty;
+        public string Type { get; init; } = "filesystem";
+        public string Value { get; init; } = string.Empty;
+        public string? Description { get; init; }
     }
 }
