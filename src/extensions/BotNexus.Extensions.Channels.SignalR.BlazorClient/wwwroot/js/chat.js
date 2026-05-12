@@ -48,7 +48,7 @@ window.chatScroll = {
     },
 
     preventEnterSubmit: function (element) {
-        if (!element || element._preventEnterBound) return;
+        if (!element || typeof element.addEventListener !== 'function' || element._preventEnterBound) return;
         element.addEventListener('keydown', function (e) {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();

@@ -8,7 +8,7 @@
         <div class="chat-header-left">
             <div class="chat-title-stack">
                 <h3>@DisplayName</h3>
-                @if (ActiveConversationId is not null)
+                @if (HasActiveConversation)
                 {
                     <div class="conversation-title-row">
                         @if (_editingTitle)
@@ -110,7 +110,7 @@
             </div>
         }
 
-        @if (ActiveConversationId is null && !IsLoadingConversations)
+        @if (!HasActiveConversation && !IsLoadingConversations)
         {
             <div class="chat-empty-state">
                 Select a conversation or start a new one.
@@ -306,6 +306,7 @@
 
     private string DisplayName => Agent?.DisplayName ?? AgentId;
     private string? ActiveConversationId => Agent?.ActiveConversationId;
+    private bool HasActiveConversation => ActiveConversation is not null;
     private string? ActiveConversationTitle => ActiveConversation?.Title;
 private bool IsStreaming =>
         Agent?.ActiveConversationId is string activeConvId
@@ -326,6 +327,7 @@ private bool IsStreaming =>
     private ElementReference _messagesContainer;
     private ElementReference _inputElement;
     private bool _enterPreventionBound;
+    private bool _wasReadOnly;
     private AgentConfigPanel? _configPanel;
     private bool _editingTitle;
     private string _titleDraft = "";
@@ -526,7 +528,12 @@ private bool IsStreaming =>
     {
         try
         {
-            if (!_enterPreventionBound)
+            // Reset enter-prevention binding when textarea is recreated (read-only → interactive)
+            if (_wasReadOnly && !IsReadOnly)
+                _enterPreventionBound = false;
+            _wasReadOnly = IsReadOnly;
+
+            if (!_enterPreventionBound && !IsReadOnly)
             {
                 await JS.InvokeVoidAsync("chatScroll.preventEnterSubmit", _inputElement);
                 _enterPreventionBound = true;
@@ -554,7 +561,7 @@ private bool IsStreaming =>
                 _forceScrollNext = true;
             _wasActive = isActive;
 
-            var currentConvId = ActiveConversationId;
+            var currentConvId = ActiveConversation?.ConversationId;
             var currentCount = Messages.Count;
             if (currentConvId != _lastActiveConversationId)
             {
