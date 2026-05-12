@@ -71,6 +71,15 @@ Design specs and bug specs live in `docs/planning/`. Each item is a folder conta
    - User interactions (clicks, input)
    - Edge cases (loading, error, empty lists)
 
+### Test Warnings
+
+**Fix all compiler warnings in tests, including nullable and async warnings.** Do not use `#nullable disable`, `#pragma warning disable`, or null-forgiving operators (`!`) to silence warnings — fix the underlying code:
+- Nullable warnings: Add proper null checks or use required initializers
+- Async warnings: Await all `Task` results or mark unused values with `_ = await`
+- Do not use `Task.Run(...).Wait()` or `task.Result` — these hide warnings and can deadlock
+
+All test warnings will be treated as test failures once warnings-as-errors is enabled.
+
 ## Git Workflow
 
 **Worktrees may be used for independent branches when requested.** When a user asks for a worktree, use it. Do not create a worktree automatically without explicit user request.
@@ -98,6 +107,10 @@ dotnet build BotNexus.slnx --nologo --tl:off
 ```
 
 Build the full solution before running tests to avoid stale assembly issues (e.g., CLI integration tests depend on `BotNexus.Cli.dll` being built).
+
+### Build Warnings
+
+**All compiler warnings must be treated as build failures and fixed before a task is complete.** Do not ship code with compiler warnings. This is enforced centrally via `TreatWarningsAsErrors=true` in `Directory.Build.props` once implementation lands. Fix warnings during development rather than ignoring them later.
 
 ## MSBuild Conventions
 

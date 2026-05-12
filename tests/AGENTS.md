@@ -147,5 +147,6 @@ This uses `Directory.Build.targets` to strip all test project inputs when `SkipT
 - **xUnit** — all test projects use xUnit with `[Fact]` and `[Theory]`
 - **NSubstitute** — for mocking (where needed)
 - **No test skipping** — don't skip or disable tests to make the suite pass
+- **No warning suppression** — fix nullable and async warnings instead of using `#nullable disable` or `#pragma warning disable`
 - **Isolation** — tests must not depend on external services or user config
 - **Naming** — `MethodUnderTest_Scenario_ExpectedResult`

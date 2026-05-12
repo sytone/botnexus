@@ -1,5 +1,9 @@
 # Copilot Instructions — BotNexus
 
+## Build Warnings
+
+**All compiler warnings must be fixed before tasks are complete.** Warnings will be treated as errors via `TreatWarningsAsErrors=true` in `Directory.Build.props`. Do not ignore, suppress, or work around warnings — fix the underlying issue (nullable checks, async/await, unused code, etc.).
+
 ## Git Workflow
 
 - **Worktrees are allowed when explicitly requested.** If a user asks you to create or use a worktree, do so. Otherwise, work directly on the current branch without creating a worktree.
