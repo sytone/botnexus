@@ -96,6 +96,32 @@ public sealed class FileAgentWorkspaceManagerTests : IDisposable
         content.ShouldContain("override entry");
     }
 
+    [Fact]
+    public void GetWorkspacePath_ForSubAgent_UsesTempWorkspaceRoot()
+    {
+        var subAgentName = "farnsworth--subagent--general--abc123";
+
+        var workspacePath = _workspaceManager.GetWorkspacePath(subAgentName);
+        var normalizedHome = Path.GetFullPath(_homePath);
+
+        workspacePath.Replace('\\', '/').ShouldContain("botnexus-subagent-workspaces");
+        Path.GetFullPath(workspacePath).StartsWith(normalizedHome, StringComparison.OrdinalIgnoreCase).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void TryCleanupWorkspace_ForSubAgent_RemovesOwnedTempWorkspace()
+    {
+        var subAgentName = "farnsworth--subagent--general--cleanup";
+        var workspacePath = _workspaceManager.GetWorkspacePath(subAgentName);
+        _fileSystem.Directory.CreateDirectory(workspacePath);
+        _fileSystem.File.WriteAllText(Path.Combine(workspacePath, "scratch.txt"), "test");
+
+        var cleaned = _workspaceManager.TryCleanupWorkspace(subAgentName);
+
+        cleaned.ShouldBeTrue();
+        _fileSystem.Directory.Exists(Path.GetDirectoryName(workspacePath)!).ShouldBeFalse();
+    }
+
     public void Dispose()
     {
         SqliteConnection.ClearAllPools();

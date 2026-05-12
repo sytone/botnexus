@@ -54,4 +54,11 @@ public interface IAgentWorkspaceManager
     /// <param name="agentName">The agent identifier.</param>
     /// <returns>The workspace directory path.</returns>
     string GetWorkspacePath(string agentName);
+
+    /// <summary>
+    /// Removes an agent-owned temporary workspace when it is safe to do so.
+    /// </summary>
+    /// <param name="agentName">The agent identifier.</param>
+    /// <returns><c>true</c> when the workspace was removed or did not exist; otherwise <c>false</c>.</returns>
+    bool TryCleanupWorkspace(string agentName) => false;
 }
