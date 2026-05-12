@@ -1,6 +1,7 @@
 using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
 
@@ -160,6 +161,66 @@ public sealed class ChatPanelTests : IDisposable
         Assert.Empty(cut.FindAll(".chat-input"));
         Assert.Empty(cut.FindAll(".new-chat-btn"));
         Assert.Empty(cut.FindAll(".conversation-title.editable"));
+    }
+
+    [Fact]
+    public void Stale_active_conversation_id_without_backing_conversation_shows_empty_state()
+    {
+        var agent = CreateAndSeedAgent("agent-1");
+        agent.ActiveConversationId = "missing-conversation";
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        Assert.Contains("Select a conversation", cut.Markup);
+    }
+
+    [Fact]
+    public void Stale_removed_cron_conversation_shows_empty_state_after_refresh()
+    {
+        var agent = CreateAndSeedAgent("agent-1");
+        agent.ActiveConversationId = "cron-session:removed-cron-session";
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        Assert.Contains("Select a conversation", cut.Markup);
+    }
+
+    [Fact]
+    public void First_render_binds_prevent_enter_with_non_empty_element_reference()
+    {
+        CreateAndSeedAgent("agent-1");
+        _ctx.JSInterop.Mode = JSRuntimeMode.Strict;
+        _ctx.JSInterop.SetupVoid("chatScroll.preventEnterSubmit", _ => true);
+        _ctx.JSInterop.SetupVoid("chatScroll.forceScrollToBottom", _ => true);
+
+        _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        var invocation = Assert.Single(_ctx.JSInterop.Invocations,
+            i => i.Identifier == "chatScroll.preventEnterSubmit");
+        var arg = Assert.IsType<ElementReference>(Assert.Single(invocation.Arguments));
+        Assert.False(string.IsNullOrWhiteSpace(arg.Id));
+    }
+
+    [Fact]
+    public void Read_only_sub_agent_view_does_not_bind_prevent_enter_submit()
+    {
+        CreateAndSeedAgent("sub-1", "Sub Agent", isConnected: true);
+        _store.SeedConversations("sub-1", [MakeConvDto("subagent-session:sub-1", "sub-1", "Sub-agent session")]);
+        _store.SetActiveConversation("sub-1", "subagent-session:sub-1");
+
+        var agent = _store.GetAgent("sub-1")!;
+        agent.SessionType = "agent-subagent";
+        var conversation = agent.Conversations["subagent-session:sub-1"];
+        conversation.IsVirtualSession = true;
+        conversation.VirtualSessionKind = "subagent";
+
+        _ctx.JSInterop.Mode = JSRuntimeMode.Strict;
+        _ctx.JSInterop.SetupVoid("chatScroll.forceScrollToBottom", _ => true);
+
+        _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "sub-1"));
+
+        Assert.DoesNotContain(_ctx.JSInterop.Invocations,
+            i => i.Identifier == "chatScroll.preventEnterSubmit");
     }
 
     [Fact]

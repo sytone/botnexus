@@ -42,4 +42,4 @@
 - Sub-agent wake delivery tests should assert both dispatch metadata and stream-event channel capabilities.
 - [CORRECTED] Legacy cron cleanup regressions must assert Blazor uses DELETE /api/conversations/{cron-session-id} (archive path only) and never falls back to session deletion; gateway must preserve/seal session history for linked/orphan projections.
 - Portal startup regressions must protect initial history load from stale `cron-session:*` 404s by removing orphan projections and continuing to load other conversations.
-
+- ChatPanel hard-refresh coverage must treat stale `ActiveConversationId` values (including removed `cron-session:*`) as empty-state render paths and assert JS interop bind safety (`preventEnterSubmit` only for interactive views with valid ElementReference semantics).
