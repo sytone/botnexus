@@ -6,21 +6,10 @@ namespace BotNexus.Gateway.Api.Controllers;
 /// <summary>
 /// Gateway lifecycle management endpoints.
 /// </summary>
-/// <summary>
-/// Represents gateway controller.
-/// </summary>
 [ApiController]
 [Route("api/gateway")]
 public sealed class GatewayController(IHostApplicationLifetime lifetime) : ControllerBase
 {
-    /// <summary>
-    /// Initiates a graceful shutdown of the gateway process.
-    /// The process supervisor (systemd, Docker, dev-loop script, etc.) is expected to restart it.
-    /// </summary>
-    /// <summary>
-    /// Executes shutdown.
-    /// </summary>
-    /// <returns>The shutdown result.</returns>
     /// <summary>Returns runtime and build information about the running gateway.</summary>
     [HttpGet("info")]
     public IActionResult Info() => Ok(new
@@ -32,6 +21,10 @@ public sealed class GatewayController(IHostApplicationLifetime lifetime) : Contr
         version       = GatewayBuildInfo.Version
     });
 
+    /// <summary>
+    /// Initiates a graceful shutdown so the process supervisor can restart the gateway cleanly.
+    /// </summary>
+    /// <returns>A shutdown acknowledgement payload.</returns>
     [HttpPost("shutdown")]
     public IActionResult Shutdown()
     {

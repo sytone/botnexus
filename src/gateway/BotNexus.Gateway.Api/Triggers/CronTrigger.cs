@@ -33,6 +33,7 @@ public sealed class CronTrigger(
     /// <param name="agentId">The agent id.</param>
     /// <param name="prompt">The prompt.</param>
     /// <param name="ct">The ct.</param>
+    /// <param name="request">Optional trigger metadata such as cron job, conversation, and model override.</param>
     /// <returns>The create session async result.</returns>
     public async Task<SessionId> CreateSessionAsync(
         AgentId agentId,
