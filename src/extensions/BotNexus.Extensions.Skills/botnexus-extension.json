@@ -4,5 +4,5 @@
   "description": "Dynamic skill loading and command contributions for agents",
   "version": "1.0.0",
   "entryAssembly": "BotNexus.Extensions.Skills.dll",
-  "extensionTypes": ["tool", "command"]
+  "extensionTypes": ["tool", "command", "hook-handler"]
 }
