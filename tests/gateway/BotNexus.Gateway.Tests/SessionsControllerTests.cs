@@ -446,7 +446,9 @@ public sealed class SessionsControllerTests
         var result = await controller.PatchMetadata("s1", patchDocument.RootElement.Clone(), CancellationToken.None);
 
         var payload = (result.Result as OkObjectResult)?.Value as Dictionary<string, object?>;
-        payload.ShouldContainKeyAndValue("theme", (object?)"dark");
+        payload.ShouldNotBeNull();
+        var metadata = payload ?? throw new InvalidOperationException("Expected metadata payload.");
+        metadata.ShouldContainKeyAndValue("theme", (object?)"dark");
     }
 
     [Fact]

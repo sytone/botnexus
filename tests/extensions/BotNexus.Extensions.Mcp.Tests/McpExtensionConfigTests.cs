@@ -30,15 +30,20 @@ public class McpExtensionConfigTests
         var config = JsonSerializer.Deserialize<McpExtensionConfig>(json);
 
         config.ShouldNotBeNull();
-        config!.Servers.Count().ShouldBe(2);
-        config.ToolPrefix.ShouldBeTrue();
+        var extensionConfig = config ?? throw new InvalidOperationException("Expected MCP config.");
+        extensionConfig.Servers.Count().ShouldBe(2);
+        extensionConfig.ToolPrefix.ShouldBeTrue();
 
-        config.Servers["github"].Command.ShouldBe("npx");
-        config.Servers["github"].Args.ShouldContain("-y");
-        config.Servers["github"].Env.ShouldContainKey("GITHUB_TOKEN");
+        extensionConfig.Servers["github"].Command.ShouldBe("npx");
+        extensionConfig.Servers["github"].Args.ShouldNotBeNull();
+        var githubArgs = extensionConfig.Servers["github"].Args ?? throw new InvalidOperationException("Expected github args.");
+        githubArgs.ShouldContain("-y");
+        extensionConfig.Servers["github"].Env.ShouldNotBeNull();
+        var githubEnv = extensionConfig.Servers["github"].Env ?? throw new InvalidOperationException("Expected github env.");
+        githubEnv.ShouldContainKey("GITHUB_TOKEN");
 
-        config.Servers["filesystem"].Command.ShouldBe("node");
-        config.Servers["filesystem"].WorkingDirectory.ShouldBe("/opt/mcp");
+        extensionConfig.Servers["filesystem"].Command.ShouldBe("node");
+        extensionConfig.Servers["filesystem"].WorkingDirectory.ShouldBe("/opt/mcp");
     }
 
     [Fact]
@@ -74,8 +79,10 @@ public class McpExtensionConfigTests
 
         var config = JsonSerializer.Deserialize<McpExtensionConfig>(json);
 
-        config!.Servers["slow-server"].InitTimeoutMs.ShouldBe(60_000);
-        config.Servers["slow-server"].CallTimeoutMs.ShouldBe(120_000);
+        config.ShouldNotBeNull();
+        var extensionConfig = config ?? throw new InvalidOperationException("Expected MCP config.");
+        extensionConfig.Servers["slow-server"].InitTimeoutMs.ShouldBe(60_000);
+        extensionConfig.Servers["slow-server"].CallTimeoutMs.ShouldBe(120_000);
     }
 
     [Fact]
@@ -97,10 +104,13 @@ public class McpExtensionConfigTests
         var config = JsonSerializer.Deserialize<McpExtensionConfig>(json);
 
         config.ShouldNotBeNull();
-        config!.Servers["remote"].Url.ShouldBe("http://localhost:3000/mcp");
-        config.Servers["remote"].Headers.ShouldContainKey("Authorization");
-        config.Servers["remote"].Headers!["Authorization"].ShouldBe("Bearer my-token");
-        config.Servers["remote"].Command.ShouldBeNull();
+        var extensionConfig = config ?? throw new InvalidOperationException("Expected MCP config.");
+        extensionConfig.Servers["remote"].Url.ShouldBe("http://localhost:3000/mcp");
+        extensionConfig.Servers["remote"].Headers.ShouldNotBeNull();
+        var headers = extensionConfig.Servers["remote"].Headers ?? throw new InvalidOperationException("Expected headers.");
+        headers.ShouldContainKey("Authorization");
+        headers["Authorization"].ShouldBe("Bearer my-token");
+        extensionConfig.Servers["remote"].Command.ShouldBeNull();
     }
 
     [Fact]
@@ -123,11 +133,12 @@ public class McpExtensionConfigTests
         var config = JsonSerializer.Deserialize<McpExtensionConfig>(json);
 
         config.ShouldNotBeNull();
-        config!.Servers.Count().ShouldBe(2);
-        config.Servers["local"].Command.ShouldBe("npx");
-        config.Servers["local"].Url.ShouldBeNull();
-        config.Servers["remote"].Url.ShouldBe("http://remote-host:8080/mcp");
-        config.Servers["remote"].Command.ShouldBeNull();
+        var extensionConfig = config ?? throw new InvalidOperationException("Expected MCP config.");
+        extensionConfig.Servers.Count().ShouldBe(2);
+        extensionConfig.Servers["local"].Command.ShouldBe("npx");
+        extensionConfig.Servers["local"].Url.ShouldBeNull();
+        extensionConfig.Servers["remote"].Url.ShouldBe("http://remote-host:8080/mcp");
+        extensionConfig.Servers["remote"].Command.ShouldBeNull();
     }
 
     [Fact]
@@ -221,7 +232,9 @@ public class McpExtensionConfigTests
 
         var config = JsonSerializer.Deserialize<McpExtensionConfig>(json);
 
-        config!.ToolPrefix.ShouldBeFalse();
+        config.ShouldNotBeNull();
+        var extensionConfig = config ?? throw new InvalidOperationException("Expected MCP config.");
+        extensionConfig.ToolPrefix.ShouldBeFalse();
     }
 
     [Fact]
@@ -244,9 +257,13 @@ public class McpExtensionConfigTests
 
         var config = JsonSerializer.Deserialize<McpExtensionConfig>(json);
 
-        config!.Servers["srv"].Env.Count().ShouldBe(3);
-        config.Servers["srv"].Env!["TOKEN"].ShouldBe("${env:MY_TOKEN}");
-        config.Servers["srv"].Env!["API_KEY"].ShouldBe("${env:API_KEY:-default-key}");
-        config.Servers["srv"].Env!["PLAIN"].ShouldBe("literal-value");
+        config.ShouldNotBeNull();
+        var extensionConfig = config ?? throw new InvalidOperationException("Expected MCP config.");
+        extensionConfig.Servers["srv"].Env.ShouldNotBeNull();
+        var env = extensionConfig.Servers["srv"].Env ?? throw new InvalidOperationException("Expected env values.");
+        env.Count().ShouldBe(3);
+        env["TOKEN"].ShouldBe("${env:MY_TOKEN}");
+        env["API_KEY"].ShouldBe("${env:API_KEY:-default-key}");
+        env["PLAIN"].ShouldBe("literal-value");
     }
 }

@@ -38,8 +38,11 @@ public sealed class SafetyHooksTests : IDisposable
         var result = await _hooks.ValidateAsync(context, _config);
 
         result.ShouldNotBeNull();
-        result!.Block.ShouldBeTrue();
-        result.Reason.ShouldContain("Unsafe path");
+        var blockedResult = result ?? throw new InvalidOperationException("Expected blocked result.");
+        blockedResult.Block.ShouldBeTrue();
+        blockedResult.Reason.ShouldNotBeNull();
+        var reason = blockedResult.Reason ?? throw new InvalidOperationException("Expected rejection reason.");
+        reason.ShouldContain("Unsafe path");
     }
 
     [Fact]
@@ -53,8 +56,11 @@ public sealed class SafetyHooksTests : IDisposable
         var result = await _hooks.ValidateAsync(context, _config);
 
         result.ShouldNotBeNull();
-        result!.Block.ShouldBeTrue();
-        result.Reason.ShouldContain("dangerous command pattern");
+        var blockedResult = result ?? throw new InvalidOperationException("Expected blocked result.");
+        blockedResult.Block.ShouldBeTrue();
+        blockedResult.Reason.ShouldNotBeNull();
+        var reason = blockedResult.Reason ?? throw new InvalidOperationException("Expected rejection reason.");
+        reason.ShouldContain("dangerous command pattern");
     }
 
     [Fact]

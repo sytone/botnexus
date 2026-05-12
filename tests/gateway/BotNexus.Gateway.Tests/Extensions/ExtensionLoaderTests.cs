@@ -109,11 +109,15 @@ public sealed class ExtensionLoaderTests : IDisposable
         result.RegisteredServices.ShouldContain(service => service.StartsWith("IChannelAdapter->", StringComparison.Ordinal));
         var descriptor = services.Single(d => d.ServiceType == typeof(IChannelAdapter));
         descriptor.ImplementationType.ShouldNotBeNull();
-        descriptor.ImplementationType!.FullName.ShouldContain("TelegramChannelAdapter");
+        var implementationType = descriptor.ImplementationType ?? throw new InvalidOperationException("Expected implementation type.");
+        implementationType.FullName.ShouldNotBeNull();
+        var fullName = implementationType.FullName ?? throw new InvalidOperationException("Expected implementation full name.");
+        fullName.ShouldContain("TelegramChannelAdapter");
 
-        var loadContext = AssemblyLoadContext.GetLoadContext(descriptor.ImplementationType.Assembly);
+        var loadContext = AssemblyLoadContext.GetLoadContext(implementationType.Assembly);
         loadContext.ShouldNotBeNull();
-        loadContext!.IsCollectible.ShouldBeTrue();
+        var context = loadContext ?? throw new InvalidOperationException("Expected load context.");
+        context.IsCollectible.ShouldBeTrue();
         loadContext.ShouldNotBe(AssemblyLoadContext.Default);
 
         loader.GetLoaded().Where(x => x.ExtensionId == "telegram-extension").ShouldHaveSingleItem();

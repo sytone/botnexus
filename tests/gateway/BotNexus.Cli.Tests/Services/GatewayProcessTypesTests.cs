@@ -95,7 +95,9 @@ public sealed class GatewayProcessTypesTests
         status.State.ShouldBe(GatewayState.Running);
         status.Pid.ShouldBe(12345);
         status.Uptime.ShouldBe(uptime);
-        status.Message.ShouldContain("Running");
+        status.Message.ShouldNotBeNull();
+        var message = status.Message ?? throw new InvalidOperationException("Expected status message.");
+        message.ShouldContain("Running");
     }
 
     [Fact]

@@ -76,10 +76,10 @@ public sealed class ListByChannelTests
             [typeof(BotNexus.Domain.Primitives.AgentId), typeof(ChannelKey), typeof(CancellationToken)]);
 
         method.ShouldNotBeNull("ListByChannelAsync must exist on session store implementations.");
-        var invocationResult = method!.Invoke(store, [BotNexus.Domain.Primitives.AgentId.From(agentId), channelType, CancellationToken.None]);
-        invocationResult.ShouldBeAssignableTo<Task>();
-
-        var task = (Task)invocationResult!;
+        var reflectionMethod = method ?? throw new InvalidOperationException("Expected ListByChannelAsync method.");
+        var invocationResult = reflectionMethod.Invoke(store, [BotNexus.Domain.Primitives.AgentId.From(agentId), channelType, CancellationToken.None]);
+        invocationResult.ShouldNotBeNull();
+        var task = invocationResult as Task ?? throw new InvalidOperationException("Expected task result.");
         await task;
 
         var resultProperty = task.GetType().GetProperty("Result");
@@ -89,4 +89,3 @@ public sealed class ListByChannelTests
         return sessions!;
     }
 }
-
