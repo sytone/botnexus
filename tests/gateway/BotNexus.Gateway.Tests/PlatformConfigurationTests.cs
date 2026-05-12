@@ -301,6 +301,46 @@ public sealed class PlatformConfigurationTests
         }
 
         listener.Messages.ShouldContain(message => message.Contains("Platform config warning", StringComparison.Ordinal));
+        listener.Messages.ShouldNotContain(message => message.Contains(configPath, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PlatformConfigLoader_Load_WithDatabaseConnectionString_DoesNotEmitConnectionStringInWarnings()
+    {
+        using var fixture = new PlatformConfigFixture();
+        var configPath = Path.Combine(fixture.RootPath, "future-version-with-secret.json");
+        const string secret = "Server=tcp:sql.internal,1433;Database=BotNexus;User Id=svc_analytics;Password=SuperSecret!123;Encrypt=True";
+        File.WriteAllText(
+            configPath,
+            $$"""
+              {
+                "version": 2,
+                "gateway": {
+                  "locations": {
+                    "analytics-db": {
+                      "type": "database",
+                      "connectionString": "{{secret}}"
+                    }
+                  }
+                }
+              }
+              """);
+        using var listener = new CollectingTraceListener();
+
+        Trace.Listeners.Add(listener);
+        try
+        {
+            _ = PlatformConfigLoader.Load(configPath, validateOnLoad: false);
+        }
+        finally
+        {
+            Trace.Listeners.Remove(listener);
+        }
+
+        listener.Messages.ShouldContain(message => message.Contains("Platform config warning", StringComparison.Ordinal));
+        listener.Messages.ShouldNotContain(message => message.Contains(secret, StringComparison.Ordinal));
+        listener.Messages.ShouldNotContain(message => message.Contains("Password=", StringComparison.OrdinalIgnoreCase));
+        listener.Messages.ShouldNotContain(message => message.Contains("User Id=", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
