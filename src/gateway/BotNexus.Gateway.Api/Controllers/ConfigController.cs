@@ -102,9 +102,11 @@ public sealed class ConfigController : ControllerBase
     /// Returns the effective (merged) configuration for a specific agent, with provenance per field.
     /// </summary>
     [HttpGet("agents/{agentId}/effective")]
-    public ActionResult<EffectiveAgentConfigResponse> GetEffectiveAgentConfig(
+    public async Task<ActionResult<EffectiveAgentConfigResponse>> GetEffectiveAgentConfig(
         string agentId,
-        [FromServices] IOptionsMonitor<PlatformConfig> configOptions)
+        [FromServices] IOptionsMonitor<PlatformConfig> configOptions,
+        [FromServices] IConfiguration configuration,
+        CancellationToken ct)
     {
         var config = configOptions.CurrentValue;
 
@@ -113,7 +115,24 @@ public sealed class ConfigController : ControllerBase
             return NotFound($"Agent '{agentId}' not found.");
 
         if (config.Agents is null || !config.Agents.TryGetValue(agentId, out var agentConfig))
-            return NotFound($"Agent '{agentId}' not found.");
+        {
+            var fallbackPath = ResolveConfiguredPath(configuration);
+            var fallbackConfig = await new PlatformConfigWriter(
+                fallbackPath,
+                new System.IO.Abstractions.FileSystem()).ReadPlatformConfigAsync(ct);
+            if (System.IO.File.Exists(fallbackPath))
+            {
+                var fallbackConfiguration = new ConfigurationBuilder()
+                    .AddJsonFile(fallbackPath, optional: false, reloadOnChange: false)
+                    .Build();
+                var postConfigure = new PlatformConfigPostConfigure(fallbackConfiguration, fallbackPath);
+                postConfigure.PostConfigure(Options.DefaultName, fallbackConfig);
+            }
+            if (fallbackConfig.Agents is null || !fallbackConfig.Agents.TryGetValue(agentId, out agentConfig))
+                return NotFound($"Agent '{agentId}' not found.");
+
+            config = fallbackConfig;
+        }
 
         var defaults = config.AgentDefaults;
         var rawElementNullable = config.AgentRawElements is not null && config.AgentRawElements.TryGetValue(agentId, out var re)
@@ -247,6 +266,19 @@ public sealed class ConfigController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(path))
         {
+            if (!System.IO.File.Exists(resolvedPath))
+            {
+                return Ok(new ConfigValidationResponse(
+                    IsValid: false,
+                    ConfigPath: resolvedPath,
+                    Warnings: [],
+                    Errors:
+                    [
+                        $"Config file not found at '{resolvedPath}'.",
+                        "Create ~/.botnexus/config.json (or pass ?path=...) and include gateway/providers/channels/agents sections."
+                    ]));
+            }
+
             var current = configOptions.CurrentValue;
             var errors = PlatformConfigLoader.Validate(current)
                 .Where(error => !string.IsNullOrWhiteSpace(error))

@@ -60,6 +60,10 @@ public sealed class ConfigControllerTests
     public async Task Validate_WhenPathNotProvided_UsesCurrentOptionsMonitorValue()
     {
         var controller = new ConfigController();
+        var root = Path.Combine(Path.GetTempPath(), "botnexus-config-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var configPath = Path.Combine(root, "config.json");
+        await File.WriteAllTextAsync(configPath, "{}");
         var options = new TestOptionsMonitor<PlatformConfig>(new PlatformConfig
         {
             Agents = new Dictionary<string, AgentDefinitionConfig>
@@ -70,16 +74,22 @@ public sealed class ConfigControllerTests
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["BotNexus:ConfigPath"] = "Q:\\missing\\config.json"
+                ["BotNexus:ConfigPath"] = configPath
             })
             .Build();
+        try
+        {
+            var result = await controller.Validate(null, options, configuration, CancellationToken.None);
 
-        var result = await controller.Validate(null, options, configuration, CancellationToken.None);
-
-        var ok = result.Result.ShouldBeOfType<OkObjectResult>();
-        var payload = ok.Value.ShouldBeOfType<ConfigValidationResponse>();
-        payload.IsValid.ShouldBeFalse();
-        payload.ConfigPath.ShouldBe(Path.GetFullPath("Q:\\missing\\config.json"));
-        payload.Errors.ShouldContain(error => error.Contains("agents.assistant.provider", StringComparison.Ordinal));
+            var ok = result.Result.ShouldBeOfType<OkObjectResult>();
+            var payload = ok.Value.ShouldBeOfType<ConfigValidationResponse>();
+            payload.IsValid.ShouldBeFalse();
+            payload.ConfigPath.ShouldBe(configPath);
+            payload.Errors.ShouldContain(error => error.Contains("agents.assistant.provider", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
     }
 }
