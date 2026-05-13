@@ -69,7 +69,7 @@ public sealed class ServiceBusChannelAdapterTests
             timestamp = "2026-05-13T12:22:56Z",
         });
 
-        await adapter.HandleMessageBodyAsync(json, null, CancellationToken.None);
+        await adapter.HandleMessageBodyAsync(json, null, null, CancellationToken.None);
 
         var dispatched = dispatcher.Invocations
             .Where(i => i.Method.Name == nameof(IChannelDispatcher.DispatchAsync))
@@ -96,7 +96,7 @@ public sealed class ServiceBusChannelAdapterTests
 
         var json = """{ "content": "minimal message", "senderId": "bot@sys.com" }""";
 
-        await adapter.HandleMessageBodyAsync(json, null, CancellationToken.None);
+        await adapter.HandleMessageBodyAsync(json, null, null, CancellationToken.None);
 
         var dispatched = dispatcher.Invocations
             .Where(i => i.Method.Name == nameof(IChannelDispatcher.DispatchAsync))
@@ -121,7 +121,7 @@ public sealed class ServiceBusChannelAdapterTests
 
         var json = """{ "content": "no sender" }""";
 
-        await adapter.HandleMessageBodyAsync(json, null, CancellationToken.None);
+        await adapter.HandleMessageBodyAsync(json, null, null, CancellationToken.None);
 
         var dispatched = dispatcher.Invocations
             .Where(i => i.Method.Name == nameof(IChannelDispatcher.DispatchAsync))
@@ -150,7 +150,7 @@ public sealed class ServiceBusChannelAdapterTests
 
         var json = """{ "content": "blocked", "senderId": "unknown@evil.com" }""";
 
-        await adapter.HandleMessageBodyAsync(json, null, CancellationToken.None);
+        await adapter.HandleMessageBodyAsync(json, null, null, CancellationToken.None);
 
         dispatcher.Verify(
             d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()),
@@ -174,7 +174,7 @@ public sealed class ServiceBusChannelAdapterTests
 
         var json = """{ "content": "hello", "senderId": "allowed@org.com" }""";
 
-        await adapter.HandleMessageBodyAsync(json, null, CancellationToken.None);
+        await adapter.HandleMessageBodyAsync(json, null, null, CancellationToken.None);
 
         dispatcher.Verify(
             d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()),
@@ -192,7 +192,7 @@ public sealed class ServiceBusChannelAdapterTests
 
         // Simulate an inbound message that sets up the pending reply context.
         var json = """{ "content": "hi", "senderId": "u@x.com", "conversationId": "conv-1", "replyTo": "custom-reply-queue", "correlationId": "corr-99" }""";
-        await adapter.HandleMessageBodyAsync(json, null, CancellationToken.None);
+        await adapter.HandleMessageBodyAsync(json, null, null, CancellationToken.None);
 
         var outbound = new OutboundMessage
         {
@@ -219,7 +219,7 @@ public sealed class ServiceBusChannelAdapterTests
 
         // Inbound with no replyTo → pending context has null ReplyTo.
         var json = """{ "content": "hi", "senderId": "u@x.com", "conversationId": "conv-2" }""";
-        await adapter.HandleMessageBodyAsync(json, null, CancellationToken.None);
+        await adapter.HandleMessageBodyAsync(json, null, null, CancellationToken.None);
 
         var outbound = new OutboundMessage
         {
@@ -246,7 +246,7 @@ public sealed class ServiceBusChannelAdapterTests
         const string correlationId = "corr-preserved-42";
 
         var inboundJson = $$"""{ "content": "q", "senderId": "s@x.com", "conversationId": "conv-3", "correlationId": "{{correlationId}}" }""";
-        await adapter.HandleMessageBodyAsync(inboundJson, null, CancellationToken.None);
+        await adapter.HandleMessageBodyAsync(inboundJson, null, null, CancellationToken.None);
 
         var outbound = new OutboundMessage
         {
@@ -320,7 +320,7 @@ public sealed class ServiceBusChannelAdapterTests
         var dispatcher = StartAdapter(adapter);
 
         // Should not throw; message is silently abandoned (logged at Warning level).
-        await adapter.HandleMessageBodyAsync("not-valid-json}{", null, CancellationToken.None);
+        await adapter.HandleMessageBodyAsync("not-valid-json}{", null, null, CancellationToken.None);
 
         dispatcher.Verify(
             d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()),
@@ -349,7 +349,7 @@ public sealed class ServiceBusChannelAdapterTests
         // Envelope has only content — everything else from application properties.
         var json = """{ "content": "from app props" }""";
 
-        await adapter.HandleMessageBodyAsync(json, appProps, CancellationToken.None);
+        await adapter.HandleMessageBodyAsync(json, appProps, null, CancellationToken.None);
 
         var dispatched = dispatcher.Invocations
             .Where(i => i.Method.Name == nameof(IChannelDispatcher.DispatchAsync))
@@ -389,5 +389,53 @@ public sealed class ServiceBusChannelAdapterTests
         factory.Senders.ShouldContainKey("direct-reply-queue");
         var sent = factory.Senders["direct-reply-queue"].SentMessages.Single();
         sent.CorrelationId.ShouldBe("direct-corr");
+    }
+
+    // ── Test: Concurrent inbound messages for same conversation route independently ─
+
+    [Fact]
+    public async Task SendAsync_ConcurrentInboundSameConversation_RepliesRouteIndependently()
+    {
+        var factory = new FakeServiceBusAdapterClientFactory();
+        var adapter = CreateAdapter(factory: factory);
+        StartAdapter(adapter);
+
+        // Two inbound messages for the same conversationId but distinct replyTo/correlationId.
+        // This simulates MaxConcurrentCalls > 1 with two messages in-flight simultaneously.
+        var jsonA = """{ "content": "msg A", "senderId": "u@x.com", "conversationId": "conv-concurrent", "replyTo": "reply-queue-A", "correlationId": "corr-A" }""";
+        var jsonB = """{ "content": "msg B", "senderId": "u@x.com", "conversationId": "conv-concurrent", "replyTo": "reply-queue-B", "correlationId": "corr-B" }""";
+
+        await adapter.HandleMessageBodyAsync(jsonA, null, "sb-msg-id-A", CancellationToken.None);
+        await adapter.HandleMessageBodyAsync(jsonB, null, "sb-msg-id-B", CancellationToken.None);
+
+        // Reply for B is sent first (out-of-order) to prove routing is by key, not FIFO.
+        var outboundB = new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("servicebus"),
+            ChannelAddress = ChannelAddress.From("conv-concurrent"),
+            Content = "reply B",
+            Metadata = new Dictionary<string, object?> { [ServiceBusChannelAdapter.MetaRequestKey] = "sb-msg-id-B" },
+        };
+        await adapter.SendAsync(outboundB, CancellationToken.None);
+
+        // Reply for A sent second.
+        var outboundA = new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("servicebus"),
+            ChannelAddress = ChannelAddress.From("conv-concurrent"),
+            Content = "reply A",
+            Metadata = new Dictionary<string, object?> { [ServiceBusChannelAdapter.MetaRequestKey] = "sb-msg-id-A" },
+        };
+        await adapter.SendAsync(outboundA, CancellationToken.None);
+
+        // A's reply must land in A's queue with A's correlationId.
+        factory.Senders.ShouldContainKey("reply-queue-A");
+        factory.Senders["reply-queue-A"].SentMessages.ShouldHaveSingleItem();
+        factory.Senders["reply-queue-A"].SentMessages[0].CorrelationId.ShouldBe("corr-A");
+
+        // B's reply must land in B's queue with B's correlationId.
+        factory.Senders.ShouldContainKey("reply-queue-B");
+        factory.Senders["reply-queue-B"].SentMessages.ShouldHaveSingleItem();
+        factory.Senders["reply-queue-B"].SentMessages[0].CorrelationId.ShouldBe("corr-B");
     }
 }

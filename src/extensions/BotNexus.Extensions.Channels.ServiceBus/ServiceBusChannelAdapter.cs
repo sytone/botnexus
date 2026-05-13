@@ -18,10 +18,18 @@ namespace BotNexus.Extensions.Channels.ServiceBus;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The adapter maintains an in-memory pending-reply index keyed by <see cref="ChannelAddress"/>
-/// (the conversation key). This allows the outbound path to recover the original
-/// <c>replyTo</c> and <c>correlationId</c> values even when the gateway does not propagate
-/// inbound metadata to <see cref="OutboundMessage.Metadata"/>.
+/// The adapter maintains an in-memory pending-reply index keyed by a per-dispatch request key
+/// (the inbound Service Bus message ID, or a generated GUID when absent). This prevents reply
+/// context from being overwritten when <see cref="ServiceBusChannelOptions.MaxConcurrentCalls"/>
+/// is greater than one and two inbound messages for the same conversation are in-flight
+/// simultaneously.
+/// </para>
+/// <para>
+/// A secondary per-conversation FIFO queue maps each <see cref="ChannelAddress"/> to its
+/// pending request keys. When the gateway does not propagate <c>InboundMessage.Metadata</c>
+/// to <c>OutboundMessage.Metadata</c>, <see cref="SendAsync"/> dequeues the oldest context
+/// for that conversation address. When the outbound message does carry
+/// <see cref="MetaRequestKey"/>, the lookup is exact and order-independent.
 /// </para>
 /// <para>
 /// For managed-identity or custom credential scenarios, register your own
@@ -36,6 +44,14 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
     internal const string MetaCorrelationId = "servicebus.correlationId";
     internal const string MetaConversationId = "servicebus.conversationId";
     internal const string MetaAgentId = "servicebus.agentId";
+
+    /// <summary>
+    /// Per-dispatch unique key threaded through <c>InboundMessage.Metadata</c> so that
+    /// <see cref="SendAsync"/> can retrieve the exact <see cref="PendingReplyContext"/> for
+    /// this request when the outbound message carries it. Preferred over the FIFO fallback
+    /// when two in-flight requests share the same conversation address.
+    /// </summary>
+    internal const string MetaRequestKey = "servicebus.requestKey";
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -52,9 +68,16 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
     private readonly ConcurrentDictionary<string, IServiceBusSenderWrapper> _senders =
         new(StringComparer.OrdinalIgnoreCase);
 
-    // Per-conversation state stored when an inbound message arrives, consumed by SendAsync.
-    // Keyed by ChannelAddress.Value (conversationId or senderId).
+    // Pending-reply contexts keyed by per-dispatch request key (SB messageId or generated GUID).
+    // Using a unique key per dispatch prevents a second in-flight message for the same
+    // conversation from overwriting the first entry when MaxConcurrentCalls > 1.
     private readonly ConcurrentDictionary<string, PendingReplyContext> _pendingReplies =
+        new(StringComparer.Ordinal);
+
+    // Secondary index: conversation address → FIFO queue of request keys.
+    // Used by SendAsync as a fallback when OutboundMessage.Metadata does not carry
+    // MetaRequestKey (the live gateway path does not propagate InboundMessage.Metadata).
+    private readonly ConcurrentDictionary<string, ConcurrentQueue<string>> _pendingQueue =
         new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
@@ -137,6 +160,7 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
 
         _senders.Clear();
         _pendingReplies.Clear();
+        _pendingQueue.Clear();
 
         if (_activeFactory is IAsyncDisposable disposable)
             await disposable.DisposeAsync();
@@ -149,12 +173,13 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
     /// <inheritdoc/>
     public override async Task SendAsync(OutboundMessage message, CancellationToken cancellationToken = default)
     {
-        var replyQueue = ResolveReplyQueue(message);
-        var (correlationId, conversationId) = ResolveReplyContext(message);
+        var pendingCtx = DequeuePendingReplyContext(message);
+        var replyQueue = ResolveReplyQueue(message, pendingCtx);
+        var (correlationId, conversationId) = ResolveReplyContext(message, pendingCtx);
 
         var envelope = new ServiceBusOutboundEnvelope
         {
-            MessageId = Guid.NewGuid().ToString(),
+            // MessageId is initialised to Guid.NewGuid() by the property initializer.
             CorrelationId = correlationId,
             AgentId = GetMetadataString(message.Metadata, MetaAgentId),
             ConversationId = conversationId ?? message.ChannelAddress.Value,
@@ -184,9 +209,6 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
         var sender = GetOrCreateSender(replyQueue);
         await sender.SendMessageAsync(sbMessage, cancellationToken);
 
-        // Release the pending-reply context once the reply has been sent.
-        _pendingReplies.TryRemove(message.ChannelAddress.Value, out _);
-
         _logger.LogDebug(
             "{DisplayName} reply sent to queue '{ReplyQueue}' (correlationId={CorrelationId})",
             DisplayName,
@@ -200,9 +222,17 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
     /// <see cref="Azure.Messaging.ServiceBus.ServiceBusModelFactory"/> messages, without
     /// needing a live processor or real Azure connection.
     /// </summary>
+    /// <param name="body">Raw JSON message body.</param>
+    /// <param name="applicationProperties">Optional Service Bus application properties used as
+    /// fallbacks when envelope fields are absent.</param>
+    /// <param name="messageId">The Service Bus message identifier, used as the per-dispatch
+    /// request key. When <c>null</c>, the envelope's own <c>messageId</c> field is tried first,
+    /// then a GUID is generated.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     internal async Task HandleMessageBodyAsync(
         string body,
         IReadOnlyDictionary<string, object>? applicationProperties,
+        string? messageId,
         CancellationToken cancellationToken)
     {
         ServiceBusInboundEnvelope? envelope;
@@ -240,12 +270,23 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
         var correlationId = envelope.CorrelationId
             ?? GetApplicationProperty(applicationProperties, "correlationId");
 
-        // Store routing context so SendAsync can recover replyTo/correlationId even when
-        // the gateway does not propagate InboundMessage.Metadata to OutboundMessage.Metadata.
-        _pendingReplies[channelAddress.Value] = new PendingReplyContext(replyTo, correlationId, conversationId);
+        // Generate a per-dispatch request key.  Using the SB messageId (or envelope messageId)
+        // means two concurrent inbound messages for the same conversation get distinct keys,
+        // so the second arrival cannot overwrite the first entry in _pendingReplies.
+        var requestKey = messageId ?? envelope.MessageId ?? Guid.NewGuid().ToString();
+
+        // Store routing context keyed by request key.
+        _pendingReplies[requestKey] = new PendingReplyContext(replyTo, correlationId, conversationId);
+
+        // Also enqueue to the per-conversation FIFO queue so SendAsync can fall back to FIFO
+        // when OutboundMessage.Metadata does not carry MetaRequestKey (live gateway path).
+        _pendingQueue
+            .GetOrAdd(channelAddress.Value, _ => new ConcurrentQueue<string>())
+            .Enqueue(requestKey);
 
         var metadata = new Dictionary<string, object?>
         {
+            [MetaRequestKey] = requestKey,
             [MetaReplyTo] = replyTo,
             [MetaCorrelationId] = correlationId,
             [MetaConversationId] = conversationId,
@@ -284,6 +325,7 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
             await HandleMessageBodyAsync(
                 args.Message.Body.ToString(),
                 args.Message.ApplicationProperties,
+                args.Message.MessageId,
                 args.CancellationToken);
 
             await args.CompleteMessageAsync(args.Message, args.CancellationToken);
@@ -326,25 +368,51 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
             $"For managed-identity authentication, inject a custom {nameof(IServiceBusAdapterClientFactory)} via DI.");
     }
 
-    private string ResolveReplyQueue(OutboundMessage message)
+    /// <summary>
+    /// Resolves and atomically removes the pending reply context for the given outbound message.
+    /// Prefers an explicit <see cref="MetaRequestKey"/> in <paramref name="message"/> metadata;
+    /// falls back to dequeuing the oldest context for the conversation address.
+    /// </summary>
+    private PendingReplyContext? DequeuePendingReplyContext(OutboundMessage message)
+    {
+        // Explicit key: present when the outbound message carries MetaRequestKey (e.g., tests,
+        // or a future gateway path that propagates inbound metadata).
+        if (GetMetadataString(message.Metadata, MetaRequestKey) is { Length: > 0 } requestKey
+            && _pendingReplies.TryRemove(requestKey, out var explicit_ctx))
+        {
+            return explicit_ctx;
+        }
+
+        // Fallback: dequeue the oldest request key for this conversation.
+        // Relies on the gateway serialising per-session so FIFO order matches reply order.
+        if (_pendingQueue.TryGetValue(message.ChannelAddress.Value, out var queue)
+            && queue.TryDequeue(out var oldestKey)
+            && _pendingReplies.TryRemove(oldestKey, out var fallback_ctx))
+        {
+            return fallback_ctx;
+        }
+
+        return null;
+    }
+
+    private string ResolveReplyQueue(OutboundMessage message, PendingReplyContext? pendingCtx)
     {
         // 1. Metadata key (populated when the caller manually constructs OutboundMessage in tests)
         if (GetMetadataString(message.Metadata, MetaReplyTo) is { Length: > 0 } metaQueue)
             return metaQueue;
 
         // 2. Pending-reply context (populated by HandleMessageBodyAsync in the live path)
-        if (_pendingReplies.TryGetValue(message.ChannelAddress.Value, out var ctx)
-            && ctx.ReplyTo is { Length: > 0 } pendingQueue)
+        if (pendingCtx?.ReplyTo is { Length: > 0 } pendingQueue)
             return pendingQueue;
 
         return _options.DefaultReplyQueueName;
     }
 
-    private (string? CorrelationId, string? ConversationId) ResolveReplyContext(OutboundMessage message)
+    private (string? CorrelationId, string? ConversationId) ResolveReplyContext(OutboundMessage message, PendingReplyContext? pendingCtx)
     {
         // Prefer values from pending-reply context (live gateway path), fall back to metadata.
-        if (_pendingReplies.TryGetValue(message.ChannelAddress.Value, out var ctx))
-            return (ctx.CorrelationId, ctx.ConversationId);
+        if (pendingCtx is not null)
+            return (pendingCtx.CorrelationId, pendingCtx.ConversationId);
 
         return (
             GetMetadataString(message.Metadata, MetaCorrelationId),
