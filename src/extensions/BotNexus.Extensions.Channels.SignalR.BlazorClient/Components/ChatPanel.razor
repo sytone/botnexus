@@ -348,7 +348,8 @@ private bool IsStreaming =>
     [
         new("/new", "Reset session and start fresh"),
         new("/compact", "Compact session to reduce tokens"),
-        new("/clear", "Clear local messages")
+        new("/clear", "Clear local messages"),
+        new("/prompts", "Browse reusable prompt templates")
     ];
 
     private SlashCommand[] _filteredCommands = [];
@@ -418,7 +419,7 @@ private bool IsStreaming =>
 
     private string InputPlaceholder => IsStreaming
         ? "Type to steer the response…"
-        : "Type a message… (/ for commands, Shift+Enter for newline)";
+        : "Type a message… (/ for commands like /prompts, Shift+Enter for newline)";
 
     private void ToggleTools()
     {
@@ -496,6 +497,9 @@ private bool IsStreaming =>
                 break;
             case "/clear":
                 Interaction.ClearLocalMessages(AgentId);
+                break;
+            case "/prompts":
+                await Interaction.SendMessageAsync(AgentId, "/prompts");
                 break;
         }
     }

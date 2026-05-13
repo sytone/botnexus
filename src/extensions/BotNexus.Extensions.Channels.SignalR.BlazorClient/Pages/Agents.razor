@@ -430,10 +430,11 @@
                 return;
             }
 
+            var wasEditing = _editingId is not null;
             _showForm = false;
             _editingId = null;
             _fieldErrors.Clear();
-            SetStatus("Saved.", "success");
+            SetStatus(wasEditing ? "Agent updated." : "Agent created.", "success");
             await LoadAgentsAsync();
         }
         catch (Exception ex)

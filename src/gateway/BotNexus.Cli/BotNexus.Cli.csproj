@@ -30,6 +30,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\BotNexus.Gateway\BotNexus.Gateway.csproj" />
+    <ProjectReference Include="..\BotNexus.Cron\BotNexus.Cron.csproj" />
   </ItemGroup>
 
 </Project>

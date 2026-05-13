@@ -106,6 +106,29 @@ public sealed class AgentConfigurationHostedServiceTests
     }
 
     [Fact]
+    public async Task StartAsync_OnSourceChange_AddsNewAgentWithoutRestart()
+    {
+        var source = new Mock<IAgentConfigurationSource>();
+        Action<IReadOnlyList<AgentDescriptor>>? callback = null;
+        source.Setup(s => s.LoadAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        source.Setup(s => s.Watch(It.IsAny<Action<IReadOnlyList<AgentDescriptor>>>()))
+            .Callback<Action<IReadOnlyList<AgentDescriptor>>>(cb => callback = cb)
+            .Returns(Mock.Of<IDisposable>());
+        var registry = new RecordingAgentRegistry();
+        var service = new AgentConfigurationHostedService([source.Object], registry, NullLogger<AgentConfigurationHostedService>.Instance);
+
+        await service.StartAsync(CancellationToken.None);
+        registry.GetAll().ShouldBeEmpty();
+        callback.ShouldNotBeNull();
+
+        callback!([CreateDescriptor("agent-new")]);
+
+        registry.Contains("agent-new").ShouldBeTrue();
+        registry.RegisterOperations.ShouldContain("agent-new");
+    }
+
+    [Fact]
     public async Task StopAsync_WithActiveWatchers_DisposesWatchers()
     {
         var watcher = new Mock<IDisposable>();
