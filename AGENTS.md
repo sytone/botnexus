@@ -82,23 +82,34 @@ All test warnings will be treated as test failures once warnings-as-errors is en
 
 ## Git Workflow
 
-**Worktrees may be used for independent branches when requested.** When a user asks for a worktree, use it. Do not create a worktree automatically without explicit user request.
+**All file modifications and commits must happen in a dedicated worktree, never directly on `main`.** This is mandatory for all agents and developers. Local `main` must remain clean and aligned to `origin/main`.
 
-```bash
-# Create a worktree for new work (N = GitHub issue number)
-git worktree add ../botnexus-wt-N -b <type>/N-<short-slug>
+### Worktree Policy
 
-# Work in the worktree — main repo always stays on main
-cd ../botnexus-wt-N
+- **Every task requires a dedicated worktree.** Create one at the start of work:
+  ```bash
+  git worktree add ../botnexus-wt-N -b <type>/N-<short-slug>
+  cd ../botnexus-wt-N
+  ```
 
-# Clean up after PR merges
-git worktree remove ../botnexus-wt-N
-```
+- **Local `main` must always be clean.** After a worktree is merged and the PR closes:
+  ```bash
+  git worktree remove ../botnexus-wt-N
+  cd ../botnexus && git checkout main && git pull origin main
+  ```
 
-- `~/projects/botnexus` — always on `main`
-- `../botnexus-wt-N` — dedicated worktree per issue/PR
-- Branch naming: `<type>/<issue-number>-<short-slug>` (e.g. `fix/64-history-first-load`)
+- **If you find local changes on `main`:** Move them to a worktree immediately before continuing work:
+  1. `git worktree add ../botnexus-recover -b <type>/<recovery-slug>`
+  2. Cherry-pick or push the changes to the worktree
+  3. `git reset --hard origin/main` on the main repo
+  4. Continue work in the worktree, then merge via PR
+
+### Branch & PR Conventions
+
+- `../botnexus-wt-N` — dedicated worktree per issue/PR (N = GitHub issue number)
+- Branch naming: `<type>/<issue-number>-<short-slug>` (e.g. `fix/64-history-first-load`, `feat/128-gateway-plugins`)
 - PRs always target `main`; never branch off a feature branch
+- `~/projects/botnexus` — always on `main`, clean and synced to `origin/main`
 
 ## Build
 
