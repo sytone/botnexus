@@ -178,4 +178,57 @@ public sealed class PortalLoadServiceTests
             Assert.DoesNotContain("Not Found", _service.LoadError);
         }
     }
+
+    [Fact]
+    public async Task InitializeAsync_RefreshesStoreFromApiInsteadOfUsingPreexistingConversationState()
+    {
+        _store.UpsertAgent(new AgentState
+        {
+            AgentId = "agent-1",
+            DisplayName = "Stale Agent",
+            IsConnected = true
+        });
+        _store.SeedConversations("agent-1", [
+            new ConversationSummaryDto(
+                "stale-conv",
+                "agent-1",
+                "Stale conversation",
+                true,
+                "Active",
+                null,
+                0,
+                DateTimeOffset.UtcNow.AddHours(-2),
+                DateTimeOffset.UtcNow.AddHours(-1))
+        ]);
+
+        _restClient.GetAgentsAsync(Arg.Any<CancellationToken>())
+            .Returns([new AgentSummary("agent-1", "General Assistant")]);
+        _restClient.GetConversationsAsync("agent-1", Arg.Any<CancellationToken>())
+            .Returns([
+                new ConversationSummaryDto(
+                    "fresh-conv",
+                    "agent-1",
+                    "Fresh conversation",
+                    true,
+                    "Active",
+                    "s-fresh",
+                    0,
+                    DateTimeOffset.UtcNow.AddMinutes(-15),
+                    DateTimeOffset.UtcNow.AddMinutes(-1))
+            ]);
+        _restClient.GetSessionsAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns([]);
+        _restClient.GetHistoryAsync("fresh-conv", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new ConversationHistoryResponseDto("fresh-conv", 0, 0, 200, []));
+
+        await _service.InitializeAsync("http://localhost:5000/hub/gateway");
+
+        await _restClient.Received(1).GetConversationsAsync("agent-1", Arg.Any<CancellationToken>());
+        await _restClient.Received(1).GetHistoryAsync("fresh-conv", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+
+        var agent = _store.GetAgent("agent-1");
+        Assert.NotNull(agent);
+        Assert.True(agent.Conversations.ContainsKey("fresh-conv"));
+        Assert.False(agent.Conversations.ContainsKey("stale-conv"));
+    }
 }
