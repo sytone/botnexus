@@ -377,6 +377,64 @@ public sealed class FileAgentConfigurationSourceTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task Watch_WhenDirectoryCreatedAfterStartup_InvokesCallbackForNewAgent()
+    {
+        var watchDirectory = Path.Combine(Path.GetTempPath(), "botnexus-file-config-watch-tests", Guid.NewGuid().ToString("N"));
+        if (Directory.Exists(watchDirectory))
+            Directory.Delete(watchDirectory, recursive: true);
+
+        var source = new FileAgentConfigurationSource(watchDirectory, new ListLogger<FileAgentConfigurationSource>(), new FileSystem());
+        var callback = new TaskCompletionSource<IReadOnlyList<AgentDescriptor>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        IDisposable? watcher = null;
+        try
+        {
+            watcher = source.Watch(descriptors =>
+            {
+                if (descriptors.Any(d => d.AgentId == "agent-new"))
+                    callback.TrySetResult(descriptors);
+            });
+
+            Directory.CreateDirectory(watchDirectory);
+            var configPath = Path.Combine(watchDirectory, "agent-new.json");
+            File.WriteAllText(
+                configPath,
+                """
+                {
+                  "agentId": "agent-new",
+                  "displayName": "Agent New",
+                  "modelId": "model",
+                  "apiProvider": "provider"
+                }
+                """);
+            await Task.Delay(100);
+            File.AppendAllText(configPath, Environment.NewLine);
+
+            var completed = await Task.WhenAny(callback.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+
+            completed.ShouldBe(callback.Task);
+            var descriptors = await callback.Task;
+            descriptors.Where(d => d.AgentId == "agent-new").ShouldHaveSingleItem();
+        }
+        finally
+        {
+            watcher?.Dispose();
+            for (var i = 0; i < 3; i++)
+            {
+                try
+                {
+                    if (Directory.Exists(watchDirectory))
+                        Directory.Delete(watchDirectory, recursive: true);
+                    break;
+                }
+                catch (IOException) when (i < 2)
+                {
+                    await Task.Delay(100);
+                }
+            }
+        }
+    }
+
     public void Dispose()
     {
         if (!_fileSystem.Directory.Exists(_directoryPath))
