@@ -199,10 +199,9 @@ public static class GatewayServiceCollectionExtensions
             {
                 var home = serviceProvider.GetRequiredService<BotNexusHome>();
                 var defaultConfigPath = Path.Combine(home.RootPath, "config.json");
-                var backup = new ConfigBackupService(
-                    Path.Combine(home.RootPath, "backups"),
-                    serviceProvider.GetRequiredService<IFileSystem>());
-                return new PlatformConfigAgentWriter(defaultConfigPath, home, serviceProvider.GetRequiredService<IFileSystem>(), backup);
+                var fileSystem = serviceProvider.GetRequiredService<IFileSystem>();
+                var writer = CreatePlatformConfigWriter(defaultConfigPath, fileSystem);
+                return new PlatformConfigAgentWriter(writer, home);
             }));
             services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
         }
@@ -225,7 +224,7 @@ public static class GatewayServiceCollectionExtensions
         var configDirectory = Path.GetDirectoryName(resolvedConfigPath) ?? PlatformConfigLoader.GetDefaultConfigDirectory(fileSystem);
 
         PlatformConfigLoader.EnsureConfigDirectory(configDirectory, fileSystem);
-        var config = PlatformConfigLoader.Load(resolvedConfigPath, fileSystem: fileSystem);
+        var config = LoadConfigForRegistration(configuration, resolvedConfigPath, fileSystem);
 
         if (configuration is not null)
         {
@@ -288,16 +287,16 @@ public static class GatewayServiceCollectionExtensions
                 configDirectory,
                 serviceProvider.GetRequiredService<ILogger<PlatformConfigAgentSource>>(),
                 serviceProvider.GetRequiredService<ILocationResolver>()));
+        services.Replace(ServiceDescriptor.Singleton(serviceProvider =>
+            CreatePlatformConfigWriter(
+                resolvedConfigPath,
+                serviceProvider.GetRequiredService<IFileSystem>())));
         services.Replace(ServiceDescriptor.Singleton<IAgentConfigurationWriter>(serviceProvider =>
         {
             var home = serviceProvider.GetRequiredService<BotNexusHome>();
-            var backup = new ConfigBackupService(
-                Path.Combine(home.RootPath, "backups"),
-                serviceProvider.GetRequiredService<IFileSystem>());
-            return new PlatformConfigAgentWriter(resolvedConfigPath, home, serviceProvider.GetRequiredService<IFileSystem>(), backup);
+            var writer = serviceProvider.GetRequiredService<PlatformConfigWriter>();
+            return new PlatformConfigAgentWriter(writer, home);
         }));
-        services.AddSingleton(new PlatformConfigWriter(resolvedConfigPath, fileSystem,
-            new ConfigBackupService(Path.Combine(Path.GetDirectoryName(resolvedConfigPath)!, "backups"), fileSystem)));
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
 
         return services;
@@ -316,6 +315,44 @@ public static class GatewayServiceCollectionExtensions
         target.Channels = source.Channels;
         target.ApiKey = source.ApiKey;
         target.Cron = source.Cron;
+    }
+
+    private static PlatformConfig LoadConfigForRegistration(IConfiguration? configuration, string resolvedConfigPath, IFileSystem fileSystem)
+    {
+        if (configuration is null)
+            return PlatformConfigLoader.Load(resolvedConfigPath, fileSystem: fileSystem);
+
+        var config = new PlatformConfig();
+        configuration.Bind(config);
+        var rawJson = TryReadConfigFile(resolvedConfigPath, fileSystem);
+        if (!string.IsNullOrWhiteSpace(rawJson))
+        {
+            PlatformConfigLoader.MigrateLegacyGatewaySettings(config, rawJson);
+            PlatformConfigLoader.ExtractAgentDefaults(config, rawJson);
+        }
+
+        return config;
+    }
+
+    private static string? TryReadConfigFile(string path, IFileSystem fileSystem)
+    {
+        try
+        {
+            return fileSystem.File.Exists(path)
+                ? fileSystem.File.ReadAllText(path)
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static PlatformConfigWriter CreatePlatformConfigWriter(string configPath, IFileSystem fileSystem)
+    {
+        var directory = Path.GetDirectoryName(configPath) ?? PlatformConfigLoader.GetDefaultConfigDirectory(fileSystem);
+        var backup = new ConfigBackupService(Path.Combine(directory, "backups"), fileSystem);
+        return new PlatformConfigWriter(configPath, fileSystem, backup);
     }
 
     private static int ParseInt(string? value, int defaultValue)

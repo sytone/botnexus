@@ -16,7 +16,6 @@ namespace BotNexus.Gateway.Api.Controllers;
 [ApiController]
 [Route("api/locations")]
 public sealed class LocationsController(
-    IConfiguration configuration,
     PlatformConfigWriter configWriter,
     IAgentRegistry agentRegistry,
     IEnumerable<IIsolationStrategy> isolationStrategies,
@@ -307,7 +306,7 @@ public sealed class LocationsController(
             && string.IsNullOrWhiteSpace(value)
             && string.Equals(existingConfig?.Type, LocationType.Database.Value, StringComparison.OrdinalIgnoreCase))
         {
-            value = existingConfig.ConnectionString;
+            value = existingConfig?.ConnectionString;
         }
 
         var config = new LocationConfig
@@ -359,8 +358,8 @@ public sealed class LocationsController(
         };
     }
 
-    private async Task<PlatformConfig> LoadConfigAsync(CancellationToken cancellationToken)
-        => await PlatformConfigLoader.LoadAsync(GetConfigPath(), cancellationToken, validateOnLoad: false);
+    private Task<PlatformConfig> LoadConfigAsync(CancellationToken cancellationToken)
+        => configWriter.ReadPlatformConfigAsync(cancellationToken);
 
     private async Task<string?> SaveConfigAsync(PlatformConfig config, CancellationToken cancellationToken)
     {
@@ -483,13 +482,6 @@ public sealed class LocationsController(
         return false;
     }
 
-    private string GetConfigPath()
-    {
-        var configuredPath = configuration["BotNexus:ConfigPath"];
-        return string.IsNullOrWhiteSpace(configuredPath)
-            ? PlatformConfigLoader.DefaultConfigPath
-            : Path.GetFullPath(configuredPath);
-    }
 }
 
 /// <summary>
@@ -551,5 +543,4 @@ public sealed class LocationHealthCheckResponse
     /// <summary>Additional status details.</summary>
     public string Message { get; init; } = string.Empty;
 }
-
 

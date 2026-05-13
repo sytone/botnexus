@@ -1,17 +1,25 @@
 using BotNexus.Gateway.Api.Controllers;
+using BotNexus.Gateway.Configuration;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 
 namespace BotNexus.Gateway.Tests;
 
 public sealed class ConfigControllerTests
 {
+    private static readonly IConfiguration EmptyConfiguration = new ConfigurationBuilder().Build();
+
     [Fact]
     public async Task Validate_WhenFileMissing_ReturnsInvalidResultWithActionableError()
     {
         var controller = new ConfigController();
         var missingPath = Path.Combine(Path.GetTempPath(), "botnexus-config-tests", Guid.NewGuid().ToString("N"), "config.json");
 
-        var result = await controller.Validate(missingPath, CancellationToken.None);
+        var result = await controller.Validate(
+            missingPath,
+            new TestOptionsMonitor<PlatformConfig>(new PlatformConfig()),
+            EmptyConfiguration,
+            CancellationToken.None);
 
         var ok = result.Result.ShouldBeOfType<OkObjectResult>();
         var payload = ok.Value.ShouldBeOfType<ConfigValidationResponse>();
@@ -31,7 +39,11 @@ public sealed class ConfigControllerTests
         {
             await File.WriteAllTextAsync(path, """{"apiKeys":{"tenant-a":{}}}""");
 
-            var result = await controller.Validate(path, CancellationToken.None);
+            var result = await controller.Validate(
+                path,
+                new TestOptionsMonitor<PlatformConfig>(new PlatformConfig()),
+                EmptyConfiguration,
+                CancellationToken.None);
 
             var ok = result.Result.ShouldBeOfType<OkObjectResult>();
             var payload = ok.Value.ShouldBeOfType<ConfigValidationResponse>();
@@ -42,5 +54,32 @@ public sealed class ConfigControllerTests
         {
             Directory.Delete(root, recursive: true);
         }
+    }
+
+    [Fact]
+    public async Task Validate_WhenPathNotProvided_UsesCurrentOptionsMonitorValue()
+    {
+        var controller = new ConfigController();
+        var options = new TestOptionsMonitor<PlatformConfig>(new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["assistant"] = new()
+            }
+        });
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["BotNexus:ConfigPath"] = "Q:\\missing\\config.json"
+            })
+            .Build();
+
+        var result = await controller.Validate(null, options, configuration, CancellationToken.None);
+
+        var ok = result.Result.ShouldBeOfType<OkObjectResult>();
+        var payload = ok.Value.ShouldBeOfType<ConfigValidationResponse>();
+        payload.IsValid.ShouldBeFalse();
+        payload.ConfigPath.ShouldBe(Path.GetFullPath("Q:\\missing\\config.json"));
+        payload.Errors.ShouldContain(error => error.Contains("agents.assistant.provider", StringComparison.Ordinal));
     }
 }

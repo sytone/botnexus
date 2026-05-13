@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Api.Models;
 using BotNexus.Gateway.Configuration;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -101,27 +102,11 @@ public sealed class ConfigController : ControllerBase
     /// Returns the effective (merged) configuration for a specific agent, with provenance per field.
     /// </summary>
     [HttpGet("agents/{agentId}/effective")]
-    public async Task<ActionResult<EffectiveAgentConfigResponse>> GetEffectiveAgentConfig(
+    public ActionResult<EffectiveAgentConfigResponse> GetEffectiveAgentConfig(
         string agentId,
-        [FromServices] IConfiguration configuration,
-        CancellationToken ct)
+        [FromServices] IOptionsMonitor<PlatformConfig> configOptions)
     {
-        var configuredPath = configuration["BotNexus:ConfigPath"];
-        var configPath = string.IsNullOrWhiteSpace(configuredPath)
-            ? PlatformConfigLoader.DefaultConfigPath
-            : configuredPath;
-        if (!System.IO.File.Exists(configPath))
-            return NotFound($"Config file not found at '{configPath}'.");
-
-        PlatformConfig config;
-        try
-        {
-            config = await PlatformConfigLoader.LoadAsync(configPath, ct, validateOnLoad: false);
-        }
-        catch
-        {
-            return StatusCode(500, "Failed to load platform config.");
-        }
+        var config = configOptions.CurrentValue;
 
         // Normalise lookup — defaults is a reserved key, never a real agent
         if (string.Equals(agentId, "defaults", StringComparison.OrdinalIgnoreCase))
@@ -245,14 +230,32 @@ public sealed class ConfigController : ControllerBase
     /// Validates the platform configuration file and returns any errors.
     /// </summary>
     /// <param name="path">Optional explicit path to a config file. Defaults to <c>~/.botnexus/config.json</c>.</param>
+    /// <param name="configOptions">Current runtime configuration bound through the host options pipeline.</param>
+    /// <param name="configuration">Host configuration used to resolve the active config path.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The config validation result.</returns>
     [HttpGet("validate")]
-    public async Task<ActionResult<ConfigValidationResponse>> Validate([FromQuery] string? path, CancellationToken cancellationToken)
+    public async Task<ActionResult<ConfigValidationResponse>> Validate(
+        [FromQuery] string? path,
+        [FromServices] IOptionsMonitor<PlatformConfig> configOptions,
+        [FromServices] IConfiguration configuration,
+        CancellationToken cancellationToken)
     {
         var resolvedPath = string.IsNullOrWhiteSpace(path)
-            ? PlatformConfigLoader.DefaultConfigPath
+            ? ResolveConfiguredPath(configuration)
             : Path.GetFullPath(path);
+
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            var current = configOptions.CurrentValue;
+            var errors = PlatformConfigLoader.Validate(current)
+                .Where(error => !string.IsNullOrWhiteSpace(error))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(error => error, StringComparer.Ordinal)
+                .ToArray();
+            var warnings = PlatformConfigLoader.ValidateWarnings(current);
+            return Ok(new ConfigValidationResponse(errors.Length == 0, resolvedPath, warnings, errors));
+        }
 
         if (!System.IO.File.Exists(resolvedPath))
         {
@@ -282,6 +285,14 @@ public sealed class ConfigController : ControllerBase
                 .ToArray();
             return Ok(new ConfigValidationResponse(false, resolvedPath, [], errors));
         }
+    }
+
+    private static string ResolveConfiguredPath(IConfiguration configuration)
+    {
+        var configuredPath = configuration["BotNexus:ConfigPath"];
+        return string.IsNullOrWhiteSpace(configuredPath)
+            ? PlatformConfigLoader.DefaultConfigPath
+            : Path.GetFullPath(configuredPath);
     }
 
     private static void RedactSecrets(JsonObject config)

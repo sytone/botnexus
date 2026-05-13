@@ -1,6 +1,4 @@
 using System.CommandLine;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Configuration;
 using Spectre.Console;
@@ -518,7 +516,10 @@ internal sealed class LocationsCommand
     private static async Task WriteConfigAsync(PlatformConfig config, string configPath, CancellationToken cancellationToken)
     {
         PlatformConfigLoader.EnsureConfigDirectory(Path.GetDirectoryName(configPath) ?? PlatformConfigLoader.DefaultHomePath);
-        await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(config, CreateWriteJsonOptions()), cancellationToken);
+        var fileSystem = new System.IO.Abstractions.FileSystem();
+        var backupsDir = Path.Combine(Path.GetDirectoryName(configPath) ?? BotNexusHome.ResolveHomePath(), "backups");
+        var writer = new PlatformConfigWriter(configPath, fileSystem, new ConfigBackupService(backupsDir, fileSystem));
+        await writer.UpdatePlatformConfigAsync(config, "before-locations-update", cancellationToken);
     }
 
     private static bool ContainsDictionaryKey<TKey, TValue>(Dictionary<TKey, TValue> dictionary, TKey key)
@@ -573,10 +574,4 @@ internal sealed class LocationsCommand
     private static string? NullIfWhiteSpace(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private static JsonSerializerOptions CreateWriteJsonOptions() => new()
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
 }

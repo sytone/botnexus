@@ -1,6 +1,4 @@
 using System.CommandLine;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using BotNexus.Cli.Wizard;
 using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Configuration;
@@ -329,10 +327,10 @@ internal sealed class AgentCommands
     private static async Task WriteConfigAsync(PlatformConfig config, string configPath, CancellationToken cancellationToken, string reason = "before-config-write")
     {
         PlatformConfigLoader.EnsureConfigDirectory(Path.GetDirectoryName(configPath) ?? PlatformConfigLoader.DefaultHomePath);
-        var backupsDir = Path.Combine(BotNexusHome.ResolveHomePath(), "backups");
-        var backup = new ConfigBackupService(backupsDir, new System.IO.Abstractions.FileSystem());
-        backup.Backup(configPath, reason);
-        await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(config, CreateWriteJsonOptions()), cancellationToken);
+        var fileSystem = new System.IO.Abstractions.FileSystem();
+        var backupsDir = Path.Combine(Path.GetDirectoryName(configPath) ?? BotNexusHome.ResolveHomePath(), "backups");
+        var writer = new PlatformConfigWriter(configPath, fileSystem, new ConfigBackupService(backupsDir, fileSystem));
+        await writer.UpdatePlatformConfigAsync(config, reason, cancellationToken);
     }
 
     private static bool ContainsDictionaryKey<TKey, TValue>(Dictionary<TKey, TValue> dictionary, TKey key)
@@ -373,10 +371,4 @@ internal sealed class AgentCommands
         return false;
     }
 
-    private static JsonSerializerOptions CreateWriteJsonOptions() => new()
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
 }
