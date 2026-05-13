@@ -37,8 +37,12 @@ public sealed class LocationsControllerTests : IDisposable
         create.Result.ShouldBeOfType<CreatedAtActionResult>();
 
         var afterCreate = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
-        afterCreate.Gateway!.Locations!.ShouldContainKey("repo");
-        afterCreate.Gateway!.Locations!["repo"].Path.ShouldBe(originalPath);
+        var afterCreateGateway = afterCreate.Gateway;
+        afterCreateGateway.ShouldNotBeNull();
+        var afterCreateLocations = afterCreateGateway.Locations;
+        afterCreateLocations.ShouldNotBeNull();
+        afterCreateLocations.ShouldContainKey("repo");
+        afterCreateLocations["repo"].Path.ShouldBe(originalPath);
 
         var update = await controller.Update("repo", new UpsertLocationRequest
         {
@@ -102,7 +106,9 @@ public sealed class LocationsControllerTests : IDisposable
 
         var badRequest = result.Result.ShouldBeOfType<BadRequestObjectResult>();
         badRequest.Value.ShouldNotBeNull();
-        (badRequest.Value?.ToString() ?? string.Empty).ShouldContain("gateway.locations.gateway-api.endpoint must be a valid http or https absolute URL.");
+        var message = badRequest.Value.ToString();
+        message.ShouldNotBeNull();
+        message.ShouldContain("gateway.locations.gateway-api.endpoint must be a valid http or https absolute URL.");
     }
 
     [Fact]
@@ -120,7 +126,9 @@ public sealed class LocationsControllerTests : IDisposable
 
         var badRequest = result.Result.ShouldBeOfType<BadRequestObjectResult>();
         badRequest.Value.ShouldNotBeNull();
-        (badRequest.Value?.ToString() ?? string.Empty).ShouldContain("Location name in payload must match route name.");
+        var message = badRequest.Value.ToString();
+        message.ShouldNotBeNull();
+        message.ShouldContain("Location name in payload must match route name.");
     }
 
     [Fact]
@@ -152,7 +160,8 @@ public sealed class LocationsControllerTests : IDisposable
         getResponse.HasConfiguredSecret.ShouldBeTrue();
 
         var list = await controller.List(CancellationToken.None);
-        var listResponses = list.Result.ShouldBeOfType<OkObjectResult>().Value.ShouldBeAssignableTo<IReadOnlyList<LocationResponse>>()!;
+        var listResponses = list.Result.ShouldBeOfType<OkObjectResult>().Value.ShouldBeAssignableTo<IReadOnlyList<LocationResponse>>();
+        listResponses.ShouldNotBeNull();
         var listedDb = listResponses.Single(location => location.Name == "db-primary");
         listedDb.PathOrEndpoint.ShouldBe("(redacted)");
         listedDb.HasConfiguredSecret.ShouldBeTrue();
@@ -220,7 +229,8 @@ public sealed class LocationsControllerTests : IDisposable
         var createdLocation = createdResult.Value.ShouldBeOfType<LocationResponse>();
         createdLocation.PathOrEndpoint.ShouldBe("(redacted)");
         createdLocation.HasConfiguredSecret.ShouldBeTrue();
-        (createdLocation.PathOrEndpoint ?? string.Empty).ShouldNotContain("SuperSecret123!");
+        createdLocation.PathOrEndpoint.ShouldNotBeNull();
+        createdLocation.PathOrEndpoint.ShouldNotContain("SuperSecret123!");
 
         var afterCreate = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
         afterCreate.Gateway!.Locations!["db-main"].ConnectionString.ShouldBe(secret);
@@ -229,18 +239,21 @@ public sealed class LocationsControllerTests : IDisposable
 
         var list = await controller.List(CancellationToken.None);
         var listResult = list.Result.ShouldBeOfType<OkObjectResult>();
-        var listLocations = listResult.Value.ShouldBeAssignableTo<IReadOnlyList<LocationResponse>>()!;
+        var listLocations = listResult.Value.ShouldBeAssignableTo<IReadOnlyList<LocationResponse>>();
+        listLocations.ShouldNotBeNull();
         var listedDb = listLocations.Single(location => location.Name == "db-main");
         listedDb.PathOrEndpoint.ShouldBe("(redacted)");
         listedDb.HasConfiguredSecret.ShouldBeTrue();
-        (listedDb.PathOrEndpoint ?? string.Empty).ShouldNotContain("SuperSecret123!");
+        listedDb.PathOrEndpoint.ShouldNotBeNull();
+        listedDb.PathOrEndpoint.ShouldNotContain("SuperSecret123!");
 
         var get = await controller.Get("db-main", CancellationToken.None);
         var getResult = get.Result.ShouldBeOfType<OkObjectResult>();
         var getLocation = getResult.Value.ShouldBeOfType<LocationResponse>();
         getLocation.PathOrEndpoint.ShouldBe("(redacted)");
         getLocation.HasConfiguredSecret.ShouldBeTrue();
-        (getLocation.PathOrEndpoint ?? string.Empty).ShouldNotContain("SuperSecret123!");
+        getLocation.PathOrEndpoint.ShouldNotBeNull();
+        getLocation.PathOrEndpoint.ShouldNotContain("SuperSecret123!");
 
         var update = await controller.Update("db-main", new UpsertLocationRequest
         {
@@ -254,7 +267,8 @@ public sealed class LocationsControllerTests : IDisposable
         var updatedLocation = updateResult.Value.ShouldBeOfType<LocationResponse>();
         updatedLocation.PathOrEndpoint.ShouldBe("(redacted)");
         updatedLocation.HasConfiguredSecret.ShouldBeTrue();
-        (updatedLocation.PathOrEndpoint ?? string.Empty).ShouldNotContain("EvenMoreSecret456!");
+        updatedLocation.PathOrEndpoint.ShouldNotBeNull();
+        updatedLocation.PathOrEndpoint.ShouldNotContain("EvenMoreSecret456!");
 
         var afterUpdate = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
         afterUpdate.Gateway!.Locations!["db-main"].ConnectionString.ShouldBe(updatedSecret);

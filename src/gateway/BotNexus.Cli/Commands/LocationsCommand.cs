@@ -565,7 +565,7 @@ internal sealed class LocationsCommand
 
     private static string ResolveSafeDisplayPath(Location location)
     {
-        if (location.Type.Equals(LocationType.Database) && !string.IsNullOrWhiteSpace(location.Path))
+        if (location.Type.Equals(LocationType.Database))
             return RedactedConnectionStringDisplay;
 
         return location.Path ?? "[dim](unset)[/]";

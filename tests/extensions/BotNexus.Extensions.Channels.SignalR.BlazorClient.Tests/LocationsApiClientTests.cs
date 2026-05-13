@@ -79,7 +79,8 @@ public sealed class LocationsApiClientTests
         var (location, error) = await client.CreateAsync(new UpsertLocationDto { Name = "dup" });
 
         location.ShouldBeNull();
-        (error ?? string.Empty).ShouldContain("already exists");
+        error.ShouldNotBeNull();
+        error.ShouldContain("already exists");
     }
 
     // ── Update ──────────────────────────────────────────────────────────

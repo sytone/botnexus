@@ -225,14 +225,7 @@ internal sealed class ServeCommand
                 continue;
 
             deployedIds.Add(extId);
-            var srcDir = Path.Combine(projectDir, "bin", "Release");
-            if (!Directory.Exists(srcDir))
-                continue;
-
-            var tfmDir = Directory.GetDirectories(srcDir)
-                .Where(d => Path.GetFileName(d).StartsWith("net", StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(d => d)
-                .FirstOrDefault();
+            var tfmDir = ResolveExtensionOutputDirectory(projectDir);
             if (tfmDir is null)
                 continue;
 
@@ -316,24 +309,11 @@ internal sealed class ServeCommand
 
             deployedIds.Add(extId);
 
-            var srcDir = Path.Combine(projectDir, "bin", "Release");
-            if (!Directory.Exists(srcDir))
-            {
-                if (verbose)
-                    AnsiConsole.MarkupLine($"[blue][[deploy]][/] [dim]No Release build for {Markup.Escape(projectName)} \u2014 skipping.[/]");
-                continue;
-            }
-
-            // Find TFM folder (net10.0, net9.0, etc.)
-            var tfmDir = Directory.GetDirectories(srcDir)
-                .Where(d => Path.GetFileName(d).StartsWith("net", StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(d => d)
-                .FirstOrDefault();
-
+            var tfmDir = ResolveExtensionOutputDirectory(projectDir);
             if (tfmDir is null)
             {
                 if (verbose)
-                    AnsiConsole.MarkupLine($"[blue][[deploy]][/] [dim]No TFM folder in {Markup.Escape(srcDir)} \u2014 skipping {Markup.Escape(projectName)}.[/]");
+                    AnsiConsole.MarkupLine($"[blue][[deploy]][/] [dim]No Debug/Release build output for {Markup.Escape(projectName)} \u2014 skipping.[/]");
                 continue;
             }
 
@@ -375,6 +355,20 @@ internal sealed class ServeCommand
         }
 
         AnsiConsole.MarkupLine($"[green]✓[/] {deployed} extension(s) deployed to [dim]{Markup.Escape(destRoot)}[/]");
+    }
+
+    private static string? ResolveExtensionOutputDirectory(string projectDir)
+    {
+        var binDir = Path.Combine(projectDir, "bin");
+        if (!Directory.Exists(binDir))
+            return null;
+
+        return new[] { Path.Combine(binDir, "Release"), Path.Combine(binDir, "Debug") }
+            .Where(Directory.Exists)
+            .SelectMany(configurationDir => Directory.GetDirectories(configurationDir)
+                .Where(tfmDir => Path.GetFileName(tfmDir).StartsWith("net", StringComparison.OrdinalIgnoreCase)))
+            .OrderByDescending(Directory.GetLastWriteTimeUtc)
+            .FirstOrDefault();
     }
 
     /// <summary>

@@ -197,18 +197,35 @@ public sealed class RuntimeConfigProviderIntegrationTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_rootPath))
-            Directory.Delete(_rootPath, recursive: true);
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            try
+            {
+                if (Directory.Exists(_rootPath))
+                    Directory.Delete(_rootPath, recursive: true);
+
+                return;
+            }
+            catch (IOException) when (attempt < 4)
+            {
+                Thread.Sleep(100);
+            }
+            catch (UnauthorizedAccessException) when (attempt < 4)
+            {
+                Thread.Sleep(100);
+            }
+        }
     }
 
     private static ServiceProvider BuildServiceProvider(string configPath)
     {
-        var configuration = new ConfigurationBuilder()
+        var configuration = (IConfigurationRoot)new ConfigurationBuilder()
             .AddJsonFile(configPath, optional: false, reloadOnChange: true)
             .Build();
 
         var services = new ServiceCollection();
-        services.AddSingleton<IConfiguration>(configuration);
+        services.AddSingleton(_ => configuration);
+        services.AddSingleton<IConfiguration>(provider => provider.GetRequiredService<IConfigurationRoot>());
         services.AddOptions<PlatformConfig>().Bind(configuration);
         services.AddSingleton<IPostConfigureOptions<PlatformConfig>>(
             _ => new PlatformConfigPostConfigure(configuration, configPath));
