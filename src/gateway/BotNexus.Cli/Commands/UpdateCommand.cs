@@ -57,9 +57,6 @@ internal class UpdateCommand
         if (pullResult != 0)
             return pullResult;
 
-        if (IsNewerCliVersionAvailable(repoRoot))
-            PrintCliUpdateRecommendation();
-
         // Step 2: Stop gateway BEFORE building — releases file locks on Windows
         GatewayStopResult stopResult;
         if (interactive)
@@ -478,68 +475,6 @@ internal class UpdateCommand
         CancellationToken cancellationToken)
         => GetCommitSubjectsBetweenCoreAsync(repoRoot, from, to, cancellationToken);
 
-    /// <summary>
-    /// Determines whether the repository source version is newer than the currently running CLI version.
-    /// </summary>
-    protected virtual bool IsNewerCliVersionAvailable(string repoRoot)
-        => IsSourceVersionNewer(GetCurrentCliVersion(), GetSourceCliVersion(repoRoot));
-
-    /// <summary>
-    /// Gets the currently running CLI version from assembly metadata.
-    /// </summary>
-    protected virtual string GetCurrentCliVersion()
-    {
-        var assembly = typeof(UpdateCommand).Assembly;
-        var informationalVersion = assembly
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
-            ?.InformationalVersion;
-
-        if (!string.IsNullOrWhiteSpace(informationalVersion))
-            return informationalVersion;
-
-        return assembly.GetName().Version?.ToString() ?? string.Empty;
-    }
-
-    /// <summary>
-    /// Reads the CLI version from source metadata in the updated repository.
-    /// </summary>
-    protected virtual string? GetSourceCliVersion(string repoRoot)
-    {
-        var cliProjectPath = Path.Combine(repoRoot, "src", "gateway", "BotNexus.Cli", "BotNexus.Cli.csproj");
-        var rootPropsPath = Path.Combine(repoRoot, "Directory.Build.props");
-
-        return ReadVersionProperty(cliProjectPath, "Version")
-            ?? ReadVersionProperty(cliProjectPath, "InformationalVersion")
-            ?? ReadVersionProperty(rootPropsPath, "Version")
-            ?? ReadVersionProperty(rootPropsPath, "InformationalVersion");
-    }
-
-    /// <summary>
-    /// Writes CLI self-update guidance when the local source is newer than the installed tool.
-    /// </summary>
-    protected virtual void PrintCliUpdateRecommendation()
-        => AnsiConsole.MarkupLine("[yellow]⚠[/] A newer BotNexus CLI version is available. Run: dotnet tool update -g botnexus.cli");
-
-    internal static bool IsSourceVersionNewer(string? currentVersion, string? sourceVersion)
-    {
-        if (!TryParseCliVersion(currentVersion, out var current) || !TryParseCliVersion(sourceVersion, out var source))
-            return false;
-
-        // Avoid noisy recommendations for pre-release source metadata.
-        if (source.IsPrerelease)
-            return false;
-
-        var versionCompare = source.Core.CompareTo(current.Core);
-        if (versionCompare > 0)
-            return true;
-
-        if (versionCompare < 0)
-            return false;
-
-        // If the numeric version matches, stable source is newer than a pre-release running tool.
-        return current.IsPrerelease && !source.IsPrerelease;
-    }
-
     private static async Task<IReadOnlyList<string>> GetCommitSubjectsBetweenCoreAsync(
         string repoRoot,
         string from,
@@ -594,9 +529,7 @@ internal class UpdateCommand
         if (runningVersion is null || sourceVersion is null || sourceVersion <= runningVersion)
             return;
 
-        AnsiConsole.MarkupLine(
-            $"[yellow]⚠[/] A newer BotNexus CLI is available ([dim]{Markup.Escape(sourceVersion.ToString())}[/] > [dim]{Markup.Escape(runningVersion.ToString())}[/]).");
-        AnsiConsole.MarkupLine("[yellow]⚠[/] Update your global CLI tool:");
+        AnsiConsole.MarkupLine("[yellow]⚠[/] A newer BotNexus CLI version is available.");
         AnsiConsole.MarkupLine("  [dim]dotnet tool update -g botnexus.cli[/]");
     }
 
@@ -621,22 +554,15 @@ internal class UpdateCommand
     /// </summary>
     protected virtual Version? GetSourceCliVersion(string repoRoot)
     {
+        var cliProjectPath = Path.Combine(repoRoot, "src", "gateway", "BotNexus.Cli", "BotNexus.Cli.csproj");
         var propsPath = Path.Combine(repoRoot, "Directory.Build.props");
-        if (!File.Exists(propsPath))
-            return null;
 
-        try
-        {
-            var propsDoc = XDocument.Load(propsPath);
-            var versionText = propsDoc.Descendants("Version")
-                .Select(x => x.Value?.Trim())
-                .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
-            return TryParseVersion(versionText, out var parsedVersion) ? parsedVersion : null;
-        }
-        catch
-        {
-            return null;
-        }
+        var versionText = ReadVersionProperty(cliProjectPath, "Version")
+            ?? ReadVersionProperty(cliProjectPath, "InformationalVersion")
+            ?? ReadVersionProperty(propsPath, "Version")
+            ?? ReadVersionProperty(propsPath, "InformationalVersion");
+
+        return TryParseVersion(versionText, out var parsedVersion) ? parsedVersion : null;
     }
 
     private static string Short(string sha) => sha.Length >= 7 ? sha[..7] : sha;
@@ -661,6 +587,26 @@ internal class UpdateCommand
 
         version = parsed;
         return true;
+    }
+
+    private static string? ReadVersionProperty(string filePath, string propertyName)
+    {
+        try
+        {
+            if (!File.Exists(filePath))
+                return null;
+
+            var document = XDocument.Load(filePath);
+            return document
+                .Descendants()
+                .FirstOrDefault(e => string.Equals(e.Name.LocalName, propertyName, StringComparison.Ordinal))
+                ?.Value
+                .Trim();
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static string? FirstNonEmptyLine(string text)
