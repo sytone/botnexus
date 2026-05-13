@@ -5,7 +5,6 @@ using System.Text.Json.Nodes;
 using BotNexus.Gateway;
 using BotNexus.Gateway.Api;
 using BotNexus.Gateway.Configuration;
-using BotNexus.Gateway.Configuration;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -128,7 +127,9 @@ public sealed class LocationsApiIntegrationTests
 
             invalidResponse.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
             var invalidBody = await invalidResponse.Content.ReadFromJsonAsync<JsonElement>();
-            invalidBody.GetProperty("error").GetString().ShouldContain("required");
+            var invalidError = invalidBody.GetProperty("error").GetString();
+            invalidError.ShouldNotBeNull();
+            invalidError.ShouldContain("required");
 
             var firstCreate = await client.PostAsJsonAsync("/api/locations", new
             {
@@ -147,7 +148,9 @@ public sealed class LocationsApiIntegrationTests
 
             duplicateCreate.StatusCode.ShouldBe(HttpStatusCode.Conflict);
             var duplicateBody = await duplicateCreate.Content.ReadFromJsonAsync<JsonElement>();
-            duplicateBody.GetProperty("error").GetString().ShouldContain("already exists");
+            var duplicateError = duplicateBody.GetProperty("error").GetString();
+            duplicateError.ShouldNotBeNull();
+            duplicateError.ShouldContain("already exists");
         });
     }
 
@@ -248,18 +251,24 @@ public sealed class LocationsApiIntegrationTests
             var createBody = await createResponse.Content.ReadFromJsonAsync<JsonElement>();
             createBody.GetProperty("pathOrEndpoint").GetString().ShouldBe("(redacted)");
             createBody.GetProperty("hasConfiguredSecret").GetBoolean().ShouldBeTrue();
-            createBody.GetProperty("pathOrEndpoint").GetString().ShouldNotContain("SyntheticSecret123!");
+            var createdPathOrEndpoint = createBody.GetProperty("pathOrEndpoint").GetString();
+            createdPathOrEndpoint.ShouldNotBeNull();
+            createdPathOrEndpoint.ShouldNotContain("SyntheticSecret123!");
 
             var getBody = await client.GetFromJsonAsync<JsonElement>("/api/locations/db-main");
             getBody.GetProperty("pathOrEndpoint").GetString().ShouldBe("(redacted)");
             getBody.GetProperty("hasConfiguredSecret").GetBoolean().ShouldBeTrue();
-            getBody.GetProperty("pathOrEndpoint").GetString().ShouldNotContain("SyntheticSecret123!");
+            var fetchedPathOrEndpoint = getBody.GetProperty("pathOrEndpoint").GetString();
+            fetchedPathOrEndpoint.ShouldNotBeNull();
+            fetchedPathOrEndpoint.ShouldNotContain("SyntheticSecret123!");
 
             var listBody = await client.GetFromJsonAsync<JsonElement>("/api/locations");
             var listedDb = listBody.EnumerateArray().Single(loc => loc.GetProperty("name").GetString() == "db-main");
             listedDb.GetProperty("pathOrEndpoint").GetString().ShouldBe("(redacted)");
             listedDb.GetProperty("hasConfiguredSecret").GetBoolean().ShouldBeTrue();
-            listedDb.GetProperty("pathOrEndpoint").GetString().ShouldNotContain("SyntheticSecret123!");
+            var listedPathOrEndpoint = listedDb.GetProperty("pathOrEndpoint").GetString();
+            listedPathOrEndpoint.ShouldNotBeNull();
+            listedPathOrEndpoint.ShouldNotContain("SyntheticSecret123!");
 
             var updateResponse = await client.PutAsJsonAsync("/api/locations/db-main", new
             {
@@ -273,7 +282,9 @@ public sealed class LocationsApiIntegrationTests
             var updateBody = await updateResponse.Content.ReadFromJsonAsync<JsonElement>();
             updateBody.GetProperty("pathOrEndpoint").GetString().ShouldBe("(redacted)");
             updateBody.GetProperty("hasConfiguredSecret").GetBoolean().ShouldBeTrue();
-            updateBody.GetProperty("pathOrEndpoint").GetString().ShouldNotContain("SyntheticSecret456!");
+            var updatedPathOrEndpoint = updateBody.GetProperty("pathOrEndpoint").GetString();
+            updatedPathOrEndpoint.ShouldNotBeNull();
+            updatedPathOrEndpoint.ShouldNotContain("SyntheticSecret456!");
 
             var configAfterUpdate = fixture.ReadConfigJson();
             configAfterUpdate["gateway"]?["locations"]?["db-main"]?["connectionString"]?.GetValue<string>()
@@ -356,4 +367,3 @@ public sealed class LocationsApiIntegrationTests
         }
     }
 }
-

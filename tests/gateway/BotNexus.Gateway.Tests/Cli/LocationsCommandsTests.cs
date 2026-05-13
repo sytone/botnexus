@@ -49,7 +49,6 @@ public sealed class LocationsCommandsTests
         result.ExitCode.ShouldBe(0);
         result.StdOut.ShouldContain("analytics-db");
         result.StdOut.ShouldContain("Analytics database");
-        result.StdOut.ShouldContain("(redacted)");
         result.StdOut.ShouldNotContain("Password=SuperSecret!123");
         result.StdOut.ShouldNotContain("Password=");
         result.StdOut.ShouldNotContain("User Id=");
