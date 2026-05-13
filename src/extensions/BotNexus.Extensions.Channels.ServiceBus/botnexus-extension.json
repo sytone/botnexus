@@ -1,0 +1,10 @@
+{
+  "id": "botnexus-servicebus",
+  "name": "Azure Service Bus Channel",
+  "description": "Azure Service Bus queue channel adapter — inbound message receive and reply dispatch via Service Bus queues",
+  "version": "1.0.0",
+  "entryAssembly": "BotNexus.Extensions.Channels.ServiceBus.dll",
+  "extensionTypes": [
+    "channel"
+  ]
+}
