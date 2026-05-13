@@ -6,7 +6,15 @@
 
 ## Git Workflow
 
-- **Worktrees are allowed when explicitly requested.** If a user asks you to create or use a worktree, do so. Otherwise, work directly on the current branch without creating a worktree.
+- **All file modifications and commits must happen in a dedicated worktree, never directly on `main`.** Create a worktree for every task. Keep the local `main` branch clean and always aligned to `origin/main`.
+- **If local changes appear on `main`**, stop work immediately, create a worktree for the branch containing those changes, then continue:
+  ```bash
+  git worktree add ../botnexus-temp -b <type>/<issue>-<slug>
+  cd ../botnexus-temp
+  git cherry-pick <commits> # move changes from main, or reset main and reset worktree to origin/main
+  cd ../botnexus && git reset --hard origin/main
+  ```
+- Then delete the temporary worktree after merging/pushing the PR.
 
 ## Dev Environment
 
