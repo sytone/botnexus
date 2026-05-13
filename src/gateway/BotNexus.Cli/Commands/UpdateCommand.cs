@@ -120,12 +120,14 @@ internal class UpdateCommand
         string afterSha;
         GitPullResult pullResult;
         int commitCount;
+        IReadOnlyList<string> commitSubjects;
 
         if (interactive)
         {
             string capturedBeforeSha = string.Empty;
             string capturedAfterSha = string.Empty;
             int capturedCount = 0;
+            IReadOnlyList<string> capturedSubjects = Array.Empty<string>();
             GitPullResult capturedPullResult = new(1, null, false);
 
             await AnsiConsole.Status()
@@ -139,7 +141,10 @@ internal class UpdateCommand
                     {
                         capturedAfterSha = GetCommitSha(repoRoot);
                         if (capturedBeforeSha != capturedAfterSha)
+                        {
                             capturedCount = await CountCommitsBetweenAsync(repoRoot, capturedBeforeSha, capturedAfterSha, cancellationToken);
+                            capturedSubjects = await GetCommitSubjectsBetweenAsync(repoRoot, capturedBeforeSha, capturedAfterSha, cancellationToken);
+                        }
                     }
                 });
 
@@ -147,6 +152,7 @@ internal class UpdateCommand
             afterSha = capturedAfterSha;
             pullResult = capturedPullResult;
             commitCount = capturedCount;
+            commitSubjects = capturedSubjects;
         }
         else
         {
@@ -155,8 +161,12 @@ internal class UpdateCommand
             pullResult = await RunGitPullAsync(repoRoot, verbose, cancellationToken);
             afterSha = pullResult.ExitCode == 0 ? GetCommitSha(repoRoot) : string.Empty;
             commitCount = 0;
+            commitSubjects = Array.Empty<string>();
             if (pullResult.ExitCode == 0 && beforeSha != afterSha)
+            {
                 commitCount = await CountCommitsBetweenAsync(repoRoot, beforeSha, afterSha, cancellationToken);
+                commitSubjects = await GetCommitSubjectsBetweenAsync(repoRoot, beforeSha, afterSha, cancellationToken);
+            }
         }
 
         if (pullResult.WasCanceled)
@@ -184,6 +194,8 @@ internal class UpdateCommand
         {
             var countStr = commitCount > 0 ? $"{commitCount} new commit(s)" : "new commit(s)";
             AnsiConsole.MarkupLine($"[green]✓[/] Pulled {countStr}: [dim]{Markup.Escape(Short(beforeSha))}[/] → [dim]{Markup.Escape(Short(afterSha))}[/]");
+            if (commitSubjects.Count > 0)
+                PrintChangesApplied(commitSubjects);
         }
 
         return 0;
@@ -329,7 +341,10 @@ internal class UpdateCommand
         }
     }
 
-    private static async Task<GitPullResult> RunGitPullAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
+    protected virtual Task<GitPullResult> RunGitPullAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
+        => RunGitPullCoreAsync(repoRoot, verbose, cancellationToken);
+
+    private static async Task<GitPullResult> RunGitPullCoreAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
     {
         Process? proc = null;
         try
@@ -391,7 +406,10 @@ internal class UpdateCommand
         }
     }
 
-    private static string GetCommitSha(string repoRoot)
+    protected virtual string GetCommitSha(string repoRoot)
+        => GetCommitShaCore(repoRoot);
+
+    private static string GetCommitShaCore(string repoRoot)
     {
         try
         {
@@ -416,7 +434,10 @@ internal class UpdateCommand
         }
     }
 
-    private static async Task<int> CountCommitsBetweenAsync(string repoRoot, string from, string to, CancellationToken cancellationToken)
+    protected virtual Task<int> CountCommitsBetweenAsync(string repoRoot, string from, string to, CancellationToken cancellationToken)
+        => CountCommitsBetweenCoreAsync(repoRoot, from, to, cancellationToken);
+
+    private static async Task<int> CountCommitsBetweenCoreAsync(string repoRoot, string from, string to, CancellationToken cancellationToken)
     {
         try
         {
@@ -439,6 +460,60 @@ internal class UpdateCommand
         {
             return 0;
         }
+    }
+
+    /// <summary>
+    /// Lists commit subjects in the update range so users can see exactly what changed.
+    /// </summary>
+    protected virtual Task<IReadOnlyList<string>> GetCommitSubjectsBetweenAsync(
+        string repoRoot,
+        string from,
+        string to,
+        CancellationToken cancellationToken)
+        => GetCommitSubjectsBetweenCoreAsync(repoRoot, from, to, cancellationToken);
+
+    private static async Task<IReadOnlyList<string>> GetCommitSubjectsBetweenCoreAsync(
+        string repoRoot,
+        string from,
+        string to,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "git",
+                Arguments = $"-C \"{repoRoot}\" log --format=%s --reverse {from}..{to}",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            using var proc = Process.Start(psi);
+            if (proc is null) return Array.Empty<string>();
+            var output = await proc.StandardOutput.ReadToEndAsync(cancellationToken);
+            await proc.WaitForExitAsync(cancellationToken);
+            if (proc.ExitCode != 0)
+                return Array.Empty<string>();
+
+            return output
+                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToArray();
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+
+    /// <summary>
+    /// Writes the applied-commit changelog section for update output.
+    /// </summary>
+    protected virtual void PrintChangesApplied(IReadOnlyList<string> commitSubjects)
+    {
+        AnsiConsole.MarkupLine("[blue][[update]][/] Changes applied:");
+        foreach (var subject in commitSubjects)
+            AnsiConsole.MarkupLine($"  - {Markup.Escape(subject)}");
     }
 
     private static string Short(string sha) => sha.Length >= 7 ? sha[..7] : sha;
@@ -493,5 +568,5 @@ internal class UpdateCommand
         }
     }
 
-    private readonly record struct GitPullResult(int ExitCode, string? FailureDetail, bool WasCanceled);
+    protected readonly record struct GitPullResult(int ExitCode, string? FailureDetail, bool WasCanceled);
 }

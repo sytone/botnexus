@@ -2,6 +2,7 @@ using System.CommandLine;
 using BotNexus.Cli.Commands;
 using BotNexus.Cli.Services;
 using NSubstitute;
+using Spectre.Console;
 
 namespace BotNexus.Cli.Tests.Commands;
 
@@ -26,6 +27,37 @@ public class UpdateCommandTests
     private sealed class GitPullStepProbeCommand(IGatewayProcessManager processManager)
         : UpdateCommand(processManager)
     {
+        public Task<int> RunGitPullStepForTestAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
+            => RunGitPullStepAsync(repoRoot, verbose, cancellationToken);
+    }
+
+    private sealed class ScriptedGitPullCommand(
+        IGatewayProcessManager processManager,
+        string beforeSha,
+        string afterSha,
+        int pullExitCode,
+        int commitCount,
+        IReadOnlyList<string> commitSubjects)
+        : UpdateCommand(processManager)
+    {
+        private int _shaReads;
+
+        protected override string GetCommitSha(string repoRoot)
+            => _shaReads++ == 0 ? beforeSha : afterSha;
+
+        protected override Task<GitPullResult> RunGitPullAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
+            => Task.FromResult(new GitPullResult(pullExitCode, null, false));
+
+        protected override Task<int> CountCommitsBetweenAsync(string repoRoot, string from, string to, CancellationToken cancellationToken)
+            => Task.FromResult(commitCount);
+
+        protected override Task<IReadOnlyList<string>> GetCommitSubjectsBetweenAsync(
+            string repoRoot,
+            string from,
+            string to,
+            CancellationToken cancellationToken)
+            => Task.FromResult(commitSubjects);
+
         public Task<int> RunGitPullStepForTestAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
             => RunGitPullStepAsync(repoRoot, verbose, cancellationToken);
     }
@@ -212,4 +244,83 @@ public class UpdateCommandTests
             Directory.Delete(tempDir, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task RunGitPullStepAsync_WhenUpdatesApplied_PrintsConventionalCommitSubjectsInOrder()
+    {
+        var pm = Substitute.For<IGatewayProcessManager>();
+        var cmd = new ScriptedGitPullCommand(
+            pm,
+            beforeSha: "1111111111111111111111111111111111111111",
+            afterSha: "2222222222222222222222222222222222222222",
+            pullExitCode: 0,
+            commitCount: 2,
+            commitSubjects:
+            [
+                "feat(cli): add update changelog subjects",
+                "fix(update)!: suppress changelog noise"
+            ]);
+
+        var output = await CaptureAnsiConsoleOutputAsync(async () =>
+        {
+            var exitCode = await cmd.RunGitPullStepForTestAsync(
+                repoRoot: "unused",
+                verbose: false,
+                cancellationToken: CancellationToken.None);
+            exitCode.ShouldBe(0);
+        });
+
+        output.ShouldContain("Changes applied:");
+        output.ShouldContain("- feat(cli): add update changelog subjects");
+        output.ShouldContain("- fix(update)!: suppress changelog noise");
+        output.IndexOf("- feat(cli): add update changelog subjects", StringComparison.Ordinal)
+            .ShouldBeLessThan(output.IndexOf("- fix(update)!: suppress changelog noise", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RunGitPullStepAsync_WhenAlreadyUpToDate_DoesNotPrintChangesAppliedSection()
+    {
+        var pm = Substitute.For<IGatewayProcessManager>();
+        var cmd = new ScriptedGitPullCommand(
+            pm,
+            beforeSha: "3333333333333333333333333333333333333333",
+            afterSha: "3333333333333333333333333333333333333333",
+            pullExitCode: 0,
+            commitCount: 0,
+            commitSubjects: []);
+
+        var output = await CaptureAnsiConsoleOutputAsync(async () =>
+        {
+            var exitCode = await cmd.RunGitPullStepForTestAsync(
+                repoRoot: "unused",
+                verbose: false,
+                cancellationToken: CancellationToken.None);
+            exitCode.ShouldBe(0);
+        });
+
+        output.ShouldContain("Already up to date");
+        output.ShouldNotContain("Changes applied:");
+    }
+
+    private static async Task<string> CaptureAnsiConsoleOutputAsync(Func<Task> action)
+    {
+        var originalConsole = AnsiConsole.Console;
+        using var outputWriter = new StringWriter();
+        AnsiConsole.Console = AnsiConsole.Create(new AnsiConsoleSettings
+        {
+            Out = new AnsiConsoleOutput(outputWriter),
+            Interactive = InteractionSupport.No
+        });
+
+        try
+        {
+            await action();
+            return outputWriter.ToString();
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
 }
