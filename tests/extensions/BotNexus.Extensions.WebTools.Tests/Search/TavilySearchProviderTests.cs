@@ -79,6 +79,8 @@ public class TavilySearchProviderTests
 
         results.ShouldBeEmpty();
         handler.Requests.ShouldHaveSingleItem();
-        handler.Requests[0].Body.ShouldContain("\"api_key\"");
+        var requestBody = handler.Requests[0].Body;
+        requestBody.ShouldNotBeNull();
+        requestBody.ShouldContain("\"api_key\"");
     }
 }

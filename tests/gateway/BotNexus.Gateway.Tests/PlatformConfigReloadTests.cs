@@ -80,12 +80,16 @@ public sealed class PlatformConfigReloadTests : IDisposable
         var config = sp.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue;
 
         // Assert
-        config.Agents.ShouldNotContainKey("defaults",
+        config.Agents.ShouldNotBeNull();
+        var agents = config.Agents ?? throw new InvalidOperationException("Expected agents config.");
+        agents.ShouldNotContainKey("defaults",
             "defaults pseudo-agent should be stripped after post-configure");
-        config.Agents.ShouldContainKey("myagent");
+        agents.ShouldContainKey("myagent");
         config.AgentDefaults.ShouldNotBeNull();
-        config.AgentDefaults!.ToolIds.ShouldNotBeNull();
-        config.AgentDefaults!.ToolIds!.ShouldContain("web-search");
+        var agentDefaults = config.AgentDefaults ?? throw new InvalidOperationException("Expected agent defaults.");
+        agentDefaults.ToolIds.ShouldNotBeNull();
+        var toolIds = agentDefaults.ToolIds ?? throw new InvalidOperationException("Expected default tool IDs.");
+        toolIds.ShouldContain("web-search");
     }
 
     [Fact]

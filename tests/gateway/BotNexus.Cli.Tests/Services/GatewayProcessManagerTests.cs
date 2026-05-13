@@ -44,7 +44,9 @@ public sealed class GatewayProcessManagerTests : IDisposable
 
         result.Success.ShouldBeFalse();
         result.Pid.ShouldBe(currentPid);
-        result.Message.ShouldContain("already running");
+        result.Message.ShouldNotBeNull();
+        var message = result.Message ?? throw new InvalidOperationException("Expected status message.");
+        message.ShouldContain("already running");
     }
 
     [Fact]
@@ -82,7 +84,9 @@ public sealed class GatewayProcessManagerTests : IDisposable
         var result = await _manager.StopAsync(_testPidDirectory);
 
         result.Success.ShouldBeTrue();
-        result.Message.ShouldContain("not running");
+        result.Message.ShouldNotBeNull();
+        var message = result.Message ?? throw new InvalidOperationException("Expected status message.");
+        message.ShouldContain("not running");
     }
 
     [Fact]
@@ -94,7 +98,9 @@ public sealed class GatewayProcessManagerTests : IDisposable
         var result = await _manager.StopAsync(_testPidDirectory);
 
         result.Success.ShouldBeTrue();
-        result.Message.ShouldContain("stale PID");
+        result.Message.ShouldNotBeNull();
+        var message = result.Message ?? throw new InvalidOperationException("Expected status message.");
+        message.ShouldContain("stale PID");
 
         // PID file should be cleaned up
         var pidFilePath = GetPidFilePath();
@@ -124,7 +130,9 @@ public sealed class GatewayProcessManagerTests : IDisposable
             var result = await _manager.StopAsync(_testPidDirectory);
 
             result.Success.ShouldBeTrue();
-            result.Message.ShouldContain("stopped");
+            result.Message.ShouldNotBeNull();
+            var message = result.Message ?? throw new InvalidOperationException("Expected status message.");
+            message.ShouldContain("stopped");
 
             // PID file should be deleted
             var pidFilePath = GetPidFilePath();
@@ -155,7 +163,9 @@ public sealed class GatewayProcessManagerTests : IDisposable
         status.State.ShouldBe(GatewayState.NotRunning);
         status.Pid.ShouldBeNull();
         status.Uptime.ShouldBeNull();
-        status.Message.ShouldContain("No PID file");
+        status.Message.ShouldNotBeNull();
+        var message = status.Message ?? throw new InvalidOperationException("Expected status message.");
+        message.ShouldContain("No PID file");
     }
 
     [Fact]
@@ -169,7 +179,9 @@ public sealed class GatewayProcessManagerTests : IDisposable
         status.State.ShouldBe(GatewayState.NotRunning);
         status.Pid.ShouldBeNull();
         status.Uptime.ShouldBeNull();
-        status.Message.ShouldContain("stale PID");
+        status.Message.ShouldNotBeNull();
+        var message = status.Message ?? throw new InvalidOperationException("Expected status message.");
+        message.ShouldContain("stale PID");
 
         // PID file should be cleaned up
         var pidFilePath = GetPidFilePath();
@@ -207,7 +219,9 @@ public sealed class GatewayProcessManagerTests : IDisposable
                 status.State.ShouldBe(GatewayState.Running);
                 status.Pid.ShouldBe(process.Id);
                 status.Uptime.ShouldNotBeNull();
-                status.Message.ShouldContain("Running");
+                status.Message.ShouldNotBeNull();
+                var message = status.Message ?? throw new InvalidOperationException("Expected status message.");
+                message.ShouldContain("Running");
             }
             else
             {
@@ -246,7 +260,9 @@ public sealed class GatewayProcessManagerTests : IDisposable
         status.State.ShouldBe(GatewayState.Running);
         status.Pid.ShouldBe(currentProcess.Id);
         status.Uptime.ShouldNotBeNull();
-        status.Message.ShouldContain("Running");
+        status.Message.ShouldNotBeNull();
+        var runningMessage = status.Message ?? throw new InvalidOperationException("Expected status message.");
+        runningMessage.ShouldContain("Running");
     }
 
     [Fact]
@@ -298,7 +314,9 @@ public sealed class GatewayProcessManagerTests : IDisposable
 
             // Process reported as still running (override returned false) — MUST return failure.
             result.Success.ShouldBeFalse();
-            result.Message.ShouldContain("did not exit");
+            result.Message.ShouldNotBeNull();
+            var message = result.Message ?? throw new InvalidOperationException("Expected status message.");
+            message.ShouldContain("did not exit");
         }
         finally
         {
@@ -358,7 +376,9 @@ public sealed class GatewayProcessManagerTests : IDisposable
             var result = await _manager.StopAsync(altTarget);
 
             result.Success.ShouldBeTrue();
-            result.Message.ShouldContain("stale PID");
+            result.Message.ShouldNotBeNull();
+            var message = result.Message ?? throw new InvalidOperationException("Expected status message.");
+            message.ShouldContain("stale PID");
             File.Exists(altPidPath).ShouldBeFalse();
 
             // Default target should be unaffected

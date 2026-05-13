@@ -43,7 +43,7 @@ public sealed class ConversationsController : ControllerBase
         [FromQuery] string? agentId,
         CancellationToken cancellationToken)
     {
-        AgentId? parsedAgentId = string.IsNullOrWhiteSpace(agentId) ? null : AgentId.From(agentId);
+        AgentId? parsedAgentId = string.IsNullOrWhiteSpace(agentId) ? (AgentId?)null : AgentId.From(agentId);
         var summaries = await _conversations.GetSummariesAsync(parsedAgentId, cancellationToken);
         return Ok(summaries);
     }

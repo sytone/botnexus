@@ -99,6 +99,7 @@ public sealed class CronSchedulerTests
         run.Error.ShouldBe("boom");
         var updated = await context.Store.GetAsync("job-1");
         updated!.LastRunStatus.ShouldBe("error");
+        updated.LastRunError.ShouldNotBeNull();
         updated.LastRunError.ShouldContain("boom");
         var history = await context.Store.GetRunHistoryAsync("job-1");
         var entry = history.ShouldHaveSingleItem();

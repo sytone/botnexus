@@ -123,7 +123,7 @@ public static class AgentConfigMerger
             Enabled = PickBool("enabled", defaults.Enabled, agent.Enabled, agentMemObj),
             Path = PickNullableString("path", defaults.Path, agent.Path, agentMemObj),
             Indexing = PickString("indexing", defaults.Indexing, agent.Indexing, agentMemObj),
-            PromptInjection = PickString("promptInjection", defaults.PromptInjection, agent.PromptInjection, agentMemObj),
+            PromptInjection = PickNullableString("promptInjection", defaults.PromptInjection, agent.PromptInjection, agentMemObj),
             Search = MergeMemorySearch(defaults.Search, agent.Search, agentMemObj),
         };
     }

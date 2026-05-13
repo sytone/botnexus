@@ -124,7 +124,7 @@ public sealed class FileAgentWorkspaceManager : IAgentWorkspaceManager
             return (memoryRoot, overrideFullPath);
         }
 
-        return (overrideFullPath, defaultTargetPath: null);
+        return (overrideFullPath, DefaultTargetPath: null);
     }
 
     private string ResolveMemoryPath(string memoryRoot, string? defaultTargetPath, string? filePath)

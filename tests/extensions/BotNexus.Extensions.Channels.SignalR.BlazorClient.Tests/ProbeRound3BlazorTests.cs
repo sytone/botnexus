@@ -159,11 +159,10 @@ public sealed class ProbeRound3BlazorTests : IDisposable
     public void GatewayConfigPanel_ChangingListenUrl_InvokesOnChangedCallback()
     {
         var config = new JsonObject { ["gateway"] = new JsonObject { ["listenUrl"] = "http://localhost:5005" } };
-        var callbackFired = false;
 
         var cut = _ctx.Render<GatewayConfigPanel>(p => p
             .Add(c => c.Config, config)
-            .Add(c => c.OnChanged, Microsoft.AspNetCore.Components.EventCallback.Factory.Create(this, () => callbackFired = true)));
+            .Add(c => c.OnChanged, Microsoft.AspNetCore.Components.EventCallback.Factory.Create(this, static () => { })));
 
         // Trigger ValueChanged on the Listen URL TextField
         // The TextField renders an input; fire change on the first input

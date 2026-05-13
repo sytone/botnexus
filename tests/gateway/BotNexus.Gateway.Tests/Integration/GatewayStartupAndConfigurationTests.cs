@@ -72,7 +72,10 @@ public sealed class GatewayStartupAndConfigurationTests
 
             health.GetProperty("status").GetString().ShouldBe("ok");
             validationResponse.GetProperty("isValid").GetBoolean().ShouldBeFalse();
-            validationResponse.GetProperty("errors")[0].GetString().ShouldContain("Config file not found");
+            var firstError = validationResponse.GetProperty("errors")[0].GetString();
+            firstError.ShouldNotBeNull();
+            var errorText = firstError ?? throw new InvalidOperationException("Expected validation error text.");
+            errorText.ShouldContain("Config file not found");
         });
     }
 
@@ -96,9 +99,11 @@ public sealed class GatewayStartupAndConfigurationTests
         {
             var config = PlatformConfigLoader.Load(configPath, validateOnLoad: false);
 
-            config.Providers.ShouldContainKey("github-copilot");
-            config.Providers!["github-copilot"].ApiKey.ShouldBe("auth:copilot");
-            config.Providers["github-copilot"].BaseUrl.ShouldBe("https://api.githubcopilot.com");
+            config.Providers.ShouldNotBeNull();
+            var providers = config.Providers ?? throw new InvalidOperationException("Expected providers.");
+            providers.ShouldContainKey("github-copilot");
+            providers["github-copilot"].ApiKey.ShouldBe("auth:copilot");
+            providers["github-copilot"].BaseUrl.ShouldBe("https://api.githubcopilot.com");
             return Task.CompletedTask;
         });
     }
@@ -373,4 +378,3 @@ public sealed class GatewayStartupAndConfigurationTests
         }
     }
 }
-

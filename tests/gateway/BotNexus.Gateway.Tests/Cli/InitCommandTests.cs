@@ -21,8 +21,10 @@ public sealed class InitCommandTests
         Directory.Exists(Path.Combine(fixture.RootPath, "agents")).ShouldBeTrue();
 
         var config = await fixture.LoadConfigAsync();
-        config.Agents.ShouldContainKey("assistant");
-        config.Agents!["assistant"].Provider.ShouldBe("github-copilot");
+        config.Agents.ShouldNotBeNull();
+        var agents = config.Agents ?? throw new InvalidOperationException("Expected agents config.");
+        agents.ShouldContainKey("assistant");
+        agents["assistant"].Provider.ShouldBe("github-copilot");
     }
 
     [Fact]
@@ -48,7 +50,9 @@ public sealed class InitCommandTests
 
         result.ExitCode.ShouldBe(0);
         config.Gateway?.ListenUrl.ShouldBe("http://0.0.0.0:5005");
-        config.Agents.ShouldContainKey("assistant");
+        config.Agents.ShouldNotBeNull();
+        var agents = config.Agents ?? throw new InvalidOperationException("Expected agents config.");
+        agents.ShouldContainKey("assistant");
     }
 
     // -------------------------------------------------------------------------
@@ -89,4 +93,3 @@ public sealed class InitCommandTests
         enabledEl.GetBoolean().ShouldBeTrue();
     }
 }
-

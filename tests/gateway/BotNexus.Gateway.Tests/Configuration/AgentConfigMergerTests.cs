@@ -235,8 +235,11 @@ public sealed class AgentConfigMergerTests
 
         // Assert
         result.FileAccess.ShouldNotBeNull();
-        result.FileAccess!.AllowedReadPaths.ShouldBe(["/agent/read"]);  // replaced, not union
-        result.FileAccess.AllowedReadPaths.ShouldNotContain("/defaults/read1");
+        var fileAccess = result.FileAccess ?? throw new InvalidOperationException("Expected file access policy.");
+        fileAccess.AllowedReadPaths.ShouldNotBeNull();
+        var allowedReadPaths = fileAccess.AllowedReadPaths ?? throw new InvalidOperationException("Expected read paths.");
+        allowedReadPaths.ShouldBe(["/agent/read"]);  // replaced, not union
+        allowedReadPaths.ShouldNotContain("/defaults/read1");
     }
 
     // -------------------------------------------------------------------------
@@ -321,7 +324,8 @@ public sealed class AgentConfigMergerTests
 
         // Assert
         result.ToolIds.ShouldBe(["tool-c"]);      // replaced entirely
-        result.ToolIds.ShouldNotContain("tool-a");
+        var toolIds = result.ToolIds ?? throw new InvalidOperationException("Expected tool IDs.");
+        toolIds.ShouldNotContain("tool-a");
     }
 
     [Fact]

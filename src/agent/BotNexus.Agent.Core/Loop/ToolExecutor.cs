@@ -324,7 +324,7 @@ internal static class ToolExecutor
                 requested = TimeSpan.FromMilliseconds(ms);
             }
 
-            if (requested.HasValue && requested.Value > toolTimeout.Value)
+            if (requested.HasValue && toolTimeout.HasValue && requested.Value > toolTimeout.Value)
             {
                 // Agent explicitly requested a longer timeout — honour it with a 10s buffer
                 // so the tool's own timeout fires before the safety cap.

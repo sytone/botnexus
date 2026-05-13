@@ -32,10 +32,15 @@ public sealed class LocationRegistryConfigurationTests
         });
 
         config.ShouldNotBeNull();
-        config!.Gateway!.Locations.ShouldContainKey("repo-root");
-        config.Gateway.Locations!["repo-root"].Path.ShouldBe("Q:\\repos\\botnexus");
-        config.Gateway.Locations!["repo-root"].Description.ShouldBe("Repository root");
-        config.Gateway.Locations!["gateway-api"].Endpoint.ShouldBe("https://example.test");
+        var platformConfig = config ?? throw new InvalidOperationException("Expected config.");
+        platformConfig.Gateway.ShouldNotBeNull();
+        var gateway = platformConfig.Gateway ?? throw new InvalidOperationException("Expected gateway config.");
+        gateway.Locations.ShouldNotBeNull();
+        var locations = gateway.Locations ?? throw new InvalidOperationException("Expected locations.");
+        locations.ShouldContainKey("repo-root");
+        locations["repo-root"].Path.ShouldBe("Q:\\repos\\botnexus");
+        locations["repo-root"].Description.ShouldBe("Repository root");
+        locations["gateway-api"].Endpoint.ShouldBe("https://example.test");
     }
 
     [Fact]

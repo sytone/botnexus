@@ -280,7 +280,15 @@ public sealed class AgentInteractionService : IAgentInteractionService
             if (agent.ActiveConversationId == conversationId)
             {
                 var next = agent.Conversations.Keys.FirstOrDefault();
-                _store.SetActiveConversation(agentId, next);
+                if (next is not null)
+                {
+                    _store.SetActiveConversation(agentId, next);
+                }
+                else
+                {
+                    agent.ActiveConversationId = null;
+                    _store.NotifyChanged();
+                }
             }
             else
             {
@@ -488,7 +496,15 @@ public sealed class AgentInteractionService : IAgentInteractionService
                     .ThenByDescending(c => c.UpdatedAt)
                     .Select(c => c.ConversationId)
                     .FirstOrDefault();
-                _store.SetActiveConversation(agentId, nextConversationId);
+                if (nextConversationId is not null)
+                {
+                    _store.SetActiveConversation(agentId, nextConversationId);
+                }
+                else
+                {
+                    agent.ActiveConversationId = null;
+                    _store.NotifyChanged();
+                }
             }
         }
         catch (Exception ex)

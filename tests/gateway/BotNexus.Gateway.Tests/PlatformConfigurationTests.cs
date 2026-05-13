@@ -52,10 +52,12 @@ public sealed class PlatformConfigurationTests
         config.Gateway?.ListenUrl.ShouldBe("http://localhost:18790");
         config.Gateway?.DefaultAgentId.ShouldBe("agent-a");
         config.Gateway?.LogLevel.ShouldBe("Debug");
-        config.Providers.ShouldContainKey("copilot");
-        config.Providers!["copilot"].ApiKey.ShouldBe("test-key");
-        config.Providers["copilot"].BaseUrl.ShouldBe("https://api.githubcopilot.com");
-        config.Providers["copilot"].DefaultModel.ShouldBe("gpt-4.1");
+        config.Providers.ShouldNotBeNull();
+        var providers = config.Providers ?? throw new InvalidOperationException("Expected providers.");
+        providers.ShouldContainKey("copilot");
+        providers["copilot"].ApiKey.ShouldBe("test-key");
+        providers["copilot"].BaseUrl.ShouldBe("https://api.githubcopilot.com");
+        providers["copilot"].DefaultModel.ShouldBe("gpt-4.1");
     }
 
     [Fact]
@@ -738,8 +740,10 @@ public sealed class PlatformConfigurationTests
         var reloaded = await PlatformConfigLoader.LoadAsync(fixture.ConfigPath, validateOnLoad: false);
 
         reloaded.Gateway?.LogLevel.ShouldBe("Warning");
-        reloaded.Providers.ShouldContainKey("copilot");
-        reloaded.Providers!["copilot"].ApiKey.ShouldBe("updated-key");
+        reloaded.Providers.ShouldNotBeNull();
+        var providers = reloaded.Providers ?? throw new InvalidOperationException("Expected providers.");
+        providers.ShouldContainKey("copilot");
+        providers["copilot"].ApiKey.ShouldBe("updated-key");
     }
 
     private sealed class PlatformConfigFixture : IDisposable

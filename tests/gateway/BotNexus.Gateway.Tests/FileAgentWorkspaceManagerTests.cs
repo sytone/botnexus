@@ -25,9 +25,15 @@ public sealed class FileAgentWorkspaceManagerTests : IDisposable
         var workspace = await _workspaceManager.LoadWorkspaceAsync("farnsworth");
 
         workspace.AgentName.ShouldBe("farnsworth");
-        workspace.Soul.ShouldContain("# Soul");
-        workspace.Identity.ShouldContain("# Identity");
-        workspace.User.ShouldContain("# User");
+        workspace.Soul.ShouldNotBeNull();
+        workspace.Identity.ShouldNotBeNull();
+        workspace.User.ShouldNotBeNull();
+        var soul = workspace.Soul ?? throw new InvalidOperationException("Expected soul content.");
+        var identity = workspace.Identity ?? throw new InvalidOperationException("Expected identity content.");
+        var user = workspace.User ?? throw new InvalidOperationException("Expected user content.");
+        soul.ShouldContain("# Soul");
+        identity.ShouldContain("# Identity");
+        user.ShouldContain("# User");
         workspace.Memory.ShouldBeEmpty();
 
         var workspacePath = _workspaceManager.GetWorkspacePath("farnsworth");
@@ -67,12 +73,12 @@ public sealed class FileAgentWorkspaceManagerTests : IDisposable
 
         overload.ShouldNotBeNull("Wave 1 requires memory_save(file_path, content) support.");
 
-        var task = (Task?)overload!.Invoke(
+        var invocationResult = overload!.Invoke(
             _workspaceManager,
             ["farnsworth", @"memory\handoff.md", "first handoff entry", CancellationToken.None]);
-
-        task.ShouldNotBeNull();
-        await task!;
+        invocationResult.ShouldNotBeNull();
+        var task = invocationResult as Task ?? throw new InvalidOperationException("Expected async task.");
+        await task;
 
         var handoffPath = Path.Combine(_workspaceManager.GetWorkspacePath("farnsworth"), "memory", "handoff.md");
         var content = await _fileSystem.File.ReadAllTextAsync(handoffPath);

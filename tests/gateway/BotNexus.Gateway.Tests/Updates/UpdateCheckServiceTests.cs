@@ -116,7 +116,6 @@ public sealed class UpdateCheckServiceTests
     [Fact]
     public async Task CheckNowAsync_WhenGitHubReturnsNewerCommit_SetsIsUpdateAvailable()
     {
-        const string currentSha = "aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000";
         const string latestSha = "bbbb1111bbbb1111bbbb1111bbbb1111bbbb1111";
 
         var config = BuildConfig();

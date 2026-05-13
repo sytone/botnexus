@@ -115,7 +115,11 @@ public sealed class LocationsCommandsTests
         addResult.ExitCode.ShouldBe(0);
         updateResult.ExitCode.ShouldBe(0);
         deleteResult.ExitCode.ShouldBe(0);
-        config.Gateway?.Locations.ShouldNotContainKey("repo");
+        config.Gateway.ShouldNotBeNull();
+        var gateway = config.Gateway ?? throw new InvalidOperationException("Expected gateway config.");
+        gateway.Locations.ShouldNotBeNull();
+        var locations = gateway.Locations ?? throw new InvalidOperationException("Expected locations.");
+        locations.ShouldNotContainKey("repo");
     }
 
     [Fact]

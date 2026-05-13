@@ -33,8 +33,12 @@ public sealed class PlatformConfigValidationTests
 
                 errors.ShouldBeEmpty();
                 config.Version.ShouldBe(1);
-                config.Agents.ShouldContainKey("assistant");
-                config.Providers.ShouldContainKey("copilot");
+                config.Agents.ShouldNotBeNull();
+                var agents = config.Agents ?? throw new InvalidOperationException("Expected agents config.");
+                agents.ShouldContainKey("assistant");
+                config.Providers.ShouldNotBeNull();
+                var providers = config.Providers ?? throw new InvalidOperationException("Expected providers config.");
+                providers.ShouldContainKey("copilot");
             });
 
     [Fact]
@@ -83,9 +87,15 @@ public sealed class PlatformConfigValidationTests
 
                 errors.ShouldBeEmpty();
                 config.Gateway.ShouldNotBeNull();
-                config.Gateway!.SessionStore!.Type.ShouldBe("InMemory");
-                config.Gateway.Extensions!.Defaults!.ShouldContainKey("botnexus-skills");
-                config.Gateway.Extensions.Defaults["botnexus-skills"].GetProperty("enabled").GetBoolean().ShouldBeTrue();
+                var gateway = config.Gateway ?? throw new InvalidOperationException("Expected gateway config.");
+                gateway.SessionStore.ShouldNotBeNull();
+                gateway.SessionStore.Type.ShouldBe("InMemory");
+                gateway.Extensions.ShouldNotBeNull();
+                var extensions = gateway.Extensions ?? throw new InvalidOperationException("Expected gateway extensions.");
+                extensions.Defaults.ShouldNotBeNull();
+                var defaults = extensions.Defaults ?? throw new InvalidOperationException("Expected extension defaults.");
+                defaults.ShouldContainKey("botnexus-skills");
+                defaults["botnexus-skills"].GetProperty("enabled").GetBoolean().ShouldBeTrue();
                 SerializeShouldNotThrow(config);
             });
 
@@ -371,7 +381,9 @@ public sealed class PlatformConfigValidationTests
             {
                 var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
                 var errors = PlatformConfigLoader.Validate(config);
-                var agent = config.Agents!["assistant"];
+                config.Agents.ShouldNotBeNull();
+                var agents = config.Agents ?? throw new InvalidOperationException("Expected agents config.");
+                var agent = agents["assistant"];
 
                 errors.ShouldBeEmpty();
                 agent.DisplayName.ShouldBe("Assistant");
@@ -384,10 +396,13 @@ public sealed class PlatformConfigValidationTests
                 agent.Heartbeat.ShouldNotBeNull();
                 agent.SessionAccess.ShouldNotBeNull();
                 agent.FileAccess.ShouldNotBeNull();
-                agent.Extensions.ShouldContainKey("botnexus-mcp");
-                agent.Extensions!["botnexus-mcp"].GetProperty("enabled").GetBoolean().ShouldBeTrue();
+                agent.Extensions.ShouldNotBeNull();
+                var agentExtensions = agent.Extensions ?? throw new InvalidOperationException("Expected agent extensions.");
+                agentExtensions.ShouldContainKey("botnexus-mcp");
+                agentExtensions["botnexus-mcp"].GetProperty("enabled").GetBoolean().ShouldBeTrue();
                 agent.Metadata.ShouldNotBeNull();
-                agent.Metadata!.Value.GetProperty("owner").GetString().ShouldBe("test-user");
+                var metadata = agent.Metadata ?? throw new InvalidOperationException("Expected metadata.");
+                metadata.GetProperty("owner").GetString().ShouldBe("test-user");
                 SerializeShouldNotThrow(config);
             });
 
@@ -428,10 +443,15 @@ public sealed class PlatformConfigValidationTests
 
                 errors.ShouldBeEmpty();
                 config.AgentDefaults.ShouldNotBeNull();
-                config.AgentDefaults!.ToolIds.ShouldBe(["read", "write"]);
-                config.Agents.ShouldContainKey("assistant");
-                config.Agents.ShouldNotContainKey("defaults");
-                config.AgentRawElements.ShouldContainKey("assistant");
+                var agentDefaults = config.AgentDefaults ?? throw new InvalidOperationException("Expected agent defaults.");
+                agentDefaults.ToolIds.ShouldBe(["read", "write"]);
+                config.Agents.ShouldNotBeNull();
+                var agents = config.Agents ?? throw new InvalidOperationException("Expected agents config.");
+                agents.ShouldContainKey("assistant");
+                agents.ShouldNotContainKey("defaults");
+                config.AgentRawElements.ShouldNotBeNull();
+                var rawElements = config.AgentRawElements ?? throw new InvalidOperationException("Expected agent raw elements.");
+                rawElements.ShouldContainKey("assistant");
             });
 
     [Fact]
@@ -563,12 +583,18 @@ public sealed class PlatformConfigValidationTests
             async configPath =>
             {
                 var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
-                var agent = config.Agents!["assistant"];
+                config.Agents.ShouldNotBeNull();
+                var agents = config.Agents ?? throw new InvalidOperationException("Expected agents config.");
+                var agent = agents["assistant"];
 
                 PlatformConfigLoader.Validate(config).ShouldBeEmpty();
-                agent.Extensions.ShouldContainKey("botnexus-exec");
-                agent.Extensions!["botnexus-exec"].GetProperty("limits").GetProperty("timeout").GetInt32().ShouldBe(30);
-                agent.Metadata!.Value.GetProperty("team").GetProperty("name").GetString().ShouldBe("platform");
+                agent.Extensions.ShouldNotBeNull();
+                var extensions = agent.Extensions ?? throw new InvalidOperationException("Expected agent extensions.");
+                extensions.ShouldContainKey("botnexus-exec");
+                extensions["botnexus-exec"].GetProperty("limits").GetProperty("timeout").GetInt32().ShouldBe(30);
+                agent.Metadata.ShouldNotBeNull();
+                var metadata = agent.Metadata ?? throw new InvalidOperationException("Expected metadata.");
+                metadata.GetProperty("team").GetProperty("name").GetString().ShouldBe("platform");
                 SerializeShouldNotThrow(config);
             });
 
@@ -711,7 +737,9 @@ public sealed class PlatformConfigValidationTests
             {
                 var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
                 PlatformConfigLoader.Validate(config).ShouldBeEmpty();
-                config.Channels.ShouldContainKey("telegram");
+                config.Channels.ShouldNotBeNull();
+                var channels = config.Channels ?? throw new InvalidOperationException("Expected channels.");
+                channels.ShouldContainKey("telegram");
             });
 
     [Fact]
@@ -753,7 +781,9 @@ public sealed class PlatformConfigValidationTests
             {
                 var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
                 PlatformConfigLoader.Validate(config).ShouldBeEmpty();
-                config.Channels.ShouldContainKey("telegram");
+                config.Channels.ShouldNotBeNull();
+                var channels = config.Channels ?? throw new InvalidOperationException("Expected channels.");
+                channels.ShouldContainKey("telegram");
             });
 
     [Fact]
@@ -783,7 +813,9 @@ public sealed class PlatformConfigValidationTests
             {
                 var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
                 PlatformConfigLoader.Validate(config).ShouldBeEmpty();
-                config.Channels.ShouldContainKey("telegram");
+                config.Channels.ShouldNotBeNull();
+                var channels = config.Channels ?? throw new InvalidOperationException("Expected channels.");
+                channels.ShouldContainKey("telegram");
             });
 
     [Fact]
@@ -872,9 +904,15 @@ public sealed class PlatformConfigValidationTests
                 var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
 
                 PlatformConfigLoader.Validate(config).ShouldBeEmpty();
-                config.Gateway!.Extensions!.Defaults.ShouldContainKey("botnexus-skills");
-                config.Gateway.Extensions.Defaults.ShouldContainKey("botnexus-exec");
-                config.Gateway.Extensions.Defaults["botnexus-exec"].GetProperty("timeout").GetInt32().ShouldBe(30);
+                config.Gateway.ShouldNotBeNull();
+                var gateway = config.Gateway ?? throw new InvalidOperationException("Expected gateway config.");
+                gateway.Extensions.ShouldNotBeNull();
+                var extensions = gateway.Extensions ?? throw new InvalidOperationException("Expected gateway extensions.");
+                extensions.Defaults.ShouldNotBeNull();
+                var defaults = extensions.Defaults ?? throw new InvalidOperationException("Expected extension defaults.");
+                defaults.ShouldContainKey("botnexus-skills");
+                defaults.ShouldContainKey("botnexus-exec");
+                defaults["botnexus-exec"].GetProperty("timeout").GetInt32().ShouldBe(30);
                 SerializeShouldNotThrow(config);
             });
 
@@ -966,7 +1004,11 @@ public sealed class PlatformConfigValidationTests
             {
                 var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
                 PlatformConfigLoader.Validate(config).ShouldBeEmpty();
-                config.Cron!.Jobs.ShouldContainKey("daily-summary");
+                config.Cron.ShouldNotBeNull();
+                var cron = config.Cron ?? throw new InvalidOperationException("Expected cron config.");
+                cron.Jobs.ShouldNotBeNull();
+                var jobs = cron.Jobs ?? throw new InvalidOperationException("Expected cron jobs.");
+                jobs.ShouldContainKey("daily-summary");
             });
 
     [Fact]
@@ -1027,8 +1069,12 @@ public sealed class PlatformConfigValidationTests
             {
                 var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
                 PlatformConfigLoader.Validate(config).ShouldBeEmpty();
-                config.Cron!.Jobs.ShouldContainKey("daily-summary");
-                var job = config.Cron.Jobs["daily-summary"];
+                config.Cron.ShouldNotBeNull();
+                var cron = config.Cron ?? throw new InvalidOperationException("Expected cron config.");
+                cron.Jobs.ShouldNotBeNull();
+                var jobs = cron.Jobs ?? throw new InvalidOperationException("Expected cron jobs.");
+                jobs.ShouldContainKey("daily-summary");
+                var job = jobs["daily-summary"];
                 job.ActionType.ShouldBe("agent-chat");
                 job.Model.ShouldBe("openai/gpt-4.1");
             });
@@ -1298,8 +1344,12 @@ public sealed class PlatformConfigValidationTests
             {
                 var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
                 PlatformConfigLoader.Validate(config).ShouldBeEmpty();
-                config.Gateway!.ApiKeys!.ShouldContainKey("tenant-a");
-                config.Gateway.ApiKeys["tenant-a"].AllowedAgents.ShouldBe(["assistant"]);
+                config.Gateway.ShouldNotBeNull();
+                var gateway = config.Gateway ?? throw new InvalidOperationException("Expected gateway config.");
+                gateway.ApiKeys.ShouldNotBeNull();
+                var apiKeys = gateway.ApiKeys ?? throw new InvalidOperationException("Expected API keys.");
+                apiKeys.ShouldContainKey("tenant-a");
+                apiKeys["tenant-a"].AllowedAgents.ShouldBe(["assistant"]);
             });
 
     [Fact]
@@ -1497,7 +1547,13 @@ public sealed class PlatformConfigValidationTests
             {
                 var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
                 PlatformConfigLoader.Validate(config).ShouldBeEmpty();
-                config.Gateway!.CrossWorld!.Peers.ShouldContainKey("world-b");
+                config.Gateway.ShouldNotBeNull();
+                var gateway = config.Gateway ?? throw new InvalidOperationException("Expected gateway config.");
+                gateway.CrossWorld.ShouldNotBeNull();
+                var crossWorld = gateway.CrossWorld ?? throw new InvalidOperationException("Expected cross-world settings.");
+                crossWorld.Peers.ShouldNotBeNull();
+                var peers = crossWorld.Peers ?? throw new InvalidOperationException("Expected cross-world peers.");
+                peers.ShouldContainKey("world-b");
             });
 
     [Fact]
