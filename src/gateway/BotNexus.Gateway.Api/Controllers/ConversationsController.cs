@@ -337,6 +337,8 @@ public sealed class ConversationsController : ControllerBase
             if (!virtualCronSessionId.HasValue || virtualCronSessionId.Value != activeSessionId)
                 await SealSessionAsync(activeSessionId, cancellationToken);
 
+        await SealConversationSessionsAsync(conversation.ConversationId, cancellationToken);
+
         await _conversations.ArchiveAsync(conversation.ConversationId, cancellationToken);
         return NoContent();
     }
@@ -373,6 +375,19 @@ public sealed class ConversationsController : ControllerBase
         session.Status = SessionStatus.Sealed;
         session.UpdatedAt = DateTimeOffset.UtcNow;
         await _sessions.SaveAsync(session, cancellationToken);
+    }
+
+    private async Task SealConversationSessionsAsync(ConversationId conversationId, CancellationToken cancellationToken)
+    {
+        var allSessions = await _sessions.ListAsync(cancellationToken: cancellationToken);
+        var linkedSessionIds = allSessions
+            .Where(session => session.Session.ConversationId is { } linkedConversationId &&
+                              linkedConversationId == conversationId)
+            .Select(session => session.SessionId)
+            .ToList();
+
+        foreach (var sessionId in linkedSessionIds)
+            await SealSessionAsync(sessionId, cancellationToken);
     }
 
     private async Task<ActionResult> GetVirtualCronHistoryAsync(

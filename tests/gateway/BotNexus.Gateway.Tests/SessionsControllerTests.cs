@@ -21,7 +21,7 @@ public sealed class SessionsControllerTests
         await store.GetOrCreateAsync("s1", "agent-a");
         var controller = new SessionsController(store);
 
-        var actionResult = await controller.List(null, CancellationToken.None);
+        var actionResult = await controller.List(null, cancellationToken: CancellationToken.None);
 
         var okResult = actionResult as OkObjectResult;
         okResult.ShouldNotBeNull();
@@ -764,7 +764,7 @@ public sealed class SessionsControllerTests
         await store.SaveAsync(session);
         var controller = new SessionsController(store);
 
-        var actionResult = await controller.List(null, CancellationToken.None);
+        var actionResult = await controller.List(null, cancellationToken: CancellationToken.None);
 
         var okResult = actionResult.ShouldBeOfType<OkObjectResult>();
         var json = System.Text.Json.JsonSerializer.Serialize(okResult!.Value);
@@ -790,6 +790,70 @@ public sealed class SessionsControllerTests
         var result = okResult!.Value.ShouldBeOfType<GatewaySession>();
         result.Session.ConversationId.ShouldNotBeNull("ConversationId must be set on the returned session");
         result.Session.ConversationId!.Value.Value.ShouldBe("c_testconvid456");
+    }
+
+    [Fact]
+    public async Task List_ByDefault_ExcludesSealedAndExpiredSessions()
+    {
+        var store = new InMemorySessionStore();
+        var activeSession = await store.GetOrCreateAsync("s-active", "agent-a");
+        activeSession.Status = SessionStatus.Active;
+        await store.SaveAsync(activeSession);
+
+        var sealedSession = await store.GetOrCreateAsync("s-sealed", "agent-a");
+        sealedSession.Status = SessionStatus.Sealed;
+        await store.SaveAsync(sealedSession);
+
+        var expiredSession = await store.GetOrCreateAsync("s-expired", "agent-a");
+        expiredSession.Status = SessionStatus.Expired;
+        await store.SaveAsync(expiredSession);
+
+        var controller = new SessionsController(store);
+        var actionResult = await controller.List(null, cancellationToken: CancellationToken.None);
+
+        var okResult = actionResult.ShouldBeOfType<OkObjectResult>();
+        var json = System.Text.Json.JsonSerializer.Serialize(okResult.Value);
+        var doc = System.Text.Json.JsonDocument.Parse(json);
+        var ids = doc.RootElement.EnumerateArray()
+            .Select(item => item.GetProperty("sessionId").GetString())
+            .Where(id => id is not null)
+            .ToHashSet(StringComparer.Ordinal);
+
+        ids.ShouldContain("s-active");
+        ids.ShouldNotContain("s-sealed");
+        ids.ShouldNotContain("s-expired");
+    }
+
+    [Fact]
+    public async Task List_WithIncludeInactive_ReturnsSealedAndExpiredSessions()
+    {
+        var store = new InMemorySessionStore();
+        var activeSession = await store.GetOrCreateAsync("s-active", "agent-a");
+        activeSession.Status = SessionStatus.Active;
+        await store.SaveAsync(activeSession);
+
+        var sealedSession = await store.GetOrCreateAsync("s-sealed", "agent-a");
+        sealedSession.Status = SessionStatus.Sealed;
+        await store.SaveAsync(sealedSession);
+
+        var expiredSession = await store.GetOrCreateAsync("s-expired", "agent-a");
+        expiredSession.Status = SessionStatus.Expired;
+        await store.SaveAsync(expiredSession);
+
+        var controller = new SessionsController(store);
+        var actionResult = await controller.List(null, includeInactive: true, cancellationToken: CancellationToken.None);
+
+        var okResult = actionResult.ShouldBeOfType<OkObjectResult>();
+        var json = System.Text.Json.JsonSerializer.Serialize(okResult.Value);
+        var doc = System.Text.Json.JsonDocument.Parse(json);
+        var ids = doc.RootElement.EnumerateArray()
+            .Select(item => item.GetProperty("sessionId").GetString())
+            .Where(id => id is not null)
+            .ToHashSet(StringComparer.Ordinal);
+
+        ids.ShouldContain("s-active");
+        ids.ShouldContain("s-sealed");
+        ids.ShouldContain("s-expired");
     }
 
     private static ControllerContext CreateControllerContext(string callerId)
