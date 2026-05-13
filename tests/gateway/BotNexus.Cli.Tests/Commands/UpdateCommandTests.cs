@@ -37,7 +37,9 @@ public class UpdateCommandTests
         string afterSha,
         int pullExitCode,
         int commitCount,
-        IReadOnlyList<string> commitSubjects)
+        IReadOnlyList<string> commitSubjects,
+        Version? runningCliVersion = null,
+        Version? sourceCliVersion = null)
         : UpdateCommand(processManager)
     {
         private int _shaReads;
@@ -57,6 +59,12 @@ public class UpdateCommandTests
             string to,
             CancellationToken cancellationToken)
             => Task.FromResult(commitSubjects);
+
+        protected override Version? GetRunningCliVersion()
+            => runningCliVersion;
+
+        protected override Version? GetSourceCliVersion(string repoRoot)
+            => sourceCliVersion;
 
         public Task<int> RunGitPullStepForTestAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
             => RunGitPullStepAsync(repoRoot, verbose, cancellationToken);
@@ -300,6 +308,89 @@ public class UpdateCommandTests
 
         output.ShouldContain("Already up to date");
         output.ShouldNotContain("Changes applied:");
+    }
+
+    [Fact]
+    public async Task RunGitPullStepAsync_WhenSourceCliVersionIsNewer_PrintsToolUpdateWarning()
+    {
+        var pm = Substitute.For<IGatewayProcessManager>();
+        var cmd = new ScriptedGitPullCommand(
+            pm,
+            beforeSha: "1111111111111111111111111111111111111111",
+            afterSha: "1111111111111111111111111111111111111111",
+            pullExitCode: 0,
+            commitCount: 0,
+            commitSubjects: [],
+            runningCliVersion: new Version(0, 1, 8),
+            sourceCliVersion: new Version(0, 1, 10));
+
+        var output = await CaptureAnsiConsoleOutputAsync(async () =>
+        {
+            var exitCode = await cmd.RunGitPullStepForTestAsync(
+                repoRoot: "unused",
+                verbose: false,
+                cancellationToken: CancellationToken.None);
+            exitCode.ShouldBe(0);
+        });
+
+        output.ShouldContain("A newer BotNexus CLI is available");
+        output.ShouldContain("dotnet tool update -g botnexus.cli");
+    }
+
+    [Theory]
+    [InlineData("0.1.10", "0.1.10")]
+    [InlineData("0.1.11", "0.1.10")]
+    public async Task RunGitPullStepAsync_WhenSourceCliVersionIsNotNewer_DoesNotPrintToolUpdateWarning(
+        string runningVersion,
+        string sourceVersion)
+    {
+        var pm = Substitute.For<IGatewayProcessManager>();
+        var cmd = new ScriptedGitPullCommand(
+            pm,
+            beforeSha: "1111111111111111111111111111111111111111",
+            afterSha: "1111111111111111111111111111111111111111",
+            pullExitCode: 0,
+            commitCount: 0,
+            commitSubjects: [],
+            runningCliVersion: Version.Parse(runningVersion),
+            sourceCliVersion: Version.Parse(sourceVersion));
+
+        var output = await CaptureAnsiConsoleOutputAsync(async () =>
+        {
+            var exitCode = await cmd.RunGitPullStepForTestAsync(
+                repoRoot: "unused",
+                verbose: false,
+                cancellationToken: CancellationToken.None);
+            exitCode.ShouldBe(0);
+        });
+
+        output.ShouldNotContain("dotnet tool update -g botnexus.cli");
+    }
+
+    [Fact]
+    public async Task RunGitPullStepAsync_WhenSourceCliVersionUnavailable_DoesNotPrintToolUpdateWarning()
+    {
+        var pm = Substitute.For<IGatewayProcessManager>();
+        var cmd = new ScriptedGitPullCommand(
+            pm,
+            beforeSha: "1111111111111111111111111111111111111111",
+            afterSha: "1111111111111111111111111111111111111111",
+            pullExitCode: 0,
+            commitCount: 0,
+            commitSubjects: [],
+            runningCliVersion: new Version(0, 1, 10),
+            sourceCliVersion: null);
+
+        var output = await CaptureAnsiConsoleOutputAsync(async () =>
+        {
+            var exitCode = await cmd.RunGitPullStepForTestAsync(
+                repoRoot: "unused",
+                verbose: false,
+                cancellationToken: CancellationToken.None);
+            exitCode.ShouldBe(0);
+        });
+
+        output.ShouldNotContain("dotnet tool update -g botnexus.cli");
     }
 
     private static async Task<string> CaptureAnsiConsoleOutputAsync(Func<Task> action)

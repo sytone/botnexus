@@ -1,6 +1,8 @@
 using System.CommandLine;
 using System.Diagnostics;
 using System.Net.Sockets;
+using System.Reflection;
+using System.Xml.Linq;
 using BotNexus.Cli.Services;
 using Spectre.Console;
 
@@ -54,6 +56,9 @@ internal class UpdateCommand
         var pullResult = await RunGitPullStepAsync(repoRoot, verbose, cancellationToken);
         if (pullResult != 0)
             return pullResult;
+
+        if (IsNewerCliVersionAvailable(repoRoot))
+            PrintCliUpdateRecommendation();
 
         // Step 2: Stop gateway BEFORE building — releases file locks on Windows
         GatewayStopResult stopResult;
@@ -198,6 +203,7 @@ internal class UpdateCommand
                 PrintChangesApplied(commitSubjects);
         }
 
+        PrintCliUpdateWarningIfNeeded(repoRoot);
         return 0;
     }
 
@@ -472,6 +478,68 @@ internal class UpdateCommand
         CancellationToken cancellationToken)
         => GetCommitSubjectsBetweenCoreAsync(repoRoot, from, to, cancellationToken);
 
+    /// <summary>
+    /// Determines whether the repository source version is newer than the currently running CLI version.
+    /// </summary>
+    protected virtual bool IsNewerCliVersionAvailable(string repoRoot)
+        => IsSourceVersionNewer(GetCurrentCliVersion(), GetSourceCliVersion(repoRoot));
+
+    /// <summary>
+    /// Gets the currently running CLI version from assembly metadata.
+    /// </summary>
+    protected virtual string GetCurrentCliVersion()
+    {
+        var assembly = typeof(UpdateCommand).Assembly;
+        var informationalVersion = assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+
+        if (!string.IsNullOrWhiteSpace(informationalVersion))
+            return informationalVersion;
+
+        return assembly.GetName().Version?.ToString() ?? string.Empty;
+    }
+
+    /// <summary>
+    /// Reads the CLI version from source metadata in the updated repository.
+    /// </summary>
+    protected virtual string? GetSourceCliVersion(string repoRoot)
+    {
+        var cliProjectPath = Path.Combine(repoRoot, "src", "gateway", "BotNexus.Cli", "BotNexus.Cli.csproj");
+        var rootPropsPath = Path.Combine(repoRoot, "Directory.Build.props");
+
+        return ReadVersionProperty(cliProjectPath, "Version")
+            ?? ReadVersionProperty(cliProjectPath, "InformationalVersion")
+            ?? ReadVersionProperty(rootPropsPath, "Version")
+            ?? ReadVersionProperty(rootPropsPath, "InformationalVersion");
+    }
+
+    /// <summary>
+    /// Writes CLI self-update guidance when the local source is newer than the installed tool.
+    /// </summary>
+    protected virtual void PrintCliUpdateRecommendation()
+        => AnsiConsole.MarkupLine("[yellow]⚠[/] A newer BotNexus CLI version is available. Run: dotnet tool update -g botnexus.cli");
+
+    internal static bool IsSourceVersionNewer(string? currentVersion, string? sourceVersion)
+    {
+        if (!TryParseCliVersion(currentVersion, out var current) || !TryParseCliVersion(sourceVersion, out var source))
+            return false;
+
+        // Avoid noisy recommendations for pre-release source metadata.
+        if (source.IsPrerelease)
+            return false;
+
+        var versionCompare = source.Core.CompareTo(current.Core);
+        if (versionCompare > 0)
+            return true;
+
+        if (versionCompare < 0)
+            return false;
+
+        // If the numeric version matches, stable source is newer than a pre-release running tool.
+        return current.IsPrerelease && !source.IsPrerelease;
+    }
+
     private static async Task<IReadOnlyList<string>> GetCommitSubjectsBetweenCoreAsync(
         string repoRoot,
         string from,
@@ -516,7 +584,84 @@ internal class UpdateCommand
             AnsiConsole.MarkupLine($"  - {Markup.Escape(subject)}");
     }
 
+    /// <summary>
+    /// Emits a tool-update recommendation when the source tree version is newer than the running CLI.
+    /// </summary>
+    protected virtual void PrintCliUpdateWarningIfNeeded(string repoRoot)
+    {
+        var runningVersion = GetRunningCliVersion();
+        var sourceVersion = GetSourceCliVersion(repoRoot);
+        if (runningVersion is null || sourceVersion is null || sourceVersion <= runningVersion)
+            return;
+
+        AnsiConsole.MarkupLine(
+            $"[yellow]⚠[/] A newer BotNexus CLI is available ([dim]{Markup.Escape(sourceVersion.ToString())}[/] > [dim]{Markup.Escape(runningVersion.ToString())}[/]).");
+        AnsiConsole.MarkupLine("[yellow]⚠[/] Update your global CLI tool:");
+        AnsiConsole.MarkupLine("  [dim]dotnet tool update -g botnexus.cli[/]");
+    }
+
+    /// <summary>
+    /// Gets the currently running CLI version for comparison against source.
+    /// </summary>
+    protected virtual Version? GetRunningCliVersion()
+    {
+        var assembly = typeof(UpdateCommand).Assembly;
+        var informationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (TryParseVersion(informationalVersion, out var parsedInformationalVersion))
+            return parsedInformationalVersion;
+
+        var assemblyVersion = assembly.GetName().Version?.ToString();
+        return TryParseVersion(assemblyVersion, out var parsedAssemblyVersion)
+            ? parsedAssemblyVersion
+            : null;
+    }
+
+    /// <summary>
+    /// Gets the CLI version declared in the source tree.
+    /// </summary>
+    protected virtual Version? GetSourceCliVersion(string repoRoot)
+    {
+        var propsPath = Path.Combine(repoRoot, "Directory.Build.props");
+        if (!File.Exists(propsPath))
+            return null;
+
+        try
+        {
+            var propsDoc = XDocument.Load(propsPath);
+            var versionText = propsDoc.Descendants("Version")
+                .Select(x => x.Value?.Trim())
+                .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+            return TryParseVersion(versionText, out var parsedVersion) ? parsedVersion : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static string Short(string sha) => sha.Length >= 7 ? sha[..7] : sha;
+
+    private static bool TryParseVersion(string? versionText, out Version version)
+    {
+        version = new Version(0, 0);
+        if (string.IsNullOrWhiteSpace(versionText))
+            return false;
+
+        var normalized = versionText.Trim();
+        var plusIndex = normalized.IndexOf('+', StringComparison.Ordinal);
+        if (plusIndex >= 0)
+            normalized = normalized[..plusIndex];
+
+        var hyphenIndex = normalized.IndexOf('-', StringComparison.Ordinal);
+        if (hyphenIndex >= 0)
+            normalized = normalized[..hyphenIndex];
+
+        if (!Version.TryParse(normalized, out var parsed))
+            return false;
+
+        version = parsed;
+        return true;
+    }
 
     private static string? FirstNonEmptyLine(string text)
     {
