@@ -276,13 +276,26 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
         var requestKey = messageId ?? envelope.MessageId ?? Guid.NewGuid().ToString();
 
         // Store routing context keyed by request key.
-        _pendingReplies[requestKey] = new PendingReplyContext(replyTo, correlationId, conversationId);
-
-        // Also enqueue to the per-conversation FIFO queue so SendAsync can fall back to FIFO
-        // when OutboundMessage.Metadata does not carry MetaRequestKey (live gateway path).
-        _pendingQueue
-            .GetOrAdd(channelAddress.Value, _ => new ConcurrentQueue<string>())
-            .Enqueue(requestKey);
+        // TryAdd returns false when this requestKey is already present, which happens when
+        // Service Bus redelivers an abandoned message with the same MessageId. On retry we
+        // update the context (replyTo/correlationId may have changed) but must NOT add a
+        // second entry to _pendingQueue — the original entry is already there. A duplicate
+        // would leave a stale key in _pendingQueue after the first successful reply removes
+        // the context, which would cause the next FIFO-fallback lookup to pop the stale key,
+        // fail TryRemove, and misroute that reply to the default queue.
+        var pendingContext = new PendingReplyContext(replyTo, correlationId, conversationId);
+        if (_pendingReplies.TryAdd(requestKey, pendingContext))
+        {
+            // First arrival: register in the per-conversation FIFO queue for SendAsync fallback.
+            _pendingQueue
+                .GetOrAdd(channelAddress.Value, _ => new ConcurrentQueue<string>())
+                .Enqueue(requestKey);
+        }
+        else
+        {
+            // Retry/redelivery: overwrite context only, do not add a duplicate FIFO entry.
+            _pendingReplies[requestKey] = pendingContext;
+        }
 
         var metadata = new Dictionary<string, object?>
         {

@@ -391,6 +391,69 @@ public sealed class ServiceBusChannelAdapterTests
         sent.CorrelationId.ShouldBe("direct-corr");
     }
 
+    // ── Test: Retry/redelivery of same messageId does not poison FIFO queue ─────
+
+    [Fact]
+    public async Task SendAsync_MessageRedeliveredWithSameMessageId_DoesNotPoisonFifoForNextPendingReply()
+    {
+        var factory = new FakeServiceBusAdapterClientFactory();
+        var adapter = CreateAdapter(factory: factory);
+        StartAdapter(adapter);
+
+        // 1. First delivery of message A (simulates initial attempt that gets abandoned).
+        const string retryMessageId = "sb-retry-msg-id";
+        const string conversationId = "conv-retry-fifo";
+
+        var jsonA1 = $$"""{ "content": "msg A first delivery", "senderId": "u@x.com", "conversationId": "{{conversationId}}", "replyTo": "reply-queue-A", "correlationId": "corr-A" }""";
+        await adapter.HandleMessageBodyAsync(jsonA1, null, retryMessageId, CancellationToken.None);
+
+        // 2. Service Bus redelivers the same message (identical messageId) after abandonment.
+        var jsonA2 = $$"""{ "content": "msg A retry", "senderId": "u@x.com", "conversationId": "{{conversationId}}", "replyTo": "reply-queue-A", "correlationId": "corr-A" }""";
+        await adapter.HandleMessageBodyAsync(jsonA2, null, retryMessageId, CancellationToken.None);
+
+        // 3. A second, distinct message B arrives for the same conversation.
+        var jsonB = $$"""{ "content": "msg B", "senderId": "u@x.com", "conversationId": "{{conversationId}}", "replyTo": "reply-queue-B", "correlationId": "corr-B" }""";
+        await adapter.HandleMessageBodyAsync(jsonB, null, "sb-distinct-msg-id-B", CancellationToken.None);
+
+        // 4. Reply for A uses FIFO fallback (no MetaRequestKey), mirroring the live gateway path
+        //    where OutboundMessage.Metadata does not carry inbound metadata.
+        //    This dequeues "sb-retry-msg-id" (the only entry), removes context_A, and sends to reply-queue-A.
+        //    Without the fix, the queue would be ["sb-retry-msg-id","sb-retry-msg-id","sb-distinct-msg-id-B"]
+        //    and this step would still succeed — the corruption only manifests in step 5.
+        var outboundA = new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("servicebus"),
+            ChannelAddress = ChannelAddress.From(conversationId),
+            Content = "reply A",
+        };
+        await adapter.SendAsync(outboundA, CancellationToken.None);
+
+        // 5. Reply for B uses FIFO fallback (no MetaRequestKey in metadata).
+        //    With fix: dequeues "sb-distinct-msg-id-B" → routes to reply-queue-B ✓
+        //    Without fix: dequeues stale duplicate "sb-retry-msg-id" → TryRemove fails → null
+        //                 → falls through to default queue "test-outbound" ✗
+        var outboundB = new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("servicebus"),
+            ChannelAddress = ChannelAddress.From(conversationId),
+            Content = "reply B",
+        };
+        await adapter.SendAsync(outboundB, CancellationToken.None);
+
+        // A's reply must have gone to reply-queue-A.
+        factory.Senders.ShouldContainKey("reply-queue-A");
+        factory.Senders["reply-queue-A"].SentMessages.ShouldHaveSingleItem();
+        factory.Senders["reply-queue-A"].SentMessages[0].CorrelationId.ShouldBe("corr-A");
+
+        // B's reply must have gone to reply-queue-B, NOT the default queue.
+        factory.Senders.ShouldContainKey("reply-queue-B");
+        factory.Senders["reply-queue-B"].SentMessages.ShouldHaveSingleItem();
+        factory.Senders["reply-queue-B"].SentMessages[0].CorrelationId.ShouldBe("corr-B");
+
+        // Default queue must NOT have received any message.
+        factory.Senders.ShouldNotContainKey("test-outbound");
+    }
+
     // ── Test: Concurrent inbound messages for same conversation route independently ─
 
     [Fact]
