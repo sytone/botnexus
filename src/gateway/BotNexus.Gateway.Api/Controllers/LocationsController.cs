@@ -7,6 +7,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Configuration;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Api.Controllers;
 
@@ -17,6 +18,7 @@ namespace BotNexus.Gateway.Api.Controllers;
 [Route("api/locations")]
 public sealed class LocationsController(
     PlatformConfigWriter configWriter,
+    IOptionsMonitor<PlatformConfig> configOptions,
     IAgentRegistry agentRegistry,
     IEnumerable<IIsolationStrategy> isolationStrategies,
     IHttpClientFactory httpClientFactory) : ControllerBase
@@ -34,9 +36,9 @@ public sealed class LocationsController(
     /// Lists all resolved locations.
     /// </summary>
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<LocationResponse>>> List(CancellationToken cancellationToken)
+    public Task<ActionResult<IReadOnlyList<LocationResponse>>> List(CancellationToken cancellationToken)
     {
-        var config = await LoadConfigAsync(cancellationToken);
+        var config = configOptions.CurrentValue;
         var declaredNames = GetDeclaredLocationNames(config);
         var worldDescriptor = WorldDescriptorBuilder.Build(config, agentRegistry, isolationStrategies);
         var responses = worldDescriptor.Locations
@@ -52,7 +54,7 @@ public sealed class LocationsController(
             .OrderBy(location => location.Name, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        return Ok(responses);
+        return Task.FromResult<ActionResult<IReadOnlyList<LocationResponse>>>(Ok(responses));
     }
 
     /// <summary>
@@ -64,7 +66,7 @@ public sealed class LocationsController(
         if (string.IsNullOrWhiteSpace(request.Name))
             return BadRequest(new { error = "Location name is required." });
 
-        var config = await LoadConfigAsync(cancellationToken);
+        var config = await configWriter.ReadPlatformConfigAsync(cancellationToken);
         config.Gateway ??= new GatewaySettingsConfig();
         config.Gateway.Locations ??= new Dictionary<string, LocationConfig>(StringComparer.OrdinalIgnoreCase);
 
@@ -79,6 +81,10 @@ public sealed class LocationsController(
         var saveError = await SaveConfigAsync(config, cancellationToken);
         if (saveError is not null)
             return BadRequest(new { error = saveError });
+        await WaitForConfigConditionAsync(
+            current => TryGetLocation(current, request.Name.Trim(), out var reloaded)
+                && IsSameLocation(reloaded, configEntry),
+            cancellationToken);
 
         return CreatedAtAction(
             nameof(Get),
@@ -96,23 +102,23 @@ public sealed class LocationsController(
     /// Gets a single location by name.
     /// </summary>
     [HttpGet("{name}")]
-    public async Task<ActionResult<LocationResponse>> Get(string name, CancellationToken cancellationToken)
+    public Task<ActionResult<LocationResponse>> Get(string name, CancellationToken cancellationToken)
     {
-        var config = await LoadConfigAsync(cancellationToken);
+        var config = configOptions.CurrentValue;
         var worldDescriptor = WorldDescriptorBuilder.Build(config, agentRegistry, isolationStrategies);
         var location = worldDescriptor.Locations.FirstOrDefault(loc =>
             string.Equals(loc.Name, name, StringComparison.OrdinalIgnoreCase));
         if (location is null)
-            return NotFound(new { error = $"Location '{name}' was not found." });
+            return Task.FromResult<ActionResult<LocationResponse>>(NotFound(new { error = $"Location '{name}' was not found." }));
 
         var isUserDefined = GetDeclaredLocationNames(config).Contains(location.Name);
-        return Ok(BuildLocationResponse(
+        return Task.FromResult<ActionResult<LocationResponse>>(Ok(BuildLocationResponse(
             name: location.Name,
             type: location.Type.Value,
             rawValue: location.Path,
             description: location.Description,
             status: "unknown",
-            isUserDefined: isUserDefined));
+            isUserDefined: isUserDefined)));
     }
 
     /// <summary>
@@ -127,7 +133,7 @@ public sealed class LocationsController(
             return BadRequest(new { error = "Location name in payload must match route name." });
         }
 
-        var config = await LoadConfigAsync(cancellationToken);
+        var config = await configWriter.ReadPlatformConfigAsync(cancellationToken);
         var locations = config.Gateway?.Locations;
         if (locations is null || !TryFindDictionaryKey(locations, name, out var existingKey))
             return NotFound(new { error = $"Location '{name}' was not found." });
@@ -147,6 +153,10 @@ public sealed class LocationsController(
         var saveError = await SaveConfigAsync(config, cancellationToken);
         if (saveError is not null)
             return BadRequest(new { error = saveError });
+        await WaitForConfigConditionAsync(
+            current => TryGetLocation(current, existingKey, out var reloaded)
+                && IsSameLocation(reloaded, configEntry),
+            cancellationToken);
 
         return Ok(BuildLocationResponse(
             name: existingKey,
@@ -163,7 +173,7 @@ public sealed class LocationsController(
     [HttpDelete("{name}")]
     public async Task<IActionResult> Delete(string name, CancellationToken cancellationToken)
     {
-        var config = await LoadConfigAsync(cancellationToken);
+        var config = await configWriter.ReadPlatformConfigAsync(cancellationToken);
         var locations = config.Gateway?.Locations;
         if (locations is null || !TryFindDictionaryKey(locations, name, out var existingKey))
             return NotFound(new { error = $"Location '{name}' was not found." });
@@ -172,6 +182,10 @@ public sealed class LocationsController(
         var saveError = await SaveConfigAsync(config, cancellationToken);
         if (saveError is not null)
             return BadRequest(new { error = saveError });
+        await WaitForConfigConditionAsync(
+            current => current.Gateway?.Locations is null
+                || !TryFindDictionaryKey(current.Gateway.Locations, existingKey, out _),
+            cancellationToken);
 
         return NoContent();
     }
@@ -182,7 +196,7 @@ public sealed class LocationsController(
     [HttpPost("{name}/check")]
     public async Task<ActionResult<LocationHealthCheckResponse>> Check(string name, CancellationToken cancellationToken)
     {
-        var config = await LoadConfigAsync(cancellationToken);
+        var config = configOptions.CurrentValue;
         var worldDescriptor = WorldDescriptorBuilder.Build(config, agentRegistry, isolationStrategies);
         var location = worldDescriptor.Locations.FirstOrDefault(loc =>
             string.Equals(loc.Name, name, StringComparison.OrdinalIgnoreCase));
@@ -288,6 +302,26 @@ public sealed class LocationsController(
             ? []
             : config.Gateway.Locations.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+    private static bool TryGetLocation(PlatformConfig config, string name, out LocationConfig location)
+    {
+        var locations = config.Gateway?.Locations;
+        if (locations is not null && TryFindDictionaryKey(locations, name, out var key))
+        {
+            location = locations[key];
+            return true;
+        }
+
+        location = null!;
+        return false;
+    }
+
+    private static bool IsSameLocation(LocationConfig left, LocationConfig right)
+        => string.Equals(left.Type, right.Type, StringComparison.OrdinalIgnoreCase)
+           && string.Equals(left.Path, right.Path, StringComparison.Ordinal)
+           && string.Equals(left.Endpoint, right.Endpoint, StringComparison.Ordinal)
+           && string.Equals(left.ConnectionString, right.ConnectionString, StringComparison.Ordinal)
+           && string.Equals(left.Description, right.Description, StringComparison.Ordinal);
+
     private static LocationConfig? BuildLocationConfig(
         UpsertLocationRequest request,
         LocationConfig? existingConfig,
@@ -358,9 +392,6 @@ public sealed class LocationsController(
         };
     }
 
-    private Task<PlatformConfig> LoadConfigAsync(CancellationToken cancellationToken)
-        => configWriter.ReadPlatformConfigAsync(cancellationToken);
-
     private async Task<string?> SaveConfigAsync(PlatformConfig config, CancellationToken cancellationToken)
     {
         var errors = PlatformConfigLoader.Validate(config);
@@ -406,6 +437,21 @@ public sealed class LocationsController(
 
         await configWriter.UpdateSectionAsync("gateway", gatewaySection.DeepClone(), cancellationToken);
         return null;
+    }
+
+    private async Task WaitForConfigConditionAsync(Func<PlatformConfig, bool> predicate, CancellationToken cancellationToken)
+    {
+        if (predicate(configOptions.CurrentValue))
+            return;
+
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await Task.Delay(50, cancellationToken);
+            if (predicate(configOptions.CurrentValue))
+                return;
+        }
     }
 
     private static readonly string[] ValidTypes =

@@ -160,8 +160,7 @@ public sealed class RuntimeConfigProviderIntegrationTests : IDisposable
         var allowedRuntimeLoadSites = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             Path.Combine("src", "gateway", "BotNexus.Gateway", "Extensions", "GatewayServiceCollectionExtensions.cs"),
-            Path.Combine("src", "gateway", "BotNexus.Gateway.Api", "Program.cs"),
-            Path.Combine("src", "gateway", "BotNexus.Gateway.Api", "Controllers", "ConfigController.cs")
+            Path.Combine("src", "gateway", "BotNexus.Gateway.Api", "Program.cs")
         };
 
         List<string> unexpected = [];
@@ -192,7 +191,7 @@ public sealed class RuntimeConfigProviderIntegrationTests : IDisposable
 
         unexpected.ShouldBeEmpty(
             "Runtime/API config loads must use IConfiguration + IOptionsMonitor provider reload. " +
-            "Only explicitly documented transitional files are allowlisted.");
+            "Only explicitly documented bootstrap files are allowlisted.");
         observedAllowed.ShouldBe(allowedRuntimeLoadSites);
     }
 

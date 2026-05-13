@@ -304,18 +304,22 @@ public sealed class ConfigController : ControllerBase
 
         try
         {
-            var config = await PlatformConfigLoader.LoadAsync(resolvedPath, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            var config = LoadConfigFromPath(resolvedPath);
             var warnings = PlatformConfigLoader.ValidateWarnings(config);
-            return Ok(new ConfigValidationResponse(true, resolvedPath, warnings, []));
-        }
-        catch (OptionsValidationException ex)
-        {
-            var errors = ex.Failures
+            var errors = PlatformConfigLoader.Validate(config)
                 .Where(error => !string.IsNullOrWhiteSpace(error))
                 .Distinct(StringComparer.Ordinal)
                 .OrderBy(error => error, StringComparer.Ordinal)
                 .ToArray();
-            return Ok(new ConfigValidationResponse(false, resolvedPath, [], errors));
+            return Ok(new ConfigValidationResponse(errors.Length == 0, resolvedPath, warnings, errors));
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidDataException or FormatException)
+        {
+            var parseMessage = ex.GetBaseException() is JsonException jsonException
+                ? jsonException.Message
+                : ex.Message;
+            return Ok(new ConfigValidationResponse(false, resolvedPath, [], [$"Invalid JSON in config file: {parseMessage}"]));
         }
     }
 
@@ -325,6 +329,18 @@ public sealed class ConfigController : ControllerBase
         return string.IsNullOrWhiteSpace(configuredPath)
             ? PlatformConfigLoader.DefaultConfigPath
             : Path.GetFullPath(configuredPath);
+    }
+
+    private static PlatformConfig LoadConfigFromPath(string path)
+    {
+        var fileConfiguration = new ConfigurationBuilder()
+            .AddJsonFile(path, optional: false, reloadOnChange: false)
+            .Build();
+
+        var config = new PlatformConfig();
+        fileConfiguration.Bind(config);
+        new PlatformConfigPostConfigure(fileConfiguration, path).PostConfigure(Options.DefaultName, config);
+        return config;
     }
 
     private static void RedactSecrets(JsonObject config)
