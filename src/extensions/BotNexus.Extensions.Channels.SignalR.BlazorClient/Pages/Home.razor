@@ -1,6 +1,10 @@
 @page "/"
+@page "/chat"
+@page "/chat/{AgentId}"
+@page "/chat/{AgentId}/{ConversationId}"
 @inject IClientStateStore Store
 @inject IPortalLoadService PortalLoad
+@inject IAgentInteractionService Interaction
 @inject NavigationManager Nav
 @implements IDisposable
 
@@ -37,10 +41,19 @@ else
 }
 
 @code {
+    [Parameter] public string? AgentId { get; set; }
+    [Parameter] public string? ConversationId { get; set; }
+    private string? _appliedRouteKey;
+
     protected override void OnInitialized()
     {
         PortalLoad.OnReadyChanged += HandleReadyChanged;
         Store.OnChanged += HandleStateChanged;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await ApplyRouteSelectionAsync();
     }
 
     protected override async Task OnInitializedAsync()
@@ -58,10 +71,69 @@ else
                 Console.Error.WriteLine($"Portal initialization failed: {ex.Message}");
             }
         }
+
+        await ApplyRouteSelectionAsync();
     }
 
-    private void HandleReadyChanged() => InvokeAsync(StateHasChanged);
-    private void HandleStateChanged() => InvokeAsync(StateHasChanged);
+    private void HandleReadyChanged() =>
+        _ = InvokeAsync(async () =>
+        {
+            await ApplyRouteSelectionAsync();
+            StateHasChanged();
+        });
+
+    private void HandleStateChanged() =>
+        _ = InvokeAsync(async () =>
+        {
+            await ApplyRouteSelectionAsync();
+            StateHasChanged();
+        });
+
+    private async Task ApplyRouteSelectionAsync()
+    {
+        if (!PortalLoad.IsReady || string.IsNullOrWhiteSpace(AgentId))
+            return;
+
+        var routeAgentId = Uri.UnescapeDataString(AgentId);
+        var routeConversationId = string.IsNullOrWhiteSpace(ConversationId)
+            ? null
+            : Uri.UnescapeDataString(ConversationId);
+        var routeKey = $"{routeAgentId}|{routeConversationId ?? ""}";
+        if (string.Equals(_appliedRouteKey, routeKey, StringComparison.Ordinal))
+            return;
+
+        if (!Store.Agents.ContainsKey(routeAgentId))
+        {
+            if (Store.ActiveAgentId is null && Store.Agents.Keys.FirstOrDefault() is { } fallback)
+            {
+                Store.ActiveAgentId = fallback;
+                Store.NotifyChanged();
+            }
+
+            return;
+        }
+
+        if (!string.Equals(Store.ActiveAgentId, routeAgentId, StringComparison.Ordinal))
+        {
+            Store.ActiveAgentId = routeAgentId;
+            Store.NotifyChanged();
+        }
+
+        if (routeConversationId is null)
+        {
+            _appliedRouteKey = routeKey;
+            return;
+        }
+
+        var agent = Store.GetAgent(routeAgentId);
+        if (agent is null || !agent.Conversations.ContainsKey(routeConversationId))
+            return;
+
+        if (!string.Equals(agent.ActiveConversationId, routeConversationId, StringComparison.Ordinal))
+            await Interaction.SelectConversationAsync(routeAgentId, routeConversationId);
+
+        _appliedRouteKey = routeKey;
+    }
 
     public void Dispose()
     {

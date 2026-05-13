@@ -1,6 +1,7 @@
 using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Layout;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
 
@@ -401,6 +402,91 @@ public sealed class MainLayoutTests : IDisposable
 
         var scrollContainer = cut.Find(".conversation-list-scroll");
         Assert.Equal(40, scrollContainer.QuerySelectorAll(".conversation-list-item-btn").Length);
+    }
+
+    [Fact]
+    public void Direct_route_to_chat_marks_chat_section_active()
+    {
+        var nav = _ctx.Services.GetRequiredService<NavigationManager>();
+        nav.NavigateTo("http://localhost/chat");
+
+        var cut = RenderLayout();
+
+        var chatLink = cut.Find("a[href='chat']");
+        Assert.Contains("active", chatLink.ClassName);
+    }
+
+    [Fact]
+    public void Hard_refresh_on_configuration_path_marks_configuration_section_active()
+    {
+        var nav = _ctx.Services.GetRequiredService<NavigationManager>();
+        nav.NavigateTo("http://localhost/configuration");
+
+        var cut = RenderLayout();
+
+        var configLink = cut.Find("a[href='configuration']");
+        Assert.Contains("active", configLink.ClassName);
+    }
+
+    [Fact]
+    public void In_app_agent_selection_updates_url_with_agent_route()
+    {
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-1", "a-1", "Default", true, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+
+        var nav = _ctx.Services.GetRequiredService<NavigationManager>();
+        nav.NavigateTo("http://localhost/chat");
+
+        var cut = RenderLayout();
+        cut.Find(".agent-dropdown-select").Change("a-1");
+
+        cut.WaitForAssertion(() =>
+            Assert.EndsWith("/chat/a-1/c-1", nav.Uri));
+    }
+
+    [Fact]
+    public void In_app_conversation_selection_updates_url_with_conversation_route()
+    {
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.SeedConversations("a-1", [
+            new ConversationSummaryDto("c-1", "a-1", "First", true, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
+            new ConversationSummaryDto("c-2", "a-1", "Second", false, "Active", null, 0, DateTimeOffset.UtcNow.AddMinutes(1), DateTimeOffset.UtcNow.AddMinutes(1))
+        ]);
+        _store.ActiveAgentId = "a-1";
+
+        var nav = _ctx.Services.GetRequiredService<NavigationManager>();
+        nav.NavigateTo("http://localhost/chat/a-1/c-1");
+
+        var cut = RenderLayout();
+        cut.FindAll(".conversation-list-item-btn")
+            .First(btn => btn.TextContent.Contains("Second", StringComparison.Ordinal))
+            .Click();
+
+        cut.WaitForAssertion(() =>
+            Assert.EndsWith("/chat/a-1/c-2", nav.Uri));
+    }
+
+    [Fact]
+    public void In_app_selection_url_encodes_agent_and_conversation_ids()
+    {
+        const string agentId = "agent/x";
+        const string conversationId = "conv/1 with space";
+        _store.SeedAgents([new AgentSummary(agentId, "Encoded Agent")]);
+        _store.SeedConversations(agentId, [
+            new ConversationSummaryDto(conversationId, agentId, "Encoded Conversation", true, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+
+        var nav = _ctx.Services.GetRequiredService<NavigationManager>();
+        nav.NavigateTo("http://localhost/chat");
+
+        var cut = RenderLayout();
+        cut.Find(".agent-dropdown-select").Change(agentId);
+
+        var expectedSuffix = $"/chat/{Uri.EscapeDataString(agentId)}/{Uri.EscapeDataString(conversationId)}";
+        cut.WaitForAssertion(() =>
+            Assert.EndsWith(expectedSuffix, nav.Uri));
     }
 
     [Fact]
