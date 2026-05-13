@@ -31,6 +31,9 @@ public interface IClientStateStore
     /// <summary>Upsert agent state (adds or updates display name/connection).</summary>
     void UpsertAgent(AgentState agent);
 
+    /// <summary>Remove an agent from the store by ID.</summary>
+    void RemoveAgent(string agentId);
+
     // ── Conversation-level ───────────────────────────────────────────────────
 
     /// <summary>Seed the conversation list for a given agent.</summary>

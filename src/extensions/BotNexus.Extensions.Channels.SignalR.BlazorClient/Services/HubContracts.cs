@@ -137,6 +137,11 @@ public sealed record SessionHistoryResponse(
     [property: JsonPropertyName("offset")] int Offset,
     [property: JsonPropertyName("limit")] int Limit);
 
+/// <summary>Payload sent via the <c>AgentsChanged</c> client method when agent config changes on the server.</summary>
+public sealed record AgentsChangedPayload(
+    [property: JsonPropertyName("changeType")] string ChangeType,
+    [property: JsonPropertyName("agentId")] string? AgentId);
+
 /// <summary>Kind of steering feedback event.</summary>
 public enum SteeringFeedbackKind
 {
