@@ -2,6 +2,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Triggers;
 using BotNexus.Domain.Primitives;
+using BotNexus.Cron.Prompts;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -24,8 +25,19 @@ public sealed class AgentPromptAction : ICronAction
             throw new InvalidOperationException("Cron job must define an agent id for agent-prompt actions.");
 
         var message = context.Job.Message;
+        if (!string.IsNullOrWhiteSpace(context.Job.TemplateName))
+        {
+            var resolver = context.Services.GetService<IPromptTemplateResolver>()
+                ?? throw new InvalidOperationException("Prompt template resolver is not registered.");
+
+            if (!resolver.TryRender(agentId, context.Job.TemplateName, context.Job.TemplateParameters, out var renderedPrompt, out var error))
+                throw new InvalidOperationException(error ?? $"Unable to render prompt template '{context.Job.TemplateName}'.");
+
+            message = renderedPrompt;
+        }
+
         if (string.IsNullOrWhiteSpace(message))
-            throw new InvalidOperationException("Cron job must define a message for agent-prompt actions.");
+            throw new InvalidOperationException("Cron job must define either a message or a templateName for agent-prompt actions.");
 
         var registry = context.Services.GetService<IAgentRegistry>();
         var descriptor = registry?.Get(AgentId.From(agentId));

@@ -109,6 +109,30 @@ public sealed class SqliteCronStoreTests
     }
 
     [Fact]
+    public async Task CreateAsync_PersistsTemplateFields()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        var job = CronStoreTestContext.CreateJob("job-1") with
+        {
+            TemplateName = "daily-status",
+            TemplateParameters = new Dictionary<string, string?>
+            {
+                ["project"] = "botnexus",
+                ["owner"] = "hermes"
+            }
+        };
+
+        await context.Store.CreateAsync(job);
+        var loaded = await context.Store.GetAsync("job-1");
+
+        loaded.ShouldNotBeNull();
+        loaded!.TemplateName.ShouldBe("daily-status");
+        loaded.TemplateParameters.ShouldNotBeNull();
+        loaded.TemplateParameters!["project"].ShouldBe("botnexus");
+        loaded.TemplateParameters["owner"].ShouldBe("hermes");
+    }
+
+    [Fact]
     public async Task DeleteAsync_RemovesJob()
     {
         await using var context = await CronStoreTestContext.CreateAsync();
