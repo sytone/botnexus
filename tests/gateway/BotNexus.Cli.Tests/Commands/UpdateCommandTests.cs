@@ -37,10 +37,13 @@ public class UpdateCommandTests
         string afterSha,
         int pullExitCode,
         int commitCount,
-        IReadOnlyList<string> commitSubjects)
+        IReadOnlyList<string> commitSubjects,
+        Version? runningCliVersion = null,
+        Version? sourceCliVersion = null)
         : UpdateCommand(processManager)
     {
         private int _shaReads;
+        public bool CliUpdateWarningPrinted { get; private set; }
 
         protected override string GetCommitSha(string repoRoot)
             => _shaReads++ == 0 ? beforeSha : afterSha;
@@ -57,6 +60,22 @@ public class UpdateCommandTests
             string to,
             CancellationToken cancellationToken)
             => Task.FromResult(commitSubjects);
+
+        protected override Version? GetRunningCliVersion()
+            => runningCliVersion;
+
+        protected override Version? GetSourceCliVersion(string repoRoot)
+            => sourceCliVersion;
+
+        protected override void PrintCliUpdateWarningIfNeeded(string repoRoot)
+        {
+            var runningVersion = GetRunningCliVersion();
+            var sourceVersion = GetSourceCliVersion(repoRoot);
+            if (runningVersion is null || sourceVersion is null || sourceVersion <= runningVersion)
+                return;
+
+            CliUpdateWarningPrinted = true;
+        }
 
         public Task<int> RunGitPullStepForTestAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
             => RunGitPullStepAsync(repoRoot, verbose, cancellationToken);
@@ -300,6 +319,79 @@ public class UpdateCommandTests
 
         output.ShouldContain("Already up to date");
         output.ShouldNotContain("Changes applied:");
+    }
+
+    [Fact]
+    public async Task RunGitPullStepAsync_WhenSourceCliVersionIsNewer_PrintsToolUpdateWarning()
+    {
+        var pm = Substitute.For<IGatewayProcessManager>();
+        var cmd = new ScriptedGitPullCommand(
+            pm,
+            beforeSha: "1111111111111111111111111111111111111111",
+            afterSha: "1111111111111111111111111111111111111111",
+            pullExitCode: 0,
+            commitCount: 0,
+            commitSubjects: [],
+            runningCliVersion: new Version(0, 1, 8),
+            sourceCliVersion: new Version(0, 1, 10));
+
+        var exitCode = await cmd.RunGitPullStepForTestAsync(
+            repoRoot: "unused",
+            verbose: false,
+            cancellationToken: CancellationToken.None);
+
+        exitCode.ShouldBe(0);
+        cmd.CliUpdateWarningPrinted.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData("0.1.10", "0.1.10")]
+    [InlineData("0.1.11", "0.1.10")]
+    public async Task RunGitPullStepAsync_WhenSourceCliVersionIsNotNewer_DoesNotPrintToolUpdateWarning(
+        string runningVersion,
+        string sourceVersion)
+    {
+        var pm = Substitute.For<IGatewayProcessManager>();
+        var cmd = new ScriptedGitPullCommand(
+            pm,
+            beforeSha: "1111111111111111111111111111111111111111",
+            afterSha: "1111111111111111111111111111111111111111",
+            pullExitCode: 0,
+            commitCount: 0,
+            commitSubjects: [],
+            runningCliVersion: Version.Parse(runningVersion),
+            sourceCliVersion: Version.Parse(sourceVersion));
+
+        var exitCode = await cmd.RunGitPullStepForTestAsync(
+            repoRoot: "unused",
+            verbose: false,
+            cancellationToken: CancellationToken.None);
+
+        exitCode.ShouldBe(0);
+        cmd.CliUpdateWarningPrinted.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task RunGitPullStepAsync_WhenSourceCliVersionUnavailable_DoesNotPrintToolUpdateWarning()
+    {
+        var pm = Substitute.For<IGatewayProcessManager>();
+        var cmd = new ScriptedGitPullCommand(
+            pm,
+            beforeSha: "1111111111111111111111111111111111111111",
+            afterSha: "1111111111111111111111111111111111111111",
+            pullExitCode: 0,
+            commitCount: 0,
+            commitSubjects: [],
+            runningCliVersion: new Version(0, 1, 10),
+            sourceCliVersion: null);
+
+        var exitCode = await cmd.RunGitPullStepForTestAsync(
+            repoRoot: "unused",
+            verbose: false,
+            cancellationToken: CancellationToken.None);
+
+        exitCode.ShouldBe(0);
+        cmd.CliUpdateWarningPrinted.ShouldBeFalse();
     }
 
     private static async Task<string> CaptureAnsiConsoleOutputAsync(Func<Task> action)
