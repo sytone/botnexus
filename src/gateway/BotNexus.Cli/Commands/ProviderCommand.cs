@@ -372,11 +372,10 @@ internal sealed class ProviderCommand
     private static async Task SaveConfigAsync(PlatformConfig config, string configPath, CancellationToken cancellationToken)
     {
         PlatformConfigLoader.EnsureConfigDirectory(Path.GetDirectoryName(configPath) ?? PlatformConfigLoader.DefaultHomePath);
-        var backupsDir = Path.Combine(BotNexusHome.ResolveHomePath(), "backups");
-        var backup = new ConfigBackupService(backupsDir, new System.IO.Abstractions.FileSystem());
-        backup.Backup(configPath, "before-provider-update");
-        var json = JsonSerializer.Serialize(config, WriteJsonOptions);
-        await File.WriteAllTextAsync(configPath, json, cancellationToken);
+        var fileSystem = new System.IO.Abstractions.FileSystem();
+        var backupsDir = Path.Combine(Path.GetDirectoryName(configPath) ?? BotNexusHome.ResolveHomePath(), "backups");
+        var writer = new PlatformConfigWriter(configPath, fileSystem, new ConfigBackupService(backupsDir, fileSystem));
+        await writer.UpdatePlatformConfigAsync(config, "before-provider-update", cancellationToken);
     }
 
     private static string GetAuthDisplay(string? apiKey)

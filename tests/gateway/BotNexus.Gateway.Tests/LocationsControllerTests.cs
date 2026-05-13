@@ -6,7 +6,6 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Api.Controllers;
 using BotNexus.Gateway.Configuration;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Configuration;
 
 namespace BotNexus.Gateway.Tests;
 
@@ -24,7 +23,7 @@ public sealed class LocationsControllerTests : IDisposable
     public async Task CreateUpdateDelete_PersistsLocationsInConfig()
     {
         var configPath = WriteConfig("""{"gateway":{"locations":{}}}""");
-        var controller = CreateController(configPath);
+        var (controller, _) = CreateController(configPath);
         var originalPath = Path.Combine(_rootPath, "repo-a");
         var updatedPath = Path.Combine(_rootPath, "repo-b");
 
@@ -80,7 +79,7 @@ public sealed class LocationsControllerTests : IDisposable
               }
             }
             """);
-        var controller = CreateController(configPath);
+        var (controller, _) = CreateController(configPath);
 
         var result = await controller.Create(new UpsertLocationRequest
         {
@@ -96,7 +95,7 @@ public sealed class LocationsControllerTests : IDisposable
     public async Task Create_WhenApiEndpointIsInvalid_ReturnsBadRequestWithValidationMessage()
     {
         var configPath = WriteConfig("""{"gateway":{"locations":{}}}""");
-        var controller = CreateController(configPath);
+        var (controller, _) = CreateController(configPath);
 
         var result = await controller.Create(new UpsertLocationRequest
         {
@@ -116,7 +115,7 @@ public sealed class LocationsControllerTests : IDisposable
     public async Task Update_WhenPayloadNameDiffersFromRoute_ReturnsBadRequest()
     {
         var configPath = WriteConfig("""{"gateway":{"locations":{"repo":{"type":"filesystem","path":"C:\\repos\\botnexus"}}}}""");
-        var controller = CreateController(configPath);
+        var (controller, _) = CreateController(configPath);
 
         var result = await controller.Update("repo", new UpsertLocationRequest
         {
@@ -136,7 +135,7 @@ public sealed class LocationsControllerTests : IDisposable
     public async Task DatabaseLocationResponses_RedactConnectionString_ButPersistValue()
     {
         var configPath = WriteConfig("""{"gateway":{"locations":{}}}""");
-        var controller = CreateController(configPath);
+        var (controller, options) = CreateController(configPath);
         const string secret = "Host=db.internal;User Id=botnexus;Password=S3cr3t!;";
 
         var create = await controller.Create(new UpsertLocationRequest
@@ -152,6 +151,8 @@ public sealed class LocationsControllerTests : IDisposable
         createdResponse.PathOrEndpoint.ShouldBe("(redacted)");
         createdResponse.HasConfiguredSecret.ShouldBeTrue();
         createdResponse.PathOrEndpoint.ShouldNotBe(secret);
+
+        await RefreshOptionsFromDiskAsync(options, configPath);
 
         var get = await controller.Get("db-primary", CancellationToken.None);
         var getResponse = get.Result.ShouldBeOfType<OkObjectResult>().Value.ShouldBeOfType<LocationResponse>();
@@ -186,7 +187,7 @@ public sealed class LocationsControllerTests : IDisposable
               }
             }
             """);
-        var controller = CreateController(configPath);
+        var (controller, _) = CreateController(configPath);
 
         var update = await controller.Update("db-primary", new UpsertLocationRequest
         {
@@ -214,7 +215,7 @@ public sealed class LocationsControllerTests : IDisposable
         const string updatedSecret = "Server=db.internal;Database=BotNexus;User Id=botnexus;Password=EvenMoreSecret456!;";
 
         var configPath = WriteConfig("""{"gateway":{"locations":{}}}""");
-        var controller = CreateController(configPath);
+        var (controller, options) = CreateController(configPath);
 
         var create = await controller.Create(new UpsertLocationRequest
         {
@@ -233,6 +234,8 @@ public sealed class LocationsControllerTests : IDisposable
 
         var afterCreate = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
         afterCreate.Gateway!.Locations!["db-main"].ConnectionString.ShouldBe(secret);
+
+        await RefreshOptionsFromDiskAsync(options, configPath);
 
         var list = await controller.List(CancellationToken.None);
         var listResult = list.Result.ShouldBeOfType<OkObjectResult>();
@@ -271,6 +274,61 @@ public sealed class LocationsControllerTests : IDisposable
         afterUpdate.Gateway!.Locations!["db-main"].ConnectionString.ShouldBe(updatedSecret);
     }
 
+    [Fact]
+    public async Task List_WhenOptionsCurrentValueDiffersFromDisk_UsesOptionsCurrentValue()
+    {
+        var configPath = WriteConfig("""{"gateway":{"locations":{"repo":{"type":"filesystem","path":"C:\\disk"}}}}""");
+        var monitorConfig = new PlatformConfig
+        {
+            Gateway = new GatewaySettingsConfig
+            {
+                Locations = new Dictionary<string, LocationConfig>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["repo"] = new()
+                    {
+                        Type = "filesystem",
+                        Path = Path.Combine(_rootPath, "monitor-repo")
+                    }
+                }
+            }
+        };
+
+        var (controller, _) = CreateController(configPath, monitorConfig);
+
+        var result = await controller.List(CancellationToken.None);
+
+        var locations = result.Result.ShouldBeOfType<OkObjectResult>()
+            .Value.ShouldBeAssignableTo<IReadOnlyList<LocationResponse>>()!;
+        var repo = locations.Single(location => location.Name == "repo");
+        repo.PathOrEndpoint.ShouldBe(Path.Combine(_rootPath, "monitor-repo"));
+    }
+
+    [Fact]
+    public async Task Create_PersistsMutationToDisk_ButGetRequiresOptionsReload()
+    {
+        var configPath = WriteConfig("""{"gateway":{"locations":{}}}""");
+        var (controller, options) = CreateController(configPath, new PlatformConfig());
+
+        var create = await controller.Create(new UpsertLocationRequest
+        {
+            Name = "repo",
+            Type = "filesystem",
+            Value = Path.Combine(_rootPath, "repo-a")
+        }, CancellationToken.None);
+        create.Result.ShouldBeOfType<CreatedAtActionResult>();
+
+        var persisted = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
+        persisted.Gateway!.Locations!.ShouldContainKey("repo");
+
+        var staleRead = await controller.Get("repo", CancellationToken.None);
+        staleRead.Result.ShouldBeOfType<NotFoundObjectResult>();
+
+        await RefreshOptionsFromDiskAsync(options, configPath);
+
+        var refreshedRead = await controller.Get("repo", CancellationToken.None);
+        refreshedRead.Result.ShouldBeOfType<OkObjectResult>();
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_rootPath))
@@ -284,25 +342,28 @@ public sealed class LocationsControllerTests : IDisposable
         return path;
     }
 
-    private static LocationsController CreateController(string configPath)
+    private static (LocationsController Controller, TestOptionsMonitor<PlatformConfig> Options) CreateController(
+        string configPath,
+        PlatformConfig? monitorConfig = null)
     {
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["BotNexus:ConfigPath"] = configPath
-            })
-            .Build();
-
         var writer = new PlatformConfigWriter(configPath, new FileSystem());
+        var configOptions = new TestOptionsMonitor<PlatformConfig>(
+            monitorConfig ?? PlatformConfigLoader.Load(configPath, validateOnLoad: false));
         var agentRegistry = new EmptyAgentRegistry();
         var httpClientFactory = new StubHttpClientFactory();
 
-        return new LocationsController(
-            configuration,
+        return (new LocationsController(
             writer,
+            configOptions,
             agentRegistry,
             Array.Empty<IIsolationStrategy>(),
-            httpClientFactory);
+            httpClientFactory),
+            configOptions);
+    }
+
+    private static async Task RefreshOptionsFromDiskAsync(TestOptionsMonitor<PlatformConfig> options, string configPath)
+    {
+        options.RaiseChanged(await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false));
     }
 
     private sealed class EmptyAgentRegistry : IAgentRegistry

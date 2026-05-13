@@ -184,10 +184,10 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
     private static async Task WriteConfigAsync(PlatformConfig config, string configPath, CancellationToken cancellationToken)
     {
         PlatformConfigLoader.EnsureConfigDirectory(Path.GetDirectoryName(configPath) ?? PlatformConfigLoader.DefaultHomePath);
-        var backupsDir = Path.Combine(BotNexusHome.ResolveHomePath(), "backups");
-        var backup = new ConfigBackupService(backupsDir, new System.IO.Abstractions.FileSystem());
-        backup.Backup(configPath, "before-config-set");
-        await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(config, CreateWriteJsonOptions()), cancellationToken);
+        var fileSystem = new System.IO.Abstractions.FileSystem();
+        var backupsDir = Path.Combine(Path.GetDirectoryName(configPath) ?? BotNexusHome.ResolveHomePath(), "backups");
+        var writer = new PlatformConfigWriter(configPath, fileSystem, new ConfigBackupService(backupsDir, fileSystem));
+        await writer.UpdatePlatformConfigAsync(config, "before-config-set", cancellationToken);
     }
 
     private static void PrintValue(object? value)

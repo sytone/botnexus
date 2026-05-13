@@ -58,7 +58,7 @@ var resolvedConfigPath = string.IsNullOrWhiteSpace(platformConfigPath)
 // assemblies can bind their own config sections without a separate file-reading path.
 builder.Configuration.AddJsonFile(resolvedConfigPath, optional: true, reloadOnChange: true);
 
-var startupPlatformConfig = PlatformConfigLoader.Load(platformConfigPath, validateOnLoad: false);
+var startupPlatformConfig = PlatformConfigLoader.Load(resolvedConfigPath, validateOnLoad: false);
 
 builder.Services.AddOpenTelemetry()
     .WithTracing(tracing =>
