@@ -41,14 +41,28 @@ public sealed class SessionsController : ControllerBase
     /// </summary>
     /// <param name="agentId">The agent id.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="includeInactive">
+    /// When <c>true</c>, includes sealed and expired sessions. When <c>false</c> (default),
+    /// only active and suspended sessions are returned.
+    /// </param>
     /// <returns>The list result.</returns>
     [HttpGet]
-    public async Task<ActionResult> List([FromQuery] string? agentId, CancellationToken cancellationToken)
+    public async Task<ActionResult> List(
+        [FromQuery] string? agentId,
+        [FromQuery] bool includeInactive = false,
+        CancellationToken cancellationToken = default)
     {
         AgentId? parsedAgentId = null;
         if (!string.IsNullOrWhiteSpace(agentId))
             parsedAgentId = AgentId.From(agentId);
         var sessions = await _sessions.ListAsync(parsedAgentId, cancellationToken);
+        if (!includeInactive)
+        {
+            sessions = sessions
+                .Where(s => s.Status is SessionStatus.Active or SessionStatus.Suspended)
+                .ToArray();
+        }
+
         var result = sessions.Select(s => new
         {
             sessionId = s.SessionId.Value,

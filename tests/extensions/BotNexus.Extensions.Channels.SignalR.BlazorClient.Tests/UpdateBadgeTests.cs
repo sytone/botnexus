@@ -31,7 +31,6 @@ public sealed class UpdateBadgeTests : IDisposable
         restClient.ApiBaseUrl.Returns("");
         var http = new HttpClient { BaseAddress = new Uri("http://localhost/") };
         var gatewayInfo = new GatewayInfoService(http, restClient);
-        var featureFlags = new FeatureFlagsService(_ctx.JSInterop.JSRuntime);
 
         _updateSvc = Substitute.For<IUpdateStatusService>();
 
@@ -40,7 +39,6 @@ public sealed class UpdateBadgeTests : IDisposable
         _ctx.Services.AddSingleton(portalLoad);
         _ctx.Services.AddSingleton(hub);
         _ctx.Services.AddSingleton(gatewayInfo);
-        _ctx.Services.AddSingleton(featureFlags);
         _ctx.Services.AddSingleton(restClient);
         _ctx.Services.AddSingleton(http);
         _ctx.Services.AddSingleton(_updateSvc);

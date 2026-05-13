@@ -139,14 +139,12 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         restClient.ApiBaseUrl.Returns("");
         var http = new HttpClient { BaseAddress = new Uri("http://localhost/") };
         var gatewayInfo = new GatewayInfoService(http, restClient);
-        var featureFlags = new FeatureFlagsService(ctx.JSInterop.JSRuntime);
 
         ctx.Services.AddSingleton<IClientStateStore>(store);
         ctx.Services.AddSingleton(interaction);
         ctx.Services.AddSingleton(portalLoad);
         ctx.Services.AddSingleton(hub);
         ctx.Services.AddSingleton(gatewayInfo);
-        ctx.Services.AddSingleton(featureFlags);
         ctx.Services.AddSingleton(restClient);
         ctx.Services.AddSingleton(http);
         ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());
@@ -183,12 +181,10 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         restClient.ApiBaseUrl.Returns("");
         var http = new HttpClient { BaseAddress = new Uri("http://localhost/") };
         var gatewayInfo = new GatewayInfoService(http, restClient);
-        var featureFlags = new FeatureFlagsService(_ctx.JSInterop.JSRuntime);
 
         _ctx.Services.AddSingleton(portalLoad);
         _ctx.Services.AddSingleton(hub);
         _ctx.Services.AddSingleton(gatewayInfo);
-        _ctx.Services.AddSingleton(featureFlags);
         _ctx.Services.AddSingleton(restClient);
         _ctx.Services.AddSingleton(http);
 

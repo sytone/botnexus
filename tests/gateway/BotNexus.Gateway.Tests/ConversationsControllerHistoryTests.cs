@@ -250,6 +250,39 @@ public sealed class ConversationsControllerHistoryTests
     }
 
     [Fact]
+    public async Task Archive_SealsAllSessionsLinkedToConversation()
+    {
+        var conversationId = ConversationId.From("c_archive_seals_all_linked_sessions");
+        var sessions = new InMemorySessionStore();
+
+        var firstLinked = await sessions.GetOrCreateAsync("s-linked-1", AgentId.From("assistant"));
+        firstLinked.Session.ConversationId = conversationId;
+        firstLinked.Status = BotNexus.Gateway.Abstractions.Models.SessionStatus.Active;
+        await sessions.SaveAsync(firstLinked);
+
+        var secondLinked = await sessions.GetOrCreateAsync("s-linked-2", AgentId.From("assistant"));
+        secondLinked.Session.ConversationId = conversationId;
+        secondLinked.Status = BotNexus.Gateway.Abstractions.Models.SessionStatus.Suspended;
+        await sessions.SaveAsync(secondLinked);
+
+        var unrelated = await sessions.GetOrCreateAsync("s-unrelated", AgentId.From("assistant"));
+        unrelated.Session.ConversationId = ConversationId.From("c_other");
+        unrelated.Status = BotNexus.Gateway.Abstractions.Models.SessionStatus.Active;
+        await sessions.SaveAsync(unrelated);
+
+        var conversationStore = new InMemoryConversationStore();
+        await conversationStore.CreateAsync(CreateConversation(conversationId, "assistant", activeSessionId: SessionId.From("s-linked-1")));
+        var controller = new ConversationsController(conversationStore, sessions);
+
+        var result = await controller.Archive(conversationId.Value, CancellationToken.None);
+
+        result.ShouldBeOfType<NoContentResult>();
+        (await sessions.GetAsync("s-linked-1"))!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
+        (await sessions.GetAsync("s-linked-2"))!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
+        (await sessions.GetAsync("s-unrelated"))!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Active);
+    }
+
+    [Fact]
     public async Task Archive_WithVirtualCronConversationId_WhenSessionMissing_ReturnsNoContent()
     {
         var sessions = new InMemorySessionStore();
@@ -261,6 +294,58 @@ public sealed class ConversationsControllerHistoryTests
 
         result.ShouldBeOfType<NoContentResult>();
     }
+
+    [Fact]
+    public async Task Archive_WithVirtualCronConversationId_KeepsConversationArchivedAcrossListReload()
+    {
+        var conversationId = ConversationId.From("c_cron_archived_stays_hidden");
+        var requestedSessionId = SessionId.From("cron:20260509002033:6f2f84a4f1634ff492a4fec212872c54");
+        var sessions = new InMemorySessionStore();
+
+        var requestedSession = await sessions.GetOrCreateAsync(requestedSessionId, AgentId.From("assistant"));
+        requestedSession.Session.ConversationId = conversationId;
+        requestedSession.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.Assistant,
+            Content = "cron-history",
+            Timestamp = DateTimeOffset.UtcNow
+        });
+        await sessions.SaveAsync(requestedSession);
+
+        var conversationStore = new InMemoryConversationStore();
+        await conversationStore.CreateAsync(CreateConversation(conversationId, "assistant", requestedSessionId));
+        var controller = new ConversationsController(conversationStore, sessions);
+
+        var archiveResult = await controller.Archive($"cron-session:{requestedSessionId.Value}", CancellationToken.None);
+
+        archiveResult.ShouldBeOfType<NoContentResult>();
+
+        var sealedRequestedSession = await sessions.GetAsync(requestedSessionId);
+        sealedRequestedSession.ShouldNotBeNull();
+        sealedRequestedSession!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
+
+        var listResult = await controller.List("assistant", CancellationToken.None);
+        var list = (listResult as OkObjectResult)?.Value as IReadOnlyList<ConversationSummary>;
+        list.ShouldNotBeNull();
+        list!.ShouldNotContain(summary => summary.ConversationId == conversationId);
+
+        var sessionsController = new SessionsController(sessions);
+        var defaultSessionsResult = await sessionsController.List("assistant", cancellationToken: CancellationToken.None);
+        var defaultSessionIds = ExtractSessionIds(defaultSessionsResult.ShouldBeOfType<OkObjectResult>());
+        defaultSessionIds.ShouldNotContain(requestedSessionId.Value);
+
+        var includeInactiveResult = await sessionsController.List("assistant", includeInactive: true, cancellationToken: CancellationToken.None);
+        var includeInactiveSessionIds = ExtractSessionIds(includeInactiveResult.ShouldBeOfType<OkObjectResult>());
+        includeInactiveSessionIds.ShouldContain(requestedSessionId.Value);
+    }
+
+    private static IReadOnlyList<string> ExtractSessionIds(OkObjectResult result)
+        => result.Value.ShouldNotBeNull()
+            .ShouldBeAssignableTo<IEnumerable<object>>()
+            .Select(item => item.GetType().GetProperty("sessionId")?.GetValue(item)?.ToString())
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Cast<string>()
+            .ToArray();
 
     private static Conversation CreateConversation(ConversationId conversationId, string agentId, SessionId? activeSessionId = null)
         => new()
