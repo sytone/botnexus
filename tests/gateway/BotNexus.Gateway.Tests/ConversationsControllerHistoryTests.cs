@@ -320,11 +320,32 @@ public sealed class ConversationsControllerHistoryTests
 
         archiveResult.ShouldBeOfType<NoContentResult>();
 
+        var sealedRequestedSession = await sessions.GetAsync(requestedSessionId);
+        sealedRequestedSession.ShouldNotBeNull();
+        sealedRequestedSession!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
+
         var listResult = await controller.List("assistant", CancellationToken.None);
         var list = (listResult as OkObjectResult)?.Value as IReadOnlyList<ConversationSummary>;
         list.ShouldNotBeNull();
         list!.ShouldNotContain(summary => summary.ConversationId == conversationId);
+
+        var sessionsController = new SessionsController(sessions);
+        var defaultSessionsResult = await sessionsController.List("assistant", cancellationToken: CancellationToken.None);
+        var defaultSessionIds = ExtractSessionIds(defaultSessionsResult.ShouldBeOfType<OkObjectResult>());
+        defaultSessionIds.ShouldNotContain(requestedSessionId.Value);
+
+        var includeInactiveResult = await sessionsController.List("assistant", includeInactive: true, cancellationToken: CancellationToken.None);
+        var includeInactiveSessionIds = ExtractSessionIds(includeInactiveResult.ShouldBeOfType<OkObjectResult>());
+        includeInactiveSessionIds.ShouldContain(requestedSessionId.Value);
     }
+
+    private static IReadOnlyList<string> ExtractSessionIds(OkObjectResult result)
+        => result.Value.ShouldNotBeNull()
+            .ShouldBeAssignableTo<IEnumerable<object>>()
+            .Select(item => item.GetType().GetProperty("sessionId")?.GetValue(item)?.ToString())
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Cast<string>()
+            .ToArray();
 
     private static Conversation CreateConversation(ConversationId conversationId, string agentId, SessionId? activeSessionId = null)
         => new()
