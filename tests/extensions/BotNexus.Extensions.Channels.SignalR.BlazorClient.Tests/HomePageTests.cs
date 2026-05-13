@@ -206,6 +206,31 @@ public sealed class HomePageTests : IDisposable
     }
 
     [Fact]
+    public void Direct_route_to_chat_agent_only_notifies_layout_subscribers_on_agent_restore()
+    {
+        _portalLoad.IsReady.Returns(true);
+        _store.ActiveAgentId.Returns("agent-1");
+
+        var agents = new Dictionary<string, AgentState>
+        {
+            ["agent-1"] = new() { AgentId = "agent-1", DisplayName = "Alpha" },
+            ["agent-2"] = new() { AgentId = "agent-2", DisplayName = "Beta" }
+        };
+
+        _store.Agents.Returns(agents.AsReadOnly());
+        _store.GetAgent(Arg.Any<string>()).Returns(ci =>
+            agents.GetValueOrDefault(ci.ArgAt<string>(0)));
+
+        _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
+        _ctx.Services.AddSingleton(new HttpClient());
+
+        _ctx.Render<Home>(p => p.Add(c => c.AgentId, "agent-2"));
+
+        Assert.Equal("agent-2", _store.ActiveAgentId);
+        _store.Received(1).NotifyChanged();
+    }
+
+    [Fact]
     public void Direct_route_decodes_url_encoded_agent_and_conversation_ids()
     {
         _portalLoad.IsReady.Returns(true);
@@ -278,6 +303,45 @@ public sealed class HomePageTests : IDisposable
             .Add(c => c.ConversationId, "missing-conversation"));
 
         Assert.Equal("agent-1", _store.ActiveAgentId);
+        _interaction.DidNotReceive().SelectConversationAsync(Arg.Any<string>(), Arg.Any<string>());
+    }
+
+    [Fact]
+    public void Direct_route_with_missing_agent_sets_fallback_and_notifies_when_active_agent_is_empty()
+    {
+        _portalLoad.IsReady.Returns(true);
+        _store.ActiveAgentId.Returns((string?)null);
+
+        var fallbackAgent = new AgentState
+        {
+            AgentId = "agent-1",
+            DisplayName = "Alpha",
+            ActiveConversationId = "known-conversation"
+        };
+        fallbackAgent.Conversations["known-conversation"] = new ConversationState
+        {
+            ConversationId = "known-conversation",
+            Title = "Known"
+        };
+
+        var agents = new Dictionary<string, AgentState>
+        {
+            ["agent-1"] = fallbackAgent
+        };
+
+        _store.Agents.Returns(agents.AsReadOnly());
+        _store.GetAgent(Arg.Any<string>()).Returns(ci =>
+            agents.GetValueOrDefault(ci.ArgAt<string>(0)));
+
+        _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
+        _ctx.Services.AddSingleton(new HttpClient());
+
+        _ctx.Render<Home>(p => p
+            .Add(c => c.AgentId, "missing-agent")
+            .Add(c => c.ConversationId, "missing-conversation"));
+
+        Assert.Equal("agent-1", _store.ActiveAgentId);
+        _store.Received(1).NotifyChanged();
         _interaction.DidNotReceive().SelectConversationAsync(Arg.Any<string>(), Arg.Any<string>());
     }
 }

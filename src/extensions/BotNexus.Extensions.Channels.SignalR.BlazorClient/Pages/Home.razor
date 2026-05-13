@@ -105,13 +105,19 @@ else
         if (!Store.Agents.ContainsKey(routeAgentId))
         {
             if (Store.ActiveAgentId is null && Store.Agents.Keys.FirstOrDefault() is { } fallback)
+            {
                 Store.ActiveAgentId = fallback;
+                Store.NotifyChanged();
+            }
 
             return;
         }
 
         if (!string.Equals(Store.ActiveAgentId, routeAgentId, StringComparison.Ordinal))
+        {
             Store.ActiveAgentId = routeAgentId;
+            Store.NotifyChanged();
+        }
 
         if (routeConversationId is null)
         {
