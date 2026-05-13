@@ -11,7 +11,7 @@ namespace BotNexus.Gateway.Tests;
 
 public sealed class AgentsControllerTests
 {
-    [Fact]
+     [Fact]
     public void List_WhenAgentsRegistered_ReturnsRegisteredAgents()
     {
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
@@ -27,7 +27,7 @@ public sealed class AgentsControllerTests
         registeredAgents.Count.ShouldBe(1);
     }
 
-    [Fact]
+     [Fact]
     public void Get_WithUnknownAgent_ReturnsNotFound()
     {
         var controller = CreateController(new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance));
@@ -37,7 +37,7 @@ public sealed class AgentsControllerTests
         result.Result.ShouldBeOfType<NotFoundResult>();
     }
 
-    [Fact]
+     [Fact]
     public async Task Register_WithValidDescriptor_ReturnsCreated()
     {
         var controller = CreateController(new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance));
@@ -47,7 +47,26 @@ public sealed class AgentsControllerTests
         result.ShouldBeOfType<CreatedAtActionResult>();
     }
 
-    [Fact]
+
+     [Fact]
+    public async Task Register_WhenSuccessful_IsImmediatelyVisibleViaListAndGet()
+    {
+        var controller = CreateController(new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance));
+
+        _ = await controller.Register(CreateDescriptor("agent-a"), CancellationToken.None);
+        var listResult = controller.List();
+        var getResult = controller.Get("agent-a");
+
+        var listOk = listResult.Result.ShouldBeOfType<OkObjectResult>();
+        var agents = listOk.Value.ShouldBeAssignableTo<IReadOnlyList<AgentDescriptor>>();
+        agents.ShouldNotBeNull();
+        agents.ShouldContain(agent => agent.AgentId == "agent-a");
+        var getOk = getResult.Result.ShouldBeOfType<OkObjectResult>();
+        var descriptor = getOk.Value.ShouldBeOfType<AgentDescriptor>();
+        descriptor.DisplayName.ShouldBe("agent-a-display");
+    }
+
+     [Fact]
     public async Task Register_WithDuplicateAgent_ReturnsConflict()
     {
         var controller = CreateController(new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance));
@@ -58,7 +77,7 @@ public sealed class AgentsControllerTests
         result.ShouldBeOfType<ConflictObjectResult>();
     }
 
-    [Fact]
+     [Fact]
     public async Task Update_WithMismatchedRouteAndPayloadAgentId_ReturnsBadRequest()
     {
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
@@ -70,7 +89,7 @@ public sealed class AgentsControllerTests
         result.Result.ShouldBeOfType<BadRequestObjectResult>();
     }
 
-    [Fact]
+     [Fact]
     public async Task Update_WithEmptyPayloadAgentId_UsesRouteAgentId()
     {
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
@@ -85,7 +104,7 @@ public sealed class AgentsControllerTests
         updated!.AgentId.Value.ShouldBe("agent-a");
     }
 
-    [Fact]
+     [Fact]
     public async Task Register_WithValidDescriptor_PersistsConfiguration()
     {
         var writer = new Mock<IAgentConfigurationWriter>();
@@ -102,7 +121,7 @@ public sealed class AgentsControllerTests
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    [Fact]
+     [Fact]
     public async Task Update_WhenSuccessful_PersistsConfiguration()
     {
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
@@ -118,7 +137,40 @@ public sealed class AgentsControllerTests
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    [Fact]
+
+     [Fact]
+    public async Task Update_WhenSuccessful_ReflectsUpdatedDescriptorInListAndGet()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor("agent-a"));
+        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), new NoOpAgentConfigurationWriter());
+        var updatedDescriptor = CreateDescriptor("agent-a") with
+        {
+            DisplayName = "updated-display",
+            ModelId = "updated-model",
+            ApiProvider = "updated-provider"
+        };
+
+        var updateResult = await controller.Update("agent-a", updatedDescriptor, CancellationToken.None);
+        var listResult = controller.List();
+        var getResult = controller.Get("agent-a");
+
+        updateResult.Result.ShouldBeOfType<OkObjectResult>();
+        var listOk = listResult.Result.ShouldBeOfType<OkObjectResult>();
+        var agents = listOk.Value.ShouldBeAssignableTo<IReadOnlyList<AgentDescriptor>>();
+        agents.ShouldNotBeNull();
+        var listDescriptor = agents.Single(agent => agent.AgentId == "agent-a");
+        listDescriptor.DisplayName.ShouldBe("updated-display");
+        listDescriptor.ModelId.ShouldBe("updated-model");
+        listDescriptor.ApiProvider.ShouldBe("updated-provider");
+        var getOk = getResult.Result.ShouldBeOfType<OkObjectResult>();
+        var getDescriptor = getOk.Value.ShouldBeOfType<AgentDescriptor>();
+        getDescriptor.DisplayName.ShouldBe("updated-display");
+        getDescriptor.ModelId.ShouldBe("updated-model");
+        getDescriptor.ApiProvider.ShouldBe("updated-provider");
+    }
+
+     [Fact]
     public async Task Unregister_DeletesPersistedConfiguration()
     {
         var writer = new Mock<IAgentConfigurationWriter>();
@@ -132,7 +184,7 @@ public sealed class AgentsControllerTests
         writer.Verify(w => w.DeleteAsync("agent-a", It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    [Fact]
+     [Fact]
     public async Task GetHealth_WithNoActiveInstances_ReturnsUnknown()
     {
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
@@ -147,7 +199,7 @@ public sealed class AgentsControllerTests
         response.InstanceCount.ShouldBe(0);
     }
 
-    [Fact]
+     [Fact]
     public async Task GetHealth_WithUnknownAgent_ReturnsNotFound()
     {
         var controller = CreateController(new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance));
@@ -157,7 +209,7 @@ public sealed class AgentsControllerTests
         result.Result.ShouldBeOfType<NotFoundResult>();
     }
 
-    [Fact]
+     [Fact]
     public async Task GetHealth_WithNonHealthCheckableHandle_ReturnsUnknown()
     {
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
@@ -192,7 +244,7 @@ public sealed class AgentsControllerTests
         response.InstanceCount.ShouldBe(1);
     }
 
-    [Fact]
+     [Fact]
     public async Task GetHealth_WithHealthCheckableHandle_ReturnsHealthy()
     {
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
@@ -230,7 +282,7 @@ public sealed class AgentsControllerTests
         response.InstanceCount.ShouldBe(1);
     }
 
-    [Fact]
+     [Fact]
     public async Task GetHealth_WithFailedHealthCheck_ReturnsUnhealthy()
     {
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
@@ -280,3 +332,4 @@ public sealed class AgentsControllerTests
     private static AgentsController CreateController(IAgentRegistry registry, IAgentSupervisor? supervisor = null)
         => new(registry, supervisor ?? Mock.Of<IAgentSupervisor>(), new NoOpAgentConfigurationWriter());
 }
+

@@ -1,4 +1,7 @@
 using System.Net;
+using System.Net.Http.Json;
+using System.Linq;
+using System.Reflection;
 using System.Text.Json;
 using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Pages;
@@ -81,7 +84,7 @@ public sealed class AgentsPageTests : IDisposable
     }
 
     [Fact]
-    public void Form_validation_shows_field_errors_when_dirty()
+    public void Form_validation_shows_field_errors()
     {
         _httpHandler.SetupResponse("/api/agents", "[]");
         _httpHandler.SetupResponse("/api/providers", "[]");
@@ -89,17 +92,11 @@ public sealed class AgentsPageTests : IDisposable
         var cut = _ctx.Render<Agents>();
         cut.WaitForState(() => cut.Markup.Contains("Add Agent"));
 
-        // Open form
         cut.Find("button.primary").Click();
-
-        // Make form dirty by typing in description (non-required field)
-        cut.Find("#description-input").Input("something");
-
-        // Click save with required fields empty
         cut.Find(".agents-form-actions button.primary").Click();
 
-        // Should show field-level errors for empty required fields
         Assert.Contains("Agent ID is required", cut.Markup);
+        Assert.Contains("Display Name is required", cut.Markup);
     }
 
     [Fact]
@@ -177,6 +174,66 @@ public sealed class AgentsPageTests : IDisposable
     }
 
     [Fact]
+    public void Save_new_agent_refreshes_list_from_api_without_stale_state()
+    {
+        _httpHandler.SetupResponse("/api/agents", "[]");
+        _httpHandler.SetupResponse("/api/providers", "[]");
+
+        var cut = _ctx.Render<Agents>();
+        cut.WaitForState(() => cut.Markup.Contains("Add Agent"));
+
+        cut.Find("button.primary").Click();
+        cut.Find("#agent-id-input").Input("bot-2");
+        cut.Find("#display-name-input").Input("Bot Two");
+        cut.Find("#provider-input").Input("openai");
+        cut.Find("#model-id-input").Input("gpt-4.1");
+
+        var refreshedAgents = JsonSerializer.Serialize(new[]
+        {
+            new { agentId = "bot-2", displayName = "Bot Two", description = "", apiProvider = "openai", modelId = "gpt-4.1", systemPrompt = "" }
+        });
+        _httpHandler.SetupResponse("/api/agents", refreshedAgents);
+        _httpHandler.SetupStatusResponse("POST", "/api/agents", HttpStatusCode.Created);
+
+        cut.Find(".agents-form-actions button.primary").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("bot-2", cut.Markup);
+            Assert.Contains("Bot Two", cut.Markup);
+        });
+    }
+
+    [Fact]
+    public void Agents_changed_signalr_event_refreshes_agents_from_api()
+    {
+        var initialAgents = JsonSerializer.Serialize(new[]
+        {
+            new { agentId = "bot-1", displayName = "Bot One", description = "", apiProvider = "openai", modelId = "gpt-4", systemPrompt = "" }
+        });
+        _httpHandler.SetupResponse("/api/agents", initialAgents);
+        _httpHandler.SetupResponse("/api/providers", "[]");
+
+        var cut = _ctx.Render<Agents>();
+        cut.WaitForState(() => cut.Markup.Contains("bot-1"));
+
+        var refreshedAgents = JsonSerializer.Serialize(new[]
+        {
+            new { agentId = "bot-1", displayName = "Bot One", description = "", apiProvider = "openai", modelId = "gpt-4", systemPrompt = "" },
+            new { agentId = "bot-2", displayName = "Bot Two", description = "", apiProvider = "openai", modelId = "gpt-4.1", systemPrompt = "" }
+        });
+        _httpHandler.SetupResponse("/api/agents", refreshedAgents);
+
+        RaiseAgentsChanged(new AgentsChangedPayload("updated", "bot-2"));
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("bot-2", cut.Markup);
+            Assert.Contains("Agent list updated from server.", cut.Markup);
+        });
+    }
+
+    [Fact]
     public void Accessible_table_has_aria_label()
     {
         var agents = JsonSerializer.Serialize(new[]
@@ -191,6 +248,13 @@ public sealed class AgentsPageTests : IDisposable
 
         var table = cut.Find("table.agents-table");
         Assert.Equal("Agent list", table.GetAttribute("aria-label"));
+    }
+
+    private void RaiseAgentsChanged(AgentsChangedPayload payload)
+    {
+        var field = typeof(GatewayHubConnection).GetField("OnAgentsChanged", BindingFlags.Instance | BindingFlags.NonPublic);
+        var handler = field?.GetValue(_hub) as Action<AgentsChangedPayload>;
+        handler?.Invoke(payload);
     }
 
     /// <summary>
@@ -216,11 +280,24 @@ public sealed class AgentsPageTests : IDisposable
             };
         }
 
+        public void SetupStatusResponse(string method, string pathSuffix, HttpStatusCode statusCode)
+        {
+            _responses[$"{method}:{pathSuffix}"] = new HttpResponseMessage(statusCode)
+            {
+                Content = new StringContent(string.Empty, System.Text.Encoding.UTF8, "text/plain")
+            };
+        }
+
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri?.PathAndQuery ?? "";
+            var methodKey = $"{request.Method.Method}:{path}";
+
             foreach (var (key, response) in _responses)
             {
+                if (key.Contains(':') && methodKey.Contains(key, StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(response);
+
                 if (path.Contains(key, StringComparison.OrdinalIgnoreCase))
                     return Task.FromResult(response);
             }
@@ -229,3 +306,4 @@ public sealed class AgentsPageTests : IDisposable
         }
     }
 }
+
