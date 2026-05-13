@@ -8,6 +8,7 @@ using BotNexus.Gateway.Abstractions.Extensions;
 using BotNexus.Gateway.Abstractions.Hooks;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Dispatching;
 using BotNexus.Gateway.Extensions;
 using BotNexus.Gateway.Hooks;
@@ -225,8 +226,111 @@ public sealed class ExtensionLoaderTests : IDisposable
         Should.NotThrow(() => ActivatorUtilities.CreateInstance(provider, hubType!));
     }
 
+    [Fact]
+    public async Task LoadAsync_SkillsExtension_RegistersSkillPromptHookHandler()
+    {
+        var extensionDirectory = Path.Combine(_rootPath, "skills-extension");
+        Directory.CreateDirectory(extensionDirectory);
+        CopySkillsExtensionArtifacts(extensionDirectory);
+
+        await File.WriteAllTextAsync(Path.Combine(extensionDirectory, "botnexus-extension.json"), JsonSerializer.Serialize(new ExtensionManifest
+        {
+            Id = "botnexus-skills",
+            Name = "Skills Manager",
+            Version = "1.0.0",
+            EntryAssembly = "BotNexus.Extensions.Skills.dll",
+            ExtensionTypes = ["tool", "command"]
+        }));
+
+        var workspacePath = Path.Combine(_rootPath, "workspace");
+        Directory.CreateDirectory(workspacePath);
+
+        var services = CreateSkillsServices(workspacePath, CreateDescriptor());
+        var loader = CreateLoader(services);
+        var discovered = await loader.DiscoverAsync(_rootPath);
+
+        var loadResult = await loader.LoadAsync(discovered.Single(x => x.Manifest.Id == "botnexus-skills"));
+
+        loadResult.Success.ShouldBeTrue(loadResult.Error);
+        loadResult.RegisteredServices.ShouldContain(s =>
+            s.StartsWith("IHookHandler<BeforePromptBuildEvent,BeforePromptBuildResult>->", StringComparison.Ordinal) &&
+            s.Contains("SkillPromptHookHandler", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task BuildSystemPromptAsync_WithEnabledSkillsExtension_AppendsSkillsContext()
+    {
+        var extensionDirectory = Path.Combine(_rootPath, "skills-extension");
+        Directory.CreateDirectory(extensionDirectory);
+        CopySkillsExtensionArtifacts(extensionDirectory);
+
+        await File.WriteAllTextAsync(Path.Combine(extensionDirectory, "botnexus-extension.json"), JsonSerializer.Serialize(new ExtensionManifest
+        {
+            Id = "botnexus-skills",
+            Name = "Skills Manager",
+            Version = "1.0.0",
+            EntryAssembly = "BotNexus.Extensions.Skills.dll",
+            ExtensionTypes = ["tool", "command"]
+        }));
+
+        var workspacePath = Path.Combine(_rootPath, "workspace");
+        Directory.CreateDirectory(workspacePath);
+        await File.WriteAllTextAsync(Path.Combine(workspacePath, "AGENTS.md"), "AGENTS");
+
+        var userProfile = Path.Combine(_rootPath, "user");
+        var skillPath = Path.Combine(userProfile, ".botnexus", "skills", "calendar-interaction");
+        Directory.CreateDirectory(skillPath);
+        await File.WriteAllTextAsync(Path.Combine(skillPath, "SKILL.md"), """
+            ---
+            name: calendar-interaction
+            description: Calendar triage guidance
+            ---
+            Use this skill for meeting cleanup.
+            """);
+
+        var originalUserProfile = Environment.GetEnvironmentVariable("USERPROFILE");
+        var originalHome = Environment.GetEnvironmentVariable("HOME");
+        try
+        {
+            Environment.SetEnvironmentVariable("USERPROFILE", userProfile);
+            Environment.SetEnvironmentVariable("HOME", userProfile);
+
+            var descriptor = CreateDescriptor();
+            var hookDispatcher = new HookDispatcher();
+            var workspaceManager = new StubWorkspaceManager(workspacePath);
+            var registry = new StubAgentRegistry(descriptor);
+            var services = new ServiceCollection();
+            services.AddSingleton<IAgentWorkspaceManager>(workspaceManager);
+            services.AddSingleton<IAgentRegistry>(registry);
+            var loader = CreateLoader(services, hookDispatcher);
+            var discovered = await loader.DiscoverAsync(_rootPath);
+
+            var loadResult = await loader.LoadAsync(discovered.Single(x => x.Manifest.Id == "botnexus-skills"));
+            loadResult.Success.ShouldBeTrue(loadResult.Error);
+
+            var builder = new WorkspaceContextBuilder(
+                workspaceManager,
+                new FileSystem(),
+                hookDispatcher);
+
+            var prompt = await builder.BuildSystemPromptAsync(descriptor);
+
+            prompt.ShouldContain("<!-- SKILLS_CONTEXT -->");
+            prompt.ShouldContain("## Skills Available (not loaded)");
+            prompt.ShouldContain("calendar-interaction");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("USERPROFILE", originalUserProfile);
+            Environment.SetEnvironmentVariable("HOME", originalHome);
+        }
+    }
+
     private static AssemblyLoadContextExtensionLoader CreateLoader(IServiceCollection services)
         => new(services, new HookDispatcher(), NullLogger<AssemblyLoadContextExtensionLoader>.Instance, new FileSystem());
+
+    private static AssemblyLoadContextExtensionLoader CreateLoader(IServiceCollection services, IHookDispatcher hookDispatcher)
+        => new(services, hookDispatcher, NullLogger<AssemblyLoadContextExtensionLoader>.Instance, new FileSystem());
 
     private static string ResolveTelegramAssemblyPath()
     {
@@ -265,6 +369,26 @@ public sealed class ExtensionLoaderTests : IDisposable
         }
     }
 
+    private static void CopySkillsExtensionArtifacts(string destinationDirectory)
+    {
+        var sourceDirectory = ResolveSkillsExtensionSourceDirectory();
+        var filesToCopy = new[]
+        {
+            "BotNexus.Extensions.Skills.dll",
+            "BotNexus.Extensions.Skills.pdb",
+            "BotNexus.Extensions.Skills.deps.json"
+        };
+
+        foreach (var fileName in filesToCopy)
+        {
+            var sourcePath = Path.Combine(sourceDirectory, fileName);
+            if (!File.Exists(sourcePath))
+                continue;
+
+            File.Copy(sourcePath, Path.Combine(destinationDirectory, fileName), overwrite: true);
+        }
+    }
+
     private static string ResolveSignalRExtensionSourceDirectory()
     {
         if (File.Exists(Path.Combine(AppContext.BaseDirectory, "BotNexus.Extensions.Channels.SignalR.dll")))
@@ -278,6 +402,41 @@ public sealed class ExtensionLoaderTests : IDisposable
         throw new DirectoryNotFoundException("Unable to locate SignalR extension build output for extension loader tests.");
     }
 
+    private static string ResolveSkillsExtensionSourceDirectory()
+    {
+        if (File.Exists(Path.Combine(AppContext.BaseDirectory, "BotNexus.Extensions.Skills.dll")))
+            return AppContext.BaseDirectory;
+
+        var root = FindRepositoryRoot();
+        var fallback = Path.Combine(root, "src", "extensions", "BotNexus.Extensions.Skills", "bin", "Debug", "net10.0");
+        if (File.Exists(Path.Combine(fallback, "BotNexus.Extensions.Skills.dll")))
+            return fallback;
+
+        throw new DirectoryNotFoundException("Unable to locate Skills extension build output for extension loader tests.");
+    }
+
+    private static ServiceCollection CreateSkillsServices(string workspacePath, AgentDescriptor descriptor)
+    {
+        var workspaceManager = new StubWorkspaceManager(workspacePath);
+        var registry = new StubAgentRegistry(descriptor);
+        var services = new ServiceCollection();
+        services.AddSingleton<IAgentWorkspaceManager>(workspaceManager);
+        services.AddSingleton<IAgentRegistry>(registry);
+        return services;
+    }
+
+    private static AgentDescriptor CreateDescriptor() => new()
+    {
+        AgentId = BotNexus.Domain.Primitives.AgentId.From("farnsworth"),
+        DisplayName = "Farnsworth",
+        ModelId = "test-model",
+        ApiProvider = "test-provider",
+        ExtensionConfig = new Dictionary<string, JsonElement>
+        {
+            ["botnexus-skills"] = JsonSerializer.SerializeToElement(new { enabled = true })
+        }
+    };
+
     private static string FindRepositoryRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);
@@ -289,6 +448,36 @@ public sealed class ExtensionLoaderTests : IDisposable
         }
 
         throw new DirectoryNotFoundException("Repository root could not be resolved from test base path.");
+    }
+
+    private sealed class StubWorkspaceManager(string workspacePath) : IAgentWorkspaceManager
+    {
+        public Task<AgentWorkspace> LoadWorkspaceAsync(string agentName, CancellationToken ct = default)
+            => Task.FromResult(new AgentWorkspace(agentName, Soul: string.Empty, Identity: string.Empty, User: string.Empty, Memory: string.Empty));
+
+        public Task SaveMemoryAsync(string agentName, string content, CancellationToken ct = default) => Task.CompletedTask;
+
+        public Task SaveMemoryAsync(string agentName, string? filePath, string content, CancellationToken ct = default) => Task.CompletedTask;
+
+        public Task SaveMemoryAsync(string agentName, string? filePath, string content, string? memoryPathOverride, CancellationToken ct = default) => Task.CompletedTask;
+
+        public string GetWorkspacePath(string agentName) => workspacePath;
+    }
+
+    private sealed class StubAgentRegistry(AgentDescriptor descriptor) : IAgentRegistry
+    {
+        public void Register(AgentDescriptor descriptor) => throw new NotSupportedException();
+
+        public void Unregister(BotNexus.Domain.Primitives.AgentId agentId) => throw new NotSupportedException();
+
+        public bool Update(BotNexus.Domain.Primitives.AgentId agentId, AgentDescriptor descriptor) => throw new NotSupportedException();
+
+        public AgentDescriptor? Get(BotNexus.Domain.Primitives.AgentId agentId)
+            => descriptor.AgentId == agentId ? descriptor : null;
+
+        public IReadOnlyList<AgentDescriptor> GetAll() => [descriptor];
+
+        public bool Contains(BotNexus.Domain.Primitives.AgentId agentId) => descriptor.AgentId == agentId;
     }
 
     public void Dispose()

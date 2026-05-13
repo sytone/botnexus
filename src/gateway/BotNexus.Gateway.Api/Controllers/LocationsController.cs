@@ -305,7 +305,8 @@ public sealed class LocationsController(
         var value = request.Value?.Trim();
         if (type == LocationType.Database.Value
             && string.IsNullOrWhiteSpace(value)
-            && string.Equals(existingConfig?.Type, LocationType.Database.Value, StringComparison.OrdinalIgnoreCase))
+            && existingConfig is { Type: var existingType }
+            && string.Equals(existingType, LocationType.Database.Value, StringComparison.OrdinalIgnoreCase))
         {
             value = existingConfig.ConnectionString;
         }
@@ -551,5 +552,4 @@ public sealed class LocationHealthCheckResponse
     /// <summary>Additional status details.</summary>
     public string Message { get; init; } = string.Empty;
 }
-
 
