@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -16,10 +17,13 @@ namespace BotNexus.Gateway.Api.Controllers;
 [Route("api/locations")]
 public sealed class LocationsController(
     IConfiguration configuration,
+    PlatformConfigWriter configWriter,
     IAgentRegistry agentRegistry,
     IEnumerable<IIsolationStrategy> isolationStrategies,
     IHttpClientFactory httpClientFactory) : ControllerBase
 {
+    private const string RedactedConnectionStringDisplay = "(redacted)";
+
     private static readonly JsonSerializerOptions WriteJsonOptions = new()
     {
         WriteIndented = true,
@@ -37,17 +41,15 @@ public sealed class LocationsController(
         var declaredNames = GetDeclaredLocationNames(config);
         var worldDescriptor = WorldDescriptorBuilder.Build(config, agentRegistry, isolationStrategies);
         var responses = worldDescriptor.Locations
-            .Select(location => new LocationResponse
-            {
-                Name = location.Name,
-                Type = location.Type.Value,
-                PathOrEndpoint = location.Path,
-                Description = location.Description,
-                Status = location.Type == LocationType.FileSystem
+            .Select(location => BuildLocationResponse(
+                name: location.Name,
+                type: location.Type.Value,
+                rawValue: location.Path,
+                description: location.Description,
+                status: location.Type == LocationType.FileSystem
                     ? (Directory.Exists(location.Path ?? string.Empty) ? "healthy" : "unhealthy")
                     : "unknown",
-                IsUserDefined = declaredNames.Contains(location.Name)
-            })
+                isUserDefined: declaredNames.Contains(location.Name)))
             .OrderBy(location => location.Name, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
@@ -70,7 +72,7 @@ public sealed class LocationsController(
         if (TryFindDictionaryKey(config.Gateway.Locations, request.Name, out _))
             return Conflict(new { error = $"Location '{request.Name}' already exists." });
 
-        var configEntry = BuildLocationConfig(request, out var validationError);
+        var configEntry = BuildLocationConfig(request, existingConfig: null, out var validationError);
         if (configEntry is null)
             return BadRequest(new { error = validationError });
 
@@ -79,15 +81,16 @@ public sealed class LocationsController(
         if (saveError is not null)
             return BadRequest(new { error = saveError });
 
-        return CreatedAtAction(nameof(Get), new { name = request.Name.Trim() }, new LocationResponse
-        {
-            Name = request.Name.Trim(),
-            Type = configEntry.Type,
-            PathOrEndpoint = ResolveDisplayValue(configEntry),
-            Description = configEntry.Description,
-            Status = "unknown",
-            IsUserDefined = true
-        });
+        return CreatedAtAction(
+            nameof(Get),
+            new { name = request.Name.Trim() },
+            BuildLocationResponse(
+                name: request.Name.Trim(),
+                type: configEntry.Type,
+                rawValue: ResolveStoredValue(configEntry),
+                description: configEntry.Description,
+                status: "unknown",
+                isUserDefined: true));
     }
 
     /// <summary>
@@ -104,15 +107,13 @@ public sealed class LocationsController(
             return NotFound(new { error = $"Location '{name}' was not found." });
 
         var isUserDefined = GetDeclaredLocationNames(config).Contains(location.Name);
-        return Ok(new LocationResponse
-        {
-            Name = location.Name,
-            Type = location.Type.Value,
-            PathOrEndpoint = location.Path,
-            Description = location.Description,
-            Status = "unknown",
-            IsUserDefined = isUserDefined
-        });
+        return Ok(BuildLocationResponse(
+            name: location.Name,
+            type: location.Type.Value,
+            rawValue: location.Path,
+            description: location.Description,
+            status: "unknown",
+            isUserDefined: isUserDefined));
     }
 
     /// <summary>
@@ -121,18 +122,25 @@ public sealed class LocationsController(
     [HttpPut("{name}")]
     public async Task<ActionResult<LocationResponse>> Update(string name, [FromBody] UpsertLocationRequest request, CancellationToken cancellationToken)
     {
+        if (!string.IsNullOrWhiteSpace(request.Name)
+            && !string.Equals(request.Name.Trim(), name.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return BadRequest(new { error = "Location name in payload must match route name." });
+        }
+
         var config = await LoadConfigAsync(cancellationToken);
         var locations = config.Gateway?.Locations;
         if (locations is null || !TryFindDictionaryKey(locations, name, out var existingKey))
             return NotFound(new { error = $"Location '{name}' was not found." });
 
+        var existingConfig = locations[existingKey];
         var configEntry = BuildLocationConfig(new UpsertLocationRequest
         {
             Name = existingKey,
             Type = request.Type,
             Value = request.Value,
             Description = request.Description
-        }, out var validationError);
+        }, existingConfig, out var validationError);
         if (configEntry is null)
             return BadRequest(new { error = validationError });
 
@@ -141,15 +149,13 @@ public sealed class LocationsController(
         if (saveError is not null)
             return BadRequest(new { error = saveError });
 
-        return Ok(new LocationResponse
-        {
-            Name = existingKey,
-            Type = configEntry.Type,
-            PathOrEndpoint = ResolveDisplayValue(configEntry),
-            Description = configEntry.Description,
-            Status = "unknown",
-            IsUserDefined = true
-        });
+        return Ok(BuildLocationResponse(
+            name: existingKey,
+            type: configEntry.Type,
+            rawValue: ResolveStoredValue(configEntry),
+            description: configEntry.Description,
+            status: "unknown",
+            isUserDefined: true));
     }
 
     /// <summary>
@@ -283,25 +289,25 @@ public sealed class LocationsController(
             ? []
             : config.Gateway.Locations.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-    private static LocationConfig? BuildLocationConfig(UpsertLocationRequest request, out string? error)
+    private static LocationConfig? BuildLocationConfig(
+        UpsertLocationRequest request,
+        LocationConfig? existingConfig,
+        out string? error)
     {
+        var normalizedName = request.Name?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(normalizedName))
+        {
+            error = "Location name is required.";
+            return null;
+        }
+
         var type = (request.Type ?? "filesystem").Trim().ToLowerInvariant();
         var value = request.Value?.Trim();
-
-        if (string.IsNullOrWhiteSpace(value))
+        if (type == LocationType.Database.Value
+            && string.IsNullOrWhiteSpace(value)
+            && string.Equals(existingConfig?.Type, LocationType.Database.Value, StringComparison.OrdinalIgnoreCase))
         {
-            error = "Path / endpoint / connection string is required.";
-            return null;
-        }
-
-        try
-        {
-            _ = LocationType.FromString(type);
-        }
-        catch (Exception)
-        {
-            error = $"Unsupported location type '{request.Type}'.";
-            return null;
+            value = existingConfig.ConnectionString;
         }
 
         var config = new LocationConfig
@@ -317,12 +323,41 @@ public sealed class LocationsController(
         else
             config.Endpoint = value;
 
+        if (!TryValidateLocationConfig(normalizedName, config, out var validationError))
+        {
+            error = validationError;
+            return null;
+        }
+
         error = null;
         return config;
     }
 
-    private static string? ResolveDisplayValue(LocationConfig config)
+    private static string? ResolveStoredValue(LocationConfig config)
         => config.Path ?? config.Endpoint ?? config.ConnectionString;
+
+    private static LocationResponse BuildLocationResponse(
+        string name,
+        string type,
+        string? rawValue,
+        string? description,
+        string status,
+        bool isUserDefined)
+    {
+        var hasConfiguredSecret = string.Equals(type, LocationType.Database.Value, StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(rawValue);
+        var safeDisplayValue = hasConfiguredSecret ? RedactedConnectionStringDisplay : rawValue;
+        return new LocationResponse
+        {
+            Name = name,
+            Type = type,
+            PathOrEndpoint = safeDisplayValue,
+            Description = description,
+            Status = status,
+            IsUserDefined = isUserDefined,
+            HasConfiguredSecret = hasConfiguredSecret
+        };
+    }
 
     private async Task<PlatformConfig> LoadConfigAsync(CancellationToken cancellationToken)
         => await PlatformConfigLoader.LoadAsync(GetConfigPath(), cancellationToken, validateOnLoad: false);
@@ -333,14 +368,119 @@ public sealed class LocationsController(
         if (errors.Count > 0)
             return string.Join(Environment.NewLine, errors);
 
-        var configPath = GetConfigPath();
-        var configDirectory = Path.GetDirectoryName(configPath) ?? PlatformConfigLoader.DefaultConfigDirectory;
-        PlatformConfigLoader.EnsureConfigDirectory(configDirectory);
-        await System.IO.File.WriteAllTextAsync(
-            configPath,
-            JsonSerializer.Serialize(config, WriteJsonOptions),
-            cancellationToken);
+        var root = await configWriter.ReadAsync(cancellationToken);
+        if (root["gateway"] is not JsonObject gatewaySection)
+        {
+            gatewaySection = new JsonObject();
+            root["gateway"] = gatewaySection;
+        }
+
+        if (config.Gateway is null)
+        {
+            gatewaySection.Remove("locations");
+        }
+        else
+        {
+            var gatewayNode = JsonSerializer.SerializeToNode(config.Gateway, WriteJsonOptions) as JsonObject ?? new JsonObject();
+            if (gatewayNode["locations"] is null)
+                gatewaySection.Remove("locations");
+            else
+                gatewaySection["locations"] = gatewayNode["locations"]!.DeepClone();
+        }
+
+        var candidateJson = root.ToJsonString(WriteJsonOptions);
+        PlatformConfig candidateConfig;
+        try
+        {
+            candidateConfig = JsonSerializer.Deserialize<PlatformConfig>(
+                candidateJson,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new PlatformConfig();
+        }
+        catch (JsonException ex)
+        {
+            return $"Invalid JSON while preparing config update: {ex.Message}";
+        }
+
+        var candidateErrors = PlatformConfigLoader.Validate(candidateConfig);
+        if (candidateErrors.Count > 0)
+            return string.Join(Environment.NewLine, candidateErrors);
+
+        await configWriter.UpdateSectionAsync("gateway", gatewaySection.DeepClone(), cancellationToken);
         return null;
+    }
+
+    private static readonly string[] ValidTypes =
+    [
+        LocationType.FileSystem.Value,
+        LocationType.Api.Value,
+        LocationType.McpServer.Value,
+        LocationType.Database.Value,
+        LocationType.RemoteNode.Value
+    ];
+
+    private static bool TryValidateLocationConfig(string name, LocationConfig locationConfig, out string error)
+    {
+        var type = string.IsNullOrWhiteSpace(locationConfig.Type)
+            ? "filesystem"
+            : locationConfig.Type.Trim();
+
+        if (type.Equals("filesystem", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(locationConfig.Path))
+            {
+                error = $"gateway.locations.{name}.path is required for filesystem locations.";
+                return false;
+            }
+
+            try
+            {
+                _ = Path.GetFullPath(locationConfig.Path);
+            }
+            catch (Exception)
+            {
+                error = $"gateway.locations.{name}.path must be a valid path.";
+                return false;
+            }
+
+            error = string.Empty;
+            return true;
+        }
+
+        if (type.Equals("api", StringComparison.OrdinalIgnoreCase)
+            || type.Equals("mcp-server", StringComparison.OrdinalIgnoreCase)
+            || type.Equals("remote-node", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(locationConfig.Endpoint))
+            {
+                error = $"gateway.locations.{name}.endpoint is required for {type} locations.";
+                return false;
+            }
+
+            if (!Uri.TryCreate(locationConfig.Endpoint, UriKind.Absolute, out var endpoint)
+                || (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps))
+            {
+                error = $"gateway.locations.{name}.endpoint must be a valid http or https absolute URL.";
+                return false;
+            }
+
+            error = string.Empty;
+            return true;
+        }
+
+        if (type.Equals("database", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(locationConfig.ConnectionString))
+            {
+                error = $"gateway.locations.{name}.connectionString is required for database locations.";
+                return false;
+            }
+
+            error = string.Empty;
+            return true;
+        }
+
+        error = $"gateway.locations.{name}.type must be one of: {string.Join(", ", ValidTypes)}.";
+        return false;
     }
 
     private string GetConfigPath()
@@ -381,7 +521,7 @@ public sealed class LocationResponse
     /// <summary>The location type.</summary>
     public string Type { get; init; } = string.Empty;
 
-    /// <summary>The path or endpoint value.</summary>
+    /// <summary>The path or endpoint value (redacted placeholder for database connection strings).</summary>
     public string? PathOrEndpoint { get; init; }
 
     /// <summary>Optional description.</summary>
@@ -392,6 +532,9 @@ public sealed class LocationResponse
 
     /// <summary>Whether this location is user-defined in config.</summary>
     public bool IsUserDefined { get; init; }
+
+    /// <summary>Whether a secret value exists but is intentionally redacted from the response.</summary>
+    public bool HasConfiguredSecret { get; init; }
 }
 
 /// <summary>
@@ -408,3 +551,5 @@ public sealed class LocationHealthCheckResponse
     /// <summary>Additional status details.</summary>
     public string Message { get; init; } = string.Empty;
 }
+
+

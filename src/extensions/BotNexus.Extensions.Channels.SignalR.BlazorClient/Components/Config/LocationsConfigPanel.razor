@@ -1,0 +1,301 @@
+@using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services
+@inject LocationsApiClient LocationsApi
+
+<div class="locations-config-panel">
+    @if (_error is not null)
+    {
+        <div class="pcfg-error-banner" role="alert">
+            <span>⚠️ @_error</span>
+            <button class="pcfg-dismiss-btn" @onclick="@(() => _error = null)" aria-label="Dismiss error">✕</button>
+        </div>
+    }
+
+    @if (_loading)
+    {
+        <div class="config-loading">
+            <div class="loading-spinner small"></div>
+            <span>Loading locations…</span>
+        </div>
+    }
+    else
+    {
+        <div class="pcfg-dict-header">
+            <h4>Locations</h4>
+            <button class="pcfg-add-btn" @onclick="ShowAddForm">+ Add Location</button>
+        </div>
+
+        @if (_showForm)
+        {
+            <div class="pcfg-entry pcfg-location-form">
+                <h4>@(_editingName is not null ? $"Edit: {_editingName}" : "New Location")</h4>
+
+                <TextField Label="Name" Value="@_formName" ValueChanged="@(v => _formName = v ?? "")"
+                           Placeholder="e.g. my-workspace" />
+                @if (_formErrors.ContainsKey("name"))
+                {
+                    <div class="pcfg-field-error">@_formErrors["name"]</div>
+                }
+
+                <SelectField Label="Type" Value="@_formType" ValueChanged="@(v => _formType = v ?? "filesystem")"
+                             Options="@_locationTypes" />
+
+                <TextField Label="@ValueLabel" Value="@_formValue" ValueChanged="@(v => _formValue = v ?? "")"
+                           Placeholder="@ValuePlaceholder" />
+                @if (_formErrors.ContainsKey("value"))
+                {
+                    <div class="pcfg-field-error">@_formErrors["value"]</div>
+                }
+
+                <TextField Label="Description" Value="@_formDescription" ValueChanged="@(v => _formDescription = v)"
+                           Placeholder="Optional description" />
+
+                <div class="pcfg-form-actions">
+                    <button class="toolbar-btn primary" @onclick="SaveForm" disabled="@_saving">
+                        @(_saving ? "Saving…" : (_editingName is not null ? "Update" : "Create"))
+                    </button>
+                    <button class="toolbar-btn" @onclick="CancelForm" disabled="@_saving">Cancel</button>
+                </div>
+            </div>
+        }
+
+        @if (_locations.Count == 0 && !_showForm)
+        {
+            <div class="text-muted" style="font-size: 0.82rem; padding: 0.25rem 0;">No locations configured.</div>
+        }
+
+        @foreach (var loc in _locations)
+        {
+            <div class="pcfg-entry">
+                <div class="pcfg-entry-header">
+                    <span class="pcfg-entry-name">
+                        @loc.Name
+                        <span class="pcfg-location-badge pcfg-location-badge-@loc.Status" title="@loc.Status">@StatusIcon(loc.Status)</span>
+                        @if (!loc.IsUserDefined)
+                        {
+                            <span class="pcfg-location-badge pcfg-location-badge-system" title="System-managed location">system</span>
+                        }
+                    </span>
+                    <span class="pcfg-entry-actions">
+                        <button class="pcfg-entry-action" @onclick="() => CheckHealth(loc.Name)" title="Health check">🩺</button>
+                        @if (loc.IsUserDefined)
+                        {
+                            <button class="pcfg-entry-action" @onclick="() => StartEdit(loc)" title="Edit">✏️</button>
+                            <button class="pcfg-entry-delete" @onclick="() => DeleteLocation(loc.Name)" title="Delete">🗑️</button>
+                        }
+                    </span>
+                </div>
+                <div class="pcfg-entry-fields">
+                    <div class="pcfg-field">
+                        <label>Type</label>
+                        <span class="pcfg-field-value">@loc.Type</span>
+                    </div>
+                    @if (!string.IsNullOrEmpty(loc.PathOrEndpoint))
+                    {
+                        <div class="pcfg-field">
+                            <label>Path / Endpoint</label>
+                            <span class="@GetPathValueCssClass(loc)">@GetPathValueDisplay(loc)</span>
+                        </div>
+                    }
+                    @if (!string.IsNullOrEmpty(loc.Description))
+                    {
+                        <div class="pcfg-field">
+                            <label>Description</label>
+                            <span class="pcfg-field-value">@loc.Description</span>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private static readonly string[] _locationTypes =
+        ["filesystem", "api", "mcp-server", "remote-node", "database"];
+
+    private List<LocationDto> _locations = [];
+    private bool _loading = true;
+    private bool _saving;
+    private bool _showForm;
+    private string? _editingName;
+    private string? _error;
+
+    // Form fields
+    private string _formName = "";
+    private string _formType = "filesystem";
+    private string _formValue = "";
+    private string? _formDescription;
+    private Dictionary<string, string> _formErrors = new();
+    private bool _editingDatabaseHasSecret;
+
+    private string ValueLabel => _formType switch
+    {
+        "database" => "Connection String",
+        "filesystem" => "Path",
+        _ => "Endpoint"
+    };
+
+    private string ValuePlaceholder => _formType switch
+    {
+        "database" when _editingDatabaseHasSecret => "Leave blank to keep existing connection string",
+        "database" => "Data Source=...",
+        "filesystem" => "/path/to/directory",
+        _ => "https://..."
+    };
+
+    private bool AllowBlankValueForEdit
+        => _editingName is not null
+            && string.Equals(_formType, "database", StringComparison.OrdinalIgnoreCase)
+            && _editingDatabaseHasSecret;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadLocations();
+    }
+
+    private async Task LoadLocations()
+    {
+        _loading = true;
+        StateHasChanged();
+
+        var (locations, error) = await LocationsApi.ListAsync();
+        _locations = locations.ToList();
+        _error = error;
+        _loading = false;
+
+        StateHasChanged();
+    }
+
+    private void ShowAddForm()
+    {
+        _editingName = null;
+        _formName = "";
+        _formType = "filesystem";
+        _formValue = "";
+        _formDescription = null;
+        _formErrors = new();
+        _editingDatabaseHasSecret = false;
+        _showForm = true;
+    }
+
+    private void StartEdit(LocationDto location)
+    {
+        _editingName = location.Name;
+        _formName = location.Name;
+        _formType = location.Type;
+        _editingDatabaseHasSecret =
+            string.Equals(location.Type, "database", StringComparison.OrdinalIgnoreCase) && location.HasConfiguredSecret;
+        _formValue = _editingDatabaseHasSecret ? string.Empty : location.PathOrEndpoint ?? "";
+        _formDescription = location.Description;
+        _formErrors = new();
+        _showForm = true;
+    }
+
+    private void CancelForm()
+    {
+        _showForm = false;
+        _editingName = null;
+        _formErrors = new();
+        _editingDatabaseHasSecret = false;
+    }
+
+    private bool ValidateForm()
+    {
+        _formErrors = new();
+
+        if (string.IsNullOrWhiteSpace(_formName))
+            _formErrors["name"] = "Location name is required.";
+
+        if (string.IsNullOrWhiteSpace(_formValue) && !AllowBlankValueForEdit)
+            _formErrors["value"] = $"{ValueLabel} is required.";
+
+        return _formErrors.Count == 0;
+    }
+
+    private async Task SaveForm()
+    {
+        if (!ValidateForm()) return;
+
+        _saving = true;
+        StateHasChanged();
+
+        var dto = new UpsertLocationDto
+        {
+            Name = _formName.Trim(),
+            Type = _formType,
+            Value = _formValue.Trim(),
+            Description = string.IsNullOrWhiteSpace(_formDescription) ? null : _formDescription.Trim()
+        };
+
+        string? error;
+        if (_editingName is not null)
+        {
+            (_, error) = await LocationsApi.UpdateAsync(_editingName, dto);
+        }
+        else
+        {
+            (_, error) = await LocationsApi.CreateAsync(dto);
+        }
+
+        _saving = false;
+
+        if (error is not null)
+        {
+            _error = error;
+            StateHasChanged();
+            return;
+        }
+
+        _showForm = false;
+        _editingName = null;
+        await LoadLocations();
+    }
+
+    private async Task DeleteLocation(string name)
+    {
+        var (success, error) = await LocationsApi.DeleteAsync(name);
+        if (!success)
+        {
+            _error = error ?? "Failed to delete location.";
+            StateHasChanged();
+            return;
+        }
+
+        await LoadLocations();
+    }
+
+    private async Task CheckHealth(string name)
+    {
+        var (result, error) = await LocationsApi.CheckHealthAsync(name);
+        if (error is not null)
+        {
+            _error = error;
+            StateHasChanged();
+            return;
+        }
+
+        // Update the status in the local list
+        var loc = _locations.FirstOrDefault(l => l.Name == name);
+        if (loc is not null && result is not null)
+        {
+            loc.Status = result.Status;
+            _error = null;
+            StateHasChanged();
+        }
+    }
+
+    private static string GetPathValueDisplay(LocationDto location)
+        => location.PathOrEndpoint ?? string.Empty;
+
+    private static string GetPathValueCssClass(LocationDto location)
+        => string.Equals(location.Type, "database", StringComparison.OrdinalIgnoreCase)
+            ? "pcfg-field-value pcfg-path-value-database"
+            : "pcfg-field-value";
+
+    private static string StatusIcon(string status) => status switch
+    {
+        "healthy" => "✅",
+        "unhealthy" => "❌",
+        _ => "❓"
+    };
+}

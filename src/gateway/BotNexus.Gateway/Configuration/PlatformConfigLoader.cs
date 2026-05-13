@@ -66,7 +66,7 @@ public static class PlatformConfigLoader
 
         if (!validateOnLoad)
         {
-            EmitVersionWarning(config, path);
+            EmitVersionWarning(config);
             return config;
         }
 
@@ -75,7 +75,7 @@ public static class PlatformConfigLoader
         if (errors.Count > 0)
             throw new OptionsValidationException(nameof(PlatformConfig), typeof(PlatformConfig), errors);
 
-        EmitVersionWarning(config, path);
+        EmitVersionWarning(config);
         return config;
     }
 
@@ -113,7 +113,7 @@ public static class PlatformConfigLoader
 
         if (!validateOnLoad)
         {
-            EmitVersionWarning(config, path);
+            EmitVersionWarning(config);
             return config;
         }
 
@@ -122,7 +122,7 @@ public static class PlatformConfigLoader
         if (errors.Count > 0)
             throw new OptionsValidationException(nameof(PlatformConfig), typeof(PlatformConfig), errors);
 
-        EmitVersionWarning(config, path);
+        EmitVersionWarning(config);
         return config;
     }
 
@@ -784,10 +784,10 @@ public static class PlatformConfigLoader
         }
     }
 
-    private static void EmitVersionWarning(PlatformConfig config, string configPath)
+    private static void EmitVersionWarning(PlatformConfig config)
     {
         foreach (var warning in ValidateWarnings(config))
-            Trace.TraceWarning("Platform config warning for '{0}': {1}", configPath, warning);
+            Trace.TraceWarning("Platform config warning: {0}", warning);
     }
 
 }
