@@ -285,9 +285,11 @@ public sealed class ExtensionLoaderTests : IDisposable
             """);
 
         var originalUserProfile = Environment.GetEnvironmentVariable("USERPROFILE");
+        var originalHome = Environment.GetEnvironmentVariable("HOME");
         try
         {
             Environment.SetEnvironmentVariable("USERPROFILE", userProfile);
+            Environment.SetEnvironmentVariable("HOME", userProfile);
 
             var descriptor = CreateDescriptor();
             var hookDispatcher = new HookDispatcher();
@@ -316,6 +318,7 @@ public sealed class ExtensionLoaderTests : IDisposable
         finally
         {
             Environment.SetEnvironmentVariable("USERPROFILE", originalUserProfile);
+            Environment.SetEnvironmentVariable("HOME", originalHome);
         }
     }
 
