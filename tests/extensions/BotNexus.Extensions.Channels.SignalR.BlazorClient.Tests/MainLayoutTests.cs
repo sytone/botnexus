@@ -28,7 +28,6 @@ public sealed class MainLayoutTests : IDisposable
         restClient.ApiBaseUrl.Returns("");
         var http = new HttpClient { BaseAddress = new Uri("http://localhost/") };
         var gatewayInfo = new GatewayInfoService(http, restClient);
-        var featureFlags = new FeatureFlagsService(_ctx.JSInterop.JSRuntime);
 
         _ctx.Services.AddSingleton<IClientStateStore>(_store);
         _ctx.Services.AddSingleton(_interaction);
@@ -36,7 +35,6 @@ public sealed class MainLayoutTests : IDisposable
         _ctx.Services.AddSingleton(hub);
         _ctx.Services.AddSingleton(gatewayInfo);
         _ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());
-        _ctx.Services.AddSingleton(featureFlags);
         _ctx.Services.AddSingleton(restClient);
         _ctx.Services.AddSingleton(http);
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;

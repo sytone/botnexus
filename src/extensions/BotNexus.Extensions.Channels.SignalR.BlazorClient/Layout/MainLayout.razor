@@ -4,7 +4,6 @@
 @inject IAgentInteractionService Interaction
 @inject IPortalLoadService PortalLoad
 @inject GatewayInfoService GatewayInfo
-@inject FeatureFlagsService FeatureFlags
 @inject GatewayHubConnection Hub
 @inject IUpdateStatusService UpdateStatus
 @inject IJSRuntime JS
@@ -272,13 +271,6 @@
         Nav.LocationChanged += OnLocationChanged;
         PortalLoad.OnReadyChanged += HandleReadyChanged;
         UpdateStatus.StatusChanged += HandleStateChanged;
-    }
-
-    protected override async Task OnInitializedAsync()
-    {
-        // Initialize feature flags before portal load so caching and other
-        // flags are available when PortalLoadService seeds conversations.
-        await FeatureFlags.InitializeAsync();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
