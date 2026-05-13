@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
@@ -491,7 +492,10 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     // ── Helpers ────────────────────────────────────────────────────────────
 
-    private bool ResolveAgent(string? sessionId, out string? agentId, out AgentState? agent)
+    private bool ResolveAgent(
+        string? sessionId,
+        [NotNullWhen(true)] out string? agentId,
+        [NotNullWhen(true)] out AgentState? agent)
     {
         agentId = null;
         agent = null;

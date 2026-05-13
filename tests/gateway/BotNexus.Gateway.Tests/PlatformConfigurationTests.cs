@@ -52,10 +52,12 @@ public sealed class PlatformConfigurationTests
         config.Gateway?.ListenUrl.ShouldBe("http://localhost:18790");
         config.Gateway?.DefaultAgentId.ShouldBe("agent-a");
         config.Gateway?.LogLevel.ShouldBe("Debug");
-        config.Providers.ShouldContainKey("copilot");
-        config.Providers!["copilot"].ApiKey.ShouldBe("test-key");
-        config.Providers["copilot"].BaseUrl.ShouldBe("https://api.githubcopilot.com");
-        config.Providers["copilot"].DefaultModel.ShouldBe("gpt-4.1");
+        config.Providers.ShouldNotBeNull();
+        var providers = config.Providers ?? throw new InvalidOperationException("Expected providers.");
+        providers.ShouldContainKey("copilot");
+        providers["copilot"].ApiKey.ShouldBe("test-key");
+        providers["copilot"].BaseUrl.ShouldBe("https://api.githubcopilot.com");
+        providers["copilot"].DefaultModel.ShouldBe("gpt-4.1");
     }
 
     [Fact]
@@ -301,6 +303,46 @@ public sealed class PlatformConfigurationTests
         }
 
         listener.Messages.ShouldContain(message => message.Contains("Platform config warning", StringComparison.Ordinal));
+        listener.Messages.ShouldNotContain(message => message.Contains(configPath, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PlatformConfigLoader_Load_WithDatabaseConnectionString_DoesNotEmitConnectionStringInWarnings()
+    {
+        using var fixture = new PlatformConfigFixture();
+        var configPath = Path.Combine(fixture.RootPath, "future-version-with-secret.json");
+        const string secret = "Server=tcp:sql.internal,1433;Database=BotNexus;User Id=svc_analytics;Password=SuperSecret!123;Encrypt=True";
+        File.WriteAllText(
+            configPath,
+            $$"""
+              {
+                "version": 2,
+                "gateway": {
+                  "locations": {
+                    "analytics-db": {
+                      "type": "database",
+                      "connectionString": "{{secret}}"
+                    }
+                  }
+                }
+              }
+              """);
+        using var listener = new CollectingTraceListener();
+
+        Trace.Listeners.Add(listener);
+        try
+        {
+            _ = PlatformConfigLoader.Load(configPath, validateOnLoad: false);
+        }
+        finally
+        {
+            Trace.Listeners.Remove(listener);
+        }
+
+        listener.Messages.ShouldContain(message => message.Contains("Platform config warning", StringComparison.Ordinal));
+        listener.Messages.ShouldNotContain(message => message.Contains(secret, StringComparison.Ordinal));
+        listener.Messages.ShouldNotContain(message => message.Contains("Password=", StringComparison.OrdinalIgnoreCase));
+        listener.Messages.ShouldNotContain(message => message.Contains("User Id=", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -698,8 +740,10 @@ public sealed class PlatformConfigurationTests
         var reloaded = await PlatformConfigLoader.LoadAsync(fixture.ConfigPath, validateOnLoad: false);
 
         reloaded.Gateway?.LogLevel.ShouldBe("Warning");
-        reloaded.Providers.ShouldContainKey("copilot");
-        reloaded.Providers!["copilot"].ApiKey.ShouldBe("updated-key");
+        reloaded.Providers.ShouldNotBeNull();
+        var providers = reloaded.Providers ?? throw new InvalidOperationException("Expected providers.");
+        providers.ShouldContainKey("copilot");
+        providers["copilot"].ApiKey.ShouldBe("updated-key");
     }
 
     private sealed class PlatformConfigFixture : IDisposable

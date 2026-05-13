@@ -34,8 +34,10 @@ public sealed class AgentCommandsTests
         var config = await fixture.LoadConfigAsync();
 
         result.ExitCode.ShouldBe(0);
-        config.Agents.ShouldContainKey("reviewer");
-        config.Agents!["reviewer"].Model.ShouldBe("gpt-5");
+        config.Agents.ShouldNotBeNull();
+        var agents = config.Agents ?? throw new InvalidOperationException("Expected agents config.");
+        agents.ShouldContainKey("reviewer");
+        agents["reviewer"].Model.ShouldBe("gpt-5");
     }
 
     [Fact]
@@ -80,7 +82,9 @@ public sealed class AgentCommandsTests
         var config = await fixture.LoadConfigAsync();
 
         result.ExitCode.ShouldBe(0);
-        config.Agents.ShouldNotContainKey("reviewer");
+        config.Agents.ShouldNotBeNull();
+        var agents = config.Agents ?? throw new InvalidOperationException("Expected agents config.");
+        agents.ShouldNotContainKey("reviewer");
     }
 
     [Fact]

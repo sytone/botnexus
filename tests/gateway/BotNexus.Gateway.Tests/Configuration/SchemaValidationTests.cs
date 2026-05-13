@@ -154,8 +154,10 @@ public sealed class SchemaValidationTests
             var errors = PlatformConfigLoader.Validate(config);
 
             config.Gateway?.ListenUrl.ShouldBe("http://localhost:5005");
-            config.Providers.ShouldContainKey("copilot");
-            config.Providers!["copilot"].ApiKey.ShouldBe("provider-key");
+            config.Providers.ShouldNotBeNull();
+            var providers = config.Providers ?? throw new InvalidOperationException("Expected providers.");
+            providers.ShouldContainKey("copilot");
+            providers["copilot"].ApiKey.ShouldBe("provider-key");
             errors.ShouldNotBeNull();
         }
         finally
@@ -243,5 +245,4 @@ public sealed class SchemaValidationTests
     }
 
 }
-
 

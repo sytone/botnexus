@@ -107,8 +107,12 @@ public sealed class TelegramChannelAdapterTests
 
         var messageCalls = calls.Where(c => c.MethodName == "sendMessage").ToList();
         messageCalls.Count().ShouldBe(2);
-        messageCalls[0].Text.Length.ShouldBe(4096);
-        messageCalls[1].Text.Length.ShouldBe(904);
+        messageCalls[0].Text.ShouldNotBeNull();
+        messageCalls[1].Text.ShouldNotBeNull();
+        var firstText = messageCalls[0].Text ?? throw new InvalidOperationException("Expected first message text.");
+        var secondText = messageCalls[1].Text ?? throw new InvalidOperationException("Expected second message text.");
+        firstText.Length.ShouldBe(4096);
+        secondText.Length.ShouldBe(904);
     }
 
     [Fact]
@@ -316,8 +320,11 @@ public sealed class TelegramChannelAdapterTests
 
         calls.Count(c => c.MethodName == "sendMessage").ShouldBe(1);
         calls.Count(c => c.MethodName == "editMessageText").ShouldBeGreaterThan(0);
-        calls.Where(c => c.MethodName == "editMessageText").Last().Text.ShouldContain(new string('a', 101));
-        calls.Where(c => c.MethodName == "editMessageText").Last().Text.ShouldContain(new string('b', 101));
+        var lastEditCall = calls.Where(c => c.MethodName == "editMessageText").Last();
+        lastEditCall.Text.ShouldNotBeNull();
+        var lastEditText = lastEditCall.Text ?? throw new InvalidOperationException("Expected edited message text.");
+        lastEditText.ShouldContain(new string('a', 101));
+        lastEditText.ShouldContain(new string('b', 101));
     }
 
     [Fact]
@@ -532,7 +539,9 @@ public sealed class TelegramChannelAdapterTests
         await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
 
         sendCalls.Count.ShouldBe(1);
-        sendCalls[0].Text.ShouldContain("first");
+        sendCalls[0].Text.ShouldNotBeNull();
+        var firstErrorText = sendCalls[0].Text ?? throw new InvalidOperationException("Expected error message text.");
+        firstErrorText.ShouldContain("first");
     }
 
     [Fact]
@@ -1185,4 +1194,3 @@ public sealed class TelegramChannelAdapterTests
         }
     }
 }
-

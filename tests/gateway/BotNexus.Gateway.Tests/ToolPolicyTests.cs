@@ -187,8 +187,11 @@ public sealed class ToolPolicyTests
         var result = await handler.HandleAsync(evt);
 
         result.ShouldNotBeNull();
-        result!.Denied.ShouldBeTrue();
-        result.DenyReason.ShouldContain("exec");
+        var deniedResult = result ?? throw new InvalidOperationException("Expected denied result.");
+        deniedResult.Denied.ShouldBeTrue();
+        deniedResult.DenyReason.ShouldNotBeNull();
+        var denyReason = deniedResult.DenyReason ?? throw new InvalidOperationException("Expected deny reason.");
+        denyReason.ShouldContain("exec");
     }
 
     [Fact]
