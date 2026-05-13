@@ -54,7 +54,7 @@
 
             @* Nav links *@
             <nav class="sidebar-nav">
-                <a href="" class="sidebar-nav-item @NavClass("")" @onclick="OnNavClick">💬 Chat</a>
+                <a href="chat" class="sidebar-nav-item @NavClass("")" @onclick="OnNavClick">💬 Chat</a>
 
                 @* Scrollable agent/conversation section *@
                 <div class="sidebar-scroll-region">
@@ -354,7 +354,7 @@
     private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
     {
         var relative = Nav.ToBaseRelativePath(e.Location).TrimEnd('/');
-        if (relative == "")
+        if (relative == "" || relative.Equals("chat", StringComparison.OrdinalIgnoreCase))
         {
             _ = InvokeAsync(async () =>
             {
@@ -367,6 +367,15 @@
     private string NavClass(string page)
     {
         var uri = Nav.ToBaseRelativePath(Nav.Uri).TrimEnd('/');
+        if (string.IsNullOrEmpty(page))
+        {
+            return uri == "" ||
+                uri.Equals("chat", StringComparison.OrdinalIgnoreCase) ||
+                uri.StartsWith("chat/", StringComparison.OrdinalIgnoreCase)
+                ? "active"
+                : "";
+        }
+
         return string.Equals(uri, page, StringComparison.OrdinalIgnoreCase) ? "active" : "";
     }
 
@@ -395,6 +404,8 @@
                 if (agent.ActiveConversationId is not null)
                     await Interaction.SelectConversationAsync(agentId, agent.ActiveConversationId);
             }
+
+            NavigateToChat(agentId, Store.GetAgent(agentId)?.ActiveConversationId);
             Store.NotifyChanged();
 
             if (_isMobile)
@@ -455,15 +466,29 @@
     private async Task SelectConversationAsync(string agentId, string conversationId)
     {
         await Interaction.SelectConversationAsync(agentId, conversationId);
+        NavigateToChat(agentId, conversationId);
         if (_isMobile)
             _sidebarOpen = false;
     }
 
     private async Task CreateConversationAsync(string agentId)
     {
-        await Interaction.CreateConversationAsync(agentId);
+        var conversationId = await Interaction.CreateConversationAsync(agentId);
+        NavigateToChat(agentId, conversationId);
         if (_isMobile)
             _sidebarOpen = false;
+    }
+
+    private void NavigateToChat(string agentId, string? conversationId = null)
+    {
+        var encodedAgentId = Uri.EscapeDataString(agentId);
+        var target = string.IsNullOrWhiteSpace(conversationId)
+            ? $"chat/{encodedAgentId}"
+            : $"chat/{encodedAgentId}/{Uri.EscapeDataString(conversationId)}";
+
+        var current = Nav.ToBaseRelativePath(Nav.Uri).TrimEnd('/');
+        if (!string.Equals(current, target, StringComparison.OrdinalIgnoreCase))
+            Nav.NavigateTo(target);
     }
 
     private async Task ArchiveConversationAsync(string agentId, string conversationId, string title, bool isVirtualSession)

@@ -23,7 +23,7 @@ public sealed class PlatformConfigAgentWriterTests : IDisposable
     [Fact]
     public async Task SaveAsync_WritesAgentIntoConfigAndCreatesWorkspace()
     {
-        var writer = new PlatformConfigAgentWriter(_configPath, _home, _fileSystem);
+        var writer = new PlatformConfigAgentWriter(new PlatformConfigWriter(_configPath, _fileSystem), _home);
         var descriptor = CreateDescriptor("test-agent") with
         {
             AllowedModelIds = ["claude-sonnet-4.5"],
@@ -67,7 +67,7 @@ public sealed class PlatformConfigAgentWriterTests : IDisposable
             }
             """);
 
-        var writer = new PlatformConfigAgentWriter(_configPath, _home, _fileSystem);
+        var writer = new PlatformConfigAgentWriter(new PlatformConfigWriter(_configPath, _fileSystem), _home);
         await writer.SaveAsync(CreateDescriptor("test-agent") with
         {
             Description = null,
@@ -103,7 +103,7 @@ public sealed class PlatformConfigAgentWriterTests : IDisposable
             }
             """);
 
-        var writer = new PlatformConfigAgentWriter(_configPath, _home, _fileSystem);
+        var writer = new PlatformConfigAgentWriter(new PlatformConfigWriter(_configPath, _fileSystem), _home);
         await writer.DeleteAsync("test-agent");
 
         var root = await ReadConfigAsync();

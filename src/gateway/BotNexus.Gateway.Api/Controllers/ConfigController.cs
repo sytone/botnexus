@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Api.Models;
 using BotNexus.Gateway.Configuration;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -103,32 +104,35 @@ public sealed class ConfigController : ControllerBase
     [HttpGet("agents/{agentId}/effective")]
     public async Task<ActionResult<EffectiveAgentConfigResponse>> GetEffectiveAgentConfig(
         string agentId,
+        [FromServices] IOptionsMonitor<PlatformConfig> configOptions,
         [FromServices] IConfiguration configuration,
         CancellationToken ct)
     {
-        var configuredPath = configuration["BotNexus:ConfigPath"];
-        var configPath = string.IsNullOrWhiteSpace(configuredPath)
-            ? PlatformConfigLoader.DefaultConfigPath
-            : configuredPath;
-        if (!System.IO.File.Exists(configPath))
-            return NotFound($"Config file not found at '{configPath}'.");
-
-        PlatformConfig config;
-        try
-        {
-            config = await PlatformConfigLoader.LoadAsync(configPath, ct, validateOnLoad: false);
-        }
-        catch
-        {
-            return StatusCode(500, "Failed to load platform config.");
-        }
+        var config = configOptions.CurrentValue;
 
         // Normalise lookup — defaults is a reserved key, never a real agent
         if (string.Equals(agentId, "defaults", StringComparison.OrdinalIgnoreCase))
             return NotFound($"Agent '{agentId}' not found.");
 
         if (config.Agents is null || !config.Agents.TryGetValue(agentId, out var agentConfig))
-            return NotFound($"Agent '{agentId}' not found.");
+        {
+            var fallbackPath = ResolveConfiguredPath(configuration);
+            var fallbackConfig = await new PlatformConfigWriter(
+                fallbackPath,
+                new System.IO.Abstractions.FileSystem()).ReadPlatformConfigAsync(ct);
+            if (System.IO.File.Exists(fallbackPath))
+            {
+                var fallbackConfiguration = new ConfigurationBuilder()
+                    .AddJsonFile(fallbackPath, optional: false, reloadOnChange: false)
+                    .Build();
+                var postConfigure = new PlatformConfigPostConfigure(fallbackConfiguration, fallbackPath);
+                postConfigure.PostConfigure(Options.DefaultName, fallbackConfig);
+            }
+            if (fallbackConfig.Agents is null || !fallbackConfig.Agents.TryGetValue(agentId, out agentConfig))
+                return NotFound($"Agent '{agentId}' not found.");
+
+            config = fallbackConfig;
+        }
 
         var defaults = config.AgentDefaults;
         var rawElementNullable = config.AgentRawElements is not null && config.AgentRawElements.TryGetValue(agentId, out var re)
@@ -245,14 +249,45 @@ public sealed class ConfigController : ControllerBase
     /// Validates the platform configuration file and returns any errors.
     /// </summary>
     /// <param name="path">Optional explicit path to a config file. Defaults to <c>~/.botnexus/config.json</c>.</param>
+    /// <param name="configOptions">Current runtime configuration bound through the host options pipeline.</param>
+    /// <param name="configuration">Host configuration used to resolve the active config path.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The config validation result.</returns>
     [HttpGet("validate")]
-    public async Task<ActionResult<ConfigValidationResponse>> Validate([FromQuery] string? path, CancellationToken cancellationToken)
+    public async Task<ActionResult<ConfigValidationResponse>> Validate(
+        [FromQuery] string? path,
+        [FromServices] IOptionsMonitor<PlatformConfig> configOptions,
+        [FromServices] IConfiguration configuration,
+        CancellationToken cancellationToken)
     {
         var resolvedPath = string.IsNullOrWhiteSpace(path)
-            ? PlatformConfigLoader.DefaultConfigPath
+            ? ResolveConfiguredPath(configuration)
             : Path.GetFullPath(path);
+
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            if (!System.IO.File.Exists(resolvedPath))
+            {
+                return Ok(new ConfigValidationResponse(
+                    IsValid: false,
+                    ConfigPath: resolvedPath,
+                    Warnings: [],
+                    Errors:
+                    [
+                        $"Config file not found at '{resolvedPath}'.",
+                        "Create ~/.botnexus/config.json (or pass ?path=...) and include gateway/providers/channels/agents sections."
+                    ]));
+            }
+
+            var current = configOptions.CurrentValue;
+            var errors = PlatformConfigLoader.Validate(current)
+                .Where(error => !string.IsNullOrWhiteSpace(error))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(error => error, StringComparer.Ordinal)
+                .ToArray();
+            var warnings = PlatformConfigLoader.ValidateWarnings(current);
+            return Ok(new ConfigValidationResponse(errors.Length == 0, resolvedPath, warnings, errors));
+        }
 
         if (!System.IO.File.Exists(resolvedPath))
         {
@@ -269,19 +304,43 @@ public sealed class ConfigController : ControllerBase
 
         try
         {
-            var config = await PlatformConfigLoader.LoadAsync(resolvedPath, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            var config = LoadConfigFromPath(resolvedPath);
             var warnings = PlatformConfigLoader.ValidateWarnings(config);
-            return Ok(new ConfigValidationResponse(true, resolvedPath, warnings, []));
-        }
-        catch (OptionsValidationException ex)
-        {
-            var errors = ex.Failures
+            var errors = PlatformConfigLoader.Validate(config)
                 .Where(error => !string.IsNullOrWhiteSpace(error))
                 .Distinct(StringComparer.Ordinal)
                 .OrderBy(error => error, StringComparer.Ordinal)
                 .ToArray();
-            return Ok(new ConfigValidationResponse(false, resolvedPath, [], errors));
+            return Ok(new ConfigValidationResponse(errors.Length == 0, resolvedPath, warnings, errors));
         }
+        catch (Exception ex) when (ex is JsonException or InvalidDataException or FormatException)
+        {
+            var parseMessage = ex.GetBaseException() is JsonException jsonException
+                ? jsonException.Message
+                : ex.Message;
+            return Ok(new ConfigValidationResponse(false, resolvedPath, [], [$"Invalid JSON in config file: {parseMessage}"]));
+        }
+    }
+
+    private static string ResolveConfiguredPath(IConfiguration configuration)
+    {
+        var configuredPath = configuration["BotNexus:ConfigPath"];
+        return string.IsNullOrWhiteSpace(configuredPath)
+            ? PlatformConfigLoader.DefaultConfigPath
+            : Path.GetFullPath(configuredPath);
+    }
+
+    private static PlatformConfig LoadConfigFromPath(string path)
+    {
+        var fileConfiguration = new ConfigurationBuilder()
+            .AddJsonFile(path, optional: false, reloadOnChange: false)
+            .Build();
+
+        var config = new PlatformConfig();
+        fileConfiguration.Bind(config);
+        new PlatformConfigPostConfigure(fileConfiguration, path).PostConfigure(Options.DefaultName, config);
+        return config;
     }
 
     private static void RedactSecrets(JsonObject config)

@@ -121,7 +121,16 @@ internal sealed class InitCommand
     {
         PlatformConfigLoader.EnsureConfigDirectory(Path.GetDirectoryName(configPath) ?? PlatformConfigLoader.DefaultHomePath);
         var json = SerializeWithAgentDefaults(config);
-        await File.WriteAllTextAsync(configPath, json, cancellationToken);
+        var fileSystem = new System.IO.Abstractions.FileSystem();
+        var backupsDir = Path.Combine(Path.GetDirectoryName(configPath) ?? BotNexusHome.ResolveHomePath(), "backups");
+        var writer = new PlatformConfigWriter(configPath, fileSystem, new ConfigBackupService(backupsDir, fileSystem));
+        await writer.MutateAsync(root =>
+        {
+            var replacement = System.Text.Json.Nodes.JsonNode.Parse(json)?.AsObject() ?? new System.Text.Json.Nodes.JsonObject();
+            root.Clear();
+            foreach (var kvp in replacement)
+                root[kvp.Key] = kvp.Value?.DeepClone();
+        }, "before-init-write", cancellationToken);
     }
 
     /// <summary>

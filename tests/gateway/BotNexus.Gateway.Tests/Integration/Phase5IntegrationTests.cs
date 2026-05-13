@@ -23,6 +23,7 @@ using BotNexus.Gateway.Sessions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -115,13 +116,21 @@ public sealed class Phase5IntegrationTests
                 }
                 """);
 
-            var validResult = await controller.Validate(validPath, CancellationToken.None);
+            var validResult = await controller.Validate(
+                validPath,
+                new TestOptionsMonitor<PlatformConfig>(new PlatformConfig()),
+                new ConfigurationBuilder().Build(),
+                CancellationToken.None);
             var validPayload = validResult.Result.ShouldBeOfType<OkObjectResult>().Value
                 .ShouldBeOfType<ConfigValidationResponse>();
             validPayload.IsValid.ShouldBeTrue();
             validPayload.Errors.ShouldBeEmpty();
 
-            var missingResult = await controller.Validate(missingPath, CancellationToken.None);
+            var missingResult = await controller.Validate(
+                missingPath,
+                new TestOptionsMonitor<PlatformConfig>(new PlatformConfig()),
+                new ConfigurationBuilder().Build(),
+                CancellationToken.None);
             var missingPayload = missingResult.Result.ShouldBeOfType<OkObjectResult>().Value
                 .ShouldBeOfType<ConfigValidationResponse>();
             missingPayload.IsValid.ShouldBeFalse();
