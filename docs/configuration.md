@@ -1206,6 +1206,8 @@ Templates can be defined in two ways:
 
 The CLI merges both sources when listing or rendering templates.
 
+**Sample Templates:** See the `prompts/` folder in the repository for example prompt files (`sample-*.prompt.json`). These demonstrate simple and advanced template patterns — copy and modify them to create your own templates in `~/.botnexus/prompts/`.
+
 ### Configuration Structure
 
 ```json

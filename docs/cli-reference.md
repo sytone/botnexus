@@ -832,6 +832,8 @@ Example output:
 
 Manage prompt templates — define reusable, parameterized prompts in configuration and execute them through the CLI or cron scheduler.
 
+**Getting Started:** See the `prompts/` folder in the repository for example templates (`sample-*.prompt.json`). Copy these to `~/.botnexus/prompts/` and customize them for your workflows.
+
 ### Usage
 
 ```powershell
