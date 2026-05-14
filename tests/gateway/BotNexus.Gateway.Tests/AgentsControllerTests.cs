@@ -245,6 +245,26 @@ public sealed class AgentsControllerTests
     }
 
     [Fact]
+    public async Task Update_WhenBroadcastFails_ReturnsOkAndPersistsUpdate()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor("agent-a"));
+        var writer = new Mock<IAgentConfigurationWriter>();
+        var (hubContext, hubClient) = CreateHubContext();
+        hubClient.Setup(client => client.AgentsChanged(It.IsAny<AgentsChangedPayload>()))
+            .ThrowsAsync(new InvalidOperationException("signalr failed"));
+        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), writer.Object, hubContext);
+
+        var result = await controller.Update("agent-a", CreateDescriptor("agent-a") with { DisplayName = "updated" }, CancellationToken.None);
+
+        result.Result.ShouldBeOfType<OkObjectResult>();
+        writer.Verify(w => w.SaveAsync(
+            It.Is<AgentDescriptor>(d => d.AgentId == "agent-a" && d.DisplayName == "updated"),
+            It.IsAny<CancellationToken>()), Times.Once);
+        registry.Get(BotNexus.Domain.Primitives.AgentId.From("agent-a"))?.DisplayName.ShouldBe("updated");
+    }
+
+    [Fact]
     public async Task Update_WhenNotFound_DoesNotBroadcastAgentsChanged()
     {
         var (hubContext, hubClient) = CreateHubContext();
@@ -272,6 +292,24 @@ public sealed class AgentsControllerTests
         hubClient.Verify(client => client.AgentsChanged(
             It.Is<AgentsChangedPayload>(payload => payload.ChangeType == "removed" && payload.AgentId == "agent-a")),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task Unregister_WhenBroadcastFails_ReturnsNoContentAndDeletesConfiguration()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor("agent-a"));
+        var writer = new Mock<IAgentConfigurationWriter>();
+        var (hubContext, hubClient) = CreateHubContext();
+        hubClient.Setup(client => client.AgentsChanged(It.IsAny<AgentsChangedPayload>()))
+            .ThrowsAsync(new InvalidOperationException("signalr failed"));
+        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), writer.Object, hubContext);
+
+        var result = await controller.Unregister("agent-a", CancellationToken.None);
+
+        result.ShouldBeOfType<NoContentResult>();
+        writer.Verify(w => w.DeleteAsync("agent-a", It.IsAny<CancellationToken>()), Times.Once);
+        registry.Get(BotNexus.Domain.Primitives.AgentId.From("agent-a")).ShouldBeNull();
     }
 
     [Fact]

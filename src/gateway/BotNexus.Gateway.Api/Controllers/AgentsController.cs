@@ -6,6 +6,8 @@ using BotNexus.Domain.Primitives;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BotNexus.Gateway.Api.Controllers;
 
@@ -23,6 +25,7 @@ public sealed class AgentsController : ControllerBase
     private readonly IAgentSupervisor _supervisor;
     private readonly IAgentConfigurationWriter _configurationWriter;
     private readonly IHubContext<GatewayHub, IGatewayHubClient>? _hubContext;
+    private readonly ILogger<AgentsController> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentsController"/> class.
@@ -31,16 +34,19 @@ public sealed class AgentsController : ControllerBase
     /// <param name="supervisor">The agent supervisor for managing agent instances and their lifecycle.</param>
     /// <param name="configurationWriter">Persists mutable agent configuration changes.</param>
     /// <param name="hubContext">Broadcasts agent lifecycle notifications to connected SignalR clients.</param>
+    /// <param name="logger">Logs best-effort SignalR notification failures.</param>
     public AgentsController(
         IAgentRegistry registry,
         IAgentSupervisor supervisor,
         IAgentConfigurationWriter configurationWriter,
-        IHubContext<GatewayHub, IGatewayHubClient>? hubContext = null)
+        IHubContext<GatewayHub, IGatewayHubClient>? hubContext = null,
+        ILogger<AgentsController>? logger = null)
     {
         _registry = registry;
         _supervisor = supervisor;
         _configurationWriter = configurationWriter;
         _hubContext = hubContext;
+        _logger = logger ?? NullLogger<AgentsController>.Instance;
     }
 
     /// <summary>Lists all registered agents.</summary>
@@ -78,8 +84,7 @@ public sealed class AgentsController : ControllerBase
         {
             _registry.Register(descriptor);
             await _configurationWriter.SaveAsync(descriptor, cancellationToken);
-            if (_hubContext is not null)
-                await _hubContext.Clients.All.AgentsChanged(new AgentsChangedPayload("added", descriptor.AgentId.Value));
+            await NotifyAgentsChangedBestEffortAsync(new AgentsChangedPayload("added", descriptor.AgentId.Value));
             return CreatedAtAction(nameof(Get), new { agentId = descriptor.AgentId }, descriptor);
         }
         catch (InvalidOperationException ex)
@@ -123,8 +128,7 @@ public sealed class AgentsController : ControllerBase
             return NotFound();
 
         await _configurationWriter.SaveAsync(updatedDescriptor, cancellationToken);
-        if (_hubContext is not null)
-            await _hubContext.Clients.All.AgentsChanged(new AgentsChangedPayload("updated", updatedDescriptor.AgentId.Value));
+        await NotifyAgentsChangedBestEffortAsync(new AgentsChangedPayload("updated", updatedDescriptor.AgentId.Value));
         return Ok(updatedDescriptor);
     }
 
@@ -144,8 +148,8 @@ public sealed class AgentsController : ControllerBase
         _registry.Unregister(typedAgentId);
         await _configurationWriter.DeleteAsync(agentId, cancellationToken);
 
-        if (existingDescriptor is not null && _hubContext is not null)
-            await _hubContext.Clients.All.AgentsChanged(new AgentsChangedPayload("removed", agentId));
+        if (existingDescriptor is not null)
+            await NotifyAgentsChangedBestEffortAsync(new AgentsChangedPayload("removed", agentId));
 
         return NoContent();
     }
@@ -311,5 +315,24 @@ public sealed class AgentsController : ControllerBase
     {
         var supervisorImpl = _supervisor as BotNexus.Gateway.Agents.DefaultAgentSupervisor;
         return supervisorImpl?.GetHandle(AgentId.From(agentId), SessionId.From(sessionId));
+    }
+
+    private async Task NotifyAgentsChangedBestEffortAsync(AgentsChangedPayload payload)
+    {
+        if (_hubContext is null)
+            return;
+
+        try
+        {
+            await _hubContext.Clients.All.AgentsChanged(payload);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to broadcast agents change notification ({ChangeType}) for agent {AgentId}.",
+                payload.ChangeType,
+                payload.AgentId);
+        }
     }
 }
