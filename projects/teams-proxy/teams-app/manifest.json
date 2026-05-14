@@ -1,0 +1,42 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "1.0.0",
+  "id": "c34c9079-4f34-47bc-889c-c157fcb854dd",
+  "developer": {
+    "name": "BotNexus",
+    "websiteUrl": "https://teamsproxy-app.azurewebsites.net",
+    "privacyUrl": "https://teamsproxy-app.azurewebsites.net",
+    "termsOfUseUrl": "https://teamsproxy-app.azurewebsites.net"
+  },
+  "name": {
+    "short": "BotNexus",
+    "full": "BotNexus Teams Proxy"
+  },
+  "description": {
+    "short": "Queue-backed BotNexus agent bridge.",
+    "full": "Routes Teams bot messages through Azure Service Bus so BotNexus agents can process and respond asynchronously."
+  },
+  "icons": {
+    "outline": "outline.png",
+    "color": "color.png"
+  },
+  "accentColor": "#6264A7",
+  "bots": [
+    {
+      "botId": "2f471c89-a590-4ee2-a045-0ffb0065c5a3",
+      "scopes": [
+        "personal"
+      ],
+      "supportsFiles": false,
+      "isNotificationOnly": false
+    }
+  ],
+  "permissions": [
+    "identity",
+    "messageTeamMembers"
+  ],
+  "validDomains": [
+    "teamsproxy-app.azurewebsites.net"
+  ]
+}
