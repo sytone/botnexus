@@ -44,16 +44,21 @@ The Azure Service Bus channel is deployed via the BotNexus CLI. Configure it by 
 }
 ```
 
-> **Tip — keep secrets out of config.** Use an environment variable or Azure Key Vault reference instead of embedding the connection string directly:
-> ```json
-> {
->   "channels": {
->     "serviceBusChannel": {
->       "connectionString": "${SERVICE_BUS_CONNECTION_STRING}"
->     }
->   }
-> }
-> ```
+### Secure configuration: Environment variables
+
+To keep secrets out of `config.json`, set the `BOTNEXUS_CHANNELS__SERVICEBUSCHANNEL__CONNECTIONSTRING` environment variable instead. BotNexus will use this value and override any connection string in your config file.
+
+On Linux / macOS:
+```bash
+export BOTNEXUS_CHANNELS__SERVICEBUSCHANNEL__CONNECTIONSTRING="Endpoint=sb://..."
+```
+
+On Windows (PowerShell):
+```powershell
+$env:BOTNEXUS_CHANNELS__SERVICEBUSCHANNEL__CONNECTIONSTRING = "Endpoint=sb://..."
+```
+
+Alternatively, for Azure deployments, use **managed identity** with `DefaultAzureCredential` (see [Managed identity / Azure Key Vault](#managed-identity--azure-key-vault) below).
 
 ---
 
