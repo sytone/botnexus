@@ -28,3 +28,7 @@
 - Phase 2 conversation dispatch: dedicated layer owns inbound resolution/session binding, returns DispatchResult; Hub/Host become transport relays.
 - `IConversationDispatcher` + `DefaultConversationDispatcher` registered in DI as the handoff seam for transport rewiring.
 - CLI cross-platform: TCP port pre-checks, SkipBuild/SkipTests flags for reliability.
+
+- Prompt template CLI commands should share the cron resolver (`CronOptionsPromptTemplateResolver`) so config-defined and file-backed templates resolve consistently.
+- Prompt template file discovery order is shared home (`~/.botnexus/prompts`), agent home (`~/.botnexus/agents/{agentId}/prompts`), then workspace prompts when available.
+- Key implementation paths for issue #29: `src\\gateway\\BotNexus.Cli\\Commands\\PromptCommands.cs`, `src\\gateway\\BotNexus.Cron\\Prompts\\CronOptionsPromptTemplateResolver.cs`, `src\\gateway\\BotNexus.Gateway\\Configuration\\PlatformConfig.cs`.
