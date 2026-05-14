@@ -29,3 +29,6 @@
 - Command documentation: distinguish client-side vs backend execution, document collision handling, sub-command parsing.
 - DDD documentation tracks phase/wave breakdown for traceability.
 - Design question resolutions must be recorded with full decision context and implications for downstream waves.
+- Prompt template documentation (PR #242): Storage locations are dual (config.json primary, ~/.botnexus/prompts/ file-based); parameter resolution uses {{name}} placeholders with 3-tier priority (caller → param defaults → simple defaults); required/optional status determined by presence of parameter metadata or placeholder in template body. Document both simple configs (for common use) and advanced parameter structures (for required validation).
+- CLI subcommand documentation: Include options table, arguments table, multiple realistic examples showing common workflows, edge cases (e.g., required params missing), and integration points (e.g., cron jobs, custom gateways).
+- Configuration guide sections benefit from JSON schema examples + human-friendly descriptions + workflow examples (e.g., file-based → config-based → CLI usage).
