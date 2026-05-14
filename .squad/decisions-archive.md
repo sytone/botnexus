@@ -29,6 +29,70 @@
 - Removed `System.Drawing.Common` NuGet package dependency
 - Removed `MaxImageDimension` constant
 
+---
+
+### 2025-07-25 — Leela: Agent Editing Hot-Reload
+
+**Author:** Leela (Lead/Architect)  
+**Date:** 2025-07-25  
+**Status:** proposed  
+**Scope:** Gateway agent lifecycle, config reload, UI editing
+
+**Context:** When an agent is added or edited (via config file change, REST API, or Blazor UI), the gateway has infrastructure to detect changes and update the in-memory registry. However, newly registered or updated descriptors take effect for *future* sessions only — active sessions retain stale snapshots.
+
+**Decision:** Implement hot-reload via descriptor-change notifications and per-handle field adoption:
+
+1. **Source-of-Truth Rules:**
+   - Config file is king. Registry reflects file state. Active sessions *may* adopt updated descriptors on next turn (opt-in per field).
+
+2. **Hot-Reload Architecture:**
+   - `FileSystemWatcher` / `IOptionsMonitor` → `AgentConfigurationHostedService` → `IAgentRegistry` fires `AgentDescriptorChanged` event → `IAgentSupervisor` notifies active handles → each `IAgentHandle` applies safe field updates on next turn
+
+3. **Safe vs Unsafe Field Updates:**
+   - ✅ **Safe:** `ModelId`, `AllowedModelIds`, `DisplayName`, `Description`, `MaxConcurrentSessions`
+   - ⚠️ **Opt-in:** `SystemPrompt`, `ToolIds`, `SubAgentIds`
+   - ❌ **No:** `ApiProvider`, `IsolationStrategy`
+
+4. **Implementation Boundaries:**
+   - **Gateway:** Add `IAgentRegistry.DescriptorChanged` event and `IAgentHandle.ApplyDescriptorUpdate` method
+   - **UI:** Enhance `AgentConfigPanel` for inline editing; show "Applied to N active sessions" feedback
+   - **Config:** Ensure atomic writes trigger `IOptionsMonitor` change notification
+
+**Tests Required:** 7 new test classes covering event dispatch, propagation, safe field adoption, system prompt reload, API trigger, concurrent updates, and UI form behavior.
+
+---
+
+### 2025-07-24 — Leela: Unify Configuration to .NET Provider/Options Pattern
+
+**Author:** Leela (Lead/Architect)  
+**Date:** 2025-07-24  
+**Status:** proposed  
+**Scope:** Configuration pipeline, hot-reload consistency
+
+**Context:** BotNexus has two parallel configuration pipelines: `IConfiguration` + `IOptions/IOptionsMonitor` (standard .NET) and `PlatformConfigLoader` (custom static loader). Config writes similarly use both `PlatformConfigWriter` and raw `File.WriteAllText` calls. This duplication creates inconsistency and bypasses the reload pipeline.
+
+**Key Gaps Identified:**
+1. CLI commands bypass IOptions entirely via `PlatformConfigLoader.LoadAsync()`
+2. API controllers re-parse `config.json` from disk via `PlatformConfigLoader` instead of reading from `IOptionsMonitor`
+3. `CompactionOptions` and `CronOptions` use `StaticOptionsMonitor` (no hot-reload)
+4. CLI writes use raw `File.WriteAllTextAsync`, no backup or locking
+
+**Migration Rules:**
+1. Remove `PlatformConfigLoader.LoadAsync` calls from API controllers → inject `IOptionsMonitor<PlatformConfig>`
+2. Migrate `CompactionOptions` and `CronOptions` to section binding
+3. Migrate CLI writes to `PlatformConfigWriter` with backup support
+4. Keep CLI offline reads via `PlatformConfigLoader` (acceptable)
+5. Don't migrate `auth.json` (separate credentials file, containment appropriate)
+
+**Success Criteria:**
+- [ ] Zero calls to `PlatformConfigLoader.LoadAsync` in API request paths
+- [ ] Zero `StaticOptionsMonitor` in production DI registrations
+- [ ] All CLI config writes go through `PlatformConfigWriter`
+- [ ] `CompactionOptions` and `CronOptions` hot-reload on config.json changes
+- [ ] New integration tests for hot-reload behavior
+
+---
+
 **Validation:**
 - Build successful: `dotnet build BotNexus.slnx` — no CA1416 warnings
 - No behavior regression: Images are still encoded and passed to agents

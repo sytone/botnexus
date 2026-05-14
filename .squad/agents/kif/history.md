@@ -50,3 +50,21 @@
 
 **Commits:** 5e6deb76, 0380cce7 (pushed to PR #242)
 
+## Session: Prompt Template Sample Files (2026-05-15)
+
+**Outcome:** Sample prompt files added to repo for user reference; documentation updated to guide discovery.
+
+**Delivered:**
+- `prompts/sample-simple-greeting.prompt.json`: Minimal template with single parameter
+- `prompts/sample-advanced-status-report.prompt.json`: Advanced template with parameter metadata, defaults, required flags
+- `docs/configuration.md`: Added reference to sample templates in Storage Locations section
+- `docs/cli-reference.md`: Added "Getting Started" note pointing to sample files
+
+**Key Decisions:**
+- Sample files live at repo root `/prompts/` to mirror `~/.botnexus/prompts/` user directory structure
+- Naming convention `sample-*.prompt.json` clearly identifies files as templates users can copy and customize
+- Simple example shows minimal viable template (name, prompt, description); advanced example showcases full feature set (parameters metadata with descriptions, required flags, defaults)
+- Documentation links users to samples from both CLI and configuration guides for discoverability
+
+**Commits:** c5063654 (pushed to PR #242)
+
