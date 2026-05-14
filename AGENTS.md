@@ -1,4 +1,4 @@
-# Agent Guidelines for BotNexus
+﻿# Agent Guidelines for BotNexus
 
 ## Platform / Runtime
 
@@ -23,17 +23,22 @@ ai-policy: minimal    # minimal | collaborative | open
 
 **If a doc has `owner: human` and `ai-policy: minimal`, do not rewrite or remove it during cleanup tasks.** This convention exists because a previous cleanup accidentally removed a human-authored document.
 
-## Planning Docs
+## Planning
 
-Design specs and bug specs live in `docs/planning/`. Each item is a folder containing `design-spec.md` and optionally `research.md`.
+All planning items (features, bugs, improvements, refactors) are tracked as **GitHub Issues** on `sytone/botnexus`.
 
-**Archival convention:**
-- Active items: `docs/planning/<item-name>/`
-- Archived items: `docs/planning/archived/<item-name>/`
-- When a topic is done: update `status: done` in the spec's YAML frontmatter, then move the whole folder to `archived/` as-is -- no renaming
-- The canonical archive folder is `archived/` (not `archive/`)
-- **Master index:** `docs/planning/INDEX.md` lists all specs (active + archived) with status and summary
-- **Lifecycle skill:** See `.github/skills/planning-management/SKILL.md` for the full spec template, lifecycle, and workflows
+**Working with issues:**
+- `gh issue list` — browse open issues
+- `gh issue view <number>` — read a specific issue
+- `gh issue create` — file a new issue
+- `gh issue edit <number>` — update an existing issue
+
+**Issue title prefixes** (use one to categorise):
+`[Portal]`, `[Gateway]`, `[Agents]`, `[CLI]`, `[Docs]`, `[Skills]`, `[Memory]`, `[Channels]`, `[Platform]`, `[Config]`
+
+**Rules:**
+- Do **not** create new `docs/planning/` folders or spec files — specs live in issues now
+- When work is complete, close the issue with a comment referencing the PR or commit
 
 ## Test Enforcement
 
