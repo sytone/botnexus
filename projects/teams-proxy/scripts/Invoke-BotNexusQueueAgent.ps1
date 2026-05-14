@@ -678,6 +678,16 @@ function Invoke-CopilotProcess {
 
     try {
         [void]$process.Start()
+
+        # Begin draining both pipes asynchronously before blocking on WaitForExit.
+        # Using StreamReader.ReadToEndAsync() avoids a deadlock that occurs when the child
+        # process writes enough output to fill the OS pipe buffer (~4 KB on Windows): the
+        # process blocks trying to write, WaitForExit never returns, and ReadToEnd is never
+        # called — a classic pipe-deadlock. ReadToEndAsync returns a native Task<string> and
+        # requires no PowerShell runspace, making it safe on any thread pool thread.
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
             try {
                 $process.Kill($true)
@@ -691,11 +701,12 @@ function Invoke-CopilotProcess {
             }
         }
 
-        $stdout = $process.StandardOutput.ReadToEnd()
-        $stderr = $process.StandardError.ReadToEnd()
+        # Drain any remaining buffered output after the process exits.
+        [System.Threading.Tasks.Task]::WaitAll($stdoutTask, $stderrTask)
+
         return [PSCustomObject]@{
             ExitCode = $process.ExitCode
-            Output = @($stdout, $stderr)
+            Output = @($stdoutTask.Result, $stderrTask.Result)
         }
     } finally {
         $process.Dispose()
