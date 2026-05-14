@@ -3,9 +3,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Api.Controllers;
 using BotNexus.Gateway.Configuration;
-using BotNexus.Extensions.Channels.SignalR;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -111,12 +109,12 @@ public sealed class AgentsControllerTests
     {
         var writer = new Mock<IAgentConfigurationWriter>();
         var descriptor = CreateDescriptor("agent-a");
-        var (hubContext, _) = CreateHubContext();
+        var notifier = CreateNotifier();
         var controller = new AgentsController(
             new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance),
             Mock.Of<IAgentSupervisor>(),
             writer.Object,
-            hubContext);
+            [notifier.Object]);
 
         _ = await controller.Register(descriptor, CancellationToken.None);
 
@@ -131,8 +129,8 @@ public sealed class AgentsControllerTests
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
         registry.Register(CreateDescriptor("agent-a"));
         var writer = new Mock<IAgentConfigurationWriter>();
-        var (hubContext, _) = CreateHubContext();
-        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), writer.Object, hubContext);
+        var notifier = CreateNotifier();
+        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), writer.Object, [notifier.Object]);
 
         var result = await controller.Update("agent-a", CreateDescriptor("agent-a") with { DisplayName = "updated" }, CancellationToken.None);
 
@@ -148,8 +146,8 @@ public sealed class AgentsControllerTests
     {
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
         registry.Register(CreateDescriptor("agent-a"));
-        var (hubContext, _) = CreateHubContext();
-        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), new NoOpAgentConfigurationWriter(), hubContext);
+        var notifier = CreateNotifier();
+        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), new NoOpAgentConfigurationWriter(), [notifier.Object]);
         var updatedDescriptor = CreateDescriptor("agent-a") with
         {
             DisplayName = "updated-display",
@@ -180,12 +178,12 @@ public sealed class AgentsControllerTests
     public async Task Unregister_DeletesPersistedConfiguration()
     {
         var writer = new Mock<IAgentConfigurationWriter>();
-        var (hubContext, _) = CreateHubContext();
+        var notifier = CreateNotifier();
         var controller = new AgentsController(
             new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance),
             Mock.Of<IAgentSupervisor>(),
             writer.Object,
-            hubContext);
+            [notifier.Object]);
 
         _ = await controller.Unregister("agent-a", CancellationToken.None);
 
@@ -196,17 +194,19 @@ public sealed class AgentsControllerTests
     public async Task Register_WhenSuccessful_BroadcastsAgentsChangedAdded()
     {
         var descriptor = CreateDescriptor("agent-a");
-        var (hubContext, hubClient) = CreateHubContext();
+        var notifier = CreateNotifier();
         var controller = new AgentsController(
             new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance),
             Mock.Of<IAgentSupervisor>(),
             new NoOpAgentConfigurationWriter(),
-            hubContext);
+            [notifier.Object]);
 
         _ = await controller.Register(descriptor, CancellationToken.None);
 
-        hubClient.Verify(client => client.AgentsChanged(
-            It.Is<AgentsChangedPayload>(payload => payload.ChangeType == "added" && payload.AgentId == "agent-a")),
+        notifier.Verify(client => client.NotifyAgentsChangedAsync(
+            "added",
+            "agent-a",
+            It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -214,18 +214,20 @@ public sealed class AgentsControllerTests
     public async Task Register_WhenDuplicate_DoesNotBroadcastAgentsChanged()
     {
         var descriptor = CreateDescriptor("agent-a");
-        var (hubContext, hubClient) = CreateHubContext();
+        var notifier = CreateNotifier();
         var controller = new AgentsController(
             new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance),
             Mock.Of<IAgentSupervisor>(),
             new NoOpAgentConfigurationWriter(),
-            hubContext);
+            [notifier.Object]);
 
         _ = await controller.Register(descriptor, CancellationToken.None);
         _ = await controller.Register(descriptor, CancellationToken.None);
 
-        hubClient.Verify(client => client.AgentsChanged(
-            It.Is<AgentsChangedPayload>(payload => payload.ChangeType == "added" && payload.AgentId == "agent-a")),
+        notifier.Verify(client => client.NotifyAgentsChangedAsync(
+            "added",
+            "agent-a",
+            It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -234,13 +236,15 @@ public sealed class AgentsControllerTests
     {
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
         registry.Register(CreateDescriptor("agent-a"));
-        var (hubContext, hubClient) = CreateHubContext();
-        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), new NoOpAgentConfigurationWriter(), hubContext);
+        var notifier = CreateNotifier();
+        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), new NoOpAgentConfigurationWriter(), [notifier.Object]);
 
         _ = await controller.Update("agent-a", CreateDescriptor("agent-a") with { DisplayName = "updated" }, CancellationToken.None);
 
-        hubClient.Verify(client => client.AgentsChanged(
-            It.Is<AgentsChangedPayload>(payload => payload.ChangeType == "updated" && payload.AgentId == "agent-a")),
+        notifier.Verify(client => client.NotifyAgentsChangedAsync(
+            "updated",
+            "agent-a",
+            It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -250,10 +254,10 @@ public sealed class AgentsControllerTests
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
         registry.Register(CreateDescriptor("agent-a"));
         var writer = new Mock<IAgentConfigurationWriter>();
-        var (hubContext, hubClient) = CreateHubContext();
-        hubClient.Setup(client => client.AgentsChanged(It.IsAny<AgentsChangedPayload>()))
+        var notifier = CreateNotifier();
+        notifier.Setup(client => client.NotifyAgentsChangedAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("signalr failed"));
-        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), writer.Object, hubContext);
+        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), writer.Object, [notifier.Object]);
 
         var result = await controller.Update("agent-a", CreateDescriptor("agent-a") with { DisplayName = "updated" }, CancellationToken.None);
 
@@ -267,16 +271,16 @@ public sealed class AgentsControllerTests
     [Fact]
     public async Task Update_WhenNotFound_DoesNotBroadcastAgentsChanged()
     {
-        var (hubContext, hubClient) = CreateHubContext();
+        var notifier = CreateNotifier();
         var controller = new AgentsController(
             new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance),
             Mock.Of<IAgentSupervisor>(),
             new NoOpAgentConfigurationWriter(),
-            hubContext);
+            [notifier.Object]);
 
         _ = await controller.Update("missing", CreateDescriptor("missing"), CancellationToken.None);
 
-        hubClient.Verify(client => client.AgentsChanged(It.IsAny<AgentsChangedPayload>()), Times.Never);
+        notifier.Verify(client => client.NotifyAgentsChangedAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -284,13 +288,15 @@ public sealed class AgentsControllerTests
     {
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
         registry.Register(CreateDescriptor("agent-a"));
-        var (hubContext, hubClient) = CreateHubContext();
-        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), new NoOpAgentConfigurationWriter(), hubContext);
+        var notifier = CreateNotifier();
+        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), new NoOpAgentConfigurationWriter(), [notifier.Object]);
 
         _ = await controller.Unregister("agent-a", CancellationToken.None);
 
-        hubClient.Verify(client => client.AgentsChanged(
-            It.Is<AgentsChangedPayload>(payload => payload.ChangeType == "removed" && payload.AgentId == "agent-a")),
+        notifier.Verify(client => client.NotifyAgentsChangedAsync(
+            "removed",
+            "agent-a",
+            It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -300,10 +306,10 @@ public sealed class AgentsControllerTests
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
         registry.Register(CreateDescriptor("agent-a"));
         var writer = new Mock<IAgentConfigurationWriter>();
-        var (hubContext, hubClient) = CreateHubContext();
-        hubClient.Setup(client => client.AgentsChanged(It.IsAny<AgentsChangedPayload>()))
+        var notifier = CreateNotifier();
+        notifier.Setup(client => client.NotifyAgentsChangedAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("signalr failed"));
-        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), writer.Object, hubContext);
+        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), writer.Object, [notifier.Object]);
 
         var result = await controller.Unregister("agent-a", CancellationToken.None);
 
@@ -315,16 +321,16 @@ public sealed class AgentsControllerTests
     [Fact]
     public async Task Unregister_WhenAgentMissing_DoesNotBroadcastAgentsChanged()
     {
-        var (hubContext, hubClient) = CreateHubContext();
+        var notifier = CreateNotifier();
         var controller = new AgentsController(
             new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance),
             Mock.Of<IAgentSupervisor>(),
             new NoOpAgentConfigurationWriter(),
-            hubContext);
+            [notifier.Object]);
 
         _ = await controller.Unregister("missing", CancellationToken.None);
 
-        hubClient.Verify(client => client.AgentsChanged(It.IsAny<AgentsChangedPayload>()), Times.Never);
+        notifier.Verify(client => client.NotifyAgentsChangedAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
      [Fact]
@@ -472,27 +478,22 @@ public sealed class AgentsControllerTests
             ApiProvider = "test-provider"
         };
 
-    private static (IHubContext<GatewayHub, IGatewayHubClient> hubContext, Mock<IGatewayHubClient> hubClient) CreateHubContext()
+    private static Mock<IAgentChangeNotifier> CreateNotifier()
     {
-        var hubClient = new Mock<IGatewayHubClient>();
-        hubClient.Setup(client => client.AgentsChanged(It.IsAny<AgentsChangedPayload>())).Returns(Task.CompletedTask);
-
-        var hubClients = new Mock<IHubClients<IGatewayHubClient>>();
-        hubClients.Setup(clients => clients.All).Returns(hubClient.Object);
-
-        var hubContext = new Mock<IHubContext<GatewayHub, IGatewayHubClient>>();
-        hubContext.SetupGet(context => context.Clients).Returns(hubClients.Object);
-        return (hubContext.Object, hubClient);
+        var notifier = new Mock<IAgentChangeNotifier>();
+        notifier.Setup(client => client.NotifyAgentsChangedAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        return notifier;
     }
 
     private static AgentsController CreateController(IAgentRegistry registry, IAgentSupervisor? supervisor = null)
     {
-        var (hubContext, _) = CreateHubContext();
+        var notifier = CreateNotifier();
         return new AgentsController(
             registry,
             supervisor ?? Mock.Of<IAgentSupervisor>(),
             new NoOpAgentConfigurationWriter(),
-            hubContext);
+            [notifier.Object]);
     }
 }
 

@@ -37,6 +37,7 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
         typeof(IMessageRouter),
         typeof(IAgentRegistry),
         typeof(IAgentSupervisor),
+        typeof(IAgentChangeNotifier),
         typeof(IAgentCommunicator),
         typeof(IAgentToolContributor),
         typeof(IActivityBroadcaster),
@@ -394,6 +395,7 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
 
             if (contract == typeof(IChannelAdapter) || 
                 contract == typeof(IIsolationStrategy) ||
+                contract == typeof(IAgentChangeNotifier) ||
                 contract == typeof(IAgentToolContributor) ||
                 contract == typeof(IAgentTool) ||
                 contract == typeof(ICommandContributor) ||
