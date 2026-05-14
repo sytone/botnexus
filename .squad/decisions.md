@@ -289,13 +289,68 @@ Current config has hard-coded typed properties. These must become **dictionary-b
 
 **Core class:** `ExtensionLoader` (in `BotNexus.Core` or new `BotNexus.Extensions` project)
 
-**Loading sequence at startup:**
-1. Read config — Enumerate keys under Providers, Channels.Instances, Tools.Extensions
-2. Resolve folders — Compute `{ExtensionsPath}/{type}/{key}/` for each key
-3. Validate folder — Log warning and skip if missing
-4. Load assemblies — Create `AssemblyLoadContext` per extension (collectible for hot-reload)
-5. Scan for types — Search loaded assemblies for concrete types implementing target interface
-6. Register in DI — `ServiceProvider.AddSingleton<ILlmProvider>(instance)`
-
 ---
 
+### 2026-05-14 — Gateway Extension Boundary Enforcement
+
+**Decision Date:** 2026-05-14  
+**Scope:** Gateway architecture, extension dependencies, hot-reload notifications  
+**Status:** ✅ Implemented & Approved
+
+**Context:** PR #237 introduced a gateway→extension compile dependency by directly injecting SignalR hub types into `AgentsController` for real-time agent config change broadcasts. This crossed the architectural boundary and created an invalid inversion of control.
+
+**Decision:** Sever the compile-time gateway→extension dependency and route notifications through a neutral gateway contract.
+
+**Implementation:**
+
+1. **New Contract: `IAgentChangeNotifier`**
+   - Location: `BotNexus.Gateway.Contracts\Agents\` (namespace: `BotNexus.Gateway.Abstractions.Agents`)
+   - Single method: `Task NotifyAgentConfigurationChangedAsync(AgentId agentId)`
+   - Transport-neutral (no SignalR coupling)
+
+2. **Refactored `AgentsController`**
+   - Old: Injected `IHubContext<GatewayHub, IGatewayHubClient>` (SignalR type)
+   - New: Injected `IEnumerable<IAgentChangeNotifier>?` (nullable, fallback to empty list)
+   - Best-effort broadcast: loop, log on error, continue
+
+3. **Removed Dependency**
+   - Removed `ProjectReference` to `BotNexus.Extensions.Channels.SignalR` from `BotNexus.Gateway.Api.csproj`
+   - Zero other gateway projects referenced extensions
+
+4. **Extension-Side Implementation**
+   - New class: `SignalRAgentChangeNotifier` in `BotNexus.Extensions.Channels.SignalR`
+   - Implements contract, bridges to SignalR hub
+   - Auto-discovered via `AssemblyLoadContextExtensionLoader` (added to `DiscoverableServiceContracts`)
+
+5. **Guard Test**
+   - Location: `tests\gateway\BotNexus.Gateway.Tests\Architecture\GatewayProjectDependencyBoundaryTests.cs`
+   - Scans all `src\gateway\**\*.csproj` for forbidden references
+   - Fails on `ProjectReference`, `PackageReference`, or `Reference` to `src\extensions` or `BotNexus.Extensions.*`
+   - Fail-before/pass-after validated by Hermes
+
+**Root Cause Analysis:**
+
+PR #237 needed fast `AgentsChanged` broadcasts for hot-reload UX. The shortcut—injecting SignalR hub types directly into the controller—solved the problem quickly but violated architectural boundaries. The proper solution: minimal notification contract (preserves behavior, restores dependency direction).
+
+**Rationale:**
+
+1. **Transport-neutral abstraction** — notifications can be delivered via SignalR, Server-Sent Events, Webhooks, or any future transport
+2. **Correct dependency direction** — Gateway publishes to abstraction; extensions implement
+3. **Zero-cost pattern** — nullable `IEnumerable<T>?` with fallback makes implementation optional
+4. **Guard prevents regression** — architecture test catches future violations in CI
+
+**Review Outcome (Leela):**
+
+✅ **APPROVED**
+- Boundary cleanly severed (zero gateway→extension references)
+- Contract is minimal and transport-neutral
+- SignalR implementation remains extension-side
+- Guard test is adequate and correctly placed
+- No over-abstraction
+
+**Commits:**
+
+- `1a8a8863` — refactor(gateway): extract IAgentChangeNotifier, sever extension dependency
+- `8f7a4a21` — test(gateway): add architecture boundary guard for extension dependencies
+
+---

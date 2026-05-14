@@ -36,3 +36,5 @@
 ## Learnings
 
 - 2026-07-29: Team reskill pass reduced cold-loaded context from ~197KB to ~59KB (70%). Charter trimming: remove Collaboration, Voice, verbose Model, boilerplate Boundaries. History summarization: distill session entries into Core Context + high-signal Learnings only.
+- 2026-05-14: Architecture boundary enforcement via transport-neutral contract (IAgentChangeNotifier) cleanly severs gateway→extension dependency. Guard test prevents regression. Approved.
+- Architecture boundary tests (csproj XML scanning) are effective guards — they run in normal test suite with zero infra overhead and catch ProjectReference, PackageReference, and bare Reference violations. Pattern: enumerate csproj, parse XML, assert no matches against a forbidden set.
