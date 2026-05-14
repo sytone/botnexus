@@ -2,6 +2,41 @@
 
 ## Active Decisions
 
+### 2026-07-29 — Kif: Prompt Template Documentation Strategy
+
+**Author:** Kif (Documentation Engineer)  
+**Date:** 2026-07-29  
+**Scope:** PR #242 prompt template library docs  
+**Status:** Implemented
+
+**Decision:** Document prompt template feature across two primary locations:
+1. **CLI Reference** (`docs/cli-reference.md`) — Add `prompt list`, `render`, `run` subcommand docs
+2. **Configuration Guide** (`docs/configuration.md`) — Add "Prompt Templates" section explaining setup, parameter resolution, and workflows
+
+**Rationale:**
+- CLI docs live in `cli-reference.md` — users learn CLI commands there
+- Config docs live in `configuration.md` — users configure templates here
+- Dual storage locations (config.json primary, ~/.botnexus/prompts/ file-based) documented in both
+- Parameter resolution algorithm (collect → merge → validate → substitute) explained step-by-step
+
+**Implementation:**
+- `docs/cli-reference.md`: 4 new sections (prompt, list, render, run) with realistic examples
+- `docs/configuration.md`: "Prompt Templates" section, parameter resolution algorithm, 4 worked examples
+- Parameter syntax `{{name}}` documented as rigid (no filters/conditions)
+- Cron integration example links to scheduling documentation
+- All examples copy-paste ready
+
+**Impact:**
+- Users discover prompt templates via CLI help, configuration guide, or PR #242
+- Documentation scope complete for basic + advanced patterns
+- Deferred: UI gallery, template marketplace
+
+**Commits:**
+- `5e6deb76`: `docs(cli): add prompt template command documentation and examples`
+- `0380cce7`: `docs(config): add prompt template configuration section and examples`
+
+---
+
 ### 2026-07-29 — Team Reskill & Context Optimization (Leela)
 
 **Decision:** Performed team-wide reskill pass per `.squad/templates/skills/reskill/SKILL.md`.

@@ -32,3 +32,13 @@
 - Prompt template CLI commands should share the cron resolver (`CronOptionsPromptTemplateResolver`) so config-defined and file-backed templates resolve consistently.
 - Prompt template file discovery order is shared home (`~/.botnexus/prompts`), agent home (`~/.botnexus/agents/{agentId}/prompts`), then workspace prompts when available.
 - Key implementation paths for issue #29: `src\\gateway\\BotNexus.Cli\\Commands\\PromptCommands.cs`, `src\\gateway\\BotNexus.Cron\\Prompts\\CronOptionsPromptTemplateResolver.cs`, `src\\gateway\\BotNexus.Gateway\\Configuration\\PlatformConfig.cs`.
+
+## Recent Work (2026-05-14)
+
+**Completed:** Issue #29 prompt template library feature.  
+- Rebase conflicts resolved after main integration.
+- Prompt template CLI commands finalized.
+- All tests passing (full build, full test suite, targeted tests).
+- PR #242 opened: https://github.com/sytone/botnexus/pull/242
+- Commits: `04a16c7e`, `f1a264c3`, `479e448a`, `d0e3e8ee`, `c4cd5c9b`
+- Deferred: broader web prompt gallery/UX beyond `/prompts` scope.

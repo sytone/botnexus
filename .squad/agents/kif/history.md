@@ -32,3 +32,21 @@
 - Prompt template documentation (PR #242): Storage locations are dual (config.json primary, ~/.botnexus/prompts/ file-based); parameter resolution uses {{name}} placeholders with 3-tier priority (caller → param defaults → simple defaults); required/optional status determined by presence of parameter metadata or placeholder in template body. Document both simple configs (for common use) and advanced parameter structures (for required validation).
 - CLI subcommand documentation: Include options table, arguments table, multiple realistic examples showing common workflows, edge cases (e.g., required params missing), and integration points (e.g., cron jobs, custom gateways).
 - Configuration guide sections benefit from JSON schema examples + human-friendly descriptions + workflow examples (e.g., file-based → config-based → CLI usage).
+
+## Session: Prompt Template Documentation (2026-05-14)
+
+**Outcome:** PR #242 documentation complete across CLI and configuration guides.
+
+**Delivered:**
+- `docs/cli-reference.md`: Added `## prompt` overview + 3 subcommand sections (list, render, run) with examples
+- `docs/configuration.md`: Added "Prompt Templates" section, parameter resolution algorithm, 4 worked examples
+- Decision merged to `decisions.md` (2026-07-29 entry)
+
+**Key Decisions:**
+- Dual storage documentation (config.json + files) — merge behavior explained
+- Parameter substitution `{{name}}` syntax (case-sensitive, no nested placeholders)
+- Cron integration example links existing scheduling documentation
+- Documentation scope: basic + advanced patterns complete; marketplace/UI gallery deferred
+
+**Commits:** 5e6deb76, 0380cce7 (pushed to PR #242)
+
