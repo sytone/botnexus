@@ -48,3 +48,5 @@
 - Gateway boundary guardrails should be enforced with a csproj architecture test that scans `src\gateway\**\*.csproj` for forbidden `ProjectReference`, `PackageReference`, and `Reference` includes targeting `src\extensions` or `BotNexus.Extensions.*`.
 - Agent-change broadcast should flow through `IAgentChangeNotifier` (contracts) so `BotNexus.Gateway.Api` stays extension-agnostic while SignalR implements transport-specific notification in the extension assembly.
 - 2026-05-14: Gateway boundary guard test (GatewayProjectDependencyBoundaryTests.cs) added, fail-before/pass-after validated, commits 1a8a8863 & 8f7a4a21 ready for approval.
+- 2026-07-29: Prompt-template regression suite now covers `.prompt.md` discovery/render precedence plus `.prompt.json` compatibility in `tests\gateway\BotNexus.Cron.Tests\CronOptionsPromptTemplateResolverTests.cs` (front matter required, body required, metadata required/default behavior).
+- 2026-07-29: CLI prompt coverage now verifies markdown list/render/run flows and multiline body preservation through gateway POST payloads in `tests\gateway\BotNexus.Cli.Tests\Commands\PromptCommandsTests.cs`.

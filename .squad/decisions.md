@@ -2,6 +2,110 @@
 
 ## Active Decisions
 
+### 2026-05-14 — Leela: Add `.prompt.md` Format for Readable Multi-Line Templates
+
+**Author:** Leela (Lead)  
+**Date:** 2026-05-14  
+**Scope:** PR #242 — Prompt Template Library  
+**Status:** Approved
+
+**Problem:** Current `.prompt.json` format stores prompt bodies as single-line JSON strings. Multi-line prompts with headings, bullet lists, numbered lists, and paragraphs become unreadable. This defeats the purpose of file-based templates — humans can't author or review them comfortably.
+
+**Decision: Dual-Format Support (`.prompt.md` + `.prompt.json`)**
+
+Add **`.prompt.md`** as the primary authoring format for multi-line prompts using YAML front matter for metadata and markdown body for prompt content. `.prompt.json` remains fully supported for backward compatibility. When both formats exist, `.prompt.md` takes precedence.
+
+**Format Example:**
+```markdown
+---
+name: status-report
+description: Weekly status report
+parameters:
+  project:
+    description: Name of the project
+    required: true
+  owner:
+    description: Team lead email
+    default: team@example.com
+---
+Generate a weekly status report for {{project}}.
+
+## Details
+- **Owner:** {{owner}}
+- **Summary:** {{summary}}
+```
+
+**Implementation Scope:**
+- Farnsworth: Add `ParseMarkdownTemplateFile` to `CronOptionsPromptTemplateResolver`, update glob patterns for both `*.prompt.json` and `*.prompt.md`
+- Hermes: Unit tests for parsing, parameter validation, precedence, round-trip render
+- Kif: Update `docs/configuration.md` and `docs/cli-reference.md`, add `.prompt.md` samples
+
+**Rationale:**
+- Repo already uses YAML-front-matter pattern in `.github/prompts/`
+- GitHub Copilot uses `.prompt.md` with front matter — users know this format
+- Markdown is universally readable and editable
+- Aligns with emerging MCP prompt resource pattern
+- Implementation cost low — one parser method, glob update, tests, docs
+
+**Verdict:** APPROVED for PR #242. Solves real usability problem with contained scope.
+
+---
+
+### 2026-05-14 — Farnsworth: Implement Readable `.prompt.md` Support
+
+**Author:** Farnsworth (Platform Dev)  
+**Date:** 2026-05-14  
+**Scope:** PR #242 — Prompt Template Implementation  
+**Status:** Implemented
+
+**Decision:** Adopt dual file-format support in the shared prompt resolver:
+- `.prompt.md` with YAML front matter (name, defaults, parameters) and markdown body as prompt text
+- `.prompt.json` retained for compatibility and machine-generated templates
+- When both formats exist for the same template, `.prompt.md` takes precedence
+
+**Implementation Details:**
+- Added `ParseMarkdownTemplateFile()` to `CronOptionsPromptTemplateResolver` using `YamlDotNet`
+- Updated `TryFindTemplatePath` and `DiscoverTemplates` to glob both `*.prompt.json` and `*.prompt.md`
+- Body parsing: Everything after closing `---` of front matter is used verbatim; whitespace and formatting preserved
+- Parameter substitution (`{{parameter}}`) works identically to JSON format
+- Leading/trailing blank lines after front matter trimmed
+
+**Why:** Keeps existing JSON workflows stable while making real-world prompt authoring substantially easier for humans.
+
+**Commits:**
+- `e91d130c`: Implementation with `.prompt.md` parsing and tests
+
+---
+
+### 2026-05-14 — Kif: Documentation for `.prompt.md` Format
+
+**Author:** Kif (Documentation Engineer)  
+**Date:** 2026-05-14  
+**Scope:** PR #242 — Documentation and Samples  
+**Status:** Complete
+
+**What:** Comprehensive documentation for the new `.prompt.md` format as the primary authoring format for human-readable, multi-line prompts.
+
+**Documentation Changes:**
+- **`docs/configuration.md`:** Updated to document `.prompt.md` (recommended for multi-line) and `.prompt.json` (compatibility). Added new "File-Based Templates: `.prompt.md` Format" section explaining YAML front matter, properties, body parsing, and advantages. Added "File-Based Templates: `.prompt.json` Format (Compatibility)" section. Added Example 4: Sprint retrospective template with multi-line structure, bullet lists, numbered lists.
+- **`docs/cli-reference.md`:** Updated prompt section overview to mention both formats with brief format guide. Updated prompt list section to note templates can be either format.
+
+**Sample Files:**
+- `prompts/sample-greeting.prompt.md` — Simple multi-line greeting with basic parameter
+- `prompts/sample-code-review-checklist.prompt.md` — Structured code review template with multiple sections, checkboxes, parameters, approval workflow
+
+**Alignment:**
+- ✅ Aligns with Leela's approved decision (2026-05-14)
+- ✅ Addresses user concern about readability of multi-line prompts
+- ✅ Maintains backward compatibility with `.prompt.json`
+- ✅ Documentation is reader-first with real workflow examples
+
+**Implementation Status:**
+- ✅ Documentation complete and committed (commit `dd82a343`)
+- ✅ Sample `.prompt.md` files provided
+
+---
+
 ### 2026-07-29 — Kif: Prompt Template Documentation Strategy
 
 **Author:** Kif (Documentation Engineer)  
@@ -229,64 +333,6 @@ Implemented Leela's boundary decision by extracting conversation runtime code in
 | `setTimeout(50)` backstop could cause visible jump | 50ms below perceptual threshold. User won't notice. |
 | Streaming threshold (200px) may scroll when user doesn't want | 200px ≈ 2-3 lines. Only during active streaming. Acceptable trade-off. |
 | `StateHasChanged()` loop if markdown keeps finding new messages | Loop terminates because `_markdownCache` is populated — each message rendered once. |
-
----
-
-### SessionStoreBase Status-Filter Overload (2026-04-12)
-
-**Decision Date:** 2026-04-12  
-**Decided By:** Farnsworth (Platform Dev)  
-**Status:** Implemented
-
-**Context:** New contract tests assert that session stores expose status-based filtering via a ListAsync overload while still honoring the existing ISessionStore contract.
-
-**Decision:** Implement ListAsync(AgentId?, GatewaySessionStatus?, CancellationToken) on SessionStoreBase as a public overload (not interface change), and keep existing ISessionStore.ListAsync(AgentId?, CancellationToken) unchanged.
-
-**Rationale:** This keeps API compatibility for interface consumers while enabling consistent status filtering behavior in all concrete stores through shared base logic.
-
----
-
-### Leela Decision: AGENTS.md Memory Tool Naming & Portability (2025-05-07)
-
-**Decision Date:** 2025-05-07  
-**Decided By:** Leela (Lead/Architect)  
-**Status:** Implemented
-
-**User Directive:** Sytone requested root AGENTS.md be updated to reflect that BotNexus runs on Windows and Linux, and to clarify the confusing "memory save" vs "memory store" tool terminology.
-
-**Context:** PR #179 established that `memory_save` is the single agent-facing tool for writing memory. The codebase also uses terms like "memory store" and "store_memory" in different contexts (Copilot CLI built-in, internal indexing). Root AGENTS.md had no memory guidance and no explicit portability statement.
-
-**Decisions:**
-
-1. **Agent-Facing Tool Name: `memory_save`**
-   - Single canonical tool name is **`memory_save`**
-   - It writes append-only daily notes to `memory/YYYY-MM-DD.md`
-   - `MEMORY.md` is **read-only** during normal turns — loaded at session start for long-term context
-   - Future consolidation ("dreaming") updates `MEMORY.md` from daily notes automatically
-   - SQLite indexes, search state, and external `store_memory` primitives are **implementation details** — never referenced in agent-facing docs
-
-2. **Platform Statement — Added to root AGENTS.md**
-   - New "Platform / Runtime" section at top of document
-   - States: "BotNexus runs on **Windows and Linux**. All guidance applies to both platforms unless explicitly noted otherwise."
-   - References cross-platform path handling section
-
-3. **Memory Tool Naming — Added to root AGENTS.md**
-   - New "Memory Tool Naming" section after "Code Practices"
-   - Clarifies `memory_save` appends to `memory/YYYY-MM-DD.md` (append-only)
-   - `MEMORY.md` is read-only during turns
-   - Consolidation updates `MEMORY.md` automatically — agents never write directly
-   - Prohibits surface use of "memory store", "store_memory", SQLite in agent-facing docs
-   - Distinguishes external Copilot CLI `store_memory` as separate mechanism
-
-**Rationale:**
-- **Single canonical name** eliminates "save vs store" ambiguity
-- **Explicit prohibition** of "memory store" in agent docs prevents future confusion
-- **Platform statement** up front anchors doc for contributors, prevents OS-specific assumptions
-
-**Implementation:**
-- **Kif** added both sections to root AGENTS.md per exact wording
-- Left per-agent template `src/gateway/BotNexus.Gateway/Templates/AGENTS.md` untouched (already correct)
-- Committed as 851a6509: `docs(agents): add platform statement and memory tool naming guidance`
 
 ---
 
