@@ -28,43 +28,38 @@ Before enabling this channel you need:
 
 ## Enabling the extension
 
-### 1. Add the NuGet package
+The Azure Service Bus channel is deployed via the BotNexus CLI. Configure it by editing your `~/.botnexus/config.json`:
 
-```shell
-dotnet add package BotNexus.Channels.ServiceBus
+```json
+{
+  "channels": {
+    "serviceBusChannel": {
+      "connectionString": "Endpoint=sb://<namespace>.servicebus.windows.net/;SharedAccessKeyName=<policy>;SharedAccessKey=<key>",
+      "inboundQueueName": "botnexus-inbound",
+      "defaultReplyQueueName": "botnexus-outbound",
+      "maxConcurrentCalls": 1,
+      "allowedSenderIds": []
+    }
+  }
+}
 ```
 
-### 2. Register the channel in your host
-
-```csharp
-// Program.cs / Startup.cs
-builder.Services.AddBotNexusServiceBusChannel(builder.Configuration);
-```
-
-### 3. Configure `botnexus.yaml`
-
-Add a `serviceBusChannel` section under `channels`:
-
-```yaml
-channels:
-  serviceBusChannel:
-    connectionString: "Endpoint=sb://<namespace>.servicebus.windows.net/;SharedAccessKeyName=<policy>;SharedAccessKey=<key>"
-    inboundQueueName: botnexus-inbound
-    defaultReplyQueueName: botnexus-outbound
-    maxConcurrentCalls: 1
-    allowedSenderIds: []   # empty = all senders permitted
-```
-
-> **Tip — keep secrets out of YAML.** Use an environment variable or Azure Key Vault reference instead of embedding the connection string directly:
-> ```yaml
-> connectionString: "${SERVICE_BUS_CONNECTION_STRING}"
+> **Tip — keep secrets out of config.** Use an environment variable or Azure Key Vault reference instead of embedding the connection string directly:
+> ```json
+> {
+>   "channels": {
+>     "serviceBusChannel": {
+>       "connectionString": "${SERVICE_BUS_CONNECTION_STRING}"
+>     }
+>   }
+> }
 > ```
 
 ---
 
 ## Configuration reference
 
-All options map to the `ServiceBusChannelOptions` class and can be set via `botnexus.yaml`, `appsettings.json`, or environment variables (prefix: `BOTNEXUS_SERVICEBUS__`).
+All options are configured via `~/.botnexus/config.json` under the `channels.serviceBusChannel` section. Options can also be overridden via environment variables with the prefix `BOTNEXUS_CHANNELS__SERVICEBUSCHANNEL__`.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -76,25 +71,28 @@ All options map to the `ServiceBusChannelOptions` class and can be set via `botn
 
 ---
 
-## Managed identity / custom credentials
+## Managed identity / Azure Key Vault
 
-When running on Azure (App Service, Container Apps, AKS, Azure Functions, etc.) you should prefer **managed identity** over a connection string.
+When running on Azure (App Service, Container Apps, AKS, Azure Functions, etc.) you should prefer **managed identity** and **Azure Key Vault** over embedding connection strings.
 
-Register a custom implementation of `IServiceBusAdapterClientFactory` **before** calling `AddBotNexusServiceBusChannel`:
+To use a managed identity:
 
-```csharp
-// Register a custom factory that uses DefaultAzureCredential
-builder.Services.AddSingleton<IServiceBusAdapterClientFactory>(sp =>
-    new ManagedIdentityServiceBusClientFactory(
-        fullyQualifiedNamespace: "myns.servicebus.windows.net",
-        credential: new DefaultAzureCredential()));
+1. Assign the service principal running BotNexus the `Azure Service Bus Data Receiver` role on the inbound queue and `Azure Service Bus Data Sender` role on the outbound queue.
+2. Omit or leave empty the `connectionString` field in your config — BotNexus will use `DefaultAzureCredential` to authenticate automatically.
 
-builder.Services.AddBotNexusServiceBusChannel(builder.Configuration);
+```json
+{
+  "channels": {
+    "serviceBusChannel": {
+      "inboundQueueName": "botnexus-inbound",
+      "defaultReplyQueueName": "botnexus-outbound",
+      "fullyQualifiedNamespace": "myns.servicebus.windows.net"
+    }
+  }
+}
 ```
 
-When a custom factory is registered, `ConnectionString` is ignored. The factory is responsible for creating both the `ServiceBusClient` (for sending) and the `ServiceBusProcessor` (for receiving).
-
-A reference implementation `ManagedIdentityServiceBusClientFactory` is shipped in the `BotNexus.Channels.ServiceBus` package.
+Alternatively, store your connection string in **Azure Key Vault** and reference it via an environment variable:
 
 ---
 
