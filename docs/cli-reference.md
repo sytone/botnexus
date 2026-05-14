@@ -65,7 +65,11 @@ You should see the root command help listing all available subcommands.
 13. [provider](#provider) — Show or set up providers
 14. [provider setup](#provider-setup) — Interactive provider setup wizard
 15. [provider list](#provider-list) — List configured providers
-16. [Examples](#examples)
+16. [prompt](#prompt) — Manage prompt templates
+17. [prompt list](#prompt-list) — List available prompt templates
+18. [prompt render](#prompt-render) — Render a prompt template
+19. [prompt run](#prompt-run) — Render and execute a prompt template
+20. [Examples](#examples)
 
 ---
 
@@ -820,6 +824,234 @@ Example output:
 │ github-copilot  │ Yes     │ OAuth │ gpt-4.1       │ default │
 │ openai          │ Yes     │ sk-…  │ gpt-4o        │ default │
 └─────────────────┴─────────┴───────┴───────────────┴─────────┘
+```
+
+---
+
+## prompt
+
+Manage prompt templates — define reusable, parameterized prompts in configuration and execute them through the CLI or cron scheduler.
+
+### Usage
+
+```powershell
+botnexus prompt [COMMAND] [OPTIONS]
+```
+
+### Subcommands
+
+- `list` — List available prompt templates
+- `render` — Render a template to stdout (substitute parameters)
+- `run` — Render and execute a template against the gateway
+
+---
+
+## prompt list
+
+List all available prompt templates for an agent.
+
+Displays templates from two sources:
+1. **Configuration-based templates** — Defined in `config.json` under `promptTemplates`
+2. **File-based templates** — Stored in `~/.botnexus/prompts/` directory as `.prompt.json` files
+
+### Usage
+
+```powershell
+botnexus prompt list [OPTIONS]
+```
+
+### Options
+
+| Option | Description |
+|---|---|
+| `--agent <ID>` | Target agent ID. Falls back to `gateway.defaultAgentId` if not specified. |
+| `--config <PATH>` | Explicit path to `config.json`. Defaults to `~/.botnexus/config.json`. |
+| `--target <DIR>` | BotNexus home directory (config, workspace, extensions). Defaults to `~/.botnexus/`. |
+| `--verbose` | Show full paths and template metadata. |
+
+### Examples
+
+**List templates for the default agent:**
+
+```powershell
+botnexus prompt list
+```
+
+Output:
+
+```text
+daily-standup
+weekly-status
+code-review-summary
+customer-feedback-analysis
+```
+
+**List templates for a specific agent:**
+
+```powershell
+botnexus prompt list --agent analyst
+```
+
+**Verbose output with descriptions:**
+
+```powershell
+botnexus prompt list --verbose
+```
+
+---
+
+## prompt render
+
+Render a template to stdout, substituting parameters with caller-provided values or defaults.
+
+Use this to preview what a template will produce before executing it through the gateway.
+
+### Usage
+
+```powershell
+botnexus prompt render <TEMPLATE> [OPTIONS]
+```
+
+### Arguments
+
+| Argument | Description |
+|---|---|
+| `<TEMPLATE>` | Template name to render. |
+
+### Options
+
+| Option | Description |
+|---|---|
+| `--param <KEY=VALUE>` | Template parameter as `key=value`. Repeat for multiple values. |
+| `--agent <ID>` | Target agent ID. Falls back to `gateway.defaultAgentId` if not specified. |
+| `--config <PATH>` | Explicit path to `config.json`. Defaults to `~/.botnexus/config.json`. |
+| `--target <DIR>` | BotNexus home directory (config, workspace, extensions). Defaults to `~/.botnexus/`. |
+| `--verbose` | Show rendering metadata (agent, parameters used). |
+
+### Examples
+
+**Render a template with default parameters:**
+
+```powershell
+botnexus prompt render daily-standup
+```
+
+Output:
+
+```text
+Provide a brief status update for the engineering team.
+Project: BotNexus
+Owner: Development Team
+Format: Markdown
+```
+
+**Render with custom parameter values:**
+
+```powershell
+botnexus prompt render weekly-status --param project=Infrastructure --param owner="Leela"
+```
+
+Output:
+
+```text
+Provide a weekly status update for the Infrastructure team.
+Project: Infrastructure
+Owner: Leela
+```
+
+**Multiple parameters:**
+
+```powershell
+botnexus prompt render code-review-summary `
+  --param repo=botnexus `
+  --param prNumber=242 `
+  --param reviewer=Hermes
+```
+
+**Capture rendered template to a file:**
+
+```powershell
+botnexus prompt render daily-standup > prompt.txt
+```
+
+---
+
+## prompt run
+
+Render a template and send the result to the gateway for agent execution.
+
+Combines template rendering with agent invocation in a single command. Useful for triggering agent workflows from scripts or cron jobs.
+
+### Usage
+
+```powershell
+botnexus prompt run <TEMPLATE> [OPTIONS]
+```
+
+### Arguments
+
+| Argument | Description |
+|---|---|
+| `<TEMPLATE>` | Template name to render and execute. |
+
+### Options
+
+| Option | Description |
+|---|---|
+| `--param <KEY=VALUE>` | Template parameter as `key=value`. Repeat for multiple values. |
+| `--agent <ID>` | Target agent ID. Falls back to `gateway.defaultAgentId` if not specified. |
+| `--session <ID>` | Optional session ID for conversation continuity. If omitted, a new session is created. |
+| `--config <PATH>` | Explicit path to `config.json`. Defaults to `~/.botnexus/config.json`. |
+| `--target <DIR>` | BotNexus home directory (config, workspace, extensions). Defaults to `~/.botnexus/`. |
+| `--gateway-url <URL>` | Override gateway URL. Defaults to `gateway.listenUrl` from config (or `http://localhost:5005`). |
+| `--verbose` | Show rendering and execution details. |
+
+### Examples
+
+**Execute a template with default parameters:**
+
+```powershell
+botnexus prompt run daily-standup
+```
+
+Output:
+
+```text
+[Agent response...]
+Engineering team is on track with all Q1 deliverables. 
+Three items in progress, two completed this week.
+```
+
+**Execute with custom parameters:**
+
+```powershell
+botnexus prompt run weekly-status --param project=Gateway --param owner=Bender
+```
+
+**Execute within an existing session (conversation continuity):**
+
+```powershell
+botnexus prompt run daily-standup --session my-session-123
+```
+
+**Execute against a non-default gateway:**
+
+```powershell
+botnexus prompt run daily-standup --gateway-url http://production.example.com:5005
+```
+
+**Verbose execution:**
+
+```powershell
+botnexus prompt run code-review-summary --param repo=botnexus --verbose
+```
+
+Output includes:
+
+```text
+[dim]Rendering template 'code-review-summary' with agent 'assistant'...[/]
+[dim]Rendered template and invoked http://localhost:5005/api/chat[/]
+[Agent response...]
 ```
 
 ---

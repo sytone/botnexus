@@ -9,12 +9,13 @@ BotNexus uses a hierarchical, dictionary-based configuration model with a unifie
 3. [Primary Deployment: ~/.botnexus/](#primary-deployment-botnexus)
 4. [Project Defaults: appsettings.json](#project-defaults-appsettingsjson)
 5. [Configuration Sections](#configuration-sections)
-6. [JSON Schema Validation](#json-schema-validation)
-7. [Hot Reload](#hot-reload)
-8. [Extension Configuration](#extension-configuration)
-9. [Environment Variable Overrides](#environment-variable-overrides)
-10. [Security Best Practices](#security-best-practices)
-11. [Examples](#examples)
+6. [Prompt Templates](#prompt-templates)
+7. [JSON Schema Validation](#json-schema-validation)
+8. [Hot Reload](#hot-reload)
+9. [Extension Configuration](#extension-configuration)
+10. [Environment Variable Overrides](#environment-variable-overrides)
+11. [Security Best Practices](#security-best-practices)
+12. [Examples](#examples)
 
 ---
 
@@ -1186,6 +1187,229 @@ Use `appsettings.Development.json` for local dev secrets (add to .gitignore):
   }
 }
 ```
+
+---
+
+## Prompt Templates
+
+Prompt templates are reusable, parameterized prompts stored in configuration or as files. They support `{{parameter}}` placeholders for dynamic substitution and are used by:
+
+- **CLI** — `botnexus prompt render` and `botnexus prompt run` commands
+- **Cron jobs** — `agent-prompt` jobs that render templates before execution
+
+### Storage Locations
+
+Templates can be defined in two ways:
+
+1. **Configuration-based** (primary) — In `config.json` under `promptTemplates` key
+2. **File-based** (shared) — In `~/.botnexus/prompts/` directory as `.prompt.json` files
+
+The CLI merges both sources when listing or rendering templates.
+
+### Configuration Structure
+
+```json
+{
+  "promptTemplates": {
+    "template-name": {
+      "prompt": "Template body with {{parameter}} placeholders",
+      "description": "Optional human-friendly description",
+      "defaults": {
+        "parameter": "default value"
+      },
+      "parameters": {
+        "parameter": {
+          "description": "Optional parameter description",
+          "default": "default value",
+          "required": false
+        }
+      }
+    }
+  }
+}
+```
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `prompt` | string | Template body. Use `{{name}}` for placeholders (required). |
+| `description` | string | Human-friendly description for the CLI `--verbose` output (optional). |
+| `defaults` | dict | Simple parameter defaults as key-value pairs (optional). |
+| `parameters` | dict | Advanced per-parameter metadata with description, default, and required flag (optional). |
+
+### Parameters
+
+Parameters are declared using `{{name}}` placeholders in the template body. The renderer:
+
+1. **Collects required parameters** from placeholders in the template
+2. **Merges values** in priority order:
+   - Caller-provided values (CLI `--param` or cron `templateParameters`)
+   - Defaults from `parameters[name].default` or `defaults[name]`
+3. **Validates** that all required parameters are supplied
+4. **Substitutes** placeholders with final values
+
+**Parameter Declaration (Advanced):**
+
+```json
+"parameters": {
+  "project": {
+    "description": "Project name or identifier",
+    "default": "BotNexus",
+    "required": false
+  },
+  "owner": {
+    "description": "Team or person responsible",
+    "default": null,
+    "required": true
+  }
+}
+```
+
+- `required: true` — Parameter must be supplied by caller if no default is set
+- `required: false` — Parameter is optional; renders as empty string if missing
+- `default` — Fallback value when caller does not supply it
+
+### Examples
+
+#### Example 1: Simple Configuration Template
+
+```json
+{
+  "promptTemplates": {
+    "daily-standup": {
+      "prompt": "Provide a brief status update for {{project}}. Owner: {{owner}}. Focus areas: {{focus}}",
+      "description": "Daily team status template",
+      "defaults": {
+        "project": "BotNexus",
+        "owner": "Development Team",
+        "focus": "Feature delivery and quality"
+      }
+    }
+  }
+}
+```
+
+**CLI usage:**
+
+```powershell
+# List templates
+botnexus prompt list
+
+# Render with defaults
+botnexus prompt render daily-standup
+
+# Render with override
+botnexus prompt render daily-standup --param owner="Leela" --param focus="Bug fixes"
+```
+
+#### Example 2: Template with Required Parameters
+
+```json
+{
+  "promptTemplates": {
+    "code-review-summary": {
+      "prompt": "Summarize the code review for PR #{{prNumber}} in {{repo}}. Reviewer: {{reviewer}}. Focus on: {{focusArea}}",
+      "description": "Code review summary for pull requests",
+      "parameters": {
+        "prNumber": {
+          "description": "Pull request number",
+          "required": true
+        },
+        "repo": {
+          "description": "Repository name",
+          "default": "botnexus",
+          "required": false
+        },
+        "reviewer": {
+          "description": "Code reviewer name",
+          "required": true
+        },
+        "focusArea": {
+          "description": "Aspect to focus on (architecture, performance, tests, etc.)",
+          "default": "architecture and testability",
+          "required": false
+        }
+      }
+    }
+  }
+}
+```
+
+**CLI usage:**
+
+```powershell
+# Missing required parameters — will fail
+botnexus prompt render code-review-summary --param prNumber=242
+# Error: Missing required template parameters: reviewer.
+
+# Successful render
+botnexus prompt render code-review-summary `
+  --param prNumber=242 `
+  --param reviewer="Hermes" `
+  --param focusArea="performance optimization"
+```
+
+#### Example 3: File-based Template
+
+Create `~/.botnexus/prompts/bug-report.prompt.json`:
+
+```json
+{
+  "name": "bug-report",
+  "prompt": "Analyze the bug report: {{bugDescription}}. Severity: {{severity}}. Affected module: {{module}}.",
+  "description": "Bug analysis and triage template"
+}
+```
+
+List available templates:
+
+```powershell
+botnexus prompt list
+# Output includes:
+# - daily-standup (from config.json)
+# - code-review-summary (from config.json)
+# - bug-report (from ~/.botnexus/prompts/bug-report.prompt.json)
+```
+
+#### Example 4: Template with Cron Job
+
+Schedule a template-based agent prompt:
+
+```json
+{
+  "cron": {
+    "enabled": true,
+    "jobs": {
+      "morning-briefing": {
+        "enabled": true,
+        "schedule": "0 9 * * MON-FRI",
+        "actionType": "agent-prompt",
+        "agentId": "analyst",
+        "templateName": "daily-standup",
+        "templateParameters": {
+          "project": "Infrastructure",
+          "owner": "Platform Team"
+        }
+      }
+    }
+  },
+  "promptTemplates": {
+    "daily-standup": {
+      "prompt": "Daily standup for {{project}} ({{owner}}). What are the top 3 items?"
+    }
+  }
+}
+```
+
+When the cron job runs (9 AM Mon–Fri), the renderer substitutes parameters and sends the expanded prompt to the agent.
+
+### Limitations
+
+- Template names are case-insensitive when stored but matched case-sensitively in CLI commands
+- Placeholder syntax `{{name}}` is rigid — no nested placeholders, filters, or conditions
+- Maximum template size is limited by JSON parser and agent context window
+- File-based templates (`.prompt.json`) are read-only — edit directly in `config.json` for primary control
 
 ---
 
