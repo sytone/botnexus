@@ -1199,14 +1199,16 @@ Prompt templates are reusable, parameterized prompts stored in configuration or 
 
 ### Storage Locations
 
-Templates can be defined in two ways:
+Templates can be defined in three ways:
 
-1. **Configuration-based** (primary) — In `config.json` under `promptTemplates` key
-2. **File-based** (shared) — In `~/.botnexus/prompts/` directory as `.prompt.json` files
+1. **Configuration-based** — In `config.json` under `promptTemplates` key
+2. **File-based** — In `~/.botnexus/prompts/` directory:
+   - **`.prompt.md`** (recommended for multi-line, human-authored prompts) — YAML front matter + Markdown body for readable content
+   - **`.prompt.json`** (supported for compatibility and machine-generated templates) — Single-file JSON format
 
-The CLI merges both sources when listing or rendering templates.
+The CLI merges all sources when listing or rendering templates. When both `foo.prompt.md` and `foo.prompt.json` exist with the same name, `.prompt.md` takes precedence.
 
-**Sample Templates:** See the `prompts/` folder in the repository for example prompt files (`sample-*.prompt.json`). These demonstrate simple and advanced template patterns — copy and modify them to create your own templates in `~/.botnexus/prompts/`.
+**Sample Templates:** See the `prompts/` folder in the repository for example prompt files (both `.prompt.md` and `.prompt.json` samples). Copy and modify them to create your own templates in `~/.botnexus/prompts/`.
 
 ### Configuration Structure
 
@@ -1239,6 +1241,79 @@ The CLI merges both sources when listing or rendering templates.
 | `description` | string | Human-friendly description for the CLI `--verbose` output (optional). |
 | `defaults` | dict | Simple parameter defaults as key-value pairs (optional). |
 | `parameters` | dict | Advanced per-parameter metadata with description, default, and required flag (optional). |
+
+### File-Based Templates: `.prompt.md` Format
+
+For multi-line prompts with headings, bullet lists, numbered lists, and paragraphs, use the **`.prompt.md`** format. This format stores metadata in YAML front matter and prompt content as readable Markdown:
+
+**Format:**
+
+```markdown
+---
+name: template-name
+description: Human-friendly description
+parameters:
+  parameter_name:
+    description: What this parameter is for
+    required: true
+    default: optional-default-value
+---
+# Prompt Title
+
+Your multi-line prompt content here.
+
+Use {{parameter}} placeholders for dynamic substitution.
+
+## Sections
+
+- **Bullet lists** are preserved
+- **Numbered lists** work too:
+  1. First item
+  2. Second item
+
+Whitespace, formatting, and structure are maintained as-is in the rendered prompt.
+```
+
+**Properties:**
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `name` | string | Template identifier (optional; defaults to filename stem). |
+| `description` | string | Human-friendly description for `--verbose` output (optional). |
+| `parameters` | dict | Per-parameter metadata (description, required, default). Same schema as JSON format (optional). |
+| _(body)_ | markdown | Everything after the closing `---` is the prompt body. Whitespace and formatting preserved. Use `{{parameter}}` placeholders. |
+
+**Advantages:**
+
+- **Readable** — No escaped newlines or JSON noise
+- **Editable** — Author and review multi-line content naturally
+- **Structured** — YAML front matter clearly separates metadata from content
+- **Maintainable** — Works with version control diffs and code review
+
+### File-Based Templates: `.prompt.json` Format (Compatibility)
+
+The `.prompt.json` format remains fully supported for:
+
+- **Simple, single-line prompts** — No need for multiline markup
+- **Machine-generated templates** — Programmatic creation and manipulation
+- **Backward compatibility** — Existing templates continue to work without migration
+
+**Format:**
+
+```json
+{
+  "name": "template-name",
+  "description": "Human-friendly description",
+  "prompt": "Single-line prompt with {{parameter}} placeholders",
+  "parameters": {
+    "parameter_name": {
+      "description": "What this parameter is for",
+      "required": true,
+      "default": "optional-default"
+    }
+  }
+}
+```
 
 ### Parameters
 
@@ -1352,7 +1427,7 @@ botnexus prompt render code-review-summary `
   --param focusArea="performance optimization"
 ```
 
-#### Example 3: File-based Template
+#### Example 3: File-based Template (JSON Format)
 
 Create `~/.botnexus/prompts/bug-report.prompt.json`:
 
@@ -1373,6 +1448,81 @@ botnexus prompt list
 # - code-review-summary (from config.json)
 # - bug-report (from ~/.botnexus/prompts/bug-report.prompt.json)
 ```
+
+#### Example 4: Multi-line Template with Markdown Format (.prompt.md)
+
+Create `~/.botnexus/prompts/sprint-retrospective.prompt.md`:
+
+```markdown
+---
+name: sprint-retrospective
+description: Sprint retrospective template with structured sections
+parameters:
+  sprint:
+    description: Sprint identifier (e.g., "Sprint 42")
+    required: true
+  team:
+    description: Team name
+    default: Development Team
+    required: false
+  duration:
+    description: Sprint duration in days
+    default: "2 weeks"
+    required: false
+---
+# Sprint {{sprint}} Retrospective
+
+## Team: {{team}}
+
+Generate a comprehensive retrospective for the completed sprint ({{duration}}).
+
+## Sections to Address
+
+- **What went well?**
+  - Highlight successes and team achievements
+  - Identify practices to continue
+
+- **What could be improved?**
+  - Pain points and bottlenecks
+  - Opportunities for process optimization
+
+- **Action Items for Next Sprint**
+  1. Specific, measurable improvements
+  2. Owner and due date for each item
+
+## Metrics to Include
+
+- Velocity comparison
+- Burn-down chart analysis
+- Team morale and engagement feedback
+
+Focus on constructive feedback and continuous improvement.
+```
+
+Render and use:
+
+```powershell
+# List templates (both .prompt.md and .prompt.json are discovered)
+botnexus prompt list
+
+# Render with parameters
+botnexus prompt render sprint-retrospective `
+  --param sprint="Sprint 42" `
+  --param team="Backend Squad"
+
+# Execute through gateway (agent processes the rendered prompt)
+botnexus prompt run sprint-retrospective `
+  --param sprint="Sprint 42" `
+  --param team="Backend Squad" `
+  --agent analyst
+```
+
+**Why use `.prompt.md` for this template?**
+
+- Multi-line content with natural structure (headings, bullets, numbered lists)
+- Readable in version control and code review
+- Easy to maintain and extend with new sections
+- Preserves formatting without JSON escaping
 
 #### Example 4: Template with Cron Job
 

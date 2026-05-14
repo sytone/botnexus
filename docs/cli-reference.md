@@ -832,7 +832,12 @@ Example output:
 
 Manage prompt templates — define reusable, parameterized prompts in configuration and execute them through the CLI or cron scheduler.
 
-**Getting Started:** See the `prompts/` folder in the repository for example templates (`sample-*.prompt.json`). Copy these to `~/.botnexus/prompts/` and customize them for your workflows.
+**Getting Started:** See the `prompts/` folder in the repository for example templates (both `.prompt.md` for multi-line human-authored templates and `.prompt.json` for simple/compatibility templates). Copy these to `~/.botnexus/prompts/` and customize them for your workflows.
+
+**Format Guide:**
+
+- **`.prompt.md`** (recommended for multi-line prompts) — YAML front matter + Markdown body for readable, maintainable templates
+- **`.prompt.json`** (supported for compatibility and machine-generated) — Single-file JSON format for simple prompts
 
 ### Usage
 
@@ -854,7 +859,7 @@ List all available prompt templates for an agent.
 
 Displays templates from two sources:
 1. **Configuration-based templates** — Defined in `config.json` under `promptTemplates`
-2. **File-based templates** — Stored in `~/.botnexus/prompts/` directory as `.prompt.json` files
+2. **File-based templates** — Stored in `~/.botnexus/prompts/` directory as `.prompt.md` or `.prompt.json` files
 
 ### Usage
 
