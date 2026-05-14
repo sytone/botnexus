@@ -49,8 +49,7 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
     {
         ArgumentNullException.ThrowIfNull(onChanged);
 
-        if (!_fileSystem.Directory.Exists(_directoryPath))
-            return null;
+        _fileSystem.Directory.CreateDirectory(_directoryPath);
 
         return new FileConfigurationWatcher(_directoryPath, _fileSystem, onChanged, LoadAsync, _logger);
     }

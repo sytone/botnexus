@@ -2377,6 +2377,81 @@ details[open] > .thinking-summary::before {
     align-self: center;
 }
 
+.agents-field-error {
+    display: block;
+    font-size: 0.75rem;
+    color: #ff5a5a;
+    margin-top: 0.2rem;
+}
+
+.cfg-input.field-error,
+.cfg-textarea.field-error {
+    border-color: #ff5a5a;
+}
+
+.agents-dirty-indicator {
+    font-size: 0.8rem;
+    color: var(--accent);
+    margin-left: auto;
+    font-style: italic;
+}
+
+.agents-confirm-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.agents-confirm-dialog {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    max-width: 400px;
+    width: 90%;
+}
+
+.agents-confirm-dialog h4 {
+    margin: 0 0 0.75rem;
+    font-size: 1rem;
+}
+
+.agents-confirm-dialog p {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    margin-bottom: 1rem;
+}
+
+.agents-confirm-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.toolbar-btn.danger {
+    background: rgba(255, 90, 90, 0.15);
+    color: #ff5a5a;
+    border-color: rgba(255, 90, 90, 0.3);
+}
+
+.toolbar-btn.danger:hover {
+    background: rgba(255, 90, 90, 0.25);
+}
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    border: 0;
+}
+
 /* ── Read-only sub-agent session banner ─────────────────────────────── */
 
 .read-only-banner {

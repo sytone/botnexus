@@ -55,6 +55,15 @@ public sealed class ClientStateStore : IClientStateStore
     }
 
     /// <inheritdoc />
+    public void RemoveAgent(string agentId)
+    {
+        _agents.Remove(agentId);
+        if (ActiveAgentId == agentId)
+            ActiveAgentId = _agents.Keys.FirstOrDefault();
+        NotifyChanged();
+    }
+
+    /// <inheritdoc />
     public void SeedConversations(string agentId, IEnumerable<ConversationSummaryDto> conversations)
     {
         if (!_agents.TryGetValue(agentId, out var agent))

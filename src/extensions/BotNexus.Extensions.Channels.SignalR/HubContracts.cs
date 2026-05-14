@@ -79,6 +79,11 @@ public sealed record SubAgentEventPayload(
     [property: JsonPropertyName("resultSummary")] string? ResultSummary,
     [property: JsonPropertyName("timedOut")] bool TimedOut);
 
+/// <summary>Payload sent via the <c>AgentsChanged</c> client method when agent config changes on the server.</summary>
+public sealed record AgentsChangedPayload(
+    [property: JsonPropertyName("changeType")] string ChangeType,
+    [property: JsonPropertyName("agentId")] string? AgentId);
+
 /// <summary>Kind of steering feedback event.</summary>
 public enum SteeringFeedbackKind { Injected, Queued }
 

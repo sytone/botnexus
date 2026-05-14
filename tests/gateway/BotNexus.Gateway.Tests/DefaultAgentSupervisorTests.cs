@@ -332,4 +332,54 @@ public sealed class DefaultAgentSupervisorTests
         Func<Task> act = () => supervisor.StopAllAsync();
         await act.ShouldNotThrowAsync();
     }
+
+    [Fact]
+    public async Task GetOrCreateAsync_WhenDescriptorUpdated_UsesUpdatedDescriptorForNewAndExistingActivation()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(new AgentDescriptor
+        {
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+            DisplayName = "Agent A",
+            ModelId = "model-v1",
+            ApiProvider = "provider-v1",
+            IsolationStrategy = "test"
+        });
+
+        var createdDescriptors = new List<AgentDescriptor>();
+        var strategy = new Mock<IIsolationStrategy>();
+        strategy.SetupGet(s => s.Name).Returns("test");
+        strategy.Setup(s => s.CreateAsync(It.IsAny<AgentDescriptor>(), It.IsAny<AgentExecutionContext>(), It.IsAny<CancellationToken>()))
+            .Callback<AgentDescriptor, AgentExecutionContext, CancellationToken>((descriptor, _, _) => createdDescriptors.Add(descriptor))
+            .Returns((AgentDescriptor descriptor, AgentExecutionContext context, CancellationToken _) =>
+                Task.FromResult(CreateHandleMock(descriptor.AgentId, context.SessionId).Object));
+
+        var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], Mock.Of<ISessionStore>(), NullLogger<DefaultAgentSupervisor>.Instance);
+
+        var firstHandle = await supervisor.GetOrCreateAsync("agent-a", "session-1");
+        var updated = registry.Update("agent-a", new AgentDescriptor
+        {
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+            DisplayName = "Agent A Updated",
+            ModelId = "model-v2",
+            ApiProvider = "provider-v2",
+            IsolationStrategy = "test"
+        });
+
+        var secondHandle = await supervisor.GetOrCreateAsync("agent-a", "session-2");
+        var refreshedFirstSessionHandle = await supervisor.GetOrCreateAsync("agent-a", "session-1");
+
+         updated.ShouldBeTrue();
+        createdDescriptors.Count.ShouldBe(3);
+        createdDescriptors[0].ModelId.ShouldBe("model-v1");
+        createdDescriptors[1].ModelId.ShouldBe("model-v2");
+        createdDescriptors[2].ModelId.ShouldBe("model-v2");
+        createdDescriptors[1].ApiProvider.ShouldBe("provider-v2");
+        createdDescriptors[2].ApiProvider.ShouldBe("provider-v2");
+        secondHandle.SessionId.Value.ShouldBe("session-2");
+        refreshedFirstSessionHandle.SessionId.Value.ShouldBe("session-1");
+        ReferenceEquals(firstHandle, refreshedFirstSessionHandle).ShouldBeFalse();
+    }
+
 }
+
