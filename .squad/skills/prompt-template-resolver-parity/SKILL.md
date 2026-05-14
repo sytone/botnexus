@@ -13,7 +13,9 @@ Use this when adding or changing prompt-template behavior in CLI, cron, or chat-
 1. Reuse CronOptionsPromptTemplateResolver from CLI instead of implementing custom placeholder parsing.
 2. Convert PlatformConfig.PromptTemplates into CronOptions.PromptTemplates before rendering/listing.
 3. Resolve prompt files from BOTNEXUS_HOME so shared (prompts/) and agent/workspace prompt folders are discovered consistently.
-4. Keep prompt run as render-first then gateway /api/chat invocation.
+4. Support both `.prompt.md` and `.prompt.json`; when both formats exist for the same template name, prefer `.prompt.md`.
+5. Parse `.prompt.md` front matter with bounded keys (`name`, `defaults`, `parameters`) and preserve markdown body line breaks for rendering.
+6. Keep prompt run as render-first then gateway /api/chat invocation.
 
 ## Examples
 - src\\gateway\\BotNexus.Cli\\Commands\\PromptCommands.cs

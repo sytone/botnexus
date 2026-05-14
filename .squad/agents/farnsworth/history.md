@@ -32,6 +32,8 @@
 - Prompt template CLI commands should share the cron resolver (`CronOptionsPromptTemplateResolver`) so config-defined and file-backed templates resolve consistently.
 - Prompt template file discovery order is shared home (`~/.botnexus/prompts`), agent home (`~/.botnexus/agents/{agentId}/prompts`), then workspace prompts when available.
 - Key implementation paths for issue #29: `src\\gateway\\BotNexus.Cli\\Commands\\PromptCommands.cs`, `src\\gateway\\BotNexus.Cron\\Prompts\\CronOptionsPromptTemplateResolver.cs`, `src\\gateway\\BotNexus.Gateway\\Configuration\\PlatformConfig.cs`.
+- `.prompt.md` and `.prompt.json` should both resolve in the shared prompt pipeline; when both exist for one template name, markdown wins.
+- Markdown prompt templates use YAML front matter for metadata/defaults/required parameters and preserve the markdown body as the renderable prompt text.
 
 ## Recent Work (2026-05-14)
 
