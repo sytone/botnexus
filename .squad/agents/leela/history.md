@@ -41,3 +41,5 @@
 - Portal tab architecture: use CSS display toggling (not @if conditional rendering) to preserve Blazor component state (scroll position, SignalR connections) when switching tabs. ChatPanel must stay alive when hidden.
 - Mobile portal banner at ≤480px should hide text and keep only burger+logo for ~36px height; tab bars should be icons-only and horizontally scrollable.
 - PR-1 slice review (issue #245): Always enable tests when the implementation they gate has landed in the same branch. Skip annotations with "pending" reasons become lies once the code exists. Catch before merge.
+- Workspace Phase 2 review: bUnit tests that mock the REST client can't catch URL routing mismatches. Always include at least one integration test that exercises the real HTTP pipeline end-to-end (WebApplicationFactory → client → controller) for new API surface. Frontend DTOs must be verified against actual API JSON, not just assumed from property names.
+- REST client URL construction must match controller routing attributes exactly. `[HttpGet("{**path}")]` requires path as a URL segment, not a query parameter. Query params route to parameterless `[HttpGet]`.
