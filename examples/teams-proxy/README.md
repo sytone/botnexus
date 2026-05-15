@@ -1,5 +1,8 @@
 # BotNexus Teams Proxy
 
+> Location: `examples/teams-proxy`  
+> This project lives with other runnable examples under `examples/`.
+
 Queue-backed Azure Bot bridge for Teams. Azure Bot posts Teams activities to `/api/messages`; this service validates the Bot Connector token, publishes a normalized message to Azure Service Bus, then reads BotNexus responses from an outbound queue and sends them back to the Teams conversation through the Bot Connector REST API.
 
 ## Flow

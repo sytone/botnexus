@@ -36,8 +36,8 @@
     <Project Path="src/gateway/BotNexus.Memory/BotNexus.Memory.csproj" />
     <Project Path="src/gateway/BotNexus.Tools/BotNexus.Tools.csproj" />
   </Folder>
-  <Folder Name="/poc/">
-    <Project Path="poc/BotNexus.CodingAgent/BotNexus.CodingAgent.csproj" />
+  <Folder Name="/examples/">
+    <Project Path="examples/BotNexus.CodingAgent/BotNexus.CodingAgent.csproj" />
   </Folder>
   <Folder Name="/src/domain/">
     <Project Path="src/domain/BotNexus.Domain/BotNexus.Domain.csproj" />
