@@ -34,6 +34,8 @@
 - Key implementation paths for issue #29: `src\\gateway\\BotNexus.Cli\\Commands\\PromptCommands.cs`, `src\\gateway\\BotNexus.Cron\\Prompts\\CronOptionsPromptTemplateResolver.cs`, `src\\gateway\\BotNexus.Gateway\\Configuration\\PlatformConfig.cs`.
 - `.prompt.md` and `.prompt.json` should both resolve in the shared prompt pipeline; when both exist for one template name, markdown wins.
 - Markdown prompt templates use YAML front matter for metadata/defaults/required parameters and preserve the markdown body as the renderable prompt text.
+- CLI prompt samples are now shipped as embedded resources via `src\\gateway\\BotNexus.Cli\\Resources\\Prompts\\*.prompt.*` with logical name prefix `PromptSamples/`.
+- `PromptCommands.ExecuteCreateSamplesAsync` now copies prompt samples from embedded assembly resources (`PromptCommands.GetEmbeddedSampleTemplateNames`) instead of scanning repository-root `prompts/`.
 
 ## Recent Work (2026-05-14)
 
@@ -44,3 +46,17 @@
 - PR #242 opened: https://github.com/sytone/botnexus/pull/242
 - Commits: `04a16c7e`, `f1a264c3`, `479e448a`, `d0e3e8ee`, `c4cd5c9b`
 - Deferred: broader web prompt gallery/UX beyond `/prompts` scope.
+
+## Recent Work (2026-05-15)
+
+**Completed:** CLI prompt samples resource migration (issue follow-up).  
+- Moved prompt sample files from repo root `prompts/` to `src\gateway\BotNexus.Cli\Resources\Prompts\`
+- Embedded samples via `BotNexus.Cli.csproj` with `PromptSamples/` logical name prefix
+- Refactored `PromptCommands.ExecuteCreateSamplesAsync` to enumerate and copy from embedded assembly resources
+- Deleted obsolete repo-root `prompts/` folder
+- Updated docs and tests to reflect embedded-resource approach
+- All tests passing (targeted: PromptCommandsTests; full build; full test suite; pre-commit)
+- Commit: `4aa53e4` (`fix(cli): embed prompt sample templates`)
+- PR #247 opened: https://github.com/sytone/botnexus/pull/247
+- Rationale: CLI sample initialization must work in published/tool installs where repo-root files are unavailable
+

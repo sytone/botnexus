@@ -344,12 +344,23 @@ public sealed class PromptCommandsTests
     }
 
     [Fact]
-    public async Task ExecuteCreateSamplesAsync_CopiesSampleTemplates()
+    public void GetEmbeddedSampleTemplateNames_ReturnsBundledTemplates()
+    {
+        var templateNames = PromptCommands.GetEmbeddedSampleTemplateNames();
+
+        templateNames.Count.ShouldBeGreaterThan(0);
+        templateNames.ShouldContain("sample-greeting.prompt.md");
+        templateNames.ShouldContain("sample-simple-greeting.prompt.json");
+    }
+
+    [Fact]
+    public async Task ExecuteCreateSamplesAsync_CopiesBundledSampleTemplates()
     {
         var tempHome = Path.Combine(Path.GetTempPath(), $"botnexus-create-samples-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempHome);
 
         var promptsDir = Path.Combine(tempHome, "prompts");
+        var bundledTemplates = PromptCommands.GetEmbeddedSampleTemplateNames();
 
         try
         {
@@ -360,8 +371,9 @@ public sealed class PromptCommandsTests
             Directory.Exists(promptsDir).ShouldBeTrue("prompts directory should be created");
 
             var copiedFiles = Directory.GetFiles(promptsDir, "*.prompt.*");
-            copiedFiles.Length.ShouldBeGreaterThan(0, "at least one sample template should be copied");
-            copiedFiles.ShouldContain(f => f.Contains("sample-greeting", StringComparison.OrdinalIgnoreCase));
+            copiedFiles.Length.ShouldBe(bundledTemplates.Count);
+            foreach (var bundledTemplate in bundledTemplates)
+                copiedFiles.Select(Path.GetFileName).ShouldContain(bundledTemplate);
         }
         finally
         {
