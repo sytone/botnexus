@@ -65,6 +65,42 @@
                 </button>
             }
         </div>
+        <div class="chat-header-overflow">
+            <button class="chat-header-overflow-trigger"
+                    @onclick="ToggleMobileActionsMenu"
+                    aria-expanded="@_showMobileActionsMenu"
+                    aria-label="More chat actions"
+                    title="More actions">
+                ⋮
+            </button>
+            @if (_showMobileActionsMenu)
+            {
+                <div class="chat-header-overflow-menu">
+                    <button class="toggle-btn @(!ShowThinking ? "toggled-off" : "")"
+                            @onclick="ToggleThinkingFromMenu"
+                            title="Toggle thinking visibility">
+                        💭
+                    </button>
+                    <button class="toggle-btn @(!ShowTools ? "toggled-off" : "")"
+                            @onclick="ToggleToolsFromMenu"
+                            title="Toggle tool visibility">
+                        🔧
+                    </button>
+                    <button class="config-btn" @onclick="OpenConfigFromMenu" title="Agent configuration">
+                        ⚙
+                    </button>
+                    @if (!IsReadOnly)
+                    {
+                        <button class="new-chat-btn"
+                                @onclick="ConfirmNewSessionFromMenu"
+                                title="Start a new session in this conversation"
+                                disabled="@IsStreaming">
+                            ↺ New session
+                        </button>
+                    }
+                </div>
+            }
+        </div>
         @if (!IsReadOnly)
         {
             <SessionControls AgentId="@AgentId" />
@@ -341,6 +377,7 @@ private bool IsStreaming =>
     private string? _lastActiveConversationId;
     private int _lastRenderedMessageCount;
     private bool _showNewSessionConfirm;
+    private bool _showMobileActionsMenu;
 
     private sealed record SlashCommand(string Name, string Description);
 
@@ -435,6 +472,18 @@ private bool IsStreaming =>
         Store.NotifyChanged();
     }
 
+    private void ToggleToolsFromMenu()
+    {
+        ToggleTools();
+        _showMobileActionsMenu = false;
+    }
+
+    private void ToggleThinkingFromMenu()
+    {
+        ToggleThinking();
+        _showMobileActionsMenu = false;
+    }
+
     private async Task StartRecording()
     {
         try
@@ -510,12 +559,29 @@ private bool IsStreaming =>
             await _configPanel.Open();
     }
 
+    private async Task OpenConfigFromMenu()
+    {
+        _showMobileActionsMenu = false;
+        await OpenConfig();
+    }
+
     private void ConfirmNewSession()
     {
         if (IsReadOnly)
             return;
 
         _showNewSessionConfirm = true;
+    }
+
+    private void ConfirmNewSessionFromMenu()
+    {
+        _showMobileActionsMenu = false;
+        ConfirmNewSession();
+    }
+
+    private void ToggleMobileActionsMenu()
+    {
+        _showMobileActionsMenu = !_showMobileActionsMenu;
     }
     private void CancelNewSession() => _showNewSessionConfirm = false;
 
