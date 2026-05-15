@@ -140,4 +140,33 @@ public sealed class GatewayRestClient : IGatewayRestClient
             $"{_apiBaseUrl}conversations/{Uri.EscapeDataString(conversationId)}", ct);
         return response.IsSuccessStatusCode;
     }
+    /// <inheritdoc />
+    public async Task<WorkspaceResponseDto?> GetWorkspaceAsync(
+        string agentId,
+        string? path = null,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        var requestPath = BuildWorkspaceRequestPath(agentId, path);
+
+        return await _http.GetFromJsonAsync<WorkspaceResponseDto>(requestPath, cancellationToken);
+    }
+
+    private string BuildWorkspaceRequestPath(string agentId, string? path)
+    {
+        var requestPath = $"{_apiBaseUrl}agents/{Uri.EscapeDataString(agentId)}/workspace";
+        if (string.IsNullOrWhiteSpace(path))
+            return requestPath;
+
+        var normalizedPath = path.Trim().Replace('\\', '/').Trim('/');
+        if (normalizedPath.Length == 0)
+            return requestPath;
+
+        var encodedSegments = normalizedPath
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Select(Uri.EscapeDataString);
+        return $"{requestPath}/{string.Join("/", encodedSegments)}";
+    }
+
 }
+

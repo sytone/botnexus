@@ -749,6 +749,160 @@ html, body, #app {
     line-height: 1.4;
 }
 
+.workspace-panel {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+    background: var(--bg-primary);
+}
+
+.workspace-tree-pane,
+.workspace-viewer-pane {
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.workspace-tree-pane {
+    border-right: 1px solid var(--border);
+    background: var(--bg-secondary);
+}
+
+.workspace-state {
+    margin: 0.75rem;
+    padding: 0.75rem;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    font-size: 0.83rem;
+    color: var(--text-secondary);
+}
+
+.workspace-state.workspace-state-error {
+    border-color: rgba(231, 76, 60, 0.5);
+    color: #f3b3ad;
+}
+
+.workspace-tree-list {
+    list-style: none;
+    margin: 0;
+    padding: 0.4rem 0;
+    overflow: auto;
+    min-height: 0;
+}
+
+.workspace-tree-row {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    min-height: 42px;
+    border: none;
+    border-radius: 0;
+    text-align: left;
+    background: transparent;
+    color: var(--text-primary);
+    padding-top: 0.45rem;
+    padding-bottom: 0.45rem;
+    padding-right: 0.6rem;
+    cursor: pointer;
+}
+
+.workspace-tree-row:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.workspace-tree-row:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
+.workspace-tree-file.selected {
+    background: rgba(0, 180, 216, 0.15);
+    color: #8fe8ff;
+}
+
+.workspace-tree-chevron {
+    width: 0.8rem;
+    flex-shrink: 0;
+    color: var(--text-muted);
+}
+
+.workspace-tree-chevron.spacer {
+    opacity: 0;
+}
+
+.workspace-tree-icon {
+    width: 1rem;
+    flex-shrink: 0;
+}
+
+.workspace-tree-name {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.workspace-viewer {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.workspace-mobile-back {
+    align-self: flex-start;
+    margin: 0.6rem 0.75rem 0;
+    min-height: 36px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-secondary);
+    padding: 0.3rem 0.8rem;
+    cursor: pointer;
+}
+
+.workspace-file-header {
+    padding: 0.75rem 0.9rem 0.5rem;
+    border-bottom: 1px solid var(--border);
+    min-width: 0;
+}
+
+.workspace-file-header h3 {
+    font-size: 0.84rem;
+    font-family: var(--font-mono);
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.workspace-file-truncation {
+    margin-top: 0.45rem;
+    color: var(--warning);
+    font-size: 0.78rem;
+}
+
+.workspace-file-content {
+    flex: 1;
+    min-height: 0;
+    margin: 0;
+    padding: 0.85rem;
+    overflow: auto;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
 /* ── Empty state (Home.razor when no agent selected) ───────────────── */
 
 .empty-state {
@@ -1517,6 +1671,18 @@ html, body, #app {
         margin: 0.75rem;
         padding: 0.75rem;
     }
+
+    .workspace-panel.mobile-tree .workspace-viewer-pane {
+        display: none;
+    }
+
+    .workspace-panel.mobile-viewer .workspace-tree-pane {
+        display: none;
+    }
+
+    .workspace-tree-pane {
+        border-right: none;
+    }
 }
 
 @media (min-width: 481px) and (max-width: 768px) {
@@ -1535,6 +1701,23 @@ html, body, #app {
         min-height: 42px;
         padding: 0.6rem 0.9rem;
         font-size: 0.85rem;
+    }
+
+    .workspace-panel {
+        flex-direction: row;
+    }
+
+    .workspace-tree-pane {
+        flex: 0 0 min(33%, 24rem);
+        border-right: 1px solid var(--border);
+    }
+
+    .workspace-viewer-pane {
+        display: flex !important;
+    }
+
+    .workspace-mobile-back {
+        display: none;
     }
 }
 

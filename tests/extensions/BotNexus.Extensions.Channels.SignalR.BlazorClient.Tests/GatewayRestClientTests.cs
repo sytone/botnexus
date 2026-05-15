@@ -137,6 +137,40 @@ public sealed class GatewayRestClientTests
     }
 
     [Fact]
+    public async Task GetWorkspaceAsync_calls_workspace_root_endpoint()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/agents/agent-1/workspace", JsonSerializer.Serialize(new
+        {
+            type = "directory",
+            path = "",
+            entries = Array.Empty<object>()
+        }));
+
+        var response = await client.GetWorkspaceAsync("agent-1");
+
+        handler.LastRequestUrl.ShouldContain("/api/agents/agent-1/workspace");
+        response.ShouldNotBeNull();
+        response!.Type.ShouldBe("directory");
+    }
+
+    [Fact]
+    public async Task GetWorkspaceAsync_encodes_requested_sub_path()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/agents/agent-1/workspace/memory/notes.md", JsonSerializer.Serialize(new
+        {
+            type = "text",
+            path = "memory/notes.md",
+            content = "hello"
+        }));
+
+        await client.GetWorkspaceAsync("agent-1", "memory/notes.md");
+
+        handler.LastRequestUrl.ShouldContain("/api/agents/agent-1/workspace/memory/notes.md");
+    }
+
+    [Fact]
     public void Configure_not_called_throws_on_request()
     {
         var client = new GatewayRestClient(new HttpClient());

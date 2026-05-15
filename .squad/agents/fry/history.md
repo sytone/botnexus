@@ -41,3 +41,6 @@ Issue #245 PR-1 uses a new `Components/AgentPanel.razor` shell that always keeps
 
 ### 2026-07-29 — Mobile Chat Actions Move to Overflow Menu at Phone Width
 `Components/ChatPanel.razor` now exposes a mobile-only overflow (`⋮`) action menu that mirrors thinking/tool/config/new-session controls when `.chat-header-actions` is hidden at `<=480px`. This keeps controls reachable on phones while reducing header clutter and preserving chat input usability. Relevant styling is in `wwwroot/css/app.css` under `.chat-header-overflow*` and mobile banner/tab adjustments.
+
+### 2026-05-15 — Workspace Tab Uses Read-Only Tree + Viewer with Lazy Directory Loads
+Issue #245 Phase 2 frontend replaced the AgentPanel Workspace placeholder with `WorkspacePanel` plus `WorkspaceFileTree` and `WorkspaceFileViewer`, wired to `GET /api/agents/{agentId}/workspace` via `IGatewayRestClient.GetWorkspaceAsync`. Mobile uses a single-pane flow (tree first, viewer with back button), while desktop stays split-pane. Viewer truncates large content client-side and honors server truncation flags for safe rendering.
