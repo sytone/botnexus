@@ -1,0 +1,83 @@
+<div class="workspace-viewer" data-testid="workspace-viewer">
+    @if (ShowBackButton)
+    {
+        <button type="button"
+                class="workspace-mobile-back"
+                @onclick="() => BackRequested.InvokeAsync()"
+                aria-label="Back to file tree">
+            ← Files
+        </button>
+    }
+
+    @if (IsLoading)
+    {
+        <div class="workspace-state">Loading file…</div>
+    }
+    else if (!string.IsNullOrWhiteSpace(ErrorMessage))
+    {
+        <div class="workspace-state workspace-state-error">@ErrorMessage</div>
+    }
+    else if (FileResponse is null)
+    {
+        <div class="workspace-state">Select a file to preview its contents.</div>
+    }
+    else if (IsBinaryFile)
+    {
+        <div class="workspace-state">This file appears to be binary and can't be previewed.</div>
+    }
+    else
+    {
+        <header class="workspace-file-header">
+            <h3>@DisplayPath</h3>
+            @if (ShowServerTruncationNotice || ShowClientTruncationNotice)
+            {
+                <p class="workspace-file-truncation">
+                    Content was truncated for safe preview. Download/open locally for the full file.
+                </p>
+            }
+        </header>
+        <pre class="workspace-file-content">@DisplayContent</pre>
+    }
+</div>
+
+@code {
+    private const int MaxPreviewCharacters = 200_000;
+
+    [Parameter]
+    public bool IsLoading { get; set; }
+
+    [Parameter]
+    public string? ErrorMessage { get; set; }
+
+    [Parameter]
+    public WorkspaceResponseDto? FileResponse { get; set; }
+
+    [Parameter]
+    public bool ShowBackButton { get; set; }
+
+    [Parameter]
+    public EventCallback BackRequested { get; set; }
+
+    private bool IsBinaryFile =>
+        string.Equals(FileResponse?.Type, "binary", StringComparison.OrdinalIgnoreCase)
+        || FileResponse?.Binary == true;
+
+    private bool ShowServerTruncationNotice => FileResponse?.IsTruncated == true;
+
+    private bool ShowClientTruncationNotice =>
+        !string.IsNullOrEmpty(FileResponse?.Content)
+        && FileResponse!.Content!.Length > MaxPreviewCharacters;
+
+    private string DisplayPath => string.IsNullOrWhiteSpace(FileResponse?.Path) ? "/" : FileResponse!.Path;
+
+    private string DisplayContent
+    {
+        get
+        {
+            var content = FileResponse?.Content ?? string.Empty;
+            return content.Length <= MaxPreviewCharacters
+                ? content
+                : content[..MaxPreviewCharacters];
+        }
+    }
+}

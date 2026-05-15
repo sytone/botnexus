@@ -38,10 +38,7 @@
         <section id="@GetPanelId(AgentPanelTab.Workspace)"
                  class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Workspace) ? "active" : "")"
                  role="tabpanel">
-            <div class="agent-panel-placeholder">
-                <h3>Workspace is coming next</h3>
-                <p>This tab will show your agent workspace files in a later PR.</p>
-            </div>
+            <WorkspacePanel AgentId="@AgentId" />
         </section>
 
         <section id="@GetPanelId(AgentPanelTab.Reports)"

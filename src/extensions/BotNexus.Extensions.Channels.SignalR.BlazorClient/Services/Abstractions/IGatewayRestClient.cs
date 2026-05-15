@@ -54,6 +54,12 @@ public interface IGatewayRestClient
     /// <summary>DELETE /api/conversations/{conversationId} — soft delete (archive).</summary>
     Task<bool> ArchiveConversationAsync(string conversationId, CancellationToken ct = default);
 
+    /// <summary>GET /api/agents/{agentId}/workspace?path={path}</summary>
+    Task<WorkspaceResponseDto?> GetWorkspaceAsync(
+        string agentId,
+        string? path = null,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Current API base URL (set via Configure). Null if not yet configured.</summary>
     string? ApiBaseUrl { get; }
 }

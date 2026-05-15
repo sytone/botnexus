@@ -140,4 +140,19 @@ public sealed class GatewayRestClient : IGatewayRestClient
             $"{_apiBaseUrl}conversations/{Uri.EscapeDataString(conversationId)}", ct);
         return response.IsSuccessStatusCode;
     }
+    /// <inheritdoc />
+    public async Task<WorkspaceResponseDto?> GetWorkspaceAsync(
+        string agentId,
+        string? path = null,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        var requestPath = $"{_apiBaseUrl}agents/{Uri.EscapeDataString(agentId)}/workspace";
+        if (!string.IsNullOrWhiteSpace(path))
+            requestPath += $"?path={Uri.EscapeDataString(path)}";
+
+        return await _http.GetFromJsonAsync<WorkspaceResponseDto>(requestPath, cancellationToken);
+    }
+
 }
+
