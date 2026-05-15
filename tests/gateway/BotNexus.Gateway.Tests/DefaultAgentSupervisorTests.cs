@@ -369,7 +369,7 @@ public sealed class DefaultAgentSupervisorTests
         var secondHandle = await supervisor.GetOrCreateAsync("agent-a", "session-2");
         var refreshedFirstSessionHandle = await supervisor.GetOrCreateAsync("agent-a", "session-1");
 
-         updated.ShouldBeTrue();
+        updated.ShouldBeTrue();
         createdDescriptors.Count.ShouldBe(3);
         createdDescriptors[0].ModelId.ShouldBe("model-v1");
         createdDescriptors[1].ModelId.ShouldBe("model-v2");
@@ -380,6 +380,4 @@ public sealed class DefaultAgentSupervisorTests
         refreshedFirstSessionHandle.SessionId.Value.ShouldBe("session-1");
         ReferenceEquals(firstHandle, refreshedFirstSessionHandle).ShouldBeFalse();
     }
-
 }
-

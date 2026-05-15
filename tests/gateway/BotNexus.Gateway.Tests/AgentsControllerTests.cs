@@ -47,8 +47,7 @@ public sealed class AgentsControllerTests
         result.ShouldBeOfType<CreatedAtActionResult>();
     }
 
-
-     [Fact]
+    [Fact]
     public async Task Register_WhenSuccessful_IsImmediatelyVisibleViaListAndGet()
     {
         var controller = CreateController(new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance));
@@ -66,7 +65,7 @@ public sealed class AgentsControllerTests
         descriptor.DisplayName.ShouldBe("agent-a-display");
     }
 
-     [Fact]
+    [Fact]
     public async Task Register_WithDuplicateAgent_ReturnsConflict()
     {
         var controller = CreateController(new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance));
@@ -140,8 +139,7 @@ public sealed class AgentsControllerTests
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
-
-     [Fact]
+    [Fact]
     public async Task Update_WhenSuccessful_ReflectsUpdatedDescriptorInListAndGet()
     {
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
@@ -174,7 +172,7 @@ public sealed class AgentsControllerTests
         getDescriptor.ApiProvider.ShouldBe("updated-provider");
     }
 
-     [Fact]
+    [Fact]
     public async Task Unregister_DeletesPersistedConfiguration()
     {
         var writer = new Mock<IAgentConfigurationWriter>();
@@ -496,4 +494,3 @@ public sealed class AgentsControllerTests
             [notifier.Object]);
     }
 }
-

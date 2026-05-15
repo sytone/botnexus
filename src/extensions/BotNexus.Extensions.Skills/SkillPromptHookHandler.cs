@@ -39,8 +39,7 @@ public sealed class SkillPromptHookHandler
 
         var workspacePath = _workspaceManager.GetWorkspacePath(hookEvent.AgentId);
 
-        var botnexusHome = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".botnexus");
+        var botnexusHome = Path.Combine(ResolveUserHomePath(), ".botnexus");
 
         var globalSkillsDir = Path.Combine(botnexusHome, "skills");
         var agentSkillsDir = Path.Combine(botnexusHome, "agents", hookEvent.AgentId, "skills");
@@ -77,5 +76,22 @@ public sealed class SkillPromptHookHandler
         }
 
         return null;
+    }
+
+    private static string ResolveUserHomePath()
+    {
+        var userProfile = Environment.GetEnvironmentVariable("USERPROFILE");
+        if (!string.IsNullOrWhiteSpace(userProfile))
+            return userProfile;
+
+        var specialFolder = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrWhiteSpace(specialFolder))
+            return specialFolder;
+
+        var home = Environment.GetEnvironmentVariable("HOME");
+        if (!string.IsNullOrWhiteSpace(home))
+            return home;
+
+        return AppContext.BaseDirectory;
     }
 }

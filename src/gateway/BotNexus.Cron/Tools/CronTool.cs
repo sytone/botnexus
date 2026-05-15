@@ -35,7 +35,13 @@ public sealed class CronTool(
                 "schedule": { "type": "string", "description": "Standard 5-field cron expression (minute hour day month weekday). The expression is evaluated in the timezone specified by 'timeZone', or UTC if omitted. Example: '30 22 * * *' with timeZone 'America/Los_Angeles' fires at 10:30 PM Pacific daily." },
                 "timeZone": { "type": "string", "description": "IANA timezone name for the schedule (e.g. 'America/Los_Angeles', 'Europe/London', 'Asia/Tokyo'). When set, the cron expression is interpreted in this timezone (including DST adjustments). Defaults to UTC if omitted." },
                 "agentId": { "type": "string", "description": "Target agent (for create, defaults to calling agent)." },
-                "message": { "type": "string", "description": "Prompt message (for create/update)." },
+                "message": { "type": "string", "description": "Prompt message (for create/update). Optional when templateName is provided." },
+                "templateName": { "type": "string", "description": "Named prompt template reference (for create/update)." },
+                "templateParameters": {
+                  "type": "object",
+                  "description": "Template parameter values for templateName (for create/update).",
+                  "additionalProperties": { "type": "string" }
+                },
                 "model": { "type": "string", "description": "Optional model override for agent-prompt jobs. Supports model-id or provider/model-id." },
                 "enabled": { "type": "boolean", "description": "Whether the job is enabled." }
               },
@@ -63,6 +69,9 @@ public sealed class CronTool(
         CopyString(arguments, prepared, "timeZone");
         CopyString(arguments, prepared, "agentId");
         CopyString(arguments, prepared, "message");
+        CopyString(arguments, prepared, "templateName");
+        if (TryReadStringMap(arguments, "templateParameters", out var templateParameters))
+            prepared["templateParameters"] = templateParameters;
         CopyString(arguments, prepared, "model");
 
         if (arguments.TryGetValue("enabled", out var enabled) && enabled is not null)
@@ -106,6 +115,9 @@ public sealed class CronTool(
         var now = DateTimeOffset.UtcNow;
         var schedule = ReadRequired(arguments, "schedule");
         var timeZone = ReadString(arguments, "timeZone");
+        var message = ReadString(arguments, "message");
+        var templateName = ReadString(arguments, "templateName");
+        EnsurePromptSource(message, templateName);
         var tz = ResolveTimeZone(timeZone);
 
         DateTimeOffset? nextRunAt = null;
@@ -123,7 +135,9 @@ public sealed class CronTool(
             Schedule = schedule,
             ActionType = "agent-prompt",
             AgentId = ReadString(arguments, "agentId") ?? _agentId,
-            Message = ReadString(arguments, "message"),
+            Message = message,
+            TemplateName = templateName,
+            TemplateParameters = ReadStringMap(arguments, "templateParameters"),
             Model = ReadString(arguments, "model"),
             Enabled = arguments.TryGetValue("enabled", out var enabled) && enabled is bool boolEnabled ? boolEnabled : true,
             TimeZone = timeZone,
@@ -147,12 +161,20 @@ public sealed class CronTool(
 
         var newSchedule = ReadString(arguments, "schedule") ?? existing.Schedule;
         var newTimeZone = arguments.ContainsKey("timeZone") ? ReadString(arguments, "timeZone") : existing.TimeZone;
+        var newMessage = arguments.ContainsKey("message") ? ReadString(arguments, "message") : existing.Message;
+        var newTemplateName = arguments.ContainsKey("templateName") ? ReadString(arguments, "templateName") : existing.TemplateName;
+        var newTemplateParameters = arguments.ContainsKey("templateParameters")
+            ? ReadStringMap(arguments, "templateParameters")
+            : existing.TemplateParameters;
+        EnsurePromptSource(newMessage, newTemplateName);
         var updated = existing with
         {
             Name = ReadString(arguments, "name") ?? existing.Name,
             Schedule = newSchedule,
             TimeZone = newTimeZone,
-            Message = ReadString(arguments, "message") ?? existing.Message,
+            Message = newMessage,
+            TemplateName = newTemplateName,
+            TemplateParameters = newTemplateParameters,
             Model = ReadString(arguments, "model") ?? existing.Model,
             AgentId = ReadString(arguments, "agentId") ?? existing.AgentId,
             Enabled = arguments.TryGetValue("enabled", out var enabled) && enabled is bool boolEnabled ? boolEnabled : existing.Enabled
@@ -265,6 +287,50 @@ public sealed class CronTool(
             throw new ArgumentException($"Argument '{key}' cannot be empty.");
 
         return result;
+    }
+
+    private static IReadOnlyDictionary<string, string?>? ReadStringMap(IReadOnlyDictionary<string, object?> arguments, string key)
+    {
+        if (!TryReadStringMap(arguments, key, out var map))
+            return null;
+
+        return map;
+    }
+
+    private static bool TryReadStringMap(
+        IReadOnlyDictionary<string, object?> arguments,
+        string key,
+        out IReadOnlyDictionary<string, string?> map)
+    {
+        if (!arguments.TryGetValue(key, out var value) || value is null)
+        {
+            map = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            return false;
+        }
+
+        map = value switch
+        {
+            JsonElement { ValueKind: JsonValueKind.Object } element => element
+                .EnumerateObject()
+                .ToDictionary(
+                    property => property.Name,
+                    property => property.Value.ValueKind == JsonValueKind.Null ? null : property.Value.ToString(),
+                    StringComparer.OrdinalIgnoreCase),
+            IReadOnlyDictionary<string, string?> typed => new Dictionary<string, string?>(typed, StringComparer.OrdinalIgnoreCase),
+            IReadOnlyDictionary<string, object?> dictionary => dictionary.ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value?.ToString(),
+                StringComparer.OrdinalIgnoreCase),
+            _ => throw new ArgumentException($"Argument '{key}' must be an object with string values.")
+        };
+
+        return true;
+    }
+
+    private static void EnsurePromptSource(string? message, string? templateName)
+    {
+        if (string.IsNullOrWhiteSpace(message) && string.IsNullOrWhiteSpace(templateName))
+            throw new ArgumentException("Either 'message' or 'templateName' is required.");
     }
 
     private static bool ReadBool(object value, string argumentName)

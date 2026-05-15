@@ -1,4 +1,5 @@
 using BotNexus.Cron.Actions;
+using BotNexus.Cron.Prompts;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -25,6 +26,7 @@ public static class CronServiceCollectionExtensions
         services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<CronScheduler>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICronAction, AgentPromptAction>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICronAction, WebhookAction>());
+        services.TryAddSingleton<IPromptTemplateResolver, CronOptionsPromptTemplateResolver>();
         return services;
     }
 

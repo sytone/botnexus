@@ -3,6 +3,7 @@ using Bunit.TestDoubles;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Layout;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+using Microsoft.AspNetCore.Components.Web;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
 
@@ -63,6 +64,35 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         await cut.InvokeAsync(() => sendBtn.Click());
 
         await _interaction.Received(1).SendMessageAsync("agent-1", "Hello from test!");
+    }
+
+    [Fact]
+    public void ChatPanel_InputPlaceholder_IncludesPromptsCommandHint()
+    {
+        SeedConnectedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConv("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        var textarea = cut.Find(".chat-input");
+        Assert.Contains("/prompts", textarea.GetAttribute("placeholder"));
+    }
+
+    [Fact]
+    public async Task ChatPanel_PromptsSlashCommand_SendsPromptsMessage()
+    {
+        SeedConnectedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConv("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        var textarea = cut.Find(".chat-input");
+
+        await cut.InvokeAsync(() => textarea.Input("/prompts"));
+        await cut.InvokeAsync(() => textarea.TriggerEvent("onkeydown", new KeyboardEventArgs { Key = "Enter" }));
+
+        await _interaction.Received(1).SendMessageAsync("agent-1", "/prompts");
     }
 
     // ── ChatPanel: New session button click triggers confirmation dialog ───────

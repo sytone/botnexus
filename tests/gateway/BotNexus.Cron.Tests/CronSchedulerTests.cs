@@ -486,6 +486,39 @@ public sealed class CronSchedulerTests
     }
 
     [Fact]
+    public async Task Scheduler_SyncConfiguredJobs_PersistsTemplateReferences()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        var logger = new ListLogger<CronScheduler>();
+        var options = new CronOptions
+        {
+            Jobs = new Dictionary<string, ConfiguredCronJob>
+            {
+                ["config-job"] = new()
+                {
+                    Name = "Config template job",
+                    Schedule = "*/5 * * * *",
+                    ActionType = "agent-prompt",
+                    AgentId = "agent-a",
+                    TemplateName = "daily-status",
+                    TemplateParameters = new Dictionary<string, string?> { ["owner"] = "Hermes" },
+                    Enabled = true
+                }
+            }
+        };
+        var scheduler = CreateScheduler(context.Store, [new RecordingAction("agent-prompt")], options, logger);
+
+        await InvokeSyncConfiguredJobsAsync(scheduler, options);
+
+        var stored = await context.Store.GetAsync("config-job");
+        stored.ShouldNotBeNull();
+        stored!.TemplateName.ShouldBe("daily-status");
+        stored.TemplateParameters.ShouldNotBeNull();
+        stored.TemplateParameters!["owner"].ShouldBe("Hermes");
+        stored.Message.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task Scheduler_SyncConfiguredJobs_InvalidJobs_AreSkippedWithWarnings()
     {
         await using var context = await CronStoreTestContext.CreateAsync();

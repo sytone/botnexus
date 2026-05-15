@@ -23,6 +23,7 @@ using var serviceProvider = new ServiceCollection()
     .AddSingleton<InstallCommand>()
     .AddSingleton<BuildCommand>()
     .AddSingleton<GatewayCommand>()
+    .AddSingleton<PromptCommands>()
     .AddSingleton<ServeCommand>()
     .AddSingleton<UpdateCommand>()
     .AddSingleton<ProviderCommand>()
@@ -41,6 +42,7 @@ root.AddCommand(serviceProvider.GetRequiredService<InstallCommand>().Build(verbo
 root.AddCommand(serviceProvider.GetRequiredService<BuildCommand>().Build(verboseOption));
 root.AddCommand(serviceProvider.GetRequiredService<ServeCommand>().Build(verboseOption));
 root.AddCommand(serviceProvider.GetRequiredService<GatewayCommand>().Build(verboseOption));
+root.AddCommand(serviceProvider.GetRequiredService<PromptCommands>().Build(verboseOption));
 root.AddCommand(serviceProvider.GetRequiredService<UpdateCommand>().Build(verboseOption));
 root.AddCommand(serviceProvider.GetRequiredService<ProviderCommand>().Build(verboseOption));
 return await root.InvokeAsync(args);

@@ -8,6 +8,16 @@ public sealed record CronJob
     public required string ActionType { get; init; }
     public string? AgentId { get; init; }
     public string? Message { get; init; }
+    /// <summary>
+    /// Optional named prompt template reference for agent-prompt jobs.
+    /// When set, the runtime resolves and renders this template at execution time.
+    /// </summary>
+    public string? TemplateName { get; init; }
+
+    /// <summary>
+    /// Optional parameter values applied when rendering <see cref="TemplateName"/>.
+    /// </summary>
+    public IReadOnlyDictionary<string, string?>? TemplateParameters { get; init; }
     public string? Model { get; init; }
     public string? WebhookUrl { get; init; }
     public string? ShellCommand { get; init; }

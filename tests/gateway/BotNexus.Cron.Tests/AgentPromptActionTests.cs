@@ -1,4 +1,5 @@
 using BotNexus.Cron.Actions;
+using BotNexus.Cron.Prompts;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Triggers;
@@ -168,6 +169,48 @@ public sealed class AgentPromptActionTests
         capturedRequest.ShouldNotBeNull();
         capturedRequest!.ConversationId.ShouldBe("conv-explicit-123");
         capturedRequest.CronJobId.ShouldBe("job-pinned");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_UsesPromptTemplateResolver_WhenTemplateNameProvided()
+    {
+        var action = new AgentPromptAction();
+        var trigger = new Mock<IInternalTrigger>();
+        var resolver = new Mock<IPromptTemplateResolver>();
+        var registry = new Mock<IAgentRegistry>();
+        string? capturedPrompt = null;
+
+        trigger.SetupGet(value => value.Type).Returns(TriggerType.Cron);
+        trigger.Setup(value => value.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()))
+            .Callback<AgentId, string, CancellationToken, InternalTriggerRequest?>((_, prompt, _, _) => capturedPrompt = prompt)
+            .ReturnsAsync(SessionId.From("cron:templated:run-1"));
+        resolver.Setup(value => value.TryRender("agent-a", "daily-summary", It.IsAny<IReadOnlyDictionary<string, string?>?>(), out It.Ref<string>.IsAny, out It.Ref<string?>.IsAny))
+            .Returns((string _, string __, IReadOnlyDictionary<string, string?>? ___, out string renderedPrompt, out string? error) =>
+            {
+                renderedPrompt = "Rendered prompt";
+                error = null;
+                return true;
+            });
+
+        registry.Setup(value => value.Get(AgentId.From("agent-a"))).Returns((AgentDescriptor?)null);
+        var services = new ServiceCollection()
+            .AddSingleton<IInternalTrigger>(trigger.Object)
+            .AddSingleton(resolver.Object)
+            .AddSingleton(registry.Object)
+            .BuildServiceProvider();
+        var context = CreateContext(services) with
+        {
+            Job = CreateContext(services).Job with
+            {
+                Message = null,
+                TemplateName = "daily-summary",
+                TemplateParameters = new Dictionary<string, string?> { ["owner"] = "Hermes" }
+            }
+        };
+
+        await action.ExecuteAsync(context);
+
+        capturedPrompt.ShouldBe("Rendered prompt");
     }
 
 }

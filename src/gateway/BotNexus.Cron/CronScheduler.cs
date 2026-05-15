@@ -222,10 +222,11 @@ public sealed class CronScheduler(
             }
 
             if (string.Equals(normalizedActionType, "agent-prompt", StringComparison.OrdinalIgnoreCase)
-                && (string.IsNullOrWhiteSpace(configuredJob.AgentId) || string.IsNullOrWhiteSpace(configuredJob.Message)))
+                && (string.IsNullOrWhiteSpace(configuredJob.AgentId)
+                    || (string.IsNullOrWhiteSpace(configuredJob.Message) && string.IsNullOrWhiteSpace(configuredJob.TemplateName))))
             {
                 _logger.LogWarning(
-                    "Skipping configured cron job '{JobId}' because agent-prompt jobs require both agentId and message.",
+                    "Skipping configured cron job '{JobId}' because agent-prompt jobs require agentId and either message or templateName.",
                     jobId);
                 continue;
             }
@@ -241,6 +242,8 @@ public sealed class CronScheduler(
                     ActionType = normalizedActionType,
                     AgentId = configuredJob.AgentId,
                     Message = configuredJob.Message,
+                    TemplateName = configuredJob.TemplateName,
+                    TemplateParameters = configuredJob.TemplateParameters,
                     Model = configuredJob.Model,
                     WebhookUrl = configuredJob.WebhookUrl,
                     ShellCommand = configuredJob.ShellCommand,
@@ -262,6 +265,8 @@ public sealed class CronScheduler(
                 ActionType = normalizedActionType,
                 AgentId = configuredJob.AgentId,
                 Message = configuredJob.Message,
+                TemplateName = configuredJob.TemplateName,
+                TemplateParameters = configuredJob.TemplateParameters,
                 Model = configuredJob.Model,
                 WebhookUrl = configuredJob.WebhookUrl,
                 ShellCommand = configuredJob.ShellCommand,

@@ -15,6 +15,9 @@
     <Compile Include="CronOptions.cs" />
     <Compile Include="HeartbeatCronProvisioner.cs" />
     <Compile Include="CronScheduler.cs" />
+    <Compile Include="Prompts\IPromptTemplateResolver.cs" />
+    <Compile Include="Prompts\CronOptionsPromptTemplateResolver.cs" />
+    <Compile Include="Prompts\PromptTemplateRenderer.cs" />
     <Compile Include="ActionStubs\AgentPromptActionStub.cs" />
     <Compile Include="ActionStubs\WebhookActionStub.cs" />
     <Compile Include="Extensions\CronServiceCollectionExtensions.cs" />

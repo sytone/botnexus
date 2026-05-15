@@ -46,6 +46,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
                     action_type TEXT NOT NULL,
                     agent_id TEXT NULL,
                     message TEXT NULL,
+                    template_name TEXT NULL,
+                    template_parameters_json TEXT NULL,
                     model TEXT NULL,
                     webhook_url TEXT NULL,
                     shell_command TEXT NULL,
@@ -104,6 +106,22 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             try { await migrateModel.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
             catch (SqliteException) { /* column already exists */ }
 
+            // Migrate existing databases: add template_name column if missing.
+            await using var migrateTemplateName = connection.CreateCommand();
+            migrateTemplateName.CommandText = """
+                ALTER TABLE cron_jobs ADD COLUMN template_name TEXT NULL;
+                """;
+            try { await migrateTemplateName.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
+            catch (SqliteException) { /* column already exists */ }
+
+            // Migrate existing databases: add template_parameters_json column if missing.
+            await using var migrateTemplateParameters = connection.CreateCommand();
+            migrateTemplateParameters.CommandText = """
+                ALTER TABLE cron_jobs ADD COLUMN template_parameters_json TEXT NULL;
+                """;
+            try { await migrateTemplateParameters.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
+            catch (SqliteException) { /* column already exists */ }
+
             _initialized = true;
         }
         finally
@@ -132,11 +150,11 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             await using var command = connection.CreateCommand();
             command.CommandText = """
                 INSERT INTO cron_jobs (
-                    id, name, schedule, action_type, agent_id, message, model, webhook_url, shell_command,
+                    id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
                     enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json
                 )
                 VALUES (
-                    $id, $name, $schedule, $actionType, $agentId, $message, $model, $webhookUrl, $shellCommand,
+                    $id, $name, $schedule, $actionType, $agentId, $message, @templateName, @templateParametersJson, $model, $webhookUrl, $shellCommand,
                     $enabled, $system, $timeZone, $createdBy, $createdAt, $lastRunAt, $nextRunAt, $lastRunStatus, $lastRunError, $metadataJson
                 )
                 """;
@@ -165,7 +183,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         await connection.OpenAsync(ct).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, name, schedule, action_type, agent_id, message, model, webhook_url, shell_command,
+            SELECT id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
                    enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json
             FROM cron_jobs
             WHERE id = $id
@@ -186,7 +204,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         await connection.OpenAsync(ct).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, name, schedule, action_type, agent_id, message, model, webhook_url, shell_command,
+            SELECT id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
                    enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json
             FROM cron_jobs
             WHERE $agentId IS NULL OR agent_id = $agentId
@@ -215,11 +233,11 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             await using var command = connection.CreateCommand();
             command.CommandText = """
                 INSERT INTO cron_jobs (
-                    id, name, schedule, action_type, agent_id, message, model, webhook_url, shell_command,
+                    id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
                     enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json
                 )
                 VALUES (
-                    $id, $name, $schedule, $actionType, $agentId, $message, $model, $webhookUrl, $shellCommand,
+                    $id, $name, $schedule, $actionType, $agentId, $message, @templateName, @templateParametersJson, $model, $webhookUrl, $shellCommand,
                     $enabled, $system, $timeZone, $createdBy, $createdAt, $lastRunAt, $nextRunAt, $lastRunStatus, $lastRunError, $metadataJson
                 )
                 ON CONFLICT(id) DO UPDATE SET
@@ -228,6 +246,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
                     action_type = excluded.action_type,
                     agent_id = excluded.agent_id,
                     message = excluded.message,
+                    template_name = excluded.template_name,
+                    template_parameters_json = excluded.template_parameters_json,
                     model = excluded.model,
                     webhook_url = excluded.webhook_url,
                     shell_command = excluded.shell_command,
@@ -415,6 +435,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         command.Parameters.AddWithValue("$actionType", job.ActionType);
         command.Parameters.AddWithValue("$agentId", (object?)job.AgentId ?? DBNull.Value);
         command.Parameters.AddWithValue("$message", (object?)job.Message ?? DBNull.Value);
+        command.Parameters.AddWithValue("@templateName", (object?)job.TemplateName ?? DBNull.Value);
+        command.Parameters.AddWithValue("@templateParametersJson", SerializeTemplateParameters(job.TemplateParameters));
         command.Parameters.AddWithValue("$model", (object?)job.Model ?? DBNull.Value);
         command.Parameters.AddWithValue("$webhookUrl", (object?)job.WebhookUrl ?? DBNull.Value);
         command.Parameters.AddWithValue("$shellCommand", (object?)job.ShellCommand ?? DBNull.Value);
@@ -432,7 +454,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
 
     private static CronJob ReadJob(SqliteDataReader reader)
     {
-        var metadataJson = reader.IsDBNull(18) ? null : reader.GetString(18);
+        var templateParametersJson = reader.IsDBNull(7) ? null : reader.GetString(7);
+        var metadataJson = reader.IsDBNull(20) ? null : reader.GetString(20);
         return new CronJob
         {
             Id = reader.GetString(0),
@@ -441,18 +464,20 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             ActionType = reader.GetString(3),
             AgentId = reader.IsDBNull(4) ? null : reader.GetString(4),
             Message = reader.IsDBNull(5) ? null : reader.GetString(5),
-            Model = reader.IsDBNull(6) ? null : reader.GetString(6),
-            WebhookUrl = reader.IsDBNull(7) ? null : reader.GetString(7),
-            ShellCommand = reader.IsDBNull(8) ? null : reader.GetString(8),
-            Enabled = !reader.IsDBNull(9) && reader.GetInt32(9) != 0,
-            System = !reader.IsDBNull(10) && reader.GetInt32(10) != 0,
-            TimeZone = reader.IsDBNull(11) ? null : reader.GetString(11),
-            CreatedBy = reader.IsDBNull(12) ? null : reader.GetString(12),
-            CreatedAt = ParseDate(reader.GetString(13)),
-            LastRunAt = reader.IsDBNull(14) ? null : ParseDate(reader.GetString(14)),
-            NextRunAt = reader.IsDBNull(15) ? null : ParseDate(reader.GetString(15)),
-            LastRunStatus = reader.IsDBNull(16) ? null : reader.GetString(16),
-            LastRunError = reader.IsDBNull(17) ? null : reader.GetString(17),
+            TemplateName = reader.IsDBNull(6) ? null : reader.GetString(6),
+            TemplateParameters = DeserializeTemplateParameters(templateParametersJson),
+            Model = reader.IsDBNull(8) ? null : reader.GetString(8),
+            WebhookUrl = reader.IsDBNull(9) ? null : reader.GetString(9),
+            ShellCommand = reader.IsDBNull(10) ? null : reader.GetString(10),
+            Enabled = !reader.IsDBNull(11) && reader.GetInt32(11) != 0,
+            System = !reader.IsDBNull(12) && reader.GetInt32(12) != 0,
+            TimeZone = reader.IsDBNull(13) ? null : reader.GetString(13),
+            CreatedBy = reader.IsDBNull(14) ? null : reader.GetString(14),
+            CreatedAt = ParseDate(reader.GetString(15)),
+            LastRunAt = reader.IsDBNull(16) ? null : ParseDate(reader.GetString(16)),
+            NextRunAt = reader.IsDBNull(17) ? null : ParseDate(reader.GetString(17)),
+            LastRunStatus = reader.IsDBNull(18) ? null : reader.GetString(18),
+            LastRunError = reader.IsDBNull(19) ? null : reader.GetString(19),
             Metadata = DeserializeMetadata(metadataJson)
         };
     }
@@ -480,11 +505,22 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
     private static object SerializeMetadata(IReadOnlyDictionary<string, object?>? metadata)
         => metadata is null ? DBNull.Value : JsonSerializer.Serialize(metadata, JsonOptions);
 
+    private static object SerializeTemplateParameters(IReadOnlyDictionary<string, string?>? parameters)
+        => parameters is null ? DBNull.Value : JsonSerializer.Serialize(parameters, JsonOptions);
+
     private static IReadOnlyDictionary<string, object?>? DeserializeMetadata(string? metadataJson)
     {
         if (string.IsNullOrWhiteSpace(metadataJson))
             return null;
 
         return JsonSerializer.Deserialize<Dictionary<string, object?>>(metadataJson, JsonOptions);
+    }
+
+    private static IReadOnlyDictionary<string, string?>? DeserializeTemplateParameters(string? parametersJson)
+    {
+        if (string.IsNullOrWhiteSpace(parametersJson))
+            return null;
+
+        return JsonSerializer.Deserialize<Dictionary<string, string?>>(parametersJson, JsonOptions);
     }
 }

@@ -79,6 +79,51 @@ public sealed class CronToolTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_Create_WithTemplateName_PersistsTemplateFields()
+    {
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        CronJob? created = null;
+        store.Setup(value => value.CreateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
+            .Callback<CronJob, CancellationToken>((job, _) => created = job)
+            .ReturnsAsync((CronJob job, CancellationToken _) => job);
+        var tool = new CronTool(store.Object, scheduler, "agent-a");
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "create",
+            ["name"] = "Template job",
+            ["schedule"] = "*/5 * * * *",
+            ["templateName"] = "daily-status",
+            ["templateParameters"] = new Dictionary<string, object?> { ["project"] = "botnexus" }
+        });
+
+        created.ShouldNotBeNull();
+        created!.TemplateName.ShouldBe("daily-status");
+        created.TemplateParameters.ShouldNotBeNull();
+        created.TemplateParameters!["project"].ShouldBe("botnexus");
+        created.Message.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Create_WithoutMessageOrTemplate_Throws()
+    {
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        var tool = new CronTool(store.Object, scheduler, "agent-a");
+
+        var act = () => tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "create",
+            ["name"] = "Invalid job",
+            ["schedule"] = "*/5 * * * *"
+        });
+
+        var ex = await act.ShouldThrowAsync<ArgumentException>();
+        ex.Message.ShouldContain("Either 'message' or 'templateName' is required.");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Delete_OwnedJob_Succeeds()
     {
         var store = new Mock<ICronStore>();
