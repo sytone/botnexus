@@ -1,0 +1,183 @@
+@inject IClientStateStore Store
+@inject NavigationManager Nav
+@implements IDisposable
+
+<div class="agent-panel" data-testid="agent-panel">
+    <header class="agent-panel-header">
+        <div class="agent-panel-avatar" aria-hidden="true">🤖</div>
+        <div class="agent-panel-meta">
+            <h2 class="agent-panel-title">@DisplayName</h2>
+            <span class="agent-panel-id">@AgentId</span>
+        </div>
+        <span class="agent-panel-status @StatusCssClass" role="status" aria-live="polite">@StatusLabel</span>
+    </header>
+
+    <nav class="agent-tab-bar agent-panel-tab-strip" role="tablist" aria-label="Agent sections">
+        @foreach (var tab in s_tabs)
+        {
+            <button class="agent-tab agent-panel-tab @(IsActiveTab(tab.Key) ? "active" : "")"
+                    data-tab="@tab.Key.ToString().ToLowerInvariant()"
+                    role="tab"
+                    aria-selected="@IsActiveTab(tab.Key)"
+                    aria-controls="@GetPanelId(tab.Key)"
+                    @onclick="() => SelectTab(tab.Key)">
+                <span class="agent-tab-icon" aria-hidden="true">@tab.Icon</span>
+                <span class="agent-tab-label">@tab.Label</span>
+            </button>
+        }
+    </nav>
+
+    <div class="agent-tab-content">
+        <section id="@GetPanelId(AgentPanelTab.Conversation)"
+                 data-testid="agent-panel-conversation"
+                 class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Conversation) ? "active" : "")"
+                 role="tabpanel">
+            <ChatPanel AgentId="@AgentId" />
+        </section>
+
+        <section id="@GetPanelId(AgentPanelTab.Workspace)"
+                 class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Workspace) ? "active" : "")"
+                 role="tabpanel">
+            <div class="agent-panel-placeholder">
+                <h3>Workspace is coming next</h3>
+                <p>This tab will show your agent workspace files in a later PR.</p>
+            </div>
+        </section>
+
+        <section id="@GetPanelId(AgentPanelTab.Reports)"
+                 class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Reports) ? "active" : "")"
+                 role="tabpanel">
+            <div class="agent-panel-placeholder">
+                <h3>Reports are coming next</h3>
+                <p>This tab will surface agent-generated reports after backend endpoints land.</p>
+            </div>
+        </section>
+
+        <section id="@GetPanelId(AgentPanelTab.Canvas)"
+                 class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Canvas) ? "active" : "")"
+                 role="tabpanel">
+            <div class="agent-panel-placeholder">
+                <h3>Canvas is coming next</h3>
+                <p>This tab will host custom interactive canvas content in a follow-up slice.</p>
+            </div>
+        </section>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public string AgentId { get; set; } = default!;
+
+    private AgentPanelTab _activeTab = AgentPanelTab.Conversation;
+
+    private AgentState? Agent => Store.GetAgent(AgentId);
+    private string DisplayName => Agent?.DisplayName ?? AgentId;
+    private string StatusLabel => Agent?.IsConnected != true ? "Offline" : Agent?.IsStreaming == true ? "Running" : "Idle";
+    private string StatusCssClass => Agent?.IsConnected != true ? "offline" : Agent?.IsStreaming == true ? "running" : "idle";
+
+    private static readonly (AgentPanelTab Key, string Label, string Icon)[] s_tabs =
+    [
+        (AgentPanelTab.Conversation, "Conversation", "💬"),
+        (AgentPanelTab.Workspace, "Workspace", "📁"),
+        (AgentPanelTab.Reports, "Reports", "📊"),
+        (AgentPanelTab.Canvas, "Canvas", "🎨")
+    ];
+
+    protected override void OnInitialized()
+    {
+        Nav.LocationChanged += HandleLocationChanged;
+        ApplyTabFromUri(Nav.Uri);
+    }
+
+    protected override void OnParametersSet()
+    {
+        ApplyTabFromUri(Nav.Uri);
+    }
+
+    public void Dispose()
+    {
+        Nav.LocationChanged -= HandleLocationChanged;
+    }
+
+    private void HandleLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        var previous = _activeTab;
+        ApplyTabFromUri(e.Location);
+        if (previous != _activeTab)
+            _ = InvokeAsync(StateHasChanged);
+    }
+
+    private bool IsActiveTab(AgentPanelTab tab) => _activeTab == tab;
+
+    private string GetPanelId(AgentPanelTab tab) => $"{AgentId}-{tab.ToString().ToLowerInvariant()}-panel";
+
+    private void SelectTab(AgentPanelTab tab)
+    {
+        _activeTab = tab;
+        var tabValue = tab == AgentPanelTab.Conversation
+            ? null
+            : tab.ToString().ToLowerInvariant();
+        var target = Nav.GetUriWithQueryParameter("tab", tabValue);
+        if (!string.Equals(target, Nav.Uri, StringComparison.Ordinal))
+            Nav.NavigateTo(target, replace: true);
+    }
+
+    private void ApplyTabFromUri(string uri)
+    {
+        var tabValue = GetQueryValue(new Uri(uri).Query, "tab");
+        if (string.IsNullOrWhiteSpace(tabValue))
+        {
+            _activeTab = AgentPanelTab.Conversation;
+            return;
+        }
+
+        if (TryParseTab(tabValue, out var parsed))
+            _activeTab = parsed;
+    }
+
+    private static string? GetQueryValue(string query, string key)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+            return null;
+
+        foreach (var segment in query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = segment.Split('=', 2);
+            if (parts.Length == 0)
+                continue;
+
+            var currentKey = Uri.UnescapeDataString(parts[0]);
+            if (!string.Equals(currentKey, key, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            return parts.Length == 2 ? Uri.UnescapeDataString(parts[1]) : string.Empty;
+        }
+
+        return null;
+    }
+
+    private static bool TryParseTab(string value, out AgentPanelTab tab)
+    {
+        tab = value.ToLowerInvariant() switch
+        {
+            "conversation" => AgentPanelTab.Conversation,
+            "workspace" => AgentPanelTab.Workspace,
+            "reports" => AgentPanelTab.Reports,
+            "canvas" => AgentPanelTab.Canvas,
+            _ => AgentPanelTab.Conversation
+        };
+
+        return value.Equals("conversation", StringComparison.OrdinalIgnoreCase)
+               || value.Equals("workspace", StringComparison.OrdinalIgnoreCase)
+               || value.Equals("reports", StringComparison.OrdinalIgnoreCase)
+               || value.Equals("canvas", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private enum AgentPanelTab
+    {
+        Conversation,
+        Workspace,
+        Reports,
+        Canvas
+    }
+}

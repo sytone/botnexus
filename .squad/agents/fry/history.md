@@ -35,3 +35,9 @@ When loading initial history during portal startup, virtual cron-session project
 
 ### 2026-07-29 — JS Interop Must Guard Against Non-DOM ElementReference
 Blazor's `ElementReference` for conditionally-rendered elements (e.g., `@if (!IsReadOnly)`) serialises as a truthy non-element object when the element is absent. JS helpers receiving ElementReferences must check `typeof element.addEventListener === 'function'` (not just `!element`) before using DOM APIs. The Blazor side should also skip the JS call entirely when the element is known to be absent, and reset any binding flags when the element may have been destroyed and recreated (e.g., read-only → interactive transitions).
+
+### 2026-07-29 — AgentPanel PR-1 Shell Keeps Chat Alive with CSS-Only Tab Visibility
+Issue #245 PR-1 uses a new `Components/AgentPanel.razor` shell that always keeps all tab panes mounted and toggles visibility with `.agent-tab-pane.active` in `wwwroot/css/app.css`. Keeping `ChatPanel` mounted inside the conversation pane preserves stream/chat state while users switch to Workspace/Reports/Canvas placeholders. Deep-link tab selection is supported with a `?tab=<conversation|workspace|reports|canvas>` query parameter without adding new routes or backend APIs.
+
+### 2026-07-29 — Mobile Chat Actions Move to Overflow Menu at Phone Width
+`Components/ChatPanel.razor` now exposes a mobile-only overflow (`⋮`) action menu that mirrors thinking/tool/config/new-session controls when `.chat-header-actions` is hidden at `<=480px`. This keeps controls reachable on phones while reducing header clutter and preserving chat input usability. Relevant styling is in `wwwroot/css/app.css` under `.chat-header-overflow*` and mobile banner/tab adjustments.

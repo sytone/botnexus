@@ -790,3 +790,224 @@ For Hermes:
 **PR:** #247 — https://github.com/sytone/botnexus/pull/247
 
 ---
+
+### 2026-07-29 — Leela: Portal Agent Workspace Tabs — PR Scope (Issue #245)
+
+**Author:** Leela (Lead)  
+**Date:** 2026-07-29  
+**Issue:** #245 — [Portal] Agent workspace UI - tabbed agent panel  
+**Status:** Approved  
+
+**Problem:** Issue #245 requests a full tabbed agent panel (Conversation, Workspace, Reports, Canvas). Implementing all four tabs with backend APIs in a single PR is an unreviewable mega-change. We need a vertical slice that delivers visible value, proves the tab architecture, and keeps mobile responsive.
+
+Additionally, the current top banner (`app-banner`) is too large/cramped on phones — it needs mobile-first attention.
+
+**Decision: PR-1 Scope — AgentPanel Shell + Tab Bar + Mobile Header**
+
+**What's IN this PR:**
+1. **AgentPanel component** — new `AgentPanel.razor` wrapping the tab structure
+   - Tab bar with icons: 💬 Chat | 📁 Workspace | 📊 Reports | 🎨 Canvas
+   - Only **Chat** tab is functional; other tabs show placeholder "Coming soon" states
+   - Tab bar is horizontal, scrollable on mobile (no wrapping)
+   - Active tab stored in component state via `?tab=` query parameter deep-linking
+
+2. **ChatPanel extraction** — existing `ChatPanel.razor` renders inside the Chat tab unchanged
+   - No behaviour changes to chat; purely re-parented into tab content area
+   - All existing ChatPanel parameters/state preserved
+
+3. **Mobile-first responsive header**
+   - Banner height reduced on `≤480px`: hide "BotNexus" text, keep burger + logo only (~36px height)
+   - Tab bar uses compact icons-only mode on `≤480px`, icons+labels on `≥769px`
+   - `chat-header-actions` moves into a "⋮" overflow menu on mobile
+
+4. **CSS variables/structure** for tab theming (consistent with dark theme vars)
+
+5. **bUnit tests** for AgentPanel:
+   - Renders tab bar with 4 tabs
+   - Default tab is Chat
+   - Clicking tab switches content
+   - Mobile class variants applied correctly
+
+**What's DEFERRED:**
+- Workspace tab (file tree, agent memory) — requires gateway API
+- Reports tab (run history, cost) — requires new domain model
+- Canvas tab (freeform drawing) — needs design spec
+- Backend APIs — no API work in PR-1
+
+**Architecture Constraints:**
+- No new backend APIs — PR-1 is frontend-only
+- No new NuGet packages — CSS + Blazor component only
+- Tab content uses `display:none`/`display:block` toggling to preserve ChatPanel scroll position
+- AgentPanel receives `AgentId` parameter, delegates to ChatPanel internally
+- Home.razor changes from `<ChatPanel>` directly to `<AgentPanel>` — single substitution
+
+**Verdict:** APPROVED. Vertical slice delivers tab architecture + mobile header improvement without backend coupling.
+
+---
+
+### 2026-07-29 — Amy: Mobile-First Responsive Design for AgentPanel — Issue #245
+
+**Author:** Amy (UI Designer)  
+**Date:** 2026-07-29  
+**Status:** Active
+
+**Executive Summary:** The new AgentPanel component (tab strip + conversation/workspace/reports/canvas UI) must remain usable on mobile phones. This decision documents the responsive breakpoints, layout strategies, and CSS patterns for mobile responsiveness.
+
+**Key Decisions:**
+
+**Breakpoints:**
+```css
+/* Mobile: 320px–767px (phones, small tablets) */
+/* Tablet: 768px–1023px (landscape phones, small tablets) */
+/* Desktop: 1024px+ (laptops, large monitors) */
+@media (max-width: 767px) { /* mobile-only */ }
+@media (min-width: 768px) and (max-width: 1023px) { /* tablet */ }
+@media (min-width: 1024px) { /* desktop */ }
+```
+
+**Mobile Layout Strategy:**
+- **Top Banner:** 40px on phones (reduced from 48px); hide "BotNexus" text
+- **Tab Strip:** 36px height; icon-only on phones; scrollable (not wrapping); momentum scroll on iOS
+- **Tab Content:** Single-column stacked, full width, no fixed-width side panes
+- **Touch targets:** Minimum 44×44px (WCAG AA)
+
+**Tab Content Responsiveness:**
+- **Conversation Tab:** Message area flex 1, input area sticky at bottom
+- **Workspace Tab:** Stack file tree + editor vertically on phones
+- **Reports Tab:** Full width stacked layout
+- **Canvas Tab:** Responsive iframe, full width
+
+**Vertical Space Budget (iPhone 12 Mini — 375×812px):**
+- Status bar: 47px
+- App banner: 40px (optimized)
+- Agent header: 36px (new, compact)
+- Tab strip: 36px (scrollable)
+- **Available content:** ~664px
+- Chat input: 42px (sticky)
+- **Scrollable chat area:** ~622px ✓ Usable
+
+**Accessibility Checklist:**
+- ✓ Touch targets: 44×44px minimum
+- ✓ Focus indicators: Visible outline (2px solid)
+- ✓ Color contrast: 4.5:1 (AA)
+- ✓ Reduced motion: Respected `prefers-reduced-motion: reduce`
+- ✓ Keyboard navigation: Tab order logical
+- ✓ Screen reader: ARIA live regions for updates
+- ✓ Zoom: Content readable at 200%
+
+**Implementation Guidance:**
+1. Mobile-first CSS: base styles for 320px, `@media (min-width: 768px)` enhancements, `@media (min-width: 1024px)` polish
+2. Test on real devices: iPhone SE 2 (375px), iPhone 12/13 (390px), iPad Air 4 (820px landscape), Surface Duo (540px)
+3. Use DevTools for iteration (Chrome DevTools device emulation, Safari responsive design mode)
+
+**Decision Rationale:**
+- Collapse top banner on mobile → frees ~8px height
+- Compact agent header (36px on mobile) → preserves vertical space; truncate name if needed
+- Scrollable tab strip (36px on mobile) → icon-only tabs avoid crowding; horizontal scroll expected on mobile
+- Single-column stacked layouts → simplifies mobile layout; no fixed-width side panes
+- 44px touch targets → WCAG AA + iOS convention
+- Momentum scroll on iOS → native feel with `-webkit-overflow-scrolling: touch`
+- Horizontal scroll prevention → no `100vw` width; prevents frustration
+
+---
+
+### 2026-07-29 — Hermes: Issue #245 Vertical Slice Test Contract
+
+**Author:** Hermes (QA)  
+**Date:** 2026-07-29  
+**Issue:** #245 — Portal agent panel tabs  
+**Status:** Active
+
+**Decision:** For PR-1, QA will enforce a narrow vertical-slice contract that is implementation-agnostic but concrete enough for TDD:
+
+1. Selecting an agent/conversation must render an AgentPanel shell hook: `[data-testid='agent-panel']`
+2. The shell must expose exactly four tabs in this order: `Conversation`, `Workspace`, `Reports`, `Canvas`
+3. Conversation is the default active tab hook: `.agent-panel-tab.active[data-tab='conversation']`
+4. Conversation tab must host chat parity surface: `[data-testid='agent-panel-conversation'] .chat-panel`
+5. Mobile/responsive CSS hooks must exist in `app.css`:
+   - `.agent-panel`, `.agent-panel-header`, `.agent-panel-tab-strip`, `.agent-panel-tab`
+   - `@media (max-width: 768px)` block retained for phone layout rules
+
+**Why:** The existing test suite already covers ChatPanel behavior deeply; this contract verifies **re-parenting and shell structure** without duplicating chat internals. Selector-based hooks give Fry/Amy freedom in markup details while still preserving stable QA gates. Mobile hook checks ensure responsive work is not deferred behind desktop-only implementation.
+
+**Test Artifact:** `tests/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests/AgentPanelVerticalSliceTests.cs`
+
+---
+
+### 2026-07-29 — Fry: AgentPanel PR-1 Vertical Slice Shell
+
+**Author:** Fry (Web Dev)  
+**Date:** 2026-07-29  
+**Status:** Implemented
+
+**Scope:** Added `AgentPanel.razor` as the chat canvas shell for Issue #245 PR-1.
+
+**Key Decisions:**
+
+1. **State preservation:** Tab switching uses CSS class visibility (`.agent-tab-pane` / `.active`) instead of conditional rendering, so the mounted `ChatPanel` keeps local UI state.
+2. **Deep-linking in-slice:** Tab selection is persisted via `?tab=` query string (`conversation`, `workspace`, `reports`, `canvas`) to avoid route expansion during PR-1.
+3. **Mobile behavior:** At `≤480px`, banner is compacted, tab labels collapse to icons, and chat header actions move to an overflow menu (`⋮`) to keep controls usable without horizontal overflow.
+
+**Files:**
+- `src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Components/AgentPanel.razor`
+- `src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Pages/Home.razor`
+- `src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Components/ChatPanel.razor`
+- `src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/wwwroot/css/app.css`
+
+---
+
+### 2026-08-01 — Hermes: Unskip AgentPanel Vertical-Slice QA Gates
+
+**Author:** Hermes (QA)  
+**Date:** 2026-08-01  
+**Issue:** #245 — Portal agent workspace tabs  
+**Status:** Implemented
+
+**Decision:** Removed all `[Fact(Skip=...)]` markers from `AgentPanelVerticalSliceTests.cs` and kept the original vertical-slice scope intact:
+
+1. Agent panel shell selector renders (`[data-testid='agent-panel']`).
+2. Tab contract remains fixed to `Conversation`, `Workspace`, `Reports`, `Canvas`.
+3. Conversation tab remains default-active via `.agent-panel-tab.active[data-tab='conversation']`.
+4. Conversation pane still hosts chat parity surface (`[data-testid='agent-panel-conversation'] .chat-panel`).
+5. Mobile CSS hooks remain in `app.css`, including `@media (max-width: 768px)` and placeholder styling hooks.
+
+**QA Notes:**
+- Stabilized tab-label assertion to target `.agent-tab-label` instead of full button text (avoids icon-text brittleness).
+- Added explicit placeholder-content checks for Workspace/Reports/Canvas copy.
+- Hardened CSS file lookup by resolving repository root via `BotNexus.slnx`, avoiding brittle relative traversal from test bin paths.
+
+**Validation:**
+- Targeted Blazor client tests pass with **0 skipped** in `AgentPanelVerticalSliceTests`.
+- `dotnet build BotNexus.slnx --nologo --tl:off` passes.
+- `dotnet test BotNexus.slnx --nologo --tl:off` passes.
+
+---
+
+### 2026-08-01 — Leela: PR-1 Agent Panel Slice — Review Outcome
+
+**Date:** 2026-08-01  
+**Reviewer:** Leela  
+**Verdict:** APPROVED
+
+**Scope Compliance:**
+The slice correctly delivers:
+- AgentPanel shell component with 4 tabs (Conversation, Workspace, Reports, Canvas)
+- Conversation tab wraps existing ChatPanel — parity preserved
+- Workspace/Reports/Canvas are labeled placeholders
+- Deep-link support via `?tab=` query parameter (URL-synced)
+- Mobile responsive styles in `app.css` with proper media queries
+- Proper ARIA: tablist/tab/tabpanel roles, aria-selected, aria-controls
+- No backend, API, or tool overreach — purely frontend
+
+**Build:** 0 warnings, 0 errors. ✅
+
+**All Gates Passed:**
+- ✅ Tests unskipped and passing (0 skipped, 0 failures)
+- ✅ Frontend-only scope preserved (no backend APIs)
+- ✅ Mobile responsive CSS implemented
+- ✅ Tab architecture proven
+- ✅ Code review complete
+
+**PR Result:** https://github.com/sytone/botnexus/pull/248
+
+---
