@@ -65,6 +65,42 @@
                 </button>
             }
         </div>
+        <div class="chat-header-overflow">
+            <button class="chat-header-overflow-trigger"
+                    @onclick="ToggleMobileActionsMenu"
+                    aria-expanded="@_showMobileActionsMenu"
+                    aria-label="More chat actions"
+                    title="More actions">
+                ⋮
+            </button>
+            @if (_showMobileActionsMenu)
+            {
+                <div class="chat-header-overflow-menu">
+                    <button class="toggle-btn @(!ShowThinking ? "toggled-off" : "")"
+                            @onclick="ToggleThinkingFromMenu"
+                            title="Toggle thinking visibility">
+                        💭
+                    </button>
+                    <button class="toggle-btn @(!ShowTools ? "toggled-off" : "")"
+                            @onclick="ToggleToolsFromMenu"
+                            title="Toggle tool visibility">
+                        🔧
+                    </button>
+                    <button class="config-btn" @onclick="OpenConfigFromMenu" title="Agent configuration">
+                        ⚙
+                    </button>
+                    @if (!IsReadOnly)
+                    {
+                        <button class="new-chat-btn"
+                                @onclick="ConfirmNewSessionFromMenu"
+                                title="Start a new session in this conversation"
+                                disabled="@IsStreaming">
+                            ↺ New session
+                        </button>
+                    }
+                </div>
+            }
+        </div>
         @if (!IsReadOnly)
         {
             <SessionControls AgentId="@AgentId" />
@@ -181,7 +217,19 @@
                 <div class="message @msg.CssClass">
                     <div class="message-header">
                         <span class="message-role">@msg.Role</span>
-                        <span class="message-time">@FormatTimestamp(msg.Timestamp)</span>
+                        <div class="message-meta">
+                            <span class="message-time">@FormatTimestamp(msg.Timestamp)</span>
+                            @if (msg.Role == "Assistant" && !string.IsNullOrWhiteSpace(msg.Content))
+                            {
+                                <button class="msg-copy-btn @(_copiedMessageId == msg.Id ? "copied" : "")"
+                                        type="button"
+                                        title="@(_copiedMessageId == msg.Id ? "Copied!" : "Copy message")"
+                                        aria-label="@(_copiedMessageId == msg.Id ? "Copied!" : "Copy message")"
+                                        @onclick="() => CopyMessage(msg.Id, msg.Content)">
+                                    @(_copiedMessageId == msg.Id ? "✓" : "📋")
+                                </button>
+                            }
+                        </div>
                     </div>
                     @if (msg.Role == "Assistant" && _markdownCache.TryGetValue(msg.Id, out var rendered))
                     {
@@ -341,6 +389,9 @@ private bool IsStreaming =>
     private string? _lastActiveConversationId;
     private int _lastRenderedMessageCount;
     private bool _showNewSessionConfirm;
+    private bool _showMobileActionsMenu;
+    private string? _copiedMessageId;
+    private static readonly TimeSpan s_copyFeedbackDuration = TimeSpan.FromSeconds(2);
 
     private sealed record SlashCommand(string Name, string Description);
 
@@ -435,6 +486,18 @@ private bool IsStreaming =>
         Store.NotifyChanged();
     }
 
+    private void ToggleToolsFromMenu()
+    {
+        ToggleTools();
+        _showMobileActionsMenu = false;
+    }
+
+    private void ToggleThinkingFromMenu()
+    {
+        ToggleThinking();
+        _showMobileActionsMenu = false;
+    }
+
     private async Task StartRecording()
     {
         try
@@ -510,6 +573,12 @@ private bool IsStreaming =>
             await _configPanel.Open();
     }
 
+    private async Task OpenConfigFromMenu()
+    {
+        _showMobileActionsMenu = false;
+        await OpenConfig();
+    }
+
     private void ConfirmNewSession()
     {
         if (IsReadOnly)
@@ -517,7 +586,42 @@ private bool IsStreaming =>
 
         _showNewSessionConfirm = true;
     }
+
+    private void ConfirmNewSessionFromMenu()
+    {
+        _showMobileActionsMenu = false;
+        ConfirmNewSession();
+    }
+
+    private void ToggleMobileActionsMenu()
+    {
+        _showMobileActionsMenu = !_showMobileActionsMenu;
+    }
     private void CancelNewSession() => _showNewSessionConfirm = false;
+
+    private async Task CopyMessage(string messageId, string content)
+    {
+        try
+        {
+            var copied = await JS.InvokeAsync<bool>("BotNexus.copyToClipboard", content);
+            if (!copied)
+                return;
+
+            _copiedMessageId = messageId;
+            StateHasChanged();
+
+            await Task.Delay(s_copyFeedbackDuration);
+            if (_copiedMessageId == messageId)
+            {
+                _copiedMessageId = null;
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Copy message failed: {ex.Message}");
+        }
+    }
 
     private async Task DoNewSession()
     {
@@ -559,6 +663,8 @@ private bool IsStreaming =>
                 StateHasChanged();
                 return;
             }
+
+            await JS.InvokeVoidAsync("BotNexus.attachCodeCopyButtons", _messagesContainer);
 
             var isActive = AgentId == Store.ActiveAgentId;
             if (isActive && !_wasActive)

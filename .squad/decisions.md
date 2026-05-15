@@ -790,3 +790,595 @@ For Hermes:
 **PR:** #247 — https://github.com/sytone/botnexus/pull/247
 
 ---
+
+### 2026-07-29 — Leela: Portal Agent Workspace Tabs — PR Scope (Issue #245)
+
+**Author:** Leela (Lead)  
+**Date:** 2026-07-29  
+**Issue:** #245 — [Portal] Agent workspace UI - tabbed agent panel  
+**Status:** Approved  
+
+**Problem:** Issue #245 requests a full tabbed agent panel (Conversation, Workspace, Reports, Canvas). Implementing all four tabs with backend APIs in a single PR is an unreviewable mega-change. We need a vertical slice that delivers visible value, proves the tab architecture, and keeps mobile responsive.
+
+Additionally, the current top banner (`app-banner`) is too large/cramped on phones — it needs mobile-first attention.
+
+**Decision: PR-1 Scope — AgentPanel Shell + Tab Bar + Mobile Header**
+
+**What's IN this PR:**
+1. **AgentPanel component** — new `AgentPanel.razor` wrapping the tab structure
+   - Tab bar with icons: 💬 Chat | 📁 Workspace | 📊 Reports | 🎨 Canvas
+   - Only **Chat** tab is functional; other tabs show placeholder "Coming soon" states
+   - Tab bar is horizontal, scrollable on mobile (no wrapping)
+   - Active tab stored in component state via `?tab=` query parameter deep-linking
+
+2. **ChatPanel extraction** — existing `ChatPanel.razor` renders inside the Chat tab unchanged
+   - No behaviour changes to chat; purely re-parented into tab content area
+   - All existing ChatPanel parameters/state preserved
+
+3. **Mobile-first responsive header**
+   - Banner height reduced on `≤480px`: hide "BotNexus" text, keep burger + logo only (~36px height)
+   - Tab bar uses compact icons-only mode on `≤480px`, icons+labels on `≥769px`
+   - `chat-header-actions` moves into a "⋮" overflow menu on mobile
+
+4. **CSS variables/structure** for tab theming (consistent with dark theme vars)
+
+5. **bUnit tests** for AgentPanel:
+   - Renders tab bar with 4 tabs
+   - Default tab is Chat
+   - Clicking tab switches content
+   - Mobile class variants applied correctly
+
+**What's DEFERRED:**
+- Workspace tab (file tree, agent memory) — requires gateway API
+- Reports tab (run history, cost) — requires new domain model
+- Canvas tab (freeform drawing) — needs design spec
+- Backend APIs — no API work in PR-1
+
+**Architecture Constraints:**
+- No new backend APIs — PR-1 is frontend-only
+- No new NuGet packages — CSS + Blazor component only
+- Tab content uses `display:none`/`display:block` toggling to preserve ChatPanel scroll position
+- AgentPanel receives `AgentId` parameter, delegates to ChatPanel internally
+- Home.razor changes from `<ChatPanel>` directly to `<AgentPanel>` — single substitution
+
+**Verdict:** APPROVED. Vertical slice delivers tab architecture + mobile header improvement without backend coupling.
+
+---
+
+### 2026-07-29 — Amy: Mobile-First Responsive Design for AgentPanel — Issue #245
+
+**Author:** Amy (UI Designer)  
+**Date:** 2026-07-29  
+**Status:** Active
+
+**Executive Summary:** The new AgentPanel component (tab strip + conversation/workspace/reports/canvas UI) must remain usable on mobile phones. This decision documents the responsive breakpoints, layout strategies, and CSS patterns for mobile responsiveness.
+
+**Key Decisions:**
+
+**Breakpoints:**
+```css
+/* Mobile: 320px–767px (phones, small tablets) */
+/* Tablet: 768px–1023px (landscape phones, small tablets) */
+/* Desktop: 1024px+ (laptops, large monitors) */
+@media (max-width: 767px) { /* mobile-only */ }
+@media (min-width: 768px) and (max-width: 1023px) { /* tablet */ }
+@media (min-width: 1024px) { /* desktop */ }
+```
+
+**Mobile Layout Strategy:**
+- **Top Banner:** 40px on phones (reduced from 48px); hide "BotNexus" text
+- **Tab Strip:** 36px height; icon-only on phones; scrollable (not wrapping); momentum scroll on iOS
+- **Tab Content:** Single-column stacked, full width, no fixed-width side panes
+- **Touch targets:** Minimum 44×44px (WCAG AA)
+
+**Tab Content Responsiveness:**
+- **Conversation Tab:** Message area flex 1, input area sticky at bottom
+- **Workspace Tab:** Stack file tree + editor vertically on phones
+- **Reports Tab:** Full width stacked layout
+- **Canvas Tab:** Responsive iframe, full width
+
+**Vertical Space Budget (iPhone 12 Mini — 375×812px):**
+- Status bar: 47px
+- App banner: 40px (optimized)
+- Agent header: 36px (new, compact)
+- Tab strip: 36px (scrollable)
+- **Available content:** ~664px
+- Chat input: 42px (sticky)
+- **Scrollable chat area:** ~622px ✓ Usable
+
+**Accessibility Checklist:**
+- ✓ Touch targets: 44×44px minimum
+- ✓ Focus indicators: Visible outline (2px solid)
+- ✓ Color contrast: 4.5:1 (AA)
+- ✓ Reduced motion: Respected `prefers-reduced-motion: reduce`
+- ✓ Keyboard navigation: Tab order logical
+- ✓ Screen reader: ARIA live regions for updates
+- ✓ Zoom: Content readable at 200%
+
+**Implementation Guidance:**
+1. Mobile-first CSS: base styles for 320px, `@media (min-width: 768px)` enhancements, `@media (min-width: 1024px)` polish
+2. Test on real devices: iPhone SE 2 (375px), iPhone 12/13 (390px), iPad Air 4 (820px landscape), Surface Duo (540px)
+3. Use DevTools for iteration (Chrome DevTools device emulation, Safari responsive design mode)
+
+**Decision Rationale:**
+- Collapse top banner on mobile → frees ~8px height
+- Compact agent header (36px on mobile) → preserves vertical space; truncate name if needed
+- Scrollable tab strip (36px on mobile) → icon-only tabs avoid crowding; horizontal scroll expected on mobile
+- Single-column stacked layouts → simplifies mobile layout; no fixed-width side panes
+- 44px touch targets → WCAG AA + iOS convention
+- Momentum scroll on iOS → native feel with `-webkit-overflow-scrolling: touch`
+- Horizontal scroll prevention → no `100vw` width; prevents frustration
+
+---
+
+### 2026-07-29 — Hermes: Issue #245 Vertical Slice Test Contract
+
+**Author:** Hermes (QA)  
+**Date:** 2026-07-29  
+**Issue:** #245 — Portal agent panel tabs  
+**Status:** Active
+
+**Decision:** For PR-1, QA will enforce a narrow vertical-slice contract that is implementation-agnostic but concrete enough for TDD:
+
+1. Selecting an agent/conversation must render an AgentPanel shell hook: `[data-testid='agent-panel']`
+2. The shell must expose exactly four tabs in this order: `Conversation`, `Workspace`, `Reports`, `Canvas`
+3. Conversation is the default active tab hook: `.agent-panel-tab.active[data-tab='conversation']`
+4. Conversation tab must host chat parity surface: `[data-testid='agent-panel-conversation'] .chat-panel`
+5. Mobile/responsive CSS hooks must exist in `app.css`:
+   - `.agent-panel`, `.agent-panel-header`, `.agent-panel-tab-strip`, `.agent-panel-tab`
+   - `@media (max-width: 768px)` block retained for phone layout rules
+
+**Why:** The existing test suite already covers ChatPanel behavior deeply; this contract verifies **re-parenting and shell structure** without duplicating chat internals. Selector-based hooks give Fry/Amy freedom in markup details while still preserving stable QA gates. Mobile hook checks ensure responsive work is not deferred behind desktop-only implementation.
+
+**Test Artifact:** `tests/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests/AgentPanelVerticalSliceTests.cs`
+
+---
+
+### 2026-07-29 — Fry: AgentPanel PR-1 Vertical Slice Shell
+
+**Author:** Fry (Web Dev)  
+**Date:** 2026-07-29  
+**Status:** Implemented
+
+**Scope:** Added `AgentPanel.razor` as the chat canvas shell for Issue #245 PR-1.
+
+**Key Decisions:**
+
+1. **State preservation:** Tab switching uses CSS class visibility (`.agent-tab-pane` / `.active`) instead of conditional rendering, so the mounted `ChatPanel` keeps local UI state.
+2. **Deep-linking in-slice:** Tab selection is persisted via `?tab=` query string (`conversation`, `workspace`, `reports`, `canvas`) to avoid route expansion during PR-1.
+3. **Mobile behavior:** At `≤480px`, banner is compacted, tab labels collapse to icons, and chat header actions move to an overflow menu (`⋮`) to keep controls usable without horizontal overflow.
+
+**Files:**
+- `src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Components/AgentPanel.razor`
+- `src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Pages/Home.razor`
+- `src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Components/ChatPanel.razor`
+- `src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/wwwroot/css/app.css`
+
+---
+
+### 2026-08-01 — Hermes: Unskip AgentPanel Vertical-Slice QA Gates
+
+**Author:** Hermes (QA)  
+**Date:** 2026-08-01  
+**Issue:** #245 — Portal agent workspace tabs  
+**Status:** Implemented
+
+**Decision:** Removed all `[Fact(Skip=...)]` markers from `AgentPanelVerticalSliceTests.cs` and kept the original vertical-slice scope intact:
+
+1. Agent panel shell selector renders (`[data-testid='agent-panel']`).
+2. Tab contract remains fixed to `Conversation`, `Workspace`, `Reports`, `Canvas`.
+3. Conversation tab remains default-active via `.agent-panel-tab.active[data-tab='conversation']`.
+4. Conversation pane still hosts chat parity surface (`[data-testid='agent-panel-conversation'] .chat-panel`).
+5. Mobile CSS hooks remain in `app.css`, including `@media (max-width: 768px)` and placeholder styling hooks.
+
+**QA Notes:**
+- Stabilized tab-label assertion to target `.agent-tab-label` instead of full button text (avoids icon-text brittleness).
+- Added explicit placeholder-content checks for Workspace/Reports/Canvas copy.
+- Hardened CSS file lookup by resolving repository root via `BotNexus.slnx`, avoiding brittle relative traversal from test bin paths.
+
+**Validation:**
+- Targeted Blazor client tests pass with **0 skipped** in `AgentPanelVerticalSliceTests`.
+- `dotnet build BotNexus.slnx --nologo --tl:off` passes.
+- `dotnet test BotNexus.slnx --nologo --tl:off` passes.
+
+---
+
+### 2026-08-01 — Leela: PR-1 Agent Panel Slice — Review Outcome
+
+**Date:** 2026-08-01  
+**Reviewer:** Leela  
+**Verdict:** APPROVED
+
+**Scope Compliance:**
+The slice correctly delivers:
+- AgentPanel shell component with 4 tabs (Conversation, Workspace, Reports, Canvas)
+- Conversation tab wraps existing ChatPanel — parity preserved
+- Workspace/Reports/Canvas are labeled placeholders
+- Deep-link support via `?tab=` query parameter (URL-synced)
+- Mobile responsive styles in `app.css` with proper media queries
+- Proper ARIA: tablist/tab/tabpanel roles, aria-selected, aria-controls
+- No backend, API, or tool overreach — purely frontend
+
+**Build:** 0 warnings, 0 errors. ✅
+
+**All Gates Passed:**
+- ✅ Tests unskipped and passing (0 skipped, 0 failures)
+- ✅ Frontend-only scope preserved (no backend APIs)
+- ✅ Mobile responsive CSS implemented
+- ✅ Tab architecture proven
+- ✅ Code review complete
+
+**PR Result:** https://github.com/sytone/botnexus/pull/248
+
+---
+
+---
+
+# Phase 2 Decision: Portal Workspace Tab
+
+**Decision:** Option A — Workspace tab + secured workspace REST API only.  
+**Deferred:** Reports tab, Canvas tab, and final deep-link/mobile validation across all tabs.
+
+---
+
+## 1. Scope Decision & Deferrals
+
+### In scope (Phase 2)
+
+1. **Backend: WorkspaceController** — New `api/agents/{agentId}/workspace` REST API with directory listing and file read endpoints.
+2. **Backend: Path traversal enforcement** — Reuse `DefaultPathValidator` + `FileAccessPolicy` to jail all API requests inside `~/.botnexus/agents/{agentId}/workspace/`.
+3. **Frontend: WorkspacePanel component** — Replace the placeholder in `AgentPanel.razor` with a file-tree + content-viewer component.
+4. **Frontend: Mobile behavior** — Workspace tab collapses file tree on narrow viewports (single-pane mode).
+5. **Tests: Backend** — Path traversal adversary tests, controller unit tests, integration test for the full request pipeline.
+6. **Tests: bUnit** — WorkspacePanel rendering, file selection, empty-state, error-state, mobile layout.
+
+### Deferred to Phase 3+
+
+- **Reports tab** — Needs report-generation tooling/conventions defined first; different data flow (generated artifacts vs. browsed files).
+- **Canvas tab** — Requires sandboxed iframe design; separate security review.
+- **Final deep-link + mobile validation** — Cross-tab integration test pass after all tabs are live.
+- **File editing via portal** — Phase 2 is read-only; write support is a separate risk surface.
+
+### Why not Option B (Workspace + Reports)?
+
+Reports share the "list files, read file" pattern at the API level, but differ materially:
+- Reports need a *reports directory convention* (`workspace/reports/` or a separate root).
+- Reports may need real-time refresh (SignalR push when agent writes a new report).
+- Bundling both doubles the PR review surface without the shared-API savings justifying it.
+- Better to land Workspace, validate the pattern, then stamp out Reports quickly in Phase 3.
+
+---
+
+## 2. Backend Contract / API Boundaries
+
+### New endpoints
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `api/agents/{agentId}/workspace` | List workspace root (flat directory listing) |
+| `GET` | `api/agents/{agentId}/workspace?path={relativePath}` | List subdirectory or read file content |
+
+### Response shapes
+
+```
+// Directory listing
+{
+  "type": "directory",
+  "path": "memory",
+  "entries": [
+    { "name": "2026-01-15.md", "type": "file", "size": 1234 },
+    { "name": "archive", "type": "directory" }
+  ]
+}
+
+// File content
+{
+  "type": "file",
+  "path": "SOUL.md",
+  "content": "...",
+  "size": 1234,
+  "encoding": "utf-8"
+}
+```
+
+### Security requirements
+
+1. **Path traversal prevention:** Resolve `path` parameter against workspace root using `Path.GetFullPath()` + containment check. Reject any resolved path that escapes `~/.botnexus/agents/{agentId}/workspace/`.
+2. **Reuse existing infra:** `FileAgentWorkspaceManager.GetWorkspacePath(agentId)` gives the root. `DefaultPathValidator` or equivalent containment check prevents escape.
+3. **Symlink resolution:** Follow the `PathUtils.ResolveFinalTargetPath` pattern — resolve symlinks, then re-check containment.
+4. **Agent existence check:** Return 404 if agent is not registered in `IAgentRegistry`.
+5. **Size limit:** Cap file content responses at a reasonable limit (e.g., 512 KB) to avoid portal OOM.
+6. **Binary files:** Return metadata only (name, size, type=binary) — no content for non-text files.
+7. **Read-only:** No PUT/POST/DELETE on workspace files in Phase 2.
+
+### Dependencies
+
+- `IAgentRegistry` — validate agent exists.
+- `IAgentWorkspaceManager` — resolve workspace path.
+- `IFileSystem` (System.IO.Abstractions) — all file I/O for testability.
+
+---
+
+## 3. Frontend Component Responsibilities
+
+### Component hierarchy
+
+```
+AgentPanel.razor
+  └─ WorkspacePanel.razor          (new — replaces placeholder)
+       ├─ WorkspaceFileTree.razor   (new — recursive directory tree)
+       └─ WorkspaceFileViewer.razor (new — file content display)
+```
+
+### WorkspacePanel
+
+- Calls `GET api/agents/{agentId}/workspace` on mount.
+- Maintains state: current directory path, selected file, loading/error flags.
+- Desktop: side-by-side tree + viewer. Mobile (<768px): tree-only until file selected, then viewer with back button.
+
+### WorkspaceFileTree
+
+- Renders entries from directory listing response.
+- Lazy-loads subdirectories on expand (one API call per expand).
+- Icons by type (📄 file, 📁 directory).
+- Highlights selected file.
+
+### WorkspaceFileViewer
+
+- Displays file content as preformatted text (monospace, scroll).
+- Shows file path breadcrumb at top.
+- Shows "Select a file" empty state when nothing selected.
+- Shows error state if file read fails.
+- Truncation message if file exceeds size cap.
+
+### Mobile behavior
+
+- Single-pane: file tree fills width, tapping a file replaces tree with viewer.
+- Back button in viewer returns to tree.
+- Same `agent-panel-mobile.css` breakpoint pattern from Phase 1.
+
+### REST client additions
+
+Add to `IGatewayRestClient` / `GatewayRestClient`:
+```csharp
+Task<WorkspaceDirectoryResponse?> GetWorkspaceAsync(string agentId, string? path = null, CancellationToken ct = default);
+```
+
+---
+
+## 4. Test Requirements
+
+### Backend tests
+
+| Test class | Coverage |
+|------------|----------|
+| `WorkspaceControllerTests` | Valid agent → 200 with directory listing; unknown agent → 404; empty workspace → 200 with empty entries |
+| `WorkspacePathSecurityTests` | `../` traversal → 400; `../../etc/passwd` → 400; absolute path → 400; symlink escape → 400; URL-encoded traversal → 400; null/empty path → root listing |
+| `WorkspaceControllerIntegrationTests` | Full pipeline with `WebApplicationFactory`: registered agent with seeded workspace files → list + read roundtrip |
+
+### Frontend bUnit tests
+
+| Test class | Coverage |
+|------------|----------|
+| `WorkspacePanelTests` | Renders loading state; renders empty workspace; renders file tree after load; file selection triggers viewer; error state on API failure |
+| `WorkspaceFileTreeTests` | Renders directory entries; expand subdirectory triggers callback; highlights selected item |
+| `WorkspaceFileViewerTests` | Shows file content; shows empty state; shows error state; truncation message |
+| `AgentPanelVerticalSliceTests` | (extend existing) Workspace tab active → renders WorkspacePanel instead of placeholder |
+
+---
+
+## 5. Agent Handoff Instructions
+
+### Bender (Backend)
+
+**Task:** Implement `WorkspaceController` in `BotNexus.Gateway.Api`.
+
+1. Add `WorkspaceController` with the two GET endpoints defined above.
+2. Inject `IAgentRegistry`, `IAgentWorkspaceManager`, `IFileSystem`.
+3. Resolve workspace root via `IAgentWorkspaceManager.GetWorkspacePath(agentId)`.
+4. Implement path containment check: resolve `path` param against workspace root, reject traversal.
+5. Return directory listing or file content based on whether resolved path is a directory or file.
+6. Cap file content at 512 KB; detect binary via BOM/null-byte heuristic.
+7. Write `WorkspaceControllerTests` and `WorkspacePathSecurityTests` using `MockFileSystem`.
+8. Write integration test with `WebApplicationFactory` and seeded workspace files.
+9. Add response DTOs in `BotNexus.Gateway.Api/Models/`: `WorkspaceEntryDto`, `WorkspaceDirectoryResponse`, `WorkspaceFileResponse`.
+10. **Security is critical** — the path traversal tests are blocking. Do not merge without adversary coverage.
+
+### Fry (Frontend)
+
+**Task:** Implement `WorkspacePanel`, `WorkspaceFileTree`, `WorkspaceFileViewer` Blazor components.
+
+1. Add `GetWorkspaceAsync` to `IGatewayRestClient` and `GatewayRestClient`.
+2. Create `WorkspacePanel.razor` — fetches workspace listing on init, manages tree/viewer state.
+3. Create `WorkspaceFileTree.razor` — renders entries, handles expand/collapse, emits file-selected event.
+4. Create `WorkspaceFileViewer.razor` — displays file content or empty/error state.
+5. Replace the placeholder `<div>` in `AgentPanel.razor` Workspace section with `<WorkspacePanel AgentId="@AgentId" />`.
+6. Add mobile CSS for single-pane workspace layout using existing breakpoint pattern.
+7. Write bUnit tests for all three components.
+8. Update `AgentPanelVerticalSliceTests` to verify workspace tab renders the real component.
+9. **Depends on:** Bender's API contract (DTOs). Can stub API calls with NSubstitute initially.
+
+### Hermes (Testing/QA)
+
+**Task:** Review test coverage and adversary scenarios.
+
+1. Verify backend path traversal tests cover: `../`, URL-encoded `%2e%2e%2f`, double-encoding, null bytes, Windows `..\\`, symlink escape.
+2. Verify bUnit tests cover: loading, empty, populated, error, and mobile states.
+3. Run full test suite after both Bender and Fry complete to catch integration gaps.
+4. Flag any workspace files that should be excluded from the API (e.g., secrets, tokens).
+
+### Amy (not needed this phase)
+
+No design/UX work required — workspace file tree is a standard pattern. If custom styling is needed, Fry can handle it using existing CSS conventions.
+
+---
+
+# Bender Decision Note: Workspace Read API (Issue #245 Phase 2)
+
+## Decision
+Implemented backend **read-only** workspace API in Gateway:
+- `GET /api/agents/{agentId}/workspace` returns a depth-limited tree.
+- `GET /api/agents/{agentId}/workspace/{**path}` returns file metadata/content.
+
+## Security / Validation
+- Agent existence checked via `IAgentRegistry` (404 for unknown agents).
+- Workspace root resolved via `IAgentWorkspaceManager`.
+- Path jail enforcement uses `DefaultPathValidator` with workspace-only policy.
+- Final target (symlink) path is resolved and revalidated to block escapes.
+- Traversal/denied paths return 403; malformed input (absolute/null-byte) returns 400; missing file returns 404.
+
+## Deferrals (Intentional)
+- No create/update/delete APIs.
+- No reports/canvas endpoints in this phase.
+
+## Validation Snapshot
+- `dotnet build BotNexus.slnx --nologo --tl:off` ✅
+- `dotnet test tests/gateway/BotNexus.Gateway.Tests/BotNexus.Gateway.Tests.csproj --filter FullyQualifiedName~Workspace` ✅
+- `dotnet test BotNexus.slnx --nologo --tl:off` ❌ existing unrelated failure in `LiveGatewayIntegrationTests.SignalRHub_ConnectsAndReceivesAgentList` (500 on agent register).
+
+---
+
+# Fry Decision Note: Workspace Tab UI (Phase 2)
+
+**Date:** 2026-05-15  
+**Scope:** Issue #245 frontend slice in `BotNexus.Extensions.Channels.SignalR.BlazorClient`
+
+## Implemented
+
+1. Replaced Workspace placeholder in `AgentPanel.razor` with `<WorkspacePanel AgentId="@AgentId" />`.
+2. Added `WorkspacePanel`, `WorkspaceFileTree`, and `WorkspaceFileViewer` components for read-only browsing.
+3. Added `IGatewayRestClient.GetWorkspaceAsync(...)` and `GatewayRestClient` implementation.
+4. Added `WorkspaceContracts.cs` DTOs in the Blazor client.
+5. Added mobile-first single-pane behavior (tree→viewer with back button) and desktop split-pane behavior.
+6. Added safe long-content handling in viewer (server truncation flag + client-side preview cap).
+
+## Explicit Deferrals Maintained
+
+- Reports tab remains placeholder.
+- Canvas tab remains placeholder.
+- No workspace write operations (save/new/delete/upload/rename) in this PR.
+
+## Coordination Notes
+
+- Frontend assumes backend workspace API contract from Leela decision (`type`, `path`, `entries`, `content`, `size`, `encoding`, truncation/binary metadata).
+- If backend final shape differs, only `WorkspaceContracts.cs` + mapping usage in `WorkspacePanel` should need adjustment.
+
+---
+
+# Hermes QA Decision Note: Workspace Phase 2 Tests
+
+## Scope covered
+- Backend API test coverage now explicitly exercises:
+  - workspace directory tree listing
+  - file content read
+  - missing file handling
+  - directory-as-file rejection
+  - traversal/path escape rejection paths
+- Frontend bUnit coverage now explicitly exercises:
+  - workspace loading, empty, and error states
+  - file selection and content display
+  - workspace mobile CSS hooks and responsive pane selectors
+
+## Validation run
+- Targeted gateway workspace tests: PASS
+- Targeted Blazor workspace/client tests: PASS
+- Full validation:
+  - `dotnet build BotNexus.slnx` PASS
+  - `dotnet test BotNexus.slnx` PASS
+
+## Remaining gaps / watch items
+- URL-encoded traversal currently resolves as not-found in integration route tests rather than explicit forbidden in all encoded forms; direct traversal rejection remains covered at controller security tests.
+- No binary file viewer UX behavior test in Blazor yet (backend returns binary metadata); consider adding once UX handling is finalized.
+
+---
+
+# Workspace Phase 2 Architecture Review — REJECTED
+
+**Reviewer:** Leela  
+**Date:** 2026-05-16  
+**Branch:** `dev/botnexus/feature-portal-workspace-tab`  
+**Scope:** Issue #245 Phase 2 (read-only workspace API + Workspace tab UI)
+
+## Verdict: REJECTED — 2 blocking issues
+
+### Blocking Issues
+
+#### 1. REST Client URL Routing Mismatch (Critical)
+
+**File:** `src/extensions/.../Services/GatewayRestClient.cs:150-152`
+
+The frontend client sends file paths as a query parameter (`?path=readme.md`), but the backend route expects file paths as URL segments (`/workspace/readme.md`).
+
+- Backend: `[HttpGet("{**path}")]` → matches `/api/agents/{id}/workspace/readme.md`
+- Client: sends `/api/agents/{id}/workspace?path=readme.md` → hits the tree endpoint (`[HttpGet]`), not the file endpoint
+
+**Impact:** File viewer will never load content in production. bUnit tests pass because they mock `IGatewayRestClient`, masking the integration failure.
+
+**Fix:** Client must construct `/api/agents/{id}/workspace/{encodedPath}` for file requests (URL path segment, not query param).
+
+#### 2. Frontend DTO Field Name Mismatch
+
+**File:** `src/extensions/.../Services/WorkspaceContracts.cs:19`
+
+- Frontend expects: `[JsonPropertyName("isTruncated")]`
+- Backend serializes: `truncated` (from `public bool Truncated { get; set; }` with default camelCase)
+
+**Impact:** Truncation indicator will always read as `null` on the client side.
+
+### Passing Areas
+
+| Area | Status |
+|------|--------|
+| Scope (no overreach into reports/canvas/write) | ✅ |
+| Backend path traversal protection (`../`, absolute, NUL) | ✅ |
+| Symlink jail (segment-by-segment resolution + CanRead) | ✅ |
+| File-vs-directory semantics | ✅ |
+| Gateway boundary (no extension deps in controller) | ✅ |
+| UI read-only (no edit/delete/create controls) | ✅ |
+| AgentPanel integration (Conversation tab unaffected) | ✅ |
+| Mobile CSS hooks (show/hide tree/viewer panes) | ✅ |
+| Test coverage (bUnit, unit, integration — all active) | ✅ |
+| No skipped tests | ✅ |
+
+### Recommended Revision
+
+**Assign to: Bender** (owns the client service layer; Fry authored the UI components, not the REST wiring).
+
+Fix the two blocking items:
+1. `GatewayRestClient.GetWorkspaceAsync` → split into two URL patterns (tree vs file) matching backend routing
+2. Align `WorkspaceContracts.cs` field name to `truncated`
+
+After fix, run integration tests end-to-end with `WebApplicationFactory` + real HTTP to confirm wiring.
+
+### Nice-to-Have (non-blocking)
+
+- Add URL-encoded traversal integration test (e.g., `%2e%2e%2f`) for defense-in-depth documentation
+
+---
+
+# Bender Decision Note: Workspace Wiring + DTO Contract Fix (Reviewer Follow-up)
+
+## Decision
+Accepted Leela's rejection findings and corrected the runtime contract at both ends:
+- Workspace client now requests subpaths using URL path segments (`/api/agents/{agentId}/workspace/{**path}`) rather than `?path=`.
+- Gateway workspace path endpoint now returns directory payloads for directory targets (not only files), enabling lazy tree expansion through the same route shape.
+- File truncation flag is now serialized as `isTruncated` so Blazor receives truncation state correctly.
+
+## Security / Scope
+- Kept existing path-jail and symlink-target validation (`DefaultPathValidator` + final-target check).
+- No write capabilities added; API remains read-only.
+- Traversal protections and denied-path behavior remain unchanged.
+
+## Test Coverage Added
+- Added client-to-controller integration test:
+  - `WorkspaceRestClient_UsesControllerPathContract_AndReadsTruncationFlag`
+  - Runs `GatewayRestClient` against `WebApplicationFactory<Program>` and validates:
+    - directory load via `/workspace/{path}`
+    - file load via `/workspace/{path}`
+    - `isTruncated` DTO mapping on oversized file payload
+
+## Validation Snapshot
+- `dotnet test tests\gateway\BotNexus.Gateway.Tests\BotNexus.Gateway.Tests.csproj --nologo --tl:off --filter "FullyQualifiedName~Workspace"` ✅
+- `dotnet test tests\extensions\BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests\BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests.csproj --nologo --tl:off --filter "FullyQualifiedName~Workspace|FullyQualifiedName~GatewayRestClient"` ✅
+- `dotnet build BotNexus.slnx --nologo --tl:off` ✅
+- `dotnet test BotNexus.slnx --nologo --tl:off` ✅ (after one transient rerun of `BotNexus.Memory.Tests`)

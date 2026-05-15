@@ -52,3 +52,8 @@
 - 2026-07-29: CLI prompt coverage now verifies markdown list/render/run flows and multiline body preservation through gateway POST payloads in `tests\gateway\BotNexus.Cli.Tests\Commands\PromptCommandsTests.cs`.
 
 - 2026-05-15: Effective Config QA — Validated backend + frontend implementation (commits 41cc4e8c, 3ffa849a). Full build 0 warnings, full test suite 0 failures. Approved for merge.
+- 2026-07-29: Issue #245 vertical-slice TDD contract lives in `AgentPanelVerticalSliceTests.cs` and locks shell selectors (`data-testid='agent-panel'`, `.agent-panel-tab`, conversation active tab selector) plus mobile CSS hooks in `app.css`.
+- 2026-08-01: Issue #245 follow-up unskipped all AgentPanel vertical-slice tests; stabilized tab assertions to read `.agent-tab-label` text (icon-safe), verified placeholder tab copy, and hardened CSS path resolution via repo-root discovery (`BotNexus.slnx` probe).
+- 2026-08-02: Issue #245 Phase 2 workspace QA added backend coverage for tree read, file read, missing file, directory-as-file, and traversal/path escape rejection in `WorkspaceControllerTests`, `WorkspacePathSecurityTests`, and `WorkspaceControllerIntegrationTests`.
+- 2026-08-02: Added/validated Blazor workspace bUnit coverage for loading/empty/error/file-content flows plus mobile CSS hooks in `WorkspacePanelTests`, and extended vertical slice + REST client tests (`AgentPanelVerticalSliceTests`, `GatewayRestClientTests`).
+- 2026-08-02: Validation passed with targeted workspace suites and full solution build/test (`dotnet build BotNexus.slnx`, `dotnet test BotNexus.slnx`), with no new skips introduced.
