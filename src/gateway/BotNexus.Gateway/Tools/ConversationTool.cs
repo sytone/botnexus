@@ -169,8 +169,11 @@ public sealed class ConversationTool(
         };
 
         var created = await conversationStore.CreateAsync(conversation, ct).ConfigureAwait(false);
-        if (!string.IsNullOrWhiteSpace(message) && sessionStore is not null)
+        if (!string.IsNullOrWhiteSpace(message))
         {
+            if (sessionStore is null)
+                throw new InvalidOperationException("Session store is required to seed an initial message.");
+
             var session = await sessionStore
                 .GetOrCreateAsync(SessionId.Create(), targetAgentId, ct)
                 .ConfigureAwait(false);

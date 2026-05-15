@@ -128,6 +128,21 @@ public sealed class ConversationToolTests
         entry.Content.ShouldBe("Please investigate issue #249");
     }
 
+    [Fact]
+    public async Task New_WithMessage_WithoutSessionStore_Throws()
+    {
+        var conversationStore = new InMemoryConversationStore();
+        var tool = new ConversationTool(conversationStore, "orchestrator", accessLevel: ConversationAccessLevel.All);
+
+        Func<Task> act = () => tool.ExecuteAsync("call-1", Args(
+            "new",
+            agentId: "nova",
+            message: "Please investigate issue #249"));
+
+        var exception = await act.ShouldThrowAsync<InvalidOperationException>();
+        exception.Message.ShouldContain("Session store is required");
+    }
+
     private static Conversation CreateConversation(string agentId, string title, string? purpose)
         => new()
         {
