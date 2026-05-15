@@ -38,6 +38,8 @@
 - 2026-07-29: Team reskill pass reduced cold-loaded context from ~197KB to ~59KB (70%). Charter trimming: remove Collaboration, Voice, verbose Model, boilerplate Boundaries. History summarization: distill session entries into Core Context + high-signal Learnings only.
 - 2026-05-14: Architecture boundary enforcement via transport-neutral contract (IAgentChangeNotifier) cleanly severs gateway→extension dependency. Guard test prevents regression. Approved.
 - Architecture boundary tests (csproj XML scanning) are effective guards — they run in normal test suite with zero infra overhead and catch ProjectReference, PackageReference, and bare Reference violations. Pattern: enumerate csproj, parse XML, assert no matches against a forbidden set.
+
+- 2026-05-15: Effective Config UI/API — Designed contract where GET /api/config returns effective state (defaults + user config), GET /api/config/raw serves raw state for edit workflows, PUT /api/config accepts raw updates without persisting implicit defaults. Separates read (effective display) from write (dirty tracking) semantics cleanly.
 - Portal tab architecture: use CSS display toggling (not @if conditional rendering) to preserve Blazor component state (scroll position, SignalR connections) when switching tabs. ChatPanel must stay alive when hidden.
 - Mobile portal banner at ≤480px should hide text and keep only burger+logo for ~36px height; tab bars should be icons-only and horizontally scrollable.
 - PR-1 slice review (issue #245): Always enable tests when the implementation they gate has landed in the same branch. Skip annotations with "pending" reasons become lies once the code exists. Catch before merge.

@@ -50,6 +50,8 @@
 - 2026-05-14: Gateway boundary guard test (GatewayProjectDependencyBoundaryTests.cs) added, fail-before/pass-after validated, commits 1a8a8863 & 8f7a4a21 ready for approval.
 - 2026-07-29: Prompt-template regression suite now covers `.prompt.md` discovery/render precedence plus `.prompt.json` compatibility in `tests\gateway\BotNexus.Cron.Tests\CronOptionsPromptTemplateResolverTests.cs` (front matter required, body required, metadata required/default behavior).
 - 2026-07-29: CLI prompt coverage now verifies markdown list/render/run flows and multiline body preservation through gateway POST payloads in `tests\gateway\BotNexus.Cli.Tests\Commands\PromptCommandsTests.cs`.
+
+- 2026-05-15: Effective Config QA — Validated backend + frontend implementation (commits 41cc4e8c, 3ffa849a). Full build 0 warnings, full test suite 0 failures. Approved for merge.
 - 2026-07-29: Issue #245 vertical-slice TDD contract lives in `AgentPanelVerticalSliceTests.cs` and locks shell selectors (`data-testid='agent-panel'`, `.agent-panel-tab`, conversation active tab selector) plus mobile CSS hooks in `app.css`.
 - 2026-08-01: Issue #245 follow-up unskipped all AgentPanel vertical-slice tests; stabilized tab assertions to read `.agent-tab-label` text (icon-safe), verified placeholder tab copy, and hardened CSS path resolution via repo-root discovery (`BotNexus.slnx` probe).
 - 2026-08-02: Issue #245 Phase 2 workspace QA added backend coverage for tree read, file read, missing file, directory-as-file, and traversal/path escape rejection in `WorkspaceControllerTests`, `WorkspacePathSecurityTests`, and `WorkspaceControllerIntegrationTests`.
