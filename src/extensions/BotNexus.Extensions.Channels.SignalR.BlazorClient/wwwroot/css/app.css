@@ -856,6 +856,13 @@ html, body, #app {
     margin-bottom: 0.25rem;
 }
 
+.message-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin-left: auto;
+}
+
 .message-role {
     font-size: 0.7rem;
     text-transform: uppercase;
@@ -867,6 +874,26 @@ html, body, #app {
     font-size: 0.65rem;
     color: var(--text-muted);
     opacity: 0.7;
+}
+
+.msg-copy-btn {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    line-height: 1;
+    padding: 0.15rem 0.3rem;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+}
+
+.message.assistant:hover .msg-copy-btn,
+.msg-copy-btn.copied {
+    opacity: 1;
+    pointer-events: auto;
 }
 
 .message-content {
@@ -1308,6 +1335,7 @@ html, body, #app {
     border-radius: calc(var(--radius) / 2);
     overflow-x: auto;
     margin: 0.5em 0;
+    position: relative;
 }
 
 .msg-content pre code {
@@ -1315,6 +1343,27 @@ html, body, #app {
     padding: 0;
     font-size: 0.85em;
     line-height: 1.5;
+}
+
+.msg-content .code-copy-btn {
+    position: absolute;
+    top: 0.35rem;
+    right: 0.35rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    line-height: 1;
+    padding: 0.2rem 0.35rem;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.msg-content pre:hover .code-copy-btn,
+.msg-content .code-copy-btn.copied {
+    opacity: 1;
 }
 
 .msg-content blockquote {
