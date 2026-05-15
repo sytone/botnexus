@@ -217,7 +217,19 @@
                 <div class="message @msg.CssClass">
                     <div class="message-header">
                         <span class="message-role">@msg.Role</span>
-                        <span class="message-time">@FormatTimestamp(msg.Timestamp)</span>
+                        <div class="message-meta">
+                            <span class="message-time">@FormatTimestamp(msg.Timestamp)</span>
+                            @if (msg.Role == "Assistant" && !string.IsNullOrWhiteSpace(msg.Content))
+                            {
+                                <button class="msg-copy-btn @(_copiedMessageId == msg.Id ? "copied" : "")"
+                                        type="button"
+                                        title="@(_copiedMessageId == msg.Id ? "Copied!" : "Copy message")"
+                                        aria-label="@(_copiedMessageId == msg.Id ? "Copied!" : "Copy message")"
+                                        @onclick="() => CopyMessage(msg.Id, msg.Content)">
+                                    @(_copiedMessageId == msg.Id ? "✓" : "📋")
+                                </button>
+                            }
+                        </div>
                     </div>
                     @if (msg.Role == "Assistant" && _markdownCache.TryGetValue(msg.Id, out var rendered))
                     {
@@ -378,6 +390,7 @@ private bool IsStreaming =>
     private int _lastRenderedMessageCount;
     private bool _showNewSessionConfirm;
     private bool _showMobileActionsMenu;
+    private string? _copiedMessageId;
 
     private sealed record SlashCommand(string Name, string Description);
 
@@ -585,6 +598,29 @@ private bool IsStreaming =>
     }
     private void CancelNewSession() => _showNewSessionConfirm = false;
 
+    private async Task CopyMessage(string messageId, string content)
+    {
+        try
+        {
+            var copied = await JS.InvokeAsync<bool>("BotNexus.copyToClipboard", content);
+            if (!copied)
+                return;
+
+            _copiedMessageId = messageId;
+            StateHasChanged();
+
+            await Task.Delay(2000);
+            if (_copiedMessageId == messageId)
+            {
+                _copiedMessageId = null;
+                StateHasChanged();
+            }
+        }
+        catch
+        {
+        }
+    }
+
     private async Task DoNewSession()
     {
         if (IsReadOnly)
@@ -625,6 +661,8 @@ private bool IsStreaming =>
                 StateHasChanged();
                 return;
             }
+
+            await JS.InvokeVoidAsync("BotNexus.attachCodeCopyButtons", _messagesContainer);
 
             var isActive = AgentId == Store.ActiveAgentId;
             if (isActive && !_wasActive)
