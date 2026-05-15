@@ -98,5 +98,6 @@ public sealed class InMemoryConversationStore : IConversationStore
             c.ActiveSessionId?.Value,
             c.ChannelBindings.Count,
             c.CreatedAt,
-            c.UpdatedAt);
+            c.UpdatedAt,
+            c.Purpose);
 }

@@ -171,7 +171,10 @@ public sealed class ToolHookWiringTests
 
     private sealed class PassthroughContextBuilder : IContextBuilder
     {
-        public Task<string> BuildSystemPromptAsync(AgentDescriptor descriptor, CancellationToken ct = default)
+        public Task<string> BuildSystemPromptAsync(
+            AgentDescriptor descriptor,
+            AgentExecutionContext? executionContext,
+            CancellationToken ct = default)
             => Task.FromResult(descriptor.SystemPrompt ?? string.Empty);
     }
 

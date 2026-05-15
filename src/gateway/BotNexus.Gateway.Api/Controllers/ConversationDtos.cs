@@ -1,10 +1,10 @@
 namespace BotNexus.Gateway.Api.Controllers;
 
 /// <summary>Request body for creating a conversation.</summary>
-public sealed record CreateConversationRequest(string AgentId, string? Title);
+public sealed record CreateConversationRequest(string AgentId, string? Title, string? Purpose = null);
 
-/// <summary>Request body for patching a conversation title.</summary>
-public sealed record PatchConversationRequest(string? Title);
+/// <summary>Request body for patching conversation metadata.</summary>
+public sealed record PatchConversationRequest(string? Title = null, string? Purpose = null);
 
 /// <summary>Request body for adding a channel binding.</summary>
 public sealed record AddBindingRequest(
@@ -20,6 +20,7 @@ public sealed record ConversationResponse(
     string ConversationId,
     string AgentId,
     string Title,
+    string? Purpose,
     bool IsDefault,
     string Status,
     string? ActiveSessionId,

@@ -104,6 +104,12 @@ public sealed record AgentDescriptor
     /// <summary>Agent IDs this agent can view sessions for (when SessionAccessLevel is "allowlist").</summary>
     public IReadOnlyList<string> SessionAllowedAgents { get; init; } = [];
 
+    /// <summary>Conversation access level for this agent's conversation tool. Defaults to "own".</summary>
+    public string ConversationAccessLevel { get; init; } = "own";
+
+    /// <summary>Agent IDs this agent can view conversations for (when ConversationAccessLevel is "allowlist").</summary>
+    public IReadOnlyList<string> ConversationAllowedAgents { get; init; } = [];
+
     /// <summary>
     /// Extension-specific configuration keyed by extension ID.
     /// Extensions read their own config from this bag using their ID as the key.

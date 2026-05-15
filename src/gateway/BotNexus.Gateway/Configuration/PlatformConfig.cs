@@ -419,6 +419,8 @@ public sealed class AgentDefinitionConfig
     public HeartbeatAgentConfig? Heartbeat { get; set; }
     /// <summary>Session access configuration for this agent's session tool.</summary>
     public SessionAccessConfig? SessionAccess { get; set; }
+    /// <summary>Conversation access configuration for this agent's conversation tool.</summary>
+    public SessionAccessConfig? ConversationAccess { get; set; }
     /// <summary>File access policy for this agent's file tools.</summary>
     public FileAccessPolicyConfig? FileAccess { get; set; }
 
