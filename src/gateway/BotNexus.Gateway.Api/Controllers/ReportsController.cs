@@ -183,7 +183,7 @@ public sealed class ReportsController : ControllerBase
         if (_fileSystem.Path.IsPathRooted(name))
             return false;
 
-        if (name.IndexOf(_fileSystem.Path.DirectorySeparatorChar) >= 0 || name.IndexOf(_fileSystem.Path.AltDirectorySeparatorChar) >= 0)
+        if (name.IndexOf('/') >= 0 || name.IndexOf('\\') >= 0)
             return false;
 
         if (!name.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
