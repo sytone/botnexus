@@ -46,3 +46,17 @@
 - PR #242 opened: https://github.com/sytone/botnexus/pull/242
 - Commits: `04a16c7e`, `f1a264c3`, `479e448a`, `d0e3e8ee`, `c4cd5c9b`
 - Deferred: broader web prompt gallery/UX beyond `/prompts` scope.
+
+## Recent Work (2026-05-15)
+
+**Completed:** CLI prompt samples resource migration (issue follow-up).  
+- Moved prompt sample files from repo root `prompts/` to `src\gateway\BotNexus.Cli\Resources\Prompts\`
+- Embedded samples via `BotNexus.Cli.csproj` with `PromptSamples/` logical name prefix
+- Refactored `PromptCommands.ExecuteCreateSamplesAsync` to enumerate and copy from embedded assembly resources
+- Deleted obsolete repo-root `prompts/` folder
+- Updated docs and tests to reflect embedded-resource approach
+- All tests passing (targeted: PromptCommandsTests; full build; full test suite; pre-commit)
+- Commit: `4aa53e4` (`fix(cli): embed prompt sample templates`)
+- PR #247 opened: https://github.com/sytone/botnexus/pull/247
+- Rationale: CLI sample initialization must work in published/tool installs where repo-root files are unavailable
+

@@ -756,3 +756,37 @@ For Hermes:
 4. Test `PlatformConfigWriter` concurrent safety
 
 ---
+
+### 2026-05-14 — Farnsworth: Bundle CLI Prompt Samples as Internal Resources
+
+**Author:** Farnsworth (Platform Dev)  
+**Date:** 2026-05-14  
+**Status:** Implemented  
+**Scope:** CLI artifact portability, prompt sample distribution
+
+**Context:** Prompt sample templates were stored in repo-root `prompts/`, which does not ship with installed/published CLI artifacts. When `botnexus prompt create samples` ran in a tool install context, the root samples folder was unavailable, and sample initialization failed.
+
+**Decision:** Move sample templates to `src\gateway\BotNexus.Cli\Resources\Prompts\` and embed them in `BotNexus.Cli` with `EmbeddedResource` items and stable logical names (`PromptSamples/<file>`). `botnexus prompt create samples` now copies from assembly resources into `~/.botnexus/prompts`.
+
+**Implementation:**
+1. Moved all `.prompt.md` and `.prompt.json` files from `prompts/` (repo root) to `src\gateway\BotNexus.Cli\Resources\Prompts\`
+2. Added `EmbeddedResource` ItemGroup to `BotNexus.Cli.csproj` with logical name prefix `PromptSamples/`
+3. Refactored `PromptCommands.ExecuteCreateSamplesAsync` to enumerate embedded resources from assembly via `GetType().Assembly.GetManifestResourceNames()` and copy to user home
+4. Deleted repo-root `prompts/` folder (no longer needed for published/tool installs)
+5. Updated docs and tests
+
+**Consequences:**
+- CLI sample initialization works in published/tool installs without requiring repo-root files
+- Runtime prompt lookup remains unchanged (`~/.botnexus/prompts`, agent prompts, workspace prompts)
+- Repository root no longer serves as runtime sample source of truth
+
+**Validation:**
+- ✅ Targeted tests: `PromptCommandsTests` — all passing
+- ✅ Full build: no warnings, no errors
+- ✅ Full test suite: all passing
+- ✅ Pre-commit hook: build + test — passing
+
+**Commit:** `4aa53e4` — `fix(cli): embed prompt sample templates`  
+**PR:** #247 — https://github.com/sytone/botnexus/pull/247
+
+---
