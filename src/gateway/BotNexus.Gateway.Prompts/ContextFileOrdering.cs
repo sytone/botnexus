@@ -1,4 +1,4 @@
-namespace BotNexus.Gateway.Prompts;
+﻿namespace BotNexus.Gateway.Prompts;
 
 /// <summary>
 /// Represents context file ordering.
@@ -7,6 +7,7 @@ public static class ContextFileOrdering
 {
     private static readonly Dictionary<string, int> DefaultOrder = new(StringComparer.OrdinalIgnoreCase)
     {
+        ["world.md"] = 5,
         ["agents.md"] = 10,
         ["soul.md"] = 20,
         ["identity.md"] = 30,
