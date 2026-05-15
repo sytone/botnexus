@@ -39,7 +39,24 @@
 - 2026-05-14: Architecture boundary enforcement via transport-neutral contract (IAgentChangeNotifier) cleanly severs gateway→extension dependency. Guard test prevents regression. Approved.
 - Architecture boundary tests (csproj XML scanning) are effective guards — they run in normal test suite with zero infra overhead and catch ProjectReference, PackageReference, and bare Reference violations. Pattern: enumerate csproj, parse XML, assert no matches against a forbidden set.
 - Portal tab architecture: use CSS display toggling (not @if conditional rendering) to preserve Blazor component state (scroll position, SignalR connections) when switching tabs. ChatPanel must stay alive when hidden.
+- Reports tab Phase 3 approved: read-only API with layered traversal/symlink security (IsSafeReportName + DefaultPathValidator + ResolveFinalTargetPath + IsUnderPath), markdown-only enforcement, 512KB cap, MockFileSystem-based unit+integration tests, bUnit component tests covering loading/empty/error/selection/mobile/XSS-fallback states. No scope overreach detected.
 - Mobile portal banner at ≤480px should hide text and keep only burger+logo for ~36px height; tab bars should be icons-only and horizontally scrollable.
 - PR-1 slice review (issue #245): Always enable tests when the implementation they gate has landed in the same branch. Skip annotations with "pending" reasons become lies once the code exists. Catch before merge.
 - Workspace Phase 2 review: bUnit tests that mock the REST client can't catch URL routing mismatches. Always include at least one integration test that exercises the real HTTP pipeline end-to-end (WebApplicationFactory → client → controller) for new API surface. Frontend DTOs must be verified against actual API JSON, not just assumed from property names.
 - REST client URL construction must match controller routing attributes exactly. `[HttpGet("{**path}")]` requires path as a URL segment, not a query parameter. Query params route to parameterless `[HttpGet]`.
+
+## Phase 3 Scoping (Portal Reports Tab)
+
+- **Decision:** Read-only reports listing only; deferred tool/SignalR/Canvas to Phase 4+.
+- **Key insight:** Workspace API pattern (path-sandboxed, IFileSystem, MockFileSystem tests) reuses cleanly for reports — no new abstractions needed.
+- **PR size target:** ≤400 LOC production code.
+- **Convention established:** Reports live at `{workspaceRoot}/reports/*.md` — agents write them via fs tools today, `report_publish` tool in Phase 4.
+
+## Phase 3 Completion (2026-05-15)
+
+- **Approval Outcome:** APPROVED. Scope verified read-only only (no POST/PUT/DELETE, no SignalR realtime, no Canvas tab).
+- **Security:** Defense-in-depth path validation (IsSafeReportName, DefaultPathValidator.ValidateAndResolve, WorkspacePathSecurity.ResolveFinalTargetPath, IsUnderPath). Symlink escape tests block 403 for both list and single-file retrieval.
+- **Test coverage:** 34 reports-specific tests all passing (backend unit/integration, bUnit component, REST client contract).
+- **Team:** Bender (reports API), Fry (reports UI), Hermes (test coverage) — all deliverables complete.
+- **PR #270** opened for merge targeting main.
+

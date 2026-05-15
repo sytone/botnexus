@@ -50,3 +50,6 @@ Issue #245 Phase 3 frontend now mounts `ReportsPanel` in `AgentPanel` and reads 
 
 ### 2026-07-30 — Reports Tab Reuses Workspace UX Patterns for Mobile + Long Content
 `ReportsPanel` follows the same single-pane mobile flow used by `WorkspacePanel` (`mobile-list` ↔ `mobile-viewer` with back button) and desktop split layout in `app.css`. Report previews are truncated client-side at 200k chars with truncation messaging, and list rows include size + modified timestamps for quick scanning.
+
+### 2026-05-15 — Phase 3 Reports Tab Complete
+Issue #245 Phase 3 frontend delivery — `ReportsPanel.razor` mounted in `AgentPanel` tab bar, reads metadata from GET /api/agents/{agentId}/reports and content from GET /api/agents/{agentId}/reports/{name} via GatewayRestClient. Safe markdown render via BotNexus.renderMarkdown (marked + DOMPurify), fallback to escaped plain-text in `<pre>` when JS unavailable. Mobile single-pane flow with back button, desktop split layout. 8 bUnit component tests + route/DTO contract tests. All green. PR #270 open for merge.
