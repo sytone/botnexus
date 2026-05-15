@@ -534,7 +534,7 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Parameters.AddWithValue("$id", conversation.ConversationId.Value);
         conversationCommand.Parameters.AddWithValue("$agentId", conversation.AgentId.Value);
         conversationCommand.Parameters.AddWithValue("$title", conversation.Title);
-        conversationCommand.Parameters.AddWithValue("$purpose", string.IsNullOrWhiteSpace(conversation.Purpose) ? DBNull.Value : conversation.Purpose);
+        conversationCommand.Parameters.AddWithValue("$purpose", conversation.Purpose is null or { Length: 0 } ? DBNull.Value : conversation.Purpose);
         conversationCommand.Parameters.AddWithValue("$isDefault", conversation.IsDefault ? 1 : 0);
         conversationCommand.Parameters.AddWithValue("$status", conversation.Status.ToString());
         conversationCommand.Parameters.AddWithValue("$activeSessionId", conversation.ActiveSessionId is null ? DBNull.Value : conversation.ActiveSessionId.Value.Value);

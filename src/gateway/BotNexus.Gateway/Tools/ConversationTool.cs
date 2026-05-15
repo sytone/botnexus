@@ -167,15 +167,15 @@ public sealed class ConversationTool(
 
     private async Task<Conversation> ResolveConversationAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken ct)
     {
-        var requestedConversationId = ReadString(arguments, "conversationId");
-        var conversationId = requestedConversationId is null
-            ? currentConversationId
-            : ConversationId.From(requestedConversationId);
-        if (conversationId is null)
+        ConversationId conversationId;
+        if (ReadString(arguments, "conversationId") is { } requestedConversationId)
+            conversationId = ConversationId.From(requestedConversationId);
+        else if (currentConversationId is { } resolvedCurrentConversationId)
+            conversationId = resolvedCurrentConversationId;
+        else
             throw new ArgumentException("Missing required argument: conversationId.");
 
-        var typedConversationId = conversationId.Value;
-        var conversation = await conversationStore.GetAsync(typedConversationId, ct).ConfigureAwait(false)
+        var conversation = await conversationStore.GetAsync(conversationId, ct).ConfigureAwait(false)
             ?? throw new KeyNotFoundException($"Conversation '{conversationId}' not found.");
 
         if (ReadString(arguments, "agentId") is { } requestedAgentId &&

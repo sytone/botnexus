@@ -1,9 +1,14 @@
 namespace BotNexus.Gateway.Api.Controllers;
 
 /// <summary>Request body for creating a conversation.</summary>
+/// <param name="AgentId">The agent that owns the new conversation.</param>
+/// <param name="Title">Optional display title. When omitted, a default title is assigned.</param>
+/// <param name="Purpose">Optional description of the conversation's intended use.</param>
 public sealed record CreateConversationRequest(string AgentId, string? Title, string? Purpose = null);
 
 /// <summary>Request body for patching conversation metadata.</summary>
+/// <param name="Title">Optional replacement display title.</param>
+/// <param name="Purpose">Optional replacement description of the conversation's intended use.</param>
 public sealed record PatchConversationRequest(string? Title = null, string? Purpose = null);
 
 /// <summary>Request body for adding a channel binding.</summary>

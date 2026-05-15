@@ -109,6 +109,10 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         return prompt;
     }
 
+    /// <summary>
+    /// Builds a descriptor-only prompt for callers that do not have a runtime session context.
+    /// Conversation-scoped prompt context requires the overload that accepts an <see cref="AgentExecutionContext"/>.
+    /// </summary>
     public Task<string> BuildSystemPromptAsync(AgentDescriptor descriptor, CancellationToken cancellationToken = default)
         => BuildSystemPromptAsync(descriptor, null, cancellationToken);
 
