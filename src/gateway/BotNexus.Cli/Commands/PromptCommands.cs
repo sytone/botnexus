@@ -99,9 +99,27 @@ internal sealed class PromptCommands
                 CancellationToken.None);
         });
 
+        var createCommand = new Command("create", "Create prompt templates.");
+
+        var samplesCommand = new Command("samples", "Initialize sample prompt templates in ~/.botnexus/prompts")
+        {
+            targetOption,
+            configOption
+        };
+        samplesCommand.SetHandler(async context =>
+        {
+            var target = context.ParseResult.GetValueForOption(targetOption);
+            var configPath = ResolveConfigPath(context.ParseResult.GetValueForOption(configOption), target);
+            var homePath = ResolveHomePath(configPath);
+            context.ExitCode = await ExecuteCreateSamplesAsync(homePath, CancellationToken.None);
+        });
+
+        createCommand.AddCommand(samplesCommand);
+
         prompt.AddCommand(listCommand);
         prompt.AddCommand(renderCommand);
         prompt.AddCommand(runCommand);
+        prompt.AddCommand(createCommand);
         return prompt;
     }
 
@@ -314,6 +332,95 @@ internal sealed class PromptCommands
         });
         Console.WriteLine(chatResponse?.Content ?? responseText);
         return 0;
+    }
+
+    public async Task<int> ExecuteCreateSamplesAsync(string homePath, CancellationToken cancellationToken)
+    {
+        _ = cancellationToken;
+        var promptsDir = Path.Combine(homePath, "prompts");
+        Directory.CreateDirectory(promptsDir);
+
+        var sampleSourceDir = ResolveSampleSourceDirectory();
+        if (string.IsNullOrWhiteSpace(sampleSourceDir) || !Directory.Exists(sampleSourceDir))
+        {
+            AnsiConsole.MarkupLine("[red]Error:[/] Unable to locate sample templates.");
+            return 1;
+        }
+
+        try
+        {
+            var sampleFiles = Directory.GetFiles(sampleSourceDir, "*.prompt.*", SearchOption.TopDirectoryOnly);
+            if (sampleFiles.Length == 0)
+            {
+                AnsiConsole.MarkupLine("[yellow]⚠[/] No sample templates found.");
+                return 0;
+            }
+
+            var copied = 0;
+            foreach (var sourceFile in sampleFiles)
+            {
+                var fileName = Path.GetFileName(sourceFile);
+                var destPath = Path.Combine(promptsDir, fileName);
+                File.Copy(sourceFile, destPath, overwrite: true);
+                copied++;
+            }
+
+            AnsiConsole.MarkupLine($"[green]✓[/] Copied {copied} sample template(s) to [dim]{Markup.Escape(promptsDir)}[/]");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Error:[/] Failed to copy samples: {Markup.Escape(ex.Message)}");
+            return 1;
+        }
+    }
+
+    private static string? ResolveSampleSourceDirectory()
+    {
+        var assemblyLocation = typeof(PromptCommands).Assembly.Location;
+        if (string.IsNullOrWhiteSpace(assemblyLocation))
+            return null;
+
+        var assemblyDir = Path.GetDirectoryName(assemblyLocation);
+        if (string.IsNullOrWhiteSpace(assemblyDir))
+            return null;
+
+        // Try multiple candidate paths, going up the directory tree
+        var candidates = new List<string>();
+
+        // Direct child of assembly directory
+        candidates.Add(Path.Combine(assemblyDir, "prompts"));
+
+        // AppContext base directory
+        candidates.Add(Path.Combine(AppContext.BaseDirectory, "prompts"));
+
+        // Traverse up from assembly directory to find repo root
+        var currentDir = assemblyDir;
+        for (var i = 0; i < 10; i++)
+        {
+            currentDir = Path.GetDirectoryName(currentDir);
+            if (string.IsNullOrWhiteSpace(currentDir))
+                break;
+
+            candidates.Add(Path.Combine(currentDir, "prompts"));
+
+            // Stop if we find a BotNexus.slnx file (repo root)
+            if (File.Exists(Path.Combine(currentDir, "BotNexus.slnx")))
+                break;
+        }
+
+        foreach (var candidate in candidates)
+        {
+            var fullPath = Path.GetFullPath(candidate);
+            if (Directory.Exists(fullPath))
+            {
+                var promptFiles = Directory.GetFiles(fullPath, "*.prompt.*", SearchOption.TopDirectoryOnly);
+                if (promptFiles.Length > 0)
+                    return fullPath;
+            }
+        }
+
+        return null;
     }
 
     private static string ResolveConfigPath(string? explicitConfigPath, string? targetHome)

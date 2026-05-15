@@ -342,4 +342,31 @@ public sealed class PromptCommandsTests
                 Directory.Delete(tempHome, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task ExecuteCreateSamplesAsync_CopiesSampleTemplates()
+    {
+        var tempHome = Path.Combine(Path.GetTempPath(), $"botnexus-create-samples-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempHome);
+
+        var promptsDir = Path.Combine(tempHome, "prompts");
+
+        try
+        {
+            var command = new PromptCommands();
+            var result = await command.ExecuteCreateSamplesAsync(tempHome, CancellationToken.None);
+
+            result.ShouldBe(0);
+            Directory.Exists(promptsDir).ShouldBeTrue("prompts directory should be created");
+
+            var copiedFiles = Directory.GetFiles(promptsDir, "*.prompt.*");
+            copiedFiles.Length.ShouldBeGreaterThan(0, "at least one sample template should be copied");
+            copiedFiles.ShouldContain(f => f.Contains("sample-greeting", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            if (Directory.Exists(tempHome))
+                Directory.Delete(tempHome, recursive: true);
+        }
+    }
 }
