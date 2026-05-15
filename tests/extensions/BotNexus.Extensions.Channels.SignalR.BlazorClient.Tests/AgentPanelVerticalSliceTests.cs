@@ -8,7 +8,6 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
 
 public sealed class AgentPanelVerticalSliceTests : IDisposable
 {
-    private const string PendingIssue245 = "Enable when Issue #245 AgentPanel shell + tab hooks land.";
     private readonly BunitContext _ctx = new();
     private readonly ClientStateStore _store = new();
     private readonly IPortalLoadService _portalLoad = Substitute.For<IPortalLoadService>();
@@ -45,59 +44,52 @@ public sealed class AgentPanelVerticalSliceTests : IDisposable
 
     public void Dispose() => _ctx.Dispose();
 
-    [Fact(Skip = PendingIssue245)]
+    [Fact]
     public void Agent_selection_renders_agent_panel_shell_container()
     {
-        var cut = _ctx.Render<Home>(p => p
-            .Add(c => c.AgentId, "agent-1")
-            .Add(c => c.ConversationId, "conv-1"));
-
-        Assert.NotEmpty(cut.FindAll("[data-testid='agent-panel']"));
+        var cut = RenderHomeForAgentConversation();
+        Assert.Single(cut.FindAll("[data-testid='agent-panel']"));
     }
 
-    [Fact(Skip = PendingIssue245)]
+    [Fact]
     public void Agent_panel_renders_expected_tab_strip_labels()
     {
-        var cut = _ctx.Render<Home>(p => p
-            .Add(c => c.AgentId, "agent-1")
-            .Add(c => c.ConversationId, "conv-1"));
+        var cut = RenderHomeForAgentConversation();
 
-        var tabLabels = cut.FindAll(".agent-panel-tab").Select(tab => tab.TextContent.Trim()).ToArray();
+        var tabLabels = cut.FindAll(".agent-panel-tab .agent-tab-label").Select(label => label.TextContent.Trim()).ToArray();
         Assert.Equal(["Conversation", "Workspace", "Reports", "Canvas"], tabLabels);
+
+        Assert.Contains("Workspace is coming next", cut.Markup);
+        Assert.Contains("Reports are coming next", cut.Markup);
+        Assert.Contains("Canvas is coming next", cut.Markup);
     }
 
-    [Fact(Skip = PendingIssue245)]
+    [Fact]
     public void Conversation_tab_is_default_active_tab()
     {
-        var cut = _ctx.Render<Home>(p => p
-            .Add(c => c.AgentId, "agent-1")
-            .Add(c => c.ConversationId, "conv-1"));
-
-        cut.Find(".agent-panel-tab.active[data-tab='conversation']");
+        var cut = RenderHomeForAgentConversation();
+        Assert.NotNull(cut.Find(".agent-panel-tab.active[data-tab='conversation']"));
     }
 
-    [Fact(Skip = PendingIssue245)]
+    [Fact]
     public void Conversation_tab_hosts_existing_chat_surface()
     {
-        var cut = _ctx.Render<Home>(p => p
-            .Add(c => c.AgentId, "agent-1")
-            .Add(c => c.ConversationId, "conv-1"));
+        var cut = RenderHomeForAgentConversation();
 
-        cut.Find("[data-testid='agent-panel-conversation'] .chat-panel");
+        Assert.NotNull(cut.Find("[data-testid='agent-panel-conversation'] .chat-panel"));
     }
 
-    [Fact(Skip = PendingIssue245)]
+    [Fact]
     public void App_css_contains_agent_panel_mobile_responsive_hooks()
     {
-        var cssPath = Path.GetFullPath(Path.Combine(
-            AppContext.BaseDirectory,
-            "..", "..", "..", "..", "..", "..",
+        var cssPath = Path.Combine(
+            FindRepositoryRoot(),
             "src",
             "extensions",
             "BotNexus.Extensions.Channels.SignalR.BlazorClient",
             "wwwroot",
             "css",
-            "app.css"));
+            "app.css");
 
         var css = File.ReadAllText(cssPath);
 
@@ -105,6 +97,26 @@ public sealed class AgentPanelVerticalSliceTests : IDisposable
         Assert.Contains(".agent-panel-header", css);
         Assert.Contains(".agent-panel-tab-strip", css);
         Assert.Contains(".agent-panel-tab", css);
+        Assert.Contains(".agent-panel-placeholder", css);
         Assert.Contains("@media (max-width: 768px)", css);
+    }
+
+    private IRenderedComponent<Home> RenderHomeForAgentConversation() =>
+        _ctx.Render<Home>(p => p
+            .Add(c => c.AgentId, "agent-1")
+            .Add(c => c.ConversationId, "conv-1"));
+
+    private static string FindRepositoryRoot()
+    {
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        while (current is not null)
+        {
+            if (File.Exists(Path.Combine(current.FullName, "BotNexus.slnx")))
+                return current.FullName;
+
+            current = current.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Unable to locate BotNexus.slnx from test base directory.");
     }
 }
