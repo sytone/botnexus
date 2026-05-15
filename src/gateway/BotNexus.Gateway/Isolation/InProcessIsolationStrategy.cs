@@ -162,7 +162,13 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             var conversationId = await ResolveConversationIdAsync(conversationStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken)
                 .ConfigureAwait(false);
             var (conversationAccessLevel, conversationAllowedAgents) = ResolveConversationAccess(descriptor);
-            tools.Add(new ConversationTool(conversationStore, descriptor.AgentId, conversationId, conversationAccessLevel, conversationAllowedAgents));
+            tools.Add(new ConversationTool(
+                conversationStore,
+                descriptor.AgentId,
+                conversationId,
+                conversationAccessLevel,
+                conversationAllowedAgents,
+                sessionStore));
         }
 
         var delayToolOptions = _serviceProvider.GetService<IOptions<DelayToolOptions>>() ?? Options.Create(new DelayToolOptions());
