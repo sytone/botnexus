@@ -68,3 +68,14 @@
 
 **Commits:** c5063654 (pushed to PR #242)
 
+
+## Recent Work
+
+**2026-05-14 — PR 243 Service Bus Channel Docs Correction**
+- Updated `docs/user-guide/channels/service-bus.md` and `service-bus-envelope.md`
+- Referred to `~/.botnexus/config.json` instead of YAML configuration examples
+- Removed manual NuGet package installation and `add-package` instructions
+- Removed C# code registration guidance (builder.WithChannel pattern)
+- Clarified BotNexus CLI-based deployment and configuration flow
+- Validated: no stale YAML/NuGet/C# registration references remain
+- Key learning: Service Bus extension documentation should describe CLI deployment and `~/.botnexus/config.json`, not manual package installation or C# registration code
