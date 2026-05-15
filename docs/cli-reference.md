@@ -832,7 +832,7 @@ Example output:
 
 Manage prompt templates — define reusable, parameterized prompts in configuration and execute them through the CLI or cron scheduler.
 
-**Getting Started:** See the `prompts/` folder in the repository for example templates (both `.prompt.md` for multi-line human-authored templates and `.prompt.json` for simple/compatibility templates). Copy these to `~/.botnexus/prompts/` and customize them for your workflows.
+**Getting Started:** Run `botnexus prompt create samples` to copy bundled sample templates into `~/.botnexus/prompts/`, then customize them for your workflows.
 
 **Format Guide:**
 
@@ -850,6 +850,7 @@ botnexus prompt [COMMAND] [OPTIONS]
 - `list` — List available prompt templates
 - `render` — Render a template to stdout (substitute parameters)
 - `run` — Render and execute a template against the gateway
+- `create samples` — Copy bundled sample templates into `~/.botnexus/prompts/`
 
 ---
 

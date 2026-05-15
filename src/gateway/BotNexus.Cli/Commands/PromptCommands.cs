@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.Net.Http.Json;
+using System.Reflection;
 using System.Text.Json;
 using BotNexus.Cron;
 using BotNexus.Cron.Prompts;
@@ -11,6 +12,8 @@ namespace BotNexus.Cli.Commands;
 
 internal sealed class PromptCommands
 {
+    private const string PromptSampleResourcePrefix = "PromptSamples/";
+
     public Command Build(Option<bool> verboseOption)
     {
         var prompt = new Command("prompt", "Manage prompt templates.");
@@ -336,32 +339,25 @@ internal sealed class PromptCommands
 
     public async Task<int> ExecuteCreateSamplesAsync(string homePath, CancellationToken cancellationToken)
     {
-        _ = cancellationToken;
         var promptsDir = Path.Combine(homePath, "prompts");
         Directory.CreateDirectory(promptsDir);
 
-        var sampleSourceDir = ResolveSampleSourceDirectory();
-        if (string.IsNullOrWhiteSpace(sampleSourceDir) || !Directory.Exists(sampleSourceDir))
-        {
-            AnsiConsole.MarkupLine("[red]Error:[/] Unable to locate sample templates.");
-            return 1;
-        }
-
         try
         {
-            var sampleFiles = Directory.GetFiles(sampleSourceDir, "*.prompt.*", SearchOption.TopDirectoryOnly);
-            if (sampleFiles.Length == 0)
+            var sampleResources = GetEmbeddedSampleTemplates().ToArray();
+            if (sampleResources.Length == 0)
             {
                 AnsiConsole.MarkupLine("[yellow]⚠[/] No sample templates found.");
                 return 0;
             }
 
             var copied = 0;
-            foreach (var sourceFile in sampleFiles)
+            foreach (var sampleResource in sampleResources)
             {
-                var fileName = Path.GetFileName(sourceFile);
-                var destPath = Path.Combine(promptsDir, fileName);
-                File.Copy(sourceFile, destPath, overwrite: true);
+                var destPath = Path.Combine(promptsDir, sampleResource.FileName);
+                await using var sourceStream = sampleResource.OpenStream();
+                await using var destinationStream = File.Create(destPath);
+                await sourceStream.CopyToAsync(destinationStream, cancellationToken);
                 copied++;
             }
 
@@ -375,52 +371,33 @@ internal sealed class PromptCommands
         }
     }
 
-    private static string? ResolveSampleSourceDirectory()
+    internal static IReadOnlyList<string> GetEmbeddedSampleTemplateNames()
     {
-        var assemblyLocation = typeof(PromptCommands).Assembly.Location;
-        if (string.IsNullOrWhiteSpace(assemblyLocation))
-            return null;
+        return GetEmbeddedSampleTemplates()
+            .Select(resource => resource.FileName)
+            .ToArray();
+    }
 
-        var assemblyDir = Path.GetDirectoryName(assemblyLocation);
-        if (string.IsNullOrWhiteSpace(assemblyDir))
-            return null;
+    private static IEnumerable<EmbeddedSampleTemplate> GetEmbeddedSampleTemplates()
+    {
+        var assembly = typeof(PromptCommands).Assembly;
+        return assembly.GetManifestResourceNames()
+            .Where(IsPromptSampleResource)
+            .OrderBy(resourceName => resourceName, StringComparer.OrdinalIgnoreCase)
+            .Select(resourceName => new EmbeddedSampleTemplate(
+                resourceName[PromptSampleResourcePrefix.Length..],
+                () => assembly.GetManifestResourceStream(resourceName)
+                    ?? throw new InvalidOperationException($"Unable to read embedded sample template '{resourceName}'.")));
+    }
 
-        // Try multiple candidate paths, going up the directory tree
-        var candidates = new List<string>();
+    private static bool IsPromptSampleResource(string resourceName)
+    {
+        if (!resourceName.StartsWith(PromptSampleResourcePrefix, StringComparison.Ordinal))
+            return false;
 
-        // Direct child of assembly directory
-        candidates.Add(Path.Combine(assemblyDir, "prompts"));
-
-        // AppContext base directory
-        candidates.Add(Path.Combine(AppContext.BaseDirectory, "prompts"));
-
-        // Traverse up from assembly directory to find repo root
-        var currentDir = assemblyDir;
-        for (var i = 0; i < 10; i++)
-        {
-            currentDir = Path.GetDirectoryName(currentDir);
-            if (string.IsNullOrWhiteSpace(currentDir))
-                break;
-
-            candidates.Add(Path.Combine(currentDir, "prompts"));
-
-            // Stop if we find a BotNexus.slnx file (repo root)
-            if (File.Exists(Path.Combine(currentDir, "BotNexus.slnx")))
-                break;
-        }
-
-        foreach (var candidate in candidates)
-        {
-            var fullPath = Path.GetFullPath(candidate);
-            if (Directory.Exists(fullPath))
-            {
-                var promptFiles = Directory.GetFiles(fullPath, "*.prompt.*", SearchOption.TopDirectoryOnly);
-                if (promptFiles.Length > 0)
-                    return fullPath;
-            }
-        }
-
-        return null;
+        var sampleFileName = resourceName[PromptSampleResourcePrefix.Length..];
+        return sampleFileName.EndsWith(".prompt.md", StringComparison.OrdinalIgnoreCase)
+               || sampleFileName.EndsWith(".prompt.json", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ResolveConfigPath(string? explicitConfigPath, string? targetHome)
@@ -502,4 +479,6 @@ internal sealed class PromptCommands
     private sealed record ChatRequestPayload(string AgentId, string Message, string? SessionId);
 
     private sealed record ChatResponsePayload(string SessionId, string Content);
+
+    private sealed record EmbeddedSampleTemplate(string FileName, Func<Stream> OpenStream);
 }

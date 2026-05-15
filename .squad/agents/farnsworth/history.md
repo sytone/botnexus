@@ -34,6 +34,8 @@
 - Key implementation paths for issue #29: `src\\gateway\\BotNexus.Cli\\Commands\\PromptCommands.cs`, `src\\gateway\\BotNexus.Cron\\Prompts\\CronOptionsPromptTemplateResolver.cs`, `src\\gateway\\BotNexus.Gateway\\Configuration\\PlatformConfig.cs`.
 - `.prompt.md` and `.prompt.json` should both resolve in the shared prompt pipeline; when both exist for one template name, markdown wins.
 - Markdown prompt templates use YAML front matter for metadata/defaults/required parameters and preserve the markdown body as the renderable prompt text.
+- CLI prompt samples are now shipped as embedded resources via `src\\gateway\\BotNexus.Cli\\Resources\\Prompts\\*.prompt.*` with logical name prefix `PromptSamples/`.
+- `PromptCommands.ExecuteCreateSamplesAsync` now copies prompt samples from embedded assembly resources (`PromptCommands.GetEmbeddedSampleTemplateNames`) instead of scanning repository-root `prompts/`.
 
 ## Recent Work (2026-05-14)
 

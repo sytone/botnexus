@@ -33,4 +33,10 @@
     <ProjectReference Include="..\BotNexus.Cron\BotNexus.Cron.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\Prompts\*.prompt.*">
+      <LogicalName>PromptSamples/%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
 </Project>

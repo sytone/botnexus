@@ -1208,7 +1208,7 @@ Templates can be defined in three ways:
 
 The CLI merges all sources when listing or rendering templates. When both `foo.prompt.md` and `foo.prompt.json` exist with the same name, `.prompt.md` takes precedence.
 
-**Sample Templates:** See the `prompts/` folder in the repository for example prompt files (both `.prompt.md` and `.prompt.json` samples). Copy and modify them to create your own templates in `~/.botnexus/prompts/`.
+**Sample Templates:** The CLI ships bundled sample prompt files. Run `botnexus prompt create samples` to copy them into `~/.botnexus/prompts/`, then modify them for your workflow.
 
 ### Configuration Structure
 
