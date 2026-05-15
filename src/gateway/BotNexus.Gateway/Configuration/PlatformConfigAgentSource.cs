@@ -105,6 +105,10 @@ public sealed class PlatformConfigAgentSource(
                 Heartbeat = CloneHeartbeatConfig(effectiveConfig.Heartbeat),
                 SessionAccessLevel = effectiveConfig.SessionAccess?.Level ?? "own",
                 SessionAllowedAgents = effectiveConfig.SessionAccess?.AllowedAgents?.ToArray() ?? [],
+                ConversationAccessLevel = effectiveConfig.ConversationAccess?.Level ?? effectiveConfig.SessionAccess?.Level ?? "own",
+                ConversationAllowedAgents = effectiveConfig.ConversationAccess?.AllowedAgents?.ToArray()
+                    ?? effectiveConfig.SessionAccess?.AllowedAgents?.ToArray()
+                    ?? [],
                 FileAccess = MapFileAccessPolicy(effectiveConfig.FileAccess, platformConfig.Gateway?.FileAccess),
                 ExtensionConfig = ExtensionConfigMerger.Merge(
                     platformConfig.Gateway?.Extensions?.Defaults,

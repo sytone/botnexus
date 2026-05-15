@@ -419,6 +419,8 @@ public sealed class AgentDefinitionConfig
     public HeartbeatAgentConfig? Heartbeat { get; set; }
     /// <summary>Session access configuration for this agent's session tool.</summary>
     public SessionAccessConfig? SessionAccess { get; set; }
+    /// <summary>Conversation access configuration for this agent's conversation tool.</summary>
+    public ConversationAccessConfig? ConversationAccess { get; set; }
     /// <summary>File access policy for this agent's file tools.</summary>
     public FileAccessPolicyConfig? FileAccess { get; set; }
 
@@ -464,6 +466,15 @@ public sealed class SessionAccessConfig
     /// <summary>Access level: "own" (default), "allowlist", or "all".</summary>
     public string Level { get; set; } = "own";
     /// <summary>Agent IDs this agent can view sessions for (when level is "allowlist").</summary>
+    public List<string>? AllowedAgents { get; set; }
+}
+
+/// <summary>Controls what conversations an agent can access via the conversation tool.</summary>
+public sealed class ConversationAccessConfig
+{
+    /// <summary>Access level: "own" (default), "allowlist", or "all".</summary>
+    public string Level { get; set; } = "own";
+    /// <summary>Agent IDs this agent can view conversations for (when level is "allowlist").</summary>
     public List<string>? AllowedAgents { get; set; }
 }
 

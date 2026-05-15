@@ -55,6 +55,22 @@ public sealed class ProbeRound3GatewayTests
     }
 
     [Fact]
+    public async Task Patch_WithNewPurpose_PersistsPurposeAndReturnsOk()
+    {
+        var store = new InMemoryConversationStore();
+        var conv = await store.CreateAsync(MakeConversation("original"));
+        var controller = CreateConvController(store);
+
+        var result = await controller.Patch(conv.ConversationId.Value,
+            new PatchConversationRequest(Purpose: "Coordinate release planning"), CancellationToken.None);
+
+        result.ShouldBeOfType<OkObjectResult>();
+        var loaded = await store.GetAsync(conv.ConversationId);
+        loaded!.Title.ShouldBe("original");
+        loaded.Purpose.ShouldBe("Coordinate release planning");
+    }
+
+    [Fact]
     public async Task Patch_WithEmptyTitle_ReturnsBadRequest()
     {
         var store = new InMemoryConversationStore();

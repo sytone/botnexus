@@ -25,6 +25,8 @@ public sealed record RuntimeInfo
     public IReadOnlyList<string>? Capabilities { get; init; }
 }
 
+public sealed record ConversationContext(string ConversationId, string Title, string? Purpose);
+
 public sealed record SystemPromptParams
 {
     public required string WorkspaceDir { get; init; }
@@ -44,6 +46,7 @@ public sealed record SystemPromptParams
     public bool ReasoningTagHint { get; init; }
     public string? ReasoningLevel { get; init; }
     public string? MemoryPromptInjection { get; init; }
+    public ConversationContext? ConversationContext { get; init; }
 }
 
 public static class SystemPromptBuilder
@@ -124,6 +127,7 @@ public static class SystemPromptBuilder
             .Add(new LambdaPromptSection(100, static context => buildDocsSection(GetGatewayData(context).Parameters.DocsPath, GetGatewayData(context).IsMinimal, GetGatewayData(context).ReadToolName)))
             .Add(new LambdaPromptSection(110, static context => buildUserIdentitySection(GetGatewayData(context).Parameters.OwnerIdentity, GetGatewayData(context).IsMinimal)))
             .Add(new LambdaPromptSection(120, static context => buildTimeSection(GetGatewayData(context).Parameters.UserTimezone)))
+            .Add(new LambdaPromptSection(125, BuildConversationContextSection, HasConversationContext))
             .Add(new LambdaPromptSection(130, static _ => ["## Workspace Files (injected)", "These user-editable files are loaded by BotNexus and included below in Project Context.", string.Empty]))
             .Add(new LambdaPromptSection(140, static context => buildReplyTagsSection(GetGatewayData(context).IsMinimal), static _ => IncludeReplyTagsSectionByDefault))
             .Add(new LambdaPromptSection(150, static context => buildMessagingSection(GetGatewayData(context).IsMinimal, GetGatewayData(context).NormalizedTools, GetGatewayData(context).RuntimeChannel, GetGatewayData(context).InlineButtonsEnabled)))
@@ -595,6 +599,32 @@ public static class SystemPromptBuilder
             buildRuntimeLine(data.Parameters.Runtime),
             $"Reasoning: {(data.Parameters.ReasoningLevel ?? "off")} (hidden unless on/stream). Toggle /reasoning; /status shows Reasoning when enabled."
         ];
+    }
+
+    private static bool HasConversationContext(PromptContext context)
+    {
+        var conversationContext = GetGatewayData(context).Parameters.ConversationContext;
+        return conversationContext is not null &&
+               (!string.IsNullOrWhiteSpace(conversationContext.Purpose) ||
+                !string.Equals(conversationContext.Title, "New conversation", StringComparison.Ordinal));
+    }
+
+    private static IReadOnlyList<string> BuildConversationContextSection(PromptContext context)
+    {
+        var conversationContext = GetGatewayData(context).Parameters.ConversationContext
+            ?? throw new InvalidOperationException("Conversation context is required.");
+
+        List<string> lines =
+        [
+            "## Conversation Context",
+            $"- **ID**: {conversationContext.ConversationId}",
+            $"- **Title**: {conversationContext.Title}"
+        ];
+
+        if (!string.IsNullOrWhiteSpace(conversationContext.Purpose))
+            lines.Add($"- **Purpose**: {conversationContext.Purpose}");
+
+        return lines;
     }
 
     private sealed class LambdaPromptSection(

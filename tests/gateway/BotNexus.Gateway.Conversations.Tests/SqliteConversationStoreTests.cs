@@ -64,6 +64,22 @@ public sealed class SqliteConversationStoreTests
     }
 
     [Fact]
+    public async Task SaveAsync_UpdatesPurpose()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var conversation = CreateConversation(Agent("agent-a"), "Planning");
+        await store.CreateAsync(conversation);
+
+        conversation.Purpose = "Coordinate release planning";
+        await store.SaveAsync(conversation);
+
+        var loaded = await fixture.CreateStore().GetAsync(conversation.ConversationId);
+        loaded.ShouldNotBeNull();
+        loaded!.Purpose.ShouldBe("Coordinate release planning");
+    }
+
+    [Fact]
     public async Task ArchiveAsync_SetsStatusToArchived()
     {
         using var fixture = new StoreFixture();
@@ -200,6 +216,7 @@ public sealed class SqliteConversationStoreTests
         summaries.Count.ShouldBe(1);
         summaries[0].ConversationId.ShouldBe(conversation.ConversationId.Value);
         summaries[0].BindingCount.ShouldBe(2);
+        summaries[0].Purpose.ShouldBeNull();
     }
 
     [Fact]

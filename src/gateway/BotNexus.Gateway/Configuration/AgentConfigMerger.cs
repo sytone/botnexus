@@ -56,6 +56,7 @@ public static class AgentConfigMerger
             Enabled = agent.Enabled,
             Soul = agent.Soul,
             SessionAccess = agent.SessionAccess,
+            ConversationAccess = agent.ConversationAccess,
             ToolPolicy = agent.ToolPolicy,
             Extensions = agent.Extensions,
 
