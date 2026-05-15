@@ -57,3 +57,6 @@
 - 2026-08-02: Issue #245 Phase 2 workspace QA added backend coverage for tree read, file read, missing file, directory-as-file, and traversal/path escape rejection in `WorkspaceControllerTests`, `WorkspacePathSecurityTests`, and `WorkspaceControllerIntegrationTests`.
 - 2026-08-02: Added/validated Blazor workspace bUnit coverage for loading/empty/error/file-content flows plus mobile CSS hooks in `WorkspacePanelTests`, and extended vertical slice + REST client tests (`AgentPanelVerticalSliceTests`, `GatewayRestClientTests`).
 - 2026-08-02: Validation passed with targeted workspace suites and full solution build/test (`dotnet build BotNexus.slnx`, `dotnet test BotNexus.slnx`), with no new skips introduced.
+- 2026-08-03: Phase 3 Reports QA added/validated backend reports controller coverage (list/content/missing/invalid/directory/traversal/symlink), Blazor ReportsPanel states + safe text fallback + mobile back behavior, and REST route contract tests for /api/agents/{agentId}/reports.
+
+- 2026-05-15: Phase 3 Reports test coverage complete and validated — 34 reports-specific tests all passing (backend unit + integration for ReportsController list/content/edge-cases, bUnit ReportsPanel component states + markdown render + fallback + mobile flow, GatewayRestClient route contracts). Full solution test suite green. PR #270 approved for merge.

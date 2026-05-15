@@ -1001,6 +1001,257 @@ The slice correctly delivers:
 
 **Build:** 0 warnings, 0 errors. ✅
 
+---
+
+### 2026-07-30 — Leela: Phase 3 Decision — Reports Tab Read-Only Report Listing
+
+**Author:** Leela (Lead/Architect)  
+**Date:** Phase 3 kick-off  
+**Issue:** #245  
+**Branch:** `dev/botnexus/feature-portal-reports-tab`  
+
+## 1. Scope Decision
+
+**Phase 3 delivers read-only Reports tab + Report listing API.**
+Canvas tab, workspace write operations, realtime refresh, and report-generation tooling are **deferred**.
+
+### Rationale
+
+- Phase 2 established the workspace file API pattern (path-sandboxed, read-only, `IFileSystem`-abstracted). Reports follow the same pattern: they are markdown files written to an agent's workspace under a `reports/` convention directory.
+- A read-only listing PR keeps the diff ≤ 400 lines of production code — reviewable in one sitting.
+- Report creation (tool integration for agents to write reports) and SignalR push are orthogonal features that can follow without rework.
+
+### Explicit Deferrals
+
+| Item | Deferred To |
+|------|-------------|
+| `report_publish` tool (agents writing reports) | Phase 4 |
+| SignalR realtime refresh on new reports | Phase 4 |
+| Canvas tab | Phase 5+ |
+| Workspace write operations | Phase 5+ |
+| Final mobile polish / cross-tab swipe | Phase 5+ |
+
+## 2. Backend API / Tool Boundaries
+
+### New Endpoint: `GET /api/agents/{agentId}/workspace/reports`
+
+Returns a filtered view of the existing workspace tree scoped to the `reports/` subdirectory.
+
+**Implementation strategy:** Reuse `WorkspaceController`'s path validation and `IFileSystem` abstraction. Add a dedicated action method (or a thin `ReportsController`) that:
+
+1. Resolves `{workspaceRoot}/reports/` via `IAgentWorkspaceManager`.
+2. Lists markdown files (`.md`) with metadata: filename, size, last-modified timestamp.
+3. Returns `404` if agent unknown; returns empty list if `reports/` dir absent.
+
+### Report Content
+
+`GET /api/agents/{agentId}/workspace/reports/{fileName}` — delegates to existing `WorkspaceController.GetFile` logic. No new code needed; the workspace file-read endpoint already serves files under any relative path.
+
+### Security
+
+- Same sandbox rules as Phase 2: path traversal blocked by `DefaultPathValidator`.
+- No authentication changes needed (local gateway trust model).
+- Reports directory is read-only from the API perspective in this phase.
+
+### Report Storage Convention
+
+Reports live at: `{agentWorkspaceRoot}/reports/{name}.md`
+Agents write them via filesystem tools (today) or a future `report_publish` tool (Phase 4).
+
+## 3. Frontend Reports Tab
+
+### Component: `ReportsPanel.razor`
+
+Replaces the current placeholder in `AgentPanel.razor`.
+
+**Responsibilities:**
+
+1. On mount, call `GET /api/agents/{agentId}/workspace/reports` via `IGatewayRestClient`.
+2. Render a list of report filenames with size and last-modified.
+3. On click, fetch markdown content via existing workspace file endpoint and render with `marked.js` (already bundled).
+4. Loading / empty / error states matching WorkspacePanel patterns.
+
+### Mobile Behavior
+
+- Single-column layout: list view → tap → detail view with back button (same pattern as `WorkspacePanel`'s mobile file viewer).
+- Reuse `_showMobileViewer` / `ShowTreeOnMobile` pattern.
+- No new mobile CSS classes needed beyond what WorkspacePanel established.
+
+## 4. SignalR / Realtime
+
+**Deferred to Phase 4.** This PR uses poll-on-tab-switch only (fetch on mount / tab activation). Rationale: realtime requires a hub event contract (`ReportPublished`) that couples to the not-yet-built `report_publish` tool.
+
+## 5. Test Requirements & Agent Handoff
+
+### Bender (Backend)
+
+1. **Unit tests** for reports listing endpoint:
+   - Agent not found → 404
+   - Reports dir missing → 200 with empty list
+   - Reports dir with mixed files → only `.md` files returned
+   - Path traversal attempt → blocked
+2. Use `MockFileSystem` from `System.IO.Abstractions.TestingHelpers`.
+3. If a new `ReportsController` is created, it needs constructor injection tests.
+
+### Fry (Frontend)
+
+1. **bUnit tests** for `ReportsPanel.razor`:
+   - Loading state renders spinner
+   - Empty report list shows friendly message
+   - Report list renders items with names
+   - Click fetches and renders markdown content
+   - Error state on API failure
+2. Mobile back-button behavior test.
+
+### Hermes (Integration / CI)
+
+- No new CI config needed; existing `dotnet test` covers new test projects.
+- Verify build passes with zero warnings after new files added.
+
+### Amy (UX / CSS)
+
+- Style `ReportsPanel` using existing `.workspace-panel` patterns.
+- Ensure report list + viewer matches visual language of WorkspacePanel.
+- Mobile breakpoint behavior: single-column with back nav.
+
+## Summary
+
+Phase 3 is a **thin read-only vertical**: list reports from workspace filesystem, render them in the portal. No new tools, no SignalR, no write paths. This keeps the PR small, independently shippable, and establishes the report-rendering contract that Phase 4's `report_publish` tool will target.
+
+---
+
+### 2026-07-30 — Bender: Reports Read API (Issue #245 Phase 3)
+
+**Author:** Bender (Runtime Dev)  
+**Scope:** Phase 3 Reports backend implementation  
+**Status:** Implemented  
+
+## Scope Delivered
+- Added `ReportsController` with read-only endpoints:
+  - `GET /api/agents/{agentId}/reports`
+  - `GET /api/agents/{agentId}/reports/{**name}`
+- Scoped reads to `{workspace}/reports` only.
+- Enforced markdown-only report names (`.md`) and blocked rooted/segmented/invalid names.
+- Kept phase read-only (no PUT/DELETE/tool integration/SignalR).
+
+## Security Model
+- Reused `DefaultPathValidator` workspace-jail checks from Phase 2.
+- Extracted shared path/symlink resolution into `WorkspacePathSecurity` and reused in `WorkspaceController` + `ReportsController`.
+- Added explicit containment check that final resolved report target remains under resolved reports root (prevents symlink escape from reports folder).
+
+## API Contract
+- List response DTO: `ReportsListResponse { reports: ReportListItemDto[] }`.
+- Content response DTO: `ReportContentResponse` (name, size, lastModifiedUtc, content, encoding).
+
+## Validation
+- `dotnet build BotNexus.slnx --nologo --tl:off -warnaserror` ✅
+- `dotnet test tests\gateway\BotNexus.Gateway.Tests\BotNexus.Gateway.Tests.csproj --no-build --nologo --tl:off --filter "FullyQualifiedName~ReportsControllerTests|FullyQualifiedName~ReportsControllerIntegrationTests|FullyQualifiedName~WorkspacePathSecurityTests|FullyQualifiedName~WorkspaceControllerIntegrationTests"` ✅
+- `dotnet test BotNexus.slnx --no-build --nologo --tl:off` ✅
+
+## Notes / Deferrals
+- No workspace write APIs, report publishing tool, or realtime report events in this phase.
+
+---
+
+### 2026-07-30 — Fry: Reports Tab UI (Issue #245 Phase 3)
+
+**Author:** Fry (Web Dev)  
+**Date:** 2026-07-30  
+**Branch:** `dev/botnexus/feature-portal-reports-tab`  
+
+## Decision Summary
+
+The Reports tab is implemented as a read-only `ReportsPanel` that:
+
+1. Lists reports from `GET /api/agents/{agentId}/reports`
+2. Loads selected report content from `GET /api/agents/{agentId}/reports/{name}`
+3. Renders markdown through `BotNexus.renderMarkdown` (marked + DOMPurify)
+4. Falls back to escaped plain-text preview if markdown JS render is unavailable
+
+## Why
+
+- Aligns frontend contract with Bender's dedicated reports API and DTO shape (`{ reports: [...] }`, `ReportContentResponse`).
+- Preserves the Phase 3 security boundary: read-only access, no writes, no realtime coupling, no report tool dependency.
+- Reuses existing safe markdown helper instead of introducing raw HTML rendering.
+
+## UX/Behavior Notes
+
+- Mobile behavior mirrors workspace panel patterns (`mobile-list` / `mobile-viewer`, back button).
+- Empty, loading, and error states are explicit in-list and in-viewer.
+- Long content is truncated client-side with an explanatory notice.
+- Conversation, Workspace, and Canvas tab behavior remain unchanged.
+
+## Test Coverage Added
+
+- `ReportsPanelTests` for loading, empty, selection/rendering, fallback, error, and mobile back behavior.
+- `GatewayRestClientTests` for reports listing/content endpoint URLs and request path handling.
+- `AgentPanelVerticalSliceTests` now verifies mounted reports panel in tab shell.
+
+---
+
+### 2026-08-03 — Hermes: Reports Phase Test Contract
+
+**Date:** 2026-08-03  
+**Owner:** Hermes (QA)  
+**Issue:** #245 Phase 3  
+
+## Decision Context
+- Current implementation and tests align on `GET /api/agents/{agentId}/reports` and `GET /api/agents/{agentId}/reports/{name}`.
+- Report list payload contract is object-wrapped: `{ reports: [...] }`.
+- Report content contract uses `ReportContentDto` (`name`, `size`, `lastModifiedUtc`, `content`, `encoding`).
+
+## QA Outcome
+- Added/validated test coverage for:
+  - backend reports list + content + missing + invalid extension/name + directory-as-report + traversal/symlink escape
+  - Blazor ReportsPanel loading/empty/error/select/render + safe plain-text fallback + mobile CSS hooks/back button
+  - client contract tests for report URL encoding and DTO naming
+
+## Follow-up
+- Prior design note referenced `/workspace/reports`; tests now lock the live `/reports` route contract to prevent accidental regressions.
+
+---
+
+### 2026-07-30 — Leela: Reports Tab Phase 3 — Architecture Review
+
+**Date:** 2025-07-30  
+**Author:** Leela (Lead/Architect)  
+**Status:** APPROVED  
+
+## Scope Verification
+
+Phase 3 delivers read-only reports only. No write endpoints (POST/PUT/DELETE), no report tool integration, no SignalR realtime, no Canvas rendering. Confirmed via code inspection — `ReportsController` exposes only `[HttpGet]` actions.
+
+## Security Assessment
+
+The backend implements defense-in-depth for path traversal and symlink escape:
+1. `IsSafeReportName` — rejects rooted paths, directory separators, non-`.md` extensions, null bytes, invalid chars
+2. `DefaultPathValidator.ValidateAndResolve` — workspace-scoped path resolution
+3. `WorkspacePathSecurity.ResolveFinalTargetPath` — resolves symlink chains
+4. `WorkspacePathSecurity.IsUnderPath` — confirms final target remains within reports directory
+5. Binary content detection and 512KB read cap
+
+Symlink escape tests confirm 403 for both listing and single-file retrieval.
+
+## Frontend Assessment
+
+`ReportsPanel.razor` handles all required UI states:
+- Loading, empty, error, selection, mobile back-navigation
+- Markdown rendered via JS interop with safe fallback to `<pre>` (plain text, HTML-escaped by Blazor)
+- Client-side truncation at 200K chars with notice
+- XSS mitigated: fallback renders in `<pre>` which Blazor auto-escapes
+
+## Test Coverage
+
+- **Unit (8 tests):** ReportsControllerTests — happy path, missing dir, missing file, directory-as-file, unsafe names (theory), symlink escape read + list
+- **Integration (2 tests):** Full HTTP pipeline via WebApplicationFactory — list+read, empty directory
+- **bUnit (8 tests):** Loading, empty, selection with markdown render, error state, plain-text fallback, XSS escaping in fallback, mobile navigation, CSS hooks
+
+All 34 reports-related tests pass green.
+
+## Verdict
+
+**APPROVED** — Implementation is scope-compliant, security-hardened, and adequately tested for PR merge.
+
 **All Gates Passed:**
 - ✅ Tests unskipped and passing (0 skipped, 0 failures)
 - ✅ Frontend-only scope preserved (no backend APIs)

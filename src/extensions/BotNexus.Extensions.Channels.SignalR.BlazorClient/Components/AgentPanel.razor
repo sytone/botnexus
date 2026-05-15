@@ -44,10 +44,7 @@
         <section id="@GetPanelId(AgentPanelTab.Reports)"
                  class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Reports) ? "active" : "")"
                  role="tabpanel">
-            <div class="agent-panel-placeholder">
-                <h3>Reports are coming next</h3>
-                <p>This tab will surface agent-generated reports after backend endpoints land.</p>
-            </div>
+            <ReportsPanel AgentId="@AgentId" />
         </section>
 
         <section id="@GetPanelId(AgentPanelTab.Canvas)"
