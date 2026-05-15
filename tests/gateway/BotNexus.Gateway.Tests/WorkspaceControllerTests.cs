@@ -71,7 +71,7 @@ public sealed class WorkspaceControllerTests
         payload.Type.ShouldBe("text");
         payload.Content.ShouldBe("hello workspace");
         payload.Encoding.ShouldBe("utf-8");
-        payload.Truncated.ShouldBeFalse();
+        payload.IsTruncated.ShouldBeFalse();
     }
 
     [Fact]
@@ -87,7 +87,7 @@ public sealed class WorkspaceControllerTests
     }
 
     [Fact]
-    public void GetFile_WhenPathIsDirectory_ReturnsBadRequest()
+    public void GetFile_WhenPathIsDirectory_ReturnsDirectoryPayload()
     {
         const string workspacePath = @"C:\workspace\agent-a";
         var fileSystem = new MockFileSystem(new Dictionary<string, MockFileData>
@@ -98,7 +98,12 @@ public sealed class WorkspaceControllerTests
 
         var result = controller.GetFile("agent-a", "folder");
 
-        result.Result.ShouldBeOfType<BadRequestObjectResult>();
+        var payload = (result.Result as OkObjectResult)?.Value.ShouldBeOfType<WorkspaceDirectoryResponse>();
+        payload.ShouldNotBeNull();
+        payload!.Type.ShouldBe("directory");
+        payload.Path.ShouldBe("folder");
+        payload.DepthLimit.ShouldBe(0);
+        payload.Entries.ShouldContain(entry => entry.Path == "folder/child.md" && entry.Type == "file");
     }
 
     private static WorkspaceController CreateController(MockFileSystem fileSystem, string workspacePath)

@@ -158,17 +158,16 @@ public sealed class GatewayRestClientTests
     public async Task GetWorkspaceAsync_encodes_requested_sub_path()
     {
         var (client, handler) = CreateClient();
-        handler.SetResponse("/api/agents/agent-1/workspace", JsonSerializer.Serialize(new
+        handler.SetResponse("/api/agents/agent-1/workspace/memory/notes.md", JsonSerializer.Serialize(new
         {
-            type = "file",
+            type = "text",
             path = "memory/notes.md",
             content = "hello"
         }));
 
         await client.GetWorkspaceAsync("agent-1", "memory/notes.md");
 
-        handler.LastRequestUrl.ShouldContain("/api/agents/agent-1/workspace");
-        handler.LastRequestUrl.ShouldContain("path=memory%2Fnotes.md");
+        handler.LastRequestUrl.ShouldContain("/api/agents/agent-1/workspace/memory/notes.md");
     }
 
     [Fact]

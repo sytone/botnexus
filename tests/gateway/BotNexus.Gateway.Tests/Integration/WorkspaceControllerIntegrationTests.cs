@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using BotNexus.Domain.Primitives;
+using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using BotNexus.Gateway;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
@@ -90,7 +91,7 @@ public sealed class WorkspaceControllerIntegrationTests
     }
 
     [Fact]
-    public async Task WorkspaceFile_WhenPathTargetsDirectory_ReturnsBadRequest()
+    public async Task WorkspacePath_WhenPathTargetsDirectory_ReturnsDirectoryPayload()
     {
         const string workspacePath = @"C:\workspace\agent-a";
         var fileSystem = new MockFileSystem(new Dictionary<string, MockFileData>
@@ -112,8 +113,52 @@ public sealed class WorkspaceControllerIntegrationTests
         using var client = factory.CreateClient();
 
         var response = await client.GetAsync("/api/agents/agent-a/workspace/memory");
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var payload = await response.Content.ReadFromJsonAsync<WorkspaceDirectoryResponse>();
+        payload.ShouldNotBeNull();
+        payload!.Type.ShouldBe("directory");
+        payload.Path.ShouldBe("memory");
+        payload.Entries.ShouldContain(entry => entry.Path == "memory/2026-05-15.md");
+    }
 
-        response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+    [Fact]
+    public async Task WorkspaceRestClient_UsesControllerPathContract_AndReadsTruncationFlag()
+    {
+        const string workspacePath = @"C:\workspace\agent-a";
+        var largeText = new string('a', 512 * 1024 + 32);
+        var fileSystem = new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            [Path.Combine(workspacePath, "memory", "notes.md")] = new("daily note"),
+            [Path.Combine(workspacePath, "memory", "large.txt")] = new(largeText)
+        });
+
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(new AgentDescriptor
+        {
+            AgentId = AgentId.From("agent-a"),
+            DisplayName = "Agent A",
+            ModelId = "gpt-4.1",
+            ApiProvider = "openai"
+        });
+
+        var workspaceManager = new StubWorkspaceManager(workspacePath);
+        await using var factory = CreateTestFactory(registry, workspaceManager, fileSystem);
+        using var http = factory.CreateClient();
+        var restClient = new GatewayRestClient(http);
+        restClient.Configure(new Uri(http.BaseAddress!, "api").ToString());
+
+        var directoryResponse = await restClient.GetWorkspaceAsync("agent-a", "memory");
+        directoryResponse.ShouldNotBeNull();
+        directoryResponse!.Type.ShouldBe("directory");
+        directoryResponse.Path.ShouldBe("memory");
+        directoryResponse.Entries.ShouldNotBeNull();
+        directoryResponse.Entries!.ShouldContain(entry => entry.Name == "notes.md" && entry.Type == "file");
+
+        var fileResponse = await restClient.GetWorkspaceAsync("agent-a", "memory/large.txt");
+        fileResponse.ShouldNotBeNull();
+        fileResponse!.Type.ShouldBe("text");
+        fileResponse.Path.ShouldBe("memory/large.txt");
+        fileResponse.IsTruncated.ShouldBeTrue();
     }
 
     private static WebApplicationFactory<Program> CreateTestFactory(

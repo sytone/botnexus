@@ -54,7 +54,7 @@ public interface IGatewayRestClient
     /// <summary>DELETE /api/conversations/{conversationId} — soft delete (archive).</summary>
     Task<bool> ArchiveConversationAsync(string conversationId, CancellationToken ct = default);
 
-    /// <summary>GET /api/agents/{agentId}/workspace?path={path}</summary>
+    /// <summary>GET /api/agents/{agentId}/workspace or /api/agents/{agentId}/workspace/{path}</summary>
     Task<WorkspaceResponseDto?> GetWorkspaceAsync(
         string agentId,
         string? path = null,

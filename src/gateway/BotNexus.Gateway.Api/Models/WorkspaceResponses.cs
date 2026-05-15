@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace BotNexus.Gateway.Api.Models;
 
 /// <summary>
@@ -36,6 +38,11 @@ public sealed class WorkspaceEntryDto
 /// </summary>
 public sealed class WorkspaceDirectoryResponse
 {
+    /// <summary>
+    /// Gets or sets the response type discriminator.
+    /// </summary>
+    public string Type { get; set; } = "directory";
+
     /// <summary>
     /// Gets or sets the workspace-relative path represented by the response root.
     /// </summary>
@@ -85,5 +92,6 @@ public sealed class WorkspaceFileResponse
     /// <summary>
     /// Gets or sets a value indicating whether content was truncated to the API read cap.
     /// </summary>
-    public bool Truncated { get; set; }
+    [JsonPropertyName("isTruncated")]
+    public bool IsTruncated { get; set; }
 }

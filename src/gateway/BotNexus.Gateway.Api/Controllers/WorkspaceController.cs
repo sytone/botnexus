@@ -92,11 +92,12 @@ public sealed class WorkspaceController : ControllerBase
     /// <param name="path">Workspace-relative file path.</param>
     /// <returns>File metadata and textual content when the target is a readable text file.</returns>
     [HttpGet("{**path}")]
+    [ProducesResponseType(typeof(WorkspaceDirectoryResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(WorkspaceFileResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public ActionResult<WorkspaceFileResponse> GetFile(string agentId, string path)
+    public ActionResult<object> GetFile(string agentId, string path)
     {
         if (!_agentRegistry.Contains(AgentId.From(agentId)))
             return NotFound();
@@ -122,7 +123,15 @@ public sealed class WorkspaceController : ControllerBase
             return Forbid();
 
         if (_fileSystem.Directory.Exists(resolvedFinalPath))
-            return BadRequest(new { error = "path points to a directory." });
+        {
+            return Ok(new WorkspaceDirectoryResponse
+            {
+                Type = "directory",
+                Path = ToWorkspaceRelativePath(workspaceRoot, resolvedFinalPath),
+                DepthLimit = 0,
+                Entries = BuildTreeEntries(workspaceRoot, resolvedFinalPath, validator, depthLimit: 0, currentDepth: 0)
+            });
+        }
 
         if (!_fileSystem.File.Exists(resolvedFinalPath))
             return NotFound();
@@ -143,7 +152,7 @@ public sealed class WorkspaceController : ControllerBase
                 Path = relativePath,
                 Type = "binary",
                 Size = fileSize,
-                Truncated = truncated
+                IsTruncated = truncated
             });
         }
 
@@ -154,7 +163,7 @@ public sealed class WorkspaceController : ControllerBase
             Size = fileSize,
             Encoding = "utf-8",
             Content = Encoding.UTF8.GetString(buffer, 0, bytesRead),
-            Truncated = truncated
+            IsTruncated = truncated
         });
     }
 
