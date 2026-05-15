@@ -45,3 +45,5 @@
 - 2026-05-14: Gateway API must never reference `BotNexus.Extensions.*` assemblies directly; agent-change broadcasts now flow through `IAgentChangeNotifier` (`src\gateway\BotNexus.Gateway.Contracts\Agents\IAgentChangeNotifier.cs`) with SignalR implementation in `src\extensions\BotNexus.Extensions.Channels.SignalR\SignalRAgentChangeNotifier.cs`.
 - 2026-05-14: Boundary regression protection lives in `tests\gateway\BotNexus.Gateway.Tests\Architecture\GatewayProjectDependencyBoundaryTests.cs`, which scans `src\gateway\**\*.csproj` and fails on extension project/package/library references.
 - 2026-05-14: Gateway boundary refactor APPROVED by Leela (commits 1a8a8863, 8f7a4a21) — dependency cleanly severed, contract is transport-neutral, no over-abstraction, guard test adequate.
+
+- 2026-05-15: Effective Config API — Implemented GET /api/config (effective state) and GET /api/config/raw (raw state) in ConfigController; updated GatewayStartupAndConfigurationTests. Commit 41cc4e8c — API now returns defaults (e.g., cron.enabled=true, tickIntervalSeconds=60) alongside user config in effective view.

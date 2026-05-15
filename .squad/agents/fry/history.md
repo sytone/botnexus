@@ -35,3 +35,5 @@ When loading initial history during portal startup, virtual cron-session project
 
 ### 2026-07-29 — JS Interop Must Guard Against Non-DOM ElementReference
 Blazor's `ElementReference` for conditionally-rendered elements (e.g., `@if (!IsReadOnly)`) serialises as a truthy non-element object when the element is absent. JS helpers receiving ElementReferences must check `typeof element.addEventListener === 'function'` (not just `!element`) before using DOM APIs. The Blazor side should also skip the JS call entirely when the element is known to be absent, and reset any binding flags when the element may have been destroyed and recreated (e.g., read-only → interactive transitions).
+
+- 2026-05-15: Effective Config UI — Updated Configuration.razor to display effective state from GET /api/config; implemented raw-state + dirty-section tracking in Configuration.razor.cs and PlatformConfigService. Commit 3ffa849a — Blazor now shows user what the system is actually using while dirty tracking enables partial saves.

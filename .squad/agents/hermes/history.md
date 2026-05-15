@@ -50,3 +50,5 @@
 - 2026-05-14: Gateway boundary guard test (GatewayProjectDependencyBoundaryTests.cs) added, fail-before/pass-after validated, commits 1a8a8863 & 8f7a4a21 ready for approval.
 - 2026-07-29: Prompt-template regression suite now covers `.prompt.md` discovery/render precedence plus `.prompt.json` compatibility in `tests\gateway\BotNexus.Cron.Tests\CronOptionsPromptTemplateResolverTests.cs` (front matter required, body required, metadata required/default behavior).
 - 2026-07-29: CLI prompt coverage now verifies markdown list/render/run flows and multiline body preservation through gateway POST payloads in `tests\gateway\BotNexus.Cli.Tests\Commands\PromptCommandsTests.cs`.
+
+- 2026-05-15: Effective Config QA — Validated backend + frontend implementation (commits 41cc4e8c, 3ffa849a). Full build 0 warnings, full test suite 0 failures. Approved for merge.
