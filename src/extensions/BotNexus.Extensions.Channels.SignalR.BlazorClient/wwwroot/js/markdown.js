@@ -1,5 +1,6 @@
 // BotNexus Blazor Client — Markdown rendering via marked + DOMPurify
 window.BotNexus = window.BotNexus || {};
+var codeCopyFeedbackDurationMs = 2000;
 
 /**
  * Renders a markdown string to sanitized HTML.
@@ -40,6 +41,7 @@ window.BotNexus.attachCodeCopyButtons = function (containerEl) {
         buttonEl.setAttribute("aria-label", "Copy code");
 
         buttonEl.addEventListener("click", function () {
+            // Trim to match the issue requirement of copying code text without leading/trailing whitespace.
             window.BotNexus.copyToClipboard((codeEl.textContent || "").trim()).then(function (copied) {
                 if (!copied) {
                     return;
@@ -55,7 +57,7 @@ window.BotNexus.attachCodeCopyButtons = function (containerEl) {
                     buttonEl.textContent = "📋";
                     buttonEl.title = "Copy code";
                     buttonEl.setAttribute("aria-label", "Copy code");
-                }, 2000);
+                }, codeCopyFeedbackDurationMs);
             });
         });
 

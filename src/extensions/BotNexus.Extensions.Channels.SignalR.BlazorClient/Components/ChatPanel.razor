@@ -391,6 +391,7 @@ private bool IsStreaming =>
     private bool _showNewSessionConfirm;
     private bool _showMobileActionsMenu;
     private string? _copiedMessageId;
+    private static readonly TimeSpan s_copyFeedbackDuration = TimeSpan.FromSeconds(2);
 
     private sealed record SlashCommand(string Name, string Description);
 
@@ -609,15 +610,16 @@ private bool IsStreaming =>
             _copiedMessageId = messageId;
             StateHasChanged();
 
-            await Task.Delay(2000);
+            await Task.Delay(s_copyFeedbackDuration);
             if (_copiedMessageId == messageId)
             {
                 _copiedMessageId = null;
                 StateHasChanged();
             }
         }
-        catch
+        catch (Exception ex)
         {
+            Console.Error.WriteLine($"Copy message failed: {ex.Message}");
         }
     }
 
