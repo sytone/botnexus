@@ -5,6 +5,7 @@ using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Sessions;
 
 namespace BotNexus.Gateway.Tools;
 
@@ -17,7 +18,8 @@ public sealed class ConversationTool(
     AgentId agentId,
     ConversationId? currentConversationId = null,
     ConversationAccessLevel accessLevel = ConversationAccessLevel.Own,
-    IReadOnlyList<string>? allowedAgents = null) : IAgentTool
+    IReadOnlyList<string>? allowedAgents = null,
+    ISessionStore? sessionStore = null) : IAgentTool
 {
     public string Name => "conversation";
     public string Label => "Conversation Context";
@@ -53,6 +55,10 @@ public sealed class ConversationTool(
                 "purpose": {
                   "type": "string",
                   "description": "Conversation purpose for set_purpose or new."
+                },
+                "message": {
+                  "type": "string",
+                  "description": "Optional initial user message to seed the new conversation."
                 }
               },
               "required": ["action"]
@@ -149,6 +155,7 @@ public sealed class ConversationTool(
 
         var title = ReadString(arguments, "displayName") ?? ReadString(arguments, "title");
         var purpose = ReadString(arguments, "purpose");
+        var message = ReadString(arguments, "message");
         var now = DateTimeOffset.UtcNow;
         var conversation = new Conversation
         {
@@ -162,6 +169,24 @@ public sealed class ConversationTool(
         };
 
         var created = await conversationStore.CreateAsync(conversation, ct).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(message) && sessionStore is not null)
+        {
+            var session = await sessionStore
+                .GetOrCreateAsync(SessionId.Create(), targetAgentId, ct)
+                .ConfigureAwait(false);
+            session.Session.ConversationId = created.ConversationId;
+            session.AddEntry(new SessionEntry
+            {
+                Role = MessageRole.User,
+                Content = message.Trim()
+            });
+            await sessionStore.SaveAsync(session, ct).ConfigureAwait(false);
+
+            created.ActiveSessionId = session.SessionId;
+            created.UpdatedAt = DateTimeOffset.UtcNow;
+            await conversationStore.SaveAsync(created, ct).ConfigureAwait(false);
+        }
+
         return TextResult(JsonSerializer.Serialize(ToToolResponse(created), JsonOptions));
     }
 

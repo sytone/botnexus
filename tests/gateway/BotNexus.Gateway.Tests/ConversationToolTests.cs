@@ -3,6 +3,7 @@ using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Conversations;
+using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Tools;
 
 namespace BotNexus.Gateway.Tests;
@@ -98,6 +99,35 @@ public sealed class ConversationToolTests
         conversations.ShouldHaveSingleItem();
     }
 
+    [Fact]
+    public async Task New_WithMessage_SeedsInitialUserMessageInNewSession()
+    {
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var tool = new ConversationTool(conversationStore, "orchestrator", accessLevel: ConversationAccessLevel.All, sessionStore: sessionStore);
+
+        var result = await tool.ExecuteAsync("call-1", Args(
+            "new",
+            agentId: "nova",
+            displayName: "Handoff",
+            message: "Please investigate issue #249"));
+
+        using var document = JsonDocument.Parse(ReadText(result));
+        var conversationId = document.RootElement.GetProperty("conversationId").GetString()
+            ?? throw new InvalidOperationException("Expected conversationId in tool response.");
+        var activeSessionId = document.RootElement.GetProperty("activeSessionId").GetString()
+            ?? throw new InvalidOperationException("Expected activeSessionId in tool response.");
+        conversationId.ShouldNotBeNullOrWhiteSpace();
+        activeSessionId.ShouldNotBeNullOrWhiteSpace();
+
+        var session = await sessionStore.GetAsync(SessionId.From(activeSessionId));
+        session.ShouldNotBeNull();
+        session.Session.ConversationId.ShouldBe(ConversationId.From(conversationId));
+        var entry = session.GetHistorySnapshot().ShouldHaveSingleItem();
+        entry.Role.ShouldBe(MessageRole.User);
+        entry.Content.ShouldBe("Please investigate issue #249");
+    }
+
     private static Conversation CreateConversation(string agentId, string title, string? purpose)
         => new()
         {
@@ -115,13 +145,15 @@ public sealed class ConversationToolTests
         string? agentId = null,
         string? conversationId = null,
         string? displayName = null,
-        string? purpose = null)
+        string? purpose = null,
+        string? message = null)
     {
         var args = new Dictionary<string, object?> { ["action"] = action };
         if (agentId is not null) args["agentId"] = agentId;
         if (conversationId is not null) args["conversationId"] = conversationId;
         if (displayName is not null) args["displayName"] = displayName;
         if (purpose is not null) args["purpose"] = purpose;
+        if (message is not null) args["message"] = message;
         return args;
     }
 
