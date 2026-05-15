@@ -152,6 +152,30 @@ public sealed class GatewayRestClient : IGatewayRestClient
         return await _http.GetFromJsonAsync<WorkspaceResponseDto>(requestPath, cancellationToken);
     }
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<ReportListItemDto>> GetReportsAsync(
+        string agentId,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        var result = await _http.GetFromJsonAsync<ReportsListResponseDto>(
+            $"{_apiBaseUrl}agents/{Uri.EscapeDataString(agentId)}/reports",
+            cancellationToken);
+
+        return result?.Reports ?? [];
+    }
+
+    /// <inheritdoc />
+    public async Task<ReportContentDto?> GetReportAsync(
+        string agentId,
+        string fileName,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        var requestPath = BuildReportsRequestPath(agentId, fileName);
+        return await _http.GetFromJsonAsync<ReportContentDto>(requestPath, cancellationToken);
+    }
+
     private string BuildWorkspaceRequestPath(string agentId, string? path)
     {
         var requestPath = $"{_apiBaseUrl}agents/{Uri.EscapeDataString(agentId)}/workspace";
@@ -168,5 +192,20 @@ public sealed class GatewayRestClient : IGatewayRestClient
         return $"{requestPath}/{string.Join("/", encodedSegments)}";
     }
 
-}
+    private string BuildReportsRequestPath(string agentId, string fileName)
+    {
+        var requestPath = $"{_apiBaseUrl}agents/{Uri.EscapeDataString(agentId)}/reports";
+        if (string.IsNullOrWhiteSpace(fileName))
+            return requestPath;
 
+        var normalizedFileName = fileName.Trim().Replace('\\', '/').Trim('/');
+        if (normalizedFileName.Length == 0)
+            return requestPath;
+
+        var encodedSegments = normalizedFileName
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Select(Uri.EscapeDataString);
+        return $"{requestPath}/{string.Join("/", encodedSegments)}";
+    }
+
+}

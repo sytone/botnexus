@@ -89,6 +89,56 @@ public sealed class WorkspacePathSecurityTests
         result.Result.ShouldBeOfType<ForbidResult>();
     }
 
+    [Fact]
+    public void GetReport_WithReportTraversal_ReturnsBadRequest()
+    {
+        var (controller, _, _, _) = CreateReportsController();
+
+        var result = controller.GetReport("agent-a", "..\\outside.md");
+
+        result.Result.ShouldBeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void GetReport_WithReportSymlinkEscape_ReturnsForbidden()
+    {
+        var (controller, fileSystem, _, reportsPath) = CreateReportsController();
+        var outsideTarget = NormalizePath(fileSystem, @"C:\outside\reports\secret.md");
+        fileSystem.AddFile(outsideTarget, new MockFileData("secret"));
+
+        var escapePath = NormalizePath(fileSystem, Path.Combine(reportsPath, "escape.md"));
+        fileSystem.File.CreateSymbolicLink(escapePath, outsideTarget);
+
+        var result = controller.GetReport("agent-a", "escape.md");
+
+        var payload = result.Result.ShouldBeOfType<StatusCodeResult>();
+        payload.StatusCode.ShouldBe(403);
+    }
+
+    private static (ReportsController Controller, MockFileSystem FileSystem, string WorkspacePath, string ReportsPath) CreateReportsController()
+    {
+        var fileSystem = new MockFileSystem();
+        var botNexusRoot = NormalizePath(fileSystem, @"C:\botnexus-home");
+        var botNexusHome = new BotNexusHome(fileSystem, botNexusRoot);
+        var workspaceManager = new FileAgentWorkspaceManager(botNexusHome, fileSystem);
+        var workspacePath = workspaceManager.GetWorkspacePath("agent-a");
+        var reportsPath = NormalizePath(fileSystem, Path.Combine(workspacePath, "reports"));
+        fileSystem.Directory.CreateDirectory(reportsPath);
+        fileSystem.AddFile(NormalizePath(fileSystem, Path.Combine(reportsPath, "weekly.md")), new MockFileData("weekly"));
+
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(new AgentDescriptor
+        {
+            AgentId = AgentId.From("agent-a"),
+            DisplayName = "Agent A",
+            ModelId = "gpt-4.1",
+            ApiProvider = "openai"
+        });
+
+        var controller = new ReportsController(registry, workspaceManager, fileSystem);
+        return (controller, fileSystem, workspacePath, reportsPath);
+    }
+
     private static (WorkspaceController Controller, MockFileSystem FileSystem, string WorkspacePath) CreateController()
     {
         var fileSystem = new MockFileSystem();

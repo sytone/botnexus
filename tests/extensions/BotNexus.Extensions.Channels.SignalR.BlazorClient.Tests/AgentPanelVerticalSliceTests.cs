@@ -60,8 +60,26 @@ public sealed class AgentPanelVerticalSliceTests : IDisposable
         Assert.Equal(["Conversation", "Workspace", "Reports", "Canvas"], tabLabels);
 
         Assert.Contains("data-testid=\"workspace-panel\"", cut.Markup);
-        Assert.Contains("Reports are coming next", cut.Markup);
+        Assert.Contains("data-testid=\"reports-panel\"", cut.Markup);
         Assert.Contains("Canvas is coming next", cut.Markup);
+    }
+
+    [Fact]
+    public void Reports_tab_activates_reports_panel()
+    {
+        var restClient = _ctx.Services.GetRequiredService<IGatewayRestClient>();
+        restClient.GetReportsAsync("agent-1", Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<ReportListItemDto>>([]));
+
+        var cut = RenderHomeForAgentConversation();
+
+        cut.Find(".agent-panel-tab[data-tab='reports']").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.NotNull(cut.Find(".agent-panel-tab.active[data-tab='reports']"));
+            Assert.NotNull(cut.Find("[data-testid='reports-panel']"));
+        });
     }
 
     [Fact]

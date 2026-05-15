@@ -20,10 +20,6 @@ public sealed class WorkspaceController : ControllerBase
     private const int DefaultTreeDepthLimit = 2;
     private const int MaximumTreeDepthLimit = 5;
     private const int MaximumFileReadBytes = 512 * 1024;
-    private static readonly StringComparison PathComparison = OperatingSystem.IsWindows()
-        ? StringComparison.OrdinalIgnoreCase
-        : StringComparison.Ordinal;
-
     private readonly IAgentRegistry _agentRegistry;
     private readonly IAgentWorkspaceManager _workspaceManager;
     private readonly IFileSystem _fileSystem;
@@ -64,7 +60,7 @@ public sealed class WorkspaceController : ControllerBase
             return BadRequest(new { error = $"depth must be between 0 and {MaximumTreeDepthLimit}." });
         }
 
-        var workspaceRoot = NormalizePath(_workspaceManager.GetWorkspacePath(agentId));
+        var workspaceRoot = WorkspacePathSecurity.NormalizePath(_fileSystem, _workspaceManager.GetWorkspacePath(agentId));
         if (!_fileSystem.Directory.Exists(workspaceRoot))
         {
             return Ok(new WorkspaceDirectoryResponse
@@ -111,14 +107,14 @@ public sealed class WorkspaceController : ControllerBase
         if (path.Contains('\0'))
             return BadRequest(new { error = "path contains invalid characters." });
 
-        var workspaceRoot = NormalizePath(_workspaceManager.GetWorkspacePath(agentId));
+        var workspaceRoot = WorkspacePathSecurity.NormalizePath(_fileSystem, _workspaceManager.GetWorkspacePath(agentId));
         var validator = new DefaultPathValidator(policy: null, workspaceRoot);
-        var normalizedRelativePath = NormalizeRelativePath(path);
+        var normalizedRelativePath = WorkspacePathSecurity.NormalizeRelativePath(_fileSystem, path);
         var resolvedPath = validator.ValidateAndResolve(normalizedRelativePath, FileAccessMode.Read);
         if (resolvedPath is null)
             return Forbid();
 
-        var resolvedFinalPath = ResolveFinalTargetPath(resolvedPath);
+        var resolvedFinalPath = WorkspacePathSecurity.ResolveFinalTargetPath(_fileSystem, resolvedPath);
         if (!validator.CanRead(resolvedFinalPath))
             return Forbid();
 
@@ -127,7 +123,7 @@ public sealed class WorkspaceController : ControllerBase
             return Ok(new WorkspaceDirectoryResponse
             {
                 Type = "directory",
-                Path = ToWorkspaceRelativePath(workspaceRoot, resolvedFinalPath),
+                Path = WorkspacePathSecurity.ToWorkspaceRelativePath(_fileSystem, workspaceRoot, resolvedFinalPath),
                 DepthLimit = 0,
                 Entries = BuildTreeEntries(workspaceRoot, resolvedFinalPath, validator, depthLimit: 0, currentDepth: 0)
             });
@@ -136,7 +132,7 @@ public sealed class WorkspaceController : ControllerBase
         if (!_fileSystem.File.Exists(resolvedFinalPath))
             return NotFound();
 
-        var relativePath = ToWorkspaceRelativePath(workspaceRoot, resolvedFinalPath);
+        var relativePath = WorkspacePathSecurity.ToWorkspaceRelativePath(_fileSystem, workspaceRoot, resolvedFinalPath);
         var fileInfo = _fileSystem.FileInfo.New(resolvedFinalPath);
         var fileSize = fileInfo.Length;
         var bytesToRead = (int)Math.Min(fileSize, MaximumFileReadBytes);
@@ -182,12 +178,12 @@ public sealed class WorkspaceController : ControllerBase
 
         foreach (var entryPath in fileSystemEntries)
         {
-            var finalPath = ResolveFinalTargetPath(entryPath);
+            var finalPath = WorkspacePathSecurity.ResolveFinalTargetPath(_fileSystem, entryPath);
             if (!validator.CanRead(finalPath))
                 continue;
 
             var isDirectory = _fileSystem.Directory.Exists(entryPath);
-            var relativePath = ToWorkspaceRelativePath(workspaceRoot, entryPath);
+            var relativePath = WorkspacePathSecurity.ToWorkspaceRelativePath(_fileSystem, workspaceRoot, entryPath);
             if (isDirectory)
             {
                 var children = currentDepth < depthLimit
@@ -216,58 +212,6 @@ public sealed class WorkspaceController : ControllerBase
         return entries;
     }
 
-    private string ResolveFinalTargetPath(string fullPath)
-    {
-        var currentPath = NormalizePath(fullPath);
-        var root = _fileSystem.Path.GetPathRoot(currentPath);
-        if (string.IsNullOrWhiteSpace(root))
-            return currentPath;
-
-        var rootPath = NormalizePath(root);
-        var segments = currentPath[rootPath.Length..]
-            .Split(
-                [_fileSystem.Path.DirectorySeparatorChar, _fileSystem.Path.AltDirectorySeparatorChar],
-                StringSplitOptions.RemoveEmptyEntries);
-
-        var path = rootPath;
-        for (var index = 0; index < segments.Length; index++)
-        {
-            path = _fileSystem.Path.Combine(path, segments[index]);
-            if (_fileSystem.Directory.Exists(path))
-            {
-                var directoryInfo = _fileSystem.DirectoryInfo.New(path);
-                if (directoryInfo.LinkTarget is null)
-                    continue;
-
-                var resolved = directoryInfo.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? path;
-                return NormalizePath(AppendRemainingSegments(resolved, segments, index + 1));
-            }
-
-            if (_fileSystem.File.Exists(path))
-            {
-                var fileInfo = _fileSystem.FileInfo.New(path);
-                if (fileInfo.LinkTarget is null)
-                    continue;
-
-                var resolved = fileInfo.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? path;
-                return NormalizePath(AppendRemainingSegments(resolved, segments, index + 1));
-            }
-
-            break;
-        }
-
-        return currentPath;
-    }
-
-    private string AppendRemainingSegments(string basePath, IReadOnlyList<string> segments, int startIndex)
-    {
-        var path = basePath;
-        for (var index = startIndex; index < segments.Count; index++)
-            path = _fileSystem.Path.Combine(path, segments[index]);
-
-        return path;
-    }
-
     private static bool IsBinary(byte[] buffer, int length)
     {
         for (var index = 0; index < length; index++)
@@ -279,26 +223,4 @@ public sealed class WorkspaceController : ControllerBase
         return false;
     }
 
-    private string NormalizePath(string path)
-    {
-        var fullPath = _fileSystem.Path.GetFullPath(path);
-        var root = _fileSystem.Path.GetPathRoot(fullPath);
-        if (!string.IsNullOrEmpty(root) && string.Equals(fullPath, root, PathComparison))
-            return fullPath;
-
-        return fullPath.TrimEnd(_fileSystem.Path.DirectorySeparatorChar, _fileSystem.Path.AltDirectorySeparatorChar);
-    }
-
-    private string NormalizeRelativePath(string path)
-    {
-        return path.Trim()
-            .Replace('/', _fileSystem.Path.DirectorySeparatorChar)
-            .Replace('\\', _fileSystem.Path.DirectorySeparatorChar);
-    }
-
-    private string ToWorkspaceRelativePath(string workspaceRoot, string absolutePath)
-    {
-        var relativePath = _fileSystem.Path.GetRelativePath(workspaceRoot, absolutePath);
-        return relativePath.Replace(_fileSystem.Path.DirectorySeparatorChar, '/');
-    }
 }

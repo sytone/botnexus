@@ -9,6 +9,21 @@ public sealed record WorkspaceEntryDto(
     [property: JsonPropertyName("type")] string Type,
     [property: JsonPropertyName("size")] long? Size);
 
+public sealed record ReportListItemDto(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("size")] long? Size,
+    [property: JsonPropertyName("lastModifiedUtc")] DateTimeOffset? LastModifiedUtc);
+
+public sealed record ReportsListResponseDto(
+    [property: JsonPropertyName("reports")] IReadOnlyList<ReportListItemDto>? Reports);
+
+public sealed record ReportContentDto(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("size")] long Size,
+    [property: JsonPropertyName("lastModifiedUtc")] DateTimeOffset? LastModifiedUtc,
+    [property: JsonPropertyName("content")] string Content,
+    [property: JsonPropertyName("encoding")] string? Encoding);
+
 public sealed record WorkspaceResponseDto(
     [property: JsonPropertyName("type")] string Type,
     [property: JsonPropertyName("path")] string Path,
