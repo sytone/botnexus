@@ -44,3 +44,9 @@ Issue #245 PR-1 uses a new `Components/AgentPanel.razor` shell that always keeps
 
 ### 2026-05-15 — Workspace Tab Uses Read-Only Tree + Viewer with Lazy Directory Loads
 Issue #245 Phase 2 frontend replaced the AgentPanel Workspace placeholder with `WorkspacePanel` plus `WorkspaceFileTree` and `WorkspaceFileViewer`, wired to `GET /api/agents/{agentId}/workspace` via `IGatewayRestClient.GetWorkspaceAsync`. Mobile uses a single-pane flow (tree first, viewer with back button), while desktop stays split-pane. Viewer truncates large content client-side and honors server truncation flags for safe rendering.
+
+### 2026-07-30 — Reports Tab Uses Dedicated Reports API + Safe Markdown Rendering
+Issue #245 Phase 3 frontend now mounts `ReportsPanel` in `AgentPanel` and reads report metadata/content from `GET /api/agents/{agentId}/reports` and `GET /api/agents/{agentId}/reports/{name}` via `IGatewayRestClient`. Markdown rendering reuses `BotNexus.renderMarkdown` (marked + DOMPurify) and falls back to escaped plain text with a user-facing notice when JS markdown rendering is unavailable, preserving safety without raw HTML injection.
+
+### 2026-07-30 — Reports Tab Reuses Workspace UX Patterns for Mobile + Long Content
+`ReportsPanel` follows the same single-pane mobile flow used by `WorkspacePanel` (`mobile-list` ↔ `mobile-viewer` with back button) and desktop split layout in `app.css`. Report previews are truncated client-side at 200k chars with truncation messaging, and list rows include size + modified timestamps for quick scanning.
