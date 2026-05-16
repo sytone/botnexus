@@ -168,7 +168,7 @@ public sealed class PortalLoadService : IPortalLoadService
                             ToolArgs = entry.ToolArgs,
                             ToolIsError = entry.ToolIsError,
                             IsToolCall = entry.ToolName is not null,
-                            ToolResult = entry.ToolName is not null ? entry.Content : null
+                            ToolResult = entry.ToolName is not null ? AnsiStripper.Strip(entry.Content) : null
                         });
                     }
                 }
@@ -200,7 +200,7 @@ public sealed class PortalLoadService : IPortalLoadService
                             ToolCallId = entry.ToolCallId,
                             ToolArgs = entry.ToolArgs,
                             ToolIsError = entry.ToolIsError,
-                            ToolResult = isTool ? entry.Content : null,
+                            ToolResult = isTool ? AnsiStripper.Strip(entry.Content) : null,
                             IsToolCall = isTool
                         });
                     }

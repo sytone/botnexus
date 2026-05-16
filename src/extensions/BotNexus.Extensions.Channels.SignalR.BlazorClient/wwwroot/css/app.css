@@ -1459,6 +1459,42 @@ html, body, #app {
     margin-bottom: 0.25rem;
 }
 
+.tool-section-header {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.25rem;
+}
+
+.tool-section-header .tool-section-label {
+    margin-bottom: 0;
+}
+
+.tool-copy-btn {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.6rem;
+    line-height: 1;
+    padding: 0.1rem 0.25rem;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+}
+
+.tool-section:hover .tool-copy-btn,
+.tool-copy-btn.copied {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.tool-copy-btn:hover {
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+}
+
 .tool-content {
     font-family: var(--font-mono);
     font-size: 0.8rem;

@@ -444,6 +444,107 @@ public sealed class ChatPanelTests : IDisposable
     }
 
     [Fact]
+    public void Renders_copy_buttons_in_expanded_tool_sections()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("Tool", "", DateTimeOffset.UtcNow)
+        {
+            IsToolCall = true,
+            ToolName = "search_files",
+            ToolArgs = "{\"query\":\"test\"}",
+            ToolResult = "found 3 files"
+        });
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        // Not visible before expanding
+        Assert.Empty(cut.FindAll(".tool-copy-btn"));
+
+        // Expand tool details
+        cut.Find(".tool-header").Click();
+
+        // Should have two copy buttons (Arguments + Result)
+        Assert.Equal(2, cut.FindAll(".tool-copy-btn").Count);
+    }
+
+    [Fact]
+    public void Tool_copy_button_renders_only_for_args_when_result_is_null()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("Tool", "", DateTimeOffset.UtcNow)
+        {
+            IsToolCall = true,
+            ToolName = "pending_tool",
+            ToolArgs = "{\"path\":\"file.cs\"}",
+            ToolResult = null
+        });
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        cut.Find(".tool-header").Click();
+
+        // Only the Arguments copy button should render
+        Assert.Single(cut.FindAll(".tool-copy-btn"));
+    }
+
+    [Fact]
+    public void Clicking_tool_args_copy_button_invokes_clipboard_with_raw_args()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("Tool", "", DateTimeOffset.UtcNow)
+        {
+            IsToolCall = true,
+            ToolName = "search_files",
+            ToolArgs = "{\"query\":\"hello world\"}",
+            ToolResult = "found 1 file"
+        });
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        cut.Find(".tool-header").Click();
+
+        // Click the first copy button (Arguments)
+        cut.FindAll(".tool-copy-btn")[0].Click();
+
+        Assert.Contains(_ctx.JSInterop.Invocations, invocation =>
+            invocation.Identifier == "BotNexus.copyToClipboard" &&
+            invocation.Arguments.Count == 1 &&
+            invocation.Arguments[0] is string copiedText &&
+            copiedText == "{\"query\":\"hello world\"}");
+    }
+
+    [Fact]
+    public void Clicking_tool_result_copy_button_invokes_clipboard_with_raw_result()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("Tool", "", DateTimeOffset.UtcNow)
+        {
+            IsToolCall = true,
+            ToolName = "search_files",
+            ToolArgs = "{\"query\":\"test\"}",
+            ToolResult = "found 3 files:\n- a.cs\n- b.cs\n- c.cs"
+        });
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        cut.Find(".tool-header").Click();
+
+        // Click the second copy button (Result)
+        cut.FindAll(".tool-copy-btn")[1].Click();
+
+        Assert.Contains(_ctx.JSInterop.Invocations, invocation =>
+            invocation.Identifier == "BotNexus.copyToClipboard" &&
+            invocation.Arguments.Count == 1 &&
+            invocation.Arguments[0] is string copiedText &&
+            copiedText == "found 3 files:\n- a.cs\n- b.cs\n- c.cs");
+    }
+
+    [Fact]
     public void Renders_session_boundary_divider_with_label()
     {
         CreateAndSeedAgent("agent-1");

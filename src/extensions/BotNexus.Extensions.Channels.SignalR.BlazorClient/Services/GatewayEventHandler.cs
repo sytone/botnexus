@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
@@ -9,7 +10,11 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 /// </summary>
 public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 {
-    private static readonly JsonSerializerOptions s_jsonOptions = new() { WriteIndented = true };
+    private static readonly JsonSerializerOptions s_jsonOptions = new()
+    {
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
 
     private readonly IClientStateStore _store;
     private readonly GatewayHubConnection _hub;
@@ -181,7 +186,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
                 conv.Messages[index] = original with
                 {
                     Content = evt.ToolIsError == true ? $"❌ {evt.ToolName} failed" : $"✅ {evt.ToolName} completed",
-                    ToolResult = evt.ToolResult,
+                    ToolResult = AnsiStripper.Strip(evt.ToolResult),
                     ToolIsError = evt.ToolIsError,
                     ToolDuration = duration
                 };
@@ -199,7 +204,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         {
             ToolName = evt.ToolName,
             ToolCallId = toolCallId,
-            ToolResult = evt.ToolResult,
+            ToolResult = AnsiStripper.Strip(evt.ToolResult),
             IsToolCall = true,
             ToolIsError = evt.ToolIsError,
             ToolDuration = duration
