@@ -173,6 +173,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 
         var delayToolOptions = _serviceProvider.GetService<IOptions<DelayToolOptions>>() ?? Options.Create(new DelayToolOptions());
         tools.Add(new DelayTool(delayToolOptions));
+        tools.Add(new DateTimeTool(descriptor.Soul?.Timezone));
 
         var fileWatcherToolOptions = _serviceProvider.GetService<IOptions<FileWatcherToolOptions>>() ?? Options.Create(new FileWatcherToolOptions());
         tools.Add(new FileWatcherTool(fileWatcherToolOptions, pathValidator));

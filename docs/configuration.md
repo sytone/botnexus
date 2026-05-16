@@ -724,6 +724,7 @@ Every agent automatically gets access to these internal tools:
 | `web_fetch` | Fetch content from URLs | Enabled | Yes |
 | `send_message` | Send messages via channels | Enabled | Yes |
 | `cron` | Schedule periodic tasks | Enabled | Yes |
+| `get_datetime` | Get current UTC and timezone-aware local date/time | Enabled | Yes |
 | `shell` | Execute shell commands | Enabled if `Exec.Enable=true` | Yes |
 
 **Disabling Tools per Agent:**

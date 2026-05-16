@@ -100,6 +100,30 @@ public sealed class InProcessIsolationStrategyTests
     }
 
     [Fact]
+    public async Task CreateAsync_AddsDateTimeToolWithAgentTimezoneDefault()
+    {
+        var strategy = CreateStrategyWithRegisteredModel();
+        var descriptor = CreateDescriptor() with
+        {
+            Soul = new SoulAgentConfig
+            {
+                Enabled = true,
+                Timezone = "America/Los_Angeles"
+            }
+        };
+
+        var handle = await strategy.CreateAsync(
+            descriptor,
+            new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-datetime") });
+
+        var tool = GetTools(handle).Single(t => string.Equals(t.Name, "get_datetime", StringComparison.OrdinalIgnoreCase));
+        var result = await tool.ExecuteAsync("call-datetime-test", new Dictionary<string, object?>());
+        var json = JsonDocument.Parse(result.Content.Single(c => c.Type == AgentToolContentType.Text).Value).RootElement;
+
+        json.GetProperty("timezone").GetString().ShouldBe("America/Los_Angeles");
+    }
+
+    [Fact]
     public async Task CreateAsync_WithHistoryInContext_SeedsOnlyUserAndAssistantMessages()
     {
         var strategy = CreateStrategyWithRegisteredModel();

@@ -1330,6 +1330,7 @@ Every agent automatically gets the following tools by default:
 | `web_fetch` | Fetch content from URLs | Enabled | Yes |
 | `send_message` | Send messages via channels | Enabled | Yes |
 | `cron` | Schedule periodic tasks | Enabled | Yes |
+| `get_datetime` | Get current UTC and timezone-aware local date/time | Enabled | Yes |
 | `shell` | Execute shell commands | Enabled if `tools.exec.enable=true` | Yes |
 
 ### Disabling Tools
