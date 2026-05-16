@@ -1396,6 +1396,15 @@ html, body, #app {
 
 .message.tool {
     max-width: 95%;
+    padding: 0.2rem 0.6rem;
+    margin-bottom: 0.1rem;
+    border-radius: calc(var(--radius) / 2);
+    line-height: 1;
+}
+
+.message.tool.expanded {
+    padding-bottom: 0.5rem;
+    margin-bottom: 0.35rem;
 }
 
 .tool-header {
@@ -1404,7 +1413,7 @@ html, body, #app {
     gap: 0.5rem;
     cursor: pointer;
     user-select: none;
-    padding: 0.15rem 0;
+    padding: 0.1rem 0;
 }
 
 .tool-header:hover {
@@ -1464,7 +1473,7 @@ html, body, #app {
     overflow-x: auto;
     white-space: pre-wrap;
     word-break: break-all;
-    max-height: 200px;
+    max-height: 160px;
     overflow-y: auto;
     margin: 0;
     color: var(--text-secondary);
