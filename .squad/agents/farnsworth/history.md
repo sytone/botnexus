@@ -29,3 +29,4 @@
 - `IConversationDispatcher` + `DefaultConversationDispatcher` registered in DI as the handoff seam for transport rewiring.
 - CLI cross-platform: TCP port pre-checks, SkipBuild/SkipTests flags for reliability.
 - Repository examples now live under `examples/`; `projects/teams-proxy` moved to `examples/teams-proxy`, and `poc/BotNexus.CodingAgent` moved to `examples/BotNexus.CodingAgent`.
+- Removed unused root `agents/` sample assets (`example-agent.json`, `security.agent.md`); repository layout documentation should point contributors to `examples/` for runnable samples.

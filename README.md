@@ -274,7 +274,6 @@ Top-level folders in this repository:
 | Folder | Purpose |
 |---|---|
 | `.squad/` | Team charters, decisions, and shared working context for role-based agents. |
-| `agents/` | Agent profile and persona assets used by runtime and tooling. |
 | `artifacts/` | Generated outputs and captured run artifacts. |
 | `docs/` | User, API, architecture, and planning documentation. |
 | `examples/` | Runnable examples and proofs-of-concept. Includes `examples/teams-proxy` (Azure Bot + Service Bus Teams bridge) and `examples/BotNexus.CodingAgent`. |
