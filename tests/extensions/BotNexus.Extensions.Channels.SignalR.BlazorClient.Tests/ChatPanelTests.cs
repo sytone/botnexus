@@ -64,13 +64,15 @@ public sealed class ChatPanelTests : IDisposable
     }
 
     [Fact]
-    public void Renders_agent_id_label_in_header()
+    public void Agent_id_label_is_not_rendered_in_header()
     {
+        // The agent ID label was removed from the chat canvas header (#292)
+        // as it is redundant with the top-level agent control.
         CreateAndSeedAgent("agent-xyz");
 
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-xyz"));
 
-        Assert.Contains("agent-xyz", cut.Markup);
+        Assert.DoesNotContain("agent-id-label", cut.Markup);
     }
 
     [Fact]

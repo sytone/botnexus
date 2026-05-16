@@ -1,4 +1,4 @@
-﻿/* ── BotNexus Blazor Client — Dark Theme ─────────────────────────────── */
+/* ── BotNexus Blazor Client — Dark Theme ─────────────────────────────── */
 
 :root {
     --bg-primary: #1a1a2e;
@@ -1038,11 +1038,6 @@ html, body, #app {
     margin: 0;
 }
 
-.agent-id-label {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-}
 
 .streaming-badge {
     font-size: 0.7rem;
