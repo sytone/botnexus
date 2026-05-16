@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using BotNexus.Agent.Core.Tools;
 
 namespace BotNexus.Extensions.ProcessTool;
 
@@ -139,9 +140,10 @@ public sealed class ManagedProcess : IDisposable
     {
         if (e.Data is null) return;
 
+        var clean = AnsiStripper.Strip(e.Data);
         lock (_lock)
         {
-            _outputBuffer.AppendLine(e.Data);
+            _outputBuffer.AppendLine(clean);
             TrimBuffer();
         }
     }
