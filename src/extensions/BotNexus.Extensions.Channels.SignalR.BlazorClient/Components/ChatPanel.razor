@@ -186,14 +186,32 @@
                             @if (msg.ToolArgs is not null)
                             {
                                 <div class="tool-section">
-                                    <span class="tool-section-label">Arguments</span>
+                                    <div class="tool-section-header">
+                                        <span class="tool-section-label">Arguments</span>
+                                        <button class="tool-copy-btn @(_copiedSectionId == $"{msg.Id}-args" ? "copied" : "")"
+                                                type="button"
+                                                title="@(_copiedSectionId == $"{msg.Id}-args" ? "Copied!" : "Copy arguments")"
+                                                aria-label="@(_copiedSectionId == $"{msg.Id}-args" ? "Copied!" : "Copy arguments")"
+                                                @onclick="() => CopyToolSection(msg.Id, CopySectionArgs, msg.ToolArgs)">
+                                            @(_copiedSectionId == $"{msg.Id}-args" ? "✓" : "📋")
+                                        </button>
+                                    </div>
                                     <pre class="tool-content">@msg.ToolArgs</pre>
                                 </div>
                             }
                             @if (msg.ToolResult is not null)
                             {
                                 <div class="tool-section">
-                                    <span class="tool-section-label">Result</span>
+                                    <div class="tool-section-header">
+                                        <span class="tool-section-label">Result</span>
+                                        <button class="tool-copy-btn @(_copiedSectionId == $"{msg.Id}-result" ? "copied" : "")"
+                                                type="button"
+                                                title="@(_copiedSectionId == $"{msg.Id}-result" ? "Copied!" : "Copy result")"
+                                                aria-label="@(_copiedSectionId == $"{msg.Id}-result" ? "Copied!" : "Copy result")"
+                                                @onclick="() => CopyToolSection(msg.Id, CopySectionResult, msg.ToolResult)">
+                                            @(_copiedSectionId == $"{msg.Id}-result" ? "✓" : "📋")
+                                        </button>
+                                    </div>
                                     <pre class="tool-content">@msg.ToolResult</pre>
                                 </div>
                             }
@@ -391,7 +409,10 @@ private bool IsStreaming =>
     private bool _showNewSessionConfirm;
     private bool _showMobileActionsMenu;
     private string? _copiedMessageId;
+    private string? _copiedSectionId;
     private static readonly TimeSpan s_copyFeedbackDuration = TimeSpan.FromSeconds(2);
+    private const string CopySectionArgs = "args";
+    private const string CopySectionResult = "result";
 
     private sealed record SlashCommand(string Name, string Description);
 
@@ -620,6 +641,31 @@ private bool IsStreaming =>
         catch (Exception ex)
         {
             Console.Error.WriteLine($"Copy message failed: {ex.Message}");
+        }
+    }
+
+    private async Task CopyToolSection(string messageId, string section, string content)
+    {
+        var sectionId = $"{messageId}-{section}";
+        try
+        {
+            var copied = await JS.InvokeAsync<bool>("BotNexus.copyToClipboard", content);
+            if (!copied)
+                return;
+
+            _copiedSectionId = sectionId;
+            StateHasChanged();
+
+            await Task.Delay(s_copyFeedbackDuration);
+            if (_copiedSectionId == sectionId)
+            {
+                _copiedSectionId = null;
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Copy tool section failed: {ex.Message}");
         }
     }
 
