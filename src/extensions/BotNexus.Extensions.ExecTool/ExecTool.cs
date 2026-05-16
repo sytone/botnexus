@@ -216,12 +216,13 @@ public sealed class ExecTool : IAgentTool
         {
             if (data is null) return;
 
+            var clean = AnsiStripper.Strip(data);
             lock (outputLock)
             {
-                var lineBytes = Encoding.UTF8.GetByteCount(data) + Environment.NewLine.Length;
+                var lineBytes = Encoding.UTF8.GetByteCount(clean) + Environment.NewLine.Length;
                 if (totalBytes + lineBytes <= MaxOutputBytes)
                 {
-                    outputBuffer.AppendLine(data);
+                    outputBuffer.AppendLine(clean);
                     totalBytes += lineBytes;
                 }
             }

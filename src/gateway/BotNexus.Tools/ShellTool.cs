@@ -477,7 +477,7 @@ public sealed class ShellTool : IAgentTool
 
         foreach (var line in selected)
         {
-            builder.AppendLine(line);
+            builder.AppendLine(AnsiStripper.Strip(line));
         }
 
         return builder.ToString().TrimEnd();
