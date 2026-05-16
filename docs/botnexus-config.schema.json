@@ -637,6 +637,12 @@
             "string"
           ]
         },
+        "emoji": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
         "description": {
           "type": [
             "null",

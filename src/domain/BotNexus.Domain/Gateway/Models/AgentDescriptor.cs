@@ -15,6 +15,9 @@ public sealed record AgentDescriptor
     /// <summary>Human-readable display name.</summary>
     public required string DisplayName { get; init; }
 
+    /// <summary>Optional emoji that visually identifies this agent in user interfaces.</summary>
+    public string? Emoji { get; init; }
+
     /// <summary>Optional description of the agent's purpose.</summary>
     public string? Description { get; init; }
 

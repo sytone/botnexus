@@ -86,6 +86,7 @@ public sealed class PlatformConfigAgentSource(
             {
                 AgentId = AgentId.From(agentId),
                 DisplayName = effectiveConfig.DisplayName ?? agentId,
+                Emoji = effectiveConfig.Emoji,
                 Description = effectiveConfig.Description,
                 ModelId = effectiveConfig.Model ?? string.Empty,
                 ApiProvider = effectiveConfig.Provider ?? string.Empty,

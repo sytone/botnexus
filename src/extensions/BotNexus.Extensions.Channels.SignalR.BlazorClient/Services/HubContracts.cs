@@ -16,7 +16,8 @@ public sealed record ConnectedPayload(
 /// <summary>Agent identity summary included in <see cref="ConnectedPayload"/>.</summary>
 public sealed record AgentSummary(
     [property: JsonPropertyName("agentId")] string AgentId,
-    [property: JsonPropertyName("displayName")] string DisplayName);
+    [property: JsonPropertyName("displayName")] string DisplayName,
+    [property: JsonPropertyName("emoji")] string? Emoji = null);
 
 /// <summary>Hub capabilities advertised on connect.</summary>
 public sealed record HubCapabilities(

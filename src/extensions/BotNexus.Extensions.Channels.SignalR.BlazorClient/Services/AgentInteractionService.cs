@@ -290,12 +290,14 @@ public sealed class AgentInteractionService : IAgentInteractionService
                     {
                         AgentId = agent.AgentId,
                         DisplayName = agent.DisplayName,
+                        Emoji = agent.Emoji,
                         IsConnected = true
                     });
                 }
                 else if (_store.GetAgent(agent.AgentId) is { } existing)
                 {
                     existing.DisplayName = agent.DisplayName;
+                    existing.Emoji = agent.Emoji;
                 }
             }
 

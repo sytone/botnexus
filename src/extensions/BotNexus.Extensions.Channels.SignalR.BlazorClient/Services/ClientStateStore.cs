@@ -31,12 +31,14 @@ public sealed class ClientStateStore : IClientStateStore
                 {
                     AgentId = a.AgentId,
                     DisplayName = a.DisplayName,
+                    Emoji = a.Emoji,
                     IsConnected = true
                 };
             }
             else
             {
                 existing.DisplayName = a.DisplayName;
+                existing.Emoji = a.Emoji;
             }
         }
 

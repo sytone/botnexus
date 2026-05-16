@@ -36,6 +36,7 @@ public sealed class SignalRHubTests
             {
                 AgentId = BotNexus.Domain.Primitives.AgentId.From("assistant"),
                 DisplayName = "Assistant",
+                Emoji = "✨",
                 ModelId = "gpt-4.1",
                 ApiProvider = "copilot"
             }
@@ -54,7 +55,8 @@ public sealed class SignalRHubTests
         await hub.OnConnectedAsync();
 
         caller.Verify(proxy => proxy.Connected(
-                It.Is<ConnectedPayload>(p => p.ConnectionId == "conn-1")),
+                It.Is<ConnectedPayload>(p => p.ConnectionId == "conn-1" &&
+                    p.Agents.Single().Emoji == "✨")),
             Times.Once);
         activity.Verify(value => value.PublishAsync(
                 It.Is<GatewayActivity>(a =>

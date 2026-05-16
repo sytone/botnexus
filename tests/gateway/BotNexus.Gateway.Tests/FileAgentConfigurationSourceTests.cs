@@ -38,6 +38,7 @@ public sealed class FileAgentConfigurationSourceTests : IDisposable
             {
               "agentId": "agent-a",
               "displayName": "Agent A",
+              "emoji": "🔬",
               "description": "Primary agent",
               "modelId": "model-x",
               "apiProvider": "provider-x",
@@ -65,6 +66,7 @@ public sealed class FileAgentConfigurationSourceTests : IDisposable
 
         descriptor.AgentId.Value.ShouldBe("agent-a");
         descriptor.DisplayName.ShouldBe("Agent A");
+        descriptor.Emoji.ShouldBe("🔬");
         descriptor.Description.ShouldBe("Primary agent");
         descriptor.ModelId.ShouldBe("model-x");
         descriptor.ApiProvider.ShouldBe("provider-x");

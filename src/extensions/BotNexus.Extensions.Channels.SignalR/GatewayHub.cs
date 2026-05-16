@@ -483,7 +483,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
 
         await Clients.Caller.Connected(new ConnectedPayload(
             Context.ConnectionId,
-            _registry.GetAll().Select(a => new AgentSummary(a.AgentId.Value, a.DisplayName)),
+            _registry.GetAll().Select(a => new AgentSummary(a.AgentId.Value, a.DisplayName, a.Emoji)),
             typeof(GatewayHub).Assembly.GetName().Version?.ToString() ?? "dev",
             new HubCapabilities(MultiSession: true)));
 

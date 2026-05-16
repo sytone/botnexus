@@ -385,6 +385,8 @@ public sealed class AgentDefinitionConfig
     public string? Provider { get; set; }
     /// <summary>Human-readable display name.</summary>
     public string? DisplayName { get; set; }
+    /// <summary>Optional emoji shown alongside the agent name in clients.</summary>
+    public string? Emoji { get; set; }
     /// <summary>Description of the agent's purpose.</summary>
     public string? Description { get; set; }
     /// <summary>Model identifier (e.g. 'gpt-4.1').</summary>
