@@ -91,23 +91,23 @@ public sealed class WorkspacePanelTests : IDisposable
                 return path switch
                 {
                     null => Task.FromResult<WorkspaceResponseDto?>(new WorkspaceResponseDto(
-                        "directory",
-                        "",
-                        [new WorkspaceEntryDto("readme.md", "file", 22)],
-                        null,
-                        null,
-                        null,
-                        null,
-                        null)),
+                        Type: "directory",
+                        Path: "",
+                        Entries: [new WorkspaceEntryDto("readme.md", "file", 22)],
+                        Content: null,
+                        Size: null,
+                        Encoding: null,
+                        IsTruncated: null,
+                        Binary: null)),
                     "readme.md" => Task.FromResult<WorkspaceResponseDto?>(new WorkspaceResponseDto(
-                        "text",
-                        "readme.md",
-                        null,
-                        "hello workspace",
-                        22,
-                        "utf-8",
-                        null,
-                        null)),
+                        Type: "text",
+                        Path: "readme.md",
+                        Entries: null,
+                        Content: "hello workspace",
+                        Size: 22,
+                        Encoding: "utf-8",
+                        IsTruncated: null,
+                        Binary: null)),
                     _ => Task.FromResult<WorkspaceResponseDto?>(null)
                 };
             });
