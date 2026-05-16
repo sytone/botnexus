@@ -69,7 +69,7 @@
                             @foreach (var (agentId, agent) in Store.Agents)
                             {
                                 <option value="@agentId">
-                                    @agent.DisplayName
+                                    @FormatAgentName(agent)
                                     @if (agent.IsStreaming) { <text> ●</text> }
                                     @if (agent.UnreadCount > 0) { <text> (@agent.UnreadCount)</text> }
                                 </option>
@@ -437,6 +437,11 @@
 
         return true;
     }
+
+    private static string FormatAgentName(AgentState agent) =>
+        string.IsNullOrWhiteSpace(agent.Emoji)
+            ? agent.DisplayName
+            : $"{agent.Emoji} {agent.DisplayName}";
 
     private static string? GetVirtualConversationBadge(ConversationState conversation)
     {

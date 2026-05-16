@@ -77,6 +77,8 @@ public sealed class FileAgentConfigurationWriter(string directoryPath, BotNexusH
 
         public string DisplayName { get; init; } = string.Empty;
 
+        public string? Emoji { get; init; }
+
         public string? Description { get; init; }
 
         public string ModelId { get; init; } = string.Empty;
@@ -108,6 +110,7 @@ public sealed class FileAgentConfigurationWriter(string directoryPath, BotNexusH
             {
                 AgentId = descriptor.AgentId,
                 DisplayName = descriptor.DisplayName,
+                Emoji = descriptor.Emoji,
                 Description = descriptor.Description,
                 ModelId = descriptor.ModelId,
                 ApiProvider = descriptor.ApiProvider,

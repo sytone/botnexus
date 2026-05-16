@@ -49,6 +49,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
                 {
                     Provider = "copilot",
                     DisplayName = "Assistant",
+                    Emoji = "✨",
                     Description = "Helpful assistant",
                     Model = "gpt-4.1",
                     AllowedModels = ["gpt-4.1", "gpt-4o"],
@@ -92,6 +93,7 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
 
         descriptor.AgentId.Value.ShouldBe("assistant");
         descriptor.DisplayName.ShouldBe("Assistant");
+        descriptor.Emoji.ShouldBe("✨");
         descriptor.Description.ShouldBe("Helpful assistant");
         descriptor.ApiProvider.ShouldBe("copilot");
         descriptor.ModelId.ShouldBe("gpt-4.1");

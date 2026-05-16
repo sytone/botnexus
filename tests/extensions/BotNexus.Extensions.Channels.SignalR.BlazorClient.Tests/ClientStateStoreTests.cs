@@ -20,6 +20,16 @@ public sealed class ClientStateStoreTests
     }
 
     [Fact]
+    public void SeedAgents_preserves_agent_emoji()
+    {
+        var store = new ClientStateStore();
+
+        store.SeedAgents([new AgentSummary("a-1", "Alpha", "✨")]);
+
+        Assert.Equal("✨", store.GetAgent("a-1")?.Emoji);
+    }
+
+    [Fact]
     public void SeedAgents_updates_existing_agent()
     {
         var store = new ClientStateStore();

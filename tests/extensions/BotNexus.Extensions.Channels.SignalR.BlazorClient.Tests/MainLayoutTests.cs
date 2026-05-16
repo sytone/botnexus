@@ -120,6 +120,22 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
+    public void Shows_agent_emoji_prefix_in_dropdown_when_available()
+    {
+        _store.SeedAgents([
+            new AgentSummary("a-1", "Farnsworth", "🔬"),
+            new AgentSummary("a-2", "UnnamedAgent")
+        ]);
+        _store.NotifyChanged();
+
+        var cut = RenderLayout();
+        var options = cut.FindAll(".agent-dropdown-select option");
+
+        Assert.Contains(options, option => option.TextContent.Trim() == "🔬 Farnsworth");
+        Assert.Contains(options, option => option.TextContent.Trim() == "UnnamedAgent");
+    }
+
+    [Fact]
     public void New_conversation_button_is_present_when_agent_is_active()
     {
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);

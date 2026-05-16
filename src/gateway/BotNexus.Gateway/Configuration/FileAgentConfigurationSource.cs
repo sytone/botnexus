@@ -145,6 +145,7 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
         {
             AgentId = AgentId.From(config.AgentId ?? string.Empty),
             DisplayName = config.DisplayName ?? string.Empty,
+            Emoji = config.Emoji,
             Description = config.Description,
             ModelId = config.ModelId ?? string.Empty,
             ApiProvider = config.ApiProvider ?? string.Empty,
@@ -347,6 +348,8 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
         public string? AgentId { get; init; }
 
         public string? DisplayName { get; init; }
+
+        public string? Emoji { get; init; }
 
         public string? Description { get; init; }
 

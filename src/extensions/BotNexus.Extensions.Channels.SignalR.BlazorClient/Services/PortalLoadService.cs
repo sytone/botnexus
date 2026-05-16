@@ -48,6 +48,7 @@ public sealed class PortalLoadService : IPortalLoadService
                 {
                     AgentId = agent.AgentId,
                     DisplayName = agent.DisplayName,
+                    Emoji = agent.Emoji,
                     IsConnected = true
                 });
             }

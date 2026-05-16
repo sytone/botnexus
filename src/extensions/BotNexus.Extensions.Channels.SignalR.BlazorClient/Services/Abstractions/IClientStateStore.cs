@@ -100,6 +100,9 @@ public sealed class AgentState
     /// <summary>Human-readable display name.</summary>
     public string DisplayName { get; set; } = "";
 
+    /// <summary>Optional emoji that visually identifies this agent.</summary>
+    public string? Emoji { get; set; }
+
     /// <summary>Active session ID (last established).</summary>
     public string? SessionId { get; set; }
 
