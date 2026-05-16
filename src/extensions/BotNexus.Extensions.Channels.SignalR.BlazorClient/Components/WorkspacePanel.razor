@@ -103,6 +103,7 @@
             }
 
             if (!string.Equals(response.Type, "file", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(response.Type, "text", StringComparison.OrdinalIgnoreCase)
                 && !string.Equals(response.Type, "binary", StringComparison.OrdinalIgnoreCase))
             {
                 _selectedFileError = "Selected item is not a file.";
