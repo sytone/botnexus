@@ -169,7 +169,7 @@
             }
             else if (msg.IsToolCall)
             {
-                <div class="message tool @(msg.ToolIsError == true ? "tool-error" : "") @(!ShowTools ? "visibility-hidden" : "")"
+                <div class="message tool @(msg.ToolIsError == true ? "tool-error" : "") @(_expandedTools.Contains(msg.Id) ? "expanded" : "") @(!ShowTools ? "visibility-hidden" : "")"
                      style="@(!ShowTools ? "display:none" : "")">
                     <div class="tool-header" @onclick="() => ToggleToolDetails(msg.Id)">
                         <span class="tool-icon">@(msg.ToolResult is null ? "⏳" : (msg.ToolIsError == true ? "❌" : "✅"))</span>

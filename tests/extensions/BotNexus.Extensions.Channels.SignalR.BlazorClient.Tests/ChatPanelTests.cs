@@ -345,6 +345,31 @@ public sealed class ChatPanelTests : IDisposable
     }
 
     [Fact]
+    public void Adds_expanded_class_only_after_tool_details_are_opened()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("Tool", "", DateTimeOffset.UtcNow)
+        {
+            IsToolCall = true,
+            ToolName = "search_files",
+            ToolArgs = "{\"query\":\"tool rows\"}",
+            ToolResult = "found 3 files"
+        });
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        var toolMessage = cut.Find(".message.tool");
+        Assert.DoesNotContain("expanded", toolMessage.ClassList);
+
+        cut.Find(".tool-header").Click();
+
+        toolMessage = cut.Find(".message.tool");
+        Assert.Contains("expanded", toolMessage.ClassList);
+    }
+
+    [Fact]
     public void Renders_pending_tool_hourglass_when_result_is_null()
     {
         CreateAndSeedAgent("agent-1");
