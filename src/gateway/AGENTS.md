@@ -8,7 +8,7 @@ Projects in `src/gateway/` may depend on:
 
 **Prohibited dependencies:**
 - `src/extensions/` — extensions depend on the gateway, not the other way around. The gateway discovers and loads extensions dynamically via the extension loader.
-- `poc/` — proof-of-concept projects are standalone
+- `examples/` — example and proof-of-concept projects are standalone
 
 ## Project structure
 

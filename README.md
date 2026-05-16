@@ -267,6 +267,22 @@ See [Architecture Guide](docs/architecture.md#provider-architecture-pi-style) an
 - [Cron & Scheduling](docs/cron-and-scheduling.md) — Scheduled tasks and heartbeats
 - [Skills Guide](docs/skills.md) — Modular knowledge packages for agents
 
+## Repository Layout
+
+Top-level folders in this repository:
+
+| Folder | Purpose |
+|---|---|
+| `.squad/` | Team charters, decisions, and shared working context for role-based agents. |
+| `artifacts/` | Generated outputs and captured run artifacts. |
+| `docs/` | User, API, architecture, and planning documentation. |
+| `examples/` | Runnable examples and proofs-of-concept. Includes `examples/teams-proxy` (Azure Bot + Service Bus Teams bridge) and `examples/BotNexus.CodingAgent`. |
+| `projects/` | Project incubator area for active experiments before they are promoted to `src/` or `examples/`. |
+| `scripts/` | Development and operational automation scripts. |
+| `src/` | Production source code (domain, agent, gateway, extensions). |
+| `tests/` | Unit, integration, component, and end-to-end test suites. |
+| `tools/` | Tooling utilities and support assets used by development workflows. |
+
 ## Project Structure
 
 ```
@@ -297,12 +313,11 @@ src/
 │   ├── BotNexus.Extensions.Skills           # Modular knowledge packages
 │   └── BotNexus.Extensions.*                # Other tool extensions
 ├── tools/                                   # Built-in tool implementations
-├── prompts/                                 # Prompt pipeline and templates
+└── prompts/                                 # Prompt pipeline and templates
 
-poc/                                         # Proof-of-concept projects
+examples/                                    # Runnable examples and proof-of-concept projects
 tests/                                       # Unit, integration, and E2E tests
 ```
-
 ## Configuration
 
 BotNexus uses a layered configuration model:

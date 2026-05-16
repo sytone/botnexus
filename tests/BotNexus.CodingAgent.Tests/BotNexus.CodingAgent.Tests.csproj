@@ -13,7 +13,7 @@
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\poc\BotNexus.CodingAgent\BotNexus.CodingAgent.csproj" />
+    <ProjectReference Include="..\..\examples\BotNexus.CodingAgent\BotNexus.CodingAgent.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -36,6 +36,12 @@
     <!-- Data -->
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.0-preview.3.25171.6" />
 
+    <!-- Azure / identity -->
+    <PackageVersion Include="Azure.Identity" Version="1.21.0" />
+    <PackageVersion Include="Azure.Messaging.ServiceBus" Version="7.20.1" />
+    <PackageVersion Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.18.0" />
+    <PackageVersion Include="System.IdentityModel.Tokens.Jwt" Version="8.18.0" />
+
     <!-- OpenTelemetry -->
     <PackageVersion Include="OpenTelemetry" Version="1.15.3" />
     <PackageVersion Include="OpenTelemetry.Api" Version="1.15.3" />
@@ -56,9 +62,6 @@
     <!-- CLI / UI -->
     <PackageVersion Include="Spectre.Console" Version="0.49.1" />
     <PackageVersion Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
-
-    <!-- Azure SDK -->
-    <PackageVersion Include="Azure.Messaging.ServiceBus" Version="7.18.4" />
 
     <!-- Tools / utilities -->
     <PackageVersion Include="Cronos" Version="0.11.1" />
