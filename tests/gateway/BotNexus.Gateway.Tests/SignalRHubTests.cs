@@ -1,13 +1,16 @@
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Conversations;
+using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Dispatching;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Extensions.Channels.SignalR;
+using BotNexus.Gateway.Services;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -334,6 +337,36 @@ public sealed class SignalRHubTests
     }
 
     [Fact]
+    public async Task GatewayHub_RespondToAskUser_CompletesPendingResponse()
+    {
+        var registry = new AskUserResponseRegistry();
+        var conversationStore = new InMemoryConversationStore();
+        var conversation = await conversationStore.CreateAsync(new Conversation
+        {
+            ConversationId = ConversationId.From("conversation-respond"),
+            AgentId = AgentId.From("agent-a"),
+            Title = "ask user",
+            ChannelBindings =
+            [
+                new ChannelBinding
+                {
+                    ChannelType = ChannelKey.From("signalr"),
+                    ChannelAddress = ChannelAddress.From("agent-a")
+                }
+            ]
+        });
+
+        var (requestId, task) = registry.Register(conversation.ConversationId, TimeSpan.FromMinutes(1));
+        var hub = CreateHub(conversationStore: conversationStore, askUserResponseRegistry: registry);
+
+        await hub.RespondToAskUser(conversation.ConversationId.Value, requestId, "staging", null, cancelled: false);
+
+        var response = await task;
+        response.RequestId.ShouldBe(requestId);
+        response.FreeFormText.ShouldBe("staging");
+    }
+
+    [Fact]
     public async Task GatewayHub_SendMessage_DefaultAgentId_ThrowsHubException()
     {
         var hub = CreateHub();
@@ -476,10 +509,12 @@ public sealed class SignalRHubTests
         ISessionWarmupService? warmup = null,
         IOptionsMonitor<CompactionOptions>? compactionOptions = null,
         IConversationDispatcher? conversationDispatcher = null,
+        IConversationStore? conversationStore = null,
+        IAskUserResponseRegistry? askUserResponseRegistry = null,
         string connectionId = "conn-test")
     {
         var sessionStore = sessions ?? new InMemorySessionStore();
-        var convStore = new InMemoryConversationStore();
+        var convStore = conversationStore ?? new InMemoryConversationStore();
         var router = new DefaultConversationRouter(
             convStore,
             sessionStore,
@@ -497,7 +532,9 @@ public sealed class SignalRHubTests
             dispatcherForHub,
             router,
             compactionOptions ?? new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
-            NullLogger<GatewayHub>.Instance)
+            NullLogger<GatewayHub>.Instance,
+            convStore,
+            askUserResponseRegistry)
         {
             Clients = clients ?? Mock.Of<IHubCallerClients<IGatewayHubClient>>(),
             Groups = groups ?? Mock.Of<IGroupManager>(),

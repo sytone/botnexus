@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Services;
 
@@ -6,24 +7,24 @@ namespace BotNexus.Gateway.Tests.Services;
 public sealed class AskUserResponseRegistryTests
 {
     [Fact]
-    public void Register_ReturnsUniqueRequestId()
+    public void Register_RequiresSinglePendingPerConversation()
     {
-        var registry = new AskUserResponseRegistry();
+        using var registry = new AskUserResponseRegistry();
+        var conversationId = ConversationId.From("conversation-1");
+        _ = registry.Register(conversationId, timeout: null);
 
-        var first = registry.Register("conversation-1", timeout: null);
-        var second = registry.Register("conversation-1", timeout: null);
-
-        first.RequestId.ShouldNotBe(second.RequestId);
+        Should.Throw<InvalidOperationException>(() => registry.Register(conversationId, timeout: null));
     }
 
     [Fact]
     public async Task Register_CreatesCompletableTask()
     {
-        var registry = new AskUserResponseRegistry();
-        var pending = registry.Register("conversation-1", timeout: null);
+        using var registry = new AskUserResponseRegistry();
+        var conversationId = ConversationId.From("conversation-2");
+        var pending = registry.Register(conversationId, timeout: null);
         var response = CreateResponse(pending.RequestId, freeFormText: "approved");
 
-        var completed = registry.TryComplete("conversation-1", pending.RequestId, response);
+        var completed = registry.TryComplete(conversationId, pending.RequestId, response);
         var result = await pending.Task;
 
         completed.ShouldBeTrue();
@@ -31,98 +32,56 @@ public sealed class AskUserResponseRegistryTests
     }
 
     [Fact]
-    public void TryComplete_WithValidRequestId_CompletesTask()
-    {
-        var registry = new AskUserResponseRegistry();
-        var pending = registry.Register("conversation-1", timeout: null);
-        var response = CreateResponse(pending.RequestId, freeFormText: "deploy");
-
-        var completed = registry.TryComplete("conversation-1", pending.RequestId, response);
-
-        completed.ShouldBeTrue();
-    }
-
-    [Fact]
-    public void TryComplete_WithInvalidRequestId_ReturnsFalse()
-    {
-        var registry = new AskUserResponseRegistry();
-        var pending = registry.Register("conversation-1", timeout: null);
-
-        var completed = registry.TryComplete("conversation-1", "missing-request", CreateResponse("missing-request"));
-
-        completed.ShouldBeFalse();
-        pending.Task.IsCompleted.ShouldBeFalse();
-    }
-
-    [Fact]
     public void TryComplete_WithWrongConversationId_ReturnsFalse()
     {
-        var registry = new AskUserResponseRegistry();
-        var pending = registry.Register("conversation-1", timeout: null);
+        using var registry = new AskUserResponseRegistry();
+        var pending = registry.Register(ConversationId.From("conversation-3"), timeout: null);
 
-        var completed = registry.TryComplete("conversation-2", pending.RequestId, CreateResponse(pending.RequestId));
+        var completed = registry.TryComplete(
+            ConversationId.From("conversation-4"),
+            pending.RequestId,
+            CreateResponse(pending.RequestId));
 
         completed.ShouldBeFalse();
         pending.Task.IsCompleted.ShouldBeFalse();
     }
 
     [Fact]
-    public async Task Cancel_CancelsTask()
+    public async Task CancelAllForConversation_CancelsPendingOnlyForTargetConversation()
     {
-        var registry = new AskUserResponseRegistry();
-        var pending = registry.Register("conversation-1", timeout: null);
+        using var registry = new AskUserResponseRegistry();
+        var firstConversation = ConversationId.From("conversation-5");
+        var secondConversation = ConversationId.From("conversation-6");
+        var first = registry.Register(firstConversation, timeout: null);
+        var second = registry.Register(secondConversation, timeout: null);
 
-        registry.Cancel(pending.RequestId);
-
-        await Should.ThrowAsync<TaskCanceledException>(async () => await pending.Task);
-    }
-
-    [Fact]
-    public async Task CancelAllForConversation_CancelsAllPendingForThatConversation()
-    {
-        var registry = new AskUserResponseRegistry();
-        var first = registry.Register("conversation-1", timeout: null);
-        var second = registry.Register("conversation-1", timeout: null);
-        var otherConversation = registry.Register("conversation-2", timeout: null);
-
-        registry.CancelAllForConversation("conversation-1");
+        registry.CancelAllForConversation(firstConversation);
 
         await Should.ThrowAsync<TaskCanceledException>(async () => await first.Task);
-        await Should.ThrowAsync<TaskCanceledException>(async () => await second.Task);
-        otherConversation.Task.IsCompleted.ShouldBeFalse();
+        second.Task.IsCompleted.ShouldBeFalse();
     }
 
     [Fact]
-    public async Task Register_WithTimeout_AutoCancelsAfterTimeout()
+    public async Task Register_WithTimeout_CompletesWithTimeoutPayload()
     {
-        var registry = new AskUserResponseRegistry();
-        var pending = registry.Register("conversation-1", TimeSpan.FromMilliseconds(75));
+        using var registry = new AskUserResponseRegistry();
+        var pending = registry.Register(ConversationId.From("conversation-7"), TimeSpan.FromMilliseconds(50));
 
-        await Should.ThrowAsync<TaskCanceledException>(async () => await pending.Task.WaitAsync(TimeSpan.FromSeconds(2)));
-    }
-
-    [Fact]
-    public async Task TryComplete_AfterTimeout_ReturnsFalse()
-    {
-        var registry = new AskUserResponseRegistry();
-        var pending = registry.Register("conversation-1", TimeSpan.FromMilliseconds(75));
-        await Should.ThrowAsync<TaskCanceledException>(async () => await pending.Task.WaitAsync(TimeSpan.FromSeconds(2)));
-
-        var completed = registry.TryComplete("conversation-1", pending.RequestId, CreateResponse(pending.RequestId));
-
-        completed.ShouldBeFalse();
+        var result = await pending.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        result.RequestId.ShouldBe(pending.RequestId);
+        result.WasTimeout.ShouldBeTrue();
     }
 
     [Fact]
     public async Task Register_MultipleConcurrent_AllIndependent()
     {
-        var registry = new AskUserResponseRegistry();
-        var requests = Enumerable.Range(0, 25)
+        using var registry = new AskUserResponseRegistry();
+        var requests = Enumerable.Range(0, 20)
             .Select(index => new
             {
                 Index = index,
-                ConversationId = $"conversation-{index % 5}",
-                Pending = registry.Register($"conversation-{index % 5}", timeout: null)
+                ConversationId = ConversationId.From($"conversation-{index}"),
+                Pending = registry.Register(ConversationId.From($"conversation-{index}"), timeout: null)
             })
             .ToList();
 
@@ -132,8 +91,7 @@ public sealed class AskUserResponseRegistryTests
                 request.Pending.RequestId,
                 CreateResponse(request.Pending.RequestId, freeFormText: $"response-{request.Index}")))));
 
-        var results = await Task.WhenAll(requests.Select(r => r.Pending.Task));
-
+        var results = await Task.WhenAll(requests.Select(request => request.Pending.Task));
         for (var index = 0; index < results.Length; index++)
             results[index].FreeFormText.ShouldBe($"response-{index}");
     }

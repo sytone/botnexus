@@ -2,6 +2,10 @@ using System.Runtime.CompilerServices;
 
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.AgentExchangeResult))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.AgentExchangeTranscriptEntry))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.AskUserChoice))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.AskUserInputType))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.AskUserRequest))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.AskUserResponse))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.AgentDescriptor))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.AgentExecutionContext))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.AgentResponse))]

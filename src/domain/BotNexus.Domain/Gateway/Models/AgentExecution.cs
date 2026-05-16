@@ -96,6 +96,12 @@ public sealed record AgentStreamEvent
 
     /// <summary>When this event was emitted.</summary>
     public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
+
+    /// <summary>
+    /// Structured payload for <see cref="AgentStreamEventType.UserInputRequired"/> events.
+    /// Present when an agent is blocked waiting for user input mid-turn.
+    /// </summary>
+    public AskUserRequest? UserInputRequest { get; init; }
 }
 
 /// <summary>
@@ -123,5 +129,8 @@ public enum AgentStreamEventType
     MessageEnd,
 
     /// <summary>An error occurred during processing.</summary>
-    Error
+    Error,
+
+    /// <summary>Agent execution is paused while awaiting interactive user input.</summary>
+    UserInputRequired
 }

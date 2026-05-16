@@ -16,6 +16,7 @@ using BotNexus.Gateway.Abstractions.Hooks;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Agents;
@@ -157,9 +158,10 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         }
 
         var conversationStore = _serviceProvider.GetService<IConversationStore>();
+        ConversationId? conversationId = null;
         if (conversationStore is not null)
         {
-            var conversationId = await ResolveConversationIdAsync(conversationStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken)
+            conversationId = await ResolveConversationIdAsync(conversationStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken)
                 .ConfigureAwait(false);
             var (conversationAccessLevel, conversationAllowedAgents) = ResolveConversationAccess(descriptor);
             tools.Add(new ConversationTool(
@@ -169,6 +171,18 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 conversationAccessLevel,
                 conversationAllowedAgents,
                 sessionStore));
+        }
+
+        var includeAskUser = effectiveToolIds.Count == 0
+            || effectiveToolIds.Contains("ask_user", StringComparer.OrdinalIgnoreCase);
+        var askUserRegistry = _serviceProvider.GetService<IAskUserResponseRegistry>();
+        if (includeAskUser && askUserRegistry is not null)
+        {
+            tools.Add(new AskUserTool(
+                askUserRegistry,
+                descriptor.AgentId,
+                context.SessionId,
+                conversationId));
         }
 
         var delayToolOptions = _serviceProvider.GetService<IOptions<DelayToolOptions>>() ?? Options.Create(new DelayToolOptions());
@@ -680,6 +694,14 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                         ToolName = toolEnd.ToolName,
                         ToolResult = toolEnd.Result.Content.FirstOrDefault()?.ToString(),
                         ToolIsError = toolEnd.IsError,
+                        MessageId = messageId
+                    },
+                    ToolExecutionUpdateEvent update when update.PartialResult?.Details is AskUserRequest askRequest => new AgentStreamEvent
+                    {
+                        Type = AgentStreamEventType.UserInputRequired,
+                        ToolCallId = update.ToolCallId,
+                        ToolName = update.ToolName,
+                        UserInputRequest = askRequest,
                         MessageId = messageId
                     },
                     MessageEndEvent end when end.Message is AssistantAgentMessage

@@ -112,7 +112,8 @@ public sealed class AskUserToolTests
 
         var result = await tool.ExecuteAsync("call-ask-user", arguments, onUpdate: _ => { });
 
-        ReadText(result).ToLowerInvariant().ShouldContain("timeout");
+        var json = JsonDocument.Parse(ReadText(result));
+        json.RootElement.GetProperty("wasTimeout").GetBoolean().ShouldBeTrue();
     }
 
     [Fact]
@@ -131,7 +132,8 @@ public sealed class AskUserToolTests
         registry.Cancel(request.RequestId);
         var result = await executionTask;
 
-        ReadText(result).ToLowerInvariant().ShouldContain("cancel");
+        var json = JsonDocument.Parse(ReadText(result));
+        json.RootElement.GetProperty("wasCancelled").GetBoolean().ShouldBeTrue();
     }
 
     [Fact]
@@ -187,7 +189,7 @@ public sealed class AskUserToolTests
         registry.TryComplete(request.ConversationId, request.RequestId, CreateResponse(request.RequestId, freeFormText: "ok")).ShouldBeTrue();
         await executionTask;
 
-        request.ConversationId.ShouldBe("conversation-from-context");
+        request.ConversationId.ShouldBe(ConversationId.From("conversation-from-context"));
     }
 
     private static AskUserTool CreateTool(AskUserResponseRegistry registry, string conversationId)
@@ -204,11 +206,8 @@ public sealed class AskUserToolTests
         {
             if (updates.Count > 0)
             {
-                var content = updates[^1].Content.Single(c => c.Type == AgentToolContentType.Text).Value;
-                return JsonSerializer.Deserialize<AskUserRequest>(content, new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                }) ?? throw new InvalidOperationException("Ask user update payload was not valid JSON.");
+                return updates[^1].Details as AskUserRequest
+                    ?? throw new InvalidOperationException("Ask user update payload was not available in tool result details.");
             }
 
             await Task.Delay(25);

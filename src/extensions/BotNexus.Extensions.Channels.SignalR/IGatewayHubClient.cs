@@ -17,6 +17,7 @@ public interface IGatewayHubClient
     Task ToolEnd(AgentStreamEvent evt);
     Task MessageEnd(AgentStreamEvent evt);
     Task Error(AgentStreamEvent evt);
+    Task UserInputRequired(AgentStreamEvent evt);
     Task SubAgentSpawned(SubAgentEventPayload payload);
     Task SubAgentCompleted(SubAgentEventPayload payload);
     Task SubAgentFailed(SubAgentEventPayload payload);

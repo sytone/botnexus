@@ -1,6 +1,7 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -19,16 +20,22 @@ public sealed class ConversationsController : ControllerBase
 {
     private readonly IConversationStore _conversations;
     private readonly ISessionStore _sessions;
+    private readonly IAskUserResponseRegistry? _askUserResponseRegistry;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ConversationsController"/> class.
     /// </summary>
     /// <param name="conversations">The conversation store.</param>
     /// <param name="sessions">The session store (used for history assembly).</param>
-    public ConversationsController(IConversationStore conversations, ISessionStore sessions)
+    /// <param name="askUserResponseRegistry">Optional registry used to cancel pending ask_user prompts on archive.</param>
+    public ConversationsController(
+        IConversationStore conversations,
+        ISessionStore sessions,
+        IAskUserResponseRegistry? askUserResponseRegistry = null)
     {
         _conversations = conversations;
         _sessions = sessions;
+        _askUserResponseRegistry = askUserResponseRegistry;
     }
 
     /// <summary>
@@ -347,6 +354,7 @@ public sealed class ConversationsController : ControllerBase
         await SealConversationSessionsAsync(conversation.ConversationId, cancellationToken);
 
         await _conversations.ArchiveAsync(conversation.ConversationId, cancellationToken);
+        _askUserResponseRegistry?.CancelAllForConversation(conversation.ConversationId);
         return NoContent();
     }
 
