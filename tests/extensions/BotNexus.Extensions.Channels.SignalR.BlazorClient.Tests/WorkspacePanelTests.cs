@@ -82,6 +82,45 @@ public sealed class WorkspacePanelTests : IDisposable
     }
 
     [Fact]
+    public void Selecting_text_file_response_renders_file_content()
+    {
+        _restClient.GetWorkspaceAsync("agent-1", Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var path = callInfo.ArgAt<string?>(1);
+                return path switch
+                {
+                    null => Task.FromResult<WorkspaceResponseDto?>(new WorkspaceResponseDto(
+                        Type: "directory",
+                        Path: "",
+                        Entries: [new WorkspaceEntryDto("readme.md", "file", 22)],
+                        Content: null,
+                        Size: null,
+                        Encoding: null,
+                        IsTruncated: null,
+                        Binary: null)),
+                    "readme.md" => Task.FromResult<WorkspaceResponseDto?>(new WorkspaceResponseDto(
+                        Type: "text",
+                        Path: "readme.md",
+                        Entries: null,
+                        Content: "hello workspace",
+                        Size: 22,
+                        Encoding: "utf-8",
+                        IsTruncated: null,
+                        Binary: null)),
+                    _ => Task.FromResult<WorkspaceResponseDto?>(null)
+                };
+            });
+
+        var cut = _ctx.Render<WorkspacePanel>(parameters => parameters.Add(x => x.AgentId, "agent-1"));
+        cut.WaitForAssertion(() => cut.Find("button[data-path='readme.md']"));
+
+        cut.Find("button[data-path='readme.md']").Click();
+
+        cut.WaitForAssertion(() => cut.Markup.ShouldContain("hello workspace"));
+    }
+
+    [Fact]
     public void Expanding_directory_loads_nested_entries()
     {
         _restClient.GetWorkspaceAsync("agent-1", Arg.Any<string?>(), Arg.Any<CancellationToken>())
