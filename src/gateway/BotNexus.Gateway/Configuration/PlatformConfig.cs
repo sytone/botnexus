@@ -36,6 +36,9 @@ public sealed class PlatformConfig
     /// <summary>Cron scheduler settings and optional seed jobs.</summary>
     public CronConfig? Cron { get; set; }
 
+    /// <summary>Named prompt templates for CLI rendering and cron template resolution.</summary>
+    public Dictionary<string, PromptTemplateConfig>? PromptTemplates { get; set; }
+
     /// <summary>
     /// World-level agent defaults. Populated at load time from the <c>agents.defaults</c> reserved key.
     /// Not directly serialized — extracted separately from the agents dictionary.
@@ -301,6 +304,12 @@ public sealed class CronJobConfig
     /// <summary>Prompt message for agent prompt jobs.</summary>
     public string? Message { get; set; }
 
+    /// <summary>Named prompt template for agent prompt jobs.</summary>
+    public string? TemplateName { get; set; }
+
+    /// <summary>Template parameter values used when rendering <see cref="TemplateName" />.</summary>
+    public Dictionary<string, string>? TemplateParameters { get; set; }
+
     /// <summary>Optional model override for agent prompt jobs.</summary>
     public string? Model { get; set; }
 
@@ -318,6 +327,35 @@ public sealed class CronJobConfig
 
     /// <summary>Optional metadata entries persisted with the job.</summary>
     public Dictionary<string, string>? Metadata { get; set; }
+}
+
+/// <summary>Named prompt template descriptor.</summary>
+public sealed class PromptTemplateConfig
+{
+    /// <summary>Template body with <c>{{parameter}}</c> placeholders.</summary>
+    public string? Prompt { get; set; }
+
+    /// <summary>Optional human-friendly description.</summary>
+    public string? Description { get; set; }
+
+    /// <summary>Default values for template parameters.</summary>
+    public Dictionary<string, string>? Defaults { get; set; }
+
+    /// <summary>Optional per-parameter metadata and defaults.</summary>
+    public Dictionary<string, PromptTemplateParameterConfig>? Parameters { get; set; }
+}
+
+/// <summary>Prompt template parameter configuration.</summary>
+public sealed class PromptTemplateParameterConfig
+{
+    /// <summary>Optional parameter description.</summary>
+    public string? Description { get; set; }
+
+    /// <summary>Optional default value.</summary>
+    public string? Default { get; set; }
+
+    /// <summary>Whether the parameter must be supplied if no default exists.</summary>
+    public bool Required { get; set; }
 }
 
 /// <summary>Configuration for dynamic extension discovery and loading.</summary>
@@ -381,6 +419,8 @@ public sealed class AgentDefinitionConfig
     public HeartbeatAgentConfig? Heartbeat { get; set; }
     /// <summary>Session access configuration for this agent's session tool.</summary>
     public SessionAccessConfig? SessionAccess { get; set; }
+    /// <summary>Conversation access configuration for this agent's conversation tool.</summary>
+    public ConversationAccessConfig? ConversationAccess { get; set; }
     /// <summary>File access policy for this agent's file tools.</summary>
     public FileAccessPolicyConfig? FileAccess { get; set; }
 
@@ -426,6 +466,15 @@ public sealed class SessionAccessConfig
     /// <summary>Access level: "own" (default), "allowlist", or "all".</summary>
     public string Level { get; set; } = "own";
     /// <summary>Agent IDs this agent can view sessions for (when level is "allowlist").</summary>
+    public List<string>? AllowedAgents { get; set; }
+}
+
+/// <summary>Controls what conversations an agent can access via the conversation tool.</summary>
+public sealed class ConversationAccessConfig
+{
+    /// <summary>Access level: "own" (default), "allowlist", or "all".</summary>
+    public string Level { get; set; } = "own";
+    /// <summary>Agent IDs this agent can view conversations for (when level is "allowlist").</summary>
     public List<string>? AllowedAgents { get; set; }
 }
 

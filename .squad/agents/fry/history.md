@@ -35,3 +35,22 @@ When loading initial history during portal startup, virtual cron-session project
 
 ### 2026-07-29 — JS Interop Must Guard Against Non-DOM ElementReference
 Blazor's `ElementReference` for conditionally-rendered elements (e.g., `@if (!IsReadOnly)`) serialises as a truthy non-element object when the element is absent. JS helpers receiving ElementReferences must check `typeof element.addEventListener === 'function'` (not just `!element`) before using DOM APIs. The Blazor side should also skip the JS call entirely when the element is known to be absent, and reset any binding flags when the element may have been destroyed and recreated (e.g., read-only → interactive transitions).
+
+- 2026-05-15: Effective Config UI — Updated Configuration.razor to display effective state from GET /api/config; implemented raw-state + dirty-section tracking in Configuration.razor.cs and PlatformConfigService. Commit 3ffa849a — Blazor now shows user what the system is actually using while dirty tracking enables partial saves.
+### 2026-07-29 — AgentPanel PR-1 Shell Keeps Chat Alive with CSS-Only Tab Visibility
+Issue #245 PR-1 uses a new `Components/AgentPanel.razor` shell that always keeps all tab panes mounted and toggles visibility with `.agent-tab-pane.active` in `wwwroot/css/app.css`. Keeping `ChatPanel` mounted inside the conversation pane preserves stream/chat state while users switch to Workspace/Reports/Canvas placeholders. Deep-link tab selection is supported with a `?tab=<conversation|workspace|reports|canvas>` query parameter without adding new routes or backend APIs.
+
+### 2026-07-29 — Mobile Chat Actions Move to Overflow Menu at Phone Width
+`Components/ChatPanel.razor` now exposes a mobile-only overflow (`⋮`) action menu that mirrors thinking/tool/config/new-session controls when `.chat-header-actions` is hidden at `<=480px`. This keeps controls reachable on phones while reducing header clutter and preserving chat input usability. Relevant styling is in `wwwroot/css/app.css` under `.chat-header-overflow*` and mobile banner/tab adjustments.
+
+### 2026-05-15 — Workspace Tab Uses Read-Only Tree + Viewer with Lazy Directory Loads
+Issue #245 Phase 2 frontend replaced the AgentPanel Workspace placeholder with `WorkspacePanel` plus `WorkspaceFileTree` and `WorkspaceFileViewer`, wired to `GET /api/agents/{agentId}/workspace` via `IGatewayRestClient.GetWorkspaceAsync`. Mobile uses a single-pane flow (tree first, viewer with back button), while desktop stays split-pane. Viewer truncates large content client-side and honors server truncation flags for safe rendering.
+
+### 2026-07-30 — Reports Tab Uses Dedicated Reports API + Safe Markdown Rendering
+Issue #245 Phase 3 frontend now mounts `ReportsPanel` in `AgentPanel` and reads report metadata/content from `GET /api/agents/{agentId}/reports` and `GET /api/agents/{agentId}/reports/{name}` via `IGatewayRestClient`. Markdown rendering reuses `BotNexus.renderMarkdown` (marked + DOMPurify) and falls back to escaped plain text with a user-facing notice when JS markdown rendering is unavailable, preserving safety without raw HTML injection.
+
+### 2026-07-30 — Reports Tab Reuses Workspace UX Patterns for Mobile + Long Content
+`ReportsPanel` follows the same single-pane mobile flow used by `WorkspacePanel` (`mobile-list` ↔ `mobile-viewer` with back button) and desktop split layout in `app.css`. Report previews are truncated client-side at 200k chars with truncation messaging, and list rows include size + modified timestamps for quick scanning.
+
+### 2026-05-15 — Phase 3 Reports Tab Complete
+Issue #245 Phase 3 frontend delivery — `ReportsPanel.razor` mounted in `AgentPanel` tab bar, reads metadata from GET /api/agents/{agentId}/reports and content from GET /api/agents/{agentId}/reports/{name} via GatewayRestClient. Safe markdown render via BotNexus.renderMarkdown (marked + DOMPurify), fallback to escaped plain-text in `<pre>` when JS unavailable. Mobile single-pane flow with back button, desktop split layout. 8 bUnit component tests + route/DTO contract tests. All green. PR #270 open for merge.

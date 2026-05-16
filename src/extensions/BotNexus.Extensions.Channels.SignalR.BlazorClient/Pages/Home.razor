@@ -35,7 +35,7 @@ else
     @foreach (var (agentId, _) in Store.Agents)
     {
         <div class="chat-panel-wrapper @(agentId == Store.ActiveAgentId ? "active" : "hidden")">
-            <ChatPanel AgentId="@agentId" />
+            <AgentPanel AgentId="@agentId" />
         </div>
     }
 }

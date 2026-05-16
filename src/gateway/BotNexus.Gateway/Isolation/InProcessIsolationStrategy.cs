@@ -11,6 +11,7 @@ using BotNexus.Agent.Core.Types;
 using BotNexus.Cron;
 using BotNexus.Cron.Tools;
 using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Hooks;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
@@ -93,7 +94,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         if (!string.IsNullOrWhiteSpace(apiEndpoint))
             model = model with { BaseUrl = apiEndpoint };
 
-        var enrichedSystemPrompt = await _contextBuilder.BuildSystemPromptAsync(descriptor, cancellationToken);
+        var enrichedSystemPrompt = await _contextBuilder.BuildSystemPromptAsync(descriptor, context, cancellationToken);
 
         var workspacePath = _workspaceManager.GetWorkspacePath(descriptor.AgentId);
         var pathValidator = new DefaultPathValidator(descriptor.FileAccess, workspacePath);
@@ -153,6 +154,21 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         {
             var (sessionAccessLevel, sessionAllowedAgents) = ResolveSessionAccess(descriptor);
             tools.Add(new SessionTool(sessionStore, descriptor.AgentId, sessionAccessLevel, sessionAllowedAgents));
+        }
+
+        var conversationStore = _serviceProvider.GetService<IConversationStore>();
+        if (conversationStore is not null)
+        {
+            var conversationId = await ResolveConversationIdAsync(conversationStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken)
+                .ConfigureAwait(false);
+            var (conversationAccessLevel, conversationAllowedAgents) = ResolveConversationAccess(descriptor);
+            tools.Add(new ConversationTool(
+                conversationStore,
+                descriptor.AgentId,
+                conversationId,
+                conversationAccessLevel,
+                conversationAllowedAgents,
+                sessionStore));
         }
 
         var delayToolOptions = _serviceProvider.GetService<IOptions<DelayToolOptions>>() ?? Options.Create(new DelayToolOptions());
@@ -403,6 +419,54 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         }
 
         return (level, allowed);
+    }
+
+    private static (ConversationAccessLevel level, IReadOnlyList<string>? allowedAgents) ResolveConversationAccess(AgentDescriptor descriptor)
+    {
+        var level = (descriptor.ConversationAccessLevel ?? "own").ToLowerInvariant() switch
+        {
+            "all" => ConversationAccessLevel.All,
+            "allowlist" => ConversationAccessLevel.Allowlist,
+            _ => ConversationAccessLevel.Own
+        };
+
+        var allowed = descriptor.ConversationAllowedAgents is { Count: > 0 }
+            ? descriptor.ConversationAllowedAgents
+            : null;
+
+        if (descriptor.SubAgentIds is { Count: > 0 } && level != ConversationAccessLevel.All)
+        {
+            var combined = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (allowed is not null)
+                foreach (var agent in allowed) combined.Add(agent);
+            foreach (var subAgentId in descriptor.SubAgentIds) combined.Add(subAgentId);
+
+            if (combined.Count > 0)
+            {
+                level = ConversationAccessLevel.Allowlist;
+                allowed = combined.ToList();
+            }
+        }
+
+        return (level, allowed);
+    }
+
+    private static async Task<ConversationId?> ResolveConversationIdAsync(
+        IConversationStore conversationStore,
+        ISessionStore? sessionStore,
+        AgentId agentId,
+        SessionId sessionId,
+        CancellationToken cancellationToken)
+    {
+        if (sessionStore is not null)
+        {
+            var session = await sessionStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+            if (session?.Session.ConversationId is { } conversationId)
+                return conversationId;
+        }
+
+        var conversations = await conversationStore.ListAsync(agentId, cancellationToken).ConfigureAwait(false);
+        return conversations.FirstOrDefault(conversation => conversation.ActiveSessionId == sessionId)?.ConversationId;
     }
 
     private static AgentMessage ConvertSessionEntryToAgentMessage(SessionEntry entry)

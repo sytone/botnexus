@@ -22,12 +22,25 @@ public sealed class PlatformConfigService
         _http = http;
     }
 
-    /// <summary>Load the full platform config (secrets redacted).</summary>
+    /// <summary>Load the effective platform config with defaults applied (secrets redacted).</summary>
     public async Task<JsonObject?> LoadAsync()
     {
         try
         {
             return await _http.GetFromJsonAsync<JsonObject>("/api/config", s_jsonOptions);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Load the raw platform config from disk (secrets redacted, no defaults applied).</summary>
+    public async Task<JsonObject?> LoadRawAsync()
+    {
+        try
+        {
+            return await _http.GetFromJsonAsync<JsonObject>("/api/config/raw", s_jsonOptions);
         }
         catch
         {

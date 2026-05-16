@@ -89,6 +89,7 @@ public sealed class ConversationsController : ControllerBase
             ConversationId = ConversationId.Create(),
             AgentId = AgentId.From(request.AgentId),
             Title = string.IsNullOrWhiteSpace(request.Title) ? "New conversation" : request.Title,
+            Purpose = NormalizePurpose(request.Purpose),
             Status = ConversationStatus.Active,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
@@ -99,7 +100,7 @@ public sealed class ConversationsController : ControllerBase
     }
 
     /// <summary>
-    /// Updates the title of an existing conversation.
+    /// Updates editable metadata for an existing conversation.
     /// </summary>
     /// <param name="conversationId">The conversation identifier.</param>
     /// <param name="request">The patch request body.</param>
@@ -114,17 +115,23 @@ public sealed class ConversationsController : ControllerBase
         [FromBody] PatchConversationRequest request,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(request.Title))
+        if (request.Title is null && request.Purpose is null)
+            return BadRequest(new { error = "title or purpose is required." });
+
+        if (request.Title is not null && string.IsNullOrWhiteSpace(request.Title))
             return BadRequest(new { error = "title must not be empty." });
 
-        if (request.Title!.Length > 500)
+        if (request.Title is { Length: > 500 })
             return BadRequest(new { error = "title must be 500 characters or fewer." });
 
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
         if (conversation is null)
             return NotFound();
 
-        conversation.Title = request.Title;
+        if (request.Title is not null)
+            conversation.Title = request.Title;
+        if (request.Purpose is not null)
+            conversation.Purpose = NormalizePurpose(request.Purpose);
         conversation.UpdatedAt = DateTimeOffset.UtcNow;
         await _conversations.SaveAsync(conversation, cancellationToken);
         return Ok(ToResponse(conversation));
@@ -349,6 +356,7 @@ public sealed class ConversationsController : ControllerBase
         ConversationId: c.ConversationId.Value,
         AgentId: c.AgentId.Value,
         Title: c.Title,
+        Purpose: c.Purpose,
         IsDefault: c.IsDefault,
         Status: c.Status.ToString(),
         ActiveSessionId: c.ActiveSessionId?.Value,
@@ -365,6 +373,9 @@ public sealed class ConversationsController : ControllerBase
         ThreadingMode: b.ThreadingMode.ToString(),
         DisplayPrefix: b.DisplayPrefix,
         BoundAt: b.BoundAt);
+
+    private static string? NormalizePurpose(string? purpose)
+        => string.IsNullOrWhiteSpace(purpose) ? null : purpose.Trim();
 
     private async Task SealSessionAsync(SessionId sessionId, CancellationToken cancellationToken)
     {

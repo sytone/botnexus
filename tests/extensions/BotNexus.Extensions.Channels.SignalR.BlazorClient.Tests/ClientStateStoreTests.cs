@@ -187,6 +187,40 @@ public sealed class ClientStateStoreTests
         Assert.Equal("c-1", store.ActiveConversationId);
     }
 
+    [Fact]
+    public void RemoveAgent_removes_agent_from_store()
+    {
+        var store = CreateSeededStore();
+
+        store.RemoveAgent("a-1");
+
+        Assert.Null(store.GetAgent("a-1"));
+        Assert.Single(store.Agents);
+    }
+
+    [Fact]
+    public void RemoveAgent_resets_active_agent_if_removed()
+    {
+        var store = CreateSeededStore();
+        store.ActiveAgentId = "a-1";
+
+        store.RemoveAgent("a-1");
+
+        Assert.NotEqual("a-1", store.ActiveAgentId);
+    }
+
+    [Fact]
+    public void RemoveAgent_fires_OnChanged()
+    {
+        var store = CreateSeededStore();
+        var fired = false;
+        store.OnChanged += () => fired = true;
+
+        store.RemoveAgent("a-1");
+
+        Assert.True(fired);
+    }
+
     private static ClientStateStore CreateSeededStore()
     {
         var store = new ClientStateStore();

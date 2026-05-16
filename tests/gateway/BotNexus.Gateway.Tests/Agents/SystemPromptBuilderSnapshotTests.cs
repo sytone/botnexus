@@ -88,6 +88,24 @@ public sealed class SystemPromptBuilderSnapshotTests
     }
 
     [Fact]
+    public void Build_ShouldIncludeConversationContextWhenPurposeOrCustomTitleExists()
+    {
+        var prompt = SystemPromptBuilder.Build(new SystemPromptParams
+        {
+            WorkspaceDir = Path.Combine(Path.GetTempPath(), "repo", "workspace"),
+            ConversationContext = new ConversationContext(
+                "conversation-123",
+                "Release Planning",
+                "Coordinate sprint planning and spec reviews")
+        });
+
+        prompt.ShouldContain("## Conversation Context");
+        prompt.ShouldContain("- **ID**: conversation-123");
+        prompt.ShouldContain("- **Title**: Release Planning");
+        prompt.ShouldContain("- **Purpose**: Coordinate sprint planning and spec reviews");
+    }
+
+    [Fact]
     public void Build_MinimalMode_DoesNotIncludeReplyTagsByDefault()
     {
         var prompt = SystemPromptBuilder.Build(new SystemPromptParams

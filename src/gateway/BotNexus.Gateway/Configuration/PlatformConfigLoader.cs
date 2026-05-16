@@ -182,6 +182,7 @@ public static class PlatformConfigLoader
         ValidateAgents(config.Agents, errors);
         ValidateAgentDefaults(config.AgentDefaults, errors);
         ValidateApiKeys(config.Gateway?.ApiKeys, errors);
+        ValidatePromptTemplates(config.PromptTemplates, errors);
         ValidateCron(config.Cron, errors);
 
         return errors;
@@ -781,6 +782,34 @@ public static class PlatformConfigLoader
                 errors.Add($"cron.jobs.{jobId}.schedule is required.");
             if (string.IsNullOrWhiteSpace(job.ActionType))
                 errors.Add($"cron.jobs.{jobId}.actionType is required.");
+            if (string.Equals(job.ActionType, "agent-prompt", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(job.ActionType, "agent-chat", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrWhiteSpace(job.AgentId))
+                    errors.Add($"cron.jobs.{jobId}.agentId is required for agent prompt jobs.");
+                if (string.IsNullOrWhiteSpace(job.Message) && string.IsNullOrWhiteSpace(job.TemplateName))
+                    errors.Add($"cron.jobs.{jobId} must define either message or templateName for agent prompt jobs.");
+            }
+        }
+    }
+
+    private static void ValidatePromptTemplates(
+        IReadOnlyDictionary<string, PromptTemplateConfig>? templates,
+        List<string> errors)
+    {
+        if (templates is null)
+            return;
+
+        foreach (var (templateName, template) in templates)
+        {
+            if (string.IsNullOrWhiteSpace(templateName))
+            {
+                errors.Add("promptTemplates contains an empty template key.");
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(template.Prompt))
+                errors.Add($"promptTemplates.{templateName}.prompt is required.");
         }
     }
 

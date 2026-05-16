@@ -137,6 +137,83 @@ public sealed class GatewayRestClientTests
     }
 
     [Fact]
+    public async Task GetWorkspaceAsync_calls_workspace_root_endpoint()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/agents/agent-1/workspace", JsonSerializer.Serialize(new
+        {
+            type = "directory",
+            path = "",
+            entries = Array.Empty<object>()
+        }));
+
+        var response = await client.GetWorkspaceAsync("agent-1");
+
+        handler.LastRequestUrl.ShouldContain("/api/agents/agent-1/workspace");
+        response.ShouldNotBeNull();
+        response!.Type.ShouldBe("directory");
+    }
+
+    [Fact]
+    public async Task GetWorkspaceAsync_encodes_requested_sub_path()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/agents/agent-1/workspace/memory/notes.md", JsonSerializer.Serialize(new
+        {
+            type = "text",
+            path = "memory/notes.md",
+            content = "hello"
+        }));
+
+        await client.GetWorkspaceAsync("agent-1", "memory/notes.md");
+
+        handler.LastRequestUrl.ShouldContain("/api/agents/agent-1/workspace/memory/notes.md");
+    }
+
+    [Fact]
+    public async Task GetReportsAsync_calls_reports_listing_endpoint()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/agents/agent-1/reports", JsonSerializer.Serialize(new
+        {
+            reports = new[]
+            {
+                new
+                {
+                    name = "weekly.md",
+                    size = 1204,
+                    lastModifiedUtc = DateTimeOffset.UtcNow
+                }
+            }
+        }));
+
+        var reports = await client.GetReportsAsync("agent-1");
+
+        handler.LastRequestUrl.ShouldContain("/api/agents/agent-1/reports");
+        reports.Count.ShouldBe(1);
+        reports[0].Name.ShouldBe("weekly.md");
+    }
+
+    [Fact]
+    public async Task GetReportAsync_encodes_report_file_name()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/agents/agent-1/reports/", JsonSerializer.Serialize(new
+        {
+            name = "weekly summary.md",
+            size = 16,
+            lastModifiedUtc = DateTimeOffset.UtcNow,
+            content = "# Weekly Summary"
+        }));
+
+        var response = await client.GetReportAsync("agent-1", "weekly summary.md");
+
+        handler.LastRequestUrl.ShouldContain("/api/agents/agent-1/reports/weekly summary.md");
+        response.ShouldNotBeNull();
+        response!.Name.ShouldBe("weekly summary.md");
+    }
+
+    [Fact]
     public void Configure_not_called_throws_on_request()
     {
         var client = new GatewayRestClient(new HttpClient());

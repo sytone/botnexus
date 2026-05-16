@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 
 namespace BotNexus.Gateway.Api.Controllers;
 
@@ -18,11 +19,35 @@ namespace BotNexus.Gateway.Api.Controllers;
 [Route("api/config")]
 public sealed class ConfigController : ControllerBase
 {
+    private static readonly JsonSerializerOptions WriteOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
+    private static readonly JsonSerializerOptions ReadOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
     /// <summary>
-    /// Get the full platform configuration (secrets redacted).
+    /// Get the effective platform configuration with defaults applied (secrets redacted).
     /// </summary>
     [HttpGet]
-    public async Task<ActionResult<JsonObject>> GetConfig(
+    public ActionResult<JsonObject> GetConfig(
+        [FromServices] IOptionsMonitor<PlatformConfig> configOptions)
+    {
+        var effectiveConfig = BuildEffectiveConfig(configOptions.CurrentValue);
+        var response = SerializeConfig(effectiveConfig);
+        RedactSecrets(response);
+        return Ok(response);
+    }
+
+    /// <summary>
+    /// Get the raw platform configuration from disk (secrets redacted).
+    /// </summary>
+    [HttpGet("raw")]
+    public async Task<ActionResult<JsonObject>> GetRawConfig(
         [FromServices] PlatformConfigWriter writer,
         CancellationToken ct)
     {
@@ -343,12 +368,77 @@ public sealed class ConfigController : ControllerBase
         return config;
     }
 
+    private static PlatformConfig BuildEffectiveConfig(PlatformConfig config)
+    {
+        var clone = JsonSerializer.Deserialize<PlatformConfig>(
+            JsonSerializer.Serialize(config, WriteOptions),
+            ReadOptions) ?? new PlatformConfig();
+        clone.Cron ??= new CronConfig();
+        return clone;
+    }
+
+    private static JsonObject SerializeConfig(PlatformConfig config)
+        => JsonSerializer.SerializeToNode(config, WriteOptions)?.AsObject() ?? new JsonObject();
+
     private static void RedactSecrets(JsonObject config)
     {
         if (config["providers"] is JsonObject providers)
             RedactProviderSecrets(providers);
         if (config["apiKey"] is JsonValue)
             config["apiKey"] = "***";
+        if (config["gateway"] is JsonObject gateway)
+            RedactGatewaySecrets(gateway);
+    }
+
+    private static void RedactGatewaySecrets(JsonObject gateway)
+    {
+        if (gateway["apiKeys"] is JsonObject apiKeys)
+            RedactGatewayApiKeys(apiKeys);
+        if (gateway["sessionStore"] is JsonObject sessionStore && sessionStore["connectionString"] is JsonValue)
+            sessionStore["connectionString"] = "***";
+        if (gateway["locations"] is JsonObject locations)
+            RedactGatewayLocations(locations);
+        if (gateway["crossWorld"] is JsonObject crossWorld)
+            RedactCrossWorldSecrets(crossWorld);
+    }
+
+    private static void RedactGatewayApiKeys(JsonObject apiKeys)
+    {
+        foreach (var (_, apiKeyNode) in apiKeys)
+        {
+            if (apiKeyNode is JsonObject apiKeyObject && apiKeyObject["apiKey"] is JsonValue)
+                apiKeyObject["apiKey"] = "***";
+        }
+    }
+
+    private static void RedactGatewayLocations(JsonObject locations)
+    {
+        foreach (var (_, locationNode) in locations)
+        {
+            if (locationNode is JsonObject location && location["connectionString"] is JsonValue)
+                location["connectionString"] = "***";
+        }
+    }
+
+    private static void RedactCrossWorldSecrets(JsonObject crossWorld)
+    {
+        if (crossWorld["peers"] is JsonObject peers)
+        {
+            foreach (var (_, peerNode) in peers)
+            {
+                if (peerNode is JsonObject peer && peer["apiKey"] is JsonValue)
+                    peer["apiKey"] = "***";
+            }
+        }
+
+        if (crossWorld["inbound"] is not JsonObject inbound || inbound["apiKeys"] is not JsonObject inboundApiKeys)
+            return;
+
+        foreach (var key in inboundApiKeys.Select(static pair => pair.Key).ToArray())
+        {
+            if (inboundApiKeys[key] is JsonValue)
+                inboundApiKeys[key] = "***";
+        }
     }
 
     private static void RedactProviderSecrets(JsonObject providers)

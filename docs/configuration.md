@@ -9,12 +9,13 @@ BotNexus uses a hierarchical, dictionary-based configuration model with a unifie
 3. [Primary Deployment: ~/.botnexus/](#primary-deployment-botnexus)
 4. [Project Defaults: appsettings.json](#project-defaults-appsettingsjson)
 5. [Configuration Sections](#configuration-sections)
-6. [JSON Schema Validation](#json-schema-validation)
-7. [Hot Reload](#hot-reload)
-8. [Extension Configuration](#extension-configuration)
-9. [Environment Variable Overrides](#environment-variable-overrides)
-10. [Security Best Practices](#security-best-practices)
-11. [Examples](#examples)
+6. [Prompt Templates](#prompt-templates)
+7. [JSON Schema Validation](#json-schema-validation)
+8. [Hot Reload](#hot-reload)
+9. [Extension Configuration](#extension-configuration)
+10. [Environment Variable Overrides](#environment-variable-overrides)
+11. [Security Best Practices](#security-best-practices)
+12. [Examples](#examples)
 
 ---
 
@@ -1186,6 +1187,381 @@ Use `appsettings.Development.json` for local dev secrets (add to .gitignore):
   }
 }
 ```
+
+---
+
+## Prompt Templates
+
+Prompt templates are reusable, parameterized prompts stored in configuration or as files. They support `{{parameter}}` placeholders for dynamic substitution and are used by:
+
+- **CLI** — `botnexus prompt render` and `botnexus prompt run` commands
+- **Cron jobs** — `agent-prompt` jobs that render templates before execution
+
+### Storage Locations
+
+Templates can be defined in three ways:
+
+1. **Configuration-based** — In `config.json` under `promptTemplates` key
+2. **File-based** — In `~/.botnexus/prompts/` directory:
+   - **`.prompt.md`** (recommended for multi-line, human-authored prompts) — YAML front matter + Markdown body for readable content
+   - **`.prompt.json`** (supported for compatibility and machine-generated templates) — Single-file JSON format
+
+The CLI merges all sources when listing or rendering templates. When both `foo.prompt.md` and `foo.prompt.json` exist with the same name, `.prompt.md` takes precedence.
+
+**Sample Templates:** The CLI ships bundled sample prompt files. Run `botnexus prompt create samples` to copy them into `~/.botnexus/prompts/`, then modify them for your workflow.
+
+### Configuration Structure
+
+```json
+{
+  "promptTemplates": {
+    "template-name": {
+      "prompt": "Template body with {{parameter}} placeholders",
+      "description": "Optional human-friendly description",
+      "defaults": {
+        "parameter": "default value"
+      },
+      "parameters": {
+        "parameter": {
+          "description": "Optional parameter description",
+          "default": "default value",
+          "required": false
+        }
+      }
+    }
+  }
+}
+```
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `prompt` | string | Template body. Use `{{name}}` for placeholders (required). |
+| `description` | string | Human-friendly description for the CLI `--verbose` output (optional). |
+| `defaults` | dict | Simple parameter defaults as key-value pairs (optional). |
+| `parameters` | dict | Advanced per-parameter metadata with description, default, and required flag (optional). |
+
+### File-Based Templates: `.prompt.md` Format
+
+For multi-line prompts with headings, bullet lists, numbered lists, and paragraphs, use the **`.prompt.md`** format. This format stores metadata in YAML front matter and prompt content as readable Markdown:
+
+**Format:**
+
+```markdown
+---
+name: template-name
+description: Human-friendly description
+parameters:
+  parameter_name:
+    description: What this parameter is for
+    required: true
+    default: optional-default-value
+---
+# Prompt Title
+
+Your multi-line prompt content here.
+
+Use {{parameter}} placeholders for dynamic substitution.
+
+## Sections
+
+- **Bullet lists** are preserved
+- **Numbered lists** work too:
+  1. First item
+  2. Second item
+
+Whitespace, formatting, and structure are maintained as-is in the rendered prompt.
+```
+
+**Properties:**
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `name` | string | Template identifier (optional; defaults to filename stem). |
+| `description` | string | Human-friendly description for `--verbose` output (optional). |
+| `parameters` | dict | Per-parameter metadata (description, required, default). Same schema as JSON format (optional). |
+| _(body)_ | markdown | Everything after the closing `---` is the prompt body. Whitespace and formatting preserved. Use `{{parameter}}` placeholders. |
+
+**Advantages:**
+
+- **Readable** — No escaped newlines or JSON noise
+- **Editable** — Author and review multi-line content naturally
+- **Structured** — YAML front matter clearly separates metadata from content
+- **Maintainable** — Works with version control diffs and code review
+
+### File-Based Templates: `.prompt.json` Format (Compatibility)
+
+The `.prompt.json` format remains fully supported for:
+
+- **Simple, single-line prompts** — No need for multiline markup
+- **Machine-generated templates** — Programmatic creation and manipulation
+- **Backward compatibility** — Existing templates continue to work without migration
+
+**Format:**
+
+```json
+{
+  "name": "template-name",
+  "description": "Human-friendly description",
+  "prompt": "Single-line prompt with {{parameter}} placeholders",
+  "parameters": {
+    "parameter_name": {
+      "description": "What this parameter is for",
+      "required": true,
+      "default": "optional-default"
+    }
+  }
+}
+```
+
+### Parameters
+
+Parameters are declared using `{{name}}` placeholders in the template body. The renderer:
+
+1. **Collects required parameters** from placeholders in the template
+2. **Merges values** in priority order:
+   - Caller-provided values (CLI `--param` or cron `templateParameters`)
+   - Defaults from `parameters[name].default` or `defaults[name]`
+3. **Validates** that all required parameters are supplied
+4. **Substitutes** placeholders with final values
+
+**Parameter Declaration (Advanced):**
+
+```json
+"parameters": {
+  "project": {
+    "description": "Project name or identifier",
+    "default": "BotNexus",
+    "required": false
+  },
+  "owner": {
+    "description": "Team or person responsible",
+    "default": null,
+    "required": true
+  }
+}
+```
+
+- `required: true` — Parameter must be supplied by caller if no default is set
+- `required: false` — Parameter is optional; renders as empty string if missing
+- `default` — Fallback value when caller does not supply it
+
+### Examples
+
+#### Example 1: Simple Configuration Template
+
+```json
+{
+  "promptTemplates": {
+    "daily-standup": {
+      "prompt": "Provide a brief status update for {{project}}. Owner: {{owner}}. Focus areas: {{focus}}",
+      "description": "Daily team status template",
+      "defaults": {
+        "project": "BotNexus",
+        "owner": "Development Team",
+        "focus": "Feature delivery and quality"
+      }
+    }
+  }
+}
+```
+
+**CLI usage:**
+
+```powershell
+# List templates
+botnexus prompt list
+
+# Render with defaults
+botnexus prompt render daily-standup
+
+# Render with override
+botnexus prompt render daily-standup --param owner="Leela" --param focus="Bug fixes"
+```
+
+#### Example 2: Template with Required Parameters
+
+```json
+{
+  "promptTemplates": {
+    "code-review-summary": {
+      "prompt": "Summarize the code review for PR #{{prNumber}} in {{repo}}. Reviewer: {{reviewer}}. Focus on: {{focusArea}}",
+      "description": "Code review summary for pull requests",
+      "parameters": {
+        "prNumber": {
+          "description": "Pull request number",
+          "required": true
+        },
+        "repo": {
+          "description": "Repository name",
+          "default": "botnexus",
+          "required": false
+        },
+        "reviewer": {
+          "description": "Code reviewer name",
+          "required": true
+        },
+        "focusArea": {
+          "description": "Aspect to focus on (architecture, performance, tests, etc.)",
+          "default": "architecture and testability",
+          "required": false
+        }
+      }
+    }
+  }
+}
+```
+
+**CLI usage:**
+
+```powershell
+# Missing required parameters — will fail
+botnexus prompt render code-review-summary --param prNumber=242
+# Error: Missing required template parameters: reviewer.
+
+# Successful render
+botnexus prompt render code-review-summary `
+  --param prNumber=242 `
+  --param reviewer="Hermes" `
+  --param focusArea="performance optimization"
+```
+
+#### Example 3: File-based Template (JSON Format)
+
+Create `~/.botnexus/prompts/bug-report.prompt.json`:
+
+```json
+{
+  "name": "bug-report",
+  "prompt": "Analyze the bug report: {{bugDescription}}. Severity: {{severity}}. Affected module: {{module}}.",
+  "description": "Bug analysis and triage template"
+}
+```
+
+List available templates:
+
+```powershell
+botnexus prompt list
+# Output includes:
+# - daily-standup (from config.json)
+# - code-review-summary (from config.json)
+# - bug-report (from ~/.botnexus/prompts/bug-report.prompt.json)
+```
+
+#### Example 4: Multi-line Template with Markdown Format (.prompt.md)
+
+Create `~/.botnexus/prompts/sprint-retrospective.prompt.md`:
+
+```markdown
+---
+name: sprint-retrospective
+description: Sprint retrospective template with structured sections
+parameters:
+  sprint:
+    description: Sprint identifier (e.g., "Sprint 42")
+    required: true
+  team:
+    description: Team name
+    default: Development Team
+    required: false
+  duration:
+    description: Sprint duration in days
+    default: "2 weeks"
+    required: false
+---
+# Sprint {{sprint}} Retrospective
+
+## Team: {{team}}
+
+Generate a comprehensive retrospective for the completed sprint ({{duration}}).
+
+## Sections to Address
+
+- **What went well?**
+  - Highlight successes and team achievements
+  - Identify practices to continue
+
+- **What could be improved?**
+  - Pain points and bottlenecks
+  - Opportunities for process optimization
+
+- **Action Items for Next Sprint**
+  1. Specific, measurable improvements
+  2. Owner and due date for each item
+
+## Metrics to Include
+
+- Velocity comparison
+- Burn-down chart analysis
+- Team morale and engagement feedback
+
+Focus on constructive feedback and continuous improvement.
+```
+
+Render and use:
+
+```powershell
+# List templates (both .prompt.md and .prompt.json are discovered)
+botnexus prompt list
+
+# Render with parameters
+botnexus prompt render sprint-retrospective `
+  --param sprint="Sprint 42" `
+  --param team="Backend Squad"
+
+# Execute through gateway (agent processes the rendered prompt)
+botnexus prompt run sprint-retrospective `
+  --param sprint="Sprint 42" `
+  --param team="Backend Squad" `
+  --agent analyst
+```
+
+**Why use `.prompt.md` for this template?**
+
+- Multi-line content with natural structure (headings, bullets, numbered lists)
+- Readable in version control and code review
+- Easy to maintain and extend with new sections
+- Preserves formatting without JSON escaping
+
+#### Example 4: Template with Cron Job
+
+Schedule a template-based agent prompt:
+
+```json
+{
+  "cron": {
+    "enabled": true,
+    "jobs": {
+      "morning-briefing": {
+        "enabled": true,
+        "schedule": "0 9 * * MON-FRI",
+        "actionType": "agent-prompt",
+        "agentId": "analyst",
+        "templateName": "daily-standup",
+        "templateParameters": {
+          "project": "Infrastructure",
+          "owner": "Platform Team"
+        }
+      }
+    }
+  },
+  "promptTemplates": {
+    "daily-standup": {
+      "prompt": "Daily standup for {{project}} ({{owner}}). What are the top 3 items?"
+    }
+  }
+}
+```
+
+When the cron job runs (9 AM Mon–Fri), the renderer substitutes parameters and sends the expanded prompt to the agent.
+
+### Limitations
+
+- Template names are case-insensitive when stored but matched case-sensitively in CLI commands
+- Placeholder syntax `{{name}}` is rigid — no nested placeholders, filters, or conditions
+- Maximum template size is limited by JSON parser and agent context window
+- File-based templates (`.prompt.json`) are read-only — edit directly in `config.json` for primary control
 
 ---
 

@@ -268,6 +268,7 @@ public sealed class SqliteConversationStore : IConversationStore
                     c.id,
                     c.agent_id,
                     c.title,
+                    c.purpose,
                     c.is_default,
                     c.status,
                     c.active_session_id,
@@ -277,7 +278,7 @@ public sealed class SqliteConversationStore : IConversationStore
                 FROM conversations c
                 LEFT JOIN conversation_bindings b ON b.conversation_id = c.id
                 WHERE c.status = 'Active'
-                GROUP BY c.id, c.agent_id, c.title, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at
+                GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at
                 ORDER BY c.updated_at DESC
                 """
             : """
@@ -285,6 +286,7 @@ public sealed class SqliteConversationStore : IConversationStore
                     c.id,
                     c.agent_id,
                     c.title,
+                    c.purpose,
                     c.is_default,
                     c.status,
                     c.active_session_id,
@@ -294,7 +296,7 @@ public sealed class SqliteConversationStore : IConversationStore
                 FROM conversations c
                 LEFT JOIN conversation_bindings b ON b.conversation_id = c.id
                 WHERE c.agent_id = $agentId AND c.status = 'Active'
-                GROUP BY c.id, c.agent_id, c.title, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at
+                GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at
                 ORDER BY c.updated_at DESC
                 """;
         if (agentId is not null)
@@ -308,12 +310,13 @@ public sealed class SqliteConversationStore : IConversationStore
                 reader.GetString(0),
                 reader.GetString(1),
                 reader.GetString(2),
-                reader.GetInt64(3) != 0,
-                reader.GetString(4),
-                reader.IsDBNull(5) ? null : reader.GetString(5),
-                checked((int)reader.GetInt64(8)),
-                ParseTimestamp(reader.GetString(6)),
-                ParseTimestamp(reader.GetString(7))));
+                reader.GetInt64(4) != 0,
+                reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetString(6),
+                checked((int)reader.GetInt64(9)),
+                ParseTimestamp(reader.GetString(7)),
+                ParseTimestamp(reader.GetString(8)),
+                reader.IsDBNull(3) ? null : reader.GetString(3)));
         }
 
         return summaries;
@@ -343,6 +346,7 @@ public sealed class SqliteConversationStore : IConversationStore
                     id TEXT PRIMARY KEY,
                     agent_id TEXT NOT NULL,
                     title TEXT NOT NULL,
+                    purpose TEXT,
                     is_default INTEGER NOT NULL DEFAULT 0,
                     status TEXT NOT NULL DEFAULT 'Active',
                     active_session_id TEXT,
@@ -372,6 +376,8 @@ public sealed class SqliteConversationStore : IConversationStore
                 """;
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
+            await EnsurePurposeColumnAsync(connection, ct).ConfigureAwait(false);
+
             // One-time migration: archive stale signalr:connection-id conversations created
             // before binding-first routing (#148). Those conversations have a title matching
             // 'signalr:<32-hex-chars>' — a connection ID, not an agent ID.
@@ -400,6 +406,32 @@ public sealed class SqliteConversationStore : IConversationStore
     private SemaphoreSlim GetConversationLock(string conversationId)
         => _conversationLocks.GetOrAdd(conversationId, static _ => new SemaphoreSlim(1, 1));
 
+    private static async Task EnsurePurposeColumnAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        await using var tableInfoCommand = connection.CreateCommand();
+        tableInfoCommand.CommandText = "PRAGMA table_info(conversations);";
+
+        var hasPurposeColumn = false;
+        await using (var reader = await tableInfoCommand.ExecuteReaderAsync(ct).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                if (string.Equals(reader.GetString(1), "purpose", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasPurposeColumn = true;
+                    break;
+                }
+            }
+        }
+
+        if (hasPurposeColumn)
+            return;
+
+        await using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = "ALTER TABLE conversations ADD COLUMN purpose TEXT;";
+        await alterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
+
     private async Task<Conversation?> LoadConversationAsync(ConversationId conversationId, CancellationToken ct)
     {
         await using var connection = CreateConnection();
@@ -411,7 +443,7 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, agent_id, title, is_default, status, active_session_id, metadata, created_at, updated_at
+            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at
             FROM conversations
             WHERE id = $id
             """;
@@ -426,14 +458,15 @@ public sealed class SqliteConversationStore : IConversationStore
             ConversationId = ConversationId.From(reader.GetString(0)),
             AgentId = AgentId.From(reader.GetString(1)),
             Title = reader.GetString(2),
-            IsDefault = reader.GetInt64(3) != 0,
-            Status = ParseConversationStatus(reader.GetString(4)),
-            Metadata = DeserializeMetadata(reader.IsDBNull(6) ? null : reader.GetString(6)),
-            CreatedAt = ParseTimestamp(reader.GetString(7)),
-            UpdatedAt = ParseTimestamp(reader.GetString(8))
+            Purpose = reader.IsDBNull(3) ? null : reader.GetString(3),
+            IsDefault = reader.GetInt64(4) != 0,
+            Status = ParseConversationStatus(reader.GetString(5)),
+            Metadata = DeserializeMetadata(reader.IsDBNull(7) ? null : reader.GetString(7)),
+            CreatedAt = ParseTimestamp(reader.GetString(8)),
+            UpdatedAt = ParseTimestamp(reader.GetString(9))
         };
-        if (!reader.IsDBNull(5))
-            conversation.ActiveSessionId = SessionId.From(reader.GetString(5));
+        if (!reader.IsDBNull(6))
+            conversation.ActiveSessionId = SessionId.From(reader.GetString(6));
 
         await reader.DisposeAsync().ConfigureAwait(false);
         conversation.ChannelBindings = await LoadBindingsAsync(connection, conversation.ConversationId, ct).ConfigureAwait(false);
@@ -481,11 +514,12 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Transaction = transaction;
         conversationCommand.CommandText = upsert
             ? """
-                INSERT INTO conversations (id, agent_id, title, is_default, status, active_session_id, metadata, created_at, updated_at)
-                VALUES ($id, $agentId, $title, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt)
                 ON CONFLICT(id) DO UPDATE SET
                     agent_id = excluded.agent_id,
                     title = excluded.title,
+                    purpose = excluded.purpose,
                     is_default = excluded.is_default,
                     status = excluded.status,
                     active_session_id = excluded.active_session_id,
@@ -494,12 +528,13 @@ public sealed class SqliteConversationStore : IConversationStore
                     updated_at = excluded.updated_at
                 """
             : """
-                INSERT INTO conversations (id, agent_id, title, is_default, status, active_session_id, metadata, created_at, updated_at)
-                VALUES ($id, $agentId, $title, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt)
                 """;
         conversationCommand.Parameters.AddWithValue("$id", conversation.ConversationId.Value);
         conversationCommand.Parameters.AddWithValue("$agentId", conversation.AgentId.Value);
         conversationCommand.Parameters.AddWithValue("$title", conversation.Title);
+        conversationCommand.Parameters.AddWithValue("$purpose", conversation.Purpose is null or { Length: 0 } ? DBNull.Value : conversation.Purpose);
         conversationCommand.Parameters.AddWithValue("$isDefault", conversation.IsDefault ? 1 : 0);
         conversationCommand.Parameters.AddWithValue("$status", conversation.Status.ToString());
         conversationCommand.Parameters.AddWithValue("$activeSessionId", conversation.ActiveSessionId is null ? DBNull.Value : conversation.ActiveSessionId.Value.Value);
@@ -575,6 +610,7 @@ public sealed class SqliteConversationStore : IConversationStore
             ConversationId = conversation.ConversationId,
             AgentId = conversation.AgentId,
             Title = conversation.Title,
+            Purpose = conversation.Purpose,
             IsDefault = conversation.IsDefault,
             Status = conversation.Status,
             CreatedAt = conversation.CreatedAt,

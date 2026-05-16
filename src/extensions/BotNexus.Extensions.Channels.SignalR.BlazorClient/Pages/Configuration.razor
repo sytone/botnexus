@@ -16,7 +16,7 @@
             }
             <button class="toolbar-btn" @onclick="Validate" disabled="@_loading">✓ Validate</button>
             <button class="toolbar-btn" @onclick="LoadConfig" disabled="@_loading">↻ Reload</button>
-            <button class="toolbar-btn primary" @onclick="SaveAll" disabled="@(!_dirty || _saving)">
+            <button class="toolbar-btn primary" @onclick="SaveAll" disabled="@(_dirtySections.Count == 0 || _saving)">
                 @(_saving ? "Saving…" : "💾 Save Changes")
             </button>
         </div>

@@ -11,7 +11,11 @@ public interface IContextBuilder
     /// Builds the effective system prompt for an agent.
     /// </summary>
     /// <param name="descriptor">The agent descriptor.</param>
+    /// <param name="executionContext">Runtime session context used for conversation-scoped prompt data.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The composed system prompt text.</returns>
-    Task<string> BuildSystemPromptAsync(AgentDescriptor descriptor, CancellationToken cancellationToken = default);
+    Task<string> BuildSystemPromptAsync(
+        AgentDescriptor descriptor,
+        AgentExecutionContext? executionContext,
+        CancellationToken cancellationToken = default);
 }

@@ -2028,3 +2028,53 @@ Agent creation form in WebUI was sending incorrect property names to AgentDescri
 
 
 
+
+
+---
+
+## Effective Config UI/API — Display Effective State
+
+**2026-05-15 — Merged from inbox**
+
+### Decision: Configuration UI and API Always Show Effective State
+
+**Context:** BotNexus configuration system supports defaults + user overrides. The UI and API were inconsistent about whether to show effective (computed) state or raw (user-submitted) state. This created friction for users and made the system's actual operational configuration unclear.
+
+**Decision:**
+
+1. **GET /api/config (new)** — Returns **effective** configuration state (defaults merged with user overrides)
+   - Example: cron.enabled = true (default), 	ickIntervalSeconds = 60 (default)
+   - UI reads this endpoint for display
+   
+2. **GET /api/config/raw (new)** — Returns **raw** configuration (user-submitted only, redacted)
+   - Used by UI for edit workflow and dirty-section tracking
+   
+3. **PUT /api/config (unchanged)** — Accepts raw updates
+   - Does not persist implicit defaults unless explicitly submitted
+   - Dirty tracking ensures only modified sections are persisted
+
+### Rationale
+
+- **Effective state for display:** Users see what the system is *actually* using, not an abstract diff.
+- **Raw state for edits:** Dirty tracking allows partial saves without bloating config with defaults.
+- **Separation of concerns:** Read (effective) vs. write (raw) semantics are clear.
+
+### Implementation
+
+**Backend (Bender):** Commit 41cc4e8c
+- Modified ConfigController to implement /api/config (effective) and /api/config/raw (raw)
+- Updated GatewayStartupAndConfigurationTests to validate both endpoints
+
+**Frontend (Fry):** Commit 3ffa849a
+- Updated Configuration.razor to display effective config
+- Implemented dirty-section tracking in Configuration.razor.cs and PlatformConfigService
+- Added Blazor component tests for effective display and save semantics
+
+### Validation (Hermes)
+- Build: 0 warnings, 0 errors
+- Tests: 0 failures
+- ✅ Approved
+
+### Status
+✅ Complete — Ready for merge to main.
+

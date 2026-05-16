@@ -1,4 +1,5 @@
-using BotNexus.Gateway.Abstractions.Agents;
+﻿using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
 using System.IO.Abstractions.TestingHelpers;
@@ -305,6 +306,74 @@ public sealed class WorkspaceContextBuilderTests
             result.ShouldContain("FILE OVERRIDE TODAY");
             result.ShouldNotContain("DEFAULT MEMORY SHOULD NOT LOAD");
             result.ShouldContain($"## journals/{todayFileName}");
+        }
+        finally
+        {
+            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task BuildSystemPromptAsync_WithWorldMd_InjectsWorldContentBeforeAgents()
+    {
+        var homePath = Path.Combine(Path.GetTempPath(), "botnexus-home-world-test-" + Guid.NewGuid().ToString("N"));
+        _fileSystem.Directory.CreateDirectory(homePath);
+        _fileSystem.File.WriteAllText(Path.Combine(homePath, "WORLD.md"), "WORLD INSTRUCTIONS");
+
+        var workspacePath = CreateWorkspace(("AGENTS.md", "AGENTS"));
+        try
+        {
+            var manager = new StubWorkspaceManager(workspacePath);
+            var home = new BotNexusHome(_fileSystem, homePath);
+            var builder = new WorkspaceContextBuilder(manager, _fileSystem, home);
+
+            var result = await builder.BuildSystemPromptAsync(new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("farnsworth"),
+                DisplayName = "Farnsworth",
+                ModelId = "test-model",
+                ApiProvider = "test-provider"
+            });
+
+            result.ShouldContain("WORLD INSTRUCTIONS");
+            result.ShouldContain("AGENTS");
+
+            // WORLD.md header should appear before AGENTS.md header
+            var worldIndex = result.IndexOf("## WORLD.md", StringComparison.Ordinal);
+            var agentsIndex = result.IndexOf("## AGENTS.md", StringComparison.Ordinal);
+            worldIndex.ShouldBeGreaterThanOrEqualTo(0);
+            agentsIndex.ShouldBeGreaterThan(worldIndex);
+        }
+        finally
+        {
+            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task BuildSystemPromptAsync_WithoutWorldMd_SkipsSilently()
+    {
+        var homePath = Path.Combine(Path.GetTempPath(), "botnexus-home-no-world-" + Guid.NewGuid().ToString("N"));
+        _fileSystem.Directory.CreateDirectory(homePath);
+        // No WORLD.md created
+
+        var workspacePath = CreateWorkspace(("AGENTS.md", "AGENTS"));
+        try
+        {
+            var manager = new StubWorkspaceManager(workspacePath);
+            var home = new BotNexusHome(_fileSystem, homePath);
+            var builder = new WorkspaceContextBuilder(manager, _fileSystem, home);
+
+            var result = await builder.BuildSystemPromptAsync(new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("farnsworth"),
+                DisplayName = "Farnsworth",
+                ModelId = "test-model",
+                ApiProvider = "test-provider"
+            });
+
+            result.ShouldContain("AGENTS");
+            result.ShouldNotContain("WORLD");
         }
         finally
         {

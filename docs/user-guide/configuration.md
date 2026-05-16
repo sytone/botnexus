@@ -138,6 +138,10 @@ Agents are defined in the `agents` section, keyed by agent ID.
         "level": "own",
         "allowedAgents": []
       },
+      "conversationAccess": {
+        "level": "own",
+        "allowedAgents": []
+      },
       "toolPolicy": {
         "alwaysApprove": [],
         "neverApprove": [],
@@ -191,6 +195,8 @@ Agents are defined in the `agents` section, keyed by agent ID.
 | `soul.idleTimeoutMinutes` | int | `30` | Idle timeout for soul sessions |
 | `sessionAccess.level` | string | `own` | Session access: `own`, `allowlist`, or `all` |
 | `sessionAccess.allowedAgents` | array | `[]` | Agent IDs to allow (when level=`allowlist`) |
+| `conversationAccess.level` | string | `sessionAccess.level` | Conversation tool access: `own`, `allowlist`, or `all` |
+| `conversationAccess.allowedAgents` | array | `sessionAccess.allowedAgents` | Agent IDs to allow for conversation access (when level=`allowlist`) |
 | `toolPolicy.alwaysApprove` | array | `[]` | Tools requiring approval before execution |
 | `toolPolicy.neverApprove` | array | `[]` | Trusted tools that skip approval |
 | `toolPolicy.denied` | array | `[]` | Tools completely blocked for this agent |

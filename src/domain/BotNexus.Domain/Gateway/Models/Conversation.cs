@@ -17,6 +17,9 @@ public sealed record Conversation
     /// <summary>Gets or sets the human-readable title of this conversation.</summary>
     public string Title { get; set; } = "New conversation";
 
+    /// <summary>Gets or sets the persisted description of this conversation's intent.</summary>
+    public string? Purpose { get; set; }
+
     /// <summary>Gets or sets a value indicating whether this is the agent's default conversation.</summary>
     public bool IsDefault { get; set; }
 

@@ -52,6 +52,8 @@ public sealed class CronController(
                     ActionType = NormalizeActionType(configured.ActionType),
                     AgentId = configured.AgentId,
                     Message = configured.Message,
+                    TemplateName = configured.TemplateName,
+                    TemplateParameters = configured.TemplateParameters,
                     Model = configured.Model,
                     WebhookUrl = configured.WebhookUrl,
                     ShellCommand = configured.ShellCommand,

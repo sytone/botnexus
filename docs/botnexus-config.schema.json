@@ -753,6 +753,16 @@
             }
           ]
         },
+        "conversationAccess": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/SessionAccessConfig"
+            }
+          ]
+        },
         "fileAccess": {
           "oneOf": [
             {

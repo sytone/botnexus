@@ -83,6 +83,26 @@ builder.Services.AddBotNexusCron();
 builder.Services.AddPlatformConfiguration(resolvedConfigPath, builder.Configuration);
 builder.Services.Configure<CronOptions>(options =>
 {
+    options.PromptTemplates = startupPlatformConfig.PromptTemplates?
+        .ToDictionary(
+            pair => pair.Key,
+            pair => new ConfiguredPromptTemplate
+            {
+                Prompt = pair.Value.Prompt,
+                Description = pair.Value.Description,
+                Defaults = pair.Value.Defaults?.ToDictionary(entry => entry.Key, entry => (string?)entry.Value, StringComparer.OrdinalIgnoreCase),
+                Parameters = pair.Value.Parameters?.ToDictionary(
+                    entry => entry.Key,
+                    entry => new ConfiguredPromptTemplateParameter
+                    {
+                        Description = entry.Value.Description,
+                        Default = entry.Value.Default,
+                        Required = entry.Value.Required
+                    },
+                    StringComparer.OrdinalIgnoreCase)
+            },
+            StringComparer.OrdinalIgnoreCase);
+
     var cron = startupPlatformConfig.Cron;
     if (cron is null)
         return;
@@ -99,6 +119,8 @@ builder.Services.Configure<CronOptions>(options =>
                 ActionType = pair.Value.ActionType,
                 AgentId = pair.Value.AgentId,
                 Message = pair.Value.Message,
+                TemplateName = pair.Value.TemplateName,
+                TemplateParameters = pair.Value.TemplateParameters?.ToDictionary(entry => entry.Key, entry => (string?)entry.Value, StringComparer.OrdinalIgnoreCase),
                 Model = ResolveCronModel(pair.Value),
                 WebhookUrl = pair.Value.WebhookUrl,
                 ShellCommand = pair.Value.ShellCommand,

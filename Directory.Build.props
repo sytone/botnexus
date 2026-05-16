@@ -8,7 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>0.1.10</Version>
-    <InformationalVersion>0.1.10</InformationalVersion>
+    <Version>0.1.12</Version>
+    <InformationalVersion>0.1.12</InformationalVersion>
   </PropertyGroup>
 </Project>

@@ -51,6 +51,7 @@ using System.Runtime.CompilerServices;
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentExchangeService))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentHandle))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentHandleInspector))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentChangeNotifier))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentRegistry))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentSupervisor))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentToolFactory))]

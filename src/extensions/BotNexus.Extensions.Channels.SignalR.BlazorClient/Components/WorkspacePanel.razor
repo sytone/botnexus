@@ -1,0 +1,183 @@
+@inject IGatewayRestClient GatewayRestClient
+@implements IDisposable
+
+<div class="workspace-panel @MobilePaneClass" data-testid="workspace-panel">
+    <section class="workspace-tree-pane">
+        @if (_isLoadingRoot)
+        {
+            <div class="workspace-state">Loading workspace…</div>
+        }
+        else if (!string.IsNullOrWhiteSpace(_rootError))
+        {
+            <div class="workspace-state workspace-state-error">@_rootError</div>
+        }
+        else
+        {
+            <WorkspaceFileTree Entries="@GetDirectoryEntries(string.Empty)"
+                               ExpandedPaths="_expandedDirectories"
+                               SelectedFilePath="_selectedFilePath"
+                               OnDirectoryToggled="ToggleDirectoryAsync"
+                               OnFileSelected="SelectFileAsync"
+                               DirectoryEntriesProvider="GetDirectoryEntries"
+                               DirectoryLoadingProvider="IsDirectoryLoading"
+                               DirectoryErrorProvider="GetDirectoryError" />
+        }
+    </section>
+
+    <section class="workspace-viewer-pane">
+        <WorkspaceFileViewer IsLoading="_isLoadingFile"
+                             ErrorMessage="@_selectedFileError"
+                             FileResponse="@_selectedFile"
+                             ShowBackButton="@_showMobileViewer"
+                             BackRequested="ShowTreeOnMobile" />
+    </section>
+</div>
+
+@code {
+    private readonly Dictionary<string, WorkspaceResponseDto> _directoryResponses = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _expandedDirectories = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _loadingDirectories = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _directoryErrors = new(StringComparer.OrdinalIgnoreCase);
+    private readonly CancellationTokenSource _cts = new();
+    private bool _isLoadingRoot = true;
+    private bool _isLoadingFile;
+    private string? _rootError;
+    private string? _selectedFilePath;
+    private WorkspaceResponseDto? _selectedFile;
+    private string? _selectedFileError;
+    private bool _showMobileViewer;
+
+    [Parameter, EditorRequired]
+    public string AgentId { get; set; } = default!;
+
+    private string MobilePaneClass => _showMobileViewer ? "mobile-viewer" : "mobile-tree";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadRootAsync();
+    }
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+
+    private async Task LoadRootAsync()
+    {
+        _isLoadingRoot = true;
+        _rootError = null;
+        await LoadDirectoryAsync(string.Empty, isRoot: true);
+        _isLoadingRoot = false;
+    }
+
+    private async Task ToggleDirectoryAsync(string directoryPath)
+    {
+        if (_expandedDirectories.Contains(directoryPath))
+        {
+            _expandedDirectories.Remove(directoryPath);
+            return;
+        }
+
+        _expandedDirectories.Add(directoryPath);
+        if (_directoryResponses.ContainsKey(directoryPath) || _loadingDirectories.Contains(directoryPath))
+            return;
+
+        await LoadDirectoryAsync(directoryPath, isRoot: false);
+    }
+
+    private async Task SelectFileAsync(string filePath)
+    {
+        _selectedFilePath = filePath;
+        _selectedFile = null;
+        _selectedFileError = null;
+        _isLoadingFile = true;
+
+        try
+        {
+            var response = await GatewayRestClient.GetWorkspaceAsync(AgentId, filePath, _cts.Token);
+            if (response is null)
+            {
+                _selectedFileError = "Unable to load file content.";
+                return;
+            }
+
+            if (!string.Equals(response.Type, "file", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(response.Type, "binary", StringComparison.OrdinalIgnoreCase))
+            {
+                _selectedFileError = "Selected item is not a file.";
+                return;
+            }
+
+            _selectedFile = response;
+            _showMobileViewer = true;
+        }
+        catch (OperationCanceledException)
+        {
+            // Navigation away/dispose path.
+        }
+        catch (Exception)
+        {
+            _selectedFileError = "Unable to load file content.";
+        }
+        finally
+        {
+            _isLoadingFile = false;
+        }
+    }
+
+    private async Task LoadDirectoryAsync(string path, bool isRoot)
+    {
+        _loadingDirectories.Add(path);
+        _directoryErrors.Remove(path);
+
+        try
+        {
+            var requestPath = string.IsNullOrWhiteSpace(path) ? null : path;
+            var response = await GatewayRestClient.GetWorkspaceAsync(AgentId, requestPath, _cts.Token);
+            if (response is null || !string.Equals(response.Type, "directory", StringComparison.OrdinalIgnoreCase))
+            {
+                SetDirectoryError(path, isRoot);
+                return;
+            }
+
+            _directoryResponses[path] = response;
+        }
+        catch (OperationCanceledException)
+        {
+            // Navigation away/dispose path.
+        }
+        catch (Exception)
+        {
+            SetDirectoryError(path, isRoot);
+        }
+        finally
+        {
+            _loadingDirectories.Remove(path);
+        }
+    }
+
+    private void SetDirectoryError(string path, bool isRoot)
+    {
+        const string message = "Unable to load workspace.";
+        if (isRoot)
+            _rootError = message;
+        else
+            _directoryErrors[path] = message;
+    }
+
+    private IReadOnlyList<WorkspaceEntryDto> GetDirectoryEntries(string path)
+    {
+        if (_directoryResponses.TryGetValue(path, out var response))
+            return response.Entries ?? [];
+
+        return [];
+    }
+
+    private bool IsDirectoryLoading(string path) => _loadingDirectories.Contains(path);
+
+    private string? GetDirectoryError(string path) =>
+        _directoryErrors.TryGetValue(path, out var error) ? error : null;
+
+    private void ShowTreeOnMobile() => _showMobileViewer = false;
+}

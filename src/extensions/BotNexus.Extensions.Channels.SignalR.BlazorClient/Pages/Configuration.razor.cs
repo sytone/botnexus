@@ -9,9 +9,10 @@ public partial class Configuration : IDisposable
     [Parameter] public string? Section { get; set; }
 
     private JsonObject? _config;
+    private HashSet<string>? _rawSections;
+    private readonly HashSet<string> _dirtySections = new(StringComparer.OrdinalIgnoreCase);
     private bool _loading = true;
     private bool _saving;
-    private bool _dirty;
     private string? _statusMessage;
     private string _statusClass = "";
     private PlatformConfigService.ConfigValidationResult? _validationResult;
@@ -25,11 +26,16 @@ public partial class Configuration : IDisposable
     private async Task LoadConfig()
     {
         _loading = true;
-        _dirty = false;
+        _dirtySections.Clear();
         SetStatus("Loading…", "");
         StateHasChanged();
 
         _config = await ConfigService.LoadAsync();
+
+        // Load raw config to know which sections actually exist on disk
+        var raw = await ConfigService.LoadRawAsync();
+        _rawSections = raw?.Select(kv => kv.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         _loading = false;
 
         if (_config is null)
@@ -42,19 +48,19 @@ public partial class Configuration : IDisposable
 
     private async Task SaveAll()
     {
-        if (_config is null) return;
+        if (_config is null || _dirtySections.Count == 0) return;
 
         _saving = true;
         SetStatus("Saving…", "");
         StateHasChanged();
 
-        var sections = _config
-            .Where(kv => kv.Key is not "$schema" and not "version" and not "agents")
-            .Select(kv => kv.Key)
+        // Only save sections the user explicitly modified
+        var sectionsToSave = _dirtySections
+            .Where(s => s is not "$schema" and not "version" and not "agents")
             .ToList();
 
         var allOk = true;
-        foreach (var section in sections)
+        foreach (var section in sectionsToSave)
         {
             var node = _config[section];
             if (node is null) continue;
@@ -72,7 +78,7 @@ public partial class Configuration : IDisposable
 
         if (allOk)
         {
-            _dirty = false;
+            _dirtySections.Clear();
             SetStatus("✅ Saved successfully", "success", autoHide: true);
         }
 
@@ -121,7 +127,8 @@ public partial class Configuration : IDisposable
 
     private void MarkDirty()
     {
-        _dirty = true;
+        var section = Section?.ToLowerInvariant() ?? "gateway";
+        _dirtySections.Add(section);
     }
 
     // ── JSON accessor helpers ───────────────────────────────────────

@@ -191,6 +191,7 @@ public sealed class ChatPanelTests : IDisposable
         CreateAndSeedAgent("agent-1");
         _ctx.JSInterop.Mode = JSRuntimeMode.Strict;
         _ctx.JSInterop.SetupVoid("chatScroll.preventEnterSubmit", _ => true);
+        _ctx.JSInterop.SetupVoid("BotNexus.attachCodeCopyButtons", _ => true);
         _ctx.JSInterop.SetupVoid("chatScroll.forceScrollToBottom", _ => true);
 
         _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
@@ -215,6 +216,7 @@ public sealed class ChatPanelTests : IDisposable
         conversation.VirtualSessionKind = "subagent";
 
         _ctx.JSInterop.Mode = JSRuntimeMode.Strict;
+        _ctx.JSInterop.SetupVoid("BotNexus.attachCodeCopyButtons", _ => true);
         _ctx.JSInterop.SetupVoid("chatScroll.forceScrollToBottom", _ => true);
 
         _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "sub-1"));
@@ -262,6 +264,66 @@ public sealed class ChatPanelTests : IDisposable
 
         var msgs = cut.FindAll(".message.assistant");
         Assert.NotEmpty(msgs);
+    }
+
+    [Fact]
+    public void Renders_copy_button_for_completed_assistant_messages()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("Assistant", "Hello from assistant", DateTimeOffset.UtcNow));
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        Assert.Single(cut.FindAll(".msg-copy-btn"));
+    }
+
+    [Fact]
+    public void Does_not_render_copy_button_for_user_messages()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("User", "Hello from user", DateTimeOffset.UtcNow));
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        Assert.Empty(cut.FindAll(".msg-copy-btn"));
+    }
+
+    [Fact]
+    public void Does_not_render_copy_button_for_streaming_assistant_message()
+    {
+        CreateAndSeedAgent("agent-1", isStreaming: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SetStreaming("conv-1", true);
+        _store.AppendStreamBuffer("conv-1", "streaming text");
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        var streamingMessage = cut.Find(".message.assistant.streaming");
+        Assert.Empty(streamingMessage.QuerySelectorAll(".msg-copy-btn"));
+    }
+
+    [Fact]
+    public void Clicking_assistant_copy_button_invokes_clipboard_copy_with_raw_message_content()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.AppendMessage("conv-1", new ChatMessage("Assistant", "```csharp\nConsole.WriteLine(42);\n```", DateTimeOffset.UtcNow));
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        cut.Find(".msg-copy-btn").Click();
+
+        Assert.Contains(_ctx.JSInterop.Invocations, invocation =>
+            invocation.Identifier == "BotNexus.copyToClipboard" &&
+            invocation.Arguments.Count == 1 &&
+            invocation.Arguments[0] is string copiedText &&
+            copiedText == "```csharp\nConsole.WriteLine(42);\n```");
     }
 
     [Fact]

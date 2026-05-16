@@ -288,7 +288,121 @@ public sealed class GatewayStartupAndConfigurationTests
         });
     }
 
-        private static WebApplicationFactory<Program> CreateTestFactory(string? appSettingsConfigPath = null)
+    [Fact]
+    public async Task ConfigEndpoint_ReturnsEffectiveCronDefaults_WhenCronSectionMissing()
+    {
+        using var fixture = new GatewayStartupFixture();
+        fixture.WriteDefaultConfig("""{}""");
+
+        await fixture.WithEnvironmentAsync(async () =>
+        {
+            await using var factory = CreateTestFactory();
+            using var client = factory.CreateClient();
+
+            var response = await client.GetFromJsonAsync<JsonElement>("/api/config");
+
+            response.TryGetProperty("cron", out var cronProp).ShouldBeTrue("cron section should be present");
+            cronProp.TryGetProperty("enabled", out var enabledProp).ShouldBeTrue("cron.enabled should be present");
+            enabledProp.GetBoolean().ShouldBeTrue("cron.enabled should default to true");
+            cronProp.TryGetProperty("tickIntervalSeconds", out var tickProp).ShouldBeTrue("cron.tickIntervalSeconds should be present");
+            tickProp.GetInt32().ShouldBe(60, "cron.tickIntervalSeconds should default to 60");
+        });
+    }
+
+    [Fact]
+    public async Task ConfigRawEndpoint_OmitsImplicitCronDefaults_WhenCronSectionMissing()
+    {
+        using var fixture = new GatewayStartupFixture();
+        fixture.WriteDefaultConfig("""{}""");
+
+        await fixture.WithEnvironmentAsync(async () =>
+        {
+            await using var factory = CreateTestFactory();
+            using var client = factory.CreateClient();
+
+            var response = await client.GetFromJsonAsync<JsonElement>("/api/config/raw");
+
+            response.TryGetProperty("cron", out _).ShouldBeFalse("raw config should not include implicit defaults");
+        });
+    }
+
+    [Fact]
+    public async Task ConfigEndpoint_RedactsSensitiveValues_InEffectiveAndRawResponses()
+    {
+        using var fixture = new GatewayStartupFixture();
+        fixture.WriteDefaultConfig("""
+            {
+              "apiKey": "root-secret",
+              "providers": {
+                "github-copilot": {
+                  "apiKey": "provider-secret",
+                  "baseUrl": "https://api.githubcopilot.com"
+                }
+              },
+              "gateway": {
+                "apiKeys": {
+                  "tenant-a": {
+                    "apiKey": "tenant-secret",
+                    "tenantId": "tenant-a",
+                    "permissions": [ "chat:send" ]
+                  }
+                },
+                "sessionStore": {
+                  "type": "Sqlite",
+                  "connectionString": "Data Source=sessions.db"
+                },
+                "locations": {
+                  "db-main": {
+                    "type": "database",
+                    "connectionString": "Server=tcp:sql.internal;Password=SuperSecret!",
+                    "description": "primary"
+                  }
+                },
+                "crossWorld": {
+                  "peers": {
+                    "world-b": {
+                      "endpoint": "https://world-b.example.com",
+                      "apiKey": "peer-secret"
+                    }
+                  },
+                  "inbound": {
+                    "enabled": true,
+                    "allowedWorlds": [ "world-b" ],
+                    "apiKeys": {
+                      "world-b": "inbound-secret"
+                    }
+                  }
+                }
+              }
+            }
+            """);
+
+        await fixture.WithEnvironmentAsync(async () =>
+        {
+            await using var factory = CreateTestFactory();
+            using var client = factory.CreateClient();
+            client.DefaultRequestHeaders.Add("X-Api-Key", "tenant-secret");
+
+            var effective = await client.GetFromJsonAsync<JsonElement>("/api/config");
+            var raw = await client.GetFromJsonAsync<JsonElement>("/api/config/raw");
+
+            AssertConfigSecretsRedacted(effective);
+            AssertConfigSecretsRedacted(raw);
+        });
+    }
+
+    private static void AssertConfigSecretsRedacted(JsonElement response)
+    {
+        response.GetProperty("apiKey").GetString().ShouldBe("***");
+        response.GetProperty("providers").GetProperty("github-copilot").GetProperty("apiKey").GetString().ShouldBe("***");
+        response.GetProperty("gateway").GetProperty("apiKeys").GetProperty("tenant-a").GetProperty("apiKey").GetString().ShouldBe("***");
+        response.GetProperty("gateway").GetProperty("sessionStore").GetProperty("connectionString").GetString().ShouldBe("***");
+        response.GetProperty("gateway").GetProperty("locations").GetProperty("db-main").GetProperty("connectionString").GetString().ShouldBe("***");
+        response.GetProperty("gateway").GetProperty("crossWorld").GetProperty("peers").GetProperty("world-b").GetProperty("apiKey").GetString().ShouldBe("***");
+        response.GetProperty("gateway").GetProperty("crossWorld").GetProperty("inbound").GetProperty("apiKeys").GetProperty("world-b").GetString().ShouldBe("***");
+    }
+
+    private static WebApplicationFactory<Program> CreateTestFactory(string? appSettingsConfigPath = null)
         => new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {

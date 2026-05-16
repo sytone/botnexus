@@ -1,6 +1,9 @@
-using BotNexus.Gateway.Abstractions.Agents;
+﻿using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Hooks;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Sessions;
 using System.IO.Abstractions;
 
 namespace BotNexus.Gateway.Agents;
@@ -19,6 +22,9 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
     private readonly IAgentWorkspaceManager _workspaceManager;
     private readonly IFileSystem _fileSystem;
     private readonly IHookDispatcher? _hookDispatcher;
+    private readonly IConversationStore? _conversationStore;
+    private readonly ISessionStore? _sessionStore;
+    private readonly string? _homePath;
 
     public WorkspaceContextBuilder(IAgentWorkspaceManager workspaceManager, IFileSystem fileSystem)
     {
@@ -36,7 +42,50 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         _hookDispatcher = hookDispatcher;
     }
 
-    public async Task<string> BuildSystemPromptAsync(AgentDescriptor descriptor, CancellationToken cancellationToken = default)
+    public WorkspaceContextBuilder(
+        IAgentWorkspaceManager workspaceManager,
+        IFileSystem fileSystem,
+        IConversationStore conversationStore,
+        ISessionStore sessionStore,
+        IHookDispatcher? hookDispatcher = null)
+    {
+        _workspaceManager = workspaceManager;
+        _fileSystem = fileSystem;
+        _conversationStore = conversationStore;
+        _sessionStore = sessionStore;
+        _hookDispatcher = hookDispatcher;
+    }
+
+    public WorkspaceContextBuilder(
+        IAgentWorkspaceManager workspaceManager,
+        IFileSystem fileSystem,
+        BotNexusHome botNexusHome,
+        IConversationStore conversationStore,
+        ISessionStore sessionStore,
+        IHookDispatcher? hookDispatcher = null)
+    {
+        _workspaceManager = workspaceManager;
+        _fileSystem = fileSystem;
+        _homePath = botNexusHome.RootPath;
+        _conversationStore = conversationStore;
+        _sessionStore = sessionStore;
+        _hookDispatcher = hookDispatcher;
+    }
+
+    public WorkspaceContextBuilder(
+        IAgentWorkspaceManager workspaceManager,
+        IFileSystem fileSystem,
+        BotNexusHome botNexusHome)
+    {
+        _workspaceManager = workspaceManager;
+        _fileSystem = fileSystem;
+        _homePath = botNexusHome.RootPath;
+    }
+
+    public async Task<string> BuildSystemPromptAsync(
+        AgentDescriptor descriptor,
+        AgentExecutionContext? executionContext,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(descriptor);
 
@@ -44,6 +93,19 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         var memoryPromptInjection = ResolveMemoryPromptInjection(descriptor.Memory?.PromptInjection);
         var promptFiles = ResolvePromptFiles(descriptor, includeMemoryFile: !IsMemoryPromptInjectionNone(memoryPromptInjection));
         var contextFiles = (await LoadContextFilesAsync(_fileSystem, workspacePath, promptFiles, cancellationToken)).ToList();
+
+        // Inject world-level instructions if WORLD.md exists at ~/.botnexus/WORLD.md
+        if (!string.IsNullOrWhiteSpace(_homePath))
+        {
+            var worldFilePath = Path.Combine(_homePath, "WORLD.md");
+            if (_fileSystem.File.Exists(worldFilePath))
+            {
+                var worldContent = await _fileSystem.File.ReadAllTextAsync(worldFilePath, cancellationToken);
+                if (!string.IsNullOrWhiteSpace(worldContent))
+                    contextFiles.Insert(0, new ContextFile("WORLD.md", worldContent.Trim()));
+            }
+        }
+
         if (descriptor.SystemPromptFiles.Count == 0 && string.IsNullOrWhiteSpace(descriptor.SystemPromptFile))
         {
             if (!IsMemoryPromptInjectionNone(memoryPromptInjection))
@@ -71,6 +133,7 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
                 ? descriptor.Heartbeat.Prompt ?? "Read HEARTBEAT.md if it exists and execute any pending tasks. If nothing needs attention, reply HEARTBEAT_OK."
                 : null,
             MemoryPromptInjection = memoryPromptInjection,
+            ConversationContext = await ResolveConversationContextAsync(descriptor, executionContext, cancellationToken),
             PromptMode = PromptMode.Full
         });
 
@@ -85,6 +148,40 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         }
 
         return prompt;
+    }
+
+    /// <summary>
+    /// Builds a descriptor-only prompt for callers that do not have a runtime session context.
+    /// Conversation-scoped prompt context requires the overload that accepts an <see cref="AgentExecutionContext"/>.
+    /// </summary>
+    public Task<string> BuildSystemPromptAsync(AgentDescriptor descriptor, CancellationToken cancellationToken = default)
+        => BuildSystemPromptAsync(descriptor, null, cancellationToken);
+
+    private async Task<ConversationContext?> ResolveConversationContextAsync(
+        AgentDescriptor descriptor,
+        AgentExecutionContext? executionContext,
+        CancellationToken cancellationToken)
+    {
+        if (_conversationStore is null || executionContext is null)
+            return null;
+
+        Conversation? conversation = null;
+        if (_sessionStore is not null)
+        {
+            var session = await _sessionStore.GetAsync(executionContext.SessionId, cancellationToken).ConfigureAwait(false);
+            if (session?.Session.ConversationId is { } conversationId)
+                conversation = await _conversationStore.GetAsync(conversationId, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (conversation is null)
+        {
+            var conversations = await _conversationStore.ListAsync(descriptor.AgentId, cancellationToken).ConfigureAwait(false);
+            conversation = conversations.FirstOrDefault(candidate => candidate.ActiveSessionId == executionContext.SessionId);
+        }
+
+        return conversation is null
+            ? null
+            : new ConversationContext(conversation.ConversationId.Value, conversation.Title, conversation.Purpose);
     }
 
     private static async Task<ContextFile[]> LoadContextFilesAsync(
