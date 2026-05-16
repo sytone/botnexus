@@ -242,7 +242,7 @@ Available built-in tools:
 - `read_file`, `write_file` — File system operations
 - `web_search`, `web_fetch` — Web access
 - `grep`, `glob` — Code search
-- `bash`, `powershell` — Shell execution
+- `bash`, `powershell` — Shell execution. Output is automatically stripped of ANSI escape sequences before it reaches the model, preventing terminal colour codes from polluting agent context.
 
 See [Extensions Guide](extensions.md) for custom tools and MCP servers.
 
