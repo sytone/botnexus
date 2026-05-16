@@ -54,3 +54,6 @@ Issue #245 Phase 3 frontend now mounts `ReportsPanel` in `AgentPanel` and reads 
 
 ### 2026-05-15 — Phase 3 Reports Tab Complete
 Issue #245 Phase 3 frontend delivery — `ReportsPanel.razor` mounted in `AgentPanel` tab bar, reads metadata from GET /api/agents/{agentId}/reports and content from GET /api/agents/{agentId}/reports/{name} via GatewayRestClient. Safe markdown render via BotNexus.renderMarkdown (marked + DOMPurify), fallback to escaped plain-text in `<pre>` when JS unavailable. Mobile single-pane flow with back button, desktop split layout. 8 bUnit component tests + route/DTO contract tests. All green. PR #270 open for merge.
+
+### 2026-05-16 — Canvas Tab Uses Agent-Scoped srcdoc + Restricted Sandbox
+Issue #245 Phase 4 frontend now mounts `CanvasPanel` in `AgentPanel` and renders the latest agent-scoped canvas HTML from `AgentState.CanvasHtml` into an iframe via `srcdoc`. Canvas updates are wired through `CanvasUpdated` hub events and `canvas` tool completions in `GatewayEventHandler`, with empty/whitespace payloads clearing the panel back to empty state. Sandbox policy is locked to `allow-scripts` only (explicitly excluding `allow-same-origin` and `allow-top-navigation`), and CSS keeps the canvas pane scroll-contained on mobile to avoid page-level overflow.

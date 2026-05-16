@@ -208,6 +208,14 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 tools.Add(new AgentConverseTool(conversationService, sessionStore, descriptor.AgentId, context.SessionId));
         }
 
+        var includeCanvas = effectiveToolIds.Count == 0
+                            || effectiveToolIds.Contains("canvas", StringComparer.OrdinalIgnoreCase);
+        if (includeCanvas)
+        {
+            var canvasNotifiers = _serviceProvider.GetServices<IAgentCanvasNotifier>().ToArray();
+            tools.Add(new CanvasTool(descriptor.AgentId, canvasNotifiers));
+        }
+
         List<object> extensionResourcesToDispose = [];
         var toolContributionContext = new AgentToolContributionContext(
             descriptor,

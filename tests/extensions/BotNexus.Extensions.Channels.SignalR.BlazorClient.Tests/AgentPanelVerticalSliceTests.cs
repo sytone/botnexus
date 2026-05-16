@@ -1,6 +1,7 @@
 using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Pages;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
 
@@ -61,7 +62,7 @@ public sealed class AgentPanelVerticalSliceTests : IDisposable
 
         Assert.Contains("data-testid=\"workspace-panel\"", cut.Markup);
         Assert.Contains("data-testid=\"reports-panel\"", cut.Markup);
-        Assert.Contains("Canvas is coming next", cut.Markup);
+        Assert.Contains("data-testid=\"canvas-panel\"", cut.Markup);
     }
 
     [Fact]
@@ -79,6 +80,21 @@ public sealed class AgentPanelVerticalSliceTests : IDisposable
         {
             Assert.NotNull(cut.Find(".agent-panel-tab.active[data-tab='reports']"));
             Assert.NotNull(cut.Find("[data-testid='reports-panel']"));
+        });
+    }
+
+    [Fact]
+    public void Canvas_query_parameter_activates_canvas_tab()
+    {
+        _ctx.Services.GetRequiredService<NavigationManager>()
+            .NavigateTo("http://localhost/chat/agent-1/conv-1?tab=canvas");
+
+        var cut = RenderHomeForAgentConversation();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.NotNull(cut.Find(".agent-panel-tab.active[data-tab='canvas']"));
+            Assert.NotNull(cut.Find("[data-testid='canvas-panel']"));
         });
     }
 
@@ -115,7 +131,7 @@ public sealed class AgentPanelVerticalSliceTests : IDisposable
         Assert.Contains(".agent-panel-header", css);
         Assert.Contains(".agent-panel-tab-strip", css);
         Assert.Contains(".agent-panel-tab", css);
-        Assert.Contains(".agent-panel-placeholder", css);
+        Assert.Contains(".canvas-panel", css);
         Assert.Contains("@media (max-width: 768px)", css);
     }
 

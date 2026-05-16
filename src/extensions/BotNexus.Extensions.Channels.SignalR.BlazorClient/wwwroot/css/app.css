@@ -730,23 +730,31 @@ html, body, #app {
     display: flex;
 }
 
-.agent-panel-placeholder {
-    margin: 1rem;
-    padding: 1rem;
+.canvas-panel {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+    background: var(--bg-primary);
+}
+
+.canvas-empty-state {
+    margin: 0.9rem;
+    padding: 0.9rem;
     border: 1px dashed var(--border);
     border-radius: var(--radius);
-    background: rgba(15, 52, 96, 0.24);
-}
-
-.agent-panel-placeholder h3 {
-    font-size: 0.95rem;
-    margin-bottom: 0.35rem;
-}
-
-.agent-panel-placeholder p {
     color: var(--text-secondary);
-    font-size: 0.84rem;
-    line-height: 1.4;
+    font-size: 0.83rem;
+}
+
+.canvas-frame {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: #fff;
 }
 
 .workspace-panel {
@@ -1759,7 +1767,7 @@ html, body, #app {
         display: none;
     }
 
-    .agent-panel-placeholder {
+    .canvas-empty-state {
         margin: 0.75rem;
         padding: 0.75rem;
     }
@@ -1778,6 +1786,11 @@ html, body, #app {
 
     .reports-panel.mobile-viewer .reports-list-pane {
         display: none;
+    }
+
+    .canvas-panel {
+        overflow: auto;
+        -webkit-overflow-scrolling: touch;
     }
 
     .workspace-tree-pane {

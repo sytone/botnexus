@@ -23,4 +23,5 @@ public interface IGatewayHubClient
     Task SubAgentKilled(SubAgentEventPayload payload);
     Task AgentsChanged(AgentsChangedPayload payload);
     Task SteeringFeedback(SteeringFeedbackPayload payload);
+    Task CanvasUpdated(string agentId, string html);
 }

@@ -55,6 +55,9 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     /// <summary>Raised when steering feedback is received from the server.</summary>
     public event Action<SteeringFeedbackPayload>? OnSteeringFeedback;
 
+    /// <summary>Raised when the current canvas HTML is updated for an agent.</summary>
+    public event Action<string, string>? OnCanvasUpdated;
+
     /// <summary>Raised when agent configuration changes on the server (add/update/delete).</summary>
     public event Action<AgentsChangedPayload>? OnAgentsChanged;
 
@@ -109,6 +112,7 @@ public sealed class GatewayHubConnection : IAsyncDisposable
         _connection.On<SubAgentEventPayload>("SubAgentFailed", p => OnSubAgentFailed?.Invoke(p));
         _connection.On<SubAgentEventPayload>("SubAgentKilled", p => OnSubAgentKilled?.Invoke(p));
         _connection.On<SteeringFeedbackPayload>("SteeringFeedback", p => OnSteeringFeedback?.Invoke(p));
+        _connection.On<string, string>("CanvasUpdated", (agentId, html) => OnCanvasUpdated?.Invoke(agentId, html));
         _connection.On<AgentsChangedPayload>("AgentsChanged", p => OnAgentsChanged?.Invoke(p));
 
         _connection.Reconnecting += _ => { OnReconnecting?.Invoke(); return Task.CompletedTask; };
