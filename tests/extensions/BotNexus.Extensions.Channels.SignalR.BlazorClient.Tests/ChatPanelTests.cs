@@ -360,18 +360,28 @@ public sealed class ChatPanelTests : IDisposable
 
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
 
-        var toolMessage = cut.Find(".message.tool");
-        Assert.DoesNotContain("expanded", toolMessage.ClassList);
+        void AssertExpandedState(bool shouldBeExpanded)
+        {
+            var toolMessage = cut.Find(".message.tool");
+            if (shouldBeExpanded)
+            {
+                Assert.Contains("expanded", toolMessage.ClassList);
+            }
+            else
+            {
+                Assert.DoesNotContain("expanded", toolMessage.ClassList);
+            }
+        }
+
+        AssertExpandedState(false);
 
         cut.Find(".tool-header").Click();
 
-        toolMessage = cut.Find(".message.tool");
-        Assert.Contains("expanded", toolMessage.ClassList);
+        AssertExpandedState(true);
 
         cut.Find(".tool-header").Click();
 
-        toolMessage = cut.Find(".message.tool");
-        Assert.DoesNotContain("expanded", toolMessage.ClassList);
+        AssertExpandedState(false);
     }
 
     [Fact]
