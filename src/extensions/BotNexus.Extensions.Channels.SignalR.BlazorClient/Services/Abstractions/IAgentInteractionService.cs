@@ -20,5 +20,6 @@ public interface IAgentInteractionService
     Task RefreshAgentsAsync();
     Task RefreshConversationsAsync(string agentId);
     Task ViewSubAgentAsync(SubAgentInfo subAgent);
+    Task RespondToAskUserAsync(string conversationId, string requestId, string? freeFormText, string[]? selectedValues, bool cancelled);
     void ClearLocalMessages(string agentId);
 }

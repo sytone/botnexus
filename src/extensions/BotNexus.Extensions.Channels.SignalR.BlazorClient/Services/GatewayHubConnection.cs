@@ -40,6 +40,9 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     /// <summary>Raised when an error occurs during streaming.</summary>
     public event Action<AgentStreamEvent>? OnError;
 
+    /// <summary>Raised when the agent requires interactive user input mid-turn.</summary>
+    public event Action<AgentStreamEvent>? OnUserInputRequired;
+
     /// <summary>Raised when a sub-agent is spawned.</summary>
     public event Action<SubAgentEventPayload>? OnSubAgentSpawned;
 
@@ -107,6 +110,7 @@ public sealed class GatewayHubConnection : IAsyncDisposable
         _connection.On<AgentStreamEvent>("ToolEnd", e => OnToolEnd?.Invoke(e));
         _connection.On<AgentStreamEvent>("MessageEnd", e => OnMessageEnd?.Invoke(e));
         _connection.On<AgentStreamEvent>("Error", e => OnError?.Invoke(e));
+        _connection.On<AgentStreamEvent>("UserInputRequired", e => OnUserInputRequired?.Invoke(e));
         _connection.On<SubAgentEventPayload>("SubAgentSpawned", p => OnSubAgentSpawned?.Invoke(p));
         _connection.On<SubAgentEventPayload>("SubAgentCompleted", p => OnSubAgentCompleted?.Invoke(p));
         _connection.On<SubAgentEventPayload>("SubAgentFailed", p => OnSubAgentFailed?.Invoke(p));
@@ -154,6 +158,24 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     /// <summary>Compact a session to reduce token usage.</summary>
     public async Task<CompactSessionResult> CompactSessionAsync(string agentId, string sessionId)
         => await _connection!.InvokeAsync<CompactSessionResult>("CompactSession", agentId, sessionId);
+
+    /// <summary>
+    /// Complete or cancel a pending <c>ask_user</c> prompt for the specified
+    /// conversation request.
+    /// </summary>
+    public async Task RespondToAskUserAsync(
+        string conversationId,
+        string requestId,
+        string? freeFormText,
+        string[]? selectedValues,
+        bool cancelled)
+        => await _connection!.InvokeAsync(
+            "RespondToAskUser",
+            conversationId,
+            requestId,
+            freeFormText,
+            selectedValues,
+            cancelled);
 
     // ── Dispose ─────────────────────────────────────────────────────────
 

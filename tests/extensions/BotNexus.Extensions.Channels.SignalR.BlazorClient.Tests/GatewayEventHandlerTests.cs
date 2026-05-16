@@ -1,4 +1,5 @@
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+using System.Text.Json;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
 
@@ -414,5 +415,63 @@ public sealed class GatewayEventHandlerTests
         _handler.HandleCanvasUpdated("agent-1", " ");
 
         Assert.Null(agent.CanvasHtml);
+    }
+
+    [Fact]
+    public void HandleUserInputRequired_sets_pending_prompt_from_metadata()
+    {
+        _handler.HandleUserInputRequired(new AgentStreamEvent
+        {
+            SessionId = "sess-1",
+            Metadata = new Dictionary<string, JsonElement>
+            {
+                ["requestId"] = JsonSerializer.SerializeToElement("req-1"),
+                ["conversationId"] = JsonSerializer.SerializeToElement("conv-1"),
+                ["prompt"] = JsonSerializer.SerializeToElement("Choose one"),
+                ["inputType"] = JsonSerializer.SerializeToElement("SingleChoice"),
+                ["choices"] = JsonSerializer.SerializeToElement("[{\"value\":\"a\",\"label\":\"Option A\"}]")
+            }
+        });
+
+        var pending = _store.GetPendingAskUser("conv-1");
+        Assert.NotNull(pending);
+        Assert.Equal("req-1", pending.RequestId);
+        Assert.Equal("Choose one", pending.Prompt);
+        Assert.Equal("SingleChoice", pending.InputType);
+        Assert.Equal("a", pending.Choices![0].Value);
+    }
+
+    [Fact]
+    public void HandleMessageEnd_clears_pending_prompt_for_conversation()
+    {
+        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        conv.StreamState.Buffer = "done";
+        _store.SetPendingAskUser(new AskUserPromptState
+        {
+            RequestId = "req-1",
+            ConversationId = "conv-1",
+            Prompt = "Need input",
+            InputType = "FreeForm"
+        });
+
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+
+        Assert.Null(_store.GetPendingAskUser("conv-1"));
+    }
+
+    [Fact]
+    public void HandleError_clears_pending_prompt_for_conversation()
+    {
+        _store.SetPendingAskUser(new AskUserPromptState
+        {
+            RequestId = "req-1",
+            ConversationId = "conv-1",
+            Prompt = "Need input",
+            InputType = "FreeForm"
+        });
+
+        _handler.HandleError(new AgentStreamEvent { SessionId = "sess-1", ErrorMessage = "boom" });
+
+        Assert.Null(_store.GetPendingAskUser("conv-1"));
     }
 }

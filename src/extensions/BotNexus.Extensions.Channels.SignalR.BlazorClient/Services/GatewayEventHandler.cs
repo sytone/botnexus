@@ -33,6 +33,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub.OnToolEnd += HandleToolEnd;
         _hub.OnMessageEnd += HandleMessageEnd;
         _hub.OnError += HandleError;
+        _hub.OnUserInputRequired += HandleUserInputRequired;
         _hub.OnSessionReset += HandleSessionReset;
         _hub.OnSubAgentSpawned += HandleSubAgentSpawned;
         _hub.OnSubAgentCompleted += HandleSubAgentCompleted;
@@ -256,6 +257,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         if (convId != agent.ActiveConversationId)
             conv.UnreadCount++;
 
+        _store.ClearPendingAskUser(convId);
         _store.NotifyChanged();
     }
 
@@ -270,6 +272,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             conv.StreamState.Buffer = "";
             conv.StreamState.ThinkingBuffer = "";
             conv.StreamState.IsStreaming = false;
+            _store.ClearPendingAskUser(convId);
         }
 
         if (agent is not null)
@@ -279,6 +282,23 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         }
 
         _store.NotifyChanged();
+    }
+
+    public void HandleUserInputRequired(AgentStreamEvent evt)
+    {
+        if (!ResolveAgent(evt.SessionId, out var agentId, out var agent))
+            return;
+
+        if (!TryBuildAskUserPrompt(evt, out var prompt))
+            return;
+
+        var resolvedConversationId = prompt.ConversationId;
+        if (string.IsNullOrWhiteSpace(resolvedConversationId))
+            resolvedConversationId = ResolveConversationId(agentId!, agent!, evt.SessionId) ?? agent!.ActiveConversationId;
+        if (string.IsNullOrWhiteSpace(resolvedConversationId))
+            return;
+
+        _store.SetPendingAskUser(prompt with { ConversationId = resolvedConversationId });
     }
 
     public void HandleSessionReset(SessionResetPayload payload)
@@ -305,6 +325,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             // erase conversation history. The portal should keep showing all
             // prior messages with a visual divider marking the new session.
             conv.Messages.Add(new ChatMessage("System", "─── New session started ───", DateTimeOffset.UtcNow));
+            _store.ClearPendingAskUser(conv.ConversationId);
         }
 
         agent.ActiveToolCalls.Clear();
@@ -546,6 +567,156 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         return null;
     }
 
+    private static bool TryBuildAskUserPrompt(AgentStreamEvent evt, [NotNullWhen(true)] out AskUserPromptState? prompt)
+    {
+        prompt = null;
+        var metadata = evt.Metadata;
+        var payload = evt.UserInputRequest;
+
+        var requestId = GetRequiredString(metadata, "requestId") ?? payload?.RequestId;
+        var conversationId = GetRequiredString(metadata, "conversationId") ?? payload?.ConversationId;
+        var promptText = GetRequiredString(metadata, "prompt") ?? payload?.Prompt;
+        var inputType = GetRequiredString(metadata, "inputType") ?? payload?.InputType;
+
+        if (string.IsNullOrWhiteSpace(requestId) ||
+            string.IsNullOrWhiteSpace(promptText) ||
+            string.IsNullOrWhiteSpace(inputType))
+        {
+            return false;
+        }
+
+        var choices = ParseChoices(metadata, payload?.Choices);
+        var allowMultiple = GetBool(metadata, "allowMultiple") ?? payload?.AllowMultiple ?? false;
+        var allowFreeForm = GetBool(metadata, "allowFreeForm") ?? payload?.AllowFreeForm ?? false;
+        var timeout = GetString(metadata, "timeout") ?? payload?.Timeout;
+        var expiresAt = ParseExpiration(timeout);
+
+        prompt = new AskUserPromptState
+        {
+            RequestId = requestId,
+            ConversationId = conversationId ?? string.Empty,
+            Prompt = promptText,
+            InputType = inputType,
+            Choices = choices,
+            AllowMultiple = allowMultiple,
+            AllowFreeForm = allowFreeForm,
+            ExpiresAt = expiresAt
+        };
+
+        return true;
+    }
+
+    private static string? GetRequiredString(IReadOnlyDictionary<string, JsonElement>? metadata, string key)
+    {
+        var value = GetString(metadata, key);
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
+    private static string? GetString(IReadOnlyDictionary<string, JsonElement>? metadata, string key)
+    {
+        if (metadata is null || !metadata.TryGetValue(key, out var raw))
+            return null;
+
+        return raw.ValueKind == JsonValueKind.String ? raw.GetString() : raw.ToString();
+    }
+
+    private static bool? GetBool(IReadOnlyDictionary<string, JsonElement>? metadata, string key)
+    {
+        if (metadata is null || !metadata.TryGetValue(key, out var raw))
+            return null;
+
+        return raw.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.String when bool.TryParse(raw.GetString(), out var parsed) => parsed,
+            _ => null
+        };
+    }
+
+    private static IReadOnlyList<AskUserChoiceState>? ParseChoices(
+        IReadOnlyDictionary<string, JsonElement>? metadata,
+        IReadOnlyList<AskUserChoicePayload>? fallbackChoices)
+    {
+        if (metadata is not null && metadata.TryGetValue("choices", out var rawChoices))
+        {
+            var parsed = ParseChoicesFromJson(rawChoices);
+            if (parsed is { Count: > 0 })
+                return parsed;
+        }
+
+        if (fallbackChoices is null || fallbackChoices.Count == 0)
+            return null;
+
+        return fallbackChoices
+            .Where(choice => !string.IsNullOrWhiteSpace(choice.Value))
+            .Select(choice => new AskUserChoiceState(
+                choice.Value!,
+                string.IsNullOrWhiteSpace(choice.Label) ? choice.Value! : choice.Label!,
+                choice.Description))
+            .ToList();
+    }
+
+    private static IReadOnlyList<AskUserChoiceState>? ParseChoicesFromJson(JsonElement rawChoices)
+    {
+        JsonElement choicesElement;
+        if (rawChoices.ValueKind == JsonValueKind.String)
+        {
+            var rawString = rawChoices.GetString();
+            if (string.IsNullOrWhiteSpace(rawString))
+                return null;
+
+            try
+            {
+                using var document = JsonDocument.Parse(rawString);
+                choicesElement = document.RootElement.Clone();
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+        else
+        {
+            choicesElement = rawChoices;
+        }
+
+        if (choicesElement.ValueKind != JsonValueKind.Array)
+            return null;
+
+        var choices = new List<AskUserChoiceState>();
+        foreach (var choice in choicesElement.EnumerateArray())
+        {
+            var value = choice.TryGetProperty("value", out var valueElement)
+                ? valueElement.GetString()
+                : null;
+            if (string.IsNullOrWhiteSpace(value))
+                continue;
+
+            var label = choice.TryGetProperty("label", out var labelElement)
+                ? labelElement.GetString()
+                : null;
+            var description = choice.TryGetProperty("description", out var descriptionElement)
+                ? descriptionElement.GetString()
+                : null;
+
+            choices.Add(new AskUserChoiceState(
+                value,
+                string.IsNullOrWhiteSpace(label) ? value : label,
+                description));
+        }
+
+        return choices;
+    }
+
+    private static DateTimeOffset? ParseExpiration(string? timeout)
+    {
+        if (string.IsNullOrWhiteSpace(timeout) || !TimeSpan.TryParse(timeout, out var duration))
+            return null;
+
+        return DateTimeOffset.UtcNow.Add(duration);
+    }
+
     // ── Hub event wiring (called when hub reconnects) ─────────────────────
 
     private void HandleReconnected() => _ = HandleReconnectedAsync();
@@ -560,6 +731,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub.OnToolEnd -= HandleToolEnd;
         _hub.OnMessageEnd -= HandleMessageEnd;
         _hub.OnError -= HandleError;
+        _hub.OnUserInputRequired -= HandleUserInputRequired;
         _hub.OnSessionReset -= HandleSessionReset;
         _hub.OnSubAgentSpawned -= HandleSubAgentSpawned;
         _hub.OnSubAgentCompleted -= HandleSubAgentCompleted;
