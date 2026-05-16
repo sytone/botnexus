@@ -367,6 +367,11 @@ public sealed class ChatPanelTests : IDisposable
 
         toolMessage = cut.Find(".message.tool");
         Assert.Contains("expanded", toolMessage.ClassList);
+
+        cut.Find(".tool-header").Click();
+
+        toolMessage = cut.Find(".message.tool");
+        Assert.DoesNotContain("expanded", toolMessage.ClassList);
     }
 
     [Fact]
