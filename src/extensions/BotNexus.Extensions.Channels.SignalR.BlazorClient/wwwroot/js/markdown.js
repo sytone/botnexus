@@ -8,8 +8,17 @@ var codeCopyFeedbackDurationMs = 2000;
  */
 window.BotNexus.renderMarkdown = function (markdown) {
     if (typeof marked !== 'undefined') {
-        var html = marked.parse(markdown, { breaks: true, gfm: true });
-        return typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(html) : html;
+        var renderer = new marked.Renderer();
+        var linkRenderer = renderer.link.bind(renderer);
+        renderer.link = function (token) {
+            var html = linkRenderer(token);
+            return html.replace(/^<a /, '<a target="_blank" rel="noopener noreferrer" ');
+        };
+
+        var html = marked.parse(markdown, { breaks: true, gfm: true, renderer: renderer });
+        return typeof DOMPurify !== 'undefined'
+            ? DOMPurify.sanitize(html, { ADD_ATTR: ["target", "rel"] })
+            : html;
     }
     return markdown;
 };
