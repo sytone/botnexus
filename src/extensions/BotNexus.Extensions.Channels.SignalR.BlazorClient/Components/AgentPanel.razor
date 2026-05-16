@@ -50,10 +50,7 @@
         <section id="@GetPanelId(AgentPanelTab.Canvas)"
                  class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Canvas) ? "active" : "")"
                  role="tabpanel">
-            <div class="agent-panel-placeholder">
-                <h3>Canvas is coming next</h3>
-                <p>This tab will host custom interactive canvas content in a follow-up slice.</p>
-            </div>
+            <CanvasPanel AgentId="@AgentId" />
         </section>
     </div>
 </div>

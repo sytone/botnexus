@@ -157,6 +157,12 @@ public sealed class AgentState
 
     /// <summary>Sub-agents spawned by this agent keyed by sub-agent ID.</summary>
     public Dictionary<string, SubAgentInfo> SubAgents { get; } = new();
+
+    /// <summary>Latest HTML payload published to the Canvas tab for this agent.</summary>
+    public string? CanvasHtml { get; set; }
+
+    /// <summary>When the latest canvas payload was published.</summary>
+    public DateTimeOffset? CanvasUpdatedAt { get; set; }
 }
 
 /// <summary>Conversation-level state: messages, stream buffers, pagination flags.</summary>

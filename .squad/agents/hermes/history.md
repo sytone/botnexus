@@ -60,3 +60,4 @@
 - 2026-08-03: Phase 3 Reports QA added/validated backend reports controller coverage (list/content/missing/invalid/directory/traversal/symlink), Blazor ReportsPanel states + safe text fallback + mobile back behavior, and REST route contract tests for /api/agents/{agentId}/reports.
 
 - 2026-05-15: Phase 3 Reports test coverage complete and validated — 34 reports-specific tests all passing (backend unit + integration for ReportsController list/content/edge-cases, bUnit ReportsPanel component states + markdown render + fallback + mobile flow, GatewayRestClient route contracts). Full solution test suite green. PR #270 approved for merge.
+- 2026-08-03: Phase 4 Canvas QA coverage now locks canvas render/clear notifier behavior (`CanvasToolTests`, `SignalRCanvasNotifierTests`), client-side routing to the correct agent (`GatewayEventHandlerTests`), and CanvasPanel empty/render/clear/rapid-update + sandbox/mobile CSS guardrails (`CanvasPanelTests`).

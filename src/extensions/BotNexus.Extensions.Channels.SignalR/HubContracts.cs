@@ -92,3 +92,4 @@ public sealed record SteeringFeedbackPayload(
     [property: JsonPropertyName("agentId")] string AgentId,
     [property: JsonPropertyName("sessionId")] string SessionId,
     [property: JsonPropertyName("kind")] SteeringFeedbackKind Kind);
+

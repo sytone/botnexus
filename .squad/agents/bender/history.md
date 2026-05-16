@@ -55,3 +55,6 @@
 
 - 2026-05-15: Phase 3 Reports API delivery complete — ReportsController.GET endpoints enforce markdown-only names, workspace-jail scoping via DefaultPathValidator + WorkspacePathSecurity symlink resolution + final-target containment check. Full unit/integration test coverage with MockFileSystem for directory operations and real HTTP pipeline validation. No write endpoints or SignalR in phase scope. All 34 reports tests pass green. PR #270 open for merge.
 - 2026-05-15: PR #270 CI failure root cause was cross-platform separator handling in `ReportsController.IsSafeReportName` — Linux accepted backslashes in `..\\outside.md`, producing 403 instead of expected 400. Fixed by explicitly rejecting both `/` and `\\` in report names, restoring consistent validation across Windows/Linux and unblocking failing gateway tests.
+
+- 2026-08-03: Phase 4 canvas runtime delivered end-to-end with gateway-neutral contract `IAgentCanvasNotifier`, runtime `canvas` tool (`render|clear`) scoped to `descriptor.AgentId`, SignalR `CanvasUpdated(agentId, html)` transport bridge, and Blazor Canvas tab state updates driven by hub events only (no tool-result fallback). Added gateway + SignalR notifier + Blazor handler/panel tests and validated targeted/full build/test runs.
+

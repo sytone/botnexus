@@ -34,6 +34,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub.OnSubAgentFailed += HandleSubAgentFailed;
         _hub.OnSubAgentKilled += HandleSubAgentKilled;
         _hub.OnSteeringFeedback += HandleSteeringFeedback;
+        _hub.OnCanvasUpdated += HandleCanvasUpdated;
         _hub.OnReconnecting += HandleReconnecting;
         _hub.OnReconnected += HandleReconnected;
         _hub.OnDisconnected += HandleDisconnected;
@@ -431,6 +432,18 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _store.NotifyChanged();
     }
 
+    public void HandleCanvasUpdated(string agentId, string html)
+    {
+        var agent = string.IsNullOrWhiteSpace(agentId) ? null : _store.GetAgent(agentId);
+
+        if (agent is null)
+            return;
+
+        agent.CanvasHtml = string.IsNullOrWhiteSpace(html) ? null : html;
+        agent.CanvasUpdatedAt = DateTimeOffset.UtcNow;
+        _store.NotifyChanged();
+    }
+
     // ── Connection lifecycle ──────────────────────────────────────────────
 
     public void HandleReconnecting()
@@ -546,6 +559,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub.OnSubAgentFailed -= HandleSubAgentFailed;
         _hub.OnSubAgentKilled -= HandleSubAgentKilled;
         _hub.OnSteeringFeedback -= HandleSteeringFeedback;
+        _hub.OnCanvasUpdated -= HandleCanvasUpdated;
         _hub.OnReconnecting -= HandleReconnecting;
         _hub.OnReconnected -= HandleReconnected;
         _hub.OnDisconnected -= HandleDisconnected;

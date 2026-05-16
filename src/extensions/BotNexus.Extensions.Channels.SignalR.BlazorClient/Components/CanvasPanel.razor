@@ -1,0 +1,39 @@
+@inject IClientStateStore Store
+@implements IDisposable
+
+<div class="canvas-panel" data-testid="canvas-panel">
+    @if (string.IsNullOrWhiteSpace(CanvasHtml))
+    {
+        <div class="canvas-empty-state">
+            Canvas output will appear here when the agent publishes HTML.
+        </div>
+    }
+    else
+    {
+        <iframe class="canvas-frame"
+                data-testid="canvas-iframe"
+                title="Agent canvas preview"
+                sandbox="allow-scripts"
+                srcdoc="@CanvasHtml"></iframe>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public string AgentId { get; set; } = default!;
+
+    private string? CanvasHtml => Store.GetAgent(AgentId)?.CanvasHtml;
+
+    protected override void OnInitialized()
+    {
+        Store.OnChanged += HandleStateChanged;
+    }
+
+    public void Dispose()
+    {
+        Store.OnChanged -= HandleStateChanged;
+    }
+
+    private void HandleStateChanged()
+        => _ = InvokeAsync(StateHasChanged);
+}

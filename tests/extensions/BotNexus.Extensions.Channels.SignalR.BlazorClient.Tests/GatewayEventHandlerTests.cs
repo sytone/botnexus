@@ -233,6 +233,29 @@ public sealed class GatewayEventHandlerTests
     }
 
     [Fact]
+    public void HandleCanvasUpdated_updates_canvas_for_matching_agent()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.CanvasHtml = null;
+
+        _handler.HandleCanvasUpdated("agent-1", "<div>Canvas</div>");
+
+        Assert.Equal("<div>Canvas</div>", agent.CanvasHtml);
+        Assert.NotNull(agent.CanvasUpdatedAt);
+    }
+
+    [Fact]
+    public void HandleCanvasUpdated_ignores_unknown_agent()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.CanvasHtml = "<p>existing</p>";
+
+        _handler.HandleCanvasUpdated("missing-agent", "<div>new</div>");
+
+        Assert.Equal("<p>existing</p>", agent.CanvasHtml);
+    }
+
+    [Fact]
     public void HandleSubAgentCompleted_routes_completion_to_originating_conversation_when_active_switches()
     {
         var agent = _store.GetAgent("agent-1")!;
@@ -380,5 +403,16 @@ public sealed class GatewayEventHandlerTests
 
         Assert.Contains(conversationOneMessages, content => content.Contains("Sub-agent killed", StringComparison.Ordinal));
         Assert.DoesNotContain(conversationTwoMessages, content => content.Contains("Sub-agent killed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void HandleCanvasUpdated_empty_html_clears_canvas_state()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.CanvasHtml = "<html><body>existing</body></html>";
+
+        _handler.HandleCanvasUpdated("agent-1", " ");
+
+        Assert.Null(agent.CanvasHtml);
     }
 }
