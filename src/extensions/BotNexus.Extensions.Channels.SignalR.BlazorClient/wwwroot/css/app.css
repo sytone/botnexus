@@ -1,4 +1,4 @@
-/* ── BotNexus Blazor Client — Dark Theme ─────────────────────────────── */
+﻿/* ── BotNexus Blazor Client — Dark Theme ─────────────────────────────── */
 
 :root {
     --bg-primary: #1a1a2e;
@@ -3385,23 +3385,45 @@ details[open] > .thinking-summary::before {
     white-space: nowrap;
 }
 
-/* ── Chat Header — Conversation Title Row ─────────────────────────────────── */
+/* Chat Header - Conversation Title Heading (was: Conversation Title Row) */
 
-.conversation-title-row {
+.chat-title-heading-row {
     display: flex;
     flex-direction: row;
-    align-items: center;
+    align-items: baseline;
     gap: 0.4rem;
-    margin-top: 0.1rem;
 }
 
-.conversation-title {
-    font-size: 0.8rem;
-    font-weight: 400;
-    color: var(--text-secondary);
+h3.conversation-title {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    cursor: default;
+}
+
+h3.conversation-title.editable {
+    cursor: pointer;
+}
+
+h3.conversation-title.editable:hover {
+    color: var(--accent);
+}
+
+.conversation-title-input {
+    font-size: 1rem;
+    font-weight: 600;
+    background: var(--bg-input, var(--bg-secondary));
+    border: 1px solid var(--border-focus, var(--accent));
+    border-radius: 4px;
+    color: inherit;
+    padding: 0.1rem 0.3rem;
+    margin: 0;
+    outline: none;
+    width: 100%;
+    max-width: 24rem;
 }
 
 /* ── Config Panel Layout ──────────────────────────────────────────────────── */

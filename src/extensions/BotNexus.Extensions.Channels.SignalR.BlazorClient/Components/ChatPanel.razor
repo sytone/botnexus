@@ -7,13 +7,12 @@
     <header class="chat-header">
         <div class="chat-header-left">
             <div class="chat-title-stack">
-                <h3>@DisplayName</h3>
-                @if (HasActiveConversation)
-                {
-                    <div class="conversation-title-row">
+                <div class="chat-title-heading-row">
+                    @if (HasActiveConversation)
+                    {
                         @if (_editingTitle)
                         {
-                            <input class="conversation-title-input"
+                            <input class="conversation-title-input conversation-title-h3"
                                    @bind="_titleDraft"
                                    @bind:event="oninput"
                                    @onblur="SaveTitle"
@@ -24,19 +23,23 @@
                         {
                             @if (IsReadOnly)
                             {
-                                <span class="conversation-title">@ActiveConversationTitle</span>
+                                <h3 class="conversation-title">@ActiveConversationTitle</h3>
                             }
                             else
                             {
-                                <span class="conversation-title editable" @onclick="StartEditTitle" title="Click to rename">@ActiveConversationTitle</span>
+                                <h3 class="conversation-title editable" @onclick="StartEditTitle" title="Click to rename">@ActiveConversationTitle</h3>
                             }
                             @if (ActiveConversation?.IsDefault == true)
                             {
                                 <span class="conversation-default-badge">Default</span>
                             }
                         }
-                    </div>
-                }
+                    }
+                    else
+                    {
+                        <h3>@DisplayName</h3>
+                    }
+                </div>
                 <span class="agent-id-label">@AgentId</span>
             </div>
 
