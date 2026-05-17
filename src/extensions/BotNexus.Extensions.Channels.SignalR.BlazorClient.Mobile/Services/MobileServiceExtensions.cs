@@ -13,9 +13,9 @@ public static class MobileServiceExtensions
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        var gatewayUrl = configuration["GatewayUrl"] ?? "http://localhost:5005";
-
-        services.AddScoped(_ => new HttpClient { BaseAddress = new Uri(gatewayUrl) });
+        // Do not set BaseAddress at registration time — the gateway URL is derived
+        // at runtime from NavigationManager so it works across devtunnels and production.
+        services.AddScoped(_ => new HttpClient());
         services.AddScoped<MobileState>();
         services.AddScoped<MobileGatewayClient>();
 
