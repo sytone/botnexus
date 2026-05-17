@@ -1,56 +1,12 @@
 using System.Net.Http.Json;
-using System.Text.Json.Serialization;
+using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.AspNetCore.SignalR.Client;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services;
 
-// ── Minimal wire DTOs ──────────────────────────────────────────────────────────
-
-file sealed record AgentSummaryDto(
-    [property: JsonPropertyName("agentId")] string AgentId,
-    [property: JsonPropertyName("displayName")] string DisplayName,
-    [property: JsonPropertyName("emoji")] string? Emoji = null);
-
-file sealed record ConversationSummaryDto(
-    [property: JsonPropertyName("conversationId")] string ConversationId,
-    [property: JsonPropertyName("title")] string Title);
-
-file sealed record HistoryMessage(
-    [property: JsonPropertyName("id")] string Id,
-    [property: JsonPropertyName("sessionId")] string SessionId,
-    [property: JsonPropertyName("role")] string Role,
-    [property: JsonPropertyName("content")] string Content,
-    [property: JsonPropertyName("timestamp")] DateTimeOffset Timestamp,
-    [property: JsonPropertyName("toolName")] string? ToolName = null,
-    [property: JsonPropertyName("toolCallId")] string? ToolCallId = null);
-
-file sealed record ConversationHistoryResponseDto(
-    [property: JsonPropertyName("messages")] IReadOnlyList<HistoryMessage>? Messages,
-    [property: JsonPropertyName("nextCursor")] string? NextCursor,
-    [property: JsonPropertyName("hasMore")] bool HasMore);
-
-file sealed record SendMessageResult(
-    [property: JsonPropertyName("sessionId")] string SessionId,
-    [property: JsonPropertyName("agentId")] string AgentId,
-    [property: JsonPropertyName("channelType")] string? ChannelType);
-
-file sealed record AgentStreamEvent
-{
-    [JsonPropertyName("type")] public string? Type { get; init; }
-    [JsonPropertyName("sessionId")] public string? SessionId { get; init; }
-    [JsonPropertyName("contentDelta")] public string? ContentDelta { get; init; }
-    [JsonPropertyName("thinkingContent")] public string? ThinkingContent { get; init; }
-    [JsonPropertyName("toolName")] public string? ToolName { get; init; }
-    [JsonPropertyName("toolCallId")] public string? ToolCallId { get; init; }
-    [JsonPropertyName("toolResult")] public string? ToolResult { get; init; }
-    [JsonPropertyName("errorMessage")] public string? ErrorMessage { get; init; }
-}
-
-// ── Main client ────────────────────────────────────────────────────────────────
-
 /// <summary>
 /// Handles REST data loading and SignalR streaming for the mobile Blazor WASM client.
-/// Self-contained — no dependency on the desktop BlazorClient assembly.
+/// Uses shared service contracts from <c>BlazorClient.Core</c>.
 /// </summary>
 public sealed class MobileGatewayClient : IAsyncDisposable
 {
@@ -78,7 +34,7 @@ public sealed class MobileGatewayClient : IAsyncDisposable
         // ── REST: agents ──────────────────────────────────────────────────────
         try
         {
-            var agents = await _http.GetFromJsonAsync<List<AgentSummaryDto>>($"{baseUrl}api/agents", ct);
+            var agents = await _http.GetFromJsonAsync<List<AgentSummary>>($"{baseUrl}api/agents", ct);
             _state.Agents.Clear();
             if (agents is not null)
             {
@@ -157,20 +113,17 @@ public sealed class MobileGatewayClient : IAsyncDisposable
     {
         try
         {
-            var history = await _http.GetFromJsonAsync<ConversationHistoryResponseDto>(
+            var history = await _http.GetFromJsonAsync<HistoryResponse>(
                 $"{baseUrl}api/conversations/{Uri.EscapeDataString(conversationId)}/history", ct);
             _state.Messages.Clear();
             if (history?.Messages is not null)
             {
                 foreach (var m in history.Messages)
                 {
-                    _state.Messages.Add(new ChatMessage
+                    _state.Messages.Add(new ChatMessage(m.Role, m.Content, m.Timestamp)
                     {
-                        Role = m.Role,
-                        Content = m.Content,
                         ToolName = m.ToolName,
-                        IsToolCall = m.ToolName is not null,
-                        Timestamp = m.Timestamp
+                        IsToolCall = m.ToolName is not null
                     });
                 }
             }
@@ -188,7 +141,7 @@ public sealed class MobileGatewayClient : IAsyncDisposable
             return;
 
         // Optimistic: add user message immediately
-        _state.Messages.Add(new ChatMessage { Role = "user", Content = content });
+        _state.Messages.Add(new ChatMessage("user", content, DateTimeOffset.UtcNow));
         _state.NotifyChanged();
 
         try
@@ -246,24 +199,22 @@ public sealed class MobileGatewayClient : IAsyncDisposable
             _state.NotifyChanged();
         });
 
-        _hub.On<AgentStreamEvent>("ThinkingDelta", e =>
+        _hub.On<AgentStreamEvent>("ThinkingDelta", _ =>
         {
-            // Ignore thinking deltas in mobile for now
+            // Thinking deltas are not displayed in the mobile UI.
         });
 
-        _hub.On<AgentStreamEvent>("ToolStart", e =>
+        _hub.On<AgentStreamEvent>("ToolStart", _ =>
         {
-            // Could add tool call indicator
+            // Tool-call indicator not shown in the mobile UI.
         });
 
         _hub.On<AgentStreamEvent>("ToolEnd", e =>
         {
             if (e.ToolName is not null)
             {
-                _state.Messages.Add(new ChatMessage
+                _state.Messages.Add(new ChatMessage("tool", e.ToolResult ?? string.Empty, DateTimeOffset.UtcNow)
                 {
-                    Role = "tool",
-                    Content = e.ToolResult ?? string.Empty,
                     ToolName = e.ToolName,
                     IsToolCall = true
                 });
@@ -274,11 +225,7 @@ public sealed class MobileGatewayClient : IAsyncDisposable
         {
             if (!string.IsNullOrEmpty(_state.StreamBuffer))
             {
-                _state.Messages.Add(new ChatMessage
-                {
-                    Role = "assistant",
-                    Content = _state.StreamBuffer
-                });
+                _state.Messages.Add(new ChatMessage("assistant", _state.StreamBuffer, DateTimeOffset.UtcNow));
             }
             _state.IsStreaming = false;
             _state.StreamBuffer = string.Empty;
@@ -291,11 +238,7 @@ public sealed class MobileGatewayClient : IAsyncDisposable
             _state.StreamBuffer = string.Empty;
             if (e.ErrorMessage is not null)
             {
-                _state.Messages.Add(new ChatMessage
-                {
-                    Role = "system",
-                    Content = $"⚠ {e.ErrorMessage}"
-                });
+                _state.Messages.Add(new ChatMessage("system", $"⚠ {e.ErrorMessage}", DateTimeOffset.UtcNow));
             }
             _state.NotifyChanged();
         });

@@ -1,6 +1,8 @@
+using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services;
 
-/// <summary>Represents a selectable agent.</summary>
+/// <summary>Represents a selectable agent in the mobile UI.</summary>
 public sealed class AgentOption
 {
     public required string AgentId { get; init; }
@@ -8,22 +10,11 @@ public sealed class AgentOption
     public string? Emoji { get; init; }
 }
 
-/// <summary>Represents a selectable conversation.</summary>
+/// <summary>Represents a selectable conversation in the mobile UI.</summary>
 public sealed class ConversationOption
 {
     public required string ConversationId { get; init; }
     public required string Title { get; init; }
-}
-
-/// <summary>A single message in the chat history.</summary>
-public sealed class ChatMessage
-{
-    /// <summary>Role: "user", "assistant", "system", "tool", "thinking"</summary>
-    public required string Role { get; init; }
-    public required string Content { get; init; }
-    public string? ToolName { get; init; }
-    public bool IsToolCall { get; init; }
-    public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
 }
 
 /// <summary>Lightweight observable state container for the mobile chat UI.</summary>
@@ -31,6 +22,8 @@ public sealed class MobileState
 {
     public List<AgentOption> Agents { get; } = [];
     public List<ConversationOption> Conversations { get; } = [];
+
+    /// <summary>Messages use the shared <see cref="ChatMessage"/> from Core.</summary>
     public List<ChatMessage> Messages { get; } = [];
 
     public string? ActiveAgentId { get; set; }
@@ -43,3 +36,4 @@ public sealed class MobileState
     public event Action? OnChanged;
     public void NotifyChanged() => OnChanged?.Invoke();
 }
+
