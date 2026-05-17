@@ -8,33 +8,52 @@
     botnexus-watchdog.ps1 every minute using Task Scheduler. Run once from an
     elevated (Administrator) PowerShell prompt.
 
-    On Linux/macOS, installs a crontab entry that runs botnexus-watchdog.ps1
-    every minute via pwsh. No elevation required.
+    On Linux/macOS, choose between two scheduling methods via -Method:
+      cron    (default) — adds a crontab entry that runs every minute.
+      systemd           — installs user-level systemd service + timer units
+                          (preferred on systemd-based distros; survives reboots
+                          without requiring a cron daemon).
+
+.PARAMETER Method
+    Linux/macOS only. Scheduling back-end: 'cron' (default) or 'systemd'.
+    Ignored on Windows.
 
 .EXAMPLE
-    # Install with defaults
+    # Windows — Scheduled Task
     .\Install-WatchdogTask.ps1
 
-    # Install with a custom repo path
-    .\Install-WatchdogTask.ps1 -RepoPath "~/projects/botnexus"
+    # Linux — cron (default)
+    ./Install-WatchdogTask.ps1
 
-    # Uninstall
-    .\Install-WatchdogTask.ps1 -Uninstall
+    # Linux — systemd timer
+    ./Install-WatchdogTask.ps1 -Method systemd
+
+    # Custom repo path
+    ./Install-WatchdogTask.ps1 -RepoPath "~/projects/botnexus" -Method systemd
+
+    # Uninstall (removes whichever method was used)
+    ./Install-WatchdogTask.ps1 -Uninstall
+    ./Install-WatchdogTask.ps1 -Uninstall -Method systemd
 #>
 
 [CmdletBinding()]
 param(
-    [string]$RepoPath              = '',
+    [string]$RepoPath                 = '',
     [int]   $GitCheckIntervalMinutes  = 5,
     [int]   $CliCheckIntervalMinutes  = 60,
     [int]   $MaxFailures              = 3,
     [string]$GatewayUrl               = 'http://localhost:5005',
+    [ValidateSet('cron', 'systemd')]
+    [string]$Method                   = 'cron',
     [switch]$Uninstall
 )
 
-$TaskName    = 'BotNexusWatchdog'
-$CronMarker  = '# BotNexusWatchdog'
-$IsWindows   = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
+$TaskName       = 'BotNexusWatchdog'
+$CronMarker     = '# BotNexusWatchdog'
+$SystemdService = 'botnexus-watchdog.service'
+$SystemdTimer   = 'botnexus-watchdog.timer'
+$SystemdDir     = Join-Path $HOME '.config' 'systemd' 'user'
+$IsWindows      = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
 
 # ── Locate dependencies ─────────────────────────────────────────────────────
 
@@ -57,6 +76,13 @@ if ($Uninstall) {
     if ($IsWindows) {
         Write-Host "Removing scheduled task '$TaskName'..."
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+    } elseif ($Method -eq 'systemd') {
+        Write-Host "Disabling systemd timer '$SystemdTimer'..."
+        & systemctl --user disable --now $SystemdTimer 2>&1 | ForEach-Object { Write-Host "  $_" }
+        Remove-Item (Join-Path $SystemdDir $SystemdService) -Force -ErrorAction SilentlyContinue
+        Remove-Item (Join-Path $SystemdDir $SystemdTimer)   -Force -ErrorAction SilentlyContinue
+        & systemctl --user daemon-reload
+        Write-Host "Unit files removed and daemon reloaded."
     } else {
         Write-Host "Removing crontab entry for '$TaskName'..."
         $existing = & crontab -l 2>/dev/null
@@ -86,29 +112,25 @@ $argParts += '-GatewayUrl', "`"$GatewayUrl`""
 
 $arguments = $argParts -join ' '
 
-# ── Install ──────────────────────────────────────────────────────────────────
+# ── Install: Windows ─────────────────────────────────────────────────────────
 
 if ($IsWindows) {
-    # Windows: Task Scheduler
     Write-Host "Creating scheduled task '$TaskName'..."
     Write-Host "  pwsh:      $pwshPath"
     Write-Host "  script:    $watchdogScript"
     Write-Host "  arguments: $arguments"
     Write-Host ''
 
-    $action  = New-ScheduledTaskAction -Execute $pwshPath -Argument $arguments
-    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration ([TimeSpan]::MaxValue)
-
+    $action   = New-ScheduledTaskAction -Execute $pwshPath -Argument $arguments
+    $trigger  = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration ([TimeSpan]::MaxValue)
     $settings = New-ScheduledTaskSettingsSet `
         -AllowStartIfOnBatteries `
         -DontStopIfGoingOnBatteries `
         -StartWhenAvailable `
         -ExecutionTimeLimit (New-TimeSpan -Minutes 5) `
         -MultipleInstances IgnoreNew
-
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType S4U -RunLevel Highest
 
-    # Remove existing task if present before re-creating
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
 
     Register-ScheduledTask `
@@ -127,8 +149,64 @@ if ($IsWindows) {
     Write-Host "To remove:  ./Install-WatchdogTask.ps1 -Uninstall"
     Write-Host "Logs:       $env:USERPROFILE\.botnexus\logs\watchdog-*.log"
 
+# ── Install: Linux/macOS — systemd ───────────────────────────────────────────
+
+} elseif ($Method -eq 'systemd') {
+    Write-Host "Installing systemd user units for '$TaskName'..."
+    Write-Host "  pwsh:      $pwshPath"
+    Write-Host "  script:    $watchdogScript"
+    Write-Host "  unit dir:  $SystemdDir"
+    Write-Host ''
+
+    New-Item -ItemType Directory -Force -Path $SystemdDir | Out-Null
+
+    $serviceContent = @"
+[Unit]
+Description=BotNexus Watchdog
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=$pwshPath $arguments
+"@
+
+    $timerContent = @"
+[Unit]
+Description=Run BotNexus Watchdog every minute
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=60
+AccuracySec=5
+
+[Install]
+WantedBy=timers.target
+"@
+
+    Set-Content -Path (Join-Path $SystemdDir $SystemdService) -Value $serviceContent -Encoding UTF8
+    Set-Content -Path (Join-Path $SystemdDir $SystemdTimer)   -Value $timerContent   -Encoding UTF8
+
+    Write-Host "Reloading systemd and enabling timer..."
+    & systemctl --user daemon-reload
+    & systemctl --user enable --now $SystemdTimer
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "systemctl enable failed. Ensure systemd --user is available on this system."
+        exit 1
+    }
+
+    Write-Host ''
+    Write-Host "systemd timer '$SystemdTimer' installed and started." -ForegroundColor Green
+    Write-Host ''
+    Write-Host "To verify:      systemctl --user status $SystemdTimer"
+    Write-Host "To view logs:   journalctl --user -u botnexus-watchdog.service -f"
+    Write-Host "To remove:      ./Install-WatchdogTask.ps1 -Uninstall -Method systemd"
+    Write-Host "Log files:      ~/.botnexus/logs/watchdog-*.log"
+
+# ── Install: Linux/macOS — cron ──────────────────────────────────────────────
+
 } else {
-    # Linux/macOS: crontab
     Write-Host "Installing crontab entry for '$TaskName'..."
     Write-Host "  pwsh:      $pwshPath"
     Write-Host "  script:    $watchdogScript"
@@ -137,7 +215,6 @@ if ($IsWindows) {
 
     $cronLine = "* * * * * $pwshPath $arguments $CronMarker"
 
-    # Fetch existing crontab, strip any prior BotNexus entry, append new line
     $existing = & crontab -l 2>/dev/null
     $filtered = @($existing | Where-Object { $_ -notmatch [regex]::Escape($CronMarker) })
     $filtered += $cronLine
