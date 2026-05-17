@@ -94,6 +94,7 @@ else
     private bool _isSending;
     private bool _menuOpen;
     private bool _ready;
+    private string _gatewayUrl = "";
     private ElementReference _messageStreamRef;
 
     protected override async Task OnInitializedAsync()
@@ -105,10 +106,10 @@ else
             // Derive gateway URL from the page origin so the app works over devtunnels,
             // production hosts, etc. — never hardcode localhost.
             var origin = new Uri(Nav.BaseUri).GetLeftPart(UriPartial.Authority);
-            var gatewayUrl = string.IsNullOrEmpty(origin)
+            _gatewayUrl = string.IsNullOrEmpty(origin)
                 ? (Config["GatewayUrl"] ?? "http://localhost:5005")
                 : origin;
-            await Gateway.InitializeAsync(gatewayUrl);
+            await Gateway.InitializeAsync(_gatewayUrl);
             _ready = true;
         }
         catch (Exception ex)
@@ -139,11 +140,24 @@ else
         catch (ObjectDisposedException) { /* component disposed, ignore */ }
     }
 
-    private void OnAgentChanged(ChangeEventArgs e)
+    private async Task OnAgentChanged(ChangeEventArgs e)
     {
-        State.ActiveAgentId = e.Value?.ToString();
+        var agentId = e.Value?.ToString();
+        if (string.IsNullOrEmpty(agentId) || agentId == State.ActiveAgentId) return;
+        State.ActiveAgentId = agentId;
+        State.ActiveConversationId = null;
+        State.Conversations.Clear();
+        State.Messages.Clear();
+        State.NotifyChanged();
         _menuOpen = false;
-        // Could reload conversations here if needed
+        try
+        {
+            await Gateway.LoadConversationsAsync(_gatewayUrl, agentId, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[Mobile] LoadConversations failed after agent switch: {ex.Message}");
+        }
     }
 
     private void OnConvChanged(ChangeEventArgs e)
