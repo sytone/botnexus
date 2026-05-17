@@ -29,8 +29,16 @@ public class SignalREndpointContributor : IEndpointContributor
 
     private static void MapBlazorApp(WebApplication app, string blazorPath, string? pathPrefix)
     {
+        var indexHtmlPath = Path.Combine(blazorPath, "index.html");
+        if (!File.Exists(indexHtmlPath))
+        {
+            app.Services.GetService<ILogger<SignalREndpointContributor>>()?.LogWarning(
+                "Blazor client index.html not found at {Path} — skipping endpoint registration", indexHtmlPath);
+            return;
+        }
+
         var fileProvider = new PhysicalFileProvider(blazorPath);
-        var indexBytes = File.ReadAllBytes(Path.Combine(blazorPath, "index.html"));
+        var indexBytes = File.ReadAllBytes(indexHtmlPath);
         var prefix = pathPrefix ?? string.Empty;
 
         app.Use(async (context, next) =>
