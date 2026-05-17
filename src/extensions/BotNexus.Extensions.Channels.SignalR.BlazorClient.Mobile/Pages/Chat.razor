@@ -1,0 +1,189 @@
+@page "/"
+@inject MobileState State
+@inject MobileGatewayClient Gateway
+@inject IConfiguration Config
+@inject IJSRuntime JS
+@implements IDisposable
+
+<PageTitle>BotNexus</PageTitle>
+
+@if (!_ready)
+{
+    <div class="portal-loading">
+        <div class="portal-load-spinner">Connecting…</div>
+    </div>
+}
+else
+{
+    <div class="mobile-app">
+
+        <!-- TOP BAR -->
+        <div class="top-bar">
+            <select class="agent-select" value="@State.ActiveAgentId" @onchange="OnAgentChanged">
+                @foreach (var agent in State.Agents)
+                {
+                    <option value="@agent.AgentId">@(agent.Emoji is not null ? agent.Emoji + " " : "")@agent.DisplayName</option>
+                }
+            </select>
+
+            <select class="conv-select" value="@State.ActiveConversationId" @onchange="OnConvChanged">
+                @foreach (var conv in State.Conversations)
+                {
+                    <option value="@conv.ConversationId">@conv.Title</option>
+                }
+            </select>
+
+            <div class="overflow-menu-wrapper">
+                <button class="overflow-btn" @onclick="ToggleMenu" aria-label="Menu">⋮</button>
+                @if (_menuOpen)
+                {
+                    <div class="overflow-dropdown">
+                        <div class="menu-session-id" title="Session ID">
+                            <span>Session: </span><span class="session-id-text">@(State.ActiveSessionId ?? "—")</span>
+                        </div>
+                        <button class="menu-action" @onclick="NewSession">New session</button>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- MESSAGE STREAM -->
+        <div class="message-stream" @ref="_messageStreamRef">
+            @foreach (var msg in State.Messages)
+            {
+                <div class="message @GetMessageClass(msg)">
+                    @if (msg.IsToolCall)
+                    {
+                        <div class="tool-call-label">🔧 @msg.ToolName</div>
+                    }
+                    <div class="message-content">@msg.Content</div>
+                    <div class="message-time">@msg.Timestamp.ToLocalTime().ToString("HH:mm")</div>
+                </div>
+            }
+
+            @if (State.IsStreaming && !string.IsNullOrEmpty(State.StreamBuffer))
+            {
+                <div class="message assistant streaming">
+                    <div class="message-content">@State.StreamBuffer<span class="stream-cursor">▌</span></div>
+                </div>
+            }
+        </div>
+
+        <!-- BOTTOM BAR -->
+        <div class="bottom-bar">
+            <textarea
+                class="input-textarea"
+                placeholder="Message…"
+                rows="1"
+                @bind="_inputText"
+                @bind:event="oninput"
+                @onkeydown="OnKeyDown"
+                disabled="@_isSending">
+            </textarea>
+            <button class="send-btn" @onclick="SendMessage" disabled="@(_isSending || string.IsNullOrWhiteSpace(_inputText))">
+                →
+            </button>
+        </div>
+
+    </div>
+}
+
+@code {
+    private string _inputText = "";
+    private bool _isSending;
+    private bool _menuOpen;
+    private bool _ready;
+    private ElementReference _messageStreamRef;
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.OnChanged += HandleStateChanged;
+
+        try
+        {
+            var gatewayUrl = Config["GatewayUrl"] ?? "http://localhost:5005";
+            await Gateway.InitializeAsync(gatewayUrl);
+            _ready = true;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[Mobile] Init failed: {ex.Message}");
+            _ready = true; // show UI anyway
+        }
+    }
+
+    private void HandleStateChanged() =>
+        _ = InvokeAsync(async () =>
+        {
+            StateHasChanged();
+            await ScrollToBottomAsync();
+        });
+
+    private void OnAgentChanged(ChangeEventArgs e)
+    {
+        State.ActiveAgentId = e.Value?.ToString();
+        _menuOpen = false;
+        // Could reload conversations here if needed
+    }
+
+    private void OnConvChanged(ChangeEventArgs e)
+    {
+        State.ActiveConversationId = e.Value?.ToString();
+    }
+
+    private async Task SendMessage()
+    {
+        if (string.IsNullOrWhiteSpace(_inputText)) return;
+        var content = _inputText.Trim();
+        _inputText = "";
+        _isSending = true;
+        try
+        {
+            await Gateway.SendMessageAsync(content);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[Mobile] Send failed: {ex.Message}");
+        }
+        finally
+        {
+            _isSending = false;
+        }
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+            await SendMessage();
+    }
+
+    private void ToggleMenu() => _menuOpen = !_menuOpen;
+
+    private async Task NewSession()
+    {
+        _menuOpen = false;
+        await Gateway.ResetSessionAsync();
+    }
+
+    private static string GetMessageClass(ChatMessage msg)
+    {
+        if (msg.IsToolCall) return "tool";
+        if (msg.Role == "thinking") return "thinking";
+        return msg.Role == "user" ? "user" : "assistant";
+    }
+
+    private async Task ScrollToBottomAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("eval",
+                "document.querySelector('.message-stream')?.scrollTo({top:1e9,behavior:'smooth'})");
+        }
+        catch { /* ignore JS interop errors */ }
+    }
+
+    public void Dispose()
+    {
+        State.OnChanged -= HandleStateChanged;
+    }
+}
