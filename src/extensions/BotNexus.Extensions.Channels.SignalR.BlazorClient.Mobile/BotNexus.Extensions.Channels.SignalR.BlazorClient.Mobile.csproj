@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ServiceWorkerAssetsManifest>service-worker-assets.js</ServiceWorkerAssetsManifest>
+    <StaticWebAssetBasePath>/mobile</StaticWebAssetBasePath>
+  </PropertyGroup>
+
+  <!-- Same NuGet packages as the desktop client. Services are duplicated in this project
+       because a WASM project cannot reference another WASM project without asset conflicts.
+       Future: extract shared services to a BotNexus.Extensions.Channels.SignalR.BlazorClient.Core
+       class library that both desktop and mobile reference. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ServiceWorker Include="wwwroot\service-worker.js" ProfileName="release" />
+  </ItemGroup>
+</Project>

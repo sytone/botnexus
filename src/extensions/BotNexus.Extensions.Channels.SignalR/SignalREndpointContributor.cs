@@ -18,32 +18,53 @@ public class SignalREndpointContributor : IEndpointContributor
 
         var extensionDir = Path.GetDirectoryName(typeof(SignalREndpointContributor).Assembly.Location)!;
         var blazorPath = Path.Combine(extensionDir, "blazor");
+        var mobilePath = Path.Combine(extensionDir, "blazor-mobile");
 
-        if (!Directory.Exists(blazorPath))
-            return;
+        if (Directory.Exists(blazorPath))
+            MapBlazorApp(app, blazorPath, pathPrefix: null);
 
-        var blazorFileProvider = new PhysicalFileProvider(blazorPath);
+        if (Directory.Exists(mobilePath))
+            MapBlazorApp(app, mobilePath, pathPrefix: "/mobile");
+    }
+
+    private static void MapBlazorApp(WebApplication app, string blazorPath, string? pathPrefix)
+    {
+        var fileProvider = new PhysicalFileProvider(blazorPath);
         var indexBytes = File.ReadAllBytes(Path.Combine(blazorPath, "index.html"));
+        var prefix = pathPrefix ?? string.Empty;
 
-        // Serve Blazor WASM client at the root URL.
-        // API, hub, health, and swagger paths are excluded so they reach their own handlers.
         app.Use(async (context, next) =>
         {
             var path = context.Request.Path.Value ?? "";
 
-            // Let API, hub, health, and swagger requests pass through
-            if (path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith("/hub/", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith("/swagger", StringComparison.OrdinalIgnoreCase) ||
-                path.Equals("/health", StringComparison.OrdinalIgnoreCase))
+            // Only handle requests under this prefix
+            if (!string.IsNullOrEmpty(prefix))
             {
-                await next();
-                return;
+                if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    await next();
+                    return;
+                }
+                // Strip prefix for file lookup
+                path = path[prefix.Length..];
+                if (string.IsNullOrEmpty(path)) path = "/";
+            }
+            else
+            {
+                // Desktop: let API/hub/health/swagger pass through
+                if (path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase) ||
+                    path.StartsWith("/hub/", StringComparison.OrdinalIgnoreCase) ||
+                    path.StartsWith("/swagger", StringComparison.OrdinalIgnoreCase) ||
+                    path.Equals("/health", StringComparison.OrdinalIgnoreCase) ||
+                    path.StartsWith("/mobile", StringComparison.OrdinalIgnoreCase))
+                {
+                    await next();
+                    return;
+                }
             }
 
-            // Try to serve a static file from the Blazor output
             var subPath = path == "/" ? "/index.html" : path;
-            var fileInfo = blazorFileProvider.GetFileInfo(subPath);
+            var fileInfo = fileProvider.GetFileInfo(subPath);
 
             if (fileInfo.Exists && !fileInfo.IsDirectory)
             {
@@ -55,7 +76,7 @@ public class SignalREndpointContributor : IEndpointContributor
                 return;
             }
 
-            // SPA fallback for client-side routes (paths without file extensions)
+            // SPA fallback for client-side routes
             if (!subPath.Contains('.'))
             {
                 context.Response.ContentType = "text/html";
@@ -63,7 +84,6 @@ public class SignalREndpointContributor : IEndpointContributor
                 return;
             }
 
-            // Fall through for non-Blazor requests or missing files
             await next();
         });
     }
