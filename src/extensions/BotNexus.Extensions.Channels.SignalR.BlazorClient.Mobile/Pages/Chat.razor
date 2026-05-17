@@ -2,6 +2,7 @@
 @inject MobileState State
 @inject MobileGatewayClient Gateway
 @inject IConfiguration Config
+@inject NavigationManager Nav
 @inject IJSRuntime JS
 @implements IDisposable
 
@@ -101,7 +102,12 @@ else
 
         try
         {
-            var gatewayUrl = Config["GatewayUrl"] ?? "http://localhost:5005";
+            // Derive gateway URL from the page origin so the app works over devtunnels,
+            // production hosts, etc. — never hardcode localhost.
+            var origin = new Uri(Nav.BaseUri).GetLeftPart(UriPartial.Authority);
+            var gatewayUrl = string.IsNullOrEmpty(origin)
+                ? (Config["GatewayUrl"] ?? "http://localhost:5005")
+                : origin;
             await Gateway.InitializeAsync(gatewayUrl);
             _ready = true;
         }
