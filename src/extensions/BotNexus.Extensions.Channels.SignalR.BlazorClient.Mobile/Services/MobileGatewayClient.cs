@@ -148,6 +148,8 @@ public sealed class MobileGatewayClient : IAsyncDisposable
         {
             await LoadHistoryAsync(baseUrl, _state.ActiveConversationId, ct);
         }
+
+        _state.NotifyChanged();
     }
 
     /// <summary>Load message history for a conversation.</summary>
