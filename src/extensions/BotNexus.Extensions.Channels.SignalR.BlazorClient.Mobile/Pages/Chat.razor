@@ -118,12 +118,26 @@ else
         }
     }
 
-    private void HandleStateChanged() =>
-        _ = InvokeAsync(async () =>
+    private void HandleStateChanged()
+    {
+        try
         {
-            StateHasChanged();
-            await ScrollToBottomAsync();
-        });
+            _ = InvokeAsync(async () =>
+            {
+                try
+                {
+                    StateHasChanged();
+                    await ScrollToBottomAsync();
+                }
+                catch (ObjectDisposedException) { /* component disposed, ignore */ }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[Mobile] Render error: {ex.Message}");
+                }
+            });
+        }
+        catch (ObjectDisposedException) { /* component disposed, ignore */ }
+    }
 
     private void OnAgentChanged(ChangeEventArgs e)
     {
