@@ -1,34 +1,50 @@
 @page "/"
-@inject MobileState State
-@inject MobileGatewayClient Gateway
-@inject IConfiguration Config
+@inject IClientStateStore Store
+@inject IAgentInteractionService Interaction
+@inject IPortalLoadService PortalLoad
 @inject NavigationManager Nav
 @inject IJSRuntime JS
 @implements IDisposable
 
 <PageTitle>BotNexus</PageTitle>
 
-@if (!_ready)
+@if (!PortalLoad.IsReady)
 {
     <div class="portal-loading">
-        <div class="portal-load-spinner">Connecting…</div>
+        @if (PortalLoad.LoadError is not null)
+        {
+            <div class="portal-load-error">⚠ @PortalLoad.LoadError</div>
+        }
+        else
+        {
+            <div class="portal-load-spinner">Connecting…</div>
+        }
     </div>
 }
 else
 {
+    var activeAgent = Store.ActiveAgentId is not null ? Store.GetAgent(Store.ActiveAgentId) : null;
+    var activeConvId = activeAgent?.ActiveConversationId;
+    var messages = activeConvId is not null ? Store.GetMessages(activeConvId) : [];
+    var streamState = activeConvId is not null ? Store.GetStreamState(activeConvId) : null;
+    var conversations = activeAgent?.Conversations.Values
+        .Where(c => c.Status == "Active")
+        .OrderByDescending(c => c.UpdatedAt)
+        .ToList() ?? [];
+
     <div class="mobile-app">
 
         <!-- TOP BAR -->
         <div class="top-bar">
-            <select class="agent-select" value="@State.ActiveAgentId" @onchange="OnAgentChanged">
-                @foreach (var agent in State.Agents)
+            <select class="agent-select" value="@Store.ActiveAgentId" @onchange="OnAgentChanged">
+                @foreach (var (agentId, agent) in Store.Agents)
                 {
-                    <option value="@agent.AgentId">@(agent.Emoji is not null ? agent.Emoji + " " : "")@agent.DisplayName</option>
+                    <option value="@agentId">@(agent.Emoji is not null ? agent.Emoji + " " : "")@agent.DisplayName</option>
                 }
             </select>
 
-            <select @key="State.ActiveAgentId" class="conv-select" value="@State.ActiveConversationId" @onchange="OnConvChanged">
-                @foreach (var conv in State.Conversations)
+            <select @key="Store.ActiveAgentId" class="conv-select" value="@activeConvId" @onchange="OnConvChanged">
+                @foreach (var conv in conversations)
                 {
                     <option value="@conv.ConversationId">@conv.Title</option>
                 }
@@ -40,7 +56,7 @@ else
                 {
                     <div class="overflow-dropdown">
                         <div class="menu-session-id" title="Session ID">
-                            <span>Session: </span><span class="session-id-text">@(State.ActiveSessionId ?? "—")</span>
+                            <span>Session: </span><span class="session-id-text">@(activeAgent?.SessionId ?? "—")</span>
                         </div>
                         <button class="menu-action" @onclick="NewSession">New session</button>
                     </div>
@@ -50,7 +66,7 @@ else
 
         <!-- MESSAGE STREAM -->
         <div class="message-stream" @ref="_messageStreamRef">
-            @foreach (var msg in State.Messages)
+            @foreach (var msg in messages)
             {
                 <div class="message @GetMessageClass(msg)">
                     @if (msg.IsToolCall)
@@ -62,10 +78,10 @@ else
                 </div>
             }
 
-            @if (State.IsStreaming && !string.IsNullOrEmpty(State.StreamBuffer))
+            @if (streamState?.IsStreaming == true && !string.IsNullOrEmpty(streamState.Buffer))
             {
                 <div class="message assistant streaming">
-                    <div class="message-content">@State.StreamBuffer<span class="stream-cursor">▌</span></div>
+                    <div class="message-content">@streamState.Buffer<span class="stream-cursor">▌</span></div>
                 </div>
             }
         </div>
@@ -93,33 +109,16 @@ else
     private string _inputText = "";
     private bool _isSending;
     private bool _menuOpen;
-    private bool _ready;
-    private string _gatewayUrl = "";
-    private string GatewayUrl => string.IsNullOrEmpty(_gatewayUrl)
-        ? new Uri(Nav.BaseUri).GetLeftPart(UriPartial.Authority)
-        : _gatewayUrl;
     private ElementReference _messageStreamRef;
 
     protected override async Task OnInitializedAsync()
     {
-        State.OnChanged += HandleStateChanged;
+        Store.OnChanged += HandleStateChanged;
+        PortalLoad.OnReadyChanged += HandleStateChanged;
 
-        try
-        {
-            // Derive gateway URL from the page origin so the app works over devtunnels,
-            // production hosts, etc. — never hardcode localhost.
-            var origin = new Uri(Nav.BaseUri).GetLeftPart(UriPartial.Authority);
-            _gatewayUrl = string.IsNullOrEmpty(origin)
-                ? (Config["GatewayUrl"] ?? "http://localhost:5005")
-                : origin;
-            await Gateway.InitializeAsync(GatewayUrl);
-            _ready = true;
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"[Mobile] Init failed: {ex.Message}");
-            _ready = true; // show UI anyway
-        }
+        var origin = new Uri(Nav.BaseUri).GetLeftPart(UriPartial.Authority);
+        var hubUrl = $"{origin}/hub/gateway";
+        await PortalLoad.InitializeAsync(hubUrl);
     }
 
     private void HandleStateChanged()
@@ -133,50 +132,48 @@ else
                     StateHasChanged();
                     await ScrollToBottomAsync();
                 }
-                catch (ObjectDisposedException) { /* component disposed, ignore */ }
+                catch (ObjectDisposedException) { }
                 catch (Exception ex)
                 {
                     Console.Error.WriteLine($"[Mobile] Render error: {ex.Message}");
                 }
             });
         }
-        catch (ObjectDisposedException) { /* component disposed, ignore */ }
+        catch (ObjectDisposedException) { }
     }
 
     private async Task OnAgentChanged(ChangeEventArgs e)
     {
         var agentId = e.Value?.ToString();
-        if (string.IsNullOrEmpty(agentId) || agentId == State.ActiveAgentId) return;
-        State.ActiveAgentId = agentId;
-        State.ActiveConversationId = null;
-        State.Conversations.Clear();
-        State.Messages.Clear();
-        State.NotifyChanged();
+        if (string.IsNullOrEmpty(agentId) || agentId == Store.ActiveAgentId) return;
+        Store.ActiveAgentId = agentId;
+        Store.NotifyChanged();
         _menuOpen = false;
-        try
-        {
-            await Gateway.LoadConversationsAsync(agentId, CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"[Mobile] LoadConversations failed after agent switch: {ex.Message}");
-        }
+        var agent = Store.GetAgent(agentId);
+        var firstConv = agent?.Conversations.Values
+            .Where(c => c.Status == "Active")
+            .OrderByDescending(c => c.UpdatedAt)
+            .FirstOrDefault();
+        if (firstConv is not null)
+            await Interaction.SelectConversationAsync(agentId, firstConv.ConversationId);
     }
 
-    private void OnConvChanged(ChangeEventArgs e)
+    private async Task OnConvChanged(ChangeEventArgs e)
     {
-        State.ActiveConversationId = e.Value?.ToString();
+        var convId = e.Value?.ToString();
+        if (string.IsNullOrEmpty(convId) || Store.ActiveAgentId is null) return;
+        await Interaction.SelectConversationAsync(Store.ActiveAgentId, convId);
     }
 
     private async Task SendMessage()
     {
-        if (string.IsNullOrWhiteSpace(_inputText)) return;
+        if (string.IsNullOrWhiteSpace(_inputText) || Store.ActiveAgentId is null) return;
         var content = _inputText.Trim();
         _inputText = "";
         _isSending = true;
         try
         {
-            await Gateway.SendMessageAsync(content);
+            await Interaction.SendMessageAsync(Store.ActiveAgentId, content);
         }
         catch (Exception ex)
         {
@@ -199,7 +196,8 @@ else
     private async Task NewSession()
     {
         _menuOpen = false;
-        await Gateway.ResetSessionAsync();
+        if (Store.ActiveAgentId is not null)
+            await Interaction.ResetSessionAsync(Store.ActiveAgentId);
     }
 
     private static string GetMessageClass(ChatMessage msg)
@@ -216,11 +214,12 @@ else
             await JS.InvokeVoidAsync("eval",
                 "document.querySelector('.message-stream')?.scrollTo({top:1e9,behavior:'smooth'})");
         }
-        catch { /* ignore JS interop errors */ }
+        catch { }
     }
 
     public void Dispose()
     {
-        State.OnChanged -= HandleStateChanged;
+        Store.OnChanged -= HandleStateChanged;
+        PortalLoad.OnReadyChanged -= HandleStateChanged;
     }
 }
