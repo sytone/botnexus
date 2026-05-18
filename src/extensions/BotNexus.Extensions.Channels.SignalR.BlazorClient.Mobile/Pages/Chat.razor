@@ -155,7 +155,7 @@ else
         _menuOpen = false;
         try
         {
-            await Gateway.LoadConversationsAsync(GatewayUrl, agentId, CancellationToken.None);
+            await Gateway.LoadConversationsAsync(agentId, CancellationToken.None);
         }
         catch (Exception ex)
         {
