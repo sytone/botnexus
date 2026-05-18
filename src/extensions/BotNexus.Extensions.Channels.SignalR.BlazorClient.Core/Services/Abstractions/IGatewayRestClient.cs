@@ -60,6 +60,20 @@ public interface IGatewayRestClient
         string? path = null,
         CancellationToken cancellationToken = default);
 
+    /// <summary>DELETE /api/agents/{agentId}/workspace/{path}?force={force}</summary>
+    Task<bool> DeleteWorkspaceItemAsync(
+        string agentId,
+        string path,
+        bool force = false,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>PUT /api/agents/{agentId}/workspace/{path} — write text content to a file.</summary>
+    Task<bool> WriteWorkspaceFileAsync(
+        string agentId,
+        string path,
+        string content,
+        CancellationToken cancellationToken = default);
+
     /// <summary>GET /api/agents/{agentId}/reports</summary>
     Task<IReadOnlyList<ReportListItemDto>> GetReportsAsync(
         string agentId,
