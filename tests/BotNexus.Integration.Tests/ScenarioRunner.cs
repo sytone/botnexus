@@ -7,7 +7,13 @@ namespace BotNexus.Integration.Tests;
 
 public class ScenarioRunner
 {
-    public async Task<int> RunAllAsync(string scenarioDir, string? filter = null)
+    /// <summary>
+    /// Runs all scenarios, either by spawning a local gateway process or by connecting to an
+    /// already-running gateway at <paramref name="externalGatewayUrl"/>.
+    /// When <paramref name="externalGatewayUrl"/> is non-null the local build and process-start
+    /// steps are skipped, which is the recommended path for container-based integration testing.
+    /// </summary>
+    public async Task<int> RunAllAsync(string scenarioDir, string? filter = null, string? externalGatewayUrl = null)
     {
         var logDir = Path.Combine(AppContext.BaseDirectory, "logs",
             $"run-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}");
@@ -17,20 +23,30 @@ public class ScenarioRunner
         log.Write($"Found {scenarios.Count} scenario(s)");
         Console.WriteLine($"Found {scenarios.Count} scenario(s)");
 
-        // Use existing Release build if available, otherwise build
-        var repoRoot = FindRepoRoot();
-        var gatewayDll = Path.Combine(repoRoot, "src", "gateway", "BotNexus.Gateway.Api",
-            "bin", "Release", "net10.0", "BotNexus.Gateway.Api.dll");
+        string? gatewayDll = null;
 
-        if (!File.Exists(gatewayDll))
+        if (externalGatewayUrl is not null)
         {
-            Console.Write("Building gateway... ");
-            gatewayDll = await BuildGatewayAsync();
-            Console.WriteLine("OK");
+            Console.WriteLine($"Container mode: targeting external gateway at {externalGatewayUrl}");
+            log.Write($"Container mode: external gateway at {externalGatewayUrl}");
         }
         else
         {
-            Console.WriteLine($"Using existing build: {gatewayDll}");
+            // Use existing Release build if available, otherwise build
+            var repoRoot = FindRepoRoot();
+            gatewayDll = Path.Combine(repoRoot, "src", "gateway", "BotNexus.Gateway.Api",
+                "bin", "Release", "net10.0", "BotNexus.Gateway.Api.dll");
+
+            if (!File.Exists(gatewayDll))
+            {
+                Console.Write("Building gateway... ");
+                gatewayDll = await BuildGatewayAsync();
+                Console.WriteLine("OK");
+            }
+            else
+            {
+                Console.WriteLine($"Using existing build: {gatewayDll}");
+            }
         }
 
         var passed = 0;
@@ -42,7 +58,11 @@ public class ScenarioRunner
 
             try
             {
-                await RunScenarioAsync(scenario, gatewayDll, log);
+                if (externalGatewayUrl is not null)
+                    await RunScenarioOnExternalGatewayAsync(scenario, externalGatewayUrl, log);
+                else
+                    await RunScenarioAsync(scenario, gatewayDll!, log);
+
                 log.WriteResult(scenario.Name, true);
                 passed++;
             }
@@ -60,6 +80,82 @@ public class ScenarioRunner
         log.Write($"Results: {passed} passed, {failed} failed");
         Console.WriteLine($"Logs: {logDir}");
         return failed > 0 ? 1 : 0;
+    }
+
+    /// <summary>
+    /// Runs a single scenario against an externally-hosted gateway (e.g., a container).
+    /// The gateway lifecycle is not managed here — only test agents are registered and cleaned up.
+    /// </summary>
+    private async Task RunScenarioOnExternalGatewayAsync(ScenarioDefinition scenario, string gatewayUrl, TestLogger log)
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(scenario.TimeoutSeconds));
+        using var httpClient = new HttpClient { BaseAddress = new Uri(gatewayUrl) };
+        var mcpServers = new List<McpPingServer>();
+        var mcpUrls = new Dictionary<string, string>();
+
+        try
+        {
+            // Start MCP test servers if the scenario needs them
+            if (scenario.McpServers is { Count: > 0 })
+            {
+                foreach (var serverDef in scenario.McpServers)
+                {
+                    var mcpPort = GetFreePort();
+                    var server = new McpPingServer(mcpPort);
+                    await server.StartAsync(CancellationToken.None);
+                    mcpServers.Add(server);
+                    mcpUrls[serverDef.Name] = server.Url;
+                    log.Write($"MCP server '{serverDef.Name}' started on port {mcpPort}");
+                }
+            }
+
+            // Register scenario agents via the gateway API
+            foreach (var agent in scenario.Agents)
+            {
+                await AgentRegistrar.RegisterAsync(httpClient, agent, mcpUrls, cts.Token);
+                log.Write($"Registered agent: {agent.Id}");
+            }
+
+            await using var client = new TestSignalRClient(gatewayUrl, log);
+            await client.ConnectAsync(cts.Token);
+            await client.SubscribeAllAsync(cts.Token);
+
+            var sharedExecutor = new StepExecutor(client, httpClient, log);
+
+            if (scenario.Tracks is { Count: > 0 })
+            {
+                log.Write($"Running {scenario.Tracks.Count} parallel tracks");
+                var trackTasks = scenario.Tracks.Select(track =>
+                {
+                    var trackExecutor = new StepExecutor(client, httpClient, log, sharedExecutor);
+                    log.Write($"  ▸ Track '{track.Name}' ({track.Steps.Count} steps)");
+                    return trackExecutor.ExecuteStepsAsync(track.Steps, cts.Token);
+                });
+                await Task.WhenAll(trackTasks);
+                log.Write("All tracks completed");
+            }
+
+            if (scenario.Steps is { Count: > 0 })
+                await sharedExecutor.ExecuteStepsAsync(scenario.Steps, cts.Token);
+        }
+        finally
+        {
+            // Clean up agents registered by this scenario so subsequent scenarios start fresh.
+            foreach (var agent in scenario.Agents)
+            {
+                try
+                {
+                    await httpClient.DeleteAsync($"/api/agents/{agent.Id}", CancellationToken.None);
+                    log.Write($"Cleaned up agent: {agent.Id}");
+                }
+                catch { /* best-effort cleanup */ }
+            }
+
+            foreach (var server in mcpServers)
+            {
+                try { await server.DisposeAsync(); } catch { }
+            }
+        }
     }
 
     private async Task RunScenarioAsync(ScenarioDefinition scenario, string gatewayDll, TestLogger log)
