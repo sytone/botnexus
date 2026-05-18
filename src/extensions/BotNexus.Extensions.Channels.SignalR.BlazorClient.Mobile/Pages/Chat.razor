@@ -27,7 +27,7 @@ else
                 }
             </select>
 
-            <select class="conv-select" value="@State.ActiveConversationId" @onchange="OnConvChanged">
+            <select @key="State.ActiveAgentId" class="conv-select" value="@State.ActiveConversationId" @onchange="OnConvChanged">
                 @foreach (var conv in State.Conversations)
                 {
                     <option value="@conv.ConversationId">@conv.Title</option>
@@ -95,6 +95,9 @@ else
     private bool _menuOpen;
     private bool _ready;
     private string _gatewayUrl = "";
+    private string GatewayUrl => string.IsNullOrEmpty(_gatewayUrl)
+        ? new Uri(Nav.BaseUri).GetLeftPart(UriPartial.Authority)
+        : _gatewayUrl;
     private ElementReference _messageStreamRef;
 
     protected override async Task OnInitializedAsync()
@@ -109,7 +112,7 @@ else
             _gatewayUrl = string.IsNullOrEmpty(origin)
                 ? (Config["GatewayUrl"] ?? "http://localhost:5005")
                 : origin;
-            await Gateway.InitializeAsync(_gatewayUrl);
+            await Gateway.InitializeAsync(GatewayUrl);
             _ready = true;
         }
         catch (Exception ex)
@@ -152,7 +155,7 @@ else
         _menuOpen = false;
         try
         {
-            await Gateway.LoadConversationsAsync(_gatewayUrl, agentId, CancellationToken.None);
+            await Gateway.LoadConversationsAsync(GatewayUrl, agentId, CancellationToken.None);
         }
         catch (Exception ex)
         {
