@@ -217,4 +217,149 @@ public sealed class TelegramMarkdownFormatterTests
         var result = TelegramMarkdownFormatter.Convert(input);
         result.ShouldBe("*Title*\n\nSome *bold* text\\.\n\n`code here`");
     }
+
+    // ─── Convert: heading placement ──────────────────────────────────────────
+
+    [Fact]
+    public void Convert_HashMidLine_EscapesLiteralHash()
+    {
+        // A # that is not at the start of a line must not be treated as a heading.
+        var result = TelegramMarkdownFormatter.Convert("Not a # heading");
+        result.ShouldBe("Not a \\# heading");
+    }
+
+    [Fact]
+    public void Convert_HeadingOnSecondLine_ConvertsToBold()
+    {
+        // A heading on the second line (preceded by \n) must still be converted.
+        var result = TelegramMarkdownFormatter.Convert("intro\n# Section");
+        result.ShouldBe("intro\n*Section*");
+    }
+
+    // ─── Convert: multiple formatting spans ──────────────────────────────────
+
+    [Fact]
+    public void Convert_MultipleBoldSpans_BothConverted()
+    {
+        // Both bold spans in the same line must be individually converted.
+        var result = TelegramMarkdownFormatter.Convert("**one** and **two**");
+        result.ShouldBe("*one* and *two*");
+    }
+
+    [Fact]
+    public void Convert_AdjacentBoldAndItalic_BothConverted()
+    {
+        // No space between bold and italic tokens — both must still be converted.
+        var result = TelegramMarkdownFormatter.Convert("**bold**_italic_");
+        result.ShouldBe("*bold*_italic_");
+    }
+
+    // ─── Convert: special chars inside formatting spans ──────────────────────
+
+    [Fact]
+    public void Convert_BoldWithDotInContent_DotIsEscaped()
+    {
+        // Special chars inside bold content must be escaped per MarkdownV2 rules.
+        var result = TelegramMarkdownFormatter.Convert("**hello.world**");
+        result.ShouldBe("*hello\\.world*");
+    }
+
+    [Fact]
+    public void Convert_BoldWithUnderscoreInContent_UnderscoreIsEscaped()
+    {
+        // An underscore inside ** bold ** must not trigger italic processing.
+        var result = TelegramMarkdownFormatter.Convert("**hello_world**");
+        result.ShouldBe("*hello\\_world*");
+    }
+
+    [Fact]
+    public void Convert_ItalicWithSpecialCharsInContent_CharsAreEscaped()
+    {
+        var result = TelegramMarkdownFormatter.Convert("_cost: $1.00_");
+        result.ShouldBe("_cost: $1\\.00_");
+    }
+
+    // ─── Convert: code suppresses markdown processing ────────────────────────
+
+    [Fact]
+    public void Convert_FencedCodeBlock_PreservesInternalAsterisks()
+    {
+        // Inside a fenced code block, ** must NOT be converted to Telegram bold.
+        // Only backtick and backslash need escaping inside code blocks.
+        var input = "```\n**not bold**\n```";
+        var result = TelegramMarkdownFormatter.Convert(input);
+        result.ShouldBe("```\n**not bold**\n```");
+    }
+
+    [Fact]
+    public void Convert_FencedCodeBlock_PreservesInternalUnderscores()
+    {
+        // Underscores inside a code block must not trigger italic processing.
+        var input = "```python\nsome_variable = True\n```";
+        var result = TelegramMarkdownFormatter.Convert(input);
+        result.ShouldBe("```python\nsome_variable = True\n```");
+    }
+
+    [Fact]
+    public void Convert_InlineCode_PreservesInternalAsterisks()
+    {
+        // Inside a backtick span, * must NOT be converted.
+        var result = TelegramMarkdownFormatter.Convert("`*not italic*`");
+        result.ShouldBe("`*not italic*`");
+    }
+
+    [Fact]
+    public void Convert_InlineCode_PreservesInternalSpecialChars()
+    {
+        // Most MarkdownV2 special chars are NOT escaped inside inline code.
+        var result = TelegramMarkdownFormatter.Convert("`x.y[0]`");
+        result.ShouldBe("`x.y[0]`");
+    }
+
+    // ─── Convert: empty / degenerate formatting tokens ───────────────────────
+
+    [Fact]
+    public void Convert_EmptyBoldSpan_DoesNotThrow()
+    {
+        // Two consecutive ** pairs with nothing between them must not crash.
+        var act = () => TelegramMarkdownFormatter.Convert("****");
+        act.ShouldNotThrow();
+    }
+
+    [Fact]
+    public void Convert_BoldWithNoClosingOnSameLine_EscapesAsterisks()
+    {
+        // An opening ** followed by content but no closing ** should be treated as
+        // literal characters — not leave dangling MarkdownV2 syntax.
+        var result = TelegramMarkdownFormatter.Convert("** not bold");
+        result.ShouldNotContain("**");
+    }
+
+    // ─── Convert: real LLM output patterns ───────────────────────────────────
+
+    [Fact]
+    public void Convert_NumberedListItem_EscapesDot()
+    {
+        // Numbered list items like "1. Item" — the dot after a digit must be escaped
+        // because "." is a MarkdownV2 special char.
+        var result = TelegramMarkdownFormatter.Convert("1. First item\n2. Second item");
+        result.ShouldBe("1\\. First item\n2\\. Second item");
+    }
+
+    [Fact]
+    public void Convert_BulletListItem_EscapesDash()
+    {
+        // Unordered list items starting with "- " — the dash must be escaped.
+        var result = TelegramMarkdownFormatter.Convert("- item one\n- item two");
+        result.ShouldBe("\\- item one\n\\- item two");
+    }
+
+    [Fact]
+    public void Convert_LlmTypicalOutput_RendersCorrectly()
+    {
+        // Typical LLM output mixing bold headers, inline code, and plain text.
+        var input = "**Summary**\n\nUse `git status` to check changes. Cost: $0.00.";
+        var result = TelegramMarkdownFormatter.Convert(input);
+        result.ShouldBe("*Summary*\n\nUse `git status` to check changes\\. Cost: $0\\.00\\.");
+    }
 }
