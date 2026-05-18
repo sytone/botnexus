@@ -1,7 +1,8 @@
 @inject IGatewayRestClient GatewayRestClient
+@inject IJSRuntime JS
 @implements IDisposable
 
-<div class="workspace-panel @MobilePaneClass" data-testid="workspace-panel">
+<div id="@_containerId" class="workspace-panel @MobilePaneClass" data-testid="workspace-panel">
     <section class="workspace-tree-pane">
         @if (_isLoadingRoot)
         {
@@ -24,6 +25,8 @@
                                DirectoryErrorProvider="GetDirectoryError" />
         }
     </section>
+
+    <div class="panel-splitter" role="separator" aria-orientation="vertical" aria-label="Resize workspace panels" title="Drag to resize"></div>
 
     <section class="workspace-viewer-pane">
         <WorkspaceFileViewer IsLoading="_isLoadingFile"
@@ -94,11 +97,22 @@
     [Parameter, EditorRequired]
     public string AgentId { get; set; } = default!;
 
+    private string _containerId => $"workspace-panel-{AgentId}";
+    private string _storageKey => $"bn-workspace-tree-width-{AgentId}";
+
     private string MobilePaneClass => _showMobileViewer ? "mobile-viewer" : "mobile-tree";
 
     protected override async Task OnInitializedAsync()
     {
         await LoadRootAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await JS.InvokeVoidAsync("BotNexus.splitter.init", _containerId, _storageKey, 280, 120, 0.7);
+        }
     }
 
     public void Dispose()
