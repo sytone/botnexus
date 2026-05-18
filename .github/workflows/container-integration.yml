@@ -1,24 +1,6 @@
 name: Container Integration Tests
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'Dockerfile'
-      - '.dockerignore'
-      - 'tests/BotNexus.Integration.Tests/**'
-      - 'tests/container/**'
-      - '.github/workflows/container-integration.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'Dockerfile'
-      - '.dockerignore'
-      - 'tests/BotNexus.Integration.Tests/**'
-      - 'tests/container/**'
-      - '.github/workflows/container-integration.yml'
   workflow_dispatch:
 
 permissions:
