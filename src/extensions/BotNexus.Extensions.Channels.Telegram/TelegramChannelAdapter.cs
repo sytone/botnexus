@@ -10,6 +10,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using MessageRole = BotNexus.Domain.Primitives.MessageRole;
 
 namespace BotNexus.Extensions.Channels.Telegram;
 
@@ -147,6 +148,10 @@ public sealed class TelegramChannelAdapter(
     /// <summary>
     /// Sends a complete outbound message through the Telegram adapter.
     /// Content is converted from Markdown to Telegram MarkdownV2 format.
+    /// When <paramref name="message"/> has <see cref="OutboundMessage.Role"/> set to
+    /// <see cref="MessageRole.User"/>, the message is a cross-channel user echo and is
+    /// formatted as "User Said:\n{content}" (MarkdownV2-escaped) — provided
+    /// <see cref="TelegramBotConfig.EchoForeignUserMessages"/> is enabled for the target bot.
     /// </summary>
     public override async Task SendAsync(OutboundMessage message, CancellationToken cancellationToken = default)
     {
@@ -164,12 +169,30 @@ public sealed class TelegramChannelAdapter(
 
         var runtime = ResolveOutboundBot(message);
         EnsureChatAllowed(runtime.Config, chatId);
-        var formatted = BuildOutboundText(message.Content, message.Metadata, message.DisplayPrefix);
 
         int? threadId = null;
         if (!string.IsNullOrEmpty(message.ThreadId?.Value) && int.TryParse(message.ThreadId.Value.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedThreadId))
             threadId = parsedThreadId;
 
+        // User messages fanned out from other channels are echoed so Telegram
+        // participants can see what was typed elsewhere in the conversation.
+        if (message.Role is not null && message.Role.Equals(MessageRole.User))
+        {
+            if (!runtime.Config.EchoForeignUserMessages)
+            {
+                _logger.LogDebug(
+                    "{DisplayName}: skipping foreign user message echo for chat {ChatId} (EchoForeignUserMessages=false)",
+                    DisplayName, chatId);
+                return;
+            }
+
+            var echoText = $"User Said:\n{TelegramMarkdownFormatter.EscapeMarkdownV2(message.Content)}";
+            foreach (var chunk in SplitMessage(echoText, Math.Max(1, runtime.Config.MaxMessageLength)))
+                await runtime.ApiClient.SendMessageAsync(chatId, chunk, threadId, cancellationToken);
+            return;
+        }
+
+        var formatted = BuildOutboundText(message.Content, message.Metadata, message.DisplayPrefix);
         foreach (var chunk in SplitMessage(formatted, Math.Max(1, runtime.Config.MaxMessageLength)))
             await runtime.ApiClient.SendMessageAsync(chatId, chunk, threadId, cancellationToken);
     }

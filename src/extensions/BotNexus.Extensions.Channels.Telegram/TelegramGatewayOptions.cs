@@ -93,6 +93,14 @@ public sealed class TelegramGatewayOptions
     /// </summary>
     public int ErrorCooldownMs { get; set; } = 60_000;
 
+    /// <summary>
+    /// When true, user messages received via fan-out from other channels are echoed using
+    /// the format "User Said:\n{message}" so Telegram participants can see cross-channel input.
+    /// Applies to single-bot deployments; ignored when <see cref="Bots"/> is non-empty.
+    /// Defaults to true.
+    /// </summary>
+    public bool EchoForeignUserMessages { get; set; } = true;
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -115,7 +123,8 @@ public sealed class TelegramGatewayOptions
             StreamingBufferMs = StreamingBufferMs,
             MaxMessageLength = MaxMessageLength,
             ErrorCooldownMs = ErrorCooldownMs,
-            ProcessEditedMessages = ProcessEditedMessages
+            ProcessEditedMessages = ProcessEditedMessages,
+            EchoForeignUserMessages = EchoForeignUserMessages
         };
         foreach (var id in AllowedChatIds)
             single.AllowedChatIds.Add(id);

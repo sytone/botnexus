@@ -62,4 +62,12 @@ public sealed class TelegramBotConfig
     /// Prevents error spam to users during outages or repeated failures.
     /// </summary>
     public int ErrorCooldownMs { get; set; } = 60_000;
+
+    /// <summary>
+    /// When true, user messages received via fan-out from other channels are echoed to this
+    /// Telegram conversation using the format "User Said:\n{message}", making cross-channel
+    /// user input visible to Telegram participants.
+    /// Defaults to true.
+    /// </summary>
+    public bool EchoForeignUserMessages { get; set; } = true;
 }

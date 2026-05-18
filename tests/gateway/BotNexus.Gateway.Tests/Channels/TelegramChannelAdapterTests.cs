@@ -1429,6 +1429,139 @@ public sealed class TelegramChannelAdapterTests
         msg.Content.ShouldBe(string.Empty);
     }
 
+    // ── Foreign user message echo ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task SendAsync_WithUserRole_EchoesWithUserSaidFormat()
+    {
+        ApiCall? sendCall = null;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCall = call;
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            AllowedChatIds = { 42 },
+            EchoForeignUserMessages = true
+        }, handler);
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("telegram"),
+            ChannelAddress = ChannelAddress.From("42"),
+            Content = "Hello from the portal",
+            Role = BotNexus.Domain.Primitives.MessageRole.User
+        });
+
+        sendCall.ShouldNotBeNull();
+        sendCall!.Text.ShouldNotBeNull();
+        var text = sendCall.Text ?? throw new InvalidOperationException("Expected message text.");
+        text.ShouldStartWith("User Said:\n");
+        text.ShouldContain("Hello from the portal");
+    }
+
+    [Fact]
+    public async Task SendAsync_WithUserRole_EchoesWithMarkdownV2EscapedContent()
+    {
+        // In MarkdownV2, > must be escaped as \>; < and & are not special chars.
+        ApiCall? sendCall = null;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCall = call;
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            AllowedChatIds = { 42 }
+        }, handler);
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("telegram"),
+            ChannelAddress = ChannelAddress.From("42"),
+            Content = "a < b & c > d",
+            Role = BotNexus.Domain.Primitives.MessageRole.User
+        });
+
+        sendCall.ShouldNotBeNull();
+        sendCall!.Text.ShouldNotBeNull();
+        var text = sendCall.Text ?? throw new InvalidOperationException("Expected message text.");
+        text.ShouldStartWith("User Said:\n");
+        // < and & are not MarkdownV2 special chars; > is and must be escaped
+        text.ShouldContain(@"a < b & c \> d");
+    }
+
+    [Fact]
+    public async Task SendAsync_WithUserRole_WhenEchoDisabled_DoesNotSend()
+    {
+        var sendCalled = false;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCalled = true;
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            AllowedChatIds = { 42 },
+            EchoForeignUserMessages = false
+        }, handler);
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("telegram"),
+            ChannelAddress = ChannelAddress.From("42"),
+            Content = "Silent user message",
+            Role = BotNexus.Domain.Primitives.MessageRole.User
+        });
+
+        sendCalled.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task SendAsync_WithNullRole_SendsAsNormalAgentResponse()
+    {
+        ApiCall? sendCall = null;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCall = call;
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            AllowedChatIds = { 42 }
+        }, handler);
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("telegram"),
+            ChannelAddress = ChannelAddress.From("42"),
+            Content = "Agent response",
+            Role = null
+        });
+
+        sendCall.ShouldNotBeNull();
+        sendCall!.Text.ShouldNotBeNull();
+        var text = sendCall.Text ?? throw new InvalidOperationException("Expected message text.");
+        text.ShouldNotStartWith("User Said:");
+    }
+
     private static TelegramChannelAdapter CreateAdapter(TelegramGatewayOptions options, HttpMessageHandler handler)
     {
         var factory = new StubHttpClientFactory(_ => new HttpClient(handler));

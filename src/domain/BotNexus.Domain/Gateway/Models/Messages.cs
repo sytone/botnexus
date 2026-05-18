@@ -103,6 +103,14 @@ public sealed record OutboundMessage
     /// </summary>
     public string? DisplayPrefix { get; init; }
 
+    /// <summary>
+    /// The role of this message. Set to <see cref="MessageRole.User"/> when fan-outing a user
+    /// message from another channel so the receiving adapter can apply channel-specific formatting
+    /// (e.g. the Telegram adapter echoes it as "User Said:\n{content}").
+    /// Null or omitted for normal agent responses.
+    /// </summary>
+    public MessageRole? Role { get; init; }
+
     /// <summary>Extensible metadata for the channel adapter.</summary>
     public IReadOnlyDictionary<string, object?> Metadata { get; init; } =
         new Dictionary<string, object?>();

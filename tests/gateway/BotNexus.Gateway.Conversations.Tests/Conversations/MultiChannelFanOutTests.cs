@@ -61,10 +61,12 @@ public sealed class MultiChannelFanOutTests
 
         await harness.Host.DispatchAsync(harness.CreateMessage("hello", "signalr", "chat-1"));
 
+        // SignalR (originating): receives only the direct agent response
         harness.SignalR.Messages.Count.ShouldBe(1);
         harness.SignalR.Messages[0].ChannelAddress.ShouldBe(ChannelAddress.From("chat-1"));
-        harness.Telegram.Messages.Count.ShouldBe(1);
-        harness.Telegram.Messages[0].ChannelAddress.ShouldBe(ChannelAddress.From("chat-100"));
+        // Telegram (non-originating): receives user echo + agent response fan-out
+        harness.Telegram.Messages.Count.ShouldBe(2);
+        harness.Telegram.Messages.ShouldContain(m => m.ChannelAddress == ChannelAddress.From("chat-100"));
         harness.Tui.Messages.ShouldBeEmpty();
     }
 
@@ -77,8 +79,10 @@ public sealed class MultiChannelFanOutTests
 
         await harness.Host.DispatchAsync(harness.CreateMessage("hello", "telegram", "chat-100"));
 
-        harness.SignalR.Messages.Count.ShouldBe(1);
-        harness.SignalR.Messages[0].ChannelAddress.ShouldBe(ChannelAddress.From("chat-1"));
+        // SignalR (non-originating): receives user echo + agent response fan-out
+        harness.SignalR.Messages.Count.ShouldBe(2);
+        harness.SignalR.Messages.ShouldContain(m => m.ChannelAddress == ChannelAddress.From("chat-1"));
+        // Telegram (originating): receives only the direct agent response
         harness.Telegram.Messages.Count.ShouldBe(1);
         harness.Telegram.Messages[0].ChannelAddress.ShouldBe(ChannelAddress.From("chat-100"));
     }
@@ -92,8 +96,10 @@ public sealed class MultiChannelFanOutTests
 
         await harness.Host.DispatchAsync(harness.CreateMessage("hello", "telegram", "chat-100"));
 
+        // Telegram (originating): only the direct agent response — no self-echo
         harness.Telegram.Messages.Count.ShouldBe(1);
-        harness.SignalR.Messages.Count.ShouldBe(1);
+        // SignalR (non-originating): user echo + agent response fan-out
+        harness.SignalR.Messages.Count.ShouldBe(2);
     }
 
     [Fact]
@@ -106,10 +112,12 @@ public sealed class MultiChannelFanOutTests
 
         await harness.Host.DispatchAsync(harness.CreateMessage("second", "signalr", "chat-1"));
 
+        // SignalR (originating): direct agent response only
         harness.SignalR.Messages.Count.ShouldBe(1);
-        harness.Telegram.Messages.Count.ShouldBe(1);
         harness.SignalR.Messages[0].Content.ShouldBe("follow-up");
-        harness.Telegram.Messages[0].Content.ShouldBe("follow-up");
+        // Telegram (non-originating): user echo [0] + agent response fan-out [1]
+        harness.Telegram.Messages.Count.ShouldBe(2);
+        harness.Telegram.Messages.ShouldContain(m => m.Content == "follow-up");
     }
 
     [Fact]
@@ -121,9 +129,11 @@ public sealed class MultiChannelFanOutTests
 
         await harness.Host.DispatchAsync(harness.CreateMessage("hello", "signalr", "chat-1"));
 
+        // SignalR (originating): direct agent response only
         harness.SignalR.Messages.Count.ShouldBe(1);
-        harness.Telegram.Messages.Count.ShouldBe(1);
-        harness.Tui.Messages.Count.ShouldBe(1);
+        // Telegram and Tui (non-originating): user echo + agent response fan-out each
+        harness.Telegram.Messages.Count.ShouldBe(2);
+        harness.Tui.Messages.Count.ShouldBe(2);
     }
 
     [Fact]
@@ -135,9 +145,11 @@ public sealed class MultiChannelFanOutTests
 
         await harness.Host.DispatchAsync(harness.CreateMessage("hello", "telegram", "chat-100"));
 
-        harness.SignalR.Messages.Count.ShouldBe(1);
+        // SignalR and Tui (non-originating): user echo + agent response fan-out each
+        harness.SignalR.Messages.Count.ShouldBe(2);
+        // Telegram (originating): direct agent response only
         harness.Telegram.Messages.Count.ShouldBe(1);
-        harness.Tui.Messages.Count.ShouldBe(1);
+        harness.Tui.Messages.Count.ShouldBe(2);
     }
 
     [Fact]
@@ -146,9 +158,9 @@ public sealed class MultiChannelFanOutTests
         var harness = CreateHarness(responseContent: "matrix");
         await harness.SeedSharedConversationAsync(("signalr", "chat-1"), ("telegram", "chat-100"), ("tui", "terminal-1"));
 
-        await AssertPerSendAsync(harness, harness.CreateMessage("from-a", "signalr", "chat-1"));
-        await AssertPerSendAsync(harness, harness.CreateMessage("from-b", "telegram", "chat-100"));
-        await AssertPerSendAsync(harness, harness.CreateMessage("from-c", "tui", "terminal-1"));
+        await AssertPerSendAsync(harness, harness.CreateMessage("from-a", "signalr", "chat-1"), originatingChannel: "signalr");
+        await AssertPerSendAsync(harness, harness.CreateMessage("from-b", "telegram", "chat-100"), originatingChannel: "telegram");
+        await AssertPerSendAsync(harness, harness.CreateMessage("from-c", "tui", "terminal-1"), originatingChannel: "tui");
     }
 
     [Fact]
@@ -182,8 +194,10 @@ public sealed class MultiChannelFanOutTests
 
         await harness.Host.DispatchAsync(harness.CreateMessage("topic", "telegram", "100", threadId: "42"));
 
-        harness.SignalR.Messages.Count.ShouldBe(1);
-        harness.SignalR.Messages[0].ThreadId.ShouldBe(ThreadId.From("42")); // fan-out carries thread
+        // SignalR (non-originating): user echo [0] + agent response fan-out [1] — both carry ThreadId
+        harness.SignalR.Messages.Count.ShouldBe(2);
+        harness.SignalR.Messages.ShouldAllBe(m => m.ThreadId == ThreadId.From("42")); // all carry thread
+        // Telegram (originating): direct agent response only
         harness.Telegram.Messages.Count.ShouldBe(1);
         harness.Telegram.Messages[0].ThreadId.ShouldBe(ThreadId.From("42")); // fix #126: direct send now carries ThreadId
     }
@@ -321,13 +335,15 @@ public sealed class MultiChannelFanOutTests
     }
 
 
-    private static async Task AssertPerSendAsync(TestHarness harness, InboundMessage message)
+    private static async Task AssertPerSendAsync(TestHarness harness, InboundMessage message, string originatingChannel)
     {
         harness.ClearOutbound();
         await harness.Host.DispatchAsync(message);
-        harness.SignalR.Messages.Count.ShouldBe(1);
-        harness.Telegram.Messages.Count.ShouldBe(1);
-        harness.Tui.Messages.Count.ShouldBe(1);
+        // Originating channel receives only the direct agent response (1 message).
+        // Non-originating channels receive the user echo + agent response fan-out (2 messages each).
+        harness.SignalR.Messages.Count.ShouldBe(originatingChannel == "signalr" ? 1 : 2);
+        harness.Telegram.Messages.Count.ShouldBe(originatingChannel == "telegram" ? 1 : 2);
+        harness.Tui.Messages.Count.ShouldBe(originatingChannel == "tui" ? 1 : 2);
     }
 
     private static TestHarness CreateHarness(string responseContent = "agent-response")

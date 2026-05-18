@@ -405,6 +405,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 OriginalContentParts = originalParts,
                 ProcessedContentParts = processedParts
             });
+
+            // Fan-out user message to other conversation bindings so channel adapters
+            // that cannot receive injected user input (e.g. Telegram) can echo it.
+            await FanOutUserMessageAsync(message, sessionId, cancellationToken);
             if (_compactor.ShouldCompact(session.Session, _compactionOptions.CurrentValue))
             {
                 _logger.LogInformation("Auto-compacting session {SessionId}", sessionId);
@@ -931,6 +935,74 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Fan-out resolution failed for session {SessionId}. Continuing.", sessionId);
+        }
+    }
+
+    /// <summary>
+    /// Best-effort fan-out of a user message to other conversation bindings.
+    /// Allows channel adapters (e.g. Telegram) to echo the user's input so participants
+    /// on channels that cannot inject user messages can still see what was said.
+    /// </summary>
+    private async Task FanOutUserMessageAsync(
+        InboundMessage message,
+        string sessionId,
+        CancellationToken cancellationToken)
+    {
+        if (_conversationRouter is null)
+            return;
+
+        try
+        {
+            var otherBindings = await _conversationRouter.GetOutboundBindingsAsync(
+                SessionId.From(sessionId),
+                message.BindingId,
+                cancellationToken);
+
+            if (otherBindings.Count == 0)
+                return;
+
+            foreach (var binding in otherBindings)
+            {
+                try
+                {
+                    var adapter = ResolveChannelAdapter(binding.ChannelType);
+                    if (adapter is null)
+                    {
+                        _logger.LogWarning(
+                            "User message fan-out: no channel adapter for type '{ChannelType}' (binding {BindingId}). Skipping.",
+                            binding.ChannelType,
+                            binding.BindingId);
+                        continue;
+                    }
+
+                    await adapter.SendAsync(new OutboundMessage
+                    {
+                        ChannelType = binding.ChannelType,
+                        ChannelAddress = binding.ChannelAddress,
+                        Content = message.Content,
+                        SessionId = sessionId,
+                        Role = MessageRole.User,
+                        ThreadId = binding.ThreadId,
+                        BindingId = binding.BindingId,
+                        DisplayPrefix = binding.DisplayPrefix
+                    }, cancellationToken);
+
+                    _logger.LogDebug(
+                        "User message fan-out delivered to {ChannelType}:{ChannelAddress} for session {SessionId}",
+                        binding.ChannelType, binding.ChannelAddress, sessionId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "User message fan-out failed for binding {BindingId} ({ChannelType}:{ChannelAddress}). Continuing.",
+                        binding.BindingId, binding.ChannelType, binding.ChannelAddress);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "User message fan-out resolution failed for session {SessionId}. Continuing.", sessionId);
         }
     }
 
