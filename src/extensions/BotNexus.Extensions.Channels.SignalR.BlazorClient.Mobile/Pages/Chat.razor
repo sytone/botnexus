@@ -163,9 +163,22 @@ else
         }
     }
 
-    private void OnConvChanged(ChangeEventArgs e)
+    private async Task OnConvChanged(ChangeEventArgs e)
     {
-        State.ActiveConversationId = e.Value?.ToString();
+        var convId = e.Value?.ToString();
+        if (string.IsNullOrEmpty(convId) || convId == State.ActiveConversationId) return;
+        State.ActiveConversationId = convId;
+        State.Messages.Clear();
+        State.ActiveSessionId = null;
+        State.NotifyChanged();
+        try
+        {
+            await Gateway.LoadHistoryAsync(convId, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[Mobile] LoadHistory failed after conv switch: {ex.Message}");
+        }
     }
 
     private async Task SendMessage()

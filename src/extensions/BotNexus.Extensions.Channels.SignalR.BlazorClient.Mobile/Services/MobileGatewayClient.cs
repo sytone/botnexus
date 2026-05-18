@@ -187,8 +187,14 @@ public sealed class MobileGatewayClient : IAsyncDisposable
     {
         if (_hub is null) return;
 
+        // Only process events for the active session — ignore events from other
+        // agents/conversations that arrive while the user has switched away.
+        bool IsActiveSession(AgentStreamEvent e) =>
+            e.SessionId is null || _state.ActiveSessionId is null || e.SessionId == _state.ActiveSessionId;
+
         _hub.On<AgentStreamEvent>("MessageStart", e =>
         {
+            if (!IsActiveSession(e)) return;
             _state.IsStreaming = true;
             _state.StreamBuffer = string.Empty;
             _state.NotifyChanged();
@@ -196,6 +202,7 @@ public sealed class MobileGatewayClient : IAsyncDisposable
 
         _hub.On<AgentStreamEvent>("ContentDelta", e =>
         {
+            if (!IsActiveSession(e)) return;
             _state.StreamBuffer += e.ContentDelta ?? string.Empty;
             _state.NotifyChanged();
         });
@@ -212,6 +219,7 @@ public sealed class MobileGatewayClient : IAsyncDisposable
 
         _hub.On<AgentStreamEvent>("ToolEnd", e =>
         {
+            if (!IsActiveSession(e)) return;
             if (e.ToolName is not null)
             {
                 _state.Messages.Add(new ChatMessage("tool", e.ToolResult ?? string.Empty, DateTimeOffset.UtcNow)
@@ -224,6 +232,7 @@ public sealed class MobileGatewayClient : IAsyncDisposable
 
         _hub.On<AgentStreamEvent>("MessageEnd", e =>
         {
+            if (!IsActiveSession(e)) return;
             if (!string.IsNullOrEmpty(_state.StreamBuffer))
             {
                 _state.Messages.Add(new ChatMessage("assistant", _state.StreamBuffer, DateTimeOffset.UtcNow));
@@ -235,6 +244,7 @@ public sealed class MobileGatewayClient : IAsyncDisposable
 
         _hub.On<AgentStreamEvent>("Error", e =>
         {
+            if (!IsActiveSession(e)) return;
             _state.IsStreaming = false;
             _state.StreamBuffer = string.Empty;
             if (e.ErrorMessage is not null)
