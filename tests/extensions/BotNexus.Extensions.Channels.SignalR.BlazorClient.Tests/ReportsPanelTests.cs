@@ -54,6 +54,7 @@ public sealed class ReportsPanelTests : IDisposable
             .Returns(Task.FromResult<ReportContentDto?>(new ReportContentDto(
                 "weekly.md",
                 42,
+                false,
                 DateTimeOffset.UtcNow,
                 "# Weekly",
                 "utf-8")));
@@ -92,6 +93,7 @@ public sealed class ReportsPanelTests : IDisposable
             .Returns(Task.FromResult<ReportContentDto?>(new ReportContentDto(
                 "weekly.md",
                 42,
+                false,
                 DateTimeOffset.UtcNow,
                 "# Weekly",
                 "utf-8")));
@@ -120,6 +122,7 @@ public sealed class ReportsPanelTests : IDisposable
             .Returns(Task.FromResult<ReportContentDto?>(new ReportContentDto(
                 "unsafe.md",
                 128,
+                false,
                 DateTimeOffset.UtcNow,
                 "<script>alert('xss')</script>",
                 "utf-8")));
@@ -148,6 +151,7 @@ public sealed class ReportsPanelTests : IDisposable
             .Returns(Task.FromResult<ReportContentDto?>(new ReportContentDto(
                 "weekly.md",
                 42,
+                false,
                 DateTimeOffset.UtcNow,
                 "# Weekly",
                 "utf-8")));
