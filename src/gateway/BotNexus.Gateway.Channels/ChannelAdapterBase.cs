@@ -51,6 +51,9 @@ public abstract class ChannelAdapterBase : IChannelAdapter
     public virtual bool SupportsToolDisplay => false;
 
     /// <inheritdoc />
+    public virtual bool SupportsInboundImages => false;
+
+    /// <inheritdoc />
     public bool IsRunning => _isRunning;
 
     /// <inheritdoc />

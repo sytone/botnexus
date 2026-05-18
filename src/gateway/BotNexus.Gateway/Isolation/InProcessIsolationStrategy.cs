@@ -633,7 +633,47 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     }
 
     /// <inheritdoc />
-    public async IAsyncEnumerable<AgentStreamEvent> StreamAsync(string message, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public async Task<AgentResponse> PromptAsync(AgentCoreUserMessage message, CancellationToken cancellationToken = default)
+    {
+        using var activity = AgentDiagnostics.Source.StartActivity("agent.prompt", ActivityKind.Internal);
+        activity?.SetTag("botnexus.agent.id", AgentId);
+        activity?.SetTag("botnexus.session.id", SessionId);
+        activity?.SetTag("botnexus.correlation.id", System.Diagnostics.Activity.Current?.TraceId.ToString());
+        try
+        {
+            var messages = await _agent.PromptAsync(message, cancellationToken);
+            var lastAssistant = messages.OfType<AssistantAgentMessage>().LastOrDefault();
+
+            var response = new AgentResponse
+            {
+                Content = lastAssistant?.Content ?? string.Empty,
+                Usage = lastAssistant?.Usage is { } u ? new AgentResponseUsage(u.InputTokens, u.OutputTokens) : null,
+                ToolCalls = messages.OfType<ToolResultAgentMessage>()
+                    .Select(t => new AgentToolCallInfo(t.ToolCallId, t.ToolName, t.IsError))
+                    .ToList()
+            };
+
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            return response;
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            throw;
+        }
+    }
+
+    /// <inheritdoc />
+    public IAsyncEnumerable<AgentStreamEvent> StreamAsync(string message, CancellationToken cancellationToken = default)
+        => StreamCoreAsync(ct => _agent.PromptAsync(message, ct), cancellationToken);
+
+    /// <inheritdoc />
+    public IAsyncEnumerable<AgentStreamEvent> StreamAsync(AgentCoreUserMessage message, CancellationToken cancellationToken = default)
+        => StreamCoreAsync(ct => _agent.PromptAsync(message, ct), cancellationToken);
+
+    private async IAsyncEnumerable<AgentStreamEvent> StreamCoreAsync(
+        Func<CancellationToken, Task> runPrompt,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         using var activity = AgentDiagnostics.Source.StartActivity("agent.stream", ActivityKind.Internal);
         activity?.SetTag("botnexus.agent.id", AgentId);
@@ -715,7 +755,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         {
             try
             {
-                await _agent.PromptAsync(message, promptCancellation.Token);
+                await runPrompt(promptCancellation.Token);
             }
             catch (OperationCanceledException) when (promptCancellation.IsCancellationRequested || cancellationToken.IsCancellationRequested)
             {

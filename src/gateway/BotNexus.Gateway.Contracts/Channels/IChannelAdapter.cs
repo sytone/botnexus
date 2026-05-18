@@ -43,6 +43,13 @@ public interface IChannelAdapter
     /// <summary>Whether this channel can render tool call activity output.</summary>
     bool SupportsToolDisplay { get; }
 
+    /// <summary>
+    /// Whether this channel can receive inbound image attachments from users.
+    /// When true, the adapter populates <see cref="BotNexus.Gateway.Abstractions.Models.InboundMessage.ContentParts"/>
+    /// with image binary data for vision-capable models.
+    /// </summary>
+    bool SupportsInboundImages { get; }
+
     /// <summary>Whether the adapter is currently running and accepting messages.</summary>
     bool IsRunning { get; }
 

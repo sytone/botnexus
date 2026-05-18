@@ -27,6 +27,7 @@ public sealed class SignalRChannelAdapter(ILogger<SignalRChannelAdapter> logger,
     public override bool SupportsFollowUp => true;
     public override bool SupportsThinkingDisplay => true;
     public override bool SupportsToolDisplay => true;
+    public override bool SupportsInboundImages => true;
 
     protected override Task OnStartAsync(CancellationToken cancellationToken)
         => Task.CompletedTask;

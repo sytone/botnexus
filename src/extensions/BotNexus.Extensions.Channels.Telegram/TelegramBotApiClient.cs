@@ -133,6 +133,31 @@ public sealed class TelegramBotApiClient(
             cancellationToken,
             allowMarkdownFallback: false);
 
+    /// <summary>
+    /// Retrieves file metadata for the given <paramref name="fileId"/> using the Telegram getFile API.
+    /// The returned <see cref="TelegramFile.FilePath"/> can be passed to <see cref="DownloadFileAsync"/>.
+    /// </summary>
+    public Task<TelegramFile> GetFileAsync(string fileId, CancellationToken cancellationToken = default)
+        => PostForResultAsync<TelegramFile>(
+            "getFile",
+            new { file_id = fileId },
+            cancellationToken,
+            allowMarkdownFallback: false);
+
+    /// <summary>
+    /// Downloads a file from the Telegram CDN using the relative path returned by <see cref="GetFileAsync"/>.
+    /// Returns the raw binary content.
+    /// </summary>
+    public async Task<byte[]> DownloadFileAsync(string filePath, CancellationToken cancellationToken = default)
+    {
+        var url = $"https://api.telegram.org/file/bot{_botToken}/{filePath}";
+        using var response = await _httpClient.GetAsync(url, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException($"Failed to download Telegram file '{filePath}': {(int)response.StatusCode}");
+
+        return await response.Content.ReadAsByteArrayAsync(cancellationToken);
+    }
+
     private async Task<T> PostForResultAsync<T>(string methodName, object payload, CancellationToken cancellationToken, bool allowMarkdownFallback)
     {
         if (string.IsNullOrWhiteSpace(_botToken))

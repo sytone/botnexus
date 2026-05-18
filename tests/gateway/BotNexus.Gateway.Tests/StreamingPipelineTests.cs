@@ -158,7 +158,7 @@ public sealed class StreamingPipelineTests
         handle.SetupGet(h => h.AgentId).Returns("agent-a");
         handle.SetupGet(h => h.SessionId).Returns("session-1");
         handle.Setup(h => h.IsRunning).Returns(false);
-        handle.Setup(h => h.StreamAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        handle.Setup(h => h.StreamAsync(It.IsAny<BotNexus.Agent.Core.Types.UserMessage>(), It.IsAny<CancellationToken>()))
             .Returns(streamEvents);
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.GetOrCreateAsync(BotNexus.Domain.Primitives.AgentId.From("agent-a"), BotNexus.Domain.Primitives.SessionId.From("session-1"), It.IsAny<CancellationToken>()))

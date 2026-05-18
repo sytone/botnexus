@@ -78,6 +78,9 @@ public sealed class TelegramChannelAdapter(
     public override bool SupportsToolDisplay => true;
 
     /// <inheritdoc />
+    public override bool SupportsInboundImages => true;
+
+    /// <inheritdoc />
     protected override async Task OnStartAsync(CancellationToken cancellationToken)
     {
         EnsureBotsInitialized();
@@ -317,10 +320,14 @@ public sealed class TelegramChannelAdapter(
 
     private async Task HandleUpdateAsync(BotRuntime runtime, TelegramUpdate update, CancellationToken cancellationToken)
     {
-        // Only process real user messages \u2014 not channel posts (no authenticated sender)
+        // Only process real user messages — not channel posts (no authenticated sender)
         var message = update.Message
             ?? (runtime.Config.ProcessEditedMessages ? update.EditedMessage : null);
-        if (message?.Chat is null || string.IsNullOrWhiteSpace(message.Text))
+
+        // Accept text messages or photo messages (with optional caption)
+        var hasText = !string.IsNullOrWhiteSpace(message?.Text);
+        var hasPhoto = message?.Photo is { Length: > 0 };
+        if (message?.Chat is null || (!hasText && !hasPhoto))
             return;
 
         var chatId = message.Chat.Id;
@@ -346,12 +353,37 @@ public sealed class TelegramChannelAdapter(
 
         var senderId = message.From.Id.ToString(CultureInfo.InvariantCulture);
 
+        // Build optional image content parts from the attached photo (if any)
+        IReadOnlyList<MessageContentPart>? contentParts = null;
+        if (hasPhoto)
+        {
+            // Telegram provides multiple resolutions; the last element is always the largest.
+            var largestPhoto = message.Photo!.OrderByDescending(p => p.FileSize ?? 0).First();
+            try
+            {
+                var file = await runtime.ApiClient.GetFileAsync(largestPhoto.FileId, cancellationToken);
+                if (!string.IsNullOrWhiteSpace(file.FilePath))
+                {
+                    var imageBytes = await runtime.ApiClient.DownloadFileAsync(file.FilePath, cancellationToken);
+                    contentParts = [new BinaryContentPart { MimeType = "image/jpeg", Data = imageBytes }];
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "bot '{BotName}' failed to download photo for updateId={UpdateId}; proceeding with caption only", runtime.BotName, update.UpdateId);
+            }
+        }
+
+        // Caption is the text for photo messages; Text is the text for regular messages.
+        var textContent = (hasPhoto ? message.Caption : message.Text) ?? string.Empty;
+
         await DispatchInboundAsync(new InboundMessage
         {
             ChannelType = ChannelType,
             SenderId = senderId,
             ChannelAddress = ChannelAddress.From(chatIdText),
-            Content = message.Text,
+            Content = textContent,
+            ContentParts = contentParts,
             TargetAgentId = string.IsNullOrWhiteSpace(runtime.Config.AgentId) ? null : runtime.Config.AgentId,
             ThreadId = message.MessageThreadId.HasValue
                 ? ThreadId.From(message.MessageThreadId.Value.ToString(CultureInfo.InvariantCulture))
