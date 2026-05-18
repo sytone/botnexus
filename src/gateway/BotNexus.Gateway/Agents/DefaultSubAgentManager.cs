@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Diagnostics;
+using BotNexus.Gateway.Security;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.Logging;
@@ -24,6 +25,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     private readonly IAgentWorkspaceManager? _workspaceManager;
     private readonly IOptionsMonitor<GatewayOptions> _options;
     private readonly ILogger<DefaultSubAgentManager> _logger;
+    private readonly DefaultToolPolicyProvider? _policyProvider;
     private readonly ConcurrentDictionary<string, SubAgentInfo> _subAgents = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<SessionId, ConcurrentBag<string>> _parentChildren = [];
     private readonly ConcurrentDictionary<string, AgentId> _parentAgentIds = new(StringComparer.OrdinalIgnoreCase);
@@ -38,7 +40,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         IChannelDispatcher dispatcher,
         IOptionsMonitor<GatewayOptions> options,
         ILogger<DefaultSubAgentManager> logger,
-        IAgentWorkspaceManager? workspaceManager = null)
+        IAgentWorkspaceManager? workspaceManager = null,
+        DefaultToolPolicyProvider? policyProvider = null)
     {
         _supervisor = supervisor;
         _registry = registry;
@@ -47,6 +50,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         _workspaceManager = workspaceManager;
         _options = options;
         _logger = logger;
+        _policyProvider = policyProvider;
     }
 
     /// <inheritdoc />
@@ -56,6 +60,31 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
         var parentDescriptor = _registry.Get(request.ParentAgentId)
             ?? throw new KeyNotFoundException($"Parent agent '{request.ParentAgentId}' is not registered.");
+
+        // Enforce spawn depth limit
+        var maxDepth = _options.CurrentValue.SubAgents.MaxDepth;
+        if (maxDepth > 0)
+        {
+            var depth = CountSubAgentDepth(request.ParentSessionId);
+            if (depth >= maxDepth)
+                throw new InvalidOperationException(
+                    $"Cannot spawn sub-agent: parent session depth {depth} has reached the maximum depth of {maxDepth}.");
+        }
+
+        // Validate tool grants against parent's deny-list (privilege escalation prevention)
+        if (_policyProvider is not null && request.ToolIds is { Count: > 0 })
+        {
+            var parentDenyList = _policyProvider.GetEffectiveDenyList(request.ParentAgentId.Value);
+            if (parentDenyList.Count > 0)
+            {
+                var denied = request.ToolIds
+                    .Where(t => parentDenyList.Contains(t, StringComparer.OrdinalIgnoreCase))
+                    .ToList();
+                if (denied.Count > 0)
+                    throw new InvalidOperationException(
+                        $"Sub-agent cannot be granted tools denied to the parent: {string.Join(", ", denied)}");
+            }
+        }
 
         var maxConcurrent = _options.CurrentValue.SubAgents.MaxConcurrentPerSession;
         if (maxConcurrent > 0)
@@ -110,6 +139,14 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         _parentAgentIds[subAgentId] = request.ParentAgentId;
         _childAgentIds[subAgentId] = childAgentId;
         _parentChildren.GetOrAdd(request.ParentSessionId, _ => []).Add(subAgentId);
+
+        // Register inherited deny-list so the child agent can't invoke parent-denied tools
+        if (_policyProvider is not null)
+        {
+            var effectiveDenyList = _policyProvider.GetEffectiveDenyList(request.ParentAgentId.Value);
+            if (effectiveDenyList.Count > 0)
+                _policyProvider.SetDynamicDenyList(childAgentId, effectiveDenyList);
+        }
 
         var timeoutSeconds = request.TimeoutSeconds > 0
             ? request.TimeoutSeconds
@@ -452,6 +489,9 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         if (!_childAgentIds.TryRemove(subAgentId, out var childAgentId))
             return;
 
+        // Remove the dynamic deny-list registered for this ephemeral sub-agent
+        _policyProvider?.RemoveDynamicDenyList(childAgentId);
+
         try
         {
             await _supervisor.StopAsync(childAgentId, childSessionId, ct);
@@ -488,5 +528,23 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 "Failed cleaning temporary workspace for child agent '{ChildAgentId}'.",
                 childAgentId);
         }
+    }
+
+    /// <summary>
+    /// Counts the sub-agent nesting depth encoded in a session ID.
+    /// A top-level session has depth 0; each <c>::subagent::</c> separator adds one level.
+    /// </summary>
+    private static int CountSubAgentDepth(SessionId sessionId)
+    {
+        const string separator = "::subagent::";
+        var value = sessionId.Value;
+        var depth = 0;
+        var searchFrom = 0;
+        while ((searchFrom = value.IndexOf(separator, searchFrom, StringComparison.OrdinalIgnoreCase)) >= 0)
+        {
+            depth++;
+            searchFrom += separator.Length;
+        }
+        return depth;
     }
 }
