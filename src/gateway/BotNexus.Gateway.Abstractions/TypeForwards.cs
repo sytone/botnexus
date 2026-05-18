@@ -86,6 +86,8 @@ using System.Runtime.CompilerServices;
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Security.ToolRiskLevel))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Security.ToolPolicyEntry))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Security.IToolPolicyProvider))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Security.IExecApprovalManager))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Security.ExecApprovalRequest))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Sessions.CompactionOptions))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Sessions.CompactionResult))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Sessions.ExistenceQuery))]
