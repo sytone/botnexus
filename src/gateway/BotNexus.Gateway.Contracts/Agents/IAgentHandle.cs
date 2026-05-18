@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
+using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 
 namespace BotNexus.Gateway.Abstractions.Agents;
 
@@ -32,12 +33,21 @@ public interface IAgentHandle : IAsyncDisposable
 
     /// <summary>
     /// Sends a message to the agent and waits for the complete response.
-    /// Use <see cref="StreamAsync"/> for real-time streaming.
+    /// Use <see cref="StreamAsync(string,CancellationToken)"/> for real-time streaming.
     /// </summary>
     /// <param name="message">The user message to send.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The complete agent response.</returns>
     Task<AgentResponse> PromptAsync(string message, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sends a multimodal user message (text + optional images) and waits for the complete response.
+    /// Use the string overload when no images are present.
+    /// </summary>
+    /// <param name="message">The user message, optionally carrying image content parts.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The complete agent response.</returns>
+    Task<AgentResponse> PromptAsync(AgentUserMessage message, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Sends a message to the agent and streams back events in real time.
@@ -47,6 +57,15 @@ public interface IAgentHandle : IAsyncDisposable
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>An async stream of agent events.</returns>
     IAsyncEnumerable<AgentStreamEvent> StreamAsync(string message, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sends a multimodal user message (text + optional images) and streams back events in real time.
+    /// Use the string overload when no images are present.
+    /// </summary>
+    /// <param name="message">The user message, optionally carrying image content parts.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>An async stream of agent events.</returns>
+    IAsyncEnumerable<AgentStreamEvent> StreamAsync(AgentUserMessage message, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Aborts the current agent execution, if any.

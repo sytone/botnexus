@@ -324,11 +324,17 @@ public sealed class SessionSwitchingTests : IAsyncDisposable
         public Task<AgentResponse> PromptAsync(string message, CancellationToken cancellationToken = default)
             => Task.FromResult(new AgentResponse { Content = string.Empty });
 
+        public Task<AgentResponse> PromptAsync(UserMessage message, CancellationToken cancellationToken = default)
+            => PromptAsync(message.Content, cancellationToken);
+
         public async IAsyncEnumerable<AgentStreamEvent> StreamAsync(string message, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.CompletedTask;
             yield break;
         }
+
+        public IAsyncEnumerable<AgentStreamEvent> StreamAsync(UserMessage message, CancellationToken cancellationToken = default)
+            => StreamAsync(message.Content, cancellationToken);
 
         public Task AbortAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task SteerAsync(string message, CancellationToken cancellationToken = default) => Task.CompletedTask;

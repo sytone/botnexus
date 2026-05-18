@@ -1,3 +1,4 @@
+using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway;
 using BotNexus.Gateway.Abstractions.Activity;
@@ -340,6 +341,8 @@ public sealed class MultiChannelFanOutTests
         handle.SetupGet(h => h.SessionId).Returns("dynamic");
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = responseContent });
+        handle.Setup(h => h.PromptAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = responseContent });
 
         var supervisor = new Mock<IAgentSupervisor>();

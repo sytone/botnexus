@@ -1077,6 +1077,358 @@ public sealed class TelegramChannelAdapterTests
         dispatched.ShouldBeFalse();
     }
 
+    // ── Photo / Image Message Tests ───────────────────────────────────────────
+
+    [Fact]
+    public async Task Polling_PhotoMessage_DispatchedWithBinaryContentPart()
+    {
+        var photoBytes = new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 }; // JPEG magic bytes
+        var dispatched = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var getUpdatesCount = 0;
+
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            // File download is a GET to /file/bot{token}/{filePath}
+            if (request.Method == HttpMethod.Get &&
+                request.RequestUri?.AbsolutePath.Contains("/file/bot", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(photoBytes)
+                };
+            }
+
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            return call.MethodName switch
+            {
+                "getUpdates" when Interlocked.Increment(ref getUpdatesCount) == 1 => JsonOk(new[]
+                {
+                    new TelegramUpdate
+                    {
+                        UpdateId = 1,
+                        Message = new TelegramMessage
+                        {
+                            MessageId = 100,
+                            Chat = new TelegramChat { Id = 42 },
+                            From = new TelegramUser { Id = 7 },
+                            Caption = "here is a photo",
+                            Photo =
+                            [
+                                new TelegramPhotoSize { FileId = "small_id", FileUniqueId = "u1", Width = 100, Height = 100, FileSize = 5_000 },
+                                new TelegramPhotoSize { FileId = "large_id", FileUniqueId = "u2", Width = 800, Height = 600, FileSize = 80_000 }
+                            ]
+                        }
+                    }
+                }),
+                "getUpdates" => JsonOk(Array.Empty<TelegramUpdate>()),
+                "getFile" => JsonOk(new TelegramFile { FileId = "large_id", FileUniqueId = "u2", FilePath = "photos/file_1.jpg" }),
+                _ => JsonOk(true)
+            };
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions { BotToken = "token", PollingTimeoutSeconds = 1 }, handler);
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
+
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+        var msg = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await adapter.StopAsync(CancellationToken.None);
+
+        msg.Content.ShouldBe("here is a photo");
+        msg.ContentParts.ShouldNotBeNull();
+        msg.ContentParts!.Count.ShouldBe(1);
+        var part = msg.ContentParts[0].ShouldBeOfType<BinaryContentPart>();
+        part.MimeType.ShouldBe("image/jpeg");
+        part.Data.ShouldBe(photoBytes);
+    }
+
+    [Fact]
+    public async Task Polling_PhotoMessage_WithNullCaption_UsesEmptyContent()
+    {
+        var photoBytes = new byte[] { 0xFF, 0xD8, 0xFF };
+        var dispatched = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var getUpdatesCount = 0;
+
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            if (request.Method == HttpMethod.Get &&
+                request.RequestUri?.AbsolutePath.Contains("/file/bot", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(photoBytes) };
+            }
+
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            return call.MethodName switch
+            {
+                "getUpdates" when Interlocked.Increment(ref getUpdatesCount) == 1 => JsonOk(new[]
+                {
+                    new TelegramUpdate
+                    {
+                        UpdateId = 2,
+                        Message = new TelegramMessage
+                        {
+                            MessageId = 101,
+                            Chat = new TelegramChat { Id = 42 },
+                            From = new TelegramUser { Id = 7 },
+                            Caption = null, // no caption
+                            Photo = [new TelegramPhotoSize { FileId = "id1", FileUniqueId = "u1", Width = 400, Height = 300, FileSize = 20_000 }]
+                        }
+                    }
+                }),
+                "getUpdates" => JsonOk(Array.Empty<TelegramUpdate>()),
+                "getFile" => JsonOk(new TelegramFile { FileId = "id1", FileUniqueId = "u1", FilePath = "photos/f.jpg" }),
+                _ => JsonOk(true)
+            };
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions { BotToken = "token", PollingTimeoutSeconds = 1 }, handler);
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
+
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+        var msg = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await adapter.StopAsync(CancellationToken.None);
+
+        msg.Content.ShouldBe(string.Empty);
+        msg.ContentParts.ShouldNotBeNull();
+        msg.ContentParts!.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Polling_PhotoMessage_DownloadFails_FallsBackToCaptionOnly()
+    {
+        // When GetFileAsync or DownloadFileAsync throws, the message is still dispatched
+        // using just the caption, with no ContentParts.
+        var dispatched = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var getUpdatesCount = 0;
+
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            return call.MethodName switch
+            {
+                "getUpdates" when Interlocked.Increment(ref getUpdatesCount) == 1 => JsonOk(new[]
+                {
+                    new TelegramUpdate
+                    {
+                        UpdateId = 3,
+                        Message = new TelegramMessage
+                        {
+                            MessageId = 102,
+                            Chat = new TelegramChat { Id = 42 },
+                            From = new TelegramUser { Id = 7 },
+                            Caption = "image with download error",
+                            Photo = [new TelegramPhotoSize { FileId = "bad_id", FileUniqueId = "u1", Width = 400, Height = 300, FileSize = 20_000 }]
+                        }
+                    }
+                }),
+                "getUpdates" => JsonOk(Array.Empty<TelegramUpdate>()),
+                // getFile returns a server error — simulates network/API failure
+                "getFile" => new HttpResponseMessage(HttpStatusCode.InternalServerError)
+                {
+                    Content = new StringContent("{\"ok\":false,\"error_code\":500,\"description\":\"server error\"}")
+                },
+                _ => JsonOk(true)
+            };
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions { BotToken = "token", PollingTimeoutSeconds = 1 }, handler);
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
+
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+        var msg = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await adapter.StopAsync(CancellationToken.None);
+
+        // Adapter must still dispatch; falls back to caption-only (no ContentParts)
+        msg.Content.ShouldBe("image with download error");
+        msg.ContentParts.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Polling_PhotoMessage_SelectsLargestPhotoByFileSize()
+    {
+        // Verifies that among multiple photo sizes, the one with the highest FileSize is chosen.
+        string? usedFileId = null;
+        var dispatched = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var getUpdatesCount = 0;
+
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            if (request.Method == HttpMethod.Get &&
+                request.RequestUri?.AbsolutePath.Contains("/file/bot", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([0xFF]) };
+            }
+
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "getFile")
+            {
+                // Capture which file_id was requested
+                using var doc = JsonDocument.Parse(call.Body);
+                usedFileId = doc.RootElement.TryGetProperty("file_id", out var el) ? el.GetString() : null;
+                return JsonOk(new TelegramFile { FileId = usedFileId!, FileUniqueId = "u", FilePath = "photos/x.jpg" });
+            }
+
+            return call.MethodName switch
+            {
+                "getUpdates" when Interlocked.Increment(ref getUpdatesCount) == 1 => JsonOk(new[]
+                {
+                    new TelegramUpdate
+                    {
+                        UpdateId = 4,
+                        Message = new TelegramMessage
+                        {
+                            MessageId = 103,
+                            Chat = new TelegramChat { Id = 42 },
+                            From = new TelegramUser { Id = 7 },
+                            Photo =
+                            [
+                                new TelegramPhotoSize { FileId = "thumb_id", FileUniqueId = "u1", Width = 90,  Height = 90,  FileSize = 3_000 },
+                                new TelegramPhotoSize { FileId = "mid_id",   FileUniqueId = "u2", Width = 320, Height = 240, FileSize = 25_000 },
+                                new TelegramPhotoSize { FileId = "hd_id",    FileUniqueId = "u3", Width = 800, Height = 600, FileSize = 95_000 }
+                            ]
+                        }
+                    }
+                }),
+                "getUpdates" => JsonOk(Array.Empty<TelegramUpdate>()),
+                _ => JsonOk(true)
+            };
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions { BotToken = "token", PollingTimeoutSeconds = 1 }, handler);
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
+
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+        await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await adapter.StopAsync(CancellationToken.None);
+
+        usedFileId.ShouldBe("hd_id");
+    }
+
+    [Fact]
+    public async Task Polling_PhotoMessage_WithNullFileSizeOnAllSizes_StillDispatches()
+    {
+        // TelegramPhotoSize.FileSize can be null; the adapter must not throw.
+        var dispatched = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var getUpdatesCount = 0;
+
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            if (request.Method == HttpMethod.Get &&
+                request.RequestUri?.AbsolutePath.Contains("/file/bot", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([0xFF, 0xD8]) };
+            }
+
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            return call.MethodName switch
+            {
+                "getUpdates" when Interlocked.Increment(ref getUpdatesCount) == 1 => JsonOk(new[]
+                {
+                    new TelegramUpdate
+                    {
+                        UpdateId = 5,
+                        Message = new TelegramMessage
+                        {
+                            MessageId = 104,
+                            Chat = new TelegramChat { Id = 42 },
+                            From = new TelegramUser { Id = 7 },
+                            Photo =
+                            [
+                                // All FileSize = null — order by (null ?? 0) = 0 for all; picks last
+                                new TelegramPhotoSize { FileId = "a", FileUniqueId = "ua", Width = 90,  Height = 90,  FileSize = null },
+                                new TelegramPhotoSize { FileId = "b", FileUniqueId = "ub", Width = 320, Height = 240, FileSize = null }
+                            ]
+                        }
+                    }
+                }),
+                "getUpdates" => JsonOk(Array.Empty<TelegramUpdate>()),
+                "getFile" => JsonOk(new TelegramFile { FileId = "a", FileUniqueId = "ua", FilePath = "photos/null_size.jpg" }),
+                _ => JsonOk(true)
+            };
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions { BotToken = "token", PollingTimeoutSeconds = 1 }, handler);
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
+
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+        var msg = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await adapter.StopAsync(CancellationToken.None);
+
+        // Must not throw and should dispatch with at least one ContentPart (or none if download fails)
+        msg.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task Polling_PhotoMessage_IsNotFilteredByUnauthorizedUser_WithNoTextGuard()
+    {
+        // Photo messages previously fell through the IsNullOrWhiteSpace(message.Text) guard.
+        // This test confirms they are accepted after the fix when the user is authorized.
+        var photoBytes = new byte[] { 0xFF, 0xD8, 0xFF };
+        var dispatched = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var getUpdatesCount = 0;
+
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            if (request.Method == HttpMethod.Get &&
+                request.RequestUri?.AbsolutePath.Contains("/file/bot", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(photoBytes) };
+            }
+
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            return call.MethodName switch
+            {
+                "getUpdates" when Interlocked.Increment(ref getUpdatesCount) == 1 => JsonOk(new[]
+                {
+                    new TelegramUpdate
+                    {
+                        UpdateId = 6,
+                        Message = new TelegramMessage
+                        {
+                            MessageId = 105,
+                            Chat = new TelegramChat { Id = 42 },
+                            From = new TelegramUser { Id = 7 },
+                            Text = null,    // no text
+                            Caption = null, // no caption either — photo only
+                            Photo = [new TelegramPhotoSize { FileId = "p1", FileUniqueId = "u1", Width = 400, Height = 300, FileSize = 12_000 }]
+                        }
+                    }
+                }),
+                "getUpdates" => JsonOk(Array.Empty<TelegramUpdate>()),
+                "getFile" => JsonOk(new TelegramFile { FileId = "p1", FileUniqueId = "u1", FilePath = "photos/photo_only.jpg" }),
+                _ => JsonOk(true)
+            };
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions { BotToken = "token", PollingTimeoutSeconds = 1 }, handler);
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
+
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+        var msg = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await adapter.StopAsync(CancellationToken.None);
+
+        msg.ContentParts.ShouldNotBeNull();
+        msg.ContentParts!.Count.ShouldBe(1);
+        msg.Content.ShouldBe(string.Empty);
+    }
+
     private static TelegramChannelAdapter CreateAdapter(TelegramGatewayOptions options, HttpMessageHandler handler)
     {
         var factory = new StubHttpClientFactory(_ => new HttpClient(handler));

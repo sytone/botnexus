@@ -1,3 +1,4 @@
+using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
 using BotNexus.Extensions.Channels.SignalR;
 using BotNexus.Gateway.Abstractions.Activity;
@@ -30,6 +31,8 @@ public sealed class FanOutStaleBindingTests
         h.SetupGet(x => x.SessionId).Returns(sessionId);
         h.Setup(x => x.IsRunning).Returns(false);
         h.Setup(x => x.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = content });
+        h.Setup(x => x.PromptAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = content });
         return h;
     }

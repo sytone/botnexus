@@ -375,6 +375,12 @@ public sealed class CopilotIntegrationTests
             }
         }
 
+        public Task<AgentResponse> PromptAsync(UserMessage message, CancellationToken cancellationToken = default)
+            => PromptAsync(message.Content, cancellationToken);
+
+        public IAsyncEnumerable<AgentStreamEvent> StreamAsync(UserMessage message, CancellationToken cancellationToken = default)
+            => StreamAsync(message.Content, cancellationToken);
+
         public Task AbortAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task SteerAsync(string message, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task FollowUpAsync(string message, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -410,6 +416,7 @@ public sealed class CopilotIntegrationTests
         public bool SupportsFollowUp => false;
         public bool SupportsThinkingDisplay => false;
         public bool SupportsToolDisplay => false;
+        public bool SupportsInboundImages => false;
         public bool IsRunning => true;
 
         public List<OutboundMessage> SentMessages { get; } = [];
