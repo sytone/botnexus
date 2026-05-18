@@ -155,6 +155,7 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<DefaultToolPolicyProvider>();
         services.TryAddSingleton<IToolPolicyProvider>(sp => sp.GetRequiredService<DefaultToolPolicyProvider>());
         services.AddSingleton<ToolPolicyHookHandler>();
+        services.TryAddSingleton<ISecretRedactor, SecretRedactor>();
 
         // Built-in isolation strategies
         services.AddSingleton<IIsolationStrategy, InProcessIsolationStrategy>();

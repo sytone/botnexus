@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Security;
 
 namespace BotNexus.Gateway.Abstractions.Models;
 
@@ -12,15 +13,17 @@ public sealed class GatewaySession
     private readonly Lock _runtimeLock = new();
     private GatewaySessionRuntime? _runtime;
     private string? _callerId;
+    private readonly ISecretRedactor? _redactor;
 
     public GatewaySession()
-        : this(new Session())
+        : this(new Session(), null)
     {
     }
 
-    public GatewaySession(Session session)
+    public GatewaySession(Session session, ISecretRedactor? redactor = null)
     {
         Session = session ?? throw new ArgumentNullException(nameof(session));
+        _redactor = redactor;
     }
 
     /// <summary>Domain session state for persistence.</summary>
@@ -151,11 +154,11 @@ public sealed class GatewaySession
     /// </summary>
     public SessionReplayBuffer ReplayBuffer => Runtime.ReplayBuffer;
 
-    /// <summary>Thread-safe append to conversation history.</summary>
-    public void AddEntry(SessionEntry entry) => Runtime.AddEntry(entry);
+    /// <summary>Thread-safe append to conversation history. Content is redacted before storage when a redactor is configured.</summary>
+    public void AddEntry(SessionEntry entry) => Runtime.AddEntry(Redact(entry));
 
-    /// <summary>Thread-safe append of multiple entries.</summary>
-    public void AddEntries(IEnumerable<SessionEntry> entries) => Runtime.AddEntries(entries);
+    /// <summary>Thread-safe append of multiple entries. Content is redacted before storage when a redactor is configured.</summary>
+    public void AddEntries(IEnumerable<SessionEntry> entries) => Runtime.AddEntries(entries.Select(Redact));
 
     /// <summary>Replaces the session history with a compacted version.</summary>
     public void ReplaceHistory(IReadOnlyList<SessionEntry> compactedEntries) => Runtime.ReplaceHistory(compactedEntries);
@@ -210,6 +213,21 @@ public sealed class GatewaySession
     /// <param name="session">The session.</param>
     /// <returns>The from session result.</returns>
     public static GatewaySession FromSession(Session session) => new(session);
+
+    // Applies the injected redactor to sensitive fields before the entry is stored.
+    private SessionEntry Redact(SessionEntry entry)
+    {
+        if (_redactor is null)
+            return entry;
+
+        var redactedContent = _redactor.Redact(entry.Content);
+        var redactedArgs = entry.ToolArgs is null ? null : _redactor.Redact(entry.ToolArgs);
+
+        if (ReferenceEquals(redactedContent, entry.Content) && ReferenceEquals(redactedArgs, entry.ToolArgs))
+            return entry;
+
+        return entry with { Content = redactedContent, ToolArgs = redactedArgs };
+    }
 }
 
 /// <summary>

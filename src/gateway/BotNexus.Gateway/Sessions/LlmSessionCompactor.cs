@@ -1,5 +1,6 @@
 using System.Text;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Domain.Primitives;
 using BotNexus.Agent.Providers.Core;
@@ -20,11 +21,13 @@ public sealed class LlmSessionCompactor : ISessionCompactor
 
     private readonly LlmClient _llmClient;
     private readonly ILogger<LlmSessionCompactor> _logger;
+    private readonly ISecretRedactor? _redactor;
 
-    public LlmSessionCompactor(LlmClient llmClient, ILogger<LlmSessionCompactor> logger)
+    public LlmSessionCompactor(LlmClient llmClient, ILogger<LlmSessionCompactor> logger, ISecretRedactor? redactor = null)
     {
         _llmClient = llmClient;
         _logger = logger;
+        _redactor = redactor;
     }
 
     public bool ShouldCompact(Session session, CompactionOptions options)
@@ -73,6 +76,10 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         {
             summary = summary[..options.MaxSummaryChars];
         }
+
+        // Redact any secrets that leaked into the LLM summary before persisting.
+        if (_redactor is not null)
+            summary = _redactor.Redact(summary);
 
         var compactionEntry = new SessionEntry
         {

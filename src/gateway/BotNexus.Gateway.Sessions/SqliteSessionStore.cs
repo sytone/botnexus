@@ -9,6 +9,7 @@ using SessionParticipant = BotNexus.Domain.Primitives.SessionParticipant;
 using ConversationId = BotNexus.Domain.Primitives.ConversationId;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
@@ -39,6 +40,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
 
     private readonly IConversationStore? _conversationStore;
     private readonly ILogger<SqliteSessionStore> _logger;
+    private readonly ISecretRedactor? _redactor;
 
     /// <summary>
     /// Initialises a new <see cref="SqliteSessionStore"/>.
@@ -49,14 +51,17 @@ public sealed class SqliteSessionStore : SessionStoreBase
     /// When provided, a startup migration links any orphaned sessions (those with no
     /// <c>conversation_id</c>) to their agent's default conversation.
     /// </param>
+    /// <param name="redactor">When provided, secrets in content are redacted before storage.</param>
     public SqliteSessionStore(
         string connectionString,
         ILogger<SqliteSessionStore> logger,
-        IConversationStore? conversationStore = null)
+        IConversationStore? conversationStore = null,
+        ISecretRedactor? redactor = null)
     {
         _connectionString = connectionString;
         _logger = logger;
         _conversationStore = conversationStore;
+        _redactor = redactor;
     }
 
     /// <inheritdoc />
@@ -104,7 +109,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
                 return loaded;
             }
 
-            var session = CreateSession(sessionId, agentId, null);
+            var session = CreateSession(sessionId, agentId, null, _redactor);
             _cache[sessionId] = session;
             return session;
         }
@@ -207,7 +212,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
         {
             var sessionId = SessionId.From(reader.GetString(0));
             var session = _cache.GetValueOrDefault(sessionId)
-                ?? await LoadSessionAsync(connection, sessionId, cancellationToken).ConfigureAwait(false);
+                ?? await LoadSessionAsync(connection, sessionId, _redactor, cancellationToken).ConfigureAwait(false);
             if (session is not null)
             {
                 _cache[sessionId] = session;
@@ -424,10 +429,10 @@ public sealed class SqliteSessionStore : SessionStoreBase
     {
         await using var connection = CreateConnection();
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        return await LoadSessionAsync(connection, sessionId, cancellationToken).ConfigureAwait(false);
+        return await LoadSessionAsync(connection, sessionId, _redactor, cancellationToken).ConfigureAwait(false);
     }
 
-    private static async Task<GatewaySession?> LoadSessionAsync(SqliteConnection connection, SessionId sessionId, CancellationToken cancellationToken)
+    private static async Task<GatewaySession?> LoadSessionAsync(SqliteConnection connection, SessionId sessionId, ISecretRedactor? redactor, CancellationToken cancellationToken)
     {
         await using var sessionCommand = connection.CreateCommand();
         sessionCommand.CommandText = """
@@ -458,20 +463,23 @@ public sealed class SqliteSessionStore : SessionStoreBase
         if (reader.FieldCount > 10 && !reader.IsDBNull(10))
             conversationId = ConversationId.From(reader.GetString(10));
 
-        var session = new GatewaySession
+        var domainSession = new Session
         {
             SessionId = SessionId.From(reader.GetString(0)),
             AgentId = AgentId.From(agentIdValue),
             ChannelType = channelType,
-            CallerId = reader.IsDBNull(3) ? null : reader.GetString(3),
             SessionType = sessionType,
             Participants = participants,
             Status = status,
             CreatedAt = createdAt,
             UpdatedAt = updatedAt,
-            Metadata = metadata
+            Metadata = metadata,
+            ConversationId = conversationId
         };
-        session.Session.ConversationId = conversationId;
+        var session = new GatewaySession(domainSession, redactor)
+        {
+            CallerId = reader.IsDBNull(3) ? null : reader.GetString(3)
+        };
 
         await reader.DisposeAsync().ConfigureAwait(false);
 

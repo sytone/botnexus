@@ -7,6 +7,7 @@ using ChannelKey = BotNexus.Domain.Primitives.ChannelKey;
 using SessionType = BotNexus.Domain.Primitives.SessionType;
 using SessionParticipant = BotNexus.Domain.Primitives.SessionParticipant;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.Extensions.Logging;
 
@@ -38,17 +39,19 @@ public sealed class FileSessionStore : SessionStoreBase
     private readonly SemaphoreSlim _lock = new(1, 1);
     private readonly Dictionary<SessionId, GatewaySession> _cache = [];
     private readonly ILogger<FileSessionStore> _logger;
+    private readonly ISecretRedactor? _redactor;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    public FileSessionStore(string storePath, ILogger<FileSessionStore> logger, IFileSystem fileSystem)
+    public FileSessionStore(string storePath, ILogger<FileSessionStore> logger, IFileSystem fileSystem, ISecretRedactor? redactor = null)
     {
         _storePath = storePath;
         _logger = logger;
         _fileSystem = fileSystem;
+        _redactor = redactor;
         _fileSystem.Directory.CreateDirectory(storePath);
     }
 
@@ -89,7 +92,7 @@ public sealed class FileSessionStore : SessionStoreBase
                 return loaded;
             }
 
-            var session = CreateSession(sessionId, agentId, null);
+            var session = CreateSession(sessionId, agentId, null, _redactor);
             _cache[sessionId] = session;
             return session;
         }
@@ -180,18 +183,20 @@ public sealed class FileSessionStore : SessionStoreBase
             cancellationToken).ConfigureAwait(false);
         if (meta is null) return null;
 
-        var session = new GatewaySession
+        var session = new GatewaySession(new Session
         {
             SessionId = sessionId,
             AgentId = meta.AgentId,
             ChannelType = meta.ChannelType,
-            CallerId = meta.CallerId,
             SessionType = meta.SessionType ?? InferSessionType(sessionId, meta.ChannelType),
             Participants = meta.Participants ?? [],
             CreatedAt = meta.CreatedAt,
             UpdatedAt = meta.UpdatedAt,
             Status = meta.Status,
             ExpiresAt = meta.ExpiresAt
+        }, _redactor)
+        {
+            CallerId = meta.CallerId
         };
         session.SetStreamReplayState(meta.NextSequenceId, meta.StreamEvents);
 
