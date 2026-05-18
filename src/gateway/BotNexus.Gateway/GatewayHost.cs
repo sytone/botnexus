@@ -408,7 +408,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
 
             // Fan-out user message to other conversation bindings so channel adapters
             // that cannot receive injected user input (e.g. Telegram) can echo it.
-            await FanOutUserMessageAsync(message, sessionId, cancellationToken);
+            // Only fan out for real user-agent turns — not sub-agents, cron, or soul sessions.
+            if (session.SessionType == SessionType.UserAgent)
+                await FanOutUserMessageAsync(message, sessionId, cancellationToken);
             if (_compactor.ShouldCompact(session.Session, _compactionOptions.CurrentValue))
             {
                 _logger.LogInformation("Auto-compacting session {SessionId}", sessionId);
