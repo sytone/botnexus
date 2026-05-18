@@ -2799,6 +2799,19 @@ details[open] > .thinking-summary::before {
     color: var(--accent);
 }
 
+.pcfg-entry-id {
+    font-weight: 400;
+    font-size: 0.75rem;
+    color: var(--text-muted, #888);
+    margin-left: 0.35rem;
+    user-select: all;
+}
+
+.pcfg-entry-id code {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.72rem;
+}
+
 .pcfg-entry-delete {
     background: transparent;
     border: none;
