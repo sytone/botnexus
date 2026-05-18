@@ -1,4 +1,75 @@
 #!/usr/bin/env pwsh
+<#
+.SYNOPSIS
+    Performs scheduled BotNexus health checks, update checks, and automated recovery.
+
+.DESCRIPTION
+    Runs a lightweight watchdog loop intended to be triggered by an external scheduler
+    (Task Scheduler, cron, or systemd timer) at a short interval such as every minute.
+
+    On each run, the script:
+    - Checks gateway health via the configured health endpoint.
+    - Tracks consecutive failures and restarts the gateway when health fails.
+    - Restores the last-known-good config after a configurable failure threshold.
+    - Checks for repository updates on a separate interval and runs botnexus update.
+    - Checks for BotNexus CLI tool updates on a separate interval.
+    - Persists state between runs in a JSON state file.
+
+.PARAMETER GatewayUrl
+    Base URL of the BotNexus gateway used for health checks.
+
+.PARAMETER HealthEndpoint
+    Relative endpoint path used for health checks.
+
+.PARAMETER RepoPath
+    Path to the local BotNexus git clone used for repository update checks.
+    Pass an empty string to skip repository checks.
+
+.PARAMETER ConfigDir
+    BotNexus home directory that contains config, logs, state, and backup folders.
+    Defaults to ~/.botnexus when not provided.
+
+.PARAMETER MaxFailures
+    Number of consecutive health-check failures before restoring last-known-good config.
+
+.PARAMETER GitCheckIntervalMinutes
+    Minimum minutes between repository update checks.
+
+.PARAMETER CliCheckIntervalMinutes
+    Minimum minutes between BotNexus CLI tool update checks.
+
+.PARAMETER LogDir
+    Directory where watchdog log files are written.
+    Defaults to <ConfigDir>/logs when not provided.
+
+.PARAMETER StateFile
+    JSON file path used to persist run state between scheduler invocations.
+    Defaults to <ConfigDir>/watchdog-state.json when not provided.
+
+.EXAMPLE
+    ./scripts/botnexus-watchdog.ps1
+
+    Runs watchdog checks with defaults.
+
+.EXAMPLE
+    ./scripts/botnexus-watchdog.ps1 -GitCheckIntervalMinutes 15 -CliCheckIntervalMinutes 120
+
+    Uses less frequent repository and CLI update checks.
+
+.EXAMPLE
+    ./scripts/botnexus-watchdog.ps1 -RepoPath ''
+
+    Runs health monitoring only and skips repository update checks.
+
+.EXAMPLE
+    ./scripts/botnexus-watchdog.ps1 -RepoPath 'D:\botnexus' -ConfigDir 'D:\botnexus-home'
+
+    Uses custom source and home paths.
+
+.NOTES
+    Intended for scheduled execution rather than long-running interactive use.
+    A lock file in the system temp directory prevents overlapping script instances.
+#>
 
 [CmdletBinding()]
 param(
