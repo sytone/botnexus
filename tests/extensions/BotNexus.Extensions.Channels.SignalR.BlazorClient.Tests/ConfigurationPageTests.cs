@@ -133,6 +133,7 @@ public sealed class ConfigurationPageTests : IDisposable
         };
 
         _ctx.Services.AddSingleton(new PlatformConfigService(httpClient));
+        _ctx.Services.AddSingleton(new CronApiClient(httpClient));
         _ctx.JSInterop.SetupVoid("", _ => true);
     }
 
@@ -158,6 +159,12 @@ public sealed class ConfigurationPageTests : IDisposable
 
             if (path == "/api/config/raw" && request.Method == HttpMethod.Get)
                 return JsonResponse(_raw);
+
+            if (path == "/api/cron" && request.Method == HttpMethod.Get)
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("[]", Encoding.UTF8, "application/json")
+                };
 
             if (path.StartsWith("/api/config/", StringComparison.Ordinal) && request.Method == HttpMethod.Put)
             {
