@@ -20,6 +20,17 @@ public sealed class WorkspaceController : ControllerBase
     private const int DefaultTreeDepthLimit = 2;
     private const int MaximumTreeDepthLimit = 5;
     private const int MaximumFileReadBytes = 512 * 1024;
+
+    /// <summary>
+    /// Returns true if <paramref name="path"/> is an absolute/rooted path on any platform.
+    /// <see cref="System.IO.Path"/> only recognises the host OS convention;
+    /// this helper additionally catches Windows drive-letter paths when running on Linux.
+    /// </summary>
+    private static bool IsAbsolutePath(string path) =>
+        System.IO.Path.IsPathRooted(path)                                                   // Linux: /foo  Windows: \foo or C:\foo
+        || (path.Length >= 3 && path[1] == ':' && (path[2] == '/' || path[2] == '\\'))  // C:/ or C:\ on Linux runner
+        || path.StartsWith('/')                                                             // belt-and-braces
+        || path.StartsWith('\\');                                                          // UNC \\server\share
     private readonly IAgentRegistry _agentRegistry;
     private readonly IAgentWorkspaceManager _workspaceManager;
     private readonly IFileSystem _fileSystem;
@@ -101,7 +112,7 @@ public sealed class WorkspaceController : ControllerBase
         if (string.IsNullOrWhiteSpace(path))
             return BadRequest(new { error = "path is required." });
 
-        if (_fileSystem.Path.IsPathRooted(path))
+        if (IsAbsolutePath(path))
             return BadRequest(new { error = "path must be workspace-relative." });
 
         if (path.Contains('\0'))
@@ -233,7 +244,7 @@ public sealed class WorkspaceController : ControllerBase
         if (string.IsNullOrWhiteSpace(path))
             return BadRequest(new { error = "path is required." });
 
-        if (_fileSystem.Path.IsPathRooted(path))
+        if (IsAbsolutePath(path))
             return BadRequest(new { error = "path must be workspace-relative." });
 
         if (path.Contains('\0'))
@@ -287,7 +298,7 @@ public sealed class WorkspaceController : ControllerBase
         if (string.IsNullOrWhiteSpace(path))
             return BadRequest(new { error = "path is required." });
 
-        if (_fileSystem.Path.IsPathRooted(path))
+        if (IsAbsolutePath(path))
             return BadRequest(new { error = "path must be workspace-relative." });
 
         if (path.Contains('\0'))
