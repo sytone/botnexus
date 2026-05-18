@@ -112,6 +112,7 @@ export default defineConfig({
         text: 'Guides',
         items: [
           { text: 'Audio Recording', link: '/guides/audio-recording' },
+          { text: 'Watchdog Setup', link: '/guides/watchdog-setup' },
         ],
       },
       {

@@ -7,7 +7,7 @@ A cross-platform PowerShell script that keeps your BotNexus gateway running, up-
 | Check | Default Interval | Action |
 |---|---|---|
 | **Gateway health** | Every run (1 min) | Restart if `/health` fails; fall back to last-known-good config after N failures |
-| **Git repo updates** | Every 5 minutes | `botnexus update --check` to detect new commits, then `botnexus update` to pull, build, and restart |
+| **Git repo updates** | Every 5 minutes | `botnexus update check` to detect new commits, then `botnexus update` to pull, build, and restart |
 | **CLI tool updates** | Every 60 minutes | `dotnet tool update -g BotNexus.Cli` |
 
 The script itself runs on a short interval (e.g. every minute). Each check type has its own timer so you control how often expensive operations happen independently.

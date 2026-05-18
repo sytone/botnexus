@@ -9,23 +9,45 @@
     elevated (Administrator) PowerShell prompt.
 
     On Linux/macOS, choose between two scheduling methods via -Method:
-      cron    (default) — adds a crontab entry that runs every minute.
-      systemd           — installs user-level systemd service + timer units
+      cron    (default) - adds a crontab entry that runs every minute.
+      systemd           - installs user-level systemd service and timer units
                           (preferred on systemd-based distros; survives reboots
                           without requiring a cron daemon).
+
+.PARAMETER RepoPath
+    Optional path to the BotNexus git repository passed to botnexus-watchdog.ps1.
+    When omitted, the watchdog script uses its own default path.
+
+.PARAMETER GitCheckIntervalMinutes
+    Interval in minutes between repository update checks performed by the watchdog.
+
+.PARAMETER CliCheckIntervalMinutes
+    Interval in minutes between BotNexus CLI tool update checks performed by the watchdog.
+
+.PARAMETER MaxFailures
+    Consecutive health-check failure threshold before watchdog config fallback is triggered.
+
+.PARAMETER GatewayUrl
+    Gateway base URL used by the watchdog health check.
 
 .PARAMETER Method
     Linux/macOS only. Scheduling back-end: 'cron' (default) or 'systemd'.
     Ignored on Windows.
 
+.PARAMETER Uninstall
+    Removes the previously installed watchdog scheduler integration.
+    - Windows: removes the BotNexusWatchdog scheduled task.
+    - cron: removes the marked crontab entry.
+    - systemd: disables/removes user timer and unit files.
+
 .EXAMPLE
-    # Windows — Scheduled Task
+    # Windows - Scheduled Task
     .\Install-WatchdogTask.ps1
 
-    # Linux — cron (default)
+    # Linux - cron (default)
     ./Install-WatchdogTask.ps1
 
-    # Linux — systemd timer
+    # Linux - systemd timer
     ./Install-WatchdogTask.ps1 -Method systemd
 
     # Custom repo path
@@ -34,6 +56,10 @@
     # Uninstall (removes whichever method was used)
     ./Install-WatchdogTask.ps1 -Uninstall
     ./Install-WatchdogTask.ps1 -Uninstall -Method systemd
+
+.NOTES
+    This script configures scheduling only. Runtime watchdog behavior is implemented in
+    botnexus-watchdog.ps1 and controlled through the forwarded arguments documented above.
 #>
 
 [CmdletBinding()]
