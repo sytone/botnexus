@@ -73,7 +73,14 @@ else
                     {
                         <div class="tool-call-label">🔧 @msg.ToolName</div>
                     }
-                    <div class="message-content">@msg.Content</div>
+                    @if (msg.Role == "assistant" && _markdownCache.TryGetValue(msg.Id, out var rendered))
+                    {
+                        <div class="message-content">@((MarkupString)rendered)</div>
+                    }
+                    else
+                    {
+                        <div class="message-content">@msg.Content</div>
+                    }
                     <div class="message-time">@msg.Timestamp.ToLocalTime().ToString("HH:mm")</div>
                 </div>
             }
@@ -110,6 +117,7 @@ else
     private bool _isSending;
     private bool _menuOpen;
     private ElementReference _messageStreamRef;
+    private readonly Dictionary<string, string> _markdownCache = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -130,6 +138,7 @@ else
                 try
                 {
                     StateHasChanged();
+                    await RenderMarkdownAsync();
                     await ScrollToBottomAsync();
                 }
                 catch (ObjectDisposedException) { }
@@ -205,6 +214,30 @@ else
         if (msg.IsToolCall) return "tool";
         if (msg.Role == "thinking") return "thinking";
         return msg.Role == "user" ? "user" : "assistant";
+    }
+
+    private async Task RenderMarkdownAsync()
+    {
+        var activeConvId = Store.ActiveAgentId is not null
+            ? Store.GetAgent(Store.ActiveAgentId)?.ActiveConversationId
+            : null;
+        if (activeConvId is null) return;
+
+        var needsRender = false;
+        foreach (var msg in Store.GetMessages(activeConvId))
+        {
+            if (msg.Role == "assistant" && !_markdownCache.ContainsKey(msg.Id))
+            {
+                try
+                {
+                    var html = await JS.InvokeAsync<string>("BotNexus.renderMarkdown", msg.Content);
+                    _markdownCache[msg.Id] = html;
+                    needsRender = true;
+                }
+                catch { /* JS not ready yet, will retry on next render */ }
+            }
+        }
+        if (needsRender) StateHasChanged();
     }
 
     private async Task ScrollToBottomAsync()
