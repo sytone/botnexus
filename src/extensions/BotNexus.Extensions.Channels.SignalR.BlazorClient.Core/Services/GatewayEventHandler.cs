@@ -338,8 +338,9 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         if (convId is not null && agent.Conversations.GetValueOrDefault(convId) is { } conv)
         {
+            var taskHint = string.IsNullOrWhiteSpace(payload.Task) ? string.Empty : $" — {payload.Task}";
             conv.Messages.Add(new ChatMessage("System",
-                $"🔄 Sub-agent spawned: {payload.Name ?? payload.SubAgentId} — {payload.Task}",
+                $"🔄 Sub-agent spawned: {payload.Name ?? payload.SubAgentId}{taskHint}",
                 DateTimeOffset.UtcNow));
         }
 

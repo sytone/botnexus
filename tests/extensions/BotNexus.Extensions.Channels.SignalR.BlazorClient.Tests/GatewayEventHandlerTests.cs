@@ -415,4 +415,60 @@ public sealed class GatewayEventHandlerTests
 
         Assert.Null(agent.CanvasHtml);
     }
+
+    // -- Fix #235 - Sub-agent spawn notification task truncation -----------
+
+    [Fact]
+    public void HandleSubAgentSpawned_short_task_is_included_verbatim_in_notification()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+        var shortTask = "Run the build checks";
+
+        _handler.HandleSubAgentSpawned(new SubAgentEventPayload(
+            SessionId: "sess-1",
+            SubAgentId: "sub-short",
+            Name: "Builder",
+            Task: shortTask,
+            Model: null,
+            Archetype: "general",
+            Status: "Running",
+            StartedAt: DateTimeOffset.UtcNow,
+            CompletedAt: null,
+            TurnsUsed: 0,
+            ResultSummary: null,
+            TimedOut: false));
+
+        var msg = conv.Messages.Last();
+        Assert.Equal("System", msg.Role);
+        Assert.Contains("Builder", msg.Content, StringComparison.Ordinal);
+        Assert.Contains(shortTask, msg.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HandleSubAgentSpawned_empty_task_omits_separator_from_notification()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+
+        _handler.HandleSubAgentSpawned(new SubAgentEventPayload(
+            SessionId: "sess-1",
+            SubAgentId: "sub-notask",
+            Name: "Silent worker",
+            Task: "",
+            Model: null,
+            Archetype: "general",
+            Status: "Running",
+            StartedAt: DateTimeOffset.UtcNow,
+            CompletedAt: null,
+            TurnsUsed: 0,
+            ResultSummary: null,
+            TimedOut: false));
+
+        var msg = conv.Messages.Last();
+        Assert.Equal("System", msg.Role);
+        Assert.Contains("Silent worker", msg.Content, StringComparison.Ordinal);
+        // No em dash separator when task is empty
+        Assert.DoesNotContain(" \u2014 ", msg.Content, StringComparison.Ordinal);
+    }
 }
