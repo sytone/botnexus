@@ -116,7 +116,7 @@ public sealed class TelegramChannelAdapterTests
     }
 
     [Fact]
-    public async Task SendAsync_EscapesHtml()
+    public async Task SendAsync_EscapesMarkdownV2SpecialChars()
     {
         ApiCall? sendCall = null;
         var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
@@ -141,8 +141,9 @@ public sealed class TelegramChannelAdapterTests
         });
 
         sendCall.ShouldNotBeNull();
-        sendCall!.Text.ShouldBe("a &lt; b &amp;&amp; c &gt; d");
-        sendCall.ParseMode.ShouldBe("HTML");
+        // < and & are not MarkdownV2 special chars; > is and must be escaped.
+        sendCall!.Text.ShouldBe("a < b && c \\> d");
+        sendCall.ParseMode.ShouldBe("MarkdownV2");
     }
 
     [Fact]
@@ -438,7 +439,7 @@ public sealed class TelegramChannelAdapterTests
     }
 
     [Fact]
-    public async Task SendAsync_HtmlParseMode_used()
+    public async Task SendAsync_MarkdownV2ParseMode_used()
     {
         ApiCall? sendCall = null;
         var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
@@ -463,11 +464,11 @@ public sealed class TelegramChannelAdapterTests
         });
 
         sendCall.ShouldNotBeNull();
-        sendCall!.ParseMode.ShouldBe("HTML");
+        sendCall!.ParseMode.ShouldBe("MarkdownV2");
     }
 
     [Fact]
-    public async Task SendAsync_HtmlSendFails_FallsBackToPlainText()
+    public async Task SendAsync_MarkdownV2SendFails_FallsBackToPlainText()
     {
         var sendCalls = new List<ApiCall>();
         var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
@@ -502,7 +503,7 @@ public sealed class TelegramChannelAdapterTests
         });
 
         sendCalls.Count.ShouldBe(2);
-        sendCalls[0].ParseMode.ShouldBe("HTML");
+        sendCalls[0].ParseMode.ShouldBe("MarkdownV2");
         sendCalls[1].ParseMode.ShouldBeNull();
         sendCalls[1].Text.ShouldBe("hello");
     }
