@@ -335,6 +335,187 @@ public sealed class MultiChannelFanOutTests
     }
 
 
+    [Fact]
+    public async Task CronSession_InSharedConversation_DoesNotFanOutUserEcho()
+    {
+        // Regression for SessionType guard: cron sessions must NOT echo user messages.
+        // Before the fix, any inbound message (including cron jobs) would call FanOutUserMessageAsync.
+        var harness = CreateHarness(responseContent: "cron-result");
+        await harness.SeedSharedConversationAsync(("signalr", "chat-1"), ("telegram", "chat-100"));
+
+        // Add a cron binding to the shared conversation so the router routes the cron
+        // message to it. ResolveSessionType sees ChannelType == "cron" → SessionType.Cron → no user echo.
+        var conversation = (await harness.Conversations.ListAsync(
+            BotNexus.Domain.Primitives.AgentId.From(AgentName))).First();
+        conversation.ChannelBindings.Add(new ChannelBinding
+        {
+            ChannelType = ChannelKey.From("cron"),
+            ChannelAddress = ChannelAddress.From("cron-0"),
+            Mode = BindingMode.Interactive
+        });
+        await harness.Conversations.SaveAsync(conversation);
+        harness.ClearOutbound();
+
+        await harness.Host.DispatchAsync(
+            harness.CreateMessage("cron-task", "cron", "cron-0"));
+
+        // Both bindings receive the agent response fan-out only (1 each) — NOT 2.
+        harness.SignalR.Messages.Count.ShouldBe(1);
+        harness.Telegram.Messages.Count.ShouldBe(1);
+        harness.SignalR.Messages.ShouldNotContain(m => m.Role == MessageRole.User);
+        harness.Telegram.Messages.ShouldNotContain(m => m.Role == MessageRole.User);
+    }
+
+    [Fact]
+    public async Task SoulSession_InSharedConversation_DoesNotFanOutUserEcho()
+    {
+        // Regression for SessionType guard: soul sessions must NOT echo user messages.
+        // To trigger the soul code path the router must return a soul session ID.
+        // We achieve this by stamping the conversation's ActiveSessionId to a soul session
+        // before dispatch — the back-compat router reuses it without recreating.
+        var harness = CreateHarness(responseContent: "soul-result");
+        await harness.SeedSharedConversationAsync(("signalr", "chat-1"), ("telegram", "chat-100"));
+
+        var seededSession = (await harness.Sessions.ListAsync()).First();
+        var soulId = seededSession.SessionId.Value + "::soul::eval";
+
+        var soulSession = await harness.Sessions.GetOrCreateAsync(
+            BotNexus.Domain.Primitives.SessionId.From(soulId),
+            BotNexus.Domain.Primitives.AgentId.From(AgentName));
+        soulSession.Session.ConversationId = seededSession.Session.ConversationId;
+        await harness.Sessions.SaveAsync(soulSession);
+
+        // Point the conversation at the soul session so the router returns it on next dispatch.
+        var conversation = (await harness.Conversations.GetAsync(seededSession.Session.ConversationId!.Value))!;
+        conversation.ActiveSessionId = BotNexus.Domain.Primitives.SessionId.From(soulId);
+        await harness.Conversations.SaveAsync(conversation);
+        harness.ClearOutbound();
+
+        // Router finds the soul session as ActiveSessionId → ResolveSessionType returns Soul → no echo.
+        await harness.Host.DispatchAsync(
+            harness.CreateMessage("soul-turn", "signalr", "chat-1"));
+
+        // Telegram (non-originating) should only receive agent response — no user echo
+        harness.Telegram.Messages.Count.ShouldBe(1);
+        harness.Telegram.Messages.ShouldNotContain(m => m.Role == MessageRole.User);
+    }
+
+    [Fact]
+    public async Task SubAgentSession_InSharedConversation_DoesNotFanOutUserEcho()
+    {
+        // Regression for SessionType guard: sub-agent sessions must NOT echo user messages.
+        // Same approach as SoulSession: stamp the conversation's ActiveSessionId so the
+        // back-compat router reuses a sub-agent session on the next dispatch.
+        var harness = CreateHarness(responseContent: "sub-result");
+        await harness.SeedSharedConversationAsync(("signalr", "chat-1"), ("telegram", "chat-100"));
+
+        var seededSession = (await harness.Sessions.ListAsync()).First();
+        var subId = seededSession.SessionId.Value + "::subagent::helper";
+
+        var subSession = await harness.Sessions.GetOrCreateAsync(
+            BotNexus.Domain.Primitives.SessionId.From(subId),
+            BotNexus.Domain.Primitives.AgentId.From(AgentName));
+        subSession.Session.ConversationId = seededSession.Session.ConversationId;
+        await harness.Sessions.SaveAsync(subSession);
+
+        var conversation = (await harness.Conversations.GetAsync(seededSession.Session.ConversationId!.Value))!;
+        conversation.ActiveSessionId = BotNexus.Domain.Primitives.SessionId.From(subId);
+        await harness.Conversations.SaveAsync(conversation);
+        harness.ClearOutbound();
+
+        // Router finds the sub-agent session as ActiveSessionId → ResolveSessionType returns SubAgent → no echo.
+        await harness.Host.DispatchAsync(
+            harness.CreateMessage("sub-turn", "signalr", "chat-1"));
+
+        // Telegram (non-originating) should only receive agent response — no user echo
+        harness.Telegram.Messages.Count.ShouldBe(1);
+        harness.Telegram.Messages.ShouldNotContain(m => m.Role == MessageRole.User);
+    }
+
+    [Fact]
+    public async Task TwoChannels_UserEchoMessage_HasRoleUserAndOriginalContent()
+    {
+        // The mocked tests only count messages. This test verifies WHAT the echo contains.
+        var harness = CreateHarness(responseContent: "agent-reply");
+        await harness.SeedSharedConversationAsync(("signalr", "chat-1"), ("telegram", "chat-100"));
+        harness.ClearOutbound();
+
+        await harness.Host.DispatchAsync(harness.CreateMessage("user typed this", "signalr", "chat-1"));
+
+        harness.Telegram.Messages.Count.ShouldBe(2);
+        var echo = harness.Telegram.Messages.Single(m => m.Role == MessageRole.User);
+        echo.Content.ShouldBe("user typed this");
+        echo.ChannelAddress.ShouldBe(ChannelAddress.From("chat-100"));
+
+        var response = harness.Telegram.Messages.Single(m => m.Role != MessageRole.User);
+        response.Content.ShouldBe("agent-reply");
+    }
+
+    [Fact]
+    public async Task TwoChannels_UserEchoDeliveredBeforeAgentResponse()
+    {
+        // Echo must arrive first so conversations appear in chronological order.
+        var harness = CreateHarness(responseContent: "response");
+        await harness.SeedSharedConversationAsync(("signalr", "chat-1"), ("telegram", "chat-100"));
+        harness.ClearOutbound();
+
+        await harness.Host.DispatchAsync(harness.CreateMessage("hi", "signalr", "chat-1"));
+
+        harness.Telegram.Messages.Count.ShouldBe(2);
+        harness.Telegram.Messages[0].Role.ShouldBe(MessageRole.User);
+        harness.Telegram.Messages[1].Role.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task FanOut_WhenAdapterMissingForBinding_OtherBindingsStillReceiveEcho()
+    {
+        // When a binding exists for a channel type with no registered adapter, the fan-out
+        // skips that binding gracefully and continues to deliver to the remaining bindings.
+        var harness = CreateHarness(responseContent: "response");
+        await harness.SeedSharedConversationAsync(("signalr", "chat-1"), ("telegram", "chat-100"));
+
+        // Inject a binding for "sms" — an unregistered channel type
+        var conversation = (await harness.Conversations.ListAsync(
+            BotNexus.Domain.Primitives.AgentId.From(AgentName))).First();
+        conversation.ChannelBindings.Add(new ChannelBinding
+        {
+            ChannelType = ChannelKey.From("sms"),
+            ChannelAddress = ChannelAddress.From("+15551234567"),
+            Mode = BindingMode.Interactive
+        });
+        await harness.Conversations.SaveAsync(conversation);
+        harness.ClearOutbound();
+
+        await Should.NotThrowAsync(() =>
+            harness.Host.DispatchAsync(harness.CreateMessage("hello", "signalr", "chat-1")));
+
+        // Telegram still receives both user echo and agent response despite "sms" having no adapter
+        harness.Telegram.Messages.Count.ShouldBe(2);
+        harness.Telegram.Messages.ShouldContain(m => m.Role == MessageRole.User);
+    }
+
+    [Fact]
+    public async Task FanOut_WhenOneAdapterThrowsOnEcho_OtherBindingsStillReceive()
+    {
+        // Per-binding try/catch: if one adapter throws during echo, others must still receive it.
+        var harness = CreateHarness(responseContent: "response");
+        await harness.SeedSharedConversationAsync(("signalr", "chat-1"), ("telegram", "chat-100"), ("tui", "terminal-1"));
+
+        // Override telegram to always throw — simulates a flaky adapter
+        harness.Telegram.Adapter
+            .Setup(c => c.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Telegram API failure"));
+        harness.ClearOutbound();
+
+        // Must NOT propagate — per-binding errors are caught and logged
+        await Should.NotThrowAsync(() =>
+            harness.Host.DispatchAsync(harness.CreateMessage("hi", "signalr", "chat-1")));
+
+        // Tui (non-throwing, non-originating) still receives both user echo and agent response
+        harness.Tui.Messages.Count.ShouldBe(2);
+        harness.Tui.Messages.ShouldContain(m => m.Role == MessageRole.User);
+    }
+
     private static async Task AssertPerSendAsync(TestHarness harness, InboundMessage message, string originatingChannel)
     {
         harness.ClearOutbound();

@@ -1562,6 +1562,148 @@ public sealed class TelegramChannelAdapterTests
         text.ShouldNotStartWith("User Said:");
     }
 
+    [Fact]
+    public async Task SendAsync_WithAssistantRole_SendsAsNormalAgentResponse()
+    {
+        // Role.Assistant is NOT User — must go through the normal send path, no "User Said:" prefix.
+        ApiCall? sendCall = null;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCall = call;
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            AllowedChatIds = { 42 }
+        }, handler);
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("telegram"),
+            ChannelAddress = ChannelAddress.From("42"),
+            Content = "This is from the assistant",
+            Role = BotNexus.Domain.Primitives.MessageRole.Assistant
+        });
+
+        sendCall.ShouldNotBeNull();
+        sendCall!.Text.ShouldNotBeNull();
+        sendCall.Text!.ShouldNotStartWith("User Said:");
+        sendCall.Text.ShouldBe("This is from the assistant");
+    }
+
+    [Fact]
+    public async Task SendAsync_WithUserRole_ThreadIdPropagatedToApi()
+    {
+        // When an echo message has a ThreadId, it must be included in the Telegram API call
+        // so the echo appears in the correct forum topic.
+        ApiCall? sendCall = null;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCall = call;
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            AllowedChatIds = { 42 }
+        }, handler);
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("telegram"),
+            ChannelAddress = ChannelAddress.From("42"),
+            ThreadId = BotNexus.Domain.Primitives.ThreadId.From("99"),
+            Content = "Portal message",
+            Role = BotNexus.Domain.Primitives.MessageRole.User
+        });
+
+        sendCall.ShouldNotBeNull();
+        sendCall!.MessageThreadId.ShouldBe(99);
+        sendCall.Text.ShouldNotBeNull();
+        sendCall.Text!.ShouldStartWith("User Said:\n");
+    }
+
+    [Fact]
+    public async Task SendAsync_WithUserRole_LongContent_PrefixOnFirstChunkOnly()
+    {
+        // When the echoed content is long enough to require splitting, the "User Said:\n" prefix
+        // must appear on the FIRST chunk only — subsequent chunks are raw content continuations.
+        var calls = new List<ApiCall>();
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                calls.Add(call);
+            return JsonOk(new TelegramMessage { MessageId = calls.Count, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            AllowedChatIds = { 42 },
+            EchoForeignUserMessages = true,
+            MaxMessageLength = 50  // small limit to force splitting
+        }, handler);
+
+        // Content = 200 'x' chars; echo = "User Said:\n" (11) + 200 = 211 chars → 5 chunks of 50 chars
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("telegram"),
+            ChannelAddress = ChannelAddress.From("42"),
+            Content = new string('x', 200),
+            Role = BotNexus.Domain.Primitives.MessageRole.User
+        });
+
+        calls.Count.ShouldBeGreaterThan(1);
+        calls[0].Text.ShouldNotBeNull();
+        calls[0].Text!.ShouldStartWith("User Said:\n");
+        // No subsequent chunk should re-start with the prefix
+        foreach (var chunk in calls.Skip(1))
+        {
+            chunk.Text.ShouldNotBeNull();
+            chunk.Text!.ShouldNotStartWith("User Said:");
+        }
+    }
+
+    [Fact]
+    public async Task SendAsync_WithUserRole_EmptyContent_SendsEchoWithPrefix()
+    {
+        // Edge case: empty content should still produce the "User Said:\n" header (no crash).
+        ApiCall? sendCall = null;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCall = call;
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            AllowedChatIds = { 42 }
+        }, handler);
+
+        await Should.NotThrowAsync(() => adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("telegram"),
+            ChannelAddress = ChannelAddress.From("42"),
+            Content = string.Empty,
+            Role = BotNexus.Domain.Primitives.MessageRole.User
+        }));
+
+        sendCall.ShouldNotBeNull();
+        sendCall!.Text.ShouldNotBeNull();
+        sendCall.Text!.ShouldStartWith("User Said:\n");
+    }
+
     private static TelegramChannelAdapter CreateAdapter(TelegramGatewayOptions options, HttpMessageHandler handler)
     {
         var factory = new StubHttpClientFactory(_ => new HttpClient(handler));
