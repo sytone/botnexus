@@ -219,6 +219,100 @@ public sealed class GatewayRestClientTests
         var client = new GatewayRestClient(new HttpClient());
         Should.Throw<InvalidOperationException>(() => client.GetAgentsAsync().GetAwaiter().GetResult());
     }
+
+    // ── DeleteWorkspaceItemAsync ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task DeleteWorkspaceItemAsync_calls_correct_url()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/agents/agent-1/workspace/notes.md", "{}");
+
+        var success = await client.DeleteWorkspaceItemAsync("agent-1", "notes.md");
+
+        success.ShouldBeTrue();
+        handler.LastRequestUrl.ShouldContain("/api/agents/agent-1/workspace/notes.md");
+    }
+
+    [Fact]
+    public async Task DeleteWorkspaceItemAsync_appends_force_query_when_true()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/agents/agent-1/workspace/logs", "{}");
+
+        await client.DeleteWorkspaceItemAsync("agent-1", "logs", force: true);
+
+        handler.LastRequestUrl.ShouldContain("?force=true");
+    }
+
+    [Fact]
+    public async Task DeleteWorkspaceItemAsync_does_not_append_force_when_false()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/agents/agent-1/workspace/notes.md", "{}");
+
+        await client.DeleteWorkspaceItemAsync("agent-1", "notes.md", force: false);
+
+        handler.LastRequestUrl.ShouldNotContain("force");
+    }
+
+    [Fact]
+    public async Task DeleteWorkspaceItemAsync_encodes_nested_path_segments()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/agents/agent-1/workspace/memory/2026-05-15.md", "{}");
+
+        await client.DeleteWorkspaceItemAsync("agent-1", "memory/2026-05-15.md");
+
+        handler.LastRequestUrl.ShouldContain("/api/agents/agent-1/workspace/memory/2026-05-15.md");
+    }
+
+    [Fact]
+    public async Task DeleteWorkspaceItemAsync_returns_false_on_error_status()
+    {
+        var (client, handler) = CreateClient();
+        // no registered path => handler returns 404 => IsSuccessStatusCode == false
+
+        var success = await client.DeleteWorkspaceItemAsync("agent-1", "no-such-file.md");
+
+        success.ShouldBeFalse();
+    }
+
+    // ── WriteWorkspaceFileAsync ──────────────────────────────────────────────────
+
+    [Fact]
+    public async Task WriteWorkspaceFileAsync_calls_correct_url()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/agents/agent-1/workspace/notes.md", "{}");
+
+        var success = await client.WriteWorkspaceFileAsync("agent-1", "notes.md", "# Hello");
+
+        success.ShouldBeTrue();
+        handler.LastRequestUrl.ShouldContain("/api/agents/agent-1/workspace/notes.md");
+    }
+
+    [Fact]
+    public async Task WriteWorkspaceFileAsync_encodes_nested_path_segments()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/agents/agent-1/workspace/memory/today.md", "{}");
+
+        await client.WriteWorkspaceFileAsync("agent-1", "memory/today.md", "content");
+
+        handler.LastRequestUrl.ShouldContain("/api/agents/agent-1/workspace/memory/today.md");
+    }
+
+    [Fact]
+    public async Task WriteWorkspaceFileAsync_returns_false_on_error_status()
+    {
+        var (client, handler) = CreateClient();
+        // no registered path => handler returns 404 => IsSuccessStatusCode == false
+
+        var success = await client.WriteWorkspaceFileAsync("agent-1", "bad/path/file.md", "content");
+
+        success.ShouldBeFalse();
+    }
 }
 
 /// <summary>Minimal HTTP handler for stubbing REST responses by URL path.</summary>
