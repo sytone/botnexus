@@ -78,7 +78,8 @@ public sealed record SubAgentEventPayload(
     [property: JsonPropertyName("completedAt")] DateTimeOffset? CompletedAt,
     [property: JsonPropertyName("turnsUsed")] int TurnsUsed,
     [property: JsonPropertyName("resultSummary")] string? ResultSummary,
-    [property: JsonPropertyName("timedOut")] bool TimedOut);
+    [property: JsonPropertyName("timedOut")] bool TimedOut,
+    [property: JsonPropertyName("childSessionId")] string? ChildSessionId);
 
 /// <summary>Payload sent via the <c>AgentsChanged</c> client method when agent config changes on the server.</summary>
 public sealed record AgentsChangedPayload(

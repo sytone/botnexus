@@ -13,7 +13,7 @@
     </header>
 
     <nav class="agent-tab-bar agent-panel-tab-strip" role="tablist" aria-label="Agent sections">
-        @foreach (var tab in s_tabs)
+        @foreach (var tab in VisibleTabs)
         {
             <button class="agent-tab agent-panel-tab @(IsActiveTab(tab.Key) ? "active" : "")"
                     data-tab="@tab.Key.ToString().ToLowerInvariant()"
@@ -35,17 +35,23 @@
             <ChatPanel AgentId="@AgentId" />
         </section>
 
+        @if (!IsSubAgent)
+        {
         <section id="@GetPanelId(AgentPanelTab.Workspace)"
                  class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Workspace) ? "active" : "")"
                  role="tabpanel">
             <WorkspacePanel AgentId="@AgentId" />
         </section>
+        }
 
+        @if (!IsSubAgent)
+        {
         <section id="@GetPanelId(AgentPanelTab.Reports)"
                  class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Reports) ? "active" : "")"
                  role="tabpanel">
             <ReportsPanel AgentId="@AgentId" />
         </section>
+        }
 
         <section id="@GetPanelId(AgentPanelTab.Canvas)"
                  class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Canvas) ? "active" : "")"
@@ -73,6 +79,11 @@
         (AgentPanelTab.Reports, "Reports", "📊"),
         (AgentPanelTab.Canvas, "Canvas", "🎨")
     ];
+
+    private AgentState? CurrentAgent => Store.GetAgent(AgentId);
+    private bool IsSubAgent => CurrentAgent?.IsReadOnly == true && CurrentAgent?.SessionType == "agent-subagent";
+    private IEnumerable<(AgentPanelTab Key, string Label, string Icon)> VisibleTabs =>
+        IsSubAgent ? s_tabs.Where(t => t.Key != AgentPanelTab.Workspace && t.Key != AgentPanelTab.Reports) : s_tabs;
 
     protected override void OnInitialized()
     {
@@ -123,7 +134,13 @@
         }
 
         if (TryParseTab(tabValue, out var parsed))
-            _activeTab = parsed;
+        {
+            // Suppress Workspace/Reports tabs for sub-agents
+            if (IsSubAgent && (parsed == AgentPanelTab.Workspace || parsed == AgentPanelTab.Reports))
+                _activeTab = AgentPanelTab.Conversation;
+            else
+                _activeTab = parsed;
+        }
     }
 
     private static string? GetQueryValue(string query, string key)

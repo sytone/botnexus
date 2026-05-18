@@ -88,7 +88,8 @@ public sealed class SubAgentSignalRBridge(
             subAgent.CompletedAt,
             subAgent.TurnsUsed,
             subAgent.ResultSummary,
-            subAgent.Status == SubAgentStatus.TimedOut);
+            subAgent.Status == SubAgentStatus.TimedOut,
+            subAgent.ChildSessionId.Value);
 
         logger.LogDebug("Forwarding {EventType} for sub-agent '{SubAgentId}' to group '{Group}'.",
             evt.Type, subAgent.SubAgentId, group);
