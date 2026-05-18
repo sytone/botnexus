@@ -7,6 +7,10 @@ on:
     - cron: daily
   workflow_dispatch:
 
+concurrency:
+  group: daily-doc-updater
+  cancel-in-progress: true
+
 permissions:
   contents: read
   issues: read
@@ -15,6 +19,9 @@ permissions:
 tracker-id: daily-doc-updater
 engine: claude
 strict: true
+
+checkout:
+  fetch-depth: 0
 
 network:
   allowed:
@@ -35,12 +42,7 @@ tools:
   github:
     toolsets: [default]
   edit:
-  bash:
-    - "find docs -name '*.md' -o -name '*.mdx'"
-    - "find docs -maxdepth 1 -ls"
-    - "find docs -name '*.md' -exec cat {} +"
-    - "grep -r '*' docs"
-    - "git"
+  bash: ["*"]
 
 timeout-minutes: 45
 
@@ -82,41 +84,36 @@ For each merged PR and commit, analyze:
 
 Create a summary of changes that should be documented.
 
-### 3. Review Documentation Instructions
+### 3. Review Existing Documentation Style
 
-**IMPORTANT**: Before making any documentation changes, you MUST read and follow the documentation guidelines:
+**IMPORTANT**: Before making any documentation changes, review the existing docs to understand the conventions:
 
 ```bash
-# Load the documentation instructions
-cat .github/instructions/documentation.instructions.md
+# Look at existing docs to understand formatting and structure
+head -50 docs/index.md
+ls docs/
 ```
 
-The documentation follows the **Diátaxis framework** with four distinct types:
-- **Tutorials** (Learning-Oriented): Guide beginners through achieving specific outcomes
-- **How-to Guides** (Goal-Oriented): Solve specific real-world problems
-- **Reference** (Information-Oriented): Provide accurate technical descriptions
-- **Explanation** (Understanding-Oriented): Clarify and illuminate topics
-
 Pay special attention to:
-- The tone and voice guidelines (neutral, technical, not promotional)
+- The tone and voice used in existing documentation (neutral, technical)
 - Proper use of headings (markdown syntax, not bold text)
-- Code samples with appropriate language tags (use `aw` for agentic workflows)
-- Astro Starlight syntax for callouts, tabs, and cards
-- Minimal use of components (prefer standard markdown)
+- Code samples with appropriate language tags
+- Consistent structure with existing pages
 
 ### 4. Identify Documentation Gaps
 
-Review the documentation in the `docs/src/content/docs/` directory:
+Review the documentation in the `docs/` directory:
 
 - Check if new features are already documented
 - Identify which documentation files need updates
-- Determine the appropriate documentation type (tutorial, how-to, reference, explanation)
-- Find the best location for new content
+- Determine the appropriate location for new content
+- Find the best existing file to add content to
 
 Use bash commands to explore documentation structure:
 
 ```bash
-find docs/src/content/docs -name '*.md' -o -name '*.mdx'
+find docs -name '*.md' | head -50
+find docs -type d
 ```
 
 ### 5. Update Documentation
@@ -124,19 +121,21 @@ find docs/src/content/docs -name '*.md' -o -name '*.mdx'
 For each missing or incomplete feature documentation:
 
 1. **Determine the correct file** based on the feature type:
-   - CLI commands → `docs/src/content/docs/setup/cli.md`
-   - Workflow reference → `docs/src/content/docs/reference/`
-   - How-to guides → `docs/src/content/docs/guides/`
-   - Samples → `docs/src/content/docs/samples/`
+   - CLI commands → `docs/cli-reference.md`
+   - Configuration → `docs/configuration.md`
+   - User guides → `docs/user-guide/`
+   - How-to guides → `docs/guides/`
+   - WebUI/Portal → `docs/webui/`
+   - API reference → `docs/api-reference.md`
+   - Extensions → `docs/extensions/`
 
-2. **Follow documentation guidelines** from `.github/instructions/documentation.instructions.md`
+2. **Follow existing documentation style** observed in step 3
 
 3. **Update the appropriate file(s)** using the edit tool:
    - Add new sections for new features
    - Update existing sections for modified features
    - Add deprecation notices for removed features
    - Include code examples with proper syntax highlighting
-   - Use appropriate Astro Starlight components (callouts, tabs, cards) sparingly
 
 4. **Maintain consistency** with existing documentation style:
    - Use the same tone and voice
@@ -199,10 +198,9 @@ This PR updates the documentation based on features merged in the last 24 hours.
 
 - **Be Thorough**: Review all merged PRs and significant commits
 - **Be Accurate**: Ensure documentation accurately reflects the code changes
-- **Follow Guidelines**: Strictly adhere to the documentation instructions
 - **Be Selective**: Only document features that affect users (skip internal refactoring unless it's significant)
 - **Be Clear**: Write clear, concise documentation that helps users
-- **Use Proper Format**: Use the correct Diátaxis category and Astro Starlight syntax
+- **Match Style**: Follow the same tone, structure, and detail level as existing docs
 - **Link References**: Include links to relevant PRs and issues where appropriate
 - **Test Understanding**: If unsure about a feature, review the code changes in detail
 
@@ -212,7 +210,7 @@ This PR updates the documentation based on features merged in the last 24 hours.
 - You have access to GitHub tools to search and review code changes
 - You have access to bash commands to explore the documentation structure
 - The safe-outputs create-pull-request will automatically create a PR with your changes
-- Always read the documentation instructions before making changes
+- Always review existing documentation style before making changes
 - Focus on user-facing features and changes that affect the developer experience
 
 Good luck! Your documentation updates help keep our project accessible and up-to-date.
