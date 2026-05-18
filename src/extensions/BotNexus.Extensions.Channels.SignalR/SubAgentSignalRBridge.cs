@@ -72,11 +72,15 @@ public sealed class SubAgentSignalRBridge(
         var parentSessionId = evt.SessionId;
         var group = $"session:{parentSessionId}";
 
+        var taskSummary = subAgent.Task.Length > 120
+            ? subAgent.Task[..120].TrimEnd() + "\u2026"
+            : subAgent.Task;
+
         var payload = new SubAgentEventPayload(
             parentSessionId,
             subAgent.SubAgentId,
             subAgent.Name,
-            subAgent.Task,
+            taskSummary,
             subAgent.Model,
             subAgent.Archetype.Value,
             subAgent.Status.ToString(),
