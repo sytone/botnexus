@@ -1182,10 +1182,16 @@ botnexus agent list
 
 ### Exit Codes
 
-All commands return:
+Most commands return:
 
 - `0` — Success
 - `1` — Error (check console output for details)
+
+`botnexus update check` uses status-style exit codes for automation:
+
+- `0` — Up to date
+- `1` — Updates available
+- `2` — Check failed (for example, git fetch error)
 
 ---
 
