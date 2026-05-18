@@ -427,6 +427,11 @@ public sealed class ShellTool : IAgentTool
             if (!process.HasExited)
             {
                 process.Kill(entireProcessTree: true);
+                // Wait for the process to fully terminate so callers can rely on
+                // the process being dead when TryKill returns. SIGKILL is asynchronous
+                // on Linux; without this wait there is a race where a caller checking
+                // the PID immediately after Kill may still observe the process as alive.
+                process.WaitForExit(milliseconds: 5_000);
             }
         }
         catch
