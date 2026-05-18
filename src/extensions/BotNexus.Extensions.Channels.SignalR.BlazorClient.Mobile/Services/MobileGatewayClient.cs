@@ -13,6 +13,7 @@ public sealed class MobileGatewayClient : IAsyncDisposable
     private readonly HttpClient _http;
     private readonly MobileState _state;
     private HubConnection? _hub;
+    private string _baseUrl = "";
 
     public MobileGatewayClient(HttpClient http, MobileState state)
     {
@@ -29,7 +30,7 @@ public sealed class MobileGatewayClient : IAsyncDisposable
         if (_hub?.State == HubConnectionState.Connected)
             return;
 
-        var baseUrl = gatewayUrl.TrimEnd('/') + "/";
+        var baseUrl = _baseUrl = gatewayUrl.TrimEnd('/') + "/";
 
         // ── REST: agents ──────────────────────────────────────────────────────
         try
@@ -53,7 +54,7 @@ public sealed class MobileGatewayClient : IAsyncDisposable
         // ── REST: conversations for active agent ──────────────────────────────
         if (_state.ActiveAgentId is not null)
         {
-            await LoadConversationsAsync(baseUrl, _state.ActiveAgentId, ct);
+            await LoadConversationsAsync(_state.ActiveAgentId, ct);
         }
 
         // ── SignalR ───────────────────────────────────────────────────────────
@@ -78,12 +79,12 @@ public sealed class MobileGatewayClient : IAsyncDisposable
     }
 
     /// <summary>Load conversations for an agent and optionally select the first one.</summary>
-    public async Task LoadConversationsAsync(string baseUrl, string agentId, CancellationToken ct = default)
+    public async Task LoadConversationsAsync(string agentId, CancellationToken ct = default)
     {
         try
         {
             var convs = await _http.GetFromJsonAsync<List<ConversationSummaryDto>>(
-                $"{baseUrl}api/conversations?agentId={Uri.EscapeDataString(agentId)}", ct);
+                $"{_baseUrl}api/conversations?agentId={Uri.EscapeDataString(agentId)}", ct);
             _state.Conversations.Clear();
             if (convs is not null)
             {
@@ -102,19 +103,19 @@ public sealed class MobileGatewayClient : IAsyncDisposable
         // ── REST: history for active conversation ─────────────────────────────
         if (_state.ActiveConversationId is not null)
         {
-            await LoadHistoryAsync(baseUrl, _state.ActiveConversationId, ct);
+            await LoadHistoryAsync(_state.ActiveConversationId, ct);
         }
 
         _state.NotifyChanged();
     }
 
     /// <summary>Load message history for a conversation.</summary>
-    public async Task LoadHistoryAsync(string baseUrl, string conversationId, CancellationToken ct = default)
+    public async Task LoadHistoryAsync(string conversationId, CancellationToken ct = default)
     {
         try
         {
             var history = await _http.GetFromJsonAsync<HistoryResponse>(
-                $"{baseUrl}api/conversations/{Uri.EscapeDataString(conversationId)}/history", ct);
+                $"{_baseUrl}api/conversations/{Uri.EscapeDataString(conversationId)}/history", ct);
             _state.Messages.Clear();
             if (history?.Messages is not null)
             {
