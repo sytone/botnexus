@@ -153,6 +153,37 @@ public sealed class GatewayRestClient : IGatewayRestClient
     }
 
     /// <inheritdoc />
+    public async Task<bool> DeleteWorkspaceItemAsync(
+        string agentId,
+        string path,
+        bool force = false,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        var requestPath = BuildWorkspaceRequestPath(agentId, path);
+        if (force)
+            requestPath += "?force=true";
+        var response = await _http.DeleteAsync(requestPath, cancellationToken);
+        return response.IsSuccessStatusCode;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> WriteWorkspaceFileAsync(
+        string agentId,
+        string path,
+        string content,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        var requestPath = BuildWorkspaceRequestPath(agentId, path);
+        var response = await _http.PutAsJsonAsync(
+            requestPath,
+            new { content },
+            cancellationToken);
+        return response.IsSuccessStatusCode;
+    }
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<ReportListItemDto>> GetReportsAsync(
         string agentId,
         CancellationToken cancellationToken = default)
