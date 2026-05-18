@@ -88,7 +88,7 @@
 </div>
 
 @code {
-    private const int MaxPreviewCharacters = 200_000;
+    private const int MaxPreviewCharacters = 512 * 1024;
 
     private readonly CancellationTokenSource _cts = new();
     private IReadOnlyList<ReportListItemDto> _reports = [];
@@ -108,7 +108,7 @@
     private string MobilePaneClass => _showMobileViewer ? "mobile-viewer" : "mobile-list";
 
     private bool ShowServerTruncationNotice =>
-        _selectedReport is { } report && report.Content.Length < report.Size;
+        _selectedReport is { IsTruncated: true };
 
     private bool ShowClientTruncationNotice =>
         !string.IsNullOrEmpty(_selectedReport?.Content)

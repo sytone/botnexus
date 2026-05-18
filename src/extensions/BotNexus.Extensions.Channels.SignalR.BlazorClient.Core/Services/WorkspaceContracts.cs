@@ -20,6 +20,7 @@ public sealed record ReportsListResponseDto(
 public sealed record ReportContentDto(
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("size")] long Size,
+    [property: JsonPropertyName("isTruncated")] bool? IsTruncated,
     [property: JsonPropertyName("lastModifiedUtc")] DateTimeOffset? LastModifiedUtc,
     [property: JsonPropertyName("content")] string Content,
     [property: JsonPropertyName("encoding")] string? Encoding);

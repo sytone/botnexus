@@ -7,6 +7,7 @@ using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using System.IO.Abstractions.TestingHelpers;
 
 namespace BotNexus.Gateway.Tests;
@@ -156,7 +157,7 @@ public sealed class ReportsControllerTests
             ApiProvider = "openai"
         });
 
-        var controller = new ReportsController(registry, workspaceManager, fileSystem);
+        var controller = new ReportsController(registry, workspaceManager, fileSystem, Options.Create(new PlatformConfig()));
         return (controller, fileSystem, workspacePath);
     }
 
