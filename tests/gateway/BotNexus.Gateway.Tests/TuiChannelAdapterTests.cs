@@ -32,7 +32,6 @@ public sealed class TuiChannelAdapterTests
             Console.SetOut(output);
 
             await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-            await Task.Delay(200);
             await adapter.StopAsync(CancellationToken.None);
         }
         finally
@@ -78,7 +77,6 @@ public sealed class TuiChannelAdapterTests
             Console.SetOut(output);
 
             await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-            await Task.Delay(200);
             await adapter.StopAsync(CancellationToken.None);
         }
         finally
