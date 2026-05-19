@@ -3,6 +3,7 @@ using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
+using System.Globalization;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
 
@@ -42,6 +43,23 @@ public sealed class ReportsPanelTests : IDisposable
         var cut = _ctx.Render<ReportsPanel>(parameters => parameters.Add(x => x.AgentId, "agent-1"));
 
         cut.WaitForAssertion(() => cut.Markup.ShouldContain("No reports found in this workspace yet."));
+    }
+
+    [Fact]
+    public void First_render_initializes_splitter_with_legacy_default_width_baseline()
+    {
+        _restClient.GetReportsAsync("agent-1", Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<ReportListItemDto>>([]));
+
+        _ctx.Render<ReportsPanel>(parameters => parameters.Add(x => x.AgentId, "agent-1"));
+
+        var invocation = Assert.Single(_ctx.JSInterop.Invocations, i => i.Identifier == "BotNexus.splitter.init");
+        Assert.Equal("reports-panel-agent-1", Assert.IsType<string>(invocation.Arguments[0]));
+        Assert.Equal("bn-reports-list-width-agent-1", Assert.IsType<string>(invocation.Arguments[1]));
+        Assert.Equal(384, Convert.ToInt32(invocation.Arguments[2], CultureInfo.InvariantCulture));
+        Assert.Equal(140, Convert.ToInt32(invocation.Arguments[3], CultureInfo.InvariantCulture));
+        Assert.Equal(0.65d, Convert.ToDouble(invocation.Arguments[4], CultureInfo.InvariantCulture), 3);
+        Assert.Equal(0.33d, Convert.ToDouble(invocation.Arguments[5], CultureInfo.InvariantCulture), 3);
     }
 
     [Fact]

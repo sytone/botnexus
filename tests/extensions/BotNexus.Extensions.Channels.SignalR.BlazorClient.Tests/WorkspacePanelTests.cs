@@ -3,6 +3,7 @@ using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
+using System.Globalization;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
 
@@ -41,6 +42,23 @@ public sealed class WorkspacePanelTests : IDisposable
         var cut = _ctx.Render<WorkspacePanel>(parameters => parameters.Add(x => x.AgentId, "agent-1"));
 
         cut.WaitForAssertion(() => cut.Markup.ShouldContain("Workspace is empty."));
+    }
+
+    [Fact]
+    public void First_render_initializes_splitter_with_legacy_default_width_baseline()
+    {
+        _restClient.GetWorkspaceAsync("agent-1", Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(_ => Task.FromResult<WorkspaceResponseDto?>(new WorkspaceResponseDto("directory", "", [], null, null, null, null, null)));
+
+        _ctx.Render<WorkspacePanel>(parameters => parameters.Add(x => x.AgentId, "agent-1"));
+
+        var invocation = Assert.Single(_ctx.JSInterop.Invocations, i => i.Identifier == "BotNexus.splitter.init");
+        Assert.Equal("workspace-panel-agent-1", Assert.IsType<string>(invocation.Arguments[0]));
+        Assert.Equal("bn-workspace-tree-width-agent-1", Assert.IsType<string>(invocation.Arguments[1]));
+        Assert.Equal(384, Convert.ToInt32(invocation.Arguments[2], CultureInfo.InvariantCulture));
+        Assert.Equal(120, Convert.ToInt32(invocation.Arguments[3], CultureInfo.InvariantCulture));
+        Assert.Equal(0.7d, Convert.ToDouble(invocation.Arguments[4], CultureInfo.InvariantCulture), 3);
+        Assert.Equal(0.33d, Convert.ToDouble(invocation.Arguments[5], CultureInfo.InvariantCulture), 3);
     }
 
     [Fact]
@@ -219,6 +237,8 @@ public sealed class WorkspacePanelTests : IDisposable
         css.ShouldContain(".workspace-panel.mobile-tree .workspace-viewer-pane");
         css.ShouldContain(".workspace-panel.mobile-viewer .workspace-tree-pane");
         css.ShouldContain(".workspace-mobile-back");
+        css.ShouldContain(".workspace-tree-row-wrapper");
+        css.ShouldContain(".workspace-tree-delete");
     }
 
     private static string FindRepositoryRoot()
