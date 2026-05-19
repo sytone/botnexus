@@ -724,6 +724,8 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                     },
                     MessageEndEvent end when end.Message is AssistantAgentMessage
                         => new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd, MessageId = messageId },
+                    TurnEndEvent
+                        => new AgentStreamEvent { Type = AgentStreamEventType.TurnEnd, MessageId = messageId },
                     _ => null
                 };
 

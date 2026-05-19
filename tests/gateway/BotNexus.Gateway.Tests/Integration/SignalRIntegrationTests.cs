@@ -781,9 +781,11 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
                 AgentStreamEventType.ToolEnd => "ToolEnd",
                 AgentStreamEventType.MessageEnd => "MessageEnd",
                 AgentStreamEventType.Error => "Error",
+                AgentStreamEventType.TurnEnd => null, // internal persistence signal -- not forwarded to Hub clients
                 _ => throw new ArgumentOutOfRangeException()
             };
 
+            if (method is null) continue; // TurnEnd is internal-only, not forwarded to Hub clients
             var payload = await handlers[method].Task.WaitAsync(cts.Token);
             payload.Type.ShouldBe(expected);
         }

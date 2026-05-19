@@ -123,5 +123,7 @@ public enum AgentStreamEventType
     MessageEnd,
 
     /// <summary>An error occurred during processing.</summary>
-    Error
+    Error,
+    /// <summary>A turn (LLM call + tool cycle) has completed. Used for mid-run persistence checkpoints.</summary>
+    TurnEnd
 }
