@@ -20,7 +20,12 @@ public sealed class TuiChannelAdapterTests
     public async Task StartAsync_WithSteerCommand_DispatchesSteerControlMessage()
     {
         var adapter = new TuiChannelAdapter(NullLogger<TuiChannelAdapter>.Instance);
+        var dispatchedTcs = new TaskCompletionSource<InboundMessage>();
         var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher
+            .Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<InboundMessage, CancellationToken>((msg, _) => dispatchedTcs.TrySetResult(msg))
+            .Returns(Task.CompletedTask);
 
         var originalIn = Console.In;
         var originalOut = Console.Out;
@@ -32,6 +37,11 @@ public sealed class TuiChannelAdapterTests
             Console.SetOut(output);
 
             await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+
+            // Wait for the dispatch to occur (up to 5 seconds), then stop.
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await dispatchedTcs.Task.WaitAsync(cts.Token);
+
             await adapter.StopAsync(CancellationToken.None);
         }
         finally
@@ -65,7 +75,12 @@ public sealed class TuiChannelAdapterTests
     public async Task StartAsync_WithRegularMessage_DispatchesWithoutSteerMetadata()
     {
         var adapter = new TuiChannelAdapter(NullLogger<TuiChannelAdapter>.Instance);
+        var dispatchedTcs = new TaskCompletionSource<InboundMessage>();
         var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher
+            .Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<InboundMessage, CancellationToken>((msg, _) => dispatchedTcs.TrySetResult(msg))
+            .Returns(Task.CompletedTask);
 
         var originalIn = Console.In;
         var originalOut = Console.Out;
@@ -77,6 +92,11 @@ public sealed class TuiChannelAdapterTests
             Console.SetOut(output);
 
             await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+
+            // Wait for the dispatch to occur (up to 5 seconds), then stop.
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await dispatchedTcs.Task.WaitAsync(cts.Token);
+
             await adapter.StopAsync(CancellationToken.None);
         }
         finally
