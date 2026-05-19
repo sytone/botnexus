@@ -1,4 +1,6 @@
-using BotNexus.Domain.Primitives;
+﻿using BotNexus.Domain.Primitives;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -19,16 +21,26 @@ public sealed class ConversationsController : ControllerBase
 {
     private readonly IConversationStore _conversations;
     private readonly ISessionStore _sessions;
+    private readonly IReadOnlyList<IConversationChangeNotifier> _conversationChangeNotifiers;
+    private readonly ILogger<ConversationsController> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ConversationsController"/> class.
     /// </summary>
     /// <param name="conversations">The conversation store.</param>
     /// <param name="sessions">The session store (used for history assembly).</param>
-    public ConversationsController(IConversationStore conversations, ISessionStore sessions)
+    /// <param name="conversationChangeNotifiers">Publishes conversation lifecycle notifications to connected channel clients.</param>
+    /// <param name="logger">Logs best-effort transport notification failures.</param>
+    public ConversationsController(
+        IConversationStore conversations,
+        ISessionStore sessions,
+        IEnumerable<IConversationChangeNotifier>? conversationChangeNotifiers = null,
+        ILogger<ConversationsController>? logger = null)
     {
         _conversations = conversations;
         _sessions = sessions;
+        _conversationChangeNotifiers = conversationChangeNotifiers?.ToArray() ?? [];
+        _logger = logger ?? NullLogger<ConversationsController>.Instance;
     }
 
     /// <summary>
@@ -96,6 +108,7 @@ public sealed class ConversationsController : ControllerBase
         };
 
         var created = await _conversations.CreateAsync(conversation, cancellationToken);
+        await NotifyConversationChangedBestEffortAsync("created", created.AgentId.Value, created.ConversationId.Value, cancellationToken);
         return CreatedAtAction(nameof(Get), new { conversationId = created.ConversationId.Value }, ToResponse(created));
     }
 
@@ -134,6 +147,7 @@ public sealed class ConversationsController : ControllerBase
             conversation.Purpose = NormalizePurpose(request.Purpose);
         conversation.UpdatedAt = DateTimeOffset.UtcNow;
         await _conversations.SaveAsync(conversation, cancellationToken);
+        await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversation.ConversationId.Value, cancellationToken);
         return Ok(ToResponse(conversation));
     }
 
@@ -347,9 +361,34 @@ public sealed class ConversationsController : ControllerBase
         await SealConversationSessionsAsync(conversation.ConversationId, cancellationToken);
 
         await _conversations.ArchiveAsync(conversation.ConversationId, cancellationToken);
+        await NotifyConversationChangedBestEffortAsync("archived", conversation.AgentId.Value, conversation.ConversationId.Value, cancellationToken);
         return NoContent();
     }
 
+    // ── Notification helpers ──────────────────────────────────────────────────
+
+    private async Task NotifyConversationChangedBestEffortAsync(string changeType, string agentId, string conversationId, CancellationToken cancellationToken)
+    {
+        if (_conversationChangeNotifiers.Count == 0)
+            return;
+
+        foreach (var notifier in _conversationChangeNotifiers)
+        {
+            try
+            {
+                await notifier.NotifyConversationChangedAsync(changeType, agentId, conversationId, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Failed to publish conversation change notification ({ChangeType}) for conversation {ConversationId} via notifier {NotifierType}.",
+                    changeType,
+                    conversationId,
+                    notifier.GetType().FullName);
+            }
+        }
+    }
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static ConversationResponse ToResponse(Conversation c) => new(
