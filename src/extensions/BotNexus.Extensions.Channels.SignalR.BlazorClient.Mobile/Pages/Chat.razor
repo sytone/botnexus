@@ -13,11 +13,11 @@
     <div class="portal-loading">
         @if (PortalLoad.LoadError is not null)
         {
-            <div class="portal-load-error">⚠ @PortalLoad.LoadError</div>
+            <div class="portal-load-error">&#x26A0; @PortalLoad.LoadError</div>
         }
         else
         {
-            <div class="portal-load-spinner">Connecting…</div>
+            <div class="portal-load-spinner">Connecting&#x2026;</div>
         }
     </div>
 }
@@ -51,12 +51,12 @@ else
             </select>
 
             <div class="overflow-menu-wrapper">
-                <button class="overflow-btn" @onclick="ToggleMenu" aria-label="Menu">⋮</button>
+                <button class="overflow-btn" @onclick="ToggleMenu" aria-label="Menu">&#x22EE;</button>
                 @if (_menuOpen)
                 {
                     <div class="overflow-dropdown">
                         <div class="menu-session-id" title="Session ID">
-                            <span>Session: </span><span class="session-id-text">@(activeAgent?.SessionId ?? "—")</span>
+                            <span>Session: </span><span class="session-id-text">@(activeAgent?.SessionId ?? "&#x2014;")</span>
                         </div>
                         <button class="menu-action" @onclick="NewSession">New session</button>
                     </div>
@@ -64,31 +64,81 @@ else
             </div>
         </div>
 
+        <!-- TOOL CALL MODAL -->
+        @if (_modalToolMessage is not null)
+        {
+            var m = _modalToolMessage;
+            <div class="tool-modal-backdrop" @onclick="CloseToolModal">
+                <div class="tool-modal" @onclick:stopPropagation="true">
+                    <div class="tool-modal-header">
+                        <span class="tool-modal-icon">@(m.ToolResult is null ? "&#x23F3;" : (m.ToolIsError == true ? "&#x274C;" : "&#x2705;"))</span>
+                        <span class="tool-modal-name">@m.ToolName</span>
+                        @if (m.ToolDuration is not null)
+                        {
+                            <span class="tool-modal-duration">@FormatDuration(m.ToolDuration.Value)</span>
+                        }
+                        <button class="tool-modal-close" @onclick="CloseToolModal" aria-label="Close">&#x2715;</button>
+                    </div>
+                    @if (m.ToolArgs is not null)
+                    {
+                        <div class="tool-modal-section">
+                            <div class="tool-modal-section-label">Arguments</div>
+                            <pre class="tool-modal-content">@m.ToolArgs</pre>
+                        </div>
+                    }
+                    @if (m.ToolResult is not null)
+                    {
+                        <div class="tool-modal-section">
+                            <div class="tool-modal-section-label">Result</div>
+                            <pre class="tool-modal-content">@m.ToolResult</pre>
+                        </div>
+                    }
+                    @if (m.ToolArgs is null && m.ToolResult is null && !string.IsNullOrEmpty(m.Content))
+                    {
+                        <div class="tool-modal-section">
+                            <pre class="tool-modal-content">@m.Content</pre>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+
         <!-- MESSAGE STREAM -->
         <div class="message-stream" @ref="_messageStreamRef">
             @foreach (var msg in messages)
             {
-                <div class="message @GetMessageClass(msg)">
-                    @if (msg.IsToolCall)
-                    {
-                        <div class="tool-call-label">🔧 @msg.ToolName</div>
-                    }
-                    @if (msg.Role == "assistant" && _markdownCache.TryGetValue(msg.Id, out var rendered))
-                    {
-                        <div class="message-content">@((MarkupString)rendered)</div>
-                    }
-                    else
-                    {
-                        <div class="message-content">@msg.Content</div>
-                    }
-                    <div class="message-time">@msg.Timestamp.ToLocalTime().ToString("HH:mm")</div>
-                </div>
+                @if (msg.IsToolCall)
+                {
+                    <button class="tool-pill @(msg.ToolIsError == true ? "tool-pill-error" : "")" @onclick="() => OpenToolModal(msg)" type="button">
+                        <span class="tool-pill-icon">@(msg.ToolResult is null ? "&#x23F3;" : (msg.ToolIsError == true ? "&#x274C;" : "&#x2705;"))</span>
+                        <span class="tool-pill-name">@msg.ToolName</span>
+                        @if (msg.ToolDuration is not null)
+                        {
+                            <span class="tool-pill-duration">@FormatDuration(msg.ToolDuration.Value)</span>
+                        }
+                        <span class="tool-pill-tap">&#x25B8;</span>
+                    </button>
+                }
+                else
+                {
+                    <div class="message @GetMessageClass(msg)">
+                        @if (msg.Role == "assistant" && _markdownCache.TryGetValue(msg.Id, out var rendered))
+                        {
+                            <div class="message-content">@((MarkupString)rendered)</div>
+                        }
+                        else
+                        {
+                            <div class="message-content">@msg.Content</div>
+                        }
+                        <div class="message-time">@msg.Timestamp.ToLocalTime().ToString("HH:mm")</div>
+                    </div>
+                }
             }
 
             @if (streamState?.IsStreaming == true && !string.IsNullOrEmpty(streamState.Buffer))
             {
                 <div class="message assistant streaming">
-                    <div class="message-content">@streamState.Buffer<span class="stream-cursor">▌</span></div>
+                    <div class="message-content">@streamState.Buffer<span class="stream-cursor">&#x258C;</span></div>
                 </div>
             }
         </div>
@@ -97,7 +147,7 @@ else
         <div class="bottom-bar">
             <textarea
                 class="input-textarea"
-                placeholder="Message…"
+                placeholder="Message&#x2026;"
                 rows="1"
                 @bind="_inputText"
                 @bind:event="oninput"
@@ -105,7 +155,7 @@ else
                 disabled="@_isSending">
             </textarea>
             <button class="send-btn" @onclick="SendMessage" disabled="@(_isSending || string.IsNullOrWhiteSpace(_inputText))">
-                →
+                &#x2192;
             </button>
         </div>
 
@@ -118,6 +168,7 @@ else
     private bool _menuOpen;
     private ElementReference _messageStreamRef;
     private readonly Dictionary<string, string> _markdownCache = new();
+    private ChatMessage? _modalToolMessage;
 
     protected override async Task OnInitializedAsync()
     {
@@ -211,10 +262,16 @@ else
 
     private static string GetMessageClass(ChatMessage msg)
     {
-        if (msg.IsToolCall) return "tool";
         if (msg.Role == "thinking") return "thinking";
         return msg.Role == "user" ? "user" : "assistant";
     }
+
+    private void OpenToolModal(ChatMessage msg) => _modalToolMessage = msg;
+    private void CloseToolModal() => _modalToolMessage = null;
+
+    private static string FormatDuration(TimeSpan d) => d.TotalSeconds < 1
+        ? $"{d.TotalMilliseconds:0}ms"
+        : $"{d.TotalSeconds:0.0}s";
 
     private async Task RenderMarkdownAsync()
     {
