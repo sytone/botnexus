@@ -803,8 +803,17 @@ html, body, #app {
     min-height: 0;
 }
 
+.workspace-tree-row-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    min-width: 0;
+}
+
 .workspace-tree-row {
     width: 100%;
+    flex: 1 1 auto;
+    min-width: 0;
     display: flex;
     align-items: center;
     gap: 0.35rem;
@@ -854,6 +863,29 @@ html, body, #app {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.workspace-tree-delete {
+    flex: 0 0 auto;
+    width: 1.6rem;
+    height: 1.6rem;
+    margin-right: 0.45rem;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    line-height: 1;
+}
+
+.workspace-tree-delete:hover {
+    background: rgba(255, 90, 90, 0.12);
+    color: #ff8e8e;
+}
+
+.workspace-tree-delete:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
 }
 
 .workspace-viewer {

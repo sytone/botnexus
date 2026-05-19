@@ -1,13 +1,13 @@
 // BotNexus Blazor Client — Resizable panel splitter
 // Supports any two-pane flex layout.
-// Usage: BotNexus.splitter.init(containerId, storageKey, defaultPx, minPx, maxFraction)
+// Usage: BotNexus.splitter.init(containerId, storageKey, defaultPx, minPx, maxFraction, defaultFraction)
 window.BotNexus = window.BotNexus || {};
 window.BotNexus.splitter = (function () {
     'use strict';
 
     var _instances = {};
 
-    function init(containerId, storageKey, defaultPx, minPx, maxFraction) {
+    function init(containerId, storageKey, defaultPx, minPx, maxFraction, defaultFraction) {
         var container = document.getElementById(containerId);
         if (!container) return;
 
@@ -17,9 +17,18 @@ window.BotNexus.splitter = (function () {
         var leftPane = splitter.previousElementSibling;
         if (!leftPane) return;
 
-        // Restore persisted width, else use default
+        var containerWidth = container.getBoundingClientRect().width;
+
+        // Restore persisted width, else use default.
+        // defaultFraction allows preserving legacy proportional defaults
+        // (for example 33% capped by a px value) on first load.
+        var defaultFromFraction = defaultPx;
+        if (typeof defaultFraction === 'number' && defaultFraction > 0 && defaultFraction <= 1) {
+            defaultFromFraction = Math.min(defaultPx, Math.floor(containerWidth * defaultFraction));
+        }
+
         var savedPx = parseInt(localStorage.getItem(storageKey), 10);
-        var initialPx = (!isNaN(savedPx) && savedPx > 0) ? savedPx : defaultPx;
+        var initialPx = (!isNaN(savedPx) && savedPx > 0) ? savedPx : defaultFromFraction;
         applyWidth(container, leftPane, initialPx, minPx, maxFraction);
 
         var dragging = false;
