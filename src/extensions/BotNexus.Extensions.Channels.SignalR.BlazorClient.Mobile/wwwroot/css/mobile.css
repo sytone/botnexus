@@ -1,4 +1,4 @@
-/* ── Reset & base ─────────────────────────────────────────────────────────── */
+﻿/* ── Reset & base ─────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
 
 body {
@@ -212,6 +212,12 @@ body {
     color: rgba(208, 223, 240, 0.4);
     margin-top: 4px;
     text-align: right;
+}
+
+.message.assistant .message-time,
+.message.tool .message-time,
+.message.thinking .message-time {
+    text-align: left;
 }
 
 .stream-cursor {

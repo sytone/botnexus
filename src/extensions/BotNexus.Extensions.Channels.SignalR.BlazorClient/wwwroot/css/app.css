@@ -934,6 +934,40 @@ html, body, #app {
     border-right: 1px solid var(--border);
     background: var(--bg-secondary);
 }
+/* -- Panel splitter (resizable divider) --------------------------------- */
+.panel-splitter {
+    flex: 0 0 8px;
+    width: 8px;
+    min-width: 8px;
+    cursor: col-resize;
+    background: transparent;
+    position: relative;
+    z-index: 1;
+    transition: background 0.15s;
+    display: none;
+}
+
+.panel-splitter::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 3px;
+    width: 2px;
+    background: var(--border);
+    transition: background 0.15s, width 0.1s, left 0.1s;
+}
+
+.panel-splitter:hover::after,
+.panel-splitter.dragging::after {
+    left: 2px;
+    width: 4px;
+    background: var(--accent);
+}
+
+.panel-splitter.dragging {
+    background: rgba(0, 180, 216, 0.06);
+}
 
 .reports-list {
     list-style: none;
@@ -1868,13 +1902,15 @@ html, body, #app {
         flex-direction: row;
     }
 
+    .panel-splitter {
+        display: flex;
+    }
+
     .workspace-tree-pane {
-        flex: 0 0 min(33%, 24rem);
         border-right: 1px solid var(--border);
     }
 
     .reports-list-pane {
-        flex: 0 0 min(33%, 24rem);
         border-right: 1px solid var(--border);
     }
 
