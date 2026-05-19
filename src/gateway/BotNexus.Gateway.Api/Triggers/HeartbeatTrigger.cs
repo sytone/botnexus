@@ -13,6 +13,11 @@ namespace BotNexus.Gateway.Api.Triggers;
 /// Internal trigger for heartbeat-scheduled sessions (<see cref="TriggerType.Heartbeat"/>).
 /// Routes into the agent's active soul session when soul is enabled, keeping heartbeat turns
 /// in today's soul context.  Falls back to a stable per-agent heartbeat conversation otherwise.
+///
+/// Phase 2: after each heartbeat turn, if the assistant response is a heartbeat acknowledgement
+/// (contains "HEARTBEAT_OK" within <see cref="AckMaxCharsDefault"/> chars), the user+assistant
+/// entries are pruned from the session history and <c>UpdatedAt</c> is restored to its
+/// pre-turn value so the session does not appear active.
 /// </summary>
 public sealed class HeartbeatTrigger(
     IAgentSupervisor supervisor,
@@ -21,6 +26,9 @@ public sealed class HeartbeatTrigger(
     ISessionStore sessions,
     ILogger<HeartbeatTrigger> logger) : IInternalTrigger
 {
+    /// <summary>Default max-chars threshold for heartbeat ack classification.</summary>
+    public const int AckMaxCharsDefault = 300;
+
     /// <inheritdoc/>
     public TriggerType Type => TriggerType.Heartbeat;
 
@@ -37,20 +45,19 @@ public sealed class HeartbeatTrigger(
         ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
 
         var descriptor = registry.Get(agentId);
-
         if (descriptor?.Soul?.Enabled == true)
-            return await RunInSoulSessionAsync(agentId, prompt, request, ct).ConfigureAwait(false);
+            return await RunInSoulSessionAsync(agentId, prompt, descriptor, request, ct).ConfigureAwait(false);
 
-        return await RunInHeartbeatSessionAsync(agentId, prompt, request, ct).ConfigureAwait(false);
+        return await RunInHeartbeatSessionAsync(agentId, prompt, descriptor, request, ct).ConfigureAwait(false);
     }
 
     // -----------------------------------------------------------------
-    // Soul path — reuse today's active soul session
+    // Soul path - reuse today's active soul session
     // -----------------------------------------------------------------
-
     private async Task<SessionId> RunInSoulSessionAsync(
         AgentId agentId,
         string prompt,
+        AgentDescriptor? descriptor,
         InternalTriggerRequest? request,
         CancellationToken ct)
     {
@@ -65,26 +72,26 @@ public sealed class HeartbeatTrigger(
             logger.LogDebug(
                 "HeartbeatTrigger: no active soul session for '{AgentId}', falling back to heartbeat session.",
                 agentId);
-            return await RunInHeartbeatSessionAsync(agentId, prompt, request, ct).ConfigureAwait(false);
+            return await RunInHeartbeatSessionAsync(agentId, prompt, descriptor, request, ct).ConfigureAwait(false);
         }
 
-        return await ExecuteInSessionAsync(agentId, soulSession.SessionId, prompt, request, ct).ConfigureAwait(false);
+        return await ExecuteInSessionAsync(agentId, soulSession.SessionId, prompt, descriptor, request, ct).ConfigureAwait(false);
     }
 
     // -----------------------------------------------------------------
-    // Heartbeat path — stable per-agent heartbeat conversation
+    // Heartbeat path - stable per-agent heartbeat conversation
     // -----------------------------------------------------------------
-
     private async Task<SessionId> RunInHeartbeatSessionAsync(
         AgentId agentId,
         string prompt,
+        AgentDescriptor? descriptor,
         InternalTriggerRequest? request,
         CancellationToken ct)
     {
         var conversation = await GetOrCreateHeartbeatConversationAsync(agentId, ct).ConfigureAwait(false);
-
         var sessionId = BuildHeartbeatSessionId(agentId);
         var session = await sessions.GetOrCreateAsync(sessionId, agentId, ct).ConfigureAwait(false);
+
         session.ChannelType = null;
         session.CallerId ??= $"heartbeat:{agentId.Value}";
         session.SessionType = SessionType.Heartbeat;
@@ -108,17 +115,17 @@ public sealed class HeartbeatTrigger(
             await conversations.SaveAsync(conversation, ct).ConfigureAwait(false);
         }
 
-        return await ExecuteInSessionAsync(agentId, sessionId, prompt, request, ct, session).ConfigureAwait(false);
+        return await ExecuteInSessionAsync(agentId, sessionId, prompt, descriptor, request, ct, session).ConfigureAwait(false);
     }
 
     // -----------------------------------------------------------------
-    // Shared execution
+    // Shared execution — with Phase 2 transcript pruning
     // -----------------------------------------------------------------
-
     private async Task<SessionId> ExecuteInSessionAsync(
         AgentId agentId,
         SessionId sessionId,
         string prompt,
+        AgentDescriptor? descriptor,
         InternalTriggerRequest? request,
         CancellationToken ct,
         GatewaySession? preloadedSession = null)
@@ -126,26 +133,69 @@ public sealed class HeartbeatTrigger(
         var session = preloadedSession
             ?? await sessions.GetOrCreateAsync(sessionId, agentId, ct).ConfigureAwait(false);
 
+        // --- Phase 2: snapshot pre-turn state ---
+        var preHeartbeatHistory = session.GetHistorySnapshot();
+        var preHeartbeatUpdatedAt = session.UpdatedAt;
+
         session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = prompt });
         await sessions.SaveAsync(session, ct).ConfigureAwait(false);
 
         var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);
         var response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
 
-        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
-        await sessions.SaveAsync(session, ct).ConfigureAwait(false);
+        var ackMaxChars = descriptor?.Heartbeat?.AckMaxChars ?? AckMaxCharsDefault;
 
-        logger.LogInformation(
-            "HeartbeatTrigger: session '{SessionId}' for agent '{AgentId}' (jobId: {JobId}).",
-            sessionId, agentId, request?.CronJobId);
+        if (IsHeartbeatAck(response.Content, ackMaxChars))
+        {
+            // --- Phase 2: prune the heartbeat turn and restore UpdatedAt ---
+            session.ReplaceHistory(preHeartbeatHistory);
+            session.UpdatedAt = preHeartbeatUpdatedAt;
+            await sessions.SaveAsync(session, ct).ConfigureAwait(false);
+
+            logger.LogDebug(
+                "HeartbeatTrigger: ack from agent '{AgentId}' session '{SessionId}' — turn pruned.",
+                agentId, sessionId);
+        }
+        else
+        {
+            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
+            await sessions.SaveAsync(session, ct).ConfigureAwait(false);
+
+            logger.LogInformation(
+                "HeartbeatTrigger: substantive response from agent '{AgentId}' session '{SessionId}' (jobId: {JobId}).",
+                agentId, sessionId, request?.CronJobId);
+        }
 
         return sessionId;
     }
 
     // -----------------------------------------------------------------
-    // Conversation management
+    // Ack classification (Phase 2)
     // -----------------------------------------------------------------
 
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="response"/> is a heartbeat
+    /// acknowledgement: it contains "HEARTBEAT_OK" and is no longer than
+    /// <paramref name="maxChars"/> characters.
+    /// </summary>
+    public static bool IsHeartbeatAck(string? response, int maxChars = AckMaxCharsDefault)
+    {
+        if (string.IsNullOrWhiteSpace(response))
+            return false;
+
+        var trimmed = response.Trim();
+
+        if (trimmed.Length > maxChars)
+            return false;
+
+        return trimmed.Equals("HEARTBEAT_OK", StringComparison.Ordinal)
+               || trimmed.StartsWith("HEARTBEAT_OK", StringComparison.Ordinal)
+               || trimmed.Contains("HEARTBEAT_OK", StringComparison.Ordinal);
+    }
+
+    // -----------------------------------------------------------------
+    // Conversation management
+    // -----------------------------------------------------------------
     private async Task<Conversation> GetOrCreateHeartbeatConversationAsync(AgentId agentId, CancellationToken ct)
     {
         var stableId = BuildHeartbeatConversationId(agentId);
@@ -168,7 +218,6 @@ public sealed class HeartbeatTrigger(
             Title = $"heartbeat:{agentId.Value}",
             IsDefault = false
         };
-
         try
         {
             await conversations.CreateAsync(conversation, ct).ConfigureAwait(false);
@@ -179,7 +228,7 @@ public sealed class HeartbeatTrigger(
         }
         catch (Exception ex)
         {
-            // Race: another run created it first — re-resolve
+            // Race: another run created it first - re-resolve
             logger.LogDebug(ex, "HeartbeatTrigger: create race for conversation '{ConversationId}', retrying.", stableId);
             var resolved = await conversations.GetAsync(stableId, ct).ConfigureAwait(false);
             if (resolved is not null) return resolved; throw;
@@ -189,7 +238,6 @@ public sealed class HeartbeatTrigger(
     // -----------------------------------------------------------------
     // ID helpers
     // -----------------------------------------------------------------
-
     private static SessionId BuildHeartbeatSessionId(AgentId agentId)
     {
         var timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss");
@@ -204,7 +252,6 @@ public sealed class HeartbeatTrigger(
     {
         if (string.IsNullOrWhiteSpace(value))
             return "agent";
-
         Span<char> buf = stackalloc char[Math.Min(40, value.Length)];
         var len = 0;
         foreach (var ch in value)
@@ -212,7 +259,6 @@ public sealed class HeartbeatTrigger(
             if (len >= buf.Length) break;
             buf[len++] = char.IsLetterOrDigit(ch) || ch is '-' or '_' ? ch : '-';
         }
-
         return new string(buf[..len]).Trim('-');
     }
 }

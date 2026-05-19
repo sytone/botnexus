@@ -20,6 +20,13 @@ public sealed class HeartbeatAgentConfig
 
     /// <summary>Quiet hours configuration — skip heartbeats during these hours.</summary>
     public QuietHoursConfig? QuietHours { get; set; }
+    /// <summary>
+    /// Maximum character length of an assistant response that can be classified as a
+    /// heartbeat acknowledgement. Responses that contain "HEARTBEAT_OK" but are longer
+    /// than this threshold are treated as substantive replies (not pruned).
+    /// Default: 300.
+    /// </summary>
+    public int AckMaxChars { get; set; } = 300;
 }
 
 /// <summary>
