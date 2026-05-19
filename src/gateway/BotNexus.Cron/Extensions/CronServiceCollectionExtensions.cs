@@ -25,6 +25,7 @@ public static class CronServiceCollectionExtensions
         services.TryAddSingleton<CronScheduler>();
         services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<CronScheduler>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICronAction, AgentPromptAction>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ICronAction, HeartbeatAction>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICronAction, WebhookAction>());
         services.TryAddSingleton<IPromptTemplateResolver, CronOptionsPromptTemplateResolver>();
         return services;

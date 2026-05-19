@@ -67,7 +67,7 @@ public sealed class HeartbeatCronProvisioner : IHostedService
                     Id = jobId,
                     Name = $"Heartbeat — {descriptor.DisplayName}",
                     Schedule = cronExpression,
-                    ActionType = "agent-prompt",
+                    ActionType = "heartbeat",
                     AgentId = descriptor.AgentId,
                     Message = prompt,
                     Enabled = true,
