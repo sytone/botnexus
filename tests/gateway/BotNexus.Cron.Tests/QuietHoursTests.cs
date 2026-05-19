@@ -13,7 +13,7 @@ public sealed class QuietHoursTests
     [Fact]
     public async Task ExecuteAsync_DuringQuietHours_SkipsExecution()
     {
-        var action = new AgentPromptAction();
+        var action = new HeartbeatAction();
         var trigger = new Mock<IInternalTrigger>();
         var registry = new Mock<IAgentRegistry>();
         var descriptor = CreateDescriptor(new QuietHoursConfig
@@ -42,7 +42,7 @@ public sealed class QuietHoursTests
     [Fact]
     public async Task ExecuteAsync_OutsideQuietHours_ExecutesNormally()
     {
-        var action = new AgentPromptAction();
+        var action = new HeartbeatAction();
         var trigger = new Mock<IInternalTrigger>();
         var registry = new Mock<IAgentRegistry>();
         var descriptor = CreateDescriptor(new QuietHoursConfig
@@ -79,7 +79,7 @@ public sealed class QuietHoursTests
                 Id = "heartbeat:agent-a",
                 Name = "Heartbeat",
                 Schedule = "*/30 * * * *",
-                ActionType = "agent-prompt",
+                ActionType = "heartbeat",
                 AgentId = "agent-a",
                 Message = "Ping from heartbeat",
                 Enabled = true,

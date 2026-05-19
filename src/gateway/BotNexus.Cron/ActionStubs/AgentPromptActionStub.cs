@@ -42,18 +42,6 @@ public sealed class AgentPromptAction : ICronAction
         var registry = context.Services.GetService<IAgentRegistry>();
         var descriptor = registry?.Get(AgentId.From(agentId));
 
-        if (context.Job.System
-            && context.Job.Id.StartsWith("heartbeat:", StringComparison.OrdinalIgnoreCase)
-            && descriptor?.Heartbeat?.QuietHours is { Enabled: true } quietHours)
-        {
-            if (IsInQuietHours(quietHours, quietHours.Timezone ?? descriptor.Soul?.Timezone ?? "UTC"))
-            {
-                context.Services.GetService<ILogger<AgentPromptAction>>()?.LogDebug(
-                    "Skipping heartbeat for agent '{AgentId}' — quiet hours active.", agentId);
-                return;
-            }
-        }
-
         var preferredTriggerType = descriptor?.Soul?.Enabled == true
             ? TriggerType.Soul
             : TriggerType.Cron;
@@ -98,50 +86,5 @@ public sealed class AgentPromptAction : ICronAction
     }
 
     private static TimeZoneInfo ResolveTimeZone(string timezoneId)
-    {
-        if (string.IsNullOrWhiteSpace(timezoneId) ||
-            timezoneId.Equals("UTC", StringComparison.OrdinalIgnoreCase))
-            return TimeZoneInfo.Utc;
-
-        try
-        {
-            return TimeZoneInfo.FindSystemTimeZoneById(timezoneId);
-        }
-        catch (TimeZoneNotFoundException)
-        {
-        }
-        catch (InvalidTimeZoneException)
-        {
-        }
-
-        if (TimeZoneInfo.TryConvertWindowsIdToIanaId(timezoneId, out var ianaTimeZone))
-        {
-            try
-            {
-                return TimeZoneInfo.FindSystemTimeZoneById(ianaTimeZone);
-            }
-            catch (TimeZoneNotFoundException)
-            {
-            }
-            catch (InvalidTimeZoneException)
-            {
-            }
-        }
-
-        if (TimeZoneInfo.TryConvertIanaIdToWindowsId(timezoneId, out var windowsTimeZone))
-        {
-            try
-            {
-                return TimeZoneInfo.FindSystemTimeZoneById(windowsTimeZone);
-            }
-            catch (TimeZoneNotFoundException)
-            {
-            }
-            catch (InvalidTimeZoneException)
-            {
-            }
-        }
-
-        return TimeZoneInfo.Utc;
-    }
+        => TimeZoneHelper.Resolve(timezoneId);
 }

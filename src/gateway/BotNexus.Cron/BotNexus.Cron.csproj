@@ -18,6 +18,8 @@
     <Compile Include="Prompts\IPromptTemplateResolver.cs" />
     <Compile Include="Prompts\CronOptionsPromptTemplateResolver.cs" />
     <Compile Include="Prompts\PromptTemplateRenderer.cs" />
+    <Compile Include="Actions\HeartbeatAction.cs" />
+    <Compile Include="Actions\TimeZoneHelper.cs" />
     <Compile Include="ActionStubs\AgentPromptActionStub.cs" />
     <Compile Include="ActionStubs\WebhookActionStub.cs" />
     <Compile Include="Extensions\CronServiceCollectionExtensions.cs" />
