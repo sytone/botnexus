@@ -14,6 +14,7 @@ public sealed class WorkspacePanelTests : IDisposable
     public WorkspacePanelTests()
     {
         _ctx.Services.AddSingleton(_restClient);
+        _ctx.JSInterop.SetupVoid("BotNexus.splitter.init", _ => true);
     }
 
     public void Dispose() => _ctx.Dispose();

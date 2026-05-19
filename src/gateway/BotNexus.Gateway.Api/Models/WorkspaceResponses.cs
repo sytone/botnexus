@@ -60,6 +60,17 @@ public sealed class WorkspaceDirectoryResponse
 }
 
 /// <summary>
+/// Request body for workspace file writes.
+/// </summary>
+public sealed class WorkspaceWriteRequest
+{
+    /// <summary>
+    /// Gets or sets the text content to write to the file.
+    /// </summary>
+    public string Content { get; set; } = string.Empty;
+}
+
+/// <summary>
 /// Response body for workspace file reads.
 /// </summary>
 public sealed class WorkspaceFileResponse

@@ -1,4 +1,4 @@
-@page "/"
+﻿@page "/"
 @inject IClientStateStore Store
 @inject IAgentInteractionService Interaction
 @inject IPortalLoadService PortalLoad
@@ -73,7 +73,7 @@ else
                     {
                         <div class="tool-call-label">🔧 @msg.ToolName</div>
                     }
-                    @if (msg.Role == "assistant" && _markdownCache.TryGetValue(msg.Id, out var rendered))
+                    @if (msg.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase) && _markdownCache.TryGetValue(msg.Id, out var rendered))
                     {
                         <div class="message-content">@((MarkupString)rendered)</div>
                     }
@@ -212,8 +212,8 @@ else
     private static string GetMessageClass(ChatMessage msg)
     {
         if (msg.IsToolCall) return "tool";
-        if (msg.Role == "thinking") return "thinking";
-        return msg.Role == "user" ? "user" : "assistant";
+        if (msg.Role.Equals("thinking", StringComparison.OrdinalIgnoreCase)) return "thinking";
+        return msg.Role.Equals("user", StringComparison.OrdinalIgnoreCase) ? "user" : "assistant";
     }
 
     private async Task RenderMarkdownAsync()
@@ -226,7 +226,7 @@ else
         var needsRender = false;
         foreach (var msg in Store.GetMessages(activeConvId))
         {
-            if (msg.Role == "assistant" && !_markdownCache.ContainsKey(msg.Id))
+            if (msg.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase) && !_markdownCache.ContainsKey(msg.Id))
             {
                 try
                 {

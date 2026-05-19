@@ -3,7 +3,7 @@
 @using Microsoft.AspNetCore.Components
 @implements IDisposable
 
-<div class="reports-panel @MobilePaneClass" data-testid="reports-panel">
+<div id="@_containerId" class="reports-panel @MobilePaneClass" data-testid="reports-panel">
     <section class="reports-list-pane">
         @if (_isLoadingReports)
         {
@@ -35,6 +35,8 @@
             </ul>
         }
     </section>
+
+    <div class="panel-splitter" role="separator" aria-orientation="vertical" aria-label="Resize reports panels" title="Drag to resize"></div>
 
     <section class="reports-viewer-pane">
         @if (_showMobileViewer)
@@ -105,6 +107,9 @@
     [Parameter, EditorRequired]
     public string AgentId { get; set; } = default!;
 
+    private string _containerId => $"reports-panel-{AgentId}";
+    private string _storageKey => $"bn-reports-list-width-{AgentId}";
+
     private string MobilePaneClass => _showMobileViewer ? "mobile-viewer" : "mobile-list";
 
     private bool ShowServerTruncationNotice =>
@@ -128,6 +133,14 @@
     protected override async Task OnInitializedAsync()
     {
         await LoadReportsAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await JS.InvokeVoidAsync("BotNexus.splitter.init", _containerId, _storageKey, 280, 140, 0.65);
+        }
     }
 
     public void Dispose()
