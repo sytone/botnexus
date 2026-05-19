@@ -1,10 +1,11 @@
-using System.Reflection;
+﻿using System.Reflection;
 using System.Runtime.Loader;
 using System.Text.Json;
 using System.IO.Abstractions;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Extensions;
 using BotNexus.Gateway.Abstractions.Hooks;
@@ -38,6 +39,7 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
         typeof(IAgentRegistry),
         typeof(IAgentSupervisor),
         typeof(IAgentChangeNotifier),
+        typeof(IConversationChangeNotifier),
         typeof(IAgentCanvasNotifier),
         typeof(IAgentCommunicator),
         typeof(IAgentToolContributor),
@@ -397,6 +399,7 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
             if (contract == typeof(IChannelAdapter) || 
                 contract == typeof(IIsolationStrategy) ||
                 contract == typeof(IAgentChangeNotifier) ||
+                contract == typeof(IConversationChangeNotifier) ||
                 contract == typeof(IAgentCanvasNotifier) ||
                 contract == typeof(IAgentToolContributor) ||
                 contract == typeof(IAgentTool) ||

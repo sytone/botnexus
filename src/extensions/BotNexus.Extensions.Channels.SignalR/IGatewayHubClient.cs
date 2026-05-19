@@ -1,4 +1,4 @@
-using BotNexus.Gateway.Abstractions.Models;
+﻿using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Extensions.Channels.SignalR;
 
@@ -22,6 +22,8 @@ public interface IGatewayHubClient
     Task SubAgentFailed(SubAgentEventPayload payload);
     Task SubAgentKilled(SubAgentEventPayload payload);
     Task AgentsChanged(AgentsChangedPayload payload);
+    Task ConversationChanged(ConversationChangedPayload payload);
+
     Task SteeringFeedback(SteeringFeedbackPayload payload);
     Task CanvasUpdated(string agentId, string html);
 }

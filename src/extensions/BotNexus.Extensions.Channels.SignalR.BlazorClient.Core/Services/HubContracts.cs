@@ -1,4 +1,4 @@
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
@@ -142,6 +142,12 @@ public sealed record SessionHistoryResponse(
 public sealed record AgentsChangedPayload(
     [property: JsonPropertyName("changeType")] string ChangeType,
     [property: JsonPropertyName("agentId")] string? AgentId);
+
+/// <summary>Payload sent via the ConversationChanged client method when a conversation is created, updated, or archived.</summary>
+public sealed record ConversationChangedPayload(
+    [property: JsonPropertyName("changeType")] string ChangeType,
+    [property: JsonPropertyName("agentId")] string AgentId,
+    [property: JsonPropertyName("conversationId")] string ConversationId);
 
 /// <summary>Kind of steering feedback event.</summary>
 public enum SteeringFeedbackKind

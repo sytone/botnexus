@@ -1,4 +1,4 @@
-using System.Diagnostics.CodeAnalysis;
+﻿using System.Diagnostics.CodeAnalysis;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 
@@ -40,7 +40,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub.OnSubAgentKilled += HandleSubAgentKilled;
         _hub.OnSteeringFeedback += HandleSteeringFeedback;
         _hub.OnCanvasUpdated += HandleCanvasUpdated;
-        _hub.OnReconnecting += HandleReconnecting;
+        _hub.OnConversationChanged += HandleConversationChanged;
+                _hub.OnReconnecting += HandleReconnecting;
         _hub.OnReconnected += HandleReconnected;
         _hub.OnDisconnected += HandleDisconnected;
     }
@@ -551,6 +552,21 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     private void HandleReconnected() => _ = HandleReconnectedAsync();
 
+    public void HandleConversationChanged(ConversationChangedPayload payload)
+    {
+        // Server notified that a conversation was created, updated, or archived.
+        // Re-fetch conversation list for the affected agent so the sidebar stays current.
+        var agentId = payload.AgentId;
+        if (string.IsNullOrWhiteSpace(agentId)) return;
+
+        _ = RefreshConversationsAsync(agentId);
+    }
+
+    // Injected async refresh delegate — wired by AgentInteractionService or PortalLoadService.
+    public Func<string, Task>? ConversationRefreshDelegate { get; set; }
+
+    private Task RefreshConversationsAsync(string agentId)
+        => ConversationRefreshDelegate?.Invoke(agentId) ?? Task.CompletedTask;
     public void Dispose()
     {
         _hub.OnConnected -= HandleConnected;
@@ -568,7 +584,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub.OnSubAgentKilled -= HandleSubAgentKilled;
         _hub.OnSteeringFeedback -= HandleSteeringFeedback;
         _hub.OnCanvasUpdated -= HandleCanvasUpdated;
-        _hub.OnReconnecting -= HandleReconnecting;
+        _hub.OnConversationChanged -= HandleConversationChanged;
+                _hub.OnReconnecting -= HandleReconnecting;
         _hub.OnReconnected -= HandleReconnected;
         _hub.OnDisconnected -= HandleDisconnected;
     }
