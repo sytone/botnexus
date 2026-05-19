@@ -18,25 +18,33 @@ A modular, extensible AI agent execution platform built in C#/.NET. BotNexus ena
 ## Key Features
 
 - **Multi-Agent** — Run multiple agents with independent configs (model, provider, system prompt, tools)
-- **Multi-Channel** — Discord, Slack, Telegram, SignalR, and REST API
+- **Multi-Channel** — Discord, Slack, Telegram, SignalR, REST API, and Azure Service Bus
 - **Multi-Provider** — GitHub Copilot (26 models: Claude, GPT, GPT-5, Gemini, Grok via model-aware routing), OpenAI, Anthropic, Azure OpenAI
 - **Model-Aware Routing** — Each model defines its API format (Anthropic Messages, OpenAI Completions, OpenAI Responses); requests route to the correct handler automatically
 - **Extensible** — Dynamic assembly loading with folder-based extension system
 - **Skills System** — Modular knowledge packages for agents (git workflows, coding standards, best practices)
 - **MCP Support** — Model Context Protocol servers (stdio and SSE transports)
+- **MCP Invoke** — Expose BotNexus agents as MCP servers to other tools
 - **Session Persistence** — Conversation history persisted to disk (JSONL format)
+- **Conversations** — Named, persistent conversation contexts across sessions with cross-agent access
 - **Observable** — Correlation IDs, health checks, real-time activity stream via WebUI
-- **CLI Tool** — `botnexus` command-line interface for config, agents, providers, doctor, and Gateway lifecycle
+- **CLI Tool** — `botnexus` command-line tool for config, agents, providers, doctor, and Gateway lifecycle
 - **Diagnostics** — 13 health checkups across 6 categories with auto-fix support (`botnexus doctor`)
 - **Hot Reload** — Edit `config.json` and changes apply live (agents, providers, cron) — no restart needed
 - **REST API** — Agent CRUD, session management, skills, system status endpoints
 - **WebUI** — Real-time chat with model selector, tool visibility toggle, and command palette (`/help`, `/reset`, `/status`, `/models`)
+- **Mobile WebUI** — Responsive Blazor WASM mobile client for on-the-go agent access
 - **Tool Control** — Disable tools per agent via `DisallowedTools` config
 - **Skill Control** — Disable skills per agent via `DisabledSkills` config (supports wildcards)
 - **Loop Detection** — Configurable safeguards against infinite tool call loops (`MaxRepeatedToolCalls`)
 - **Model Logging** — Actual model used logged per provider call for debugging and observability
 - **Config Audit** — Config changes backed up to `.bak`, OAuth token operations logged
 - **Agent Templates** — Auto-bootstrapped workspace with SOUL.md, IDENTITY.md, USER.md, HEARTBEAT.md, MEMORY.md
+- **Heartbeat System** — Dedicated `HeartbeatAction` + `HeartbeatTrigger` with cron scheduling for background agent tasks
+- **Memory System** — Structured agent memory with search, retrieval, and lifecycle management
+- **Audio Transcription** — Audio input transcription extension
+- **Web Tools** — Built-in web search and fetch tools
+- **Process & Exec Tools** — Shell command execution with approval gating
 
 ## Gateway Service
 
@@ -114,6 +122,7 @@ Edit `~/.botnexus/config.json` to configure:
 | `/api/sessions` | GET | List sessions |
 | `/api/sessions/{id}` | GET | Get session history |
 | `/api/sessions/{id}` | DELETE | Delete a session |
+| `/api/conversations` | GET/POST | List or create named conversation contexts |
 | `/hub/gateway` | SignalR Hub | Real-time streaming with agents |
 
 ### SignalR Hub
@@ -214,14 +223,21 @@ On first run, BotNexus creates `~/.botnexus/` with a default `config.json`. Edit
 | Component | Description |
 |-----------|-------------|
 | **Gateway** | Main orchestrator — message bus, agent routing, channel management, hot reload |
+| **Gateway.Api** | ASP.NET host — REST controllers, SignalR hub, Blazor WebUI |
+| **Gateway.Dispatching** | Message dispatch pipeline between channels and agent runners |
+| **Gateway.Prompts** | Prompt pipeline — template rendering, context injection, mustache support |
+| **Gateway.Conversations** | Named persistent conversation contexts with cross-agent access |
+| **Gateway.Sessions** | JSONL-based conversation persistence |
 | **Agent** | Per-agent processing loop with context building and tool execution |
 | **Core** | 14 interface contracts, configuration, extension loading |
 | **Cli** | `botnexus` command-line tool — config, agents, providers, doctor, Gateway lifecycle |
+| **Cron** | Scheduled task engine — cron expressions, HeartbeatAction, HeartbeatTrigger |
+| **Memory** | Structured agent memory with search, retrieval, and lifecycle management |
+| **Tools** | Built-in tool implementations shared across agents |
 | **Diagnostics** | 13 health checkups with auto-fix, used by CLI doctor and `/api/doctor` endpoint |
-| **Channels** | Discord, Slack, Telegram, SignalR implementations |
+| **Channels** | Discord, Slack, Telegram, SignalR, Service Bus implementations |
 | **Providers** | Copilot (OAuth, model-aware routing), OpenAI, Anthropic LLM backends |
-| **Session** | JSONL-based conversation persistence |
-| **WebUI** | Real-time activity monitoring dashboard |
+| **WebUI** | Real-time activity monitoring dashboard (desktop + mobile Blazor WASM) |
 
 ### Provider Model-Aware Routing
 
@@ -252,18 +268,17 @@ Example:
 }
 ```
 
-See [Architecture Guide](docs/architecture.md#provider-architecture-pi-style) and [Configuration Guide](docs/configuration.md#copilot-provider-supported-models) for details.
+See [Architecture Guide](docs/architecture/overview.md) and [Configuration Guide](docs/configuration.md) for details.
 
-
+---
 
 - **[Getting Started](docs/getting-started.md)** ← Start here
 - [Developer Guide](docs/getting-started-dev.md) — Build, test, and run locally
 - [API Reference](docs/api-reference.md) — REST and SignalR endpoints
 - [Architecture Overview](docs/architecture/overview.md) — System design and components
-- [Developer Guide](docs/getting-started-dev.md) — Build, test, and deploy with dev-loop script
 - [Configuration Guide](docs/configuration.md) — Complete configuration reference
 - [Extension Development](docs/extension-development.md) — Build custom providers, channels, and tools
-- [Workspace & Memory](docs/architecture/workspace-and-memory.md) — Agent workspace and memory system
+- [Workspace & Memory](docs/development/workspace-and-memory.md) — Agent workspace and memory system
 - [Cron & Scheduling](docs/cron-and-scheduling.md) — Scheduled tasks and heartbeats
 - [Skills Guide](docs/skills.md) — Modular knowledge packages for agents
 
@@ -273,6 +288,8 @@ Top-level folders in this repository:
 
 | Folder | Purpose |
 |---|---|
+| `.copilot/` | Copilot configuration and custom instructions. |
+| `.github/` | GitHub Actions CI/CD workflows, Copilot agent definitions, and issue templates. |
 | `.squad/` | Team charters, decisions, and shared working context for role-based agents. |
 | `artifacts/` | Generated outputs and captured run artifacts. |
 | `docs/` | User, API, architecture, and planning documentation. |
@@ -282,42 +299,55 @@ Top-level folders in this repository:
 | `src/` | Production source code (domain, agent, gateway, extensions). |
 | `tests/` | Unit, integration, component, and end-to-end test suites. |
 | `tools/` | Tooling utilities and support assets used by development workflows. |
+| `worktrees/` | Git worktree root — active feature/fix branches. Never commit directly here. |
 
 ## Project Structure
 
 ```
 src/
 ├── domain/
-│   └── BotNexus.Domain                      # Domain primitives (value objects, smart enums)
+│   └── BotNexus.Domain                                  # Domain primitives (value objects, smart enums)
 ├── agent/
-│   ├── BotNexus.Agent.Core                  # Agent loop, tool execution, streaming
-│   ├── BotNexus.Agent.Providers.Core        # Provider abstractions, LLM client, model registry
-│   ├── BotNexus.Agent.Providers.Copilot     # GitHub Copilot provider (OAuth, model-aware routing)
-│   ├── BotNexus.Agent.Providers.OpenAI      # OpenAI provider
-│   ├── BotNexus.Agent.Providers.Anthropic   # Anthropic provider
-│   └── BotNexus.Agent.Providers.OpenAICompat # OpenAI-compatible provider
+│   ├── BotNexus.Agent.Core                              # Agent loop, tool execution, streaming
+│   ├── BotNexus.Agent.Providers.Core                    # Provider abstractions, LLM client, model registry
+│   ├── BotNexus.Agent.Providers.Copilot                 # GitHub Copilot provider (OAuth, model-aware routing)
+│   ├── BotNexus.Agent.Providers.OpenAI                  # OpenAI provider
+│   ├── BotNexus.Agent.Providers.Anthropic               # Anthropic provider
+│   └── BotNexus.Agent.Providers.OpenAICompat            # OpenAI-compatible provider (custom endpoints)
 ├── gateway/
-│   ├── BotNexus.Gateway                     # Main host, agent router, hot reload
-│   ├── BotNexus.Gateway.Api                 # REST API, middleware, SignalR hub
-│   ├── BotNexus.Gateway.Abstractions        # Gateway contracts and interfaces
-│   ├── BotNexus.Gateway.Contracts           # Shared DTOs
-│   ├── BotNexus.Gateway.Sessions            # Session persistence
-│   ├── BotNexus.Gateway.Conversations       # Conversation persistence and routing
-│   ├── BotNexus.Gateway.Channels            # Channel adapter base classes
-│   └── BotNexus.Cli                         # CLI tool (botnexus command)
+│   ├── BotNexus.Gateway                                 # Main host, agent router, hot reload
+│   ├── BotNexus.Gateway.Api                             # REST API, middleware, SignalR hub, Blazor host
+│   ├── BotNexus.Gateway.Abstractions                    # Gateway contracts and interfaces
+│   ├── BotNexus.Gateway.Contracts                       # Shared DTOs
+│   ├── BotNexus.Gateway.Channels                        # Channel adapter base classes
+│   ├── BotNexus.Gateway.Conversations                   # Named persistent conversation contexts
+│   ├── BotNexus.Gateway.Dispatching                     # Message dispatch pipeline
+│   ├── BotNexus.Gateway.Prompts                         # Prompt pipeline (template rendering, mustache)
+│   ├── BotNexus.Gateway.Sessions                        # Session persistence (JSONL)
+│   ├── BotNexus.Cron                                    # Cron scheduling engine (HeartbeatAction, HeartbeatTrigger)
+│   ├── BotNexus.Memory                                  # Agent memory: search, retrieval, lifecycle
+│   ├── BotNexus.Tools                                   # Built-in tool implementations
+│   └── BotNexus.Cli                                     # CLI tool (botnexus command)
 ├── extensions/
-│   ├── BotNexus.Extensions.Channels.SignalR  # SignalR channel (WebUI real-time)
-│   ├── BotNexus.Extensions.Channels.Telegram # Telegram Bot channel
-│   ├── BotNexus.Extensions.Channels.Tui      # Terminal UI channel
-│   ├── BotNexus.Extensions.Mcp              # MCP server support
-│   ├── BotNexus.Extensions.Skills           # Modular knowledge packages
-│   └── BotNexus.Extensions.*                # Other tool extensions
-├── tools/                                   # Built-in tool implementations
-└── prompts/                                 # Prompt pipeline and templates
+│   ├── BotNexus.Extensions.Channels.SignalR             # SignalR channel (WebUI real-time)
+│   ├── BotNexus.Extensions.Channels.SignalR.BlazorClient         # Blazor WebUI (desktop)
+│   ├── BotNexus.Extensions.Channels.SignalR.BlazorClient.Core    # Shared Blazor service layer
+│   ├── BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile  # Blazor WASM mobile client
+│   ├── BotNexus.Extensions.Channels.Telegram           # Telegram Bot channel
+│   ├── BotNexus.Extensions.Channels.ServiceBus         # Azure Service Bus channel
+│   ├── BotNexus.Extensions.Channels.Tui                # Terminal UI channel
+│   ├── BotNexus.Extensions.Mcp                         # MCP server support (stdio + SSE)
+│   ├── BotNexus.Extensions.McpInvoke                   # Expose agents as MCP servers
+│   ├── BotNexus.Extensions.Skills                      # Modular knowledge packages
+│   ├── BotNexus.Extensions.ExecTool                    # Shell exec tool with approval gating
+│   ├── BotNexus.Extensions.ProcessTool                 # Background process management tool
+│   ├── BotNexus.Extensions.WebTools                    # Web search and fetch tools
+│   └── BotNexus.Extensions.AudioTranscription          # Audio input transcription
 
-examples/                                    # Runnable examples and proof-of-concept projects
-tests/                                       # Unit, integration, and E2E tests
+examples/                                                # Runnable examples and proof-of-concept projects
+tests/                                                   # Unit, integration, and E2E tests
 ```
+
 ## Configuration
 
 BotNexus uses a layered configuration model:
