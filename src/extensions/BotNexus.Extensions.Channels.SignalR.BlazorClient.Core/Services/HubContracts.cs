@@ -80,7 +80,8 @@ public sealed record SubAgentEventPayload(
     [property: JsonPropertyName("completedAt")] DateTimeOffset? CompletedAt,
     [property: JsonPropertyName("turnsUsed")] int TurnsUsed,
     [property: JsonPropertyName("resultSummary")] string? ResultSummary,
-    [property: JsonPropertyName("timedOut")] bool TimedOut);
+    [property: JsonPropertyName("timedOut")] bool TimedOut,
+    [property: JsonPropertyName("childSessionId")] string? ChildSessionId);
 
 // ── Client → Server return types ────────────────────────────────────────
 

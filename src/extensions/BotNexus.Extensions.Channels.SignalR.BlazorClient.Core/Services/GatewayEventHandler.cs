@@ -331,7 +331,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             Status = "Running",
             StartedAt = payload.StartedAt,
             Model = payload.Model,
-            Archetype = payload.Archetype
+            Archetype = payload.Archetype,
+            ChildSessionId = payload.ChildSessionId
         };
 
         // Register sub-agent's own session

@@ -851,7 +851,9 @@ public sealed class GatewayHostTests
 
         var first = host.DispatchAsync(CreateMessage("one", sessionId: "session-1"));
         var second = host.DispatchAsync(CreateMessage("two", sessionId: "session-1"));
-        await Task.Delay(20);
+        // Yield until the first dispatch is actively running (PromptAsync takes 250ms, so both
+        // are in-flight by the time we need to verify busy rejection).
+        await Task.WhenAny(first, second, Task.Delay(100));
         await host.DispatchAsync(CreateMessage("three", sessionId: "session-1"));
         await Task.WhenAll(first, second);
 
@@ -945,8 +947,10 @@ public sealed class GatewayHostTests
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.StopAllAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
+        var channelStartedTcs = new TaskCompletionSource();
         var firstChannel = CreateChannelAdapter("web", supportsStreaming: false);
         firstChannel.Setup(c => c.StartAsync(It.IsAny<IChannelDispatcher>(), It.IsAny<CancellationToken>()))
+            .Callback(() => channelStartedTcs.TrySetResult())
             .Returns(Task.CompletedTask);
         firstChannel.Setup(c => c.StopAsync(It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -977,7 +981,8 @@ public sealed class GatewayHostTests
             NullLogger<GatewayHost>.Instance);
 
         await host.StartAsync(CancellationToken.None);
-        await Task.Delay(150);
+        // Wait until the channel adapter's StartAsync has been invoked (event-driven, not time-based).
+        await channelStartedTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await host.StopAsync(CancellationToken.None);
 
         firstChannel.Verify(c => c.StartAsync(It.IsAny<IChannelDispatcher>(), It.IsAny<CancellationToken>()), Times.Once);

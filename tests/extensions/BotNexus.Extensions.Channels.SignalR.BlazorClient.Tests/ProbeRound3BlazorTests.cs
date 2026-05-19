@@ -458,7 +458,8 @@ public sealed class ProbeRound3BlazorTests : IDisposable
             CompletedAt: null,
             TurnsUsed: 0,
             ResultSummary: null,
-            TimedOut: false
+            TimedOut: false,
+            ChildSessionId: null
         ));
 
         store.GetAgent("agent-1")!.SubAgents.ShouldContainKey("sub-1");
@@ -501,7 +502,8 @@ public sealed class ProbeRound3BlazorTests : IDisposable
             CompletedAt: null,
             TurnsUsed: 0,
             ResultSummary: null,
-            TimedOut: false
+            TimedOut: false,
+            ChildSessionId: null
         ));
 
         // Then complete
@@ -517,7 +519,8 @@ public sealed class ProbeRound3BlazorTests : IDisposable
             CompletedAt: DateTimeOffset.UtcNow,
             TurnsUsed: 1,
             ResultSummary: "Done!",
-            TimedOut: false
+            TimedOut: false,
+            ChildSessionId: null
         ));
 
         store.GetAgent("agent-1")!.SubAgents["sub-1"].Status.ShouldBe("Completed");

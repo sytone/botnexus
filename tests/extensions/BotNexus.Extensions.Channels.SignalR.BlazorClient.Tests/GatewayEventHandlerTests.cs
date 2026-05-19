@@ -280,7 +280,8 @@ public sealed class GatewayEventHandlerTests
             CompletedAt: null,
             TurnsUsed: 0,
             ResultSummary: null,
-            TimedOut: false));
+            TimedOut: false,
+            ChildSessionId: null));
 
         _store.SetActiveConversation("agent-1", "conv-2");
 
@@ -296,7 +297,8 @@ public sealed class GatewayEventHandlerTests
             CompletedAt: DateTimeOffset.UtcNow,
             TurnsUsed: 1,
             ResultSummary: "All green",
-            TimedOut: false));
+            TimedOut: false,
+            ChildSessionId: null));
 
         var conversationOneMessages = agent.Conversations["conv-1"].Messages.Select(m => m.Content).ToList();
         var conversationTwoMessages = agent.Conversations["conv-2"].Messages.Select(m => m.Content).ToList();
@@ -330,7 +332,8 @@ public sealed class GatewayEventHandlerTests
             CompletedAt: null,
             TurnsUsed: 0,
             ResultSummary: null,
-            TimedOut: false));
+            TimedOut: false,
+            ChildSessionId: null));
 
         _store.SetActiveConversation("agent-1", "conv-2");
 
@@ -346,7 +349,8 @@ public sealed class GatewayEventHandlerTests
             CompletedAt: DateTimeOffset.UtcNow,
             TurnsUsed: 1,
             ResultSummary: "Tool call failed",
-            TimedOut: false));
+            TimedOut: false,
+            ChildSessionId: null));
 
         var conversationOneMessages = agent.Conversations["conv-1"].Messages.Select(m => m.Content).ToList();
         var conversationTwoMessages = agent.Conversations["conv-2"].Messages.Select(m => m.Content).ToList();
@@ -380,7 +384,8 @@ public sealed class GatewayEventHandlerTests
             CompletedAt: null,
             TurnsUsed: 0,
             ResultSummary: null,
-            TimedOut: false));
+            TimedOut: false,
+            ChildSessionId: null));
 
         _store.SetActiveConversation("agent-1", "conv-2");
 
@@ -396,7 +401,8 @@ public sealed class GatewayEventHandlerTests
             CompletedAt: DateTimeOffset.UtcNow,
             TurnsUsed: 1,
             ResultSummary: null,
-            TimedOut: false));
+            TimedOut: false,
+            ChildSessionId: null));
 
         var conversationOneMessages = agent.Conversations["conv-1"].Messages.Select(m => m.Content).ToList();
         var conversationTwoMessages = agent.Conversations["conv-2"].Messages.Select(m => m.Content).ToList();
@@ -437,7 +443,8 @@ public sealed class GatewayEventHandlerTests
             CompletedAt: null,
             TurnsUsed: 0,
             ResultSummary: null,
-            TimedOut: false));
+            TimedOut: false,
+            ChildSessionId: null));
 
         var msg = conv.Messages.Last();
         Assert.Equal("System", msg.Role);
@@ -463,7 +470,8 @@ public sealed class GatewayEventHandlerTests
             CompletedAt: null,
             TurnsUsed: 0,
             ResultSummary: null,
-            TimedOut: false));
+            TimedOut: false,
+            ChildSessionId: null));
 
         var msg = conv.Messages.Last();
         Assert.Equal("System", msg.Role);
