@@ -411,6 +411,11 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 try
                 {
                     var result = await _compactor.CompactAsync(session.Session, _compactionOptions.CurrentValue, cancellationToken);
+                    if (result.Succeeded && result.CompactedHistory is not null)
+                    {
+                        session.ReplaceHistory(result.CompactedHistory);
+                        session.Session.UpdatedAt = DateTimeOffset.UtcNow;
+                    }
                     await _sessions.SaveAsync(session, cancellationToken);
                     _logger.LogInformation(
                         "Session {SessionId} compacted: {Summarized} entries summarized, {Preserved} preserved",
@@ -707,9 +712,16 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         CancellationToken cancellationToken)
     {
         var result = await _compactor.CompactAsync(session.Session, _compactionOptions.CurrentValue, cancellationToken);
+        if (result.Succeeded && result.CompactedHistory is not null)
+        {
+            session.ReplaceHistory(result.CompactedHistory);
+            session.Session.UpdatedAt = DateTimeOffset.UtcNow;
+        }
         await _sessions.SaveAsync(session, cancellationToken);
 
-        var feedback = $"Session compacted: {result.EntriesSummarized} entries summarized, {result.EntriesPreserved} preserved.";
+        var feedback = result.Succeeded
+            ? $"Session compacted: {result.EntriesSummarized} entries summarized, {result.EntriesPreserved} preserved."
+            : "Compaction aborted: the summarization model returned an empty response. Session history was not modified.";
         if (ResolveChannelAdapter(message.ChannelType) is { } channel)
         {
             await channel.SendAsync(new OutboundMessage

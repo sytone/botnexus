@@ -59,11 +59,15 @@ public sealed class LlmSessionCompactorTests
             ("assistant", "a3"));
         var compactor = CreateCompactor("summary-u1");
 
-        await compactor.CompactAsync(session.Session, new CompactionOptions
+        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
         {
             PreservedTurns = 2,
             SummarizationModel = TestModel.Id
         });
+
+        result.Succeeded.ShouldBeTrue();
+        result.CompactedHistory.ShouldNotBeNull();
+        session.ReplaceHistory(result.CompactedHistory!);
 
         session.GetHistorySnapshot().Select(entry => entry.Content).ToList().ShouldBe(
             new[] { "summary-u1", "u2", "a2", "t2", "u3", "a3" }, ignoreOrder: false);
@@ -85,8 +89,13 @@ public sealed class LlmSessionCompactorTests
             SummarizationModel = TestModel.Id
         });
 
+        result.Succeeded.ShouldBeTrue();
+        result.CompactedHistory.ShouldNotBeNull();
         result.EntriesSummarized.ShouldBe(2);
         result.EntriesPreserved.ShouldBe(2);
+
+        session.ReplaceHistory(result.CompactedHistory!);
+
         session.GetHistorySnapshot().Select(entry => entry.Content)
             .ToList().ShouldBe(new[] { "structured summary", "recent", "recent-response" }, ignoreOrder: false);
     }
@@ -100,6 +109,8 @@ public sealed class LlmSessionCompactorTests
         var result = await compactor.CompactAsync(session.Session, new CompactionOptions());
 
         result.Summary.ShouldBeEmpty();
+        result.Succeeded.ShouldBeFalse();
+        result.CompactedHistory.ShouldBeNull();
         result.EntriesSummarized.ShouldBe(0);
         result.EntriesPreserved.ShouldBe(0);
         session.GetHistorySnapshot().ShouldBeEmpty();
@@ -123,6 +134,8 @@ public sealed class LlmSessionCompactorTests
         });
 
         result.Summary.ShouldBeEmpty();
+        result.Succeeded.ShouldBeFalse();
+        result.CompactedHistory.ShouldBeNull();
         result.EntriesSummarized.ShouldBe(0);
         result.EntriesPreserved.ShouldBe(4);
         session.GetHistorySnapshot().ShouldBe(originalHistory);
@@ -137,11 +150,15 @@ public sealed class LlmSessionCompactorTests
             ("user", "recent"));
         var compactor = CreateCompactor("compacted");
 
-        await compactor.CompactAsync(session.Session, new CompactionOptions
+        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
         });
+
+        result.Succeeded.ShouldBeTrue();
+        result.CompactedHistory.ShouldNotBeNull();
+        session.ReplaceHistory(result.CompactedHistory!);
 
         var summaryEntry = session.GetHistorySnapshot().First();
         summaryEntry.Role.ShouldBe(MessageRole.System);
@@ -165,8 +182,47 @@ public sealed class LlmSessionCompactorTests
             SummarizationModel = TestModel.Id
         });
 
+        result.Succeeded.ShouldBeTrue();
         result.Summary.Length.ShouldBe(40);
+
+        session.ReplaceHistory(result.CompactedHistory!);
         session.GetHistorySnapshot().First().Content.Length.ShouldBe(40);
+    }
+
+    /// <summary>
+    /// Regression test for Bug 1 / Bug 5 (#366): when the LLM returns an empty response,
+    /// CompactAsync must abort and leave history completely unchanged.
+    /// </summary>
+    [Fact]
+    public async Task CompactAsync_EmptyLlmResponse_AbortsWithoutMutatingHistory()
+    {
+        var session = CreateSession(
+            ("user", "important message 1"),
+            ("assistant", "important response 1"),
+            ("user", "important message 2"),
+            ("assistant", "important response 2"),
+            ("user", "recent"));
+        var originalHistory = session.GetHistorySnapshot().ToList();
+
+        // Simulate LLM returning empty text
+        var compactor = CreateCompactor(summary: "");
+
+        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
+        {
+            PreservedTurns = 1,
+            SummarizationModel = TestModel.Id
+        });
+
+        result.Succeeded.ShouldBeFalse("compaction should be aborted when LLM returns empty summary");
+        result.Summary.ShouldBeEmpty();
+        result.CompactedHistory.ShouldBeNull();
+        result.EntriesSummarized.ShouldBe(0);
+
+        // Critical: history must be completely unchanged
+        session.GetHistorySnapshot().Count.ShouldBe(originalHistory.Count,
+            "history must not be modified when LLM returns empty summary");
+        session.GetHistorySnapshot().Select(e => e.Content).ToList()
+            .ShouldBe(originalHistory.Select(e => e.Content).ToList());
     }
 
     [Fact]
@@ -252,4 +308,3 @@ public sealed class LlmSessionCompactorTests
         return stream;
     }
 }
-
