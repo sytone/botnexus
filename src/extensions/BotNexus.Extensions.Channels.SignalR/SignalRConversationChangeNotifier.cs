@@ -1,4 +1,4 @@
-﻿using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Abstractions.Conversations;
 using Microsoft.AspNetCore.SignalR;
 
 namespace BotNexus.Extensions.Channels.SignalR;
@@ -12,5 +12,5 @@ public sealed class SignalRConversationChangeNotifier(IHubContext<GatewayHub, IG
 
     /// <inheritdoc />
     public Task NotifyConversationChangedAsync(string changeType, string agentId, string conversationId, CancellationToken cancellationToken = default)
-        => _hubContext.Clients.All.ConversationChanged(new ConversationChangedPayload(changeType, agentId, conversationId));
+        => _hubContext.Clients.All.ConversationChanged(new ConversationChangedPayload(changeType, agentId, conversationId, DateTimeOffset.UtcNow));
 }

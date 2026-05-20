@@ -1,4 +1,4 @@
-﻿using System.Text.Json.Serialization;
+using System.Text.Json.Serialization;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
@@ -148,7 +148,8 @@ public sealed record AgentsChangedPayload(
 public sealed record ConversationChangedPayload(
     [property: JsonPropertyName("changeType")] string ChangeType,
     [property: JsonPropertyName("agentId")] string AgentId,
-    [property: JsonPropertyName("conversationId")] string ConversationId);
+    [property: JsonPropertyName("conversationId")] string ConversationId,
+    [property: JsonPropertyName("updatedAt")] DateTimeOffset? UpdatedAt = null);
 
 /// <summary>Kind of steering feedback event.</summary>
 public enum SteeringFeedbackKind
@@ -164,3 +165,5 @@ public sealed record SteeringFeedbackPayload(
     [property: JsonPropertyName("agentId")] string AgentId,
     [property: JsonPropertyName("sessionId")] string SessionId,
     [property: JsonPropertyName("kind")] SteeringFeedbackKind Kind);
+
+
