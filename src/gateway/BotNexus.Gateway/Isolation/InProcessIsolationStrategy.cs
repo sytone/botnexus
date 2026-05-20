@@ -570,16 +570,23 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                 t.Definition.Parameters.GetRawText().Length))
             .ToList();
         var historyEntries = state.Messages.Count;
-        var historyChars = state.Messages.Sum(static message => message switch
+
+        var userAssistantChars = state.Messages.Sum(static message => message switch
         {
             AgentCoreUserMessage user => user.Content?.Length ?? 0,
             AssistantAgentMessage assistant => assistant.Content?.Length ?? 0,
             SystemAgentMessage system => system.Content?.Length ?? 0,
-            ToolResultAgentMessage tool => tool.Result.Content.Sum(static c => c.Value?.Length ?? 0),
             SubAgentCompletionMessage subAgent => subAgent.Content?.Length ?? 0,
             _ => 0
         });
 
+        var toolResultChars = state.Messages.Sum(static message => message switch
+        {
+            ToolResultAgentMessage tool => tool.Result.Content.Sum(static c => c.Value?.Length ?? 0),
+            _ => 0
+        });
+
+        var historyChars = userAssistantChars + toolResultChars;
         var totalChars = systemPromptChars
             + toolDefinitions.Sum(static t => t.SchemaChars + t.Name.Length + (t.Description?.Length ?? 0))
             + historyChars;
@@ -596,6 +603,10 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             HistoryEntryCount = historyEntries,
             HistoryChars = historyChars,
             HistoryTokens = historyChars / 4,
+            UserAssistantChars = userAssistantChars,
+            UserAssistantTokens = userAssistantChars / 4,
+            ToolResultChars = toolResultChars,
+            ToolResultTokens = toolResultChars / 4,
             TotalEstimatedTokens = estimatedTokens,
             SystemPrompt = state.SystemPrompt
         };
