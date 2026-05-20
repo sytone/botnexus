@@ -106,6 +106,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
 
         var message = request.Message;
         var finalResponse = string.Empty;
+        var objectiveMet = false;
         try
         {
             for (var turn = 0; turn < request.MaxTurns; turn++)
@@ -117,7 +118,10 @@ public sealed class AgentExchangeService : IAgentExchangeService
                 AddTurn(MessageRole.Assistant, finalResponse, transcript, session);
 
                 if (IsObjectiveMet(request.Objective, finalResponse))
+                {
+                    objectiveMet = true;
                     break;
+                }
 
                 if (turn == request.MaxTurns - 1)
                     break;
@@ -145,7 +149,8 @@ public sealed class AgentExchangeService : IAgentExchangeService
             Status = "sealed",
             Turns = transcript.Count,
             FinalResponse = finalResponse,
-            Transcript = transcript
+            Transcript = transcript,
+            CompletionReason = objectiveMet ? "objectiveMet" : "maxTurnsReached"
         };
     }
 
@@ -200,6 +205,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
         var transcript = new List<AgentExchangeTranscriptEntry>();
         var message = request.Message;
         var finalResponse = string.Empty;
+        var objectiveMet = false;
         string? remoteSessionId = null;
 
         try
@@ -234,7 +240,10 @@ public sealed class AgentExchangeService : IAgentExchangeService
                 AddTurn(MessageRole.Assistant, finalResponse, transcript, session);
 
                 if (IsObjectiveMet(request.Objective, finalResponse))
+                {
+                    objectiveMet = true;
                     break;
+                }
 
                 if (turn == request.MaxTurns - 1)
                     break;
@@ -263,7 +272,8 @@ public sealed class AgentExchangeService : IAgentExchangeService
             Status = "sealed",
             Turns = transcript.Count,
             FinalResponse = finalResponse,
-            Transcript = transcript
+            Transcript = transcript,
+            CompletionReason = objectiveMet ? "objectiveMet" : "maxTurnsReached"
         };
     }
 
@@ -286,9 +296,9 @@ public sealed class AgentExchangeService : IAgentExchangeService
         if (string.IsNullOrWhiteSpace(objective))
             return true;
 
-        return response.Contains("objective met", StringComparison.OrdinalIgnoreCase)
-               || response.Contains("completed objective", StringComparison.OrdinalIgnoreCase)
-               || response.Contains("done", StringComparison.OrdinalIgnoreCase);
+        // Only explicit completion signals; broad words like "done" cause false positives (issue #379).
+        return response.Contains("OBJECTIVE MET", StringComparison.OrdinalIgnoreCase)
+               || response.Contains("completed objective", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string BuildFollowUpMessage(string? objective, string latestResponse)
