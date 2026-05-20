@@ -34,4 +34,38 @@ public sealed class SignalRChannelAdapterTests
                     ((AgentStreamEvent)arg).SessionId == SessionId.From("session-1"))),
             Times.Once);
     }
+
+    [Fact]
+    public async Task SendStreamEventAsync_UserInputRequired_InvokesDedicatedClientEvent()
+    {
+        var clientProxy = new Mock<IGatewayHubClient>();
+        clientProxy.Setup(proxy => proxy.UserInputRequired(It.IsAny<AgentStreamEvent>()))
+            .Returns(Task.CompletedTask);
+
+        var clients = new Mock<IHubClients<IGatewayHubClient>>();
+        clients.Setup(value => value.Group("session:session-2")).Returns(clientProxy.Object);
+
+        var hubContext = new Mock<IHubContext<GatewayHub, IGatewayHubClient>>();
+        hubContext.SetupGet(value => value.Clients).Returns(clients.Object);
+
+        var adapter = new SignalRChannelAdapter(NullLogger<SignalRChannelAdapter>.Instance, hubContext.Object);
+        var streamEvent = new AgentStreamEvent
+        {
+            Type = AgentStreamEventType.UserInputRequired,
+            UserInputRequest = new AskUserRequest
+            {
+                RequestId = "request-1",
+                AgentId = "agent-a",
+                SessionId = "session-2",
+                ConversationId = ConversationId.From("conversation-2"),
+                Prompt = "Pick one"
+            }
+        };
+
+        await adapter.SendStreamEventAsync("session-2", streamEvent, CancellationToken.None);
+
+        clientProxy.Verify(proxy => proxy.UserInputRequired(
+                It.Is<AgentStreamEvent>(evt => evt.Type == AgentStreamEventType.UserInputRequired)),
+            Times.Once);
+    }
 }

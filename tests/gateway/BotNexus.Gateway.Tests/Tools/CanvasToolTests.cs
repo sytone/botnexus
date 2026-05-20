@@ -1,38 +1,34 @@
+// Updated CanvasToolTests.cs - tests with conversationId
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Tools;
 using Moq;
-
 namespace BotNexus.Gateway.Tests.Tools;
-
 public sealed class CanvasToolTests
 {
     [Fact]
     public void Tool_HasExpectedNameAndLabel()
     {
-        var tool = new CanvasTool(AgentId.From("agent-a"));
-
+        var tool = new CanvasTool(AgentId.From("agent-a"), null, null);
         tool.Name.ShouldBe("canvas");
         tool.Label.ShouldBe("Canvas");
     }
 
     [Fact]
-    public async Task ExecuteAsync_Render_PublishesHtmlForCurrentAgent()
+    public async Task ExecuteAsync_Render_PublishesHtmlWithConversationId()
     {
         var notifier = new Mock<IAgentCanvasNotifier>();
-        var tool = new CanvasTool(AgentId.From("agent-a"), [notifier.Object]);
-
+        var tool = new CanvasTool(AgentId.From("agent-a"), ConversationId.From("conv-1"), [notifier.Object]);
         var result = await ExecuteAsync(tool, new Dictionary<string, object?>
         {
             ["action"] = "render",
             ["html"] = "<h1>Hello</h1>",
-            ["agentId"] = "agent-b"
         });
-
         notifier.Verify(value => value.NotifyCanvasUpdatedAsync(
                 "agent-a",
+                "conv-1",
                 "<h1>Hello</h1>",
                 It.IsAny<CancellationToken>()),
             Times.Once);
@@ -40,18 +36,35 @@ public sealed class CanvasToolTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_Clear_PublishesEmptyHtmlForCurrentAgent()
+    public async Task ExecuteAsync_Render_NullConversationId_PassesEmptyString()
     {
         var notifier = new Mock<IAgentCanvasNotifier>();
-        var tool = new CanvasTool(AgentId.From("agent-a"), [notifier.Object]);
+        var tool = new CanvasTool(AgentId.From("agent-a"), null, [notifier.Object]);
+        await ExecuteAsync(tool, new Dictionary<string, object?>
+        {
+            ["action"] = "render",
+            ["html"] = "<h1>Hello</h1>",
+        });
+        notifier.Verify(value => value.NotifyCanvasUpdatedAsync(
+                "agent-a",
+                "",
+                "<h1>Hello</h1>",
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
 
+    [Fact]
+    public async Task ExecuteAsync_Clear_PublishesEmptyHtmlWithConversationId()
+    {
+        var notifier = new Mock<IAgentCanvasNotifier>();
+        var tool = new CanvasTool(AgentId.From("agent-a"), ConversationId.From("conv-1"), [notifier.Object]);
         var result = await ExecuteAsync(tool, new Dictionary<string, object?>
         {
             ["action"] = "clear"
         });
-
         notifier.Verify(value => value.NotifyCanvasUpdatedAsync(
                 "agent-a",
+                "conv-1",
                 string.Empty,
                 It.IsAny<CancellationToken>()),
             Times.Once);
@@ -61,26 +74,22 @@ public sealed class CanvasToolTests
     [Fact]
     public async Task PrepareArgumentsAsync_RenderRequiresHtml()
     {
-        var tool = new CanvasTool(AgentId.From("agent-a"));
-
+        var tool = new CanvasTool(AgentId.From("agent-a"), null, null);
         Func<Task> action = () => tool.PrepareArgumentsAsync(new Dictionary<string, object?>
         {
             ["action"] = "render"
         });
-
         await action.ShouldThrowAsync<ArgumentException>();
     }
 
     [Fact]
     public async Task PrepareArgumentsAsync_RejectsInvalidAction()
     {
-        var tool = new CanvasTool(AgentId.From("agent-a"));
-
+        var tool = new CanvasTool(AgentId.From("agent-a"), null, null);
         Func<Task> action = () => tool.PrepareArgumentsAsync(new Dictionary<string, object?>
         {
             ["action"] = "paint"
         });
-
         await action.ShouldThrowAsync<ArgumentException>();
     }
 

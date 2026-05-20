@@ -9,6 +9,7 @@ using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Media;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Abstractions.Extensions;
@@ -21,6 +22,7 @@ using BotNexus.Gateway.Hooks;
 using BotNexus.Gateway.Isolation;
 using BotNexus.Gateway.Media;
 using BotNexus.Gateway.Routing;
+using BotNexus.Gateway.Services;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Security;
 using BotNexus.Gateway.Federation;
@@ -132,6 +134,8 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<IConversationStore, InMemoryConversationStore>();
         services.TryAddSingleton<IConversationRouter, DefaultConversationRouter>();
         services.TryAddSingleton<IConversationDispatcher, DefaultConversationDispatcher>();
+        services.TryAddSingleton<IAskUserResponseRegistry, AskUserResponseRegistry>();
+        services.TryAddSingleton<PendingAskUserInterceptor>();
         services.AddSingleton<InternalChannelAdapter>();
         services.AddSingleton<IChannelAdapter>(serviceProvider => serviceProvider.GetRequiredService<InternalChannelAdapter>());
         services.AddSingleton<ISessionCompactor, LlmSessionCompactor>();
@@ -205,7 +209,6 @@ public static class GatewayServiceCollectionExtensions
                 return new PlatformConfigAgentWriter(writer, home);
             }));
             services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
-            services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentWorkspaceScaffolder>());
         }
 
         return services;
@@ -300,7 +303,6 @@ public static class GatewayServiceCollectionExtensions
             return new PlatformConfigAgentWriter(writer, home);
         }));
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
-            services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentWorkspaceScaffolder>());
 
         return services;
     }
@@ -506,7 +508,6 @@ public static class GatewayServiceCollectionExtensions
     {
         services.AddSingleton<IAgentConfigurationSource, T>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
-            services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentWorkspaceScaffolder>());
         return services;
     }
 
@@ -541,7 +542,6 @@ public static class GatewayServiceCollectionExtensions
                 serviceProvider.GetRequiredService<IFileSystem>())));
 
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
-            services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentWorkspaceScaffolder>());
         return services;
     }
 }

@@ -238,7 +238,7 @@ public sealed class GatewayEventHandlerTests
         var agent = _store.GetAgent("agent-1")!;
         agent.CanvasHtml = null;
 
-        _handler.HandleCanvasUpdated("agent-1", "<div>Canvas</div>");
+        _handler.HandleCanvasUpdated("agent-1", "conv-1", "<div>Canvas</div>");
 
         Assert.Equal("<div>Canvas</div>", agent.CanvasHtml);
         Assert.NotNull(agent.CanvasUpdatedAt);
@@ -250,7 +250,7 @@ public sealed class GatewayEventHandlerTests
         var agent = _store.GetAgent("agent-1")!;
         agent.CanvasHtml = "<p>existing</p>";
 
-        _handler.HandleCanvasUpdated("missing-agent", "<div>new</div>");
+        _handler.HandleCanvasUpdated("missing-agent", "conv-1", "<div>new</div>");
 
         Assert.Equal("<p>existing</p>", agent.CanvasHtml);
     }
@@ -417,7 +417,7 @@ public sealed class GatewayEventHandlerTests
         var agent = _store.GetAgent("agent-1")!;
         agent.CanvasHtml = "<html><body>existing</body></html>";
 
-        _handler.HandleCanvasUpdated("agent-1", " ");
+        _handler.HandleCanvasUpdated("agent-1", "conv-1", " ");
 
         Assert.Null(agent.CanvasHtml);
     }

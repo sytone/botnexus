@@ -55,6 +55,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
     private readonly IConversationDispatcher? _conversationDispatcher;
     private readonly IConversationRouter? _conversationRouter;
     private readonly SessionLifecycleEvents? _sessionLifecycleEvents;
+    private readonly PendingAskUserInterceptor? _pendingAskUserInterceptor;
     private readonly ConcurrentDictionary<string, SessionQueueState> _sessionQueues = new(StringComparer.OrdinalIgnoreCase);
 
     public GatewayHost(
@@ -70,7 +71,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         SessionLifecycleEvents? sessionLifecycleEvents = null,
         IMediaPipeline? mediaPipeline = null,
         IConversationDispatcher? conversationDispatcher = null,
-        IConversationRouter? conversationRouter = null)
+        IConversationRouter? conversationRouter = null,
+        PendingAskUserInterceptor? pendingAskUserInterceptor = null)
     {
         _supervisor = supervisor;
         _router = router;
@@ -84,6 +86,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         _conversationDispatcher = conversationDispatcher;
         _conversationRouter = conversationRouter;
         _sessionLifecycleEvents = sessionLifecycleEvents;
+        _pendingAskUserInterceptor = pendingAskUserInterceptor;
         SessionQueueCapacity = Math.Max(sessionQueueCapacity, 1);
     }
 
@@ -384,6 +387,16 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 }
             }
 
+            if (_pendingAskUserInterceptor is not null &&
+                session.Session.ConversationId is { } activeConversationId &&
+                _pendingAskUserInterceptor.TryIntercept(message, activeConversationId))
+            {
+                _logger.LogInformation(
+                    "Captured ask_user response for conversation {ConversationId}; skipping normal agent dispatch.",
+                    activeConversationId);
+                continue;
+            }
+
             IReadOnlyList<MessageContentPart>? originalParts = message.ContentParts;
             IReadOnlyList<MessageContentPart>? processedParts = null;
 
@@ -506,9 +519,20 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                                 // For channels like Telegram that support forum topics, the
                                 // bare chatId is not enough — we encode threadId into the key
                                 // so the adapter can split them apart (fixes #125).
-                                var streamConversationId = streamingSource.ThreadId is not null
-                                    ? $"{message.ChannelAddress}:{streamingSource.ThreadId}"
-                                    : message.ChannelAddress.Value;
+                                 var streamConversationId = streamingSource.ThreadId is not null
+                                     ? $"{message.ChannelAddress}:{streamingSource.ThreadId}"
+                                     : message.ChannelAddress.Value;
+
+                                if (enriched.Type == AgentStreamEventType.UserInputRequired)
+                                {
+                                    await HandleUserInputRequiredAsync(
+                                        message,
+                                        sessionId,
+                                        streamingSource,
+                                        enriched,
+                                        ct);
+                                    return;
+                                }
 
                                 if (channel is IStreamEventChannelAdapter streamEventChannel)
                                     await streamEventChannel.SendStreamEventAsync(streamConversationId, enriched, ct);
@@ -814,6 +838,105 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         => !string.IsNullOrWhiteSpace(message.SessionId)
             ? message.SessionId
             : $"{message.ChannelType}:{message.ChannelAddress}";
+
+    private async Task HandleUserInputRequiredAsync(
+        InboundMessage message,
+        string sessionId,
+        ChannelSource source,
+        AgentStreamEvent streamEvent,
+        CancellationToken cancellationToken)
+    {
+        var request = streamEvent.UserInputRequest;
+        var sourceConversationId = source.ThreadId is not null
+            ? $"{message.ChannelAddress}:{source.ThreadId}"
+            : message.ChannelAddress.Value;
+
+        if (ResolveChannelAdapter(message.ChannelType) is { } sourceAdapter)
+            await SendAskUserToBindingAsync(sourceAdapter, sourceConversationId, source, sessionId, streamEvent, request, cancellationToken);
+
+        if (_conversationRouter is null)
+            return;
+
+        var outboundBindings = await _conversationRouter.GetOutboundBindingsAsync(
+            SessionId.From(sessionId),
+            source.BindingId,
+            cancellationToken);
+
+        foreach (var binding in outboundBindings)
+        {
+            var adapter = ResolveChannelAdapter(binding.ChannelType);
+            if (adapter is null)
+                continue;
+
+            var bindingConversationId = binding.ThreadId is not null
+                ? $"{binding.ChannelAddress}:{binding.ThreadId}"
+                : binding.ChannelAddress.Value;
+            var bindingSource = new ChannelSource(
+                binding.ChannelType,
+                binding.ChannelAddress,
+                message.SenderId,
+                binding.ThreadId,
+                binding.BindingId,
+                binding.DisplayPrefix);
+            await SendAskUserToBindingAsync(adapter, bindingConversationId, bindingSource, sessionId, streamEvent, request, cancellationToken);
+        }
+    }
+
+    private static async Task SendAskUserToBindingAsync(
+        IChannelAdapter adapter,
+        string conversationId,
+        ChannelSource source,
+        string sessionId,
+        AgentStreamEvent streamEvent,
+        AskUserRequest? request,
+        CancellationToken cancellationToken)
+    {
+        if (adapter is IStreamEventChannelAdapter streamAdapter)
+        {
+            await streamAdapter.SendStreamEventAsync(conversationId, streamEvent, cancellationToken);
+            return;
+        }
+
+        if (request is null)
+            return;
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = source.ChannelType,
+            ChannelAddress = source.ChannelAddress,
+            Content = FormatAskUserFallbackPrompt(request),
+            SessionId = sessionId,
+            ThreadId = source.ThreadId,
+            BindingId = source.BindingId,
+            DisplayPrefix = source.DisplayPrefix
+        }, cancellationToken);
+    }
+
+    private static string FormatAskUserFallbackPrompt(AskUserRequest request)
+    {
+        var lines = new List<string>
+        {
+            "❓ Agent question:",
+            request.Prompt
+        };
+
+        if (request.Choices is { Count: > 0 })
+        {
+            lines.Add(string.Empty);
+            for (var index = 0; index < request.Choices.Count; index++)
+            {
+                var choice = request.Choices[index];
+                var label = string.IsNullOrWhiteSpace(choice.Label) ? choice.Value : choice.Label;
+                lines.Add($"{index + 1}. {label}");
+            }
+        }
+
+        lines.Add(string.Empty);
+        lines.Add(request.AllowMultiple
+            ? "Reply with one or more answers."
+            : "Reply with your answer.");
+        return string.Join(Environment.NewLine, lines);
+    }
 
     private async Task SendBusyAsync(InboundMessage message, CancellationToken cancellationToken)
     {

@@ -89,6 +89,26 @@ public interface IClientStateStore
 
     /// <summary>Commit the stream buffer as a final assistant message in the conversation.</summary>
     void CommitStreamBuffer(string conversationId, string? thinkingContent = null);
+
+    // ── ask_user prompt state ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Set or replace the pending <c>ask_user</c> prompt for a conversation so
+    /// the chat panel can render inline response controls.
+    /// </summary>
+    void SetPendingAskUser(AskUserPromptState prompt);
+
+    /// <summary>
+    /// Clear the pending <c>ask_user</c> prompt for a conversation after submit,
+    /// cancellation, timeout, or stream termination.
+    /// </summary>
+    void ClearPendingAskUser(string conversationId);
+
+    /// <summary>
+    /// Get the active <c>ask_user</c> prompt for the conversation, or <c>null</c>
+    /// when no interactive prompt is waiting.
+    /// </summary>
+    AskUserPromptState? GetPendingAskUser(string conversationId);
 }
 
 /// <summary>Agent-level state for the portal sidebar and chat panel.</summary>
