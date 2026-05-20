@@ -16,6 +16,7 @@ using BotNexus.Gateway.Abstractions.Hooks;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Agents;
@@ -162,13 +163,15 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             var conversationId = await ResolveConversationIdAsync(conversationStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken)
                 .ConfigureAwait(false);
             var (conversationAccessLevel, conversationAllowedAgents) = ResolveConversationAccess(descriptor);
+            var conversationDispatcher = _serviceProvider.GetService<IChannelDispatcher>();
             tools.Add(new ConversationTool(
                 conversationStore,
                 descriptor.AgentId,
                 conversationId,
                 conversationAccessLevel,
                 conversationAllowedAgents,
-                sessionStore));
+                sessionStore,
+                conversationDispatcher));
         }
 
         var delayToolOptions = _serviceProvider.GetService<IOptions<DelayToolOptions>>() ?? Options.Create(new DelayToolOptions());
