@@ -65,7 +65,7 @@ public sealed class BotNexusHome
             // Fallback to HOME environment variable on Linux/Unix systems
             userProfile = Environment.GetEnvironmentVariable("HOME") ?? string.Empty;
         }
-        
+
         if (string.IsNullOrWhiteSpace(userProfile))
             throw new InvalidOperationException("Unable to determine user home directory. Please set BOTNEXUS_HOME environment variable.");
 
@@ -99,8 +99,50 @@ public sealed class BotNexusHome
     private void ScaffoldAgentWorkspace(string agentDirectory)
     {
         var workspacePath = Path.Combine(agentDirectory, "workspace");
+        EnsureWorkspaceScaffoldFiles(workspacePath);
+        _fileSystem.Directory.CreateDirectory(Path.Combine(agentDirectory, "data", "sessions"));
+    }
+
+    private void MigrateLegacyWorkspace(string agentDirectory)
+    {
+        var workspacePath = Path.Combine(agentDirectory, "workspace");
+        if (_fileSystem.Directory.Exists(workspacePath))
+        {
+            // Workspace subdir already exists — ensure all scaffold files are present (idempotent, never overwrites)
+            EnsureWorkspaceScaffoldFiles(workspacePath);
+            return;
+        }
+
+        var hasLegacyFiles = LegacyWorkspaceFiles
+            .Any(f => _fileSystem.File.Exists(Path.Combine(agentDirectory, f)));
+        if (!hasLegacyFiles)
+        {
+            ScaffoldAgentWorkspace(agentDirectory);
+            return;
+        }
+
         _fileSystem.Directory.CreateDirectory(workspacePath);
         _fileSystem.Directory.CreateDirectory(Path.Combine(agentDirectory, "data", "sessions"));
+        foreach (var file in LegacyWorkspaceFiles)
+        {
+            var src = Path.Combine(agentDirectory, file);
+            var dst = Path.Combine(workspacePath, file);
+            if (_fileSystem.File.Exists(src))
+                _fileSystem.File.Move(src, dst, overwrite: true);
+        }
+
+        // After migration, ensure any newly-required scaffold files are present
+        EnsureWorkspaceScaffoldFiles(workspacePath);
+    }
+
+    /// <summary>
+    /// Ensures all workspace scaffold files exist in the given workspace directory.
+    /// Missing files are created from embedded templates (or written as empty).
+    /// Existing files are never overwritten.
+    /// </summary>
+    internal void EnsureWorkspaceScaffoldFiles(string workspacePath)
+    {
+        _fileSystem.Directory.CreateDirectory(workspacePath);
 
         var assembly = typeof(BotNexusHome).Assembly;
         foreach (var file in WorkspaceScaffoldFiles)
@@ -124,31 +166,6 @@ public sealed class BotNexusHome
             }
 
             _fileSystem.File.WriteAllText(path, string.Empty);
-        }
-    }
-
-    private void MigrateLegacyWorkspace(string agentDirectory)
-    {
-        var workspacePath = Path.Combine(agentDirectory, "workspace");
-        if (_fileSystem.Directory.Exists(workspacePath))
-            return;
-
-        var hasLegacyFiles = LegacyWorkspaceFiles
-            .Any(f => _fileSystem.File.Exists(Path.Combine(agentDirectory, f)));
-        if (!hasLegacyFiles)
-        {
-            ScaffoldAgentWorkspace(agentDirectory);
-            return;
-        }
-
-        _fileSystem.Directory.CreateDirectory(workspacePath);
-        _fileSystem.Directory.CreateDirectory(Path.Combine(agentDirectory, "data", "sessions"));
-        foreach (var file in LegacyWorkspaceFiles)
-        {
-            var src = Path.Combine(agentDirectory, file);
-            var dst = Path.Combine(workspacePath, file);
-            if (_fileSystem.File.Exists(src))
-                _fileSystem.File.Move(src, dst, overwrite: true);
         }
     }
 }
