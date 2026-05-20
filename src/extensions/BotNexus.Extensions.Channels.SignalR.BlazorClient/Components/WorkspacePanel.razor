@@ -1,4 +1,4 @@
-@inject IGatewayRestClient GatewayRestClient
+﻿@inject IGatewayRestClient GatewayRestClient
 @inject IJSRuntime JS
 @implements IDisposable
 
@@ -94,6 +94,13 @@
     private bool _deleteIsNonEmptyDir;
     private string? _deleteError;
 
+    // Issue #345: turn-end refresh tracking
+    private bool _wasStreaming;
+
+    /// <summary>Optional state store for turn-end auto-refresh (issue #345).</summary>
+    [Parameter]
+    public IClientStateStore? Store { get; set; }
+
     [Parameter, EditorRequired]
     public string AgentId { get; set; } = default!;
 
@@ -104,7 +111,35 @@
 
     protected override async Task OnInitializedAsync()
     {
+        if (Store is not null)
+        {
+            _wasStreaming = Store.GetAgent(AgentId)?.IsStreaming == true;
+            Store.OnChanged += HandleStateChanged;
+        }
         await LoadRootAsync();
+    }
+
+    private void HandleStateChanged()
+    {
+        var agent = Store?.GetAgent(AgentId);
+        if (agent is null) return;
+
+        var isStreaming = agent.IsStreaming;
+        if (_wasStreaming && !isStreaming)
+        {
+            // Turn just ended for our agent -- clear cached directories and reload
+            _wasStreaming = false;
+            _directoryResponses.Clear();
+            _expandedDirectories.Clear();
+            _ = InvokeAsync(async () =>
+            {
+                await LoadRootAsync();
+                StateHasChanged();
+            });
+            return;
+        }
+
+        _wasStreaming = isStreaming;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -117,6 +152,8 @@
 
     public void Dispose()
     {
+        if (Store is not null)
+            Store.OnChanged -= HandleStateChanged;
         _cts.Cancel();
         _cts.Dispose();
     }

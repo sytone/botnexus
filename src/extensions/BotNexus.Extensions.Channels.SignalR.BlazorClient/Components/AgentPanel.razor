@@ -1,4 +1,4 @@
-@inject IClientStateStore Store
+﻿@inject IClientStateStore Store
 @inject NavigationManager Nav
 @implements IDisposable
 
@@ -40,7 +40,7 @@
         <section id="@GetPanelId(AgentPanelTab.Workspace)"
                  class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Workspace) ? "active" : "")"
                  role="tabpanel">
-            <WorkspacePanel AgentId="@AgentId" />
+            <WorkspacePanel AgentId="@AgentId" Store="Store" />
         </section>
         }
 
@@ -49,7 +49,7 @@
         <section id="@GetPanelId(AgentPanelTab.Reports)"
                  class="agent-tab-pane @(IsActiveTab(AgentPanelTab.Reports) ? "active" : "")"
                  role="tabpanel">
-            <ReportsPanel AgentId="@AgentId" />
+            <ReportsPanel AgentId="@AgentId" Store="Store" />
         </section>
         }
 
