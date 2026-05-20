@@ -119,7 +119,6 @@ else
             </button>
         </div>
     </div>
-
     <!-- TOOL CALL MODAL -->
     @if (_modalToolMessage is not null)
     {
@@ -162,6 +161,11 @@ else
     private readonly Dictionary<string, string> _markdownCache = new();
     private ChatMessage? _modalToolMessage;
 
+    // Scroll guard state — tracks last-known active context to prevent cross-agent scroll
+    private string? _lastActiveAgentId;
+    private string? _lastActiveConversationId;
+    private int _lastRenderedMessageCount;
+
     protected override async Task OnInitializedAsync()
     {
         Store.OnChanged += HandleStateChanged;
@@ -181,7 +185,7 @@ else
                 {
                     StateHasChanged();
                     await RenderMarkdownAsync();
-                    await ScrollToBottomAsync();
+                    await ConditionalScrollAsync();
                 }
                 catch (ObjectDisposedException) { }
                 catch (Exception ex)
@@ -191,6 +195,40 @@ else
             });
         }
         catch (ObjectDisposedException) { }
+    }
+
+    /// <summary>
+    /// Scrolls to the bottom only when the active agent/conversation has changed or
+    /// new messages have arrived for the currently-viewed conversation.
+    /// Does NOT scroll when a background agent's state fires the global OnChanged event.
+    /// </summary>
+    private async Task ConditionalScrollAsync()
+    {
+        var activeAgentId = Store.ActiveAgentId;
+        var activeConvId = activeAgentId is not null
+            ? Store.GetAgent(activeAgentId)?.ActiveConversationId
+            : null;
+
+        // Agent or conversation switched → force scroll immediately
+        bool switched = activeAgentId != _lastActiveAgentId || activeConvId != _lastActiveConversationId;
+        if (switched)
+        {
+            _lastActiveAgentId = activeAgentId;
+            _lastActiveConversationId = activeConvId;
+            _lastRenderedMessageCount = activeConvId is not null ? Store.GetMessages(activeConvId).Count : 0;
+            await ForceScrollToBottomAsync();
+            return;
+        }
+
+        // Same agent/conv — only scroll if message count grew for the active conversation
+        if (activeConvId is null) return;
+        var currentCount = Store.GetMessages(activeConvId).Count;
+        var isStreaming = Store.GetStreamState(activeConvId)?.IsStreaming == true;
+        if (currentCount > _lastRenderedMessageCount || isStreaming)
+        {
+            _lastRenderedMessageCount = currentCount;
+            await ScrollToBottomAsync(isStreaming);
+        }
     }
 
     private async Task OnAgentChanged(ChangeEventArgs e)
@@ -292,12 +330,27 @@ else
         if (needsRender) StateHasChanged();
     }
 
-    private async Task ScrollToBottomAsync()
+    /// <summary>
+    /// Smart scroll: only scrolls if near the bottom (user-scroll-aware).
+    /// Uses the shared chatScroll JS interop helper.
+    /// </summary>
+    private async Task ScrollToBottomAsync(bool isStreaming = false)
     {
         try
         {
-            await JS.InvokeVoidAsync("eval",
-                "document.querySelector('.message-stream')?.scrollTo({top:1e9,behavior:'smooth'})");
+            await JS.InvokeVoidAsync("chatScroll.scrollToBottom", _messageStreamRef, isStreaming);
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// Force-scrolls to bottom unconditionally (used on agent/conversation switch).
+    /// </summary>
+    private async Task ForceScrollToBottomAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("chatScroll.forceScrollToBottom", _messageStreamRef);
         }
         catch { }
     }
