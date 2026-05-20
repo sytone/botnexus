@@ -1,3 +1,4 @@
+using BotNexus.Cron;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
@@ -12,9 +13,6 @@ namespace BotNexus.Gateway.Api.Controllers;
 /// <summary>
 /// REST API for agent registration and lifecycle management.
 /// </summary>
-/// <summary>
-/// Represents agents controller.
-/// </summary>
 [ApiController]
 [Route("api/[controller]")]
 public sealed class AgentsController : ControllerBase
@@ -23,44 +21,33 @@ public sealed class AgentsController : ControllerBase
     private readonly IAgentSupervisor _supervisor;
     private readonly IAgentConfigurationWriter _configurationWriter;
     private readonly IReadOnlyList<IAgentChangeNotifier> _agentChangeNotifiers;
+    private readonly IHeartbeatProvisioner? _heartbeatProvisioner;
     private readonly ILogger<AgentsController> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentsController"/> class.
     /// </summary>
-    /// <param name="registry">The agent registry for accessing registered agents.</param>
-    /// <param name="supervisor">The agent supervisor for managing agent instances and their lifecycle.</param>
-    /// <param name="configurationWriter">Persists mutable agent configuration changes.</param>
-    /// <param name="agentChangeNotifiers">Publishes agent lifecycle notifications to connected channel clients.</param>
-    /// <param name="logger">Logs best-effort transport notification failures.</param>
     public AgentsController(
         IAgentRegistry registry,
         IAgentSupervisor supervisor,
         IAgentConfigurationWriter configurationWriter,
         IEnumerable<IAgentChangeNotifier>? agentChangeNotifiers = null,
+        IHeartbeatProvisioner? heartbeatProvisioner = null,
         ILogger<AgentsController>? logger = null)
     {
         _registry = registry;
         _supervisor = supervisor;
         _configurationWriter = configurationWriter;
         _agentChangeNotifiers = agentChangeNotifiers?.ToArray() ?? [];
+        _heartbeatProvisioner = heartbeatProvisioner;
         _logger = logger ?? NullLogger<AgentsController>.Instance;
     }
 
     /// <summary>Lists all registered agents.</summary>
-    /// <summary>
-    /// Executes list.
-    /// </summary>
-    /// <returns>The list result.</returns>
     [HttpGet]
     public ActionResult<IReadOnlyList<AgentDescriptor>> List() => Ok(_registry.GetAll());
 
     /// <summary>Gets a specific agent by ID.</summary>
-    /// <summary>
-    /// Executes get.
-    /// </summary>
-    /// <param name="agentId">The agent id.</param>
-    /// <returns>The get result.</returns>
     [HttpGet("{agentId}")]
     public ActionResult<AgentDescriptor> Get(string agentId)
     {
@@ -69,12 +56,6 @@ public sealed class AgentsController : ControllerBase
     }
 
     /// <summary>Registers a new agent.</summary>
-    /// <summary>
-    /// Executes register.
-    /// </summary>
-    /// <param name="descriptor">The descriptor.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The register result.</returns>
     [HttpPost]
     public async Task<ActionResult> Register([FromBody] AgentDescriptor descriptor, CancellationToken cancellationToken)
     {
@@ -82,6 +63,10 @@ public sealed class AgentsController : ControllerBase
         {
             _registry.Register(descriptor);
             await _configurationWriter.SaveAsync(descriptor, cancellationToken);
+
+            if (_heartbeatProvisioner is not null)
+                await _heartbeatProvisioner.ProvisionAsync(descriptor, cancellationToken);
+
             await NotifyAgentsChangedBestEffortAsync("added", descriptor.AgentId.Value, cancellationToken);
             return CreatedAtAction(nameof(Get), new { agentId = descriptor.AgentId }, descriptor);
         }
@@ -94,14 +79,6 @@ public sealed class AgentsController : ControllerBase
     /// <summary>
     /// Updates an existing agent descriptor.
     /// </summary>
-    /// <param name="agentId">The route agent identifier.</param>
-    /// <param name="descriptor">The descriptor payload to persist.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The updated descriptor when found; otherwise 404.</returns>
-    /// <remarks>
-    /// If <paramref name="descriptor" /> omits <see cref="AgentDescriptor.AgentId" />, the route value is used.
-    /// If both are provided, they must match.
-    /// </remarks>
     [HttpPut("{agentId}")]
     [ProducesResponseType(typeof(AgentDescriptor), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -126,17 +103,15 @@ public sealed class AgentsController : ControllerBase
             return NotFound();
 
         await _configurationWriter.SaveAsync(updatedDescriptor, cancellationToken);
+
+        if (_heartbeatProvisioner is not null)
+            await _heartbeatProvisioner.ProvisionAsync(updatedDescriptor, cancellationToken);
+
         await NotifyAgentsChangedBestEffortAsync("updated", updatedDescriptor.AgentId.Value, cancellationToken);
         return Ok(updatedDescriptor);
     }
 
     /// <summary>Unregisters an agent.</summary>
-    /// <summary>
-    /// Executes unregister.
-    /// </summary>
-    /// <param name="agentId">The agent id.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The unregister result.</returns>
     [HttpDelete("{agentId}")]
     public async Task<ActionResult> Unregister(string agentId, CancellationToken cancellationToken)
     {
@@ -153,12 +128,6 @@ public sealed class AgentsController : ControllerBase
     }
 
     /// <summary>Gets the status of a running agent instance.</summary>
-    /// <summary>
-    /// Executes get instance status.
-    /// </summary>
-    /// <param name="agentId">The agent id.</param>
-    /// <param name="sessionId">The session id.</param>
-    /// <returns>The get instance status result.</returns>
     [HttpGet("{agentId}/sessions/{sessionId}/status")]
     public ActionResult<AgentInstance> GetInstanceStatus(string agentId, string sessionId)
     {
@@ -167,20 +136,10 @@ public sealed class AgentsController : ControllerBase
     }
 
     /// <summary>Lists all active agent instances.</summary>
-    /// <summary>
-    /// Executes list instances.
-    /// </summary>
-    /// <returns>The list instances result.</returns>
     [HttpGet("instances")]
     public ActionResult<IReadOnlyList<AgentInstance>> ListInstances() => Ok(_supervisor.GetAllInstances());
 
     /// <summary>Gets runtime health for active instances of an agent.</summary>
-    /// <summary>
-    /// Executes get health.
-    /// </summary>
-    /// <param name="agentId">The agent id.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The get health result.</returns>
     [HttpGet("{agentId}/health")]
     public async Task<ActionResult<AgentHealthResponse>> GetHealth(string agentId, CancellationToken cancellationToken)
     {
@@ -214,13 +173,6 @@ public sealed class AgentsController : ControllerBase
     }
 
     /// <summary>Stops a specific agent instance.</summary>
-    /// <summary>
-    /// Executes stop instance.
-    /// </summary>
-    /// <param name="agentId">The agent id.</param>
-    /// <param name="sessionId">The session id.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The stop instance result.</returns>
     [HttpPost("{agentId}/sessions/{sessionId}/stop")]
     public async Task<ActionResult> StopInstance(string agentId, string sessionId, CancellationToken cancellationToken)
     {

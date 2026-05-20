@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Threading.Channels;
+using BotNexus.Agent.Core.Types;
+using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -422,6 +424,11 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 try
                 {
                     var result = await _compactor.CompactAsync(session.Session, _compactionOptions.CurrentValue, cancellationToken);
+                    if (result.Succeeded && result.CompactedHistory is not null)
+                    {
+                        session.ReplaceHistory(result.CompactedHistory);
+                        session.Session.UpdatedAt = DateTimeOffset.UtcNow;
+                    }
                     await _sessions.SaveAsync(session, cancellationToken);
                     _logger.LogInformation(
                         "Session {SessionId} compacted: {Summarized} entries summarized, {Preserved} preserved",
@@ -457,8 +464,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     // Capture the resolved source for the lambda closure so the
                     // streaming conversationId includes the ThreadId (fixes #125).
                     var streamingSource = resolvedSource;
+                    var userMessage = BuildUserMessage(message, processedParts ?? originalParts);
                     await StreamingSessionHelper.ProcessAndSaveAsync(
-                        handle.StreamAsync(message.Content, cancellationToken),
+                        handle.StreamAsync(userMessage, cancellationToken),
                         session,
                         _sessions,
                         new StreamingSessionOptions(
@@ -508,7 +516,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 }
                 else
                 {
-                    var response = await handle.PromptAsync(message.Content, cancellationToken);
+                    var userMessage = BuildUserMessage(message, processedParts ?? originalParts);
+                    var response = await handle.PromptAsync(userMessage, cancellationToken);
                     if (IsHeartbeatAck(response.Content))
                     {
                         _logger.LogDebug("Heartbeat ack from agent '{AgentId}' session '{SessionId}'", agentId, sessionId);
@@ -726,9 +735,16 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         CancellationToken cancellationToken)
     {
         var result = await _compactor.CompactAsync(session.Session, _compactionOptions.CurrentValue, cancellationToken);
+        if (result.Succeeded && result.CompactedHistory is not null)
+        {
+            session.ReplaceHistory(result.CompactedHistory);
+            session.Session.UpdatedAt = DateTimeOffset.UtcNow;
+        }
         await _sessions.SaveAsync(session, cancellationToken);
 
-        var feedback = $"Session compacted: {result.EntriesSummarized} entries summarized, {result.EntriesPreserved} preserved.";
+        var feedback = result.Succeeded
+            ? $"Session compacted: {result.EntriesSummarized} entries summarized, {result.EntriesPreserved} preserved."
+            : "Compaction aborted: the summarization model returned an empty response. Session history was not modified.";
         if (ResolveChannelAdapter(message.ChannelType) is { } channel)
         {
             await channel.SendAsync(new OutboundMessage
@@ -1062,6 +1078,51 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             channelType,
             string.Join(", ", _channelManager.Adapters.Select(a => a.ChannelType)));
         return null;
+    }
+
+    /// <summary>
+    /// Builds a <see cref="AgentUserMessage"/> from an inbound message, attaching any image
+    /// content parts as <see cref="AgentImageContent"/> so vision-capable models receive them.
+    /// Falls back to a plain text <see cref="AgentUserMessage"/> when no image parts are present.
+    /// </summary>
+    private static AgentUserMessage BuildUserMessage(
+        InboundMessage message,
+        IReadOnlyList<MessageContentPart>? contentParts)
+    {
+        var images = BuildImageContent(contentParts);
+        return images is { Count: > 0 }
+            ? new AgentUserMessage(message.Content, images)
+            : new AgentUserMessage(message.Content);
+    }
+
+    private static IReadOnlyList<AgentImageContent>? BuildImageContent(
+        IReadOnlyList<MessageContentPart>? contentParts)
+    {
+        if (contentParts is null or { Count: 0 })
+            return null;
+
+        List<AgentImageContent>? images = null;
+        foreach (var part in contentParts)
+        {
+            AgentImageContent? imageContent = part switch
+            {
+                // Inline binary — convert to base64 data URI
+                BinaryContentPart bin when bin.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
+                    => new AgentImageContent($"data:{bin.MimeType};base64,{Convert.ToBase64String(bin.Data)}"),
+                // External URL reference
+                ReferenceContentPart refPart when refPart.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
+                    => new AgentImageContent(refPart.Uri),
+                _ => null
+            };
+
+            if (imageContent is not null)
+            {
+                images ??= [];
+                images.Add(imageContent);
+            }
+        }
+
+        return images;
     }
 
     private sealed class SessionQueueState(Channel<QueuedInboundMessage> queue, Task workerTask)

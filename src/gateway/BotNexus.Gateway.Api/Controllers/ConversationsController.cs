@@ -1,7 +1,9 @@
 using BotNexus.Domain.Primitives;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using BotNexus.Gateway.Abstractions.Conversations;
-using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Services;
+using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -11,7 +13,7 @@ using SessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 namespace BotNexus.Gateway.Api.Controllers;
 
 /// <summary>
-/// REST API for conversation management — listing, creating, updating, and inspecting conversations
+/// REST API for conversation management ΓÇö listing, creating, updating, and inspecting conversations
 /// along with their channel bindings and assembled history.
 /// </summary>
 [ApiController]
@@ -20,6 +22,8 @@ public sealed class ConversationsController : ControllerBase
 {
     private readonly IConversationStore _conversations;
     private readonly ISessionStore _sessions;
+    private readonly IReadOnlyList<IConversationChangeNotifier> _conversationChangeNotifiers;
+    private readonly ILogger<ConversationsController> _logger;
     private readonly IAskUserResponseRegistry? _askUserResponseRegistry;
 
     /// <summary>
@@ -27,14 +31,20 @@ public sealed class ConversationsController : ControllerBase
     /// </summary>
     /// <param name="conversations">The conversation store.</param>
     /// <param name="sessions">The session store (used for history assembly).</param>
+    /// <param name="conversationChangeNotifiers">Publishes conversation lifecycle notifications to connected channel clients.</param>
+    /// <param name="logger">Logs best-effort transport notification failures.</param>
     /// <param name="askUserResponseRegistry">Optional registry used to cancel pending ask_user prompts on archive.</param>
     public ConversationsController(
         IConversationStore conversations,
         ISessionStore sessions,
+        IEnumerable<IConversationChangeNotifier>? conversationChangeNotifiers = null,
+        ILogger<ConversationsController>? logger = null,
         IAskUserResponseRegistry? askUserResponseRegistry = null)
     {
         _conversations = conversations;
         _sessions = sessions;
+        _conversationChangeNotifiers = conversationChangeNotifiers?.ToArray() ?? [];
+        _logger = logger ?? NullLogger<ConversationsController>.Instance;
         _askUserResponseRegistry = askUserResponseRegistry;
     }
 
@@ -103,6 +113,7 @@ public sealed class ConversationsController : ControllerBase
         };
 
         var created = await _conversations.CreateAsync(conversation, cancellationToken);
+        await NotifyConversationChangedBestEffortAsync("created", created.AgentId.Value, created.ConversationId.Value, cancellationToken);
         return CreatedAtAction(nameof(Get), new { conversationId = created.ConversationId.Value }, ToResponse(created));
     }
 
@@ -141,6 +152,7 @@ public sealed class ConversationsController : ControllerBase
             conversation.Purpose = NormalizePurpose(request.Purpose);
         conversation.UpdatedAt = DateTimeOffset.UtcNow;
         await _conversations.SaveAsync(conversation, cancellationToken);
+        await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversation.ConversationId.Value, cancellationToken);
         return Ok(ToResponse(conversation));
     }
 
@@ -355,10 +367,35 @@ public sealed class ConversationsController : ControllerBase
 
         await _conversations.ArchiveAsync(conversation.ConversationId, cancellationToken);
         _askUserResponseRegistry?.CancelAllForConversation(conversation.ConversationId);
+        await NotifyConversationChangedBestEffortAsync("archived", conversation.AgentId.Value, conversation.ConversationId.Value, cancellationToken);
         return NoContent();
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
+    // ΓöÇΓöÇ Notification helpers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+    private async Task NotifyConversationChangedBestEffortAsync(string changeType, string agentId, string conversationId, CancellationToken cancellationToken)
+    {
+        if (_conversationChangeNotifiers.Count == 0)
+            return;
+
+        foreach (var notifier in _conversationChangeNotifiers)
+        {
+            try
+            {
+                await notifier.NotifyConversationChangedAsync(changeType, agentId, conversationId, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Failed to publish conversation change notification ({ChangeType}) for conversation {ConversationId} via notifier {NotifierType}.",
+                    changeType,
+                    conversationId,
+                    notifier.GetType().FullName);
+            }
+        }
+    }
+    // ΓöÇΓöÇ Helpers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
     private static ConversationResponse ToResponse(Conversation c) => new(
         ConversationId: c.ConversationId.Value,
@@ -483,3 +520,4 @@ public sealed class ConversationsController : ControllerBase
     }
 
 }
+

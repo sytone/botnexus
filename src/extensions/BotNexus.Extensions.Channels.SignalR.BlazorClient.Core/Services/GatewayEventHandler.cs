@@ -41,7 +41,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub.OnSubAgentKilled += HandleSubAgentKilled;
         _hub.OnSteeringFeedback += HandleSteeringFeedback;
         _hub.OnCanvasUpdated += HandleCanvasUpdated;
-        _hub.OnReconnecting += HandleReconnecting;
+        _hub.OnConversationChanged += HandleConversationChanged;
+                _hub.OnReconnecting += HandleReconnecting;
         _hub.OnReconnected += HandleReconnected;
         _hub.OnDisconnected += HandleDisconnected;
     }
@@ -251,6 +252,9 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         agent.IsStreaming = false;
         agent.ProcessingStage = null;
 
+        // Update timestamp client-side so sort order reflects recent activity (issue #382).
+        conv.UpdatedAt = DateTimeOffset.UtcNow;
+
         if (agent.AgentId != _store.ActiveAgentId)
             agent.UnreadCount++;
 
@@ -351,7 +355,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             Status = "Running",
             StartedAt = payload.StartedAt,
             Model = payload.Model,
-            Archetype = payload.Archetype
+            Archetype = payload.Archetype,
+            ChildSessionId = payload.ChildSessionId
         };
 
         // Register sub-agent's own session
@@ -359,8 +364,9 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         if (convId is not null && agent.Conversations.GetValueOrDefault(convId) is { } conv)
         {
+            var taskHint = string.IsNullOrWhiteSpace(payload.Task) ? string.Empty : $" — {payload.Task}";
             conv.Messages.Add(new ChatMessage("System",
-                $"🔄 Sub-agent spawned: {payload.Name ?? payload.SubAgentId} — {payload.Task}",
+                $"🔄 Sub-agent spawned: {payload.Name ?? payload.SubAgentId}{taskHint}",
                 DateTimeOffset.UtcNow));
         }
 
@@ -721,6 +727,36 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     private void HandleReconnected() => _ = HandleReconnectedAsync();
 
+    public void HandleConversationChanged(ConversationChangedPayload payload)
+    {
+        // Server notified that a conversation was created, updated, or archived.
+        var agentId = payload.AgentId;
+        if (string.IsNullOrWhiteSpace(agentId)) return;
+
+        // Fast path: if the payload carries the new UpdatedAt, apply it directly
+        // to the client state without a REST round-trip (issue #382).
+        if (payload.UpdatedAt.HasValue && _store.GetAgent(agentId) is { } agent)
+        {
+            var convId = payload.ConversationId;
+            if (!string.IsNullOrWhiteSpace(convId) &&
+                agent.Conversations.TryGetValue(convId, out var conv))
+            {
+                conv.UpdatedAt = payload.UpdatedAt.Value;
+                _store.NotifyChanged();
+                return;
+            }
+        }
+
+        // Fallback: full conversation list refresh (covers create/archive and cases
+        // where the conversation is not yet in the local store).
+        _ = RefreshConversationsAsync(agentId);
+    }
+
+    // Injected async refresh delegate — wired by AgentInteractionService or PortalLoadService.
+    public Func<string, Task>? ConversationRefreshDelegate { get; set; }
+
+    private Task RefreshConversationsAsync(string agentId)
+        => ConversationRefreshDelegate?.Invoke(agentId) ?? Task.CompletedTask;
     public void Dispose()
     {
         _hub.OnConnected -= HandleConnected;
@@ -739,8 +775,10 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub.OnSubAgentKilled -= HandleSubAgentKilled;
         _hub.OnSteeringFeedback -= HandleSteeringFeedback;
         _hub.OnCanvasUpdated -= HandleCanvasUpdated;
-        _hub.OnReconnecting -= HandleReconnecting;
+        _hub.OnConversationChanged -= HandleConversationChanged;
+                _hub.OnReconnecting -= HandleReconnecting;
         _hub.OnReconnected -= HandleReconnected;
         _hub.OnDisconnected -= HandleDisconnected;
     }
 }
+

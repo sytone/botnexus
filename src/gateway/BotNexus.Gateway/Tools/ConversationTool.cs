@@ -3,6 +3,7 @@ using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -19,7 +20,8 @@ public sealed class ConversationTool(
     ConversationId? currentConversationId = null,
     ConversationAccessLevel accessLevel = ConversationAccessLevel.Own,
     IReadOnlyList<string>? allowedAgents = null,
-    ISessionStore? sessionStore = null) : IAgentTool
+    ISessionStore? sessionStore = null,
+    IChannelDispatcher? channelDispatcher = null) : IAgentTool
 {
     public string Name => "conversation";
     public string Label => "Conversation Context";
@@ -188,6 +190,29 @@ public sealed class ConversationTool(
             created.ActiveSessionId = session.SessionId;
             created.UpdatedAt = DateTimeOffset.UtcNow;
             await conversationStore.SaveAsync(created, ct).ConfigureAwait(false);
+
+            // Trigger agent turn: dispatch a synthetic inbound message so the agent
+            // processes the seeded user message rather than it sitting silently in history.
+            if (channelDispatcher is not null)
+            {
+                await channelDispatcher.DispatchAsync(
+                    new InboundMessage
+                    {
+                        ChannelType = ChannelKey.From("internal"),
+                        SenderId = agentId.Value,
+                        ChannelAddress = ChannelAddress.From(targetAgentId.Value),
+                        Content = message.Trim(),
+                        TargetAgentId = targetAgentId.Value,
+                        SessionId = session.SessionId.Value,
+                        ConversationId = created.ConversationId.Value,
+                        Metadata = new Dictionary<string, object?>
+                        {
+                            ["messageType"] = "message",
+                            ["source"] = "conversation-tool-new"
+                        }
+                    },
+                    ct).ConfigureAwait(false);
+            }
         }
 
         return TextResult(JsonSerializer.Serialize(ToToolResponse(created), JsonOptions));

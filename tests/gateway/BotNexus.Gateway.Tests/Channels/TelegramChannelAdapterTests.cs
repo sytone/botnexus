@@ -116,7 +116,7 @@ public sealed class TelegramChannelAdapterTests
     }
 
     [Fact]
-    public async Task SendAsync_EscapesHtml()
+    public async Task SendAsync_EscapesMarkdownV2SpecialChars()
     {
         ApiCall? sendCall = null;
         var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
@@ -141,8 +141,9 @@ public sealed class TelegramChannelAdapterTests
         });
 
         sendCall.ShouldNotBeNull();
-        sendCall!.Text.ShouldBe("a &lt; b &amp;&amp; c &gt; d");
-        sendCall.ParseMode.ShouldBe("HTML");
+        // < and & are not MarkdownV2 special chars; > is and must be escaped.
+        sendCall!.Text.ShouldBe("a < b && c \\> d");
+        sendCall.ParseMode.ShouldBe("MarkdownV2");
     }
 
     [Fact]
@@ -438,7 +439,7 @@ public sealed class TelegramChannelAdapterTests
     }
 
     [Fact]
-    public async Task SendAsync_HtmlParseMode_used()
+    public async Task SendAsync_MarkdownV2ParseMode_used()
     {
         ApiCall? sendCall = null;
         var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
@@ -463,11 +464,11 @@ public sealed class TelegramChannelAdapterTests
         });
 
         sendCall.ShouldNotBeNull();
-        sendCall!.ParseMode.ShouldBe("HTML");
+        sendCall!.ParseMode.ShouldBe("MarkdownV2");
     }
 
     [Fact]
-    public async Task SendAsync_HtmlSendFails_FallsBackToPlainText()
+    public async Task SendAsync_MarkdownV2SendFails_FallsBackToPlainText()
     {
         var sendCalls = new List<ApiCall>();
         var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
@@ -502,7 +503,7 @@ public sealed class TelegramChannelAdapterTests
         });
 
         sendCalls.Count.ShouldBe(2);
-        sendCalls[0].ParseMode.ShouldBe("HTML");
+        sendCalls[0].ParseMode.ShouldBe("MarkdownV2");
         sendCalls[1].ParseMode.ShouldBeNull();
         sendCalls[1].Text.ShouldBe("hello");
     }
@@ -1076,6 +1077,358 @@ public sealed class TelegramChannelAdapterTests
         dispatched.ShouldBeFalse();
     }
 
+    // ── Photo / Image Message Tests ───────────────────────────────────────────
+
+    [Fact]
+    public async Task Polling_PhotoMessage_DispatchedWithBinaryContentPart()
+    {
+        var photoBytes = new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 }; // JPEG magic bytes
+        var dispatched = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var getUpdatesCount = 0;
+
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            // File download is a GET to /file/bot{token}/{filePath}
+            if (request.Method == HttpMethod.Get &&
+                request.RequestUri?.AbsolutePath.Contains("/file/bot", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(photoBytes)
+                };
+            }
+
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            return call.MethodName switch
+            {
+                "getUpdates" when Interlocked.Increment(ref getUpdatesCount) == 1 => JsonOk(new[]
+                {
+                    new TelegramUpdate
+                    {
+                        UpdateId = 1,
+                        Message = new TelegramMessage
+                        {
+                            MessageId = 100,
+                            Chat = new TelegramChat { Id = 42 },
+                            From = new TelegramUser { Id = 7 },
+                            Caption = "here is a photo",
+                            Photo =
+                            [
+                                new TelegramPhotoSize { FileId = "small_id", FileUniqueId = "u1", Width = 100, Height = 100, FileSize = 5_000 },
+                                new TelegramPhotoSize { FileId = "large_id", FileUniqueId = "u2", Width = 800, Height = 600, FileSize = 80_000 }
+                            ]
+                        }
+                    }
+                }),
+                "getUpdates" => JsonOk(Array.Empty<TelegramUpdate>()),
+                "getFile" => JsonOk(new TelegramFile { FileId = "large_id", FileUniqueId = "u2", FilePath = "photos/file_1.jpg" }),
+                _ => JsonOk(true)
+            };
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions { BotToken = "token", PollingTimeoutSeconds = 1 }, handler);
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
+
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+        var msg = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await adapter.StopAsync(CancellationToken.None);
+
+        msg.Content.ShouldBe("here is a photo");
+        msg.ContentParts.ShouldNotBeNull();
+        msg.ContentParts!.Count.ShouldBe(1);
+        var part = msg.ContentParts[0].ShouldBeOfType<BinaryContentPart>();
+        part.MimeType.ShouldBe("image/jpeg");
+        part.Data.ShouldBe(photoBytes);
+    }
+
+    [Fact]
+    public async Task Polling_PhotoMessage_WithNullCaption_UsesEmptyContent()
+    {
+        var photoBytes = new byte[] { 0xFF, 0xD8, 0xFF };
+        var dispatched = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var getUpdatesCount = 0;
+
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            if (request.Method == HttpMethod.Get &&
+                request.RequestUri?.AbsolutePath.Contains("/file/bot", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(photoBytes) };
+            }
+
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            return call.MethodName switch
+            {
+                "getUpdates" when Interlocked.Increment(ref getUpdatesCount) == 1 => JsonOk(new[]
+                {
+                    new TelegramUpdate
+                    {
+                        UpdateId = 2,
+                        Message = new TelegramMessage
+                        {
+                            MessageId = 101,
+                            Chat = new TelegramChat { Id = 42 },
+                            From = new TelegramUser { Id = 7 },
+                            Caption = null, // no caption
+                            Photo = [new TelegramPhotoSize { FileId = "id1", FileUniqueId = "u1", Width = 400, Height = 300, FileSize = 20_000 }]
+                        }
+                    }
+                }),
+                "getUpdates" => JsonOk(Array.Empty<TelegramUpdate>()),
+                "getFile" => JsonOk(new TelegramFile { FileId = "id1", FileUniqueId = "u1", FilePath = "photos/f.jpg" }),
+                _ => JsonOk(true)
+            };
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions { BotToken = "token", PollingTimeoutSeconds = 1 }, handler);
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
+
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+        var msg = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await adapter.StopAsync(CancellationToken.None);
+
+        msg.Content.ShouldBe(string.Empty);
+        msg.ContentParts.ShouldNotBeNull();
+        msg.ContentParts!.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Polling_PhotoMessage_DownloadFails_FallsBackToCaptionOnly()
+    {
+        // When GetFileAsync or DownloadFileAsync throws, the message is still dispatched
+        // using just the caption, with no ContentParts.
+        var dispatched = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var getUpdatesCount = 0;
+
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            return call.MethodName switch
+            {
+                "getUpdates" when Interlocked.Increment(ref getUpdatesCount) == 1 => JsonOk(new[]
+                {
+                    new TelegramUpdate
+                    {
+                        UpdateId = 3,
+                        Message = new TelegramMessage
+                        {
+                            MessageId = 102,
+                            Chat = new TelegramChat { Id = 42 },
+                            From = new TelegramUser { Id = 7 },
+                            Caption = "image with download error",
+                            Photo = [new TelegramPhotoSize { FileId = "bad_id", FileUniqueId = "u1", Width = 400, Height = 300, FileSize = 20_000 }]
+                        }
+                    }
+                }),
+                "getUpdates" => JsonOk(Array.Empty<TelegramUpdate>()),
+                // getFile returns a server error — simulates network/API failure
+                "getFile" => new HttpResponseMessage(HttpStatusCode.InternalServerError)
+                {
+                    Content = new StringContent("{\"ok\":false,\"error_code\":500,\"description\":\"server error\"}")
+                },
+                _ => JsonOk(true)
+            };
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions { BotToken = "token", PollingTimeoutSeconds = 1 }, handler);
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
+
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+        var msg = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await adapter.StopAsync(CancellationToken.None);
+
+        // Adapter must still dispatch; falls back to caption-only (no ContentParts)
+        msg.Content.ShouldBe("image with download error");
+        msg.ContentParts.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Polling_PhotoMessage_SelectsLargestPhotoByFileSize()
+    {
+        // Verifies that among multiple photo sizes, the one with the highest FileSize is chosen.
+        string? usedFileId = null;
+        var dispatched = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var getUpdatesCount = 0;
+
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            if (request.Method == HttpMethod.Get &&
+                request.RequestUri?.AbsolutePath.Contains("/file/bot", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([0xFF]) };
+            }
+
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "getFile")
+            {
+                // Capture which file_id was requested
+                using var doc = JsonDocument.Parse(call.Body);
+                usedFileId = doc.RootElement.TryGetProperty("file_id", out var el) ? el.GetString() : null;
+                return JsonOk(new TelegramFile { FileId = usedFileId!, FileUniqueId = "u", FilePath = "photos/x.jpg" });
+            }
+
+            return call.MethodName switch
+            {
+                "getUpdates" when Interlocked.Increment(ref getUpdatesCount) == 1 => JsonOk(new[]
+                {
+                    new TelegramUpdate
+                    {
+                        UpdateId = 4,
+                        Message = new TelegramMessage
+                        {
+                            MessageId = 103,
+                            Chat = new TelegramChat { Id = 42 },
+                            From = new TelegramUser { Id = 7 },
+                            Photo =
+                            [
+                                new TelegramPhotoSize { FileId = "thumb_id", FileUniqueId = "u1", Width = 90,  Height = 90,  FileSize = 3_000 },
+                                new TelegramPhotoSize { FileId = "mid_id",   FileUniqueId = "u2", Width = 320, Height = 240, FileSize = 25_000 },
+                                new TelegramPhotoSize { FileId = "hd_id",    FileUniqueId = "u3", Width = 800, Height = 600, FileSize = 95_000 }
+                            ]
+                        }
+                    }
+                }),
+                "getUpdates" => JsonOk(Array.Empty<TelegramUpdate>()),
+                _ => JsonOk(true)
+            };
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions { BotToken = "token", PollingTimeoutSeconds = 1 }, handler);
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
+
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+        await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await adapter.StopAsync(CancellationToken.None);
+
+        usedFileId.ShouldBe("hd_id");
+    }
+
+    [Fact]
+    public async Task Polling_PhotoMessage_WithNullFileSizeOnAllSizes_StillDispatches()
+    {
+        // TelegramPhotoSize.FileSize can be null; the adapter must not throw.
+        var dispatched = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var getUpdatesCount = 0;
+
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            if (request.Method == HttpMethod.Get &&
+                request.RequestUri?.AbsolutePath.Contains("/file/bot", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([0xFF, 0xD8]) };
+            }
+
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            return call.MethodName switch
+            {
+                "getUpdates" when Interlocked.Increment(ref getUpdatesCount) == 1 => JsonOk(new[]
+                {
+                    new TelegramUpdate
+                    {
+                        UpdateId = 5,
+                        Message = new TelegramMessage
+                        {
+                            MessageId = 104,
+                            Chat = new TelegramChat { Id = 42 },
+                            From = new TelegramUser { Id = 7 },
+                            Photo =
+                            [
+                                // All FileSize = null — order by (null ?? 0) = 0 for all; picks last
+                                new TelegramPhotoSize { FileId = "a", FileUniqueId = "ua", Width = 90,  Height = 90,  FileSize = null },
+                                new TelegramPhotoSize { FileId = "b", FileUniqueId = "ub", Width = 320, Height = 240, FileSize = null }
+                            ]
+                        }
+                    }
+                }),
+                "getUpdates" => JsonOk(Array.Empty<TelegramUpdate>()),
+                "getFile" => JsonOk(new TelegramFile { FileId = "a", FileUniqueId = "ua", FilePath = "photos/null_size.jpg" }),
+                _ => JsonOk(true)
+            };
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions { BotToken = "token", PollingTimeoutSeconds = 1 }, handler);
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
+
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+        var msg = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await adapter.StopAsync(CancellationToken.None);
+
+        // Must not throw and should dispatch with at least one ContentPart (or none if download fails)
+        msg.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task Polling_PhotoMessage_IsNotFilteredByUnauthorizedUser_WithNoTextGuard()
+    {
+        // Photo messages previously fell through the IsNullOrWhiteSpace(message.Text) guard.
+        // This test confirms they are accepted after the fix when the user is authorized.
+        var photoBytes = new byte[] { 0xFF, 0xD8, 0xFF };
+        var dispatched = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var getUpdatesCount = 0;
+
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            if (request.Method == HttpMethod.Get &&
+                request.RequestUri?.AbsolutePath.Contains("/file/bot", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(photoBytes) };
+            }
+
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            return call.MethodName switch
+            {
+                "getUpdates" when Interlocked.Increment(ref getUpdatesCount) == 1 => JsonOk(new[]
+                {
+                    new TelegramUpdate
+                    {
+                        UpdateId = 6,
+                        Message = new TelegramMessage
+                        {
+                            MessageId = 105,
+                            Chat = new TelegramChat { Id = 42 },
+                            From = new TelegramUser { Id = 7 },
+                            Text = null,    // no text
+                            Caption = null, // no caption either — photo only
+                            Photo = [new TelegramPhotoSize { FileId = "p1", FileUniqueId = "u1", Width = 400, Height = 300, FileSize = 12_000 }]
+                        }
+                    }
+                }),
+                "getUpdates" => JsonOk(Array.Empty<TelegramUpdate>()),
+                "getFile" => JsonOk(new TelegramFile { FileId = "p1", FileUniqueId = "u1", FilePath = "photos/photo_only.jpg" }),
+                _ => JsonOk(true)
+            };
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions { BotToken = "token", PollingTimeoutSeconds = 1 }, handler);
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
+
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+        var msg = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await adapter.StopAsync(CancellationToken.None);
+
+        msg.ContentParts.ShouldNotBeNull();
+        msg.ContentParts!.Count.ShouldBe(1);
+        msg.Content.ShouldBe(string.Empty);
+    }
+
     private static TelegramChannelAdapter CreateAdapter(TelegramGatewayOptions options, HttpMessageHandler handler)
     {
         var factory = new StubHttpClientFactory(_ => new HttpClient(handler));
@@ -1083,6 +1436,449 @@ public sealed class TelegramChannelAdapterTests
             NullLogger<TelegramChannelAdapter>.Instance,
             Options.Create(options),
             factory);
+    }
+
+    // ── Core markdown conversion: SendAsync ───────────────────────────────────
+
+    [Fact]
+    public async Task SendAsync_WithBoldMarkdown_TextArrivesAsBoldMarkdownV2()
+    {
+        // THE CORE FEATURE TEST: verifies that LLM markdown (**bold**) is converted to
+        // Telegram MarkdownV2 (*bold*) before being sent to the API.
+        ApiCall? sendCall = null;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCall = call;
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions { BotToken = "token", AllowedChatIds = { 42 } }, handler);
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("telegram"),
+            ChannelAddress = ChannelAddress.From("42"),
+            Content = "**bold text**"
+        });
+
+        sendCall.ShouldNotBeNull();
+        sendCall!.Text.ShouldBe("*bold text*");
+        sendCall.ParseMode.ShouldBe("MarkdownV2");
+    }
+
+    [Fact]
+    public async Task SendAsync_WithInlineCode_CodeSpanPreserved()
+    {
+        ApiCall? sendCall = null;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCall = call;
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions { BotToken = "token", AllowedChatIds = { 42 } }, handler);
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("telegram"),
+            ChannelAddress = ChannelAddress.From("42"),
+            Content = "Run `git status` to check."
+        });
+
+        sendCall.ShouldNotBeNull();
+        // The inline code span is preserved; the dot after "check" is escaped.
+        sendCall!.Text.ShouldBe("Run `git status` to check\\.");
+    }
+
+    [Fact]
+    public async Task SendAsync_WithFencedCodeBlock_BlockPreservedAndMarkdownInsideNotConverted()
+    {
+        ApiCall? sendCall = null;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCall = call;
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions { BotToken = "token", AllowedChatIds = { 42 } }, handler);
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("telegram"),
+            ChannelAddress = ChannelAddress.From("42"),
+            Content = "```csharp\nvar x = **1**;\n```"
+        });
+
+        sendCall.ShouldNotBeNull();
+        // ** inside code block must NOT be converted to Telegram bold.
+        sendCall!.Text.ShouldBe("```csharp\nvar x = **1**;\n```");
+    }
+
+    // ── Core markdown conversion: streaming ───────────────────────────────────
+
+    [Fact]
+    public async Task SendStreamEventAsync_ContentDeltaWithMarkdown_FinalTextIsConverted()
+    {
+        // Verifies that markdown in a ContentDelta event is converted to MarkdownV2 at MessageEnd flush.
+        ApiCall? sendCall = null;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCall = call;
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            AllowedChatIds = { 42 },
+            StreamingBufferMs = 60_000 // prevent time-based flush during test
+        }, handler);
+
+        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
+        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "**hello**" });
+        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
+
+        sendCall.ShouldNotBeNull();
+        // Raw markdown **hello** must be converted to MarkdownV2 *hello* at flush time.
+        sendCall!.Text.ShouldBe("*hello*");
+        sendCall.ParseMode.ShouldBe("MarkdownV2");
+    }
+
+    [Fact]
+    public async Task SendStreamEventAsync_MultiDeltaMarkdownToken_AssembledBeforeConversion()
+    {
+        // CRITICAL: verifies that formatting tokens split across multiple deltas are assembled
+        // BEFORE conversion, not escaped per delta. If escaping happened per delta, **bol would
+        // become \*\*bol and d** would become d\*\*, producing literal asterisks in the output.
+        ApiCall? sendCall = null;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCall = call;
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            AllowedChatIds = { 42 },
+            StreamingBufferMs = 60_000 // prevent time-based flush; only flush at MessageEnd
+        }, handler);
+
+        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
+        // Simulate streaming where **bold** arrives split across two deltas
+        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "**bol" });
+        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "d**" });
+        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
+
+        sendCall.ShouldNotBeNull();
+        var text = sendCall!.Text ?? throw new InvalidOperationException("Expected message text.");
+        // Must be *bold* (bold converted), NOT \*\*bold\*\* (literal asterisks from per-delta escaping).
+        text.ShouldBe("*bold*");
+        text.ShouldNotContain("\\*");
+    }
+
+    [Fact]
+    public async Task SendStreamDeltaAsync_WithMarkdown_ConvertsAtFlush()
+    {
+        // SendStreamDeltaAsync buffers raw content and converts at flush threshold.
+        ApiCall? sendCall = null;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCall = call;
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions { BotToken = "token", AllowedChatIds = { 42 } }, handler);
+
+        // Send 100 chars of markdown — this hits the StreamingFlushThresholdChars (100) and triggers flush.
+        var boldContent = new string('x', 96);
+        var delta = $"**{boldContent}**"; // 100 chars total: 2 + 96 + 2
+        await adapter.SendStreamDeltaAsync("42", delta);
+
+        sendCall.ShouldNotBeNull();
+        // The raw ** must be converted to * (Telegram bold) at flush time, not escaped as \*.
+        sendCall!.Text.ShouldBe($"*{boldContent}*");
+        sendCall.ParseMode.ShouldBe("MarkdownV2");
+    }
+
+    // ── Streaming: tool and error events ────────────────────────────────────
+
+    [Fact]
+    public async Task SendStreamEventAsync_ToolStartEvent_EscapedInFinalMessage()
+    {
+        // Tool start events add [toolName] started to the raw buffer.
+        // At flush time, Convert() must escape [ and ] as literal chars and escape _ in tool names.
+        ApiCall? sendCall = null;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCall = call;
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            AllowedChatIds = { 42 },
+            StreamingBufferMs = 60_000
+        }, handler);
+
+        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
+        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.ToolStart, ToolName = "memory_save" });
+        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
+
+        sendCall.ShouldNotBeNull();
+        var text = sendCall!.Text ?? throw new InvalidOperationException("Expected message text.");
+        // [memory_save] started → brackets escaped as \[ \], underscore escaped as \_
+        text.ShouldContain("\\[memory\\_save\\] started");
+    }
+
+    [Fact]
+    public async Task SendStreamEventAsync_ToolEndWithError_EscapedInFinalMessage()
+    {
+        ApiCall? sendCall = null;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCall = call;
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            AllowedChatIds = { 42 },
+            StreamingBufferMs = 60_000
+        }, handler);
+
+        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
+        await adapter.SendStreamEventAsync("42", new AgentStreamEvent
+        {
+            Type = AgentStreamEventType.ToolEnd,
+            ToolName = "read_file",
+            ToolIsError = true
+        });
+        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
+
+        sendCall.ShouldNotBeNull();
+        var text = sendCall!.Text ?? throw new InvalidOperationException("Expected message text.");
+        text.ShouldContain("\\[read\\_file\\] failed");
+    }
+
+    [Fact]
+    public async Task SendStreamEventAsync_ErrorMessage_SpecialCharsEscaped()
+    {
+        // Error messages containing special chars must be escaped by Convert() at flush time.
+        ApiCall? sendCall = null;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCall = call;
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            AllowedChatIds = { 42 },
+            StreamingBufferMs = 60_000,
+            ErrorCooldownMs = 0
+        }, handler);
+
+        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
+        await adapter.SendStreamEventAsync("42", new AgentStreamEvent
+        {
+            Type = AgentStreamEventType.Error,
+            ErrorMessage = "Connection failed. Retry 1/3"
+        });
+        await adapter.SendStreamEventAsync("42", new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd });
+
+        sendCall.ShouldNotBeNull();
+        var text = sendCall!.Text ?? throw new InvalidOperationException("Expected message text.");
+        // Dot and / must be escaped; ⚠️ emoji is not a MarkdownV2 special char.
+        text.ShouldContain("Connection failed\\. Retry 1/3");
+    }
+
+    // ── BuildOutboundText paths ───────────────────────────────────────────────
+
+    [Fact]
+    public async Task SendAsync_WithDisplayPrefix_PrefixIsEscapedNotConverted()
+    {
+        // displayPrefix goes through EscapeMarkdownV2 (not Convert), so markdown
+        // tokens in the prefix render as literal text, not as formatting.
+        ApiCall? sendCall = null;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCall = call;
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions { BotToken = "token", AllowedChatIds = { 42 } }, handler);
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("telegram"),
+            ChannelAddress = ChannelAddress.From("42"),
+            Content = "response",
+            DisplayPrefix = "_agent_:" // looks like italic markdown in the prefix
+        });
+
+        sendCall.ShouldNotBeNull();
+        var text = sendCall!.Text ?? throw new InvalidOperationException("Expected message text.");
+        // EscapeMarkdownV2("_agent_:") must produce \_agent\_: — literal, not italic.
+        text.ShouldStartWith("\\_agent\\_:");
+        // Content is still converted normally.
+        text.ShouldContain("response");
+    }
+
+    [Fact]
+    public async Task SendAsync_WithThinkingMetadata_ThinkingIsConverted()
+    {
+        // The "thinking" metadata value goes through Convert(), not EscapeMarkdownV2.
+        // Markdown formatting in thinking content must render as formatted text.
+        ApiCall? sendCall = null;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCall = call;
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions { BotToken = "token", AllowedChatIds = { 42 } }, handler);
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("telegram"),
+            ChannelAddress = ChannelAddress.From("42"),
+            Content = "answer",
+            Metadata = new Dictionary<string, object?> { ["thinking"] = "**deep thought**" }
+        });
+
+        sendCall.ShouldNotBeNull();
+        var text = sendCall!.Text ?? throw new InvalidOperationException("Expected message text.");
+        // thinking goes through Convert() → **deep thought** → *deep thought*
+        text.ShouldContain("Thinking: *deep thought*");
+    }
+
+    [Fact]
+    public async Task SendAsync_WithToolCallMetadata_BracketsAreLiteralAndNameIsEscaped()
+    {
+        // The "toolCall" metadata value must appear with literal [ and ] brackets
+        // and the tool name must have underscores escaped.
+        ApiCall? sendCall = null;
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+                sendCall = call;
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions { BotToken = "token", AllowedChatIds = { 42 } }, handler);
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("telegram"),
+            ChannelAddress = ChannelAddress.From("42"),
+            Content = "done",
+            Metadata = new Dictionary<string, object?> { ["toolCall"] = "write_file" }
+        });
+
+        sendCall.ShouldNotBeNull();
+        var text = sendCall!.Text ?? throw new InvalidOperationException("Expected message text.");
+        // The hardcoded \[ and \] produce literal brackets; EscapeMarkdownV2(write_file) → write\_file
+        text.ShouldContain("\\[write\\_file\\]");
+    }
+
+    // ── Fallback behavior ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task SendAsync_MarkdownV2RejectedWithMarkdownContent_FallbackSendsAlreadyConvertedText()
+    {
+        // When Telegram rejects MarkdownV2, the plain-text retry sends the already-converted
+        // MarkdownV2 text (e.g., *bold* instead of **bold**). This is expected behavior:
+        // the fallback is readable even if it shows MarkdownV2 syntax as literal characters.
+        var sendCalls = new List<ApiCall>();
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            if (call.MethodName == "sendMessage")
+            {
+                sendCalls.Add(call);
+                if (sendCalls.Count == 1)
+                {
+                    return new HttpResponseMessage(HttpStatusCode.BadRequest)
+                    {
+                        Content = new StringContent(
+                            "{\"ok\":false,\"description\":\"Bad Request: can't parse entities\"}",
+                            Encoding.UTF8,
+                            "application/json")
+                    };
+                }
+            }
+
+            return JsonOk(new TelegramMessage { MessageId = 1, Chat = new TelegramChat { Id = 42 } });
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions { BotToken = "token", AllowedChatIds = { 42 } }, handler);
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("telegram"),
+            ChannelAddress = ChannelAddress.From("42"),
+            Content = "**bold content**"
+        });
+
+        sendCalls.Count.ShouldBe(2);
+        sendCalls[0].ParseMode.ShouldBe("MarkdownV2");
+        sendCalls[0].Text.ShouldBe("*bold content*"); // already converted
+        sendCalls[1].ParseMode.ShouldBeNull(); // plain text retry — no parse_mode
+        // The fallback sends the converted MarkdownV2 text (not original **bold content**).
+        // This means * renders literally — acceptable degraded fallback.
+        sendCalls[1].Text.ShouldBe("*bold content*");
+    }
+
+    [Fact]
+    public async Task SendAsync_SendThrowsUnexpectedException_PropagatesException()
+    {
+        // Non-400 errors (e.g., network failures) must not be silently swallowed.
+        var handler = new StubHttpMessageHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError)
+            {
+                Content = new StringContent(
+                    "{\"ok\":false,\"description\":\"Internal Server Error\"}",
+                    Encoding.UTF8,
+                    "application/json")
+            }));
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions { BotToken = "token", AllowedChatIds = { 42 } }, handler);
+
+        Func<Task> act = () => adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = ChannelKey.From("telegram"),
+            ChannelAddress = ChannelAddress.From("42"),
+            Content = "hello"
+        });
+
+        await act.ShouldThrowAsync<Exception>();
     }
 
     [Fact]

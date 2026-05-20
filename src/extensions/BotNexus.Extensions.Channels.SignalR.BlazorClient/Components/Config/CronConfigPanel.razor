@@ -1,33 +1,249 @@
 @using System.Text.Json.Nodes
+@using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services
+@inject CronApiClient CronApi
 
 @{ var cron = GetObjectCaseInsensitive(Config, "cron"); }
 
-<BoolField Label="Enabled" Value="@GetBoolCaseInsensitive(cron, "enabled")" ValueChanged="@(v => SetNestedBoolCaseInsensitive("cron", "enabled", v))" />
-<NumberField Label="Tick Interval (seconds)" Value="@GetNullableInt(cron, "tickIntervalSeconds")" ValueChanged="@(v => SetNestedNumCaseInsensitive("cron", "tickIntervalSeconds", v))" />
+@* Global cron settings — stored in appsettings.json *@
+<ConfigSection Title="Global Settings" Description="Controls whether the cron scheduler runs and how frequently it polls for due jobs." Id="cron-global" StartExpanded="true">
+    <BoolField Label="Enabled" Value="@GetBoolCaseInsensitive(cron, "enabled")" ValueChanged="@(v => SetNestedBoolCaseInsensitive("cron", "enabled", v))" />
+    <NumberField Label="Tick Interval (seconds)" Value="@GetNullableInt(cron, "tickIntervalSeconds")" ValueChanged="@(v => SetNestedNumCaseInsensitive("cron", "tickIntervalSeconds", v))" />
+</ConfigSection>
 
-<DictionarySection Title="Jobs" SectionPath="cron.jobs" Entries="@GetDictCaseInsensitive(cron, "jobs")"
-                   OnAddEntry="@((string key) => AddNestedDictEntryCaseInsensitive("cron", "jobs", key))"
-                   OnDeleteEntry="@((string key) => DeleteNestedDictEntryCaseInsensitive("cron", "jobs", key))">
-    <EntryTemplate Context="entry">
-        <TextField Label="Job Name" Value="@GetStrCaseInsensitive(entry.Value, "name")" ValueChanged="@(v => SetCronJobFieldCaseInsensitive(entry.Key, "name", v))" />
-        <TextField Label="Schedule (cron)" Value="@GetStrCaseInsensitive(entry.Value, "schedule")" ValueChanged="@(v => SetCronJobFieldCaseInsensitive(entry.Key, "schedule", v))" />
-        <SelectField Label="Action Type" Value="@GetStrCaseInsensitive(entry.Value, "actionType")" ValueChanged="@(v => SetCronJobFieldCaseInsensitive(entry.Key, "actionType", v))"
-                     Options="@(new[] { "agent-prompt", "agent-chat", "webhook", "shell" })" />
-        <TextField Label="Agent ID" Value="@GetStrCaseInsensitive(entry.Value, "agentId")" ValueChanged="@(v => SetCronJobFieldCaseInsensitive(entry.Key, "agentId", v))" />
-        <TextField Label="Target Model" Value="@GetCronModel(entry.Value)" ValueChanged="@(v => SetCronModel(entry.Key, v))" />
-        <TextField Label="Message" Value="@GetStrCaseInsensitive(entry.Value, "message")" ValueChanged="@(v => SetCronJobFieldCaseInsensitive(entry.Key, "message", v))" />
-        <TextField Label="Webhook URL" Value="@GetStrCaseInsensitive(entry.Value, "webhookUrl")" ValueChanged="@(v => SetCronJobFieldCaseInsensitive(entry.Key, "webhookUrl", v))" />
-        <TextField Label="Shell Command" Value="@GetStrCaseInsensitive(entry.Value, "shellCommand")" ValueChanged="@(v => SetCronJobFieldCaseInsensitive(entry.Key, "shellCommand", v))" />
-        <BoolField Label="Enabled" Value="@GetBoolCaseInsensitive(entry.Value, "enabled")" ValueChanged="@(v => SetCronJobBoolCaseInsensitive(entry.Key, "enabled", v))" />
-        <TextField Label="Created By" Value="@GetStrCaseInsensitive(entry.Value, "createdBy")" ValueChanged="@(v => SetCronJobFieldCaseInsensitive(entry.Key, "createdBy", v))" />
-    </EntryTemplate>
-</DictionarySection>
+@* Jobs — loaded live from GET /api/cron (SQLite + config-file merged view) *@
+<ConfigSection Title="Jobs" Description="Scheduled jobs from all sources (SQLite store and config file). SQLite jobs can be created, edited, and deleted here. Config-file jobs are read-only." Id="cron-jobs" StartExpanded="true">
+    <div class="pcfg-dict-section">
+        <div class="pcfg-dict-header">
+            <span></span>
+            <button class="pcfg-add-btn" @onclick="ShowAddForm" disabled="@_loading">+ Add Job</button>
+        </div>
+
+        @if (_error is not null)
+        {
+            <div class="pcfg-error-banner" role="alert">
+                <span>⚠️ @_error</span>
+                <button class="pcfg-dismiss-btn" @onclick="@(() => _error = null)" aria-label="Dismiss">✕</button>
+            </div>
+        }
+
+        @if (_loading)
+        {
+            <div class="config-loading">
+                <div class="loading-spinner small"></div>
+                <span>Loading jobs…</span>
+            </div>
+        }
+        else
+        {
+            @if (_showForm)
+            {
+                <div class="pcfg-entry pcfg-cron-form">
+                    <h4>@(_editingId is not null ? $"Edit: {_form.Name}" : "New Job")</h4>
+
+                    <TextField Label="Job ID" Value="@_form.Id" ValueChanged="@(v => _form.Id = v ?? "")"
+                               Placeholder="Leave blank to auto-generate" />
+                    <TextField Label="Job Name" Value="@_form.Name" ValueChanged="@(v => _form.Name = v ?? "")" />
+                    <TextField Label="Schedule (cron)" Value="@_form.Schedule" ValueChanged="@(v => _form.Schedule = v ?? "")"
+                               Placeholder="e.g. 0 9 * * *" />
+                    <SelectField Label="Action Type" Value="@_form.ActionType" ValueChanged="@(v => _form.ActionType = v ?? "agent-prompt")"
+                                 Options="@(new[] { "agent-prompt", "webhook", "shell" })" />
+                    <TextField Label="Agent ID" Value="@(_form.AgentId ?? "")" ValueChanged="@(v => _form.AgentId = string.IsNullOrEmpty(v) ? null : v)" />
+                    <TextField Label="Target Model" Value="@(_form.Model ?? "")" ValueChanged="@(v => _form.Model = string.IsNullOrEmpty(v) ? null : v)" />
+                    <TextField Label="Message" Value="@(_form.Message ?? "")" ValueChanged="@(v => _form.Message = string.IsNullOrEmpty(v) ? null : v)" />
+                    <TextField Label="Webhook URL" Value="@(_form.WebhookUrl ?? "")" ValueChanged="@(v => _form.WebhookUrl = string.IsNullOrEmpty(v) ? null : v)" />
+                    <TextField Label="Shell Command" Value="@(_form.ShellCommand ?? "")" ValueChanged="@(v => _form.ShellCommand = string.IsNullOrEmpty(v) ? null : v)" />
+                    <TextField Label="Timezone" Value="@(_form.TimeZone ?? "")" ValueChanged="@(v => _form.TimeZone = string.IsNullOrEmpty(v) ? null : v)"
+                               Placeholder="e.g. America/Los_Angeles (optional)" />
+                    <BoolField Label="Enabled" Value="@_form.Enabled" ValueChanged="@(v => _form.Enabled = v)" />
+
+                    <div class="pcfg-form-actions">
+                        <button class="toolbar-btn primary" @onclick="SaveForm" disabled="@_saving">
+                            @(_saving ? "Saving…" : (_editingId is not null ? "Update" : "Create"))
+                        </button>
+                        <button class="toolbar-btn" @onclick="CancelForm" disabled="@_saving">Cancel</button>
+                    </div>
+                </div>
+            }
+
+            @if (_jobs.Count == 0 && !_showForm)
+            {
+                <div class="text-muted" style="font-size: 0.82rem; padding: 0.25rem 0;">No jobs configured.</div>
+            }
+
+            @foreach (var job in _jobs.Where(j => !j.System))
+            {
+                <div class="pcfg-entry">
+                    <div class="pcfg-entry-header">
+                        <span class="pcfg-entry-name">
+                            @job.Name
+                            <span class="pcfg-entry-id" title="Internal job ID">[<code>@job.Id</code>]</span>
+                            @if (!job.Enabled)
+                            {
+                                <span class="pcfg-location-badge pcfg-location-badge-unhealthy" title="Disabled">disabled</span>
+                            }
+                            @if (job.LastRunStatus is not null)
+                            {
+                                <span class="pcfg-location-badge pcfg-location-badge-@(job.LastRunStatus == "success" ? "healthy" : "unhealthy")"
+                                      title="Last run: @job.LastRunStatus">@job.LastRunStatus</span>
+                            }
+                        </span>
+                        <span class="pcfg-entry-actions">
+                            <button class="pcfg-entry-action" @onclick="() => RunNow(job.Id)" title="Run now">▶</button>
+                            <button class="pcfg-entry-action" @onclick="() => StartEdit(job)" title="Edit">✏️</button>
+                            <button class="pcfg-entry-delete" @onclick="() => DeleteJob(job.Id)" title="Delete">🗑️</button>
+                        </span>
+                    </div>
+                    <div class="pcfg-entry-fields">
+                        <div class="pcfg-field"><label>Schedule</label><span class="pcfg-field-value">@job.Schedule</span></div>
+                        <div class="pcfg-field"><label>Action</label><span class="pcfg-field-value">@job.ActionType</span></div>
+                        @if (!string.IsNullOrEmpty(job.AgentId))
+                        {
+                            <div class="pcfg-field"><label>Agent</label><span class="pcfg-field-value">@job.AgentId</span></div>
+                        }
+                        @if (!string.IsNullOrEmpty(job.Message))
+                        {
+                            <div class="pcfg-field"><label>Message</label><span class="pcfg-field-value">@job.Message</span></div>
+                        }
+                        @if (!string.IsNullOrEmpty(job.TimeZone))
+                        {
+                            <div class="pcfg-field"><label>Timezone</label><span class="pcfg-field-value">@job.TimeZone</span></div>
+                        }
+                        @if (job.LastRunAt.HasValue)
+                        {
+                            <div class="pcfg-field"><label>Last Run</label><span class="pcfg-field-value">@job.LastRunAt.Value.ToLocalTime().ToString("g")</span></div>
+                        }
+                        @if (job.NextRunAt.HasValue)
+                        {
+                            <div class="pcfg-field"><label>Next Run</label><span class="pcfg-field-value">@job.NextRunAt.Value.ToLocalTime().ToString("g")</span></div>
+                        }
+                        @if (!string.IsNullOrEmpty(job.LastRunError))
+                        {
+                            <div class="pcfg-field pcfg-field-error"><label>Last Error</label><span class="pcfg-field-value">@job.LastRunError</span></div>
+                        }
+                    </div>
+                </div>
+            }
+        }
+    </div>
+</ConfigSection>
 
 @code {
     [Parameter] public JsonObject? Config { get; set; }
     [Parameter] public EventCallback OnChanged { get; set; }
 
+    private List<CronJobDto> _jobs = [];
+    private bool _loading = true;
+    private bool _saving;
+    private bool _showForm;
+    private string? _editingId;
+    private string? _error;
+    private CronJobDto _form = new();
+
     private void MarkDirty() => OnChanged.InvokeAsync();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadJobs();
+    }
+
+    private async Task LoadJobs()
+    {
+        _loading = true;
+        StateHasChanged();
+        var (jobs, error) = await CronApi.ListAsync();
+        _jobs = jobs.ToList();
+        _error = error;
+        _loading = false;
+        StateHasChanged();
+    }
+
+    private void ShowAddForm()
+    {
+        _editingId = null;
+        _form = new CronJobDto { Enabled = true };
+        _showForm = true;
+    }
+
+    private void StartEdit(CronJobDto job)
+    {
+        _editingId = job.Id;
+        _form = new CronJobDto
+        {
+            Id = job.Id,
+            Name = job.Name,
+            Schedule = job.Schedule,
+            ActionType = job.ActionType,
+            AgentId = job.AgentId,
+            Message = job.Message,
+            Model = job.Model,
+            WebhookUrl = job.WebhookUrl,
+            ShellCommand = job.ShellCommand,
+            TimeZone = job.TimeZone,
+            Enabled = job.Enabled,
+            CreatedBy = job.CreatedBy,
+            CreatedAt = job.CreatedAt,
+        };
+        _showForm = true;
+    }
+
+    private void CancelForm()
+    {
+        _showForm = false;
+        _editingId = null;
+    }
+
+    private async Task SaveForm()
+    {
+        _saving = true;
+        StateHasChanged();
+
+        string? error;
+        if (_editingId is not null)
+        {
+            (_, error) = await CronApi.UpdateAsync(_editingId, _form);
+        }
+        else
+        {
+            (_, error) = await CronApi.CreateAsync(_form);
+        }
+
+        _saving = false;
+
+        if (error is not null)
+        {
+            _error = error;
+            StateHasChanged();
+            return;
+        }
+
+        _showForm = false;
+        _editingId = null;
+        await LoadJobs();
+    }
+
+    private async Task DeleteJob(string jobId)
+    {
+        var (success, error) = await CronApi.DeleteAsync(jobId);
+        if (!success)
+        {
+            _error = error ?? "Failed to delete job.";
+            StateHasChanged();
+            return;
+        }
+        await LoadJobs();
+    }
+
+    private async Task RunNow(string jobId)
+    {
+        var (success, error) = await CronApi.RunNowAsync(jobId);
+        if (!success)
+        {
+            _error = error ?? "Failed to trigger job.";
+            StateHasChanged();
+        }
+    }
+
+    // ── Config-backed helpers (global cron settings only) ───────────────
 
     private static JsonObject? GetObjectCaseInsensitive(JsonObject? parent, string key)
     {
@@ -44,14 +260,6 @@
         return obj.FirstOrDefault(kv => string.Equals(kv.Key, key, StringComparison.OrdinalIgnoreCase)).Key;
     }
 
-    private static string GetStrCaseInsensitive(JsonObject? obj, string key)
-    {
-        var resolvedKey = ResolveKey(obj, key);
-        var node = resolvedKey is null ? null : obj?[resolvedKey];
-        if (node is JsonValue jv) { var raw = jv.ToString(); return raw == "***" ? "" : raw; }
-        return "";
-    }
-
     private static bool GetBoolCaseInsensitive(JsonObject? obj, string key)
     {
         var resolvedKey = ResolveKey(obj, key);
@@ -63,31 +271,6 @@
     {
         if (obj?[key] is JsonValue jv && jv.TryGetValue<int>(out var i)) return i;
         return null;
-    }
-
-    private static Dictionary<string, JsonObject?> GetDictCaseInsensitive(JsonObject? obj, string key)
-    {
-        var resolvedKey = ResolveKey(obj, key);
-        if (resolvedKey is not null && obj?[resolvedKey] is JsonObject dict) return dict.ToDictionary(kv => kv.Key, kv => kv.Value as JsonObject);
-        return new();
-    }
-
-    private void SetNestedBool(string section, string key, bool value)
-    {
-        EnsureObjectCaseInsensitive(section);
-        var obj = Config![section] as JsonObject;
-        if (obj is null) return;
-        obj[key] = value;
-        MarkDirty();
-    }
-
-    private void SetNestedNum(string section, string key, int? value)
-    {
-        EnsureObjectCaseInsensitive(section);
-        var obj = Config![section] as JsonObject;
-        if (obj is null) return;
-        obj[key] = value.HasValue ? JsonValue.Create(value.Value) : null;
-        MarkDirty();
     }
 
     private void SetNestedBoolCaseInsensitive(string section, string key, bool value)
@@ -112,92 +295,10 @@
         MarkDirty();
     }
 
-    private void SetCronJobFieldCaseInsensitive(string jobKey, string field, string? value)
-    {
-        var cron = GetObjectCaseInsensitive(Config, "cron");
-        var jobs = GetObjectCaseInsensitive(cron, "jobs");
-        var job = jobs?[jobKey] as JsonObject;
-        if (job is null) return;
-        var key = ResolveKey(job, field) ?? field;
-        job[key] = string.IsNullOrEmpty(value) ? null : value;
-        MarkDirty();
-    }
-
-    private void SetCronJobBoolCaseInsensitive(string jobKey, string field, bool value)
-    {
-        var cron = GetObjectCaseInsensitive(Config, "cron");
-        var jobs = GetObjectCaseInsensitive(cron, "jobs");
-        var job = jobs?[jobKey] as JsonObject;
-        if (job is null) return;
-        var key = ResolveKey(job, field) ?? field;
-        job[key] = value;
-        MarkDirty();
-    }
-
-    private void AddNestedDictEntryCaseInsensitive(string section, string dict, string key)
-    {
-        if (Config is null || string.IsNullOrWhiteSpace(key)) return;
-        EnsureObjectCaseInsensitive(section);
-        var sectionKey = ResolveKey(Config, section) ?? section;
-        var parent = Config[sectionKey] as JsonObject;
-        if (parent is null) return;
-        var dictKey = ResolveKey(parent, dict) ?? dict;
-        if (parent[dictKey] is not JsonObject dictObj) { dictObj = new JsonObject(); parent[dictKey] = dictObj; }
-        dictObj[key] = new JsonObject();
-        MarkDirty();
-        StateHasChanged();
-    }
-
-    private void DeleteNestedDictEntryCaseInsensitive(string section, string dict, string key)
-    {
-        var parent = GetObjectCaseInsensitive(Config, section);
-        var dictObj = GetObjectCaseInsensitive(parent, dict);
-        if (dictObj is null) return;
-        dictObj.Remove(key);
-        MarkDirty();
-        StateHasChanged();
-    }
-
     private void EnsureObjectCaseInsensitive(string key)
     {
         if (Config is null) return;
         var resolvedKey = ResolveKey(Config, key) ?? key;
         if (Config[resolvedKey] is not JsonObject) Config[resolvedKey] = new JsonObject();
-    }
-
-    private static string GetCronModel(JsonObject? job)
-    {
-        var model = GetStrCaseInsensitive(job, "model");
-        if (!string.IsNullOrWhiteSpace(model))
-            return model;
-
-        var metadata = ResolveKey(job, "metadata") is { } metadataKey
-            ? job?[metadataKey] as JsonObject
-            : null;
-
-        return GetStrCaseInsensitive(metadata, "model");
-    }
-
-    private void SetCronModel(string jobKey, string? value)
-    {
-        var cron = GetObjectCaseInsensitive(Config, "cron");
-        var jobs = GetObjectCaseInsensitive(cron, "jobs");
-        var job = jobs?[jobKey] as JsonObject;
-        if (job is null) return;
-
-        var modelKey = ResolveKey(job, "model") ?? "model";
-        job[modelKey] = string.IsNullOrWhiteSpace(value) ? null : value;
-
-        if (ResolveKey(job, "metadata") is { } metadataKeyName
-            && job[metadataKeyName] is JsonObject metadata)
-        {
-            if (ResolveKey(metadata, "model") is { } metadataModelKey)
-                metadata.Remove(metadataModelKey);
-
-            if (metadata.Count == 0)
-                job[metadataKeyName] = null;
-        }
-
-        MarkDirty();
     }
 }

@@ -1,5 +1,7 @@
 using ChannelAddress = BotNexus.Domain.Primitives.ChannelAddress;
 using ThreadId = BotNexus.Domain.Primitives.ThreadId;
+using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
+using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
@@ -61,7 +63,7 @@ public sealed class GatewayHostTests
         handle.SetupGet(h => h.AgentId).Returns("agent-a");
         handle.SetupGet(h => h.SessionId).Returns("session-1");
         handle.Setup(h => h.IsRunning).Returns(false);
-        handle.Setup(h => h.StreamAsync("hello", It.IsAny<CancellationToken>()))
+        handle.Setup(h => h.StreamAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .Returns(ToAsyncEnumerable(
             [
                 new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "hello " },
@@ -190,6 +192,8 @@ public sealed class GatewayHostTests
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string msg, CancellationToken _) => new AgentResponse { Content = $"echo:{msg}" });
+        handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((AgentUserMessage msg, CancellationToken _) => new AgentResponse { Content = $"echo:{msg.Content}" });
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.GetOrCreateAsync(BotNexus.Domain.Primitives.AgentId.From("agent-a"), It.IsAny<BotNexus.Domain.Primitives.SessionId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(handle.Object);
@@ -219,6 +223,8 @@ public sealed class GatewayHostTests
         handle.SetupGet(h => h.SessionId).Returns("session-1");
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("boom"));
+        handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("boom"));
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.GetOrCreateAsync(BotNexus.Domain.Primitives.AgentId.From("agent-a"), BotNexus.Domain.Primitives.SessionId.From("session-1"), It.IsAny<CancellationToken>()))
@@ -527,6 +533,8 @@ public sealed class GatewayHostTests
         handle.SetupGet(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = "response" });
+        handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "response" });
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.GetInstance(BotNexus.Domain.Primitives.AgentId.From("agent-a"), BotNexus.Domain.Primitives.SessionId.From("session-1")))
             .Returns(new AgentInstance
@@ -552,7 +560,7 @@ public sealed class GatewayHostTests
         // Steering was NOT called because agent is not running
         handle.Verify(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         // Instead, message was processed normally via PromptAsync
-        handle.Verify(h => h.PromptAsync("nudge", It.IsAny<CancellationToken>()), Times.Once);
+        handle.Verify(h => h.PromptAsync(It.Is<AgentUserMessage>(m => m.Content == "nudge"), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -867,6 +875,12 @@ public sealed class GatewayHostTests
                 await Task.Delay(250);
                 return new AgentResponse { Content = "ok" };
             });
+        handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                await Task.Delay(250);
+                return new AgentResponse { Content = "ok" };
+            });
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.GetOrCreateAsync(BotNexus.Domain.Primitives.AgentId.From("agent-a"), BotNexus.Domain.Primitives.SessionId.From("session-1"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(handle.Object);
@@ -885,7 +899,9 @@ public sealed class GatewayHostTests
 
         var first = host.DispatchAsync(CreateMessage("one", sessionId: "session-1"));
         var second = host.DispatchAsync(CreateMessage("two", sessionId: "session-1"));
-        await Task.Delay(20);
+        // Yield until the first dispatch is actively running (PromptAsync takes 250ms, so both
+        // are in-flight by the time we need to verify busy rejection).
+        await Task.WhenAny(first, second, Task.Delay(100));
         await host.DispatchAsync(CreateMessage("three", sessionId: "session-1"));
         await Task.WhenAll(first, second);
 
@@ -916,6 +932,15 @@ public sealed class GatewayHostTests
                 Interlocked.Decrement(ref inFlight);
                 return new AgentResponse { Content = $"echo:{message}" };
             });
+        handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
+            .Returns<AgentUserMessage, CancellationToken>(async (message, _) =>
+            {
+                var current = Interlocked.Increment(ref inFlight);
+                Interlocked.Exchange(ref maxInFlight, Math.Max(maxInFlight, current));
+                await Task.Delay(75);
+                Interlocked.Decrement(ref inFlight);
+                return new AgentResponse { Content = $"echo:{message.Content}" };
+            });
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.GetOrCreateAsync(BotNexus.Domain.Primitives.AgentId.From("agent-a"), BotNexus.Domain.Primitives.SessionId.From("session-1"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(handle.Object);
@@ -936,8 +961,8 @@ public sealed class GatewayHostTests
         await Task.WhenAll(first, second);
 
         maxInFlight.ShouldBe(1);
-        handle.Verify(h => h.PromptAsync("one", It.IsAny<CancellationToken>()), Times.Once);
-        handle.Verify(h => h.PromptAsync("two", It.IsAny<CancellationToken>()), Times.Once);
+        handle.Verify(h => h.PromptAsync(It.Is<AgentUserMessage>(m => m.Content == "one"), It.IsAny<CancellationToken>()), Times.Once);
+        handle.Verify(h => h.PromptAsync(It.Is<AgentUserMessage>(m => m.Content == "two"), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -970,8 +995,10 @@ public sealed class GatewayHostTests
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.StopAllAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
+        var channelStartedTcs = new TaskCompletionSource();
         var firstChannel = CreateChannelAdapter("web", supportsStreaming: false);
         firstChannel.Setup(c => c.StartAsync(It.IsAny<IChannelDispatcher>(), It.IsAny<CancellationToken>()))
+            .Callback(() => channelStartedTcs.TrySetResult())
             .Returns(Task.CompletedTask);
         firstChannel.Setup(c => c.StopAsync(It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -1002,7 +1029,8 @@ public sealed class GatewayHostTests
             NullLogger<GatewayHost>.Instance);
 
         await host.StartAsync(CancellationToken.None);
-        await Task.Delay(150);
+        // Wait until the channel adapter's StartAsync has been invoked (event-driven, not time-based).
+        await channelStartedTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await host.StopAsync(CancellationToken.None);
 
         firstChannel.Verify(c => c.StartAsync(It.IsAny<IChannelDispatcher>(), It.IsAny<CancellationToken>()), Times.Once);
@@ -1012,6 +1040,394 @@ public sealed class GatewayHostTests
         supervisor.Verify(s => s.StopAllAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task DispatchAsync_WithBinaryImageContentPart_ForwardsImageToAgent()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+
+        AgentUserMessage? capturedMessage = null;
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.AgentId).Returns("agent-a");
+        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.Setup(h => h.IsRunning).Returns(false);
+        handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<AgentUserMessage, CancellationToken>((m, _) => capturedMessage = m)
+            .ReturnsAsync(new AgentResponse { Content = "ok" });
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                BotNexus.Domain.Primitives.SessionId.From("session-1"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var session = new GatewaySession
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-1"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a")
+        };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.SessionId.From("session-1"),
+                BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        await using var host = CreateHost(
+            supervisor.Object, router.Object, sessions.Object,
+            new RecordingActivityBroadcaster(), CreateChannelManager(channel.Object));
+
+        var imageData = new byte[] { 0xFF, 0xD8, 0xFF }; // minimal JPEG header
+        var message = CreateMessage("look at this", sessionId: "session-1") with
+        {
+            ContentParts = [new BinaryContentPart { MimeType = "image/jpeg", Data = imageData }]
+        };
+
+        await host.DispatchAsync(message);
+
+        capturedMessage.ShouldNotBeNull();
+        capturedMessage!.Images.ShouldNotBeNull();
+        capturedMessage.Images.ShouldHaveSingleItem();
+        capturedMessage.Images![0].Value.ShouldBe($"data:image/jpeg;base64,{Convert.ToBase64String(imageData)}");
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WithReferenceImageContentPart_ForwardsUrlToAgent()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+
+        AgentUserMessage? capturedMessage = null;
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.AgentId).Returns("agent-a");
+        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.Setup(h => h.IsRunning).Returns(false);
+        handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<AgentUserMessage, CancellationToken>((m, _) => capturedMessage = m)
+            .ReturnsAsync(new AgentResponse { Content = "ok" });
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                BotNexus.Domain.Primitives.SessionId.From("session-1"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var session = new GatewaySession
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-1"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a")
+        };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.SessionId.From("session-1"),
+                BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        await using var host = CreateHost(
+            supervisor.Object, router.Object, sessions.Object,
+            new RecordingActivityBroadcaster(), CreateChannelManager(channel.Object));
+
+        const string imageUrl = "https://example.com/photo.jpg";
+        var message = CreateMessage("describe this", sessionId: "session-1") with
+        {
+            ContentParts = [new ReferenceContentPart { MimeType = "image/jpeg", Uri = imageUrl }]
+        };
+
+        await host.DispatchAsync(message);
+
+        capturedMessage.ShouldNotBeNull();
+        capturedMessage!.Images.ShouldNotBeNull();
+        capturedMessage.Images.ShouldHaveSingleItem();
+        capturedMessage.Images![0].Value.ShouldBe(imageUrl);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WithNoImageContentParts_UsesStringOverload()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+
+        var handle = CreatePromptHandle("agent-a", "session-1", "response");
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                BotNexus.Domain.Primitives.SessionId.From("session-1"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var session = new GatewaySession
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-1"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a")
+        };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.SessionId.From("session-1"),
+                BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        await using var host = CreateHost(
+            supervisor.Object, router.Object, sessions.Object,
+            new RecordingActivityBroadcaster(), CreateChannelManager(channel.Object));
+
+        await host.DispatchAsync(CreateMessage("plain text", sessionId: "session-1"));
+
+        // GatewayHost always calls the UserMessage overload; string overload is never used directly
+        handle.Verify(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        handle.Verify(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WithNonImageBinaryPart_ProducesNoImagesInUserMessage()
+    {
+        // A BinaryContentPart with audio/wav must NOT be converted to an image
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+
+        AgentUserMessage? capturedMessage = null;
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.AgentId).Returns("agent-a");
+        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.Setup(h => h.IsRunning).Returns(false);
+        handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<AgentUserMessage, CancellationToken>((m, _) => capturedMessage = m)
+            .ReturnsAsync(new AgentResponse { Content = "ok" });
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                BotNexus.Domain.Primitives.SessionId.From("session-1"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var session = new GatewaySession
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-1"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a")
+        };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.SessionId.From("session-1"),
+                BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        await using var host = CreateHost(
+            supervisor.Object, router.Object, sessions.Object,
+            new RecordingActivityBroadcaster(), CreateChannelManager(channel.Object));
+
+        var message = CreateMessage("transcribe this", sessionId: "session-1") with
+        {
+            ContentParts = [new BinaryContentPart { MimeType = "audio/wav", Data = [0x52, 0x49, 0x46, 0x46] }]
+        };
+
+        await host.DispatchAsync(message);
+
+        capturedMessage.ShouldNotBeNull();
+        capturedMessage!.Images.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WithMixedImageAndNonImageParts_ForwardsOnlyImageParts()
+    {
+        // Only image/* MIME types should be forwarded; non-image parts are silently excluded
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+
+        AgentUserMessage? capturedMessage = null;
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.AgentId).Returns("agent-a");
+        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.Setup(h => h.IsRunning).Returns(false);
+        handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<AgentUserMessage, CancellationToken>((m, _) => capturedMessage = m)
+            .ReturnsAsync(new AgentResponse { Content = "ok" });
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                BotNexus.Domain.Primitives.SessionId.From("session-1"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var session = new GatewaySession
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-1"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a")
+        };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.SessionId.From("session-1"),
+                BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        await using var host = CreateHost(
+            supervisor.Object, router.Object, sessions.Object,
+            new RecordingActivityBroadcaster(), CreateChannelManager(channel.Object));
+
+        var imageData = new byte[] { 0xFF, 0xD8, 0xFF };
+        var message = CreateMessage("analyze this", sessionId: "session-1") with
+        {
+            ContentParts =
+            [
+                new BinaryContentPart { MimeType = "image/png", Data = imageData },
+                new BinaryContentPart { MimeType = "audio/wav", Data = [0x52, 0x49, 0x46, 0x46] },
+                new ReferenceContentPart { MimeType = "application/pdf", Uri = "https://example.com/doc.pdf" }
+            ]
+        };
+
+        await host.DispatchAsync(message);
+
+        capturedMessage.ShouldNotBeNull();
+        capturedMessage!.Images.ShouldNotBeNull();
+        capturedMessage.Images!.Count.ShouldBe(1);
+        capturedMessage.Images[0].Value.ShouldBe($"data:image/png;base64,{Convert.ToBase64String(imageData)}");
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WithMultipleImageParts_ForwardsAllImages()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+
+        AgentUserMessage? capturedMessage = null;
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.AgentId).Returns("agent-a");
+        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.Setup(h => h.IsRunning).Returns(false);
+        handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<AgentUserMessage, CancellationToken>((m, _) => capturedMessage = m)
+            .ReturnsAsync(new AgentResponse { Content = "ok" });
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                BotNexus.Domain.Primitives.SessionId.From("session-1"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var session = new GatewaySession
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-1"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a")
+        };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.SessionId.From("session-1"),
+                BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        await using var host = CreateHost(
+            supervisor.Object, router.Object, sessions.Object,
+            new RecordingActivityBroadcaster(), CreateChannelManager(channel.Object));
+
+        var jpeg1 = new byte[] { 0xFF, 0xD8, 0xFF };
+        var png1 = new byte[] { 0x89, 0x50, 0x4E, 0x47 };
+        const string imageUrl = "https://cdn.example.com/img3.webp";
+
+        var message = CreateMessage("compare these", sessionId: "session-1") with
+        {
+            ContentParts =
+            [
+                new BinaryContentPart { MimeType = "image/jpeg", Data = jpeg1 },
+                new BinaryContentPart { MimeType = "image/png", Data = png1 },
+                new ReferenceContentPart { MimeType = "image/webp", Uri = imageUrl }
+            ]
+        };
+
+        await host.DispatchAsync(message);
+
+        capturedMessage.ShouldNotBeNull();
+        capturedMessage!.Images.ShouldNotBeNull();
+        capturedMessage.Images!.Count.ShouldBe(3);
+        capturedMessage.Images[0].Value.ShouldBe($"data:image/jpeg;base64,{Convert.ToBase64String(jpeg1)}");
+        capturedMessage.Images[1].Value.ShouldBe($"data:image/png;base64,{Convert.ToBase64String(png1)}");
+        capturedMessage.Images[2].Value.ShouldBe(imageUrl);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WithEmptyContentParts_ProducesNoImages()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+
+        AgentUserMessage? capturedMessage = null;
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.AgentId).Returns("agent-a");
+        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.Setup(h => h.IsRunning).Returns(false);
+        handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<AgentUserMessage, CancellationToken>((m, _) => capturedMessage = m)
+            .ReturnsAsync(new AgentResponse { Content = "ok" });
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                BotNexus.Domain.Primitives.SessionId.From("session-1"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var session = new GatewaySession
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-1"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a")
+        };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetOrCreateAsync(
+                BotNexus.Domain.Primitives.SessionId.From("session-1"),
+                BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        await using var host = CreateHost(
+            supervisor.Object, router.Object, sessions.Object,
+            new RecordingActivityBroadcaster(), CreateChannelManager(channel.Object));
+
+        var message = CreateMessage("plain text", sessionId: "session-1") with
+        {
+            ContentParts = []
+        };
+
+        await host.DispatchAsync(message);
+
+        capturedMessage.ShouldNotBeNull();
+        capturedMessage!.Images.ShouldBeNull();
+    }
+
     private static Mock<IAgentHandle> CreatePromptHandle(string agentId, string sessionId, string content)
     {
         var handle = new Mock<IAgentHandle>();
@@ -1019,6 +1435,8 @@ public sealed class GatewayHostTests
         handle.SetupGet(h => h.SessionId).Returns(sessionId);
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = content });
+        handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = content });
         return handle;
     }

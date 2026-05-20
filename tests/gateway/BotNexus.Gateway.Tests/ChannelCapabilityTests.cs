@@ -67,7 +67,34 @@ public sealed class ChannelCapabilityTests
         adapter.SupportsFollowUp.ShouldBeFalse();
         adapter.SupportsThinkingDisplay.ShouldBeTrue();
         adapter.SupportsToolDisplay.ShouldBeTrue();
+        adapter.SupportsInboundImages.ShouldBeTrue();
         adapter.ShouldBeAssignableTo<IStreamEventChannelAdapter>();
+    }
+
+    [Fact]
+    public void SignalRAdapter_SupportsInboundImages()
+    {
+        var adapter = new SignalRChannelAdapter(
+            NullLogger<SignalRChannelAdapter>.Instance,
+            Mock.Of<IHubContext<GatewayHub, IGatewayHubClient>>());
+
+        adapter.SupportsInboundImages.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void TuiAdapter_DoesNotSupportInboundImages()
+    {
+        var adapter = new TuiChannelAdapter(NullLogger<TuiChannelAdapter>.Instance);
+
+        adapter.SupportsInboundImages.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void DefaultChannelAdapterBase_DoesNotSupportInboundImages()
+    {
+        IChannelAdapter adapter = new TestChannelAdapter();
+
+        adapter.SupportsInboundImages.ShouldBeFalse();
     }
 
     [Fact]

@@ -9,6 +9,8 @@
     <Project Path="src/extensions/BotNexus.Extensions.ExecTool/BotNexus.Extensions.ExecTool.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.SignalR/BotNexus.Extensions.Channels.SignalR.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/BotNexus.Extensions.Channels.SignalR.BlazorClient.csproj" />
+    <Project Path="src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core.csproj" />
+    <Project Path="src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile/BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.Telegram/BotNexus.Extensions.Channels.Telegram.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.Tui/BotNexus.Extensions.Channels.Tui.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.ServiceBus/BotNexus.Extensions.Channels.ServiceBus.csproj" />

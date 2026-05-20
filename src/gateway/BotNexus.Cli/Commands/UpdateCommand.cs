@@ -45,7 +45,67 @@ internal class UpdateCommand
             context.ExitCode = await ExecuteAsync(repoRoot, home, port, verbose, context.GetCancellationToken());
         });
 
+        var checkSourceOption = new Option<string?>("--source", () => null, "Path to the BotNexus repository root. Defaults to ~/botnexus.");
+        var checkCommand = new Command("check", "Check whether updates are available from origin/main.")
+        {
+            checkSourceOption
+        };
+
+        checkCommand.SetHandler(async context =>
+        {
+            var source = context.ParseResult.GetValueForOption(checkSourceOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var repoRoot = CliPaths.ResolveSource(source);
+            context.ExitCode = await CheckAsync(repoRoot, verbose, context.GetCancellationToken());
+        });
+
+        command.AddCommand(checkCommand);
+
         return command;
+    }
+
+    internal async Task<int> CheckAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
+    {
+        AnsiConsole.MarkupLine("[blue][[update]][/] Checking for updates...");
+
+        var fetchResult = await RunGitFetchAsync(repoRoot, verbose, cancellationToken);
+        if (fetchResult.WasCanceled)
+        {
+            AnsiConsole.MarkupLine("[yellow]⚠[/] Update check cancelled.");
+            return CancelledExitCode;
+        }
+
+        if (fetchResult.ExitCode != 0)
+        {
+            AnsiConsole.MarkupLine("[red]✗[/] Could not fetch updates from origin/main.");
+            if (!string.IsNullOrWhiteSpace(fetchResult.FailureDetail))
+                AnsiConsole.MarkupLine($"[dim]{Markup.Escape(fetchResult.FailureDetail)}[/]");
+            return 2;
+        }
+
+        var behindResult = await GetBehindCountAsync(repoRoot, cancellationToken);
+        if (behindResult.WasCanceled)
+        {
+            AnsiConsole.MarkupLine("[yellow]⚠[/] Update check cancelled.");
+            return CancelledExitCode;
+        }
+
+        if (behindResult.ExitCode != 0)
+        {
+            AnsiConsole.MarkupLine("[red]✗[/] Could not determine update status.");
+            if (!string.IsNullOrWhiteSpace(behindResult.FailureDetail))
+                AnsiConsole.MarkupLine($"[dim]{Markup.Escape(behindResult.FailureDetail)}[/]");
+            return 2;
+        }
+
+        if (behindResult.BehindCount > 0)
+        {
+            AnsiConsole.MarkupLine($"[yellow]↻[/] Updates available: [bold]{behindResult.BehindCount}[/] commit(s) behind origin/main.");
+            return 1;
+        }
+
+        AnsiConsole.MarkupLine("[green]✓[/] Already up to date.");
+        return 0;
     }
 
     internal async Task<int> ExecuteAsync(string repoRoot, string home, int port, bool verbose, CancellationToken cancellationToken)
@@ -346,6 +406,136 @@ internal class UpdateCommand
 
     protected virtual Task<GitPullResult> RunGitPullAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
         => RunGitPullCoreAsync(repoRoot, verbose, cancellationToken);
+
+    protected virtual Task<GitCommandResult> RunGitFetchAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
+        => RunGitFetchCoreAsync(repoRoot, verbose, cancellationToken);
+
+    private static async Task<GitCommandResult> RunGitFetchCoreAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
+    {
+        Process? proc = null;
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "git",
+                Arguments = $"-C \"{repoRoot}\" fetch origin main",
+                UseShellExecute = false,
+                RedirectStandardOutput = !verbose,
+                RedirectStandardError = !verbose,
+                CreateNoWindow = true
+            };
+
+            proc = Process.Start(psi);
+            if (proc is null)
+                return new GitCommandResult(1, "Failed to start git process.", false);
+
+            var stdoutTask = verbose
+                ? Task.FromResult(string.Empty)
+                : proc.StandardOutput.ReadToEndAsync(cancellationToken);
+            var stderrTask = verbose
+                ? Task.FromResult(string.Empty)
+                : proc.StandardError.ReadToEndAsync(cancellationToken);
+
+            await Task.WhenAll(stdoutTask, stderrTask, proc.WaitForExitAsync(cancellationToken));
+
+            if (proc.ExitCode == 0)
+                return new GitCommandResult(0, null, false);
+
+            var stderr = await stderrTask;
+            var stdout = await stdoutTask;
+            var details = FirstNonEmptyLine(stderr) ?? FirstNonEmptyLine(stdout);
+            return new GitCommandResult(proc.ExitCode, details, false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            if (proc is { HasExited: false })
+            {
+                try
+                {
+                    proc.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // Best-effort kill to avoid orphaned git processes.
+                }
+            }
+
+            return new GitCommandResult(CancelledExitCode, null, true);
+        }
+        catch (Exception ex)
+        {
+            return new GitCommandResult(1, ex.Message, false);
+        }
+        finally
+        {
+            proc?.Dispose();
+        }
+    }
+
+    protected virtual Task<GitBehindResult> GetBehindCountAsync(string repoRoot, CancellationToken cancellationToken)
+        => GetBehindCountCoreAsync(repoRoot, cancellationToken);
+
+    private static async Task<GitBehindResult> GetBehindCountCoreAsync(string repoRoot, CancellationToken cancellationToken)
+    {
+        Process? proc = null;
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "git",
+                Arguments = $"-C \"{repoRoot}\" rev-list --count HEAD..origin/main",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            proc = Process.Start(psi);
+            if (proc is null)
+                return new GitBehindResult(1, 0, "Failed to start git process.", false);
+
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync(cancellationToken);
+            var stderrTask = proc.StandardError.ReadToEndAsync(cancellationToken);
+            await Task.WhenAll(stdoutTask, stderrTask, proc.WaitForExitAsync(cancellationToken));
+
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
+            if (proc.ExitCode != 0)
+            {
+                var details = FirstNonEmptyLine(stderr) ?? FirstNonEmptyLine(stdout);
+                return new GitBehindResult(proc.ExitCode, 0, details, false);
+            }
+
+            if (!int.TryParse(stdout.Trim(), out var count))
+                return new GitBehindResult(1, 0, "Unexpected git output while parsing behind count.", false);
+
+            return new GitBehindResult(0, count, null, false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            if (proc is { HasExited: false })
+            {
+                try
+                {
+                    proc.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // Best-effort kill to avoid orphaned git processes.
+                }
+            }
+
+            return new GitBehindResult(CancelledExitCode, 0, null, true);
+        }
+        catch (Exception ex)
+        {
+            return new GitBehindResult(1, 0, ex.Message, false);
+        }
+        finally
+        {
+            proc?.Dispose();
+        }
+    }
 
     private static async Task<GitPullResult> RunGitPullCoreAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
     {
@@ -659,5 +849,7 @@ internal class UpdateCommand
         }
     }
 
-    protected readonly record struct GitPullResult(int ExitCode, string? FailureDetail, bool WasCanceled);
+    internal readonly record struct GitPullResult(int ExitCode, string? FailureDetail, bool WasCanceled);
+    internal readonly record struct GitCommandResult(int ExitCode, string? FailureDetail, bool WasCanceled);
+    internal readonly record struct GitBehindResult(int ExitCode, int BehindCount, string? FailureDetail, bool WasCanceled);
 }

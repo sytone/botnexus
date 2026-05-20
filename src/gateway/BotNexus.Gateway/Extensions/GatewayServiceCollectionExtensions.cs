@@ -159,6 +159,7 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<DefaultToolPolicyProvider>();
         services.TryAddSingleton<IToolPolicyProvider>(sp => sp.GetRequiredService<DefaultToolPolicyProvider>());
         services.AddSingleton<ToolPolicyHookHandler>();
+        services.TryAddSingleton<ISecretRedactor, SecretRedactor>();
 
         // Built-in isolation strategies
         services.AddSingleton<IIsolationStrategy, InProcessIsolationStrategy>();
@@ -208,6 +209,7 @@ public static class GatewayServiceCollectionExtensions
                 return new PlatformConfigAgentWriter(writer, home);
             }));
             services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
+            services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentWorkspaceScaffolder>());
         }
 
         return services;
@@ -302,6 +304,7 @@ public static class GatewayServiceCollectionExtensions
             return new PlatformConfigAgentWriter(writer, home);
         }));
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
+            services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentWorkspaceScaffolder>());
 
         return services;
     }
@@ -507,6 +510,7 @@ public static class GatewayServiceCollectionExtensions
     {
         services.AddSingleton<IAgentConfigurationSource, T>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
+            services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentWorkspaceScaffolder>());
         return services;
     }
 
@@ -541,6 +545,7 @@ public static class GatewayServiceCollectionExtensions
                 serviceProvider.GetRequiredService<IFileSystem>())));
 
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
+            services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentWorkspaceScaffolder>());
         return services;
     }
 }

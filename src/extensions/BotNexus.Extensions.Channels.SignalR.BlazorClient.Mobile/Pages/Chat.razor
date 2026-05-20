@@ -1,0 +1,363 @@
+@page "/"
+@inject IClientStateStore Store
+@inject IAgentInteractionService Interaction
+@inject IPortalLoadService PortalLoad
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@implements IDisposable
+<PageTitle>BotNexus</PageTitle>
+@if (!PortalLoad.IsReady)
+{
+    <div class="portal-loading">
+        @if (PortalLoad.LoadError is not null)
+        {
+            <div class="portal-load-error">&#x26A0; @PortalLoad.LoadError</div>
+        }
+        else
+        {
+            <div class="portal-load-spinner">Connecting&#x2026;</div>
+        }
+    </div>
+}
+else
+{
+    var activeAgent = Store.ActiveAgentId is not null ? Store.GetAgent(Store.ActiveAgentId) : null;
+    var activeConvId = activeAgent?.ActiveConversationId;
+    var messages = activeConvId is not null ? Store.GetMessages(activeConvId) : [];
+    var streamState = activeConvId is not null ? Store.GetStreamState(activeConvId) : null;
+    var conversations = activeAgent?.Conversations.Values
+        .Where(c => c.Status == "Active")
+        .OrderByDescending(c => c.UpdatedAt)
+        .ToList() ?? [];
+    <div class="mobile-app">
+        <!-- TOP BAR -->
+        <div class="top-bar">
+            <select class="agent-select" value="@Store.ActiveAgentId" @onchange="OnAgentChanged">
+                @foreach (var (agentId, agent) in Store.Agents)
+                {
+                    <option value="@agentId">@(agent.Emoji is not null ? agent.Emoji + " " : "")@agent.DisplayName</option>
+                }
+            </select>
+            <select @key="Store.ActiveAgentId" class="conv-select" value="@activeConvId" @onchange="OnConvChanged">
+                @foreach (var conv in conversations)
+                {
+                    <option value="@conv.ConversationId">@conv.Title</option>
+                }
+            </select>
+            <div class="overflow-menu-wrapper">
+                <button class="overflow-btn" @onclick="ToggleMenu" aria-label="Menu">&#x22EF;</button>
+                @if (_menuOpen)
+                {
+                    <div class="overflow-dropdown">
+                        <div class="menu-session-id" title="Session ID">
+                            <span>Session: </span><span class="session-id-text">@(activeAgent?.SessionId ?? "&#x2014;")</span>
+                        </div>
+                        <button class="menu-action" @onclick="NewSession">New session</button>
+                    </div>
+                }
+            </div>
+        </div>
+        <!-- MESSAGE STREAM -->
+        <div class="message-stream" @ref="_messageStreamRef">
+            @foreach (var msg in messages)
+            {
+                @if (msg.IsBoundary)
+                {
+                    <div class="session-boundary">@(msg.BoundaryLabel ?? "New session")</div>
+                }
+                else if (msg.IsToolCall)
+                {
+                    var toolIcon = msg.ToolIsError == true ? "&#x274C;" : msg.ToolResult is not null ? "&#x2705;" : "&#x23F3;";
+                    var toolDuration = msg.ToolDuration is not null ? $" {msg.ToolDuration.Value.TotalSeconds:F1}s" : "";
+                    <button class="tool-pill @(msg.ToolIsError == true ? "tool-pill-error" : "")"
+                            @onclick="() => OpenToolModal(msg)"
+                            title="Tap to view details">
+                        <span class="tool-pill-icon">@((MarkupString)toolIcon)</span>
+                        <span class="tool-pill-name">@msg.ToolName</span>
+                        @if (!string.IsNullOrEmpty(toolDuration))
+                        {
+                            <span class="tool-pill-duration">@toolDuration</span>
+                        }
+                        <span class="tool-pill-chevron">&#x25B8;</span>
+                    </button>
+                }
+                else
+                {
+                    <div class="message @GetMessageClass(msg)">
+                        @if (msg.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase) && _markdownCache.TryGetValue(msg.Id, out var rendered))
+                        {
+                            <div class="message-content">@((MarkupString)rendered)</div>
+                        }
+                        else
+                        {
+                            <div class="message-content">@msg.Content</div>
+                        }
+                        <div class="message-time">@msg.Timestamp.ToLocalTime().ToString("HH:mm")</div>
+                    </div>
+                }
+            }
+            @if (streamState?.IsStreaming == true && !string.IsNullOrEmpty(streamState.Buffer))
+            {
+                <div class="message assistant streaming">
+                    <div class="message-content">@streamState.Buffer<span class="stream-cursor">&#x2588;</span></div>
+                </div>
+            }
+        </div>
+        <!-- BOTTOM BAR -->
+        <div class="bottom-bar">
+            <textarea
+                class="input-textarea"
+                placeholder="Message&#x2026;"
+                rows="1"
+                @bind="_inputText"
+                @bind:event="oninput"
+                @onkeydown="OnKeyDown"
+                disabled="@_isSending">
+            </textarea>
+            <button class="send-btn" @onclick="SendMessage" disabled="@(_isSending || string.IsNullOrWhiteSpace(_inputText))">
+                &#x21A6;
+            </button>
+        </div>
+    </div>
+    <!-- TOOL CALL MODAL -->
+    @if (_modalToolMessage is not null)
+    {
+        <div class="tool-modal-backdrop" @onclick="CloseToolModal"></div>
+        <div class="tool-modal" role="dialog" aria-modal="true" aria-label="Tool call details">
+            <div class="tool-modal-header">
+                <span class="tool-modal-name">&#x1F527; @_modalToolMessage.ToolName</span>
+                <button class="tool-modal-close" @onclick="CloseToolModal" aria-label="Close">&#x2715;</button>
+            </div>
+            @if (!string.IsNullOrEmpty(_modalToolMessage.ToolArgs))
+            {
+                <div class="tool-modal-section">
+                    <div class="tool-modal-section-label">Arguments</div>
+                    <pre class="tool-modal-content">@_modalToolMessage.ToolArgs</pre>
+                </div>
+            }
+            @if (!string.IsNullOrEmpty(_modalToolMessage.ToolResult))
+            {
+                <div class="tool-modal-section">
+                    <div class="tool-modal-section-label">Result @(_modalToolMessage.ToolIsError == true ? "(error)" : "")</div>
+                    <pre class="tool-modal-content @(_modalToolMessage.ToolIsError == true ? "tool-modal-content--error" : "")">@_modalToolMessage.ToolResult</pre>
+                </div>
+            }
+            else if (string.IsNullOrEmpty(_modalToolMessage.ToolArgs))
+            {
+                <div class="tool-modal-empty">No details available.</div>
+            }
+            @if (_modalToolMessage.ToolDuration is not null)
+            {
+                <div class="tool-modal-section"><span class="tool-modal-duration">Duration: @_modalToolMessage.ToolDuration.Value.TotalSeconds.ToString("F2")s</span></div>
+            }
+        </div>
+    }
+}
+@code {
+    private string _inputText = "";
+    private bool _isSending;
+    private bool _menuOpen;
+    private ElementReference _messageStreamRef;
+    private readonly Dictionary<string, string> _markdownCache = new();
+    private ChatMessage? _modalToolMessage;
+
+    // Scroll guard state — tracks last-known active context to prevent cross-agent scroll
+    private string? _lastActiveAgentId;
+    private string? _lastActiveConversationId;
+    private int _lastRenderedMessageCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Store.OnChanged += HandleStateChanged;
+        PortalLoad.OnReadyChanged += HandleStateChanged;
+        var origin = new Uri(Nav.BaseUri).GetLeftPart(UriPartial.Authority);
+        var hubUrl = $"{origin}/hub/gateway";
+        await PortalLoad.InitializeAsync(hubUrl);
+    }
+
+    private void HandleStateChanged()
+    {
+        try
+        {
+            _ = InvokeAsync(async () =>
+            {
+                try
+                {
+                    StateHasChanged();
+                    await RenderMarkdownAsync();
+                    await ConditionalScrollAsync();
+                }
+                catch (ObjectDisposedException) { }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[Mobile] Render error: {ex.Message}");
+                }
+            });
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    /// <summary>
+    /// Scrolls to the bottom only when the active agent/conversation has changed or
+    /// new messages have arrived for the currently-viewed conversation.
+    /// Does NOT scroll when a background agent's state fires the global OnChanged event.
+    /// </summary>
+    private async Task ConditionalScrollAsync()
+    {
+        var activeAgentId = Store.ActiveAgentId;
+        var activeConvId = activeAgentId is not null
+            ? Store.GetAgent(activeAgentId)?.ActiveConversationId
+            : null;
+
+        // Agent or conversation switched → force scroll immediately
+        bool switched = activeAgentId != _lastActiveAgentId || activeConvId != _lastActiveConversationId;
+        if (switched)
+        {
+            _lastActiveAgentId = activeAgentId;
+            _lastActiveConversationId = activeConvId;
+            _lastRenderedMessageCount = activeConvId is not null ? Store.GetMessages(activeConvId).Count : 0;
+            await ForceScrollToBottomAsync();
+            return;
+        }
+
+        // Same agent/conv — only scroll if message count grew for the active conversation
+        if (activeConvId is null) return;
+        var currentCount = Store.GetMessages(activeConvId).Count;
+        var isStreaming = Store.GetStreamState(activeConvId)?.IsStreaming == true;
+        if (currentCount > _lastRenderedMessageCount || isStreaming)
+        {
+            _lastRenderedMessageCount = currentCount;
+            await ScrollToBottomAsync(isStreaming);
+        }
+    }
+
+    private async Task OnAgentChanged(ChangeEventArgs e)
+    {
+        var agentId = e.Value?.ToString();
+        if (string.IsNullOrEmpty(agentId) || agentId == Store.ActiveAgentId) return;
+        Store.ActiveAgentId = agentId;
+        Store.NotifyChanged();
+        _menuOpen = false;
+        var agent = Store.GetAgent(agentId);
+        var firstConv = agent?.Conversations.Values
+            .Where(c => c.Status == "Active")
+            .OrderByDescending(c => c.UpdatedAt)
+            .FirstOrDefault();
+        if (firstConv is not null)
+            await Interaction.SelectConversationAsync(agentId, firstConv.ConversationId);
+    }
+
+    private async Task OnConvChanged(ChangeEventArgs e)
+    {
+        var convId = e.Value?.ToString();
+        if (string.IsNullOrEmpty(convId) || Store.ActiveAgentId is null) return;
+        await Interaction.SelectConversationAsync(Store.ActiveAgentId, convId);
+    }
+
+    private async Task SendMessage()
+    {
+        if (string.IsNullOrWhiteSpace(_inputText) || Store.ActiveAgentId is null) return;
+        var content = _inputText.Trim();
+        _inputText = "";
+        _isSending = true;
+        try
+        {
+            await Interaction.SendMessageAsync(Store.ActiveAgentId, content);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[Mobile] Send failed: {ex.Message}");
+        }
+        finally
+        {
+            _isSending = false;
+        }
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+            await SendMessage();
+    }
+
+    private void ToggleMenu() => _menuOpen = !_menuOpen;
+
+    private async Task NewSession()
+    {
+        _menuOpen = false;
+        if (Store.ActiveAgentId is not null)
+            await Interaction.ResetSessionAsync(Store.ActiveAgentId);
+    }
+
+    private void OpenToolModal(ChatMessage msg)
+    {
+        _modalToolMessage = msg;
+        StateHasChanged();
+    }
+
+    private void CloseToolModal()
+    {
+        _modalToolMessage = null;
+        StateHasChanged();
+    }
+
+    private static string GetMessageClass(ChatMessage msg)
+    {
+        if (msg.Role.Equals("thinking", StringComparison.OrdinalIgnoreCase)) return "thinking";
+        return msg.Role.Equals("user", StringComparison.OrdinalIgnoreCase) ? "user" : "assistant";
+    }
+
+    private async Task RenderMarkdownAsync()
+    {
+        var activeConvId = Store.ActiveAgentId is not null
+            ? Store.GetAgent(Store.ActiveAgentId)?.ActiveConversationId
+            : null;
+        if (activeConvId is null) return;
+        var needsRender = false;
+        foreach (var msg in Store.GetMessages(activeConvId))
+        {
+            if (msg.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase) && !_markdownCache.ContainsKey(msg.Id))
+            {
+                try
+                {
+                    var html = await JS.InvokeAsync<string>("BotNexus.renderMarkdown", msg.Content);
+                    _markdownCache[msg.Id] = html;
+                    needsRender = true;
+                }
+                catch { /* JS not ready yet, will retry on next render */ }
+            }
+        }
+        if (needsRender) StateHasChanged();
+    }
+
+    /// <summary>
+    /// Smart scroll: only scrolls if near the bottom (user-scroll-aware).
+    /// Uses the shared chatScroll JS interop helper.
+    /// </summary>
+    private async Task ScrollToBottomAsync(bool isStreaming = false)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("chatScroll.scrollToBottom", _messageStreamRef, isStreaming);
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// Force-scrolls to bottom unconditionally (used on agent/conversation switch).
+    /// </summary>
+    private async Task ForceScrollToBottomAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("chatScroll.forceScrollToBottom", _messageStreamRef);
+        }
+        catch { }
+    }
+
+    public void Dispose()
+    {
+        Store.OnChanged -= HandleStateChanged;
+        PortalLoad.OnReadyChanged -= HandleStateChanged;
+    }
+}

@@ -803,8 +803,17 @@ html, body, #app {
     min-height: 0;
 }
 
+.workspace-tree-row-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    min-width: 0;
+}
+
 .workspace-tree-row {
     width: 100%;
+    flex: 1 1 auto;
+    min-width: 0;
     display: flex;
     align-items: center;
     gap: 0.35rem;
@@ -854,6 +863,29 @@ html, body, #app {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.workspace-tree-delete {
+    flex: 0 0 auto;
+    width: 1.6rem;
+    height: 1.6rem;
+    margin-right: 0.45rem;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    line-height: 1;
+}
+
+.workspace-tree-delete:hover {
+    background: rgba(255, 90, 90, 0.12);
+    color: #ff8e8e;
+}
+
+.workspace-tree-delete:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
 }
 
 .workspace-viewer {
@@ -933,6 +965,40 @@ html, body, #app {
 .reports-list-pane {
     border-right: 1px solid var(--border);
     background: var(--bg-secondary);
+}
+/* -- Panel splitter (resizable divider) --------------------------------- */
+.panel-splitter {
+    flex: 0 0 8px;
+    width: 8px;
+    min-width: 8px;
+    cursor: col-resize;
+    background: transparent;
+    position: relative;
+    z-index: 1;
+    transition: background 0.15s;
+    display: none;
+}
+
+.panel-splitter::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 3px;
+    width: 2px;
+    background: var(--border);
+    transition: background 0.15s, width 0.1s, left 0.1s;
+}
+
+.panel-splitter:hover::after,
+.panel-splitter.dragging::after {
+    left: 2px;
+    width: 4px;
+    background: var(--accent);
+}
+
+.panel-splitter.dragging {
+    background: rgba(0, 180, 216, 0.06);
 }
 
 .reports-list {
@@ -1954,13 +2020,15 @@ html, body, #app {
         flex-direction: row;
     }
 
+    .panel-splitter {
+        display: flex;
+    }
+
     .workspace-tree-pane {
-        flex: 0 0 min(33%, 24rem);
         border-right: 1px solid var(--border);
     }
 
     .reports-list-pane {
-        flex: 0 0 min(33%, 24rem);
         border-right: 1px solid var(--border);
     }
 
@@ -2883,6 +2951,19 @@ details[open] > .thinking-summary::before {
     font-weight: 600;
     font-size: 0.88rem;
     color: var(--accent);
+}
+
+.pcfg-entry-id {
+    font-weight: 400;
+    font-size: 0.75rem;
+    color: var(--text-muted, #888);
+    margin-left: 0.35rem;
+    user-select: all;
+}
+
+.pcfg-entry-id code {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.72rem;
 }
 
 .pcfg-entry-delete {

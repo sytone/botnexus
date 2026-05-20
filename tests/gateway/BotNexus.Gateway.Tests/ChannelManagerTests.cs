@@ -50,6 +50,7 @@ public sealed class ChannelManagerTests
         public bool SupportsFollowUp => false;
         public bool SupportsThinkingDisplay => false;
         public bool SupportsToolDisplay => false;
+        public bool SupportsInboundImages => false;
         public bool IsRunning => true;
 
         public Task StartAsync(IChannelDispatcher dispatcher, CancellationToken cancellationToken = default) => Task.CompletedTask;

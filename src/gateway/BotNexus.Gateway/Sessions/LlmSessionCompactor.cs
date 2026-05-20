@@ -1,5 +1,6 @@
 using System.Text;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Domain.Primitives;
 using BotNexus.Agent.Providers.Core;
@@ -20,11 +21,13 @@ public sealed class LlmSessionCompactor : ISessionCompactor
 
     private readonly LlmClient _llmClient;
     private readonly ILogger<LlmSessionCompactor> _logger;
+    private readonly ISecretRedactor? _redactor;
 
-    public LlmSessionCompactor(LlmClient llmClient, ILogger<LlmSessionCompactor> logger)
+    public LlmSessionCompactor(LlmClient llmClient, ILogger<LlmSessionCompactor> logger, ISecretRedactor? redactor = null)
     {
         _llmClient = llmClient;
         _logger = logger;
+        _redactor = redactor;
     }
 
     public bool ShouldCompact(Session session, CompactionOptions options)
@@ -45,6 +48,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             return new CompactionResult
             {
                 Summary = string.Empty,
+                Succeeded = false,
                 EntriesSummarized = 0,
                 EntriesPreserved = 0,
                 TokensBefore = 0,
@@ -58,6 +62,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             return new CompactionResult
             {
                 Summary = string.Empty,
+                Succeeded = false,
                 EntriesSummarized = 0,
                 EntriesPreserved = toPreserve.Count,
                 TokensBefore = EstimateTokenCount(session),
@@ -69,10 +74,34 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         var summaryPrompt = BuildSummarizationPrompt(toSummarize, options.MaxSummaryChars);
         var summary = await CallLlmForSummaryAsync(summaryPrompt, options, cancellationToken).ConfigureAwait(false);
 
+        // Bug 1 / Bug 5 guard: if the LLM returned nothing, abort — do NOT mutate history.
+        if (string.IsNullOrWhiteSpace(summary))
+        {
+            _logger.LogWarning(
+                "Compaction aborted for session {SessionId}: LLM returned an empty summary. " +
+                "History is unchanged. Summarized {Count} entries would have been deleted.",
+                session.SessionId,
+                toSummarize.Count);
+
+            return new CompactionResult
+            {
+                Summary = string.Empty,
+                Succeeded = false,
+                EntriesSummarized = 0,
+                EntriesPreserved = history.Count,
+                TokensBefore = tokensBefore,
+                TokensAfter = tokensBefore
+            };
+        }
+
         if (summary.Length > options.MaxSummaryChars)
         {
             summary = summary[..options.MaxSummaryChars];
         }
+
+        // Redact any secrets that leaked into the LLM summary before persisting.
+        if (_redactor is not null)
+            summary = _redactor.Redact(summary);
 
         var compactionEntry = new SessionEntry
         {
@@ -82,24 +111,28 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             Timestamp = DateTimeOffset.UtcNow
         };
 
+        // Bug 4: do NOT assign session.History directly — return the new list so the caller
+        // can apply it via GatewaySession.ReplaceHistory() which routes through the runtime lock.
         var newHistory = new List<SessionEntry> { compactionEntry };
         newHistory.AddRange(toPreserve);
-        session.History = newHistory;
-        session.UpdatedAt = DateTimeOffset.UtcNow;
 
-        var tokensAfter = EstimateTokenCount(session);
+        var tokensAfter = EstimateTokenCountFromEntries(newHistory);
 
         _logger.LogInformation(
-            "Compacted session {SessionId}: {Summarized} entries summarized, {Preserved} preserved, tokens {Before}→{After}",
+            "Compacted session {SessionId}: {Summarized} entries summarized, {Preserved} preserved, " +
+            "tokens {Before}→{After} (delta {Delta})",
             session.SessionId,
             toSummarize.Count,
             toPreserve.Count,
             tokensBefore,
-            tokensAfter);
+            tokensAfter,
+            tokensBefore - tokensAfter);
 
         return new CompactionResult
         {
             Summary = summary,
+            Succeeded = true,
+            CompactedHistory = newHistory,
             EntriesSummarized = toSummarize.Count,
             EntriesPreserved = toPreserve.Count,
             TokensBefore = tokensBefore,
@@ -173,6 +206,13 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         CancellationToken cancellationToken)
     {
         var model = ResolveModel(options.SummarizationModel, options.SummarizationProvider);
+
+        // Bug 3: log the resolved model so failures are diagnosable.
+        _logger.LogDebug(
+            "Requesting compaction summary via model {ModelId} (provider {Provider})",
+            model.Id,
+            model.Provider);
+
         var context = new Context(
             SystemPrompt: null,
             Messages:
@@ -185,12 +225,29 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             .WaitAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        return string.Join(
+        // Bug 3: log what actually came back before filtering.
+        _logger.LogDebug(
+            "Compaction LLM response: {ContentItemCount} content item(s), TextContent items: {TextCount}",
+            completion.Content.Count,
+            completion.Content.OfType<TextContent>().Count());
+
+        var result = string.Join(
             Environment.NewLine,
             completion.Content
                 .OfType<TextContent>()
                 .Select(content => content.Text)
                 .Where(text => !string.IsNullOrWhiteSpace(text)));
+
+        if (string.IsNullOrWhiteSpace(result))
+        {
+            _logger.LogWarning(
+                "Model {ModelId} returned no usable TextContent for compaction summary. " +
+                "Raw content types: {Types}",
+                model.Id,
+                string.Join(", ", completion.Content.Select(c => c.GetType().Name)));
+        }
+
+        return result;
     }
 
     private LlmModel ResolveModel(string? requestedModelId, string? preferredProvider = null)
@@ -260,6 +317,12 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     private static int EstimateTokenCount(Session session)
     {
         var totalChars = session.History.Sum(entry => entry.Content?.Length ?? 0);
+        return totalChars / 4;
+    }
+
+    private static int EstimateTokenCountFromEntries(IEnumerable<SessionEntry> entries)
+    {
+        var totalChars = entries.Sum(entry => entry.Content?.Length ?? 0);
         return totalChars / 4;
     }
 }

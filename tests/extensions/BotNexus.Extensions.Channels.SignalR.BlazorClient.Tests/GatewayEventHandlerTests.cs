@@ -1,5 +1,4 @@
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
-using System.Text.Json;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
 
@@ -281,7 +280,8 @@ public sealed class GatewayEventHandlerTests
             CompletedAt: null,
             TurnsUsed: 0,
             ResultSummary: null,
-            TimedOut: false));
+            TimedOut: false,
+            ChildSessionId: null));
 
         _store.SetActiveConversation("agent-1", "conv-2");
 
@@ -297,7 +297,8 @@ public sealed class GatewayEventHandlerTests
             CompletedAt: DateTimeOffset.UtcNow,
             TurnsUsed: 1,
             ResultSummary: "All green",
-            TimedOut: false));
+            TimedOut: false,
+            ChildSessionId: null));
 
         var conversationOneMessages = agent.Conversations["conv-1"].Messages.Select(m => m.Content).ToList();
         var conversationTwoMessages = agent.Conversations["conv-2"].Messages.Select(m => m.Content).ToList();
@@ -331,7 +332,8 @@ public sealed class GatewayEventHandlerTests
             CompletedAt: null,
             TurnsUsed: 0,
             ResultSummary: null,
-            TimedOut: false));
+            TimedOut: false,
+            ChildSessionId: null));
 
         _store.SetActiveConversation("agent-1", "conv-2");
 
@@ -347,7 +349,8 @@ public sealed class GatewayEventHandlerTests
             CompletedAt: DateTimeOffset.UtcNow,
             TurnsUsed: 1,
             ResultSummary: "Tool call failed",
-            TimedOut: false));
+            TimedOut: false,
+            ChildSessionId: null));
 
         var conversationOneMessages = agent.Conversations["conv-1"].Messages.Select(m => m.Content).ToList();
         var conversationTwoMessages = agent.Conversations["conv-2"].Messages.Select(m => m.Content).ToList();
@@ -381,7 +384,8 @@ public sealed class GatewayEventHandlerTests
             CompletedAt: null,
             TurnsUsed: 0,
             ResultSummary: null,
-            TimedOut: false));
+            TimedOut: false,
+            ChildSessionId: null));
 
         _store.SetActiveConversation("agent-1", "conv-2");
 
@@ -397,7 +401,8 @@ public sealed class GatewayEventHandlerTests
             CompletedAt: DateTimeOffset.UtcNow,
             TurnsUsed: 1,
             ResultSummary: null,
-            TimedOut: false));
+            TimedOut: false,
+            ChildSessionId: null));
 
         var conversationOneMessages = agent.Conversations["conv-1"].Messages.Select(m => m.Content).ToList();
         var conversationTwoMessages = agent.Conversations["conv-2"].Messages.Select(m => m.Content).ToList();
@@ -417,61 +422,61 @@ public sealed class GatewayEventHandlerTests
         Assert.Null(agent.CanvasHtml);
     }
 
-    [Fact]
-    public void HandleUserInputRequired_sets_pending_prompt_from_metadata()
-    {
-        _handler.HandleUserInputRequired(new AgentStreamEvent
-        {
-            SessionId = "sess-1",
-            Metadata = new Dictionary<string, JsonElement>
-            {
-                ["requestId"] = JsonSerializer.SerializeToElement("req-1"),
-                ["conversationId"] = JsonSerializer.SerializeToElement("conv-1"),
-                ["prompt"] = JsonSerializer.SerializeToElement("Choose one"),
-                ["inputType"] = JsonSerializer.SerializeToElement("SingleChoice"),
-                ["choices"] = JsonSerializer.SerializeToElement("[{\"value\":\"a\",\"label\":\"Option A\"}]")
-            }
-        });
+    // -- Fix #235 - Sub-agent spawn notification task truncation -----------
 
-        var pending = _store.GetPendingAskUser("conv-1");
-        Assert.NotNull(pending);
-        Assert.Equal("req-1", pending.RequestId);
-        Assert.Equal("Choose one", pending.Prompt);
-        Assert.Equal("SingleChoice", pending.InputType);
-        Assert.Equal("a", pending.Choices![0].Value);
+    [Fact]
+    public void HandleSubAgentSpawned_short_task_is_included_verbatim_in_notification()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+        var shortTask = "Run the build checks";
+
+        _handler.HandleSubAgentSpawned(new SubAgentEventPayload(
+            SessionId: "sess-1",
+            SubAgentId: "sub-short",
+            Name: "Builder",
+            Task: shortTask,
+            Model: null,
+            Archetype: "general",
+            Status: "Running",
+            StartedAt: DateTimeOffset.UtcNow,
+            CompletedAt: null,
+            TurnsUsed: 0,
+            ResultSummary: null,
+            TimedOut: false,
+            ChildSessionId: null));
+
+        var msg = conv.Messages.Last();
+        Assert.Equal("System", msg.Role);
+        Assert.Contains("Builder", msg.Content, StringComparison.Ordinal);
+        Assert.Contains(shortTask, msg.Content, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void HandleMessageEnd_clears_pending_prompt_for_conversation()
+    public void HandleSubAgentSpawned_empty_task_omits_separator_from_notification()
     {
-        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
-        conv.StreamState.Buffer = "done";
-        _store.SetPendingAskUser(new AskUserPromptState
-        {
-            RequestId = "req-1",
-            ConversationId = "conv-1",
-            Prompt = "Need input",
-            InputType = "FreeForm"
-        });
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
 
-        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleSubAgentSpawned(new SubAgentEventPayload(
+            SessionId: "sess-1",
+            SubAgentId: "sub-notask",
+            Name: "Silent worker",
+            Task: "",
+            Model: null,
+            Archetype: "general",
+            Status: "Running",
+            StartedAt: DateTimeOffset.UtcNow,
+            CompletedAt: null,
+            TurnsUsed: 0,
+            ResultSummary: null,
+            TimedOut: false,
+            ChildSessionId: null));
 
-        Assert.Null(_store.GetPendingAskUser("conv-1"));
-    }
-
-    [Fact]
-    public void HandleError_clears_pending_prompt_for_conversation()
-    {
-        _store.SetPendingAskUser(new AskUserPromptState
-        {
-            RequestId = "req-1",
-            ConversationId = "conv-1",
-            Prompt = "Need input",
-            InputType = "FreeForm"
-        });
-
-        _handler.HandleError(new AgentStreamEvent { SessionId = "sess-1", ErrorMessage = "boom" });
-
-        Assert.Null(_store.GetPendingAskUser("conv-1"));
+        var msg = conv.Messages.Last();
+        Assert.Equal("System", msg.Role);
+        Assert.Contains("Silent worker", msg.Content, StringComparison.Ordinal);
+        // No em dash separator when task is empty
+        Assert.DoesNotContain(" \u2014 ", msg.Content, StringComparison.Ordinal);
     }
 }

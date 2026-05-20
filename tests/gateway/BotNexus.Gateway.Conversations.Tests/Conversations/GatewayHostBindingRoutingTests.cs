@@ -1,3 +1,4 @@
+using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -145,6 +146,10 @@ public sealed class GatewayHostBindingRoutingTests
             .Returns(ToAsyncEnumerable([
                 new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "hello world" }
             ]));
+        handle.Setup(h => h.StreamAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(ToAsyncEnumerable([
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "hello world" }
+            ]));
 
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.GetOrCreateAsync(
@@ -262,6 +267,8 @@ public sealed class GatewayHostBindingRoutingTests
         handle.SetupGet(h => h.SessionId).Returns(sessionId);
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = content });
+        handle.Setup(h => h.PromptAsync(It.IsAny<UserMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = content });
         return handle;
     }

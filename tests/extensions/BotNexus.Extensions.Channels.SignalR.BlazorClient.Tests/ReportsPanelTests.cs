@@ -1,8 +1,10 @@
-using Bunit;
+﻿using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
+using System.Globalization;
+using Shouldly;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
 
@@ -45,6 +47,23 @@ public sealed class ReportsPanelTests : IDisposable
     }
 
     [Fact]
+    public void First_render_initializes_splitter_with_legacy_default_width_baseline()
+    {
+        _restClient.GetReportsAsync("agent-1", Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<ReportListItemDto>>([]));
+
+        _ctx.Render<ReportsPanel>(parameters => parameters.Add(x => x.AgentId, "agent-1"));
+
+        var invocation = Assert.Single(_ctx.JSInterop.Invocations, i => i.Identifier == "BotNexus.splitter.init");
+        Assert.Equal("reports-panel-agent-1", Assert.IsType<string>(invocation.Arguments[0]));
+        Assert.Equal("bn-reports-list-width-agent-1", Assert.IsType<string>(invocation.Arguments[1]));
+        Assert.Equal(384, Convert.ToInt32(invocation.Arguments[2], CultureInfo.InvariantCulture));
+        Assert.Equal(140, Convert.ToInt32(invocation.Arguments[3], CultureInfo.InvariantCulture));
+        Assert.Equal(0.65d, Convert.ToDouble(invocation.Arguments[4], CultureInfo.InvariantCulture), 3);
+        Assert.Equal(0.33d, Convert.ToDouble(invocation.Arguments[5], CultureInfo.InvariantCulture), 3);
+    }
+
+    [Fact]
     public void Selecting_report_fetches_and_renders_markdown_content()
     {
         _restClient.GetReportsAsync("agent-1", Arg.Any<CancellationToken>())
@@ -54,6 +73,7 @@ public sealed class ReportsPanelTests : IDisposable
             .Returns(Task.FromResult<ReportContentDto?>(new ReportContentDto(
                 "weekly.md",
                 42,
+                false,
                 DateTimeOffset.UtcNow,
                 "# Weekly",
                 "utf-8")));
@@ -92,6 +112,7 @@ public sealed class ReportsPanelTests : IDisposable
             .Returns(Task.FromResult<ReportContentDto?>(new ReportContentDto(
                 "weekly.md",
                 42,
+                false,
                 DateTimeOffset.UtcNow,
                 "# Weekly",
                 "utf-8")));
@@ -120,6 +141,7 @@ public sealed class ReportsPanelTests : IDisposable
             .Returns(Task.FromResult<ReportContentDto?>(new ReportContentDto(
                 "unsafe.md",
                 128,
+                false,
                 DateTimeOffset.UtcNow,
                 "<script>alert('xss')</script>",
                 "utf-8")));
@@ -148,6 +170,7 @@ public sealed class ReportsPanelTests : IDisposable
             .Returns(Task.FromResult<ReportContentDto?>(new ReportContentDto(
                 "weekly.md",
                 42,
+                false,
                 DateTimeOffset.UtcNow,
                 "# Weekly",
                 "utf-8")));
@@ -181,6 +204,69 @@ public sealed class ReportsPanelTests : IDisposable
         css.ShouldContain(".reports-panel.mobile-list .reports-viewer-pane");
         css.ShouldContain(".reports-panel.mobile-viewer .reports-list-pane");
         css.ShouldContain(".reports-list-row");
+    }
+
+    // ── Issue #345: auto-refresh on turn-end ───────────────────────────────────
+
+    [Fact]
+    public void Refreshes_reports_when_active_agent_turn_ends()
+    {
+        // Arrange: store with active streaming agent
+        var store = new ClientStateStore();
+        store.UpsertAgent(new AgentState { AgentId = "agent-1", IsStreaming = true });
+        store.ActiveAgentId = "agent-1";
+
+        var callCount = 0;
+        _restClient.GetReportsAsync("agent-1", Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                callCount++;
+                return Task.FromResult<IReadOnlyList<ReportListItemDto>>([]);
+            });
+
+        var cut = _ctx.Render<ReportsPanel>(parameters => parameters
+            .Add(x => x.AgentId, "agent-1")
+            .Add(x => x.Store, store));
+        cut.WaitForAssertion(() => callCount.ShouldBeGreaterThan(0));
+        var loadCountAfterMount = callCount;
+
+        // Act: turn ends
+        store.GetAgent("agent-1")!.IsStreaming = false;
+        store.NotifyChanged();
+
+        // Assert: reports were reloaded
+        cut.WaitForAssertion(() => callCount.ShouldBeGreaterThan(loadCountAfterMount));
+    }
+
+    [Fact]
+    public void Does_not_refresh_reports_when_background_agent_turn_ends()
+    {
+        // Arrange: agent-1 is active (not streaming), agent-2 is background
+        var store = new ClientStateStore();
+        store.UpsertAgent(new AgentState { AgentId = "agent-1", IsStreaming = false });
+        store.UpsertAgent(new AgentState { AgentId = "agent-2", IsStreaming = true });
+        store.ActiveAgentId = "agent-1";
+
+        var callCount = 0;
+        _restClient.GetReportsAsync("agent-1", Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                callCount++;
+                return Task.FromResult<IReadOnlyList<ReportListItemDto>>([]);
+            });
+
+        var cut = _ctx.Render<ReportsPanel>(parameters => parameters
+            .Add(x => x.AgentId, "agent-1")
+            .Add(x => x.Store, store));
+        cut.WaitForAssertion(() => callCount.ShouldBeGreaterThan(0));
+        var loadCountAfterMount = callCount;
+
+        // Act: background agent turn ends
+        store.GetAgent("agent-2")!.IsStreaming = false;
+        store.NotifyChanged();
+
+        // Confirm no reload fired for the active panel
+        cut.WaitForAssertion(() => callCount.ShouldBe(loadCountAfterMount));
     }
 
     private static string FindRepositoryRoot()

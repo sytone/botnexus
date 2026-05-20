@@ -7,7 +7,7 @@ namespace BotNexus.Extensions.Channels.Telegram;
 
 /// <summary>
 /// Thin HTTP client for the Telegram Bot API.
-/// One instance per bot token. Uses HTML parse_mode for outbound messages.
+/// One instance per bot token. Uses MarkdownV2 parse_mode for outbound messages.
 /// </summary>
 public sealed class TelegramBotApiClient(
     HttpClient httpClient,
@@ -34,7 +34,7 @@ public sealed class TelegramBotApiClient(
 
     /// <summary>
     /// Sends a text message to a chat, optionally into a forum topic thread.
-    /// HTML parse_mode is used. If Telegram rejects the HTML (400 Bad Request),
+    /// MarkdownV2 parse_mode is used. If Telegram rejects the MarkdownV2 (400 Bad Request),
     /// the message is retried as plain text without any parse_mode.
     /// </summary>
     /// <remarks>
@@ -55,29 +55,29 @@ public sealed class TelegramBotApiClient(
         var isGeneralTopic = messageThreadId is 1;
         var effectiveThreadId = isGeneralTopic ? null : messageThreadId;
 
-        // Try HTML first; fall back to plain text if Telegram rejects it (400).
+        // Try MarkdownV2 first; fall back to plain text if Telegram rejects it (400).
         try
         {
-            var htmlPayload = effectiveThreadId.HasValue
-                ? (object)new { chat_id = chatId, text, parse_mode = "HTML", message_thread_id = effectiveThreadId.Value }
-                : new { chat_id = chatId, text, parse_mode = "HTML" };
+            var markdownPayload = effectiveThreadId.HasValue
+                ? (object)new { chat_id = chatId, text, parse_mode = "MarkdownV2", message_thread_id = effectiveThreadId.Value }
+                : new { chat_id = chatId, text, parse_mode = "MarkdownV2" };
 
-            return await PostForResultAsync<TelegramMessage>("sendMessage", htmlPayload, cancellationToken, allowHtmlFallback: true);
+            return await PostForResultAsync<TelegramMessage>("sendMessage", markdownPayload, cancellationToken, allowMarkdownFallback: true);
         }
-        catch (TelegramHtmlParseException)
+        catch (TelegramMarkdownParseException)
         {
-            // HTML was rejected — retry as plain text
-            _logger.LogWarning("Telegram rejected HTML for sendMessage to chat {ChatId}; retrying as plain text", chatId);
+            // MarkdownV2 was rejected — retry as plain text
+            _logger.LogWarning("Telegram rejected MarkdownV2 for sendMessage to chat {ChatId}; retrying as plain text", chatId);
             var plainPayload = effectiveThreadId.HasValue
                 ? (object)new { chat_id = chatId, text, message_thread_id = effectiveThreadId.Value }
                 : new { chat_id = chatId, text };
 
-            return await PostForResultAsync<TelegramMessage>("sendMessage", plainPayload, cancellationToken, allowHtmlFallback: false);
+            return await PostForResultAsync<TelegramMessage>("sendMessage", plainPayload, cancellationToken, allowMarkdownFallback: false);
         }
     }
 
     /// <summary>
-    /// Edits an existing message's text. Uses HTML parse_mode.
+    /// Edits an existing message's text. Uses MarkdownV2 parse_mode.
     /// </summary>
     public Task<TelegramMessage> EditMessageTextAsync(
         long chatId,
@@ -86,9 +86,9 @@ public sealed class TelegramBotApiClient(
         CancellationToken cancellationToken = default)
         => PostForResultAsync<TelegramMessage>(
             "editMessageText",
-            new { chat_id = chatId, message_id = messageId, text, parse_mode = "HTML" },
+            new { chat_id = chatId, message_id = messageId, text, parse_mode = "MarkdownV2" },
             cancellationToken,
-            allowHtmlFallback: false);
+            allowMarkdownFallback: false);
 
     /// <summary>
     /// Long-polls for new updates from the Telegram Bot API.
@@ -108,7 +108,7 @@ public sealed class TelegramBotApiClient(
                 allowed_updates = AllowedUpdateTypes
             },
             cancellationToken,
-            allowHtmlFallback: false);
+            allowMarkdownFallback: false);
 
         return updates;
     }
@@ -121,7 +121,7 @@ public sealed class TelegramBotApiClient(
             "setWebhook",
             new { url },
             cancellationToken,
-            allowHtmlFallback: false);
+            allowMarkdownFallback: false);
 
     /// <summary>
     /// Removes any previously registered webhook, reverting to long polling mode.
@@ -131,9 +131,34 @@ public sealed class TelegramBotApiClient(
             "deleteWebhook",
             new { drop_pending_updates = false },
             cancellationToken,
-            allowHtmlFallback: false);
+            allowMarkdownFallback: false);
 
-    private async Task<T> PostForResultAsync<T>(string methodName, object payload, CancellationToken cancellationToken, bool allowHtmlFallback)
+    /// <summary>
+    /// Retrieves file metadata for the given <paramref name="fileId"/> using the Telegram getFile API.
+    /// The returned <see cref="TelegramFile.FilePath"/> can be passed to <see cref="DownloadFileAsync"/>.
+    /// </summary>
+    public Task<TelegramFile> GetFileAsync(string fileId, CancellationToken cancellationToken = default)
+        => PostForResultAsync<TelegramFile>(
+            "getFile",
+            new { file_id = fileId },
+            cancellationToken,
+            allowMarkdownFallback: false);
+
+    /// <summary>
+    /// Downloads a file from the Telegram CDN using the relative path returned by <see cref="GetFileAsync"/>.
+    /// Returns the raw binary content.
+    /// </summary>
+    public async Task<byte[]> DownloadFileAsync(string filePath, CancellationToken cancellationToken = default)
+    {
+        var url = $"https://api.telegram.org/file/bot{_botToken}/{filePath}";
+        using var response = await _httpClient.GetAsync(url, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException($"Failed to download Telegram file '{filePath}': {(int)response.StatusCode}");
+
+        return await response.Content.ReadAsByteArrayAsync(cancellationToken);
+    }
+
+    private async Task<T> PostForResultAsync<T>(string methodName, object payload, CancellationToken cancellationToken, bool allowMarkdownFallback)
     {
         if (string.IsNullOrWhiteSpace(_botToken))
             throw new InvalidOperationException("Telegram BotToken is required.");
@@ -160,9 +185,9 @@ public sealed class TelegramBotApiClient(
                 continue;
             }
 
-            // 400 on sendMessage with HTML parse_mode means malformed HTML — signal fallback.
-            if (response.StatusCode == HttpStatusCode.BadRequest && allowHtmlFallback)
-                throw new TelegramHtmlParseException($"Telegram rejected HTML for {methodName}: {body}");
+            // 400 on sendMessage with MarkdownV2 parse_mode means malformed markdown — signal fallback.
+            if (response.StatusCode == HttpStatusCode.BadRequest && allowMarkdownFallback)
+                throw new TelegramMarkdownParseException($"Telegram rejected MarkdownV2 for {methodName}: {body}");
 
             if (!response.IsSuccessStatusCode)
                 throw new HttpRequestException($"Telegram API call '{methodName}' failed ({(int)response.StatusCode}): {body}");
@@ -208,7 +233,7 @@ public sealed class TelegramBotApiClient(
 }
 
 /// <summary>
-/// Thrown internally when Telegram returns a 400 for an HTML-formatted message,
+/// Thrown internally when Telegram returns a 400 for a MarkdownV2-formatted message,
 /// signalling that <see cref="TelegramBotApiClient"/> should retry as plain text.
 /// </summary>
-internal sealed class TelegramHtmlParseException(string message) : Exception(message);
+internal sealed class TelegramMarkdownParseException(string message) : Exception(message);

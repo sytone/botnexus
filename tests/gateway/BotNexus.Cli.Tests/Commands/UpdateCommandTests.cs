@@ -81,6 +81,19 @@ public class UpdateCommandTests
             => RunGitPullStepAsync(repoRoot, verbose, cancellationToken);
     }
 
+    private sealed class ScriptedUpdateCheckCommand(
+        IGatewayProcessManager processManager,
+        UpdateCommand.GitCommandResult fetchResult,
+        UpdateCommand.GitBehindResult behindResult)
+        : UpdateCommand(processManager)
+    {
+        protected override Task<GitCommandResult> RunGitFetchAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
+            => Task.FromResult(fetchResult);
+
+        protected override Task<GitBehindResult> GetBehindCountAsync(string repoRoot, CancellationToken cancellationToken)
+            => Task.FromResult(behindResult);
+    }
+
     private static UpdateCommand BuildCommand()
     {
         var pm = Substitute.For<IGatewayProcessManager>();
@@ -98,6 +111,15 @@ public class UpdateCommandTests
         var command = BuildCommand().Build(verbose);
 
         command.Name.ShouldBe("update");
+    }
+
+    [Fact]
+    public void Update_command_registers_check_subcommand()
+    {
+        var verbose = new Option<bool>("--verbose");
+        var command = BuildCommand().Build(verbose);
+
+        command.Subcommands.Any(c => c.Name == "check").ShouldBeTrue();
     }
 
     [Fact]
@@ -392,6 +414,48 @@ public class UpdateCommandTests
 
         exitCode.ShouldBe(0);
         cmd.CliUpdateWarningPrinted.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task CheckAsync_WhenRepositoryIsUpToDate_ReturnsZero()
+    {
+        var pm = Substitute.For<IGatewayProcessManager>();
+        var cmd = new ScriptedUpdateCheckCommand(
+            pm,
+            new UpdateCommand.GitCommandResult(0, null, false),
+            new UpdateCommand.GitBehindResult(0, 0, null, false));
+
+        var exitCode = await cmd.CheckAsync("unused", verbose: false, CancellationToken.None);
+
+        exitCode.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task CheckAsync_WhenRepositoryIsBehind_ReturnsOne()
+    {
+        var pm = Substitute.For<IGatewayProcessManager>();
+        var cmd = new ScriptedUpdateCheckCommand(
+            pm,
+            new UpdateCommand.GitCommandResult(0, null, false),
+            new UpdateCommand.GitBehindResult(0, 3, null, false));
+
+        var exitCode = await cmd.CheckAsync("unused", verbose: false, CancellationToken.None);
+
+        exitCode.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task CheckAsync_WhenFetchFails_ReturnsErrorCodeTwo()
+    {
+        var pm = Substitute.For<IGatewayProcessManager>();
+        var cmd = new ScriptedUpdateCheckCommand(
+            pm,
+            new UpdateCommand.GitCommandResult(128, "fatal: not a git repository", false),
+            new UpdateCommand.GitBehindResult(0, 0, null, false));
+
+        var exitCode = await cmd.CheckAsync("unused", verbose: false, CancellationToken.None);
+
+        exitCode.ShouldBe(2);
     }
 
     private static async Task<string> CaptureAnsiConsoleOutputAsync(Func<Task> action)

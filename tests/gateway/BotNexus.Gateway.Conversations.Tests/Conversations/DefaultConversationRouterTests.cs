@@ -5,6 +5,8 @@ using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using Shouldly;
 
 namespace BotNexus.Gateway.Conversations.Tests.Conversations;
 
@@ -381,6 +383,79 @@ public sealed class DefaultConversationRouterTests
         var bindings = await router.GetOutboundBindingsAsync(sessionId, BindingId.From("src"));
 
         bindings.ShouldContain(b => b.ChannelAddress == ChannelAddress.From("notify-only-chan") && b.Mode == BindingMode.NotifyOnly);
+    }
+
+    // ── Issue #382: IConversationChangeNotifier is called when conversation changes ──
+
+    [Fact]
+    public async Task ResolveInbound_NewConversation_CallsNotifierWithUpdated()
+    {
+        var notifier = new Mock<IConversationChangeNotifier>();
+        notifier
+            .Setup(n => n.NotifyConversationChangedAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var router = new DefaultConversationRouter(
+            new InMemoryConversationStore(),
+            new InMemorySessionStore(),
+            NullLogger<DefaultConversationRouter>.Instance,
+            notifier.Object);
+
+        await router.ResolveInboundAsync(Agent(), Channel(), ChannelAddress.From("chat-notify-new"), null);
+
+        notifier.Verify(
+            n => n.NotifyConversationChangedAsync(
+                "updated",
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()),
+            Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task ResolveInbound_ExistingConversationSameSession_DoesNotCallNotifier()
+    {
+        // A second resolve on an already-active conversation with no changes
+        // should not fire the notifier.
+        var notifier = new Mock<IConversationChangeNotifier>();
+        notifier
+            .Setup(n => n.NotifyConversationChangedAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var router = new DefaultConversationRouter(
+            conversationStore,
+            sessionStore,
+            NullLogger<DefaultConversationRouter>.Instance,
+            notifier.Object);
+
+        var agentId = Agent("agent-stable");
+        // First call creates and saves -- fires notifier.
+        await router.ResolveInboundAsync(agentId, Channel(), ChannelAddress.From("chat-stable-382"), null);
+        notifier.Invocations.Clear();
+
+        // Second call -- same conversation, same session, nothing changed.
+        await router.ResolveInboundAsync(agentId, Channel(), ChannelAddress.From("chat-stable-382"), null);
+
+        notifier.Verify(
+            n => n.NotifyConversationChangedAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task ResolveInbound_WithoutNotifier_DoesNotThrow()
+    {
+        // Notifier is optional -- null is fine for backwards compatibility.
+        var router = CreateRouter();
+
+        var ex = await Record.ExceptionAsync(() =>
+            router.ResolveInboundAsync(Agent(), Channel(), ChannelAddress.From("chat-no-notifier-382"), null));
+
+        ex.ShouldBeNull();
     }
 }
 

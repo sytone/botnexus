@@ -768,7 +768,6 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
                 ToolName = type is AgentStreamEventType.ToolStart or AgentStreamEventType.ToolEnd ? "search" : null,
                 ToolResult = type == AgentStreamEventType.ToolEnd ? "done" : null,
                 ToolIsError = type == AgentStreamEventType.ToolEnd ? false : null,
-                ErrorMessage = type == AgentStreamEventType.Error ? "boom" : null,
                 UserInputRequest = type == AgentStreamEventType.UserInputRequired
                     ? new AskUserRequest
                     {
@@ -794,9 +793,11 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
                 AgentStreamEventType.MessageEnd => "MessageEnd",
                 AgentStreamEventType.Error => "Error",
                 AgentStreamEventType.UserInputRequired => "UserInputRequired",
+                AgentStreamEventType.TurnEnd => null, // internal persistence signal -- not forwarded to Hub clients
                 _ => throw new ArgumentOutOfRangeException()
             };
 
+            if (method is null) continue; // TurnEnd is internal-only, not forwarded to Hub clients
             var payload = await handlers[method].Task.WaitAsync(cts.Token);
             payload.Type.ShouldBe(expected);
         }
@@ -853,7 +854,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
 
                     services.AddSignalRChannelForTests();
 
-                    // Force InMemory stores in tests — prevents SQLite file creation and ensures isolation
+                    // Force InMemory stores in tests ΓÇö prevents SQLite file creation and ensures isolation
                     services.Replace(ServiceDescriptor.Singleton<ISessionStore, InMemorySessionStore>());
                     services.Replace(ServiceDescriptor.Singleton<IConversationStore, InMemoryConversationStore>());
 
@@ -965,11 +966,17 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         public Task<AgentResponse> PromptAsync(string message, CancellationToken cancellationToken = default)
             => Task.FromResult(new AgentResponse { Content = string.Empty });
 
+        public Task<AgentResponse> PromptAsync(UserMessage message, CancellationToken cancellationToken = default)
+            => PromptAsync(message.Content, cancellationToken);
+
         public async IAsyncEnumerable<AgentStreamEvent> StreamAsync(string message, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.CompletedTask;
             yield break;
         }
+
+        public IAsyncEnumerable<AgentStreamEvent> StreamAsync(UserMessage message, CancellationToken cancellationToken = default)
+            => StreamAsync(message.Content, cancellationToken);
 
         public Task AbortAsync(CancellationToken cancellationToken = default)
         {
@@ -983,3 +990,4 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }
+

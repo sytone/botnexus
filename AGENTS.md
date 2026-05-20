@@ -116,6 +116,29 @@ All test warnings will be treated as test failures once warnings-as-errors is en
 - PRs always target `main`; never branch off a feature branch
 - `~/projects/botnexus` — always on `main`, clean and synced to `origin/main`
 
+### PR Titles
+
+**PR titles must follow Conventional Commits format**, exactly as commit messages do:
+
+```
+<type>(<scope>): <short summary>
+```
+
+This is critical because GitHub uses the PR title as the squash-merge commit message. A non-conforming PR title produces a non-conforming history entry.
+
+**Rules:**
+- Use the same types and scopes as commits: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `ci`, `perf`, `build`
+- Keep the summary lowercase, imperative mood, no trailing period
+- Reference the issue number in the PR body, not the title (e.g. `Closes #128`)
+
+**Examples:**
+```
+feat(agents): add memory consolidation on session close
+fix(gateway): handle null provider response on timeout
+docs(agents): add conventional commit rules for PRs
+chore(deps): bump Microsoft.Extensions.* to 10.0.1
+```
+
 ## Build
 
 ```shell

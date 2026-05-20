@@ -1,4 +1,4 @@
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.AgentExchangeResult))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.AgentExchangeTranscriptEntry))]
@@ -56,6 +56,8 @@ using System.Runtime.CompilerServices;
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentHandle))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentHandleInspector))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentChangeNotifier))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Conversations.IConversationChangeNotifier))]
+
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentCanvasNotifier))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentRegistry))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentSupervisor))]
@@ -90,6 +92,8 @@ using System.Runtime.CompilerServices;
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Security.ToolRiskLevel))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Security.ToolPolicyEntry))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Security.IToolPolicyProvider))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Security.IExecApprovalManager))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Security.ExecApprovalRequest))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Sessions.CompactionOptions))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Sessions.CompactionResult))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Sessions.ExistenceQuery))]

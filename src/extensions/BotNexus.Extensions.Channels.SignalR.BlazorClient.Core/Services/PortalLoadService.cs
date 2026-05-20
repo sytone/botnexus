@@ -1,4 +1,4 @@
-namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+﻿namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 /// <summary>
 /// Owns the portal startup sequence: REST first, SignalR second.
@@ -9,6 +9,7 @@ public sealed class PortalLoadService : IPortalLoadService
     private readonly GatewayHubConnection _hub;
     private readonly IClientStateStore _store;
     private readonly IGatewayEventHandler _eventHandler;
+    private readonly IAgentInteractionService? _agentInteraction;
 
     public bool IsReady { get; private set; }
     public bool IsLoading { get; private set; }
@@ -19,12 +20,14 @@ public sealed class PortalLoadService : IPortalLoadService
         IGatewayRestClient restClient,
         GatewayHubConnection hub,
         IClientStateStore store,
-        IGatewayEventHandler eventHandler)
+        IGatewayEventHandler eventHandler,
+        IAgentInteractionService? agentInteraction = null)
     {
         _restClient = restClient;
         _hub = hub;
         _store = store;
         _eventHandler = eventHandler;
+        _agentInteraction = agentInteraction;  // optional — null when not wired (e.g. in tests)
     }
 
     public async Task InitializeAsync(string hubUrl, CancellationToken cancellationToken = default)
@@ -119,6 +122,14 @@ public sealed class PortalLoadService : IPortalLoadService
                 }
             }
 
+            // Wire conversation-refresh delegate so ConversationChanged SignalR events
+            // trigger a REST re-fetch of the conversation list for the affected agent.
+            if (_eventHandler is GatewayEventHandler concreteHandler)
+            {
+                var agentInteractionRef = _agentInteraction;
+                if (agentInteractionRef is not null)
+                    concreteHandler.ConversationRefreshDelegate = agentId => agentInteractionRef.RefreshConversationsAsync(agentId);
+            }
             await _hub.ConnectAsync(hubUrl);
 
             var subscribeResult = await _hub.SubscribeAllAsync();

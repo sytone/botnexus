@@ -59,14 +59,14 @@
                 @* Scrollable agent/conversation section *@
                 <div class="sidebar-scroll-region">
                 @* Agent dropdown + session list nested under Chat *@
-                @if (Store.Agents.Count > 0)
+                @if (Store.Agents.Values.Any(a => !a.IsReadOnly))
                 {
                     <div class="agent-dropdown-container">
                         <select class="agent-dropdown-select"
                                 value="@Store.ActiveAgentId"
                                 @onchange="OnAgentSelected">
                             <option value="">— select agent —</option>
-                            @foreach (var (agentId, agent) in Store.Agents)
+                            @foreach (var (agentId, agent) in Store.Agents.Where(kv => !kv.Value.IsReadOnly))
                             {
                                 <option value="@agentId">
                                     @FormatAgentName(agent)

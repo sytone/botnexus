@@ -318,17 +318,18 @@ public sealed class AgentInteractionService : IAgentInteractionService
     {
         var subAgentId = subAgent.SubAgentId;
 
+        var childSessionId = subAgent.ChildSessionId ?? subAgentId;
         if (!_store.Agents.ContainsKey(subAgentId))
         {
             _store.UpsertAgent(new AgentState
             {
                 AgentId = subAgentId,
                 DisplayName = subAgent.Name ?? $"Sub-agent {subAgentId[..Math.Min(8, subAgentId.Length)]}",
-                SessionId = subAgentId,
+                SessionId = childSessionId,
                 SessionType = "agent-subagent",
                 IsConnected = true
             });
-            _store.RegisterSession(subAgentId, subAgentId);
+            _store.RegisterSession(subAgentId, childSessionId);
         }
 
         _store.ActiveAgentId = subAgentId;
@@ -518,6 +519,8 @@ public sealed class AgentInteractionService : IAgentInteractionService
             agent.Conversations[convId] = conv;
         }
 
+        // Keep ActiveSessionId in sync with the actual child session ID
+        conv.ActiveSessionId = agent.SessionId ?? subAgentId;
         agent.ActiveConversationId = convId;
         if (conv.HistoryLoaded || conv.IsLoadingHistory) return;
 
@@ -527,7 +530,10 @@ public sealed class AgentInteractionService : IAgentInteractionService
         try
         {
             // Use session history endpoint for sub-agent session transcripts.
-            var response = await _restClient.GetSessionHistoryAsync(subAgentId, limit: 50);
+            // Use the child session ID (from SubAgentInfo.ChildSessionId propagated via AgentState.SessionId)
+            // rather than the ephemeral sub-agent run ID to avoid 404s.
+            var sessionIdForHistory = agent.SessionId ?? subAgentId;
+            var response = await _restClient.GetSessionHistoryAsync(sessionIdForHistory, limit: 50);
             conv.Messages.Clear();
             if (response?.Entries is { Count: > 0 })
             {

@@ -16,23 +16,33 @@ else
             var indentLevel = Depth + 1;
 
             <li role="treeitem" aria-expanded="@(isDirectory ? isExpanded : null)">
-                <button type="button"
-                        data-path="@fullPath"
-                        class="@rowCss"
-                        style="padding-left: @(indentLevel * 0.9m)rem"
-                        @onclick="() => OnRowClicked(entry, fullPath)">
-                    @if (isDirectory)
-                    {
-                        <span class="workspace-tree-chevron" aria-hidden="true">@(isExpanded ? "▾" : "▸")</span>
-                        <span class="workspace-tree-icon" aria-hidden="true">📁</span>
-                    }
-                    else
-                    {
-                        <span class="workspace-tree-chevron spacer" aria-hidden="true"></span>
-                        <span class="workspace-tree-icon" aria-hidden="true">📄</span>
-                    }
-                    <span class="workspace-tree-name">@entry.Name</span>
-                </button>
+                <div class="workspace-tree-row-wrapper">
+                    <button type="button"
+                            data-path="@fullPath"
+                            class="@rowCss"
+                            style="padding-left: @(indentLevel * 0.9m)rem"
+                            @onclick="() => OnRowClicked(entry, fullPath)">
+                        @if (isDirectory)
+                        {
+                            <span class="workspace-tree-chevron" aria-hidden="true">@(isExpanded ? "▾" : "▸")</span>
+                            <span class="workspace-tree-icon" aria-hidden="true">📁</span>
+                        }
+                        else
+                        {
+                            <span class="workspace-tree-chevron spacer" aria-hidden="true"></span>
+                            <span class="workspace-tree-icon" aria-hidden="true">📄</span>
+                        }
+                        <span class="workspace-tree-name">@entry.Name</span>
+                    </button>
+                    <button type="button"
+                            class="workspace-tree-delete"
+                            title="Delete @fullPath"
+                            aria-label="Delete @fullPath"
+                            @onclick:stopPropagation="true"
+                            @onclick="() => OnDeleteRequested.InvokeAsync(fullPath)">
+                        🗑
+                    </button>
+                </div>
 
                 @if (isDirectory && isExpanded)
                 {
@@ -54,6 +64,7 @@ else
                                                SelectedFilePath="SelectedFilePath"
                                                OnDirectoryToggled="OnDirectoryToggled"
                                                OnFileSelected="OnFileSelected"
+                                               OnDeleteRequested="OnDeleteRequested"
                                                DirectoryEntriesProvider="DirectoryEntriesProvider"
                                                DirectoryLoadingProvider="DirectoryLoadingProvider"
                                                DirectoryErrorProvider="DirectoryErrorProvider" />
@@ -86,6 +97,9 @@ else
 
     [Parameter]
     public EventCallback<string> OnFileSelected { get; set; }
+
+    [Parameter]
+    public EventCallback<string> OnDeleteRequested { get; set; }
 
     [Parameter]
     public Func<string, IReadOnlyList<WorkspaceEntryDto>?>? DirectoryEntriesProvider { get; set; }

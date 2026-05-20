@@ -43,9 +43,15 @@ public sealed class ReportContentResponse
     public string Name { get; set; } = string.Empty;
 
     /// <summary>
-    /// Gets or sets the report file size in bytes.
+    /// Gets or sets the content character count (after UTF-8 decoding).
     /// </summary>
     public long Size { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether the content was truncated server-side due to MaxReportFileSizeBytes.
+    /// When true, the full file is larger than what was returned.
+    /// </summary>
+    public bool IsTruncated { get; set; }
 
     /// <summary>
     /// Gets or sets the last write time in UTC.

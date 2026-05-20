@@ -126,7 +126,8 @@ public sealed record SubAgentEventPayload(
     [property: JsonPropertyName("completedAt")] DateTimeOffset? CompletedAt,
     [property: JsonPropertyName("turnsUsed")] int TurnsUsed,
     [property: JsonPropertyName("resultSummary")] string? ResultSummary,
-    [property: JsonPropertyName("timedOut")] bool TimedOut);
+    [property: JsonPropertyName("timedOut")] bool TimedOut,
+    [property: JsonPropertyName("childSessionId")] string? ChildSessionId);
 
 // ── Client → Server return types ────────────────────────────────────────
 
@@ -189,6 +190,13 @@ public sealed record AgentsChangedPayload(
     [property: JsonPropertyName("changeType")] string ChangeType,
     [property: JsonPropertyName("agentId")] string? AgentId);
 
+/// <summary>Payload sent via the ConversationChanged client method when a conversation is created, updated, or archived.</summary>
+public sealed record ConversationChangedPayload(
+    [property: JsonPropertyName("changeType")] string ChangeType,
+    [property: JsonPropertyName("agentId")] string AgentId,
+    [property: JsonPropertyName("conversationId")] string ConversationId,
+    [property: JsonPropertyName("updatedAt")] DateTimeOffset? UpdatedAt = null);
+
 /// <summary>Kind of steering feedback event.</summary>
 public enum SteeringFeedbackKind
 {
@@ -203,3 +211,5 @@ public sealed record SteeringFeedbackPayload(
     [property: JsonPropertyName("agentId")] string AgentId,
     [property: JsonPropertyName("sessionId")] string SessionId,
     [property: JsonPropertyName("kind")] SteeringFeedbackKind Kind);
+
+

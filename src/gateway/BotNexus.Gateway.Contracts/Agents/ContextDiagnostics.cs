@@ -11,6 +11,19 @@ public sealed record ContextDiagnostics
     public int HistoryEntryCount { get; init; }
     public int HistoryChars { get; init; }
     public int HistoryTokens { get; init; }
+
+    /// <summary>Chars contributed by user and assistant text messages in history.</summary>
+    public int UserAssistantChars { get; init; }
+
+    /// <summary>Estimated tokens for user and assistant text messages in history.</summary>
+    public int UserAssistantTokens { get; init; }
+
+    /// <summary>Chars contributed by tool result messages in history.</summary>
+    public int ToolResultChars { get; init; }
+
+    /// <summary>Estimated tokens for tool result messages in history.</summary>
+    public int ToolResultTokens { get; init; }
+
     public int TotalEstimatedTokens { get; init; }
     public string? SystemPrompt { get; init; }
 }

@@ -78,6 +78,9 @@ public sealed class TelegramChannelAdapter(
     public override bool SupportsToolDisplay => true;
 
     /// <inheritdoc />
+    public override bool SupportsInboundImages => true;
+
+    /// <inheritdoc />
     protected override async Task OnStartAsync(CancellationToken cancellationToken)
     {
         EnsureBotsInitialized();
@@ -143,7 +146,7 @@ public sealed class TelegramChannelAdapter(
 
     /// <summary>
     /// Sends a complete outbound message through the Telegram adapter.
-    /// Content is escaped for Telegram HTML parse mode.
+    /// Content is converted from Markdown to Telegram MarkdownV2 format.
     /// </summary>
     public override async Task SendAsync(OutboundMessage message, CancellationToken cancellationToken = default)
     {
@@ -186,7 +189,9 @@ public sealed class TelegramChannelAdapter(
         await state.Lock.WaitAsync(cancellationToken);
         try
         {
-            state.Buffer.Append(EscapeHtml(delta));
+            // Buffer raw delta; MarkdownV2 conversion happens at flush time so formatting
+            // tokens that span multiple deltas (e.g. **bold**) are preserved intact.
+            state.Buffer.Append(delta);
             state.PendingCharacterCount += delta.Length;
             if (ShouldFlush(state, runtime.Config))
                 await FlushStreamingStateAsync(runtime, state, force: false, cancellationToken);
@@ -219,14 +224,15 @@ public sealed class TelegramChannelAdapter(
                     break;
 
                 case AgentStreamEventType.ContentDelta when streamEvent.ContentDelta is not null:
-                    state.Buffer.Append(EscapeHtml(streamEvent.ContentDelta));
+                    // Buffer raw markdown; conversion to MarkdownV2 happens at flush time.
+                    state.Buffer.Append(streamEvent.ContentDelta);
                     state.PendingCharacterCount += streamEvent.ContentDelta.Length;
                     break;
 
                 case AgentStreamEventType.ThinkingDelta when streamEvent.ThinkingContent is not null:
                     AppendLineIfNeeded(state.Buffer);
                     state.Buffer.Append("Thinking: ");
-                    state.Buffer.Append(EscapeHtml(streamEvent.ThinkingContent));
+                    state.Buffer.Append(streamEvent.ThinkingContent);
                     state.PendingCharacterCount += streamEvent.ThinkingContent.Length;
                     break;
 
@@ -235,7 +241,7 @@ public sealed class TelegramChannelAdapter(
                     var toolName = streamEvent.ToolName ?? "tool";
                     AppendLineIfNeeded(state.Buffer);
                     state.Buffer.Append("[");
-                    state.Buffer.Append(EscapeHtml(toolName));
+                    state.Buffer.Append(toolName);
                     state.Buffer.Append("] started");
                     state.PendingCharacterCount += toolName.Length + 10;
                     break;
@@ -247,7 +253,7 @@ public sealed class TelegramChannelAdapter(
                     var toolName = streamEvent.ToolName ?? streamEvent.ToolCallId ?? "tool";
                     AppendLineIfNeeded(state.Buffer);
                     state.Buffer.Append("[");
-                    state.Buffer.Append(EscapeHtml(toolName));
+                    state.Buffer.Append(toolName);
                     state.Buffer.Append("] ");
                     state.Buffer.Append(status);
                     state.PendingCharacterCount += toolName.Length + status.Length + 3;
@@ -260,7 +266,7 @@ public sealed class TelegramChannelAdapter(
 
                     AppendLineIfNeeded(state.Buffer);
                     state.Buffer.Append("⚠️ ");
-                    state.Buffer.Append(EscapeHtml(streamEvent.ErrorMessage));
+                    state.Buffer.Append(streamEvent.ErrorMessage);
                     state.PendingCharacterCount += streamEvent.ErrorMessage.Length + 2;
                     break;
 
@@ -314,10 +320,14 @@ public sealed class TelegramChannelAdapter(
 
     private async Task HandleUpdateAsync(BotRuntime runtime, TelegramUpdate update, CancellationToken cancellationToken)
     {
-        // Only process real user messages \u2014 not channel posts (no authenticated sender)
+        // Only process real user messages — not channel posts (no authenticated sender)
         var message = update.Message
             ?? (runtime.Config.ProcessEditedMessages ? update.EditedMessage : null);
-        if (message?.Chat is null || string.IsNullOrWhiteSpace(message.Text))
+
+        // Accept text messages or photo messages (with optional caption)
+        var hasText = !string.IsNullOrWhiteSpace(message?.Text);
+        var hasPhoto = message?.Photo is { Length: > 0 };
+        if (message?.Chat is null || (!hasText && !hasPhoto))
             return;
 
         var chatId = message.Chat.Id;
@@ -343,12 +353,37 @@ public sealed class TelegramChannelAdapter(
 
         var senderId = message.From.Id.ToString(CultureInfo.InvariantCulture);
 
+        // Build optional image content parts from the attached photo (if any)
+        IReadOnlyList<MessageContentPart>? contentParts = null;
+        if (hasPhoto)
+        {
+            // Telegram provides multiple resolutions; the last element is always the largest.
+            var largestPhoto = message.Photo!.OrderByDescending(p => p.FileSize ?? 0).First();
+            try
+            {
+                var file = await runtime.ApiClient.GetFileAsync(largestPhoto.FileId, cancellationToken);
+                if (!string.IsNullOrWhiteSpace(file.FilePath))
+                {
+                    var imageBytes = await runtime.ApiClient.DownloadFileAsync(file.FilePath, cancellationToken);
+                    contentParts = [new BinaryContentPart { MimeType = "image/jpeg", Data = imageBytes }];
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "bot '{BotName}' failed to download photo for updateId={UpdateId}; proceeding with caption only", runtime.BotName, update.UpdateId);
+            }
+        }
+
+        // Caption is the text for photo messages; Text is the text for regular messages.
+        var textContent = (hasPhoto ? message.Caption : message.Text) ?? string.Empty;
+
         await DispatchInboundAsync(new InboundMessage
         {
             ChannelType = ChannelType,
             SenderId = senderId,
             ChannelAddress = ChannelAddress.From(chatIdText),
-            Content = message.Text,
+            Content = textContent,
+            ContentParts = contentParts,
             TargetAgentId = string.IsNullOrWhiteSpace(runtime.Config.AgentId) ? null : runtime.Config.AgentId,
             ThreadId = message.MessageThreadId.HasValue
                 ? ThreadId.From(message.MessageThreadId.Value.ToString(CultureInfo.InvariantCulture))
@@ -371,8 +406,10 @@ public sealed class TelegramChannelAdapter(
         var maxLength = Math.Max(1, runtime.Config.MaxMessageLength);
         while (state.Buffer.Length > maxLength)
         {
-            var chunk = state.Buffer.ToString(0, maxLength);
-            await SendOrEditStreamingMessageAsync(runtime, state, chunk, cancellationToken);
+            // Convert the raw chunk to MarkdownV2 before sending.
+            var rawChunk = state.Buffer.ToString(0, maxLength);
+            var formattedChunk = TelegramMarkdownFormatter.Convert(rawChunk);
+            await SendOrEditStreamingMessageAsync(runtime, state, formattedChunk, cancellationToken);
             state.MessageId = null;
             state.Buffer.Remove(0, maxLength);
         }
@@ -380,11 +417,15 @@ public sealed class TelegramChannelAdapter(
         if (!force && !ShouldFlush(state, runtime.Config))
             return;
 
-        var text = state.Buffer.ToString();
-        if (string.IsNullOrEmpty(text))
+        var rawText = state.Buffer.ToString();
+        if (string.IsNullOrEmpty(rawText))
             return;
 
-        await SendOrEditStreamingMessageAsync(runtime, state, text, cancellationToken);
+        // Convert accumulated raw markdown to Telegram MarkdownV2 at flush time.
+        // Doing the conversion here (not per-delta) ensures multi-delta formatting tokens
+        // such as **bold** are fully assembled before being transformed.
+        var formattedText = TelegramMarkdownFormatter.Convert(rawText);
+        await SendOrEditStreamingMessageAsync(runtime, state, formattedText, cancellationToken);
         state.LastFlushUtc = DateTimeOffset.UtcNow;
         state.PendingCharacterCount = 0;
     }
@@ -474,26 +515,26 @@ public sealed class TelegramChannelAdapter(
 
         if (!string.IsNullOrWhiteSpace(displayPrefix))
         {
-            builder.Append(EscapeHtml(displayPrefix));
+            builder.Append(TelegramMarkdownFormatter.EscapeMarkdownV2(displayPrefix));
             builder.Append(' ');
         }
 
         if (TryGetMetadataString(metadata, "thinking", out var thinking))
         {
             builder.Append("Thinking: ");
-            builder.Append(EscapeHtml(thinking));
+            builder.Append(TelegramMarkdownFormatter.Convert(thinking));
             builder.AppendLine();
             builder.AppendLine();
         }
 
-        builder.Append(EscapeHtml(content));
+        builder.Append(TelegramMarkdownFormatter.Convert(content));
 
         if (TryGetMetadataString(metadata, "toolCall", out var toolCall))
         {
             builder.AppendLine();
-            builder.Append('[');
-            builder.Append(EscapeHtml(toolCall));
-            builder.Append(']');
+            builder.Append("\\[");
+            builder.Append(TelegramMarkdownFormatter.EscapeMarkdownV2(toolCall));
+            builder.Append("\\]");
         }
 
         return builder.ToString();
@@ -553,17 +594,6 @@ public sealed class TelegramChannelAdapter(
     {
         if (builder.Length > 0)
             builder.AppendLine();
-    }
-
-    private static string EscapeHtml(string value)
-    {
-        if (string.IsNullOrEmpty(value))
-            return string.Empty;
-
-        return value
-            .Replace("&", "&amp;", StringComparison.Ordinal)
-            .Replace("<", "&lt;", StringComparison.Ordinal)
-            .Replace(">", "&gt;", StringComparison.Ordinal);
     }
 
     private sealed class BotRuntime(string botName, TelegramBotConfig config, TelegramBotApiClient apiClient)

@@ -52,6 +52,9 @@ public sealed class SubAgentInfo
 
     /// <summary>Archetype of the sub-agent.</summary>
     public string? Archetype { get; set; }
+
+    /// <summary>The child session ID used by this sub-agent for history lookup.</summary>
+    public string? ChildSessionId { get; set; }
 }
 
 /// <summary>

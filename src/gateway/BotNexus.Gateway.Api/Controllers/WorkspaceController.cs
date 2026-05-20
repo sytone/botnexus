@@ -20,6 +20,17 @@ public sealed class WorkspaceController : ControllerBase
     private const int DefaultTreeDepthLimit = 2;
     private const int MaximumTreeDepthLimit = 5;
     private const int MaximumFileReadBytes = 512 * 1024;
+
+    /// <summary>
+    /// Returns true if <paramref name="path"/> is an absolute/rooted path on any platform.
+    /// <see cref="System.IO.Path"/> only recognises the host OS convention;
+    /// this helper additionally catches Windows drive-letter paths when running on Linux.
+    /// </summary>
+    private static bool IsAbsolutePath(string path) =>
+        System.IO.Path.IsPathRooted(path)                                                   // Linux: /foo  Windows: \foo or C:\foo
+        || (path.Length >= 3 && path[1] == ':' && (path[2] == '/' || path[2] == '\\'))  // C:/ or C:\ on Linux runner
+        || path.StartsWith('/')                                                             // belt-and-braces
+        || path.StartsWith('\\');                                                          // UNC \\server\share
     private readonly IAgentRegistry _agentRegistry;
     private readonly IAgentWorkspaceManager _workspaceManager;
     private readonly IFileSystem _fileSystem;
@@ -101,7 +112,7 @@ public sealed class WorkspaceController : ControllerBase
         if (string.IsNullOrWhiteSpace(path))
             return BadRequest(new { error = "path is required." });
 
-        if (_fileSystem.Path.IsPathRooted(path))
+        if (IsAbsolutePath(path))
             return BadRequest(new { error = "path must be workspace-relative." });
 
         if (path.Contains('\0'))
@@ -210,6 +221,109 @@ public sealed class WorkspaceController : ControllerBase
         }
 
         return entries;
+    }
+
+    /// <summary>
+    /// Deletes a file or directory at a workspace-relative path.
+    /// </summary>
+    /// <param name="agentId">Agent identifier whose workspace contains the target.</param>
+    /// <param name="path">Workspace-relative path to the file or directory to delete.</param>
+    /// <param name="force">When <c>true</c>, allows deletion of non-empty directories.</param>
+    /// <returns>204 on success; 404 if not found; 403 if path escapes workspace; 409 if directory is non-empty and force is false.</returns>
+    [HttpDelete("{**path}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public ActionResult DeleteItem(string agentId, string path, [FromQuery] bool force = false)
+    {
+        if (!_agentRegistry.Contains(AgentId.From(agentId)))
+            return NotFound();
+
+        if (string.IsNullOrWhiteSpace(path))
+            return BadRequest(new { error = "path is required." });
+
+        if (IsAbsolutePath(path))
+            return BadRequest(new { error = "path must be workspace-relative." });
+
+        if (path.Contains('\0'))
+            return BadRequest(new { error = "path contains invalid characters." });
+
+        var workspaceRoot = WorkspacePathSecurity.NormalizePath(_fileSystem, _workspaceManager.GetWorkspacePath(agentId));
+        var validator = new DefaultPathValidator(policy: null, workspaceRoot);
+        var normalizedRelativePath = WorkspacePathSecurity.NormalizeRelativePath(_fileSystem, path);
+        var resolvedPath = validator.ValidateAndResolve(normalizedRelativePath, FileAccessMode.Write);
+        if (resolvedPath is null)
+            return Forbid();
+
+        var resolvedFinalPath = WorkspacePathSecurity.ResolveFinalTargetPath(_fileSystem, resolvedPath);
+        if (!validator.CanWrite(resolvedFinalPath))
+            return Forbid();
+
+        if (_fileSystem.Directory.Exists(resolvedFinalPath))
+        {
+            var isEmpty = !_fileSystem.Directory.EnumerateFileSystemEntries(resolvedFinalPath).Any();
+            if (!isEmpty && !force)
+                return Conflict(new { error = "Directory is not empty. Use force=true to delete recursively." });
+
+            _fileSystem.Directory.Delete(resolvedFinalPath, recursive: true);
+            return NoContent();
+        }
+
+        if (!_fileSystem.File.Exists(resolvedFinalPath))
+            return NotFound();
+
+        _fileSystem.File.Delete(resolvedFinalPath);
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Writes text content to a workspace-relative file path.
+    /// </summary>
+    /// <param name="agentId">Agent identifier whose workspace should be written to.</param>
+    /// <param name="path">Workspace-relative file path.</param>
+    /// <param name="request">Request body containing the text content to write.</param>
+    /// <returns>204 on success; 400/403 as appropriate.</returns>
+    [HttpPut("{**path}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public ActionResult WriteFile(string agentId, string path, [FromBody] WorkspaceWriteRequest request)
+    {
+        if (!_agentRegistry.Contains(AgentId.From(agentId)))
+            return NotFound();
+
+        if (string.IsNullOrWhiteSpace(path))
+            return BadRequest(new { error = "path is required." });
+
+        if (IsAbsolutePath(path))
+            return BadRequest(new { error = "path must be workspace-relative." });
+
+        if (path.Contains('\0'))
+            return BadRequest(new { error = "path contains invalid characters." });
+
+        var workspaceRoot = WorkspacePathSecurity.NormalizePath(_fileSystem, _workspaceManager.GetWorkspacePath(agentId));
+        var validator = new DefaultPathValidator(policy: null, workspaceRoot);
+        var normalizedRelativePath = WorkspacePathSecurity.NormalizeRelativePath(_fileSystem, path);
+        var resolvedPath = validator.ValidateAndResolve(normalizedRelativePath, FileAccessMode.Write);
+        if (resolvedPath is null)
+            return Forbid();
+
+        var resolvedFinalPath = WorkspacePathSecurity.ResolveFinalTargetPath(_fileSystem, resolvedPath);
+        if (!validator.CanWrite(resolvedFinalPath))
+            return Forbid();
+
+        if (_fileSystem.Directory.Exists(resolvedFinalPath))
+            return BadRequest(new { error = "Path refers to a directory, not a file." });
+
+        var parentDir = _fileSystem.Path.GetDirectoryName(resolvedFinalPath);
+        if (!string.IsNullOrEmpty(parentDir) && !_fileSystem.Directory.Exists(parentDir))
+            return BadRequest(new { error = "Parent directory does not exist." });
+
+        _fileSystem.File.WriteAllText(resolvedFinalPath, request.Content, Encoding.UTF8);
+        return NoContent();
     }
 
     private static bool IsBinary(byte[] buffer, int length)

@@ -40,6 +40,11 @@ public sealed class PlatformConfig
     public Dictionary<string, PromptTemplateConfig>? PromptTemplates { get; set; }
 
     /// <summary>
+    /// Workspace and portal display settings (reports, file viewer limits).
+    /// </summary>
+    public WorkspacePortalConfig? Workspace { get; set; }
+
+    /// <summary>
     /// World-level agent defaults. Populated at load time from the <c>agents.defaults</c> reserved key.
     /// Not directly serialized — extracted separately from the agents dictionary.
     /// </summary>
@@ -519,4 +524,18 @@ public sealed class ApiKeyConfig
     public List<string>? Permissions { get; set; }
     /// <summary>Whether this key has administrative privileges.</summary>
     public bool IsAdmin { get; set; }
+}
+
+/// <summary>
+/// Workspace and portal display settings.
+/// Controls limits for report and file preview in the portal UI.
+/// </summary>
+public sealed class WorkspacePortalConfig
+{
+    /// <summary>
+    /// Maximum number of bytes read from a report file for portal preview.
+    /// Files larger than this are truncated server-side and flagged in the UI.
+    /// Defaults to 524288 (512 KB). Set to 0 for no server-side limit.
+    /// </summary>
+    public int MaxReportFileSizeBytes { get; set; } = 512 * 1024;
 }

@@ -16,6 +16,7 @@ using BotNexus.Gateway.Abstractions.Hooks;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Domain.Primitives;
@@ -37,7 +38,7 @@ using GatewayAfterToolCallResult = BotNexus.Gateway.Abstractions.Hooks.AfterTool
 namespace BotNexus.Gateway.Isolation;
 
 /// <summary>
-/// In-process isolation strategy — runs agents directly in the Gateway process
+/// In-process isolation strategy ΓÇö runs agents directly in the Gateway process
 /// by wrapping <see cref="BotNexus.Agent.Core.Agent"/>.
 /// </summary>
 /// <remarks>
@@ -127,7 +128,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         if (descriptor.Memory?.Enabled == true)
         {
             var memoryStore = _memoryStoreFactory.Create(descriptor.AgentId);
-            // Initialize asynchronously — don't block handle creation.
+            // Initialize asynchronously ΓÇö don't block handle creation.
             // Memory tools work immediately; the store initializes in the background.
             _ = memoryStore.InitializeAsync(CancellationToken.None);
             tools.Add(new MemorySaveTool(_workspaceManager, descriptor.AgentId, descriptor.Memory.Path));
@@ -149,7 +150,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             }
         }
 
-        // Session tool — always available, access level from config
+        // Session tool ΓÇö always available, access level from config
         var sessionStore = _serviceProvider.GetService<ISessionStore>();
         if (sessionStore is not null)
         {
@@ -158,19 +159,20 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         }
 
         var conversationStore = _serviceProvider.GetService<IConversationStore>();
-        ConversationId? conversationId = null;
         if (conversationStore is not null)
         {
-            conversationId = await ResolveConversationIdAsync(conversationStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken)
+            var conversationId = await ResolveConversationIdAsync(conversationStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken)
                 .ConfigureAwait(false);
             var (conversationAccessLevel, conversationAllowedAgents) = ResolveConversationAccess(descriptor);
+            var conversationDispatcher = _serviceProvider.GetService<IChannelDispatcher>();
             tools.Add(new ConversationTool(
                 conversationStore,
                 descriptor.AgentId,
                 conversationId,
                 conversationAccessLevel,
                 conversationAllowedAgents,
-                sessionStore));
+                sessionStore,
+                conversationDispatcher));
         }
 
         var includeAskUser = effectiveToolIds.Count == 0
@@ -178,13 +180,15 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         var askUserRegistry = _serviceProvider.GetService<IAskUserResponseRegistry>();
         if (includeAskUser && askUserRegistry is not null)
         {
+            var askUserConversationId = conversationStore is not null
+                ? await ResolveConversationIdAsync(conversationStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken).ConfigureAwait(false)
+                : null;
             tools.Add(new AskUserTool(
                 askUserRegistry,
                 descriptor.AgentId,
                 context.SessionId,
-                conversationId));
+                askUserConversationId));
         }
-
         var delayToolOptions = _serviceProvider.GetService<IOptions<DelayToolOptions>>() ?? Options.Create(new DelayToolOptions());
         tools.Add(new DelayTool(delayToolOptions));
         tools.Add(new DateTimeTool(descriptor.Soul?.Timezone));
@@ -301,13 +305,16 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         List<AgentMessage>? initialMessages = null;
         if (context.History.Count > 0)
         {
-            // Only inject user and assistant messages from history. Tool-role entries
-            // become orphaned ToolResultMessages (no matching tool_use in the preceding
-            // assistant message) which causes the LLM provider to reject the conversation.
-            // System entries are also excluded — the agent's system prompt is set separately.
+            // Inject compaction summary entries as system messages so the LLM retains
+            // summarised context when the handle is recreated (e.g. after a gateway restart).
+            // Tool-role entries are excluded: they become orphaned ToolResultMessages
+            // (no matching tool_use in the preceding assistant message) which causes
+            // LLM provider rejection. Regular system entries (IsCompactionSummary=false)
+            // are also excluded ΓÇö the agent's system prompt is set separately.
             initialMessages = context.History
                 .Where(e => e.Role == Domain.Primitives.MessageRole.User
-                         || e.Role == Domain.Primitives.MessageRole.Assistant)
+                         || e.Role == Domain.Primitives.MessageRole.Assistant
+                         || (e.Role == Domain.Primitives.MessageRole.System && e.IsCompactionSummary))
                 .Select(ConvertSessionEntryToAgentMessage)
                 .ToList();
 
@@ -356,7 +363,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
     }
 
     /// <summary>
-    /// Returns true when <paramref name="toolIds"/> represents the all-tools wildcard — either an
+    /// Returns true when <paramref name="toolIds"/> represents the all-tools wildcard ΓÇö either an
     /// empty list (legacy behaviour) or a list whose sole entry is <c>"*"</c> (intuitive form).
     /// </summary>
     private static bool IsWildcardToolIds(IReadOnlyList<string> toolIds)
@@ -584,16 +591,23 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                 t.Definition.Parameters.GetRawText().Length))
             .ToList();
         var historyEntries = state.Messages.Count;
-        var historyChars = state.Messages.Sum(static message => message switch
+
+        var userAssistantChars = state.Messages.Sum(static message => message switch
         {
             AgentCoreUserMessage user => user.Content?.Length ?? 0,
             AssistantAgentMessage assistant => assistant.Content?.Length ?? 0,
             SystemAgentMessage system => system.Content?.Length ?? 0,
-            ToolResultAgentMessage tool => tool.Result.Content.Sum(static c => c.Value?.Length ?? 0),
             SubAgentCompletionMessage subAgent => subAgent.Content?.Length ?? 0,
             _ => 0
         });
 
+        var toolResultChars = state.Messages.Sum(static message => message switch
+        {
+            ToolResultAgentMessage tool => tool.Result.Content.Sum(static c => c.Value?.Length ?? 0),
+            _ => 0
+        });
+
+        var historyChars = userAssistantChars + toolResultChars;
         var totalChars = systemPromptChars
             + toolDefinitions.Sum(static t => t.SchemaChars + t.Name.Length + (t.Description?.Length ?? 0))
             + historyChars;
@@ -610,6 +624,10 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             HistoryEntryCount = historyEntries,
             HistoryChars = historyChars,
             HistoryTokens = historyChars / 4,
+            UserAssistantChars = userAssistantChars,
+            UserAssistantTokens = userAssistantChars / 4,
+            ToolResultChars = toolResultChars,
+            ToolResultTokens = toolResultChars / 4,
             TotalEstimatedTokens = estimatedTokens,
             SystemPrompt = state.SystemPrompt
         };
@@ -647,7 +665,47 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     }
 
     /// <inheritdoc />
-    public async IAsyncEnumerable<AgentStreamEvent> StreamAsync(string message, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public async Task<AgentResponse> PromptAsync(AgentCoreUserMessage message, CancellationToken cancellationToken = default)
+    {
+        using var activity = AgentDiagnostics.Source.StartActivity("agent.prompt", ActivityKind.Internal);
+        activity?.SetTag("botnexus.agent.id", AgentId);
+        activity?.SetTag("botnexus.session.id", SessionId);
+        activity?.SetTag("botnexus.correlation.id", System.Diagnostics.Activity.Current?.TraceId.ToString());
+        try
+        {
+            var messages = await _agent.PromptAsync(message, cancellationToken);
+            var lastAssistant = messages.OfType<AssistantAgentMessage>().LastOrDefault();
+
+            var response = new AgentResponse
+            {
+                Content = lastAssistant?.Content ?? string.Empty,
+                Usage = lastAssistant?.Usage is { } u ? new AgentResponseUsage(u.InputTokens, u.OutputTokens) : null,
+                ToolCalls = messages.OfType<ToolResultAgentMessage>()
+                    .Select(t => new AgentToolCallInfo(t.ToolCallId, t.ToolName, t.IsError))
+                    .ToList()
+            };
+
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            return response;
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            throw;
+        }
+    }
+
+    /// <inheritdoc />
+    public IAsyncEnumerable<AgentStreamEvent> StreamAsync(string message, CancellationToken cancellationToken = default)
+        => StreamCoreAsync(ct => _agent.PromptAsync(message, ct), cancellationToken);
+
+    /// <inheritdoc />
+    public IAsyncEnumerable<AgentStreamEvent> StreamAsync(AgentCoreUserMessage message, CancellationToken cancellationToken = default)
+        => StreamCoreAsync(ct => _agent.PromptAsync(message, ct), cancellationToken);
+
+    private async IAsyncEnumerable<AgentStreamEvent> StreamCoreAsync(
+        Func<CancellationToken, Task> runPrompt,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         using var activity = AgentDiagnostics.Source.StartActivity("agent.stream", ActivityKind.Internal);
         activity?.SetTag("botnexus.agent.id", AgentId);
@@ -696,16 +754,10 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                         ToolIsError = toolEnd.IsError,
                         MessageId = messageId
                     },
-                    ToolExecutionUpdateEvent update when update.PartialResult?.Details is AskUserRequest askRequest => new AgentStreamEvent
-                    {
-                        Type = AgentStreamEventType.UserInputRequired,
-                        ToolCallId = update.ToolCallId,
-                        ToolName = update.ToolName,
-                        UserInputRequest = askRequest,
-                        MessageId = messageId
-                    },
                     MessageEndEvent end when end.Message is AssistantAgentMessage
                         => new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd, MessageId = messageId },
+                    TurnEndEvent
+                        => new AgentStreamEvent { Type = AgentStreamEventType.TurnEnd, MessageId = messageId },
                     _ => null
                 };
 
@@ -737,7 +789,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         {
             try
             {
-                await _agent.PromptAsync(message, promptCancellation.Token);
+                await runPrompt(promptCancellation.Token);
             }
             catch (OperationCanceledException) when (promptCancellation.IsCancellationRequested || cancellationToken.IsCancellationRequested)
             {
@@ -856,3 +908,4 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         }
     }
 }
+

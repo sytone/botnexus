@@ -18,5 +18,6 @@ builder.Services.AddScoped<PlatformConfigService>();
 builder.Services.AddScoped<GatewayInfoService>();
 builder.Services.AddScoped<IUpdateStatusService, UpdateStatusService>();
 builder.Services.AddScoped<LocationsApiClient>();
+builder.Services.AddScoped<CronApiClient>();
 
 await builder.Build().RunAsync();

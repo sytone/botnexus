@@ -36,4 +36,19 @@
     <Copy SourceFiles="@(BlazorPublishFiles)" DestinationFolder="$(OutputPath)blazor\%(RecursiveDir)" SkipUnchangedFiles="true" />
   </Target>
 
+  <!-- Publish the mobile Blazor WASM client and bundle at blazor-mobile/
+       ContinueOnError means a mobile build failure does NOT break the desktop portal. -->
+  <Target Name="PublishMobileBlazorClient" AfterTargets="Build">
+    <Exec Command="dotnet publish &quot;$(MSBuildProjectDirectory)/../BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile/BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.csproj&quot; -c $(Configuration) -o &quot;$(IntermediateOutputPath)blazor-mobile-publish&quot; --nologo -v:q"
+          ContinueOnError="true"
+          IgnoreExitCode="true" />
+  </Target>
+
+  <Target Name="CopyMobileBlazorClient" AfterTargets="PublishMobileBlazorClient">
+    <ItemGroup>
+      <MobileBlazorPublishFiles Include="$(IntermediateOutputPath)blazor-mobile-publish\wwwroot\**" />
+    </ItemGroup>
+    <Copy SourceFiles="@(MobileBlazorPublishFiles)" DestinationFolder="$(OutputPath)blazor-mobile\%(RecursiveDir)" SkipUnchangedFiles="true" />
+  </Target>
+
   </Project>

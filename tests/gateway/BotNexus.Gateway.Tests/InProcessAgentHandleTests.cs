@@ -61,7 +61,77 @@ public sealed class InProcessAgentHandleTests
             .ShouldContain("hello");
     }
 
-    private static (BotNexus.Agent.Core.Agent Agent, InProcessAgentHandle Handle) CreateHandle()
+    [Fact]
+    public async Task StreamAsync_WithUserMessageContainingImages_PassesImageContentToProvider()
+    {
+        // This is a real end-to-end test: the image travels from UserMessage →
+        // AgentLoopRunner → MessageConverter → provider Context.
+        // We capture the Context passed to the provider and assert it has an ImageContent block.
+        var capturingProvider = new CapturingStreamingTestProvider();
+        var (_, handle) = CreateHandle(capturingProvider);
+
+        var images = new List<AgentImageContent>
+        {
+            new("data:image/jpeg;base64,/9j/4AAQ==")
+        };
+        var userMessage = new BotNexus.Agent.Core.Types.UserMessage("describe this image", images);
+
+        var events = new List<AgentStreamEvent>();
+        await foreach (var evt in handle.StreamAsync(userMessage))
+            events.Add(evt);
+
+        // Verify the provider actually received a call
+        capturingProvider.LastContext.ShouldNotBeNull();
+
+        // Verify the UserMessage was converted to a ProviderUserMessage with ImageContent blocks
+        var providerMessages = capturingProvider.LastContext!.Messages;
+        var userMsg = providerMessages
+            .OfType<BotNexus.Agent.Providers.Core.Models.UserMessage>()
+            .FirstOrDefault();
+
+        userMsg.ShouldNotBeNull();
+        userMsg!.Content.IsText.ShouldBeFalse("image messages use block content, not plain text");
+        userMsg.Content.Blocks.ShouldNotBeNull();
+        userMsg.Content.Blocks!.OfType<ImageContent>().ShouldHaveSingleItem();
+
+        var imageBlock = userMsg.Content.Blocks.OfType<ImageContent>().Single();
+        imageBlock.MimeType.ShouldBe("image/jpeg");
+        imageBlock.Data.ShouldBe("/9j/4AAQ==");
+    }
+
+    [Fact]
+    public async Task PromptAsync_WithUserMessageContainingImages_PassesImageContentToProvider()
+    {
+        // Non-streaming path: PromptAsync(UserMessage) must also forward images to the provider.
+        var capturingProvider = new CapturingStreamingTestProvider();
+        var (_, handle) = CreateHandle(capturingProvider);
+
+        var images = new List<AgentImageContent>
+        {
+            new("https://example.com/diagram.png")
+        };
+        var userMessage = new BotNexus.Agent.Core.Types.UserMessage("explain the diagram", images);
+
+        var response = await handle.PromptAsync(userMessage);
+
+        response.Content.ShouldNotBeEmpty();
+        capturingProvider.LastContext.ShouldNotBeNull();
+
+        var providerMessages = capturingProvider.LastContext!.Messages;
+        var userMsg = providerMessages
+            .OfType<BotNexus.Agent.Providers.Core.Models.UserMessage>()
+            .FirstOrDefault();
+
+        userMsg.ShouldNotBeNull();
+        userMsg!.Content.Blocks.ShouldNotBeNull();
+        var imageBlock = userMsg.Content.Blocks!.OfType<ImageContent>().SingleOrDefault();
+        imageBlock.ShouldNotBeNull();
+        // URL-based image: value is used as data, mimeType defaults to image/png
+        imageBlock!.Data.ShouldBe("https://example.com/diagram.png");
+    }
+
+    private static (BotNexus.Agent.Core.Agent Agent, InProcessAgentHandle Handle) CreateHandle(
+        IApiProvider? provider = null)
     {
         var modelRegistry = new ModelRegistry();
         modelRegistry.Register("test-provider", new LlmModel(
@@ -77,7 +147,7 @@ public sealed class InProcessAgentHandleTests
             MaxTokens: 1024));
 
         var providers = new ApiProviderRegistry();
-        providers.Register(new StreamingTestProvider());
+        providers.Register(provider ?? new StreamingTestProvider());
         var llmClient = new LlmClient(providers, modelRegistry);
         var model = modelRegistry.GetModel("test-provider", "test-model")!;
         var options = new AgentOptions(
@@ -125,6 +195,42 @@ public sealed class InProcessAgentHandleTests
             var withText = partial with { Content = [new TextContent("hello")] };
             stream.Push(new StartEvent(partial));
             stream.Push(new TextDeltaEvent(0, "hello", withText));
+            stream.Push(new DoneEvent(StopReason.Stop, withText));
+            return stream;
+        }
+    }
+
+    /// <summary>
+    /// A test provider that captures the last Context it was called with so tests
+    /// can assert on the actual provider messages (including ImageContent blocks).
+    /// </summary>
+    private sealed class CapturingStreamingTestProvider : IApiProvider
+    {
+        public string Api => "test-api";
+
+        public Context? LastContext { get; private set; }
+
+        public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
+            => StreamSimple(model, context, null);
+
+        public LlmStream StreamSimple(LlmModel model, Context context, SimpleStreamOptions? options = null)
+        {
+            LastContext = context;
+
+            var stream = new LlmStream();
+            var partial = new AssistantMessage(
+                Content: [],
+                Api: model.Api,
+                Provider: model.Provider,
+                ModelId: model.Id,
+                Usage: Usage.Empty(),
+                StopReason: StopReason.Stop,
+                ErrorMessage: null,
+                ResponseId: null,
+                Timestamp: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            var withText = partial with { Content = [new TextContent("ok")] };
+            stream.Push(new StartEvent(partial));
+            stream.Push(new TextDeltaEvent(0, "ok", withText));
             stream.Push(new DoneEvent(StopReason.Stop, withText));
             return stream;
         }
