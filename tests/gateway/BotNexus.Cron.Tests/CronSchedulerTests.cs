@@ -569,6 +569,100 @@ public sealed class CronSchedulerTests
         action.ExecutionCount.ShouldBe(0);
     }
 
+    [Fact]
+    public async Task Scheduler_MultipleDueJobs_RunConcurrently_NotSerially()
+    {
+        // Two jobs each take ~150ms. Serial execution would take >=300ms.
+        // Concurrent execution should finish in <250ms.
+        await using var context = await CronStoreTestContext.CreateAsync();
+        var action = new DelayedAction("slow-action", TimeSpan.FromMilliseconds(150));
+
+        for (var i = 1; i <= 2; i++)
+        {
+            var job = CronStoreTestContext.CreateJob($"job-{i}", actionType: "slow-action") with
+            {
+                NextRunAt = DateTimeOffset.UtcNow.AddMinutes(-1)
+            };
+            await context.Store.CreateAsync(job);
+        }
+
+        var scheduler = CreateScheduler(context.Store, [action]);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await InvokeProcessTickAsync(scheduler);
+        sw.Stop();
+
+        action.ExecutionCount.ShouldBe(2, "both jobs must run");
+        sw.ElapsedMilliseconds.ShouldBeLessThan(280,
+            "concurrent execution of two 150ms jobs should complete well under 300ms");
+    }
+
+    [Fact]
+    public async Task Scheduler_MultipleDueJobs_PartialFailure_AllRunAndFailuresRecorded()
+    {
+        // Three jobs: first fails, second and third succeed.
+        // With concurrent execution, all three must run (not abort on first failure).
+        await using var context = await CronStoreTestContext.CreateAsync();
+        var failAction = new ThrowingAction("fail-action", "kaboom");
+        var okAction = new RecordingAction("ok-action");
+
+        var jobs = new[]
+        {
+            ("job-fail", "fail-action"),
+            ("job-ok-1", "ok-action"),
+            ("job-ok-2", "ok-action")
+        };
+        foreach (var (id, type) in jobs)
+        {
+            var job = CronStoreTestContext.CreateJob(id, actionType: type) with
+            {
+                NextRunAt = DateTimeOffset.UtcNow.AddMinutes(-1)
+            };
+            await context.Store.CreateAsync(job);
+        }
+
+        var scheduler = CreateScheduler(context.Store, [failAction, okAction]);
+        await InvokeProcessTickAsync(scheduler);
+
+        okAction.ExecutionCount.ShouldBe(2, "both ok jobs should run despite the first job failing");
+        var failHistory = await context.Store.GetRunHistoryAsync("job-fail");
+        failHistory.ShouldHaveSingleItem().Status.ShouldBe("error");
+        var ok1History = await context.Store.GetRunHistoryAsync("job-ok-1");
+        ok1History.ShouldHaveSingleItem().Status.ShouldBe("ok");
+        var ok2History = await context.Store.GetRunHistoryAsync("job-ok-2");
+        ok2History.ShouldHaveSingleItem().Status.ShouldBe("ok");
+    }
+
+    [Fact]
+    public async Task Scheduler_MultipleDueJobs_NextRunAt_UpdatedIndependently()
+    {
+        // Verify that concurrent runs each update their own NextRunAt independently.
+        await using var context = await CronStoreTestContext.CreateAsync();
+        var action = new RecordingAction("test-action");
+
+        for (var i = 1; i <= 3; i++)
+        {
+            var job = CronStoreTestContext.CreateJob($"job-{i}", actionType: "test-action") with
+            {
+                NextRunAt = DateTimeOffset.UtcNow.AddMinutes(-1)
+            };
+            await context.Store.CreateAsync(job);
+        }
+
+        var scheduler = CreateScheduler(context.Store, [action]);
+        await InvokeProcessTickAsync(scheduler);
+
+        action.ExecutionCount.ShouldBe(3);
+        for (var i = 1; i <= 3; i++)
+        {
+            var updated = await context.Store.GetAsync($"job-{i}");
+            updated.ShouldNotBeNull();
+            updated!.NextRunAt.ShouldNotBeNull(
+                $"job-{i} NextRunAt should be updated after concurrent run");
+            updated.NextRunAt!.Value.ShouldBeGreaterThan(DateTimeOffset.UtcNow.AddSeconds(-5),
+                $"job-{i} NextRunAt should be a future time");
+        }
+    }
+
     private static CronScheduler CreateScheduler(
         ICronStore store,
         IEnumerable<ICronAction> actions,
@@ -601,6 +695,19 @@ public sealed class CronSchedulerTests
         var task = method!.Invoke(scheduler, [options, CancellationToken.None]) as Task;
         Assert.NotNull(task);
         await task!;
+    }
+
+    private sealed class DelayedAction(string actionType, TimeSpan delay) : ICronAction
+    {
+        private int _executionCount;
+        public int ExecutionCount => _executionCount;
+        public string ActionType => actionType;
+
+        public async Task ExecuteAsync(CronExecutionContext context, CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(delay, cancellationToken);
+            Interlocked.Increment(ref _executionCount);
+        }
     }
 
     private sealed class RecordingAction(string actionType) : ICronAction
