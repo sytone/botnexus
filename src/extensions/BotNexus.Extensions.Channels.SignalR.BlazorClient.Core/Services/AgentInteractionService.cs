@@ -345,6 +345,21 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
     }
 
+    public async Task RespondToAskUserAsync(
+        string conversationId,
+        string requestId,
+        string? freeFormText,
+        string[]? selectedValues,
+        bool cancelled)
+    {
+        await _hub.RespondToAskUserAsync(
+            conversationId,
+            requestId,
+            freeFormText,
+            selectedValues,
+            cancelled);
+    }
+
     public void ClearLocalMessages(string agentId)
     {
         var agent = _store.GetAgent(agentId);

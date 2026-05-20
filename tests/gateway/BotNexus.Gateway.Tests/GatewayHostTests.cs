@@ -10,6 +10,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Dispatching;
+using BotNexus.Gateway.Services;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -107,6 +108,53 @@ public sealed class GatewayHostTests
 
         supervisor.Verify(s => s.GetOrCreateAsync(It.IsAny<BotNexus.Domain.Primitives.AgentId>(), It.IsAny<BotNexus.Domain.Primitives.SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
         sessions.Verify(s => s.GetOrCreateAsync(It.IsAny<BotNexus.Domain.Primitives.SessionId>(), It.IsAny<BotNexus.Domain.Primitives.AgentId>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WithPendingAskUserRequest_ConsumesInboundAsToolResponse()
+    {
+        var conversationId = BotNexus.Domain.Primitives.ConversationId.From("conversation-ask");
+        var sessionId = BotNexus.Domain.Primitives.SessionId.From("session-ask");
+        var sessions = new InMemorySessionStore();
+        var session = await sessions.GetOrCreateAsync(sessionId, BotNexus.Domain.Primitives.AgentId.From("agent-a"));
+        session.Session.ConversationId = conversationId;
+        await sessions.SaveAsync(session);
+
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+
+        var supervisor = new Mock<IAgentSupervisor>();
+
+        var conversationDispatcher = new Mock<IConversationDispatcher>();
+        conversationDispatcher.Setup(dispatcher => dispatcher.DispatchAsync(It.IsAny<InboundMessageContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((InboundMessageContext context, CancellationToken _) => new DispatchResult(
+                context,
+                context.Source,
+                new ConversationSessionResolution(conversationId, sessionId, false, false)));
+
+        var askUserRegistry = new AskUserResponseRegistry();
+        var (requestId, pendingTask) = askUserRegistry.Register(conversationId, TimeSpan.FromMinutes(1));
+        var interceptor = new PendingAskUserInterceptor(askUserRegistry);
+
+        await using var host = CreateHost(
+            supervisor.Object,
+            router.Object,
+            sessions,
+            new RecordingActivityBroadcaster(),
+            CreateChannelManager(),
+            conversationDispatcher: conversationDispatcher.Object,
+            pendingAskUserInterceptor: interceptor);
+
+        await host.DispatchAsync(CreateMessage("Deploy to staging", sessionId: sessionId.Value, conversationId: conversationId.Value));
+
+        var response = await pendingTask;
+        response.RequestId.ShouldBe(requestId);
+        response.FreeFormText.ShouldBe("Deploy to staging");
+        supervisor.Verify(s => s.GetOrCreateAsync(
+            It.IsAny<BotNexus.Domain.Primitives.AgentId>(),
+            It.IsAny<BotNexus.Domain.Primitives.SessionId>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -1425,7 +1473,8 @@ public sealed class GatewayHostTests
         ISessionCompactor? compactor = null,
         IOptionsMonitor<CompactionOptions>? compactionOptions = null,
         IConversationDispatcher? conversationDispatcher = null,
-        IConversationRouter? conversationRouter = null)
+        IConversationRouter? conversationRouter = null,
+        PendingAskUserInterceptor? pendingAskUserInterceptor = null)
         => new(
             supervisor,
             router,
@@ -1437,7 +1486,8 @@ public sealed class GatewayHostTests
             NullLogger<GatewayHost>.Instance,
             sessionQueueCapacity,
             conversationDispatcher: conversationDispatcher,
-            conversationRouter: conversationRouter);
+            conversationRouter: conversationRouter,
+            pendingAskUserInterceptor: pendingAskUserInterceptor);
 
     private static InboundMessage CreateMessage(
         string content,

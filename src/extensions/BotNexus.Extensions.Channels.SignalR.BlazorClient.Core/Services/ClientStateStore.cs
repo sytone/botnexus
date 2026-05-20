@@ -8,6 +8,7 @@ public sealed class ClientStateStore : IClientStateStore
 {
     private readonly Dictionary<string, AgentState> _agents = new();
     private readonly Dictionary<string, string> _sessionToAgent = new(); // sessionId → agentId
+    private readonly Dictionary<string, AskUserPromptState> _pendingAskUserByConversation = new();
 
     // ── IClientStateStore ────────────────────────────────────────────────────
 
@@ -286,6 +287,26 @@ public sealed class ClientStateStore : IClientStateStore
 
         NotifyChanged();
     }
+
+    // ── ask_user prompt state ────────────────────────────────────────────────
+
+    /// <inheritdoc />
+    public void SetPendingAskUser(AskUserPromptState prompt)
+    {
+        _pendingAskUserByConversation[prompt.ConversationId] = prompt;
+        NotifyChanged();
+    }
+
+    /// <inheritdoc />
+    public void ClearPendingAskUser(string conversationId)
+    {
+        if (_pendingAskUserByConversation.Remove(conversationId))
+            NotifyChanged();
+    }
+
+    /// <inheritdoc />
+    public AskUserPromptState? GetPendingAskUser(string conversationId) =>
+        _pendingAskUserByConversation.GetValueOrDefault(conversationId);
 
     // ── Session resolution ─────────────────────────────────────────────────────
 

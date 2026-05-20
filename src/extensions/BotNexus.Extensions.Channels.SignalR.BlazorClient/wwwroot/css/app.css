@@ -1245,6 +1245,92 @@ html, body, #app {
     background: var(--bg-secondary);
 }
 
+.chat-input-area.ask-user-input-area {
+    display: block;
+}
+
+.ask-user-prompt {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-surface);
+    padding: 0.85rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+}
+
+.ask-user-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+}
+
+.ask-user-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.ask-user-timeout {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+.ask-user-text {
+    margin: 0;
+    color: var(--text-primary);
+    line-height: 1.45;
+    white-space: pre-wrap;
+}
+
+.ask-user-choices {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
+.ask-user-choice {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.45rem;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.ask-user-choice input {
+    margin-top: 0.15rem;
+}
+
+.ask-user-choice-label {
+    line-height: 1.35;
+}
+
+.ask-user-free-form {
+    width: 100%;
+    min-height: 70px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    padding: 0.6rem 0.75rem;
+    font-family: var(--font-sans);
+    font-size: 0.9rem;
+    resize: vertical;
+}
+
+.ask-user-error {
+    color: var(--error);
+    font-size: 0.8rem;
+}
+
+.ask-user-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+}
+
 .chat-input {
     flex: 1;
     padding: 0.6rem 0.75rem;
