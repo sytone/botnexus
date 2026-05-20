@@ -740,7 +740,8 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
             ["ToolStart"] = new(TaskCreationOptions.RunContinuationsAsynchronously),
             ["ToolEnd"] = new(TaskCreationOptions.RunContinuationsAsynchronously),
             ["MessageEnd"] = new(TaskCreationOptions.RunContinuationsAsynchronously),
-            ["Error"] = new(TaskCreationOptions.RunContinuationsAsynchronously)
+            ["Error"] = new(TaskCreationOptions.RunContinuationsAsynchronously),
+            ["UserInputRequired"] = new(TaskCreationOptions.RunContinuationsAsynchronously)
         };
 
         var subscriptions = new List<IDisposable>
@@ -751,7 +752,8 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
             connection.On<AgentStreamEvent>("ToolStart", payload => handlers["ToolStart"].TrySetResult(payload)),
             connection.On<AgentStreamEvent>("ToolEnd", payload => handlers["ToolEnd"].TrySetResult(payload)),
             connection.On<AgentStreamEvent>("MessageEnd", payload => handlers["MessageEnd"].TrySetResult(payload)),
-            connection.On<AgentStreamEvent>("Error", payload => handlers["Error"].TrySetResult(payload))
+            connection.On<AgentStreamEvent>("Error", payload => handlers["Error"].TrySetResult(payload)),
+            connection.On<AgentStreamEvent>("UserInputRequired", payload => handlers["UserInputRequired"].TrySetResult(payload))
         };
 
         var adapter = factory.Services.GetRequiredService<SignalRChannelAdapter>();
@@ -766,7 +768,16 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
                 ToolName = type is AgentStreamEventType.ToolStart or AgentStreamEventType.ToolEnd ? "search" : null,
                 ToolResult = type == AgentStreamEventType.ToolEnd ? "done" : null,
                 ToolIsError = type == AgentStreamEventType.ToolEnd ? false : null,
-                ErrorMessage = type == AgentStreamEventType.Error ? "boom" : null
+                UserInputRequest = type == AgentStreamEventType.UserInputRequired
+                    ? new AskUserRequest
+                    {
+                        RequestId = "request-1",
+                        ConversationId = ConversationId.From("conversation-1"),
+                        SessionId = SessionId.From(sessionId),
+                        AgentId = AgentId.From(TestAgentId),
+                        Prompt = "Need input?"
+                    }
+                    : null
             }, cts.Token);
         }
 
@@ -781,6 +792,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
                 AgentStreamEventType.ToolEnd => "ToolEnd",
                 AgentStreamEventType.MessageEnd => "MessageEnd",
                 AgentStreamEventType.Error => "Error",
+                AgentStreamEventType.UserInputRequired => "UserInputRequired",
                 AgentStreamEventType.TurnEnd => null, // internal persistence signal -- not forwarded to Hub clients
                 _ => throw new ArgumentOutOfRangeException()
             };
@@ -842,7 +854,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
 
                     services.AddSignalRChannelForTests();
 
-                    // Force InMemory stores in tests — prevents SQLite file creation and ensures isolation
+                    // Force InMemory stores in tests ΓÇö prevents SQLite file creation and ensures isolation
                     services.Replace(ServiceDescriptor.Singleton<ISessionStore, InMemorySessionStore>());
                     services.Replace(ServiceDescriptor.Singleton<IConversationStore, InMemoryConversationStore>());
 
@@ -978,3 +990,4 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }
+

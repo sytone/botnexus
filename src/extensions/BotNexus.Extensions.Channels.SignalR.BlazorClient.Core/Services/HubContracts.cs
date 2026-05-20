@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
@@ -65,6 +66,51 @@ public sealed record AgentStreamEvent
 
     [JsonPropertyName("errorMessage")]
     public string? ErrorMessage { get; init; }
+
+    [JsonPropertyName("metadata")]
+    public IReadOnlyDictionary<string, JsonElement>? Metadata { get; init; }
+
+    [JsonPropertyName("userInputRequest")]
+    public AskUserRequestPayload? UserInputRequest { get; init; }
+}
+
+public sealed record AskUserRequestPayload
+{
+    [JsonPropertyName("requestId")]
+    public string? RequestId { get; init; }
+
+    [JsonPropertyName("conversationId")]
+    public string? ConversationId { get; init; }
+
+    [JsonPropertyName("prompt")]
+    public string? Prompt { get; init; }
+
+    [JsonPropertyName("inputType")]
+    public string? InputType { get; init; }
+
+    [JsonPropertyName("choices")]
+    public IReadOnlyList<AskUserChoicePayload>? Choices { get; init; }
+
+    [JsonPropertyName("allowMultiple")]
+    public bool AllowMultiple { get; init; }
+
+    [JsonPropertyName("allowFreeForm")]
+    public bool AllowFreeForm { get; init; }
+
+    [JsonPropertyName("timeout")]
+    public string? Timeout { get; init; }
+}
+
+public sealed record AskUserChoicePayload
+{
+    [JsonPropertyName("value")]
+    public string? Value { get; init; }
+
+    [JsonPropertyName("label")]
+    public string? Label { get; init; }
+
+    [JsonPropertyName("description")]
+    public string? Description { get; init; }
 }
 
 /// <summary>Sub-agent lifecycle event payload.</summary>
