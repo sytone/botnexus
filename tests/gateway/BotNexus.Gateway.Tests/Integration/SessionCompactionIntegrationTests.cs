@@ -163,11 +163,15 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         session.AddEntries(originalEntries);
 
         var compactor = CreateCompactor("fixed-summary");
-        await compactor.CompactAsync(session.Session, new CompactionOptions
+        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
         {
             PreservedTurns = 3,
             SummarizationModel = TestModel.Id
         });
+
+        result.Succeeded.ShouldBeTrue();
+        result.CompactedHistory.ShouldNotBeNull();
+        session.ReplaceHistory(result.CompactedHistory!);
 
         var history = session.GetHistorySnapshot();
         history.Count().ShouldBe(7);
@@ -194,11 +198,15 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         ]);
 
         var compactor = CreateCompactor("tool-summary");
-        await compactor.CompactAsync(session.Session, new CompactionOptions
+        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
         });
+
+        result.Succeeded.ShouldBeTrue();
+        result.CompactedHistory.ShouldNotBeNull();
+        session.ReplaceHistory(result.CompactedHistory!);
 
         session.GetHistorySnapshot().Select(entry => entry.Content)
             .ShouldBe(new[] { "tool-summary", "u2", "a2", "tool-call", "tool-result" }, ignoreOrder: false);
@@ -217,11 +225,15 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         ]);
 
         var compactor = CreateCompactor("coherent-summary");
-        await compactor.CompactAsync(session.Session, new CompactionOptions
+        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
         });
+
+        result.Succeeded.ShouldBeTrue();
+        result.CompactedHistory.ShouldNotBeNull();
+        session.ReplaceHistory(result.CompactedHistory!);
 
         session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "u3" });
         session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "a3" });
@@ -247,11 +259,15 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         ]);
 
         var compactor = CreateCompactor("archived-summary");
-        await compactor.CompactAsync(session.Session, new CompactionOptions
+        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
         });
+
+        if (result.Succeeded && result.CompactedHistory is not null)
+            session.ReplaceHistory(result.CompactedHistory);
+
         await store.SaveAsync(session);
 
         await store.ArchiveAsync(sessionId);
@@ -269,21 +285,31 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         var session = BuildCompactionSession();
         var compactor = CreateCompactor(new string('x', 50_000));
 
-        await compactor.CompactAsync(session.Session, new CompactionOptions
+        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
         {
             PreservedTurns = 1,
             MaxSummaryChars = 16_000,
             SummarizationModel = TestModel.Id
         });
 
+        result.Succeeded.ShouldBeTrue();
+        result.CompactedHistory.ShouldNotBeNull();
+        session.ReplaceHistory(result.CompactedHistory!);
+
         session.GetHistorySnapshot().First().Content.Length.ShouldBeLessThanOrEqualTo(16_000);
     }
 
+    /// <summary>
+    /// Regression test for Bug 1 (#366): when the LLM returns an empty summary, compaction
+    /// must abort and leave history completely unchanged — no data loss.
+    /// </summary>
     [Fact]
     [Trait("Category", "Security")]
     public async Task CompactionSummary_EmptyResponse_HandledGracefully()
     {
         var session = BuildCompactionSession();
+        var originalCount = session.GetHistorySnapshot().Count;
+        var originalContents = session.GetHistorySnapshot().Select(e => e.Content).ToList();
         var compactor = CreateCompactor(string.Empty);
 
         Func<Task> act = async () => await compactor.CompactAsync(session.Session, new CompactionOptions
@@ -293,9 +319,12 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         });
 
         await act.ShouldNotThrowAsync();
-        session.GetHistorySnapshot().Count().ShouldBe(3);
-        session.GetHistorySnapshot().Skip(1).Select(entry => entry.Content)
-            .ShouldBe(new[] { "recent-user", "recent-assistant" }, ignoreOrder: false);
+
+        // Bug 1 fix: history must be completely unchanged when LLM returns empty summary
+        session.GetHistorySnapshot().Count().ShouldBe(originalCount,
+            "history must not be modified when LLM returns empty summary");
+        session.GetHistorySnapshot().Select(e => e.Content).ToList()
+            .ShouldBe(originalContents, "no entries should be lost when compaction is aborted");
     }
 
     [Fact]
@@ -340,6 +369,11 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
 
         Func<Task> act = async () => await Task.WhenAll(compactTask, addTask);
         await act.ShouldNotThrowAsync();
+
+        // Apply compaction result if succeeded (caller responsibility after Bug 4 fix)
+        var result = await compactTask;
+        if (result.Succeeded && result.CompactedHistory is not null)
+            session.ReplaceHistory(result.CompactedHistory);
 
         var history = session.GetHistorySnapshot();
         foreach (var entry in history)
