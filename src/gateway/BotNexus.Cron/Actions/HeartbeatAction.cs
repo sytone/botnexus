@@ -4,6 +4,7 @@ using BotNexus.Gateway.Abstractions.Triggers;
 using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using System.Text.RegularExpressions;
 
 namespace BotNexus.Cron.Actions;
 
@@ -11,9 +12,7 @@ namespace BotNexus.Cron.Actions;
 
 /// <summary>
 /// Dedicated cron action for system heartbeat jobs (actionType = "heartbeat").
-/// Handles quiet-hours gating and heartbeat-specific trigger routing.
-/// The quiet-hours check that was previously embedded as a heuristic inside
-/// <see cref="AgentPromptAction"/> now lives exclusively here.
+/// Handles quiet-hours gating, HEARTBEAT.md emptiness pre-check, and heartbeat-specific trigger routing.
 /// </summary>
 public sealed class HeartbeatAction : ICronAction
 {
@@ -29,17 +28,32 @@ public sealed class HeartbeatAction : ICronAction
         if (string.IsNullOrWhiteSpace(agentId))
             throw new InvalidOperationException("Heartbeat cron job must define an agent id.");
 
+        var logger = context.Services.GetService<ILogger<HeartbeatAction>>();
         var registry = context.Services.GetService<IAgentRegistry>();
         var descriptor = registry?.Get(AgentId.From(agentId));
 
+        // Pre-flight: quiet hours
         var quietHours = descriptor?.Heartbeat?.QuietHours;
         var timezoneFallback = descriptor?.Soul?.Timezone ?? "UTC";
         if (quietHours is { Enabled: true }
             && IsInQuietHours(quietHours, quietHours.Timezone ?? timezoneFallback))
         {
-            context.Services.GetService<ILogger<HeartbeatAction>>()?.LogDebug(
-                "Skipping heartbeat for agent '{AgentId}' — quiet hours active.", agentId);
+            logger?.LogDebug("Skipping heartbeat for agent '{AgentId}' — quiet hours active.", agentId);
             return;
+        }
+
+        // Pre-flight: HEARTBEAT.md emptiness check
+        var workspaceManager = context.Services.GetService<IAgentWorkspaceManager>();
+        if (workspaceManager is not null)
+        {
+            var heartbeatContent = await ReadHeartbeatFileAsync(workspaceManager, agentId, cancellationToken);
+            if (IsEffectivelyEmpty(heartbeatContent))
+            {
+                logger?.LogDebug(
+                    "Skipping heartbeat for agent '{AgentId}' — HEARTBEAT.md is absent or effectively empty.",
+                    agentId);
+                return;
+            }
         }
 
         var prompt = context.Job.Message;
@@ -65,6 +79,66 @@ public sealed class HeartbeatAction : ICronAction
     }
 
     /// <summary>
+    /// Reads the contents of HEARTBEAT.md from the agent's workspace.
+    /// Returns null if the file does not exist or the workspace manager cannot locate the file.
+    /// </summary>
+    public static async Task<string?> ReadHeartbeatFileAsync(
+        IAgentWorkspaceManager workspaceManager,
+        string agentId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var workspacePath = workspaceManager.GetWorkspacePath(agentId);
+            var heartbeatPath = Path.Combine(workspacePath, "HEARTBEAT.md");
+            if (!File.Exists(heartbeatPath))
+                return null;
+
+            return await File.ReadAllTextAsync(heartbeatPath, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // If we can't read the file, treat it as present (run the heartbeat — safer to fire than skip)
+            return "unreadable";
+        }
+    }
+
+    /// <summary>
+    /// Returns true when the HEARTBEAT.md content has no actionable tasks.
+    /// A file is considered effectively empty when it is null/whitespace or contains only:
+    /// <list type="bullet">
+    ///   <item>Blank lines</item>
+    ///   <item>Markdown headings (lines starting with #)</item>
+    ///   <item>Horizontal rules (--- or ***)</item>
+    ///   <item>Empty or unchecked checkboxes (- [ ] ...)</item>
+    ///   <item>HTML/markdown comments (&lt;!-- ... --&gt;)</item>
+    /// </list>
+    /// </summary>
+    public static bool IsEffectivelyEmpty(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+            return true;
+
+        // Strip HTML/markdown comments
+        var stripped = Regex.Replace(content, @"<!--.*?-->", string.Empty, RegexOptions.Singleline);
+
+        foreach (var rawLine in stripped.Split('\n'))
+        {
+            var line = rawLine.Trim();
+
+            if (line.Length == 0) continue;                              // blank
+            if (line.StartsWith('#')) continue;                          // heading
+            if (Regex.IsMatch(line, @"^[-*_]{3}$")) continue;          // horizontal rule
+            if (Regex.IsMatch(line, @"^-\s*\[\s*\]\s*$")) continue;     // empty/blank checkbox (no task text)
+
+            // Any other non-trivial line = has content
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Resolves the best available trigger for a heartbeat run.
     /// Priority: HeartbeatTrigger > SoulTrigger (soul agents) > CronTrigger.
     /// </summary>
@@ -72,12 +146,10 @@ public sealed class HeartbeatAction : ICronAction
     {
         var all = services.GetServices<IInternalTrigger>().ToList();
 
-        // First choice: dedicated heartbeat trigger
         var heartbeatTrigger = all.FirstOrDefault(t => t.Type.Equals(TriggerType.Heartbeat));
         if (heartbeatTrigger is not null)
             return heartbeatTrigger;
 
-        // Second choice: soul trigger for soul-enabled agents (preserves prior routing behaviour)
         if (descriptor?.Soul?.Enabled == true)
         {
             var soulTrigger = all.FirstOrDefault(t => t.Type.Equals(TriggerType.Soul));
@@ -85,7 +157,6 @@ public sealed class HeartbeatAction : ICronAction
                 return soulTrigger;
         }
 
-        // Fallback: standard cron trigger
         return all.FirstOrDefault(t => t.Type.Equals(TriggerType.Cron))
             ?? throw new InvalidOperationException(
                 "No suitable internal trigger found for heartbeat action (heartbeat, soul, or cron).");
@@ -101,7 +172,6 @@ public sealed class HeartbeatAction : ICronAction
             !TimeSpan.TryParse(config.End, out var end))
             return false;
 
-        // Overnight range e.g. 23:00–07:00
         if (start > end)
             return currentTime >= start || currentTime < end;
 
