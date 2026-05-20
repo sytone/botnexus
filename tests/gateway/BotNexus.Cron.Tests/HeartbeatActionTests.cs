@@ -259,6 +259,154 @@ public sealed class HeartbeatActionTests
     }
 
     // -----------------------------------------------------------------
+    // Phase 4: HEARTBEAT.md pre-check — IsEffectivelyEmpty
+    // -----------------------------------------------------------------
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("\n\n\n")]
+    public void IsEffectivelyEmpty_NullOrWhitespace_ReturnsTrue(string? content)
+        => HeartbeatAction.IsEffectivelyEmpty(content).ShouldBeTrue();
+
+    [Theory]
+    [InlineData("# HEARTBEAT.md")]
+    [InlineData("# Tasks\n## Pending")]
+    [InlineData("---")]
+    [InlineData("***")]
+    [InlineData("---\n# Heading\n---")]
+    public void IsEffectivelyEmpty_OnlyHeadingsAndRules_ReturnsTrue(string content)
+        => HeartbeatAction.IsEffectivelyEmpty(content).ShouldBeTrue();
+
+    [Theory]
+    [InlineData("- [ ]")]
+    [InlineData("- [ ] ")]
+    [InlineData("- [ ] \n- [ ] ")]
+    [InlineData("# Tasks\n- [ ]\n- [ ] ")]
+    public void IsEffectivelyEmpty_OnlyEmptyCheckboxes_ReturnsTrue(string content)
+        => HeartbeatAction.IsEffectivelyEmpty(content).ShouldBeTrue();
+
+    [Fact]
+    public void IsEffectivelyEmpty_HtmlCommentsOnly_ReturnsTrue()
+        => HeartbeatAction.IsEffectivelyEmpty("<!-- pending tasks go here -->\n# HEARTBEAT.md").ShouldBeTrue();
+
+    [Fact]
+    public void IsEffectivelyEmpty_DefaultStubContent_ReturnsTrue()
+        => HeartbeatAction.IsEffectivelyEmpty("# HEARTBEAT.md\n\n_No pending tasks._").ShouldBeFalse();
+
+    [Theory]
+    [InlineData("- [ ] Deploy the thing")]
+    [InlineData("- [x] Already done")]
+    [InlineData("# Tasks\n- [ ] Something pending")]
+    [InlineData("Run the migration script")]
+    [InlineData("_No pending tasks._")]
+    public void IsEffectivelyEmpty_WithContent_ReturnsFalse(string content)
+        => HeartbeatAction.IsEffectivelyEmpty(content).ShouldBeFalse();
+
+    [Fact]
+    public void IsEffectivelyEmpty_CheckedCheckbox_ReturnsFalse()
+        => HeartbeatAction.IsEffectivelyEmpty("- [x] Done task").ShouldBeFalse();
+
+    [Fact]
+    public void IsEffectivelyEmpty_MixedEmptyAndFilledCheckboxes_ReturnsFalse()
+        => HeartbeatAction.IsEffectivelyEmpty("- [ ] \n- [x] Done\n- [ ]").ShouldBeFalse();
+
+    // -----------------------------------------------------------------
+    // Phase 4: HEARTBEAT.md pre-check — ExecuteAsync integration
+    // -----------------------------------------------------------------
+
+    [Fact]
+    public async Task ExecuteAsync_EmptyHeartbeatFile_SkipsExecution()
+    {
+        var action = new HeartbeatAction();
+        var trigger = new Mock<IInternalTrigger>();
+        var registry = new Mock<IAgentRegistry>();
+        var workspace = new Mock<IAgentWorkspaceManager>();
+
+        trigger.SetupGet(v => v.Type).Returns(TriggerType.Heartbeat);
+        registry.Setup(v => v.Get(AgentId.From("agent-a"))).Returns((AgentDescriptor?)null);
+        workspace.Setup(v => v.GetWorkspacePath("agent-a"))
+            .Returns(Path.Combine(Path.GetTempPath(), "botnexus-test-nonexistent-" + Guid.NewGuid()));
+
+        var services = new ServiceCollection()
+            .AddSingleton(registry.Object)
+            .AddSingleton<IInternalTrigger>(trigger.Object)
+            .AddSingleton(workspace.Object)
+            .BuildServiceProvider();
+        var context = CreateContext(services);
+
+        await action.ExecuteAsync(context);
+
+        // HEARTBEAT.md doesn't exist in the temp path — should skip
+        trigger.Verify(v => v.CreateSessionAsync(
+            It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_NoWorkspaceManager_ProceedsNormally()
+    {
+        // When IAgentWorkspaceManager is not registered, the pre-check is skipped entirely
+        var action = new HeartbeatAction();
+        var trigger = new Mock<IInternalTrigger>();
+        var registry = new Mock<IAgentRegistry>();
+        var sessionId = SessionId.From("heartbeat:agent-a:20260101000000:nomanager");
+
+        trigger.SetupGet(v => v.Type).Returns(TriggerType.Heartbeat);
+        trigger.Setup(v => v.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()))
+            .ReturnsAsync(sessionId);
+        registry.Setup(v => v.Get(AgentId.From("agent-a"))).Returns((AgentDescriptor?)null);
+
+        var services = new ServiceCollection()
+            .AddSingleton(registry.Object)
+            .AddSingleton<IInternalTrigger>(trigger.Object)
+            // no IAgentWorkspaceManager registered
+            .BuildServiceProvider();
+        var context = CreateContext(services);
+
+        await action.ExecuteAsync(context);
+
+        trigger.Verify(v => v.CreateSessionAsync(
+            It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ReadHeartbeatFileAsync_MissingFile_ReturnsNull()
+    {
+        var workspace = new Mock<IAgentWorkspaceManager>();
+        workspace.Setup(v => v.GetWorkspacePath("agent-a"))
+            .Returns(Path.Combine(Path.GetTempPath(), "botnexus-test-nonexistent-" + Guid.NewGuid()));
+
+        var result = await HeartbeatAction.ReadHeartbeatFileAsync(workspace.Object, "agent-a", CancellationToken.None);
+
+        result.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ReadHeartbeatFileAsync_ExistingFile_ReturnsContent()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-test-" + Guid.NewGuid());
+        Directory.CreateDirectory(tempDir);
+        var heartbeatPath = Path.Combine(tempDir, "HEARTBEAT.md");
+        await File.WriteAllTextAsync(heartbeatPath, "- [ ] Deploy the thing");
+
+        var workspace = new Mock<IAgentWorkspaceManager>();
+        workspace.Setup(v => v.GetWorkspacePath("agent-a")).Returns(tempDir);
+
+        try
+        {
+            var result = await HeartbeatAction.ReadHeartbeatFileAsync(workspace.Object, "agent-a", CancellationToken.None);
+            result.ShouldBe("- [ ] Deploy the thing");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    // -----------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------
 
