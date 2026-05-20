@@ -18,7 +18,7 @@ public sealed class CronToolTests
         store.Setup(value => value.ListAsync(null, It.IsAny<CancellationToken>()))
             .ReturnsAsync([
                 CreateJob("job-1", createdBy: "agent-a"),
-                CreateJob("job-2", createdBy: "agent-b")
+                CreateJobWithTarget("job-2", createdBy: "agent-b", agentId: "agent-b")
             ]);
         var tool = new CronTool(store.Object, scheduler, "agent-a");
 
@@ -150,7 +150,7 @@ public sealed class CronToolTests
         var store = new Mock<ICronStore>();
         var scheduler = CreateScheduler();
         store.Setup(value => value.GetAsync("job-1", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateJob("job-1", createdBy: "other-agent"));
+            .ReturnsAsync(CreateJobWithTarget("job-1", createdBy: "other-agent", agentId: "other-agent"));
         var tool = new CronTool(store.Object, scheduler, "agent-a");
 
         var act = () => tool.ExecuteAsync("call-1", new Dictionary<string, object?>
@@ -370,6 +370,147 @@ public sealed class CronToolTests
         saved!.Model.ShouldBe("openai/gpt-4.1");
     }
 
+
+    // -- Issue #342: target-agent visibility tests --------------------------
+
+    [Fact]
+    public async Task ExecuteAsync_List_IncludesJobsTargetingCallingAgent_EvenWhenCreatedByOther()
+    {
+        // Agent farnsworth targets a job created by nova -- farnsworth should see it.
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        store.Setup(s => s.ListAsync(null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                CreateJobWithTarget("job-1", createdBy: "nova", agentId: "farnsworth"),
+                CreateJobWithTarget("job-2", createdBy: "other-agent", agentId: "other-agent")
+            ]);
+        var tool = new CronTool(store.Object, scheduler, "farnsworth");
+
+        var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?> { ["action"] = "list" });
+        var jobs = JsonSerializer.Deserialize<List<CronJobDto>>(ReadText(result), JsonOptions);
+
+        jobs.ShouldNotBeNull();
+        jobs!.ShouldHaveSingleItem().Id.ShouldBe("job-1");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_List_DoesNotIncludeJobsNeitherCreatedByNorTargetingCallingAgent()
+    {
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        store.Setup(s => s.ListAsync(null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                CreateJobWithTarget("job-1", createdBy: "nova", agentId: "nova"),
+                CreateJobWithTarget("job-2", createdBy: "other", agentId: "other")
+            ]);
+        var tool = new CronTool(store.Object, scheduler, "farnsworth");
+
+        var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?> { ["action"] = "list" });
+        var jobs = JsonSerializer.Deserialize<List<CronJobDto>>(ReadText(result), JsonOptions);
+
+        jobs.ShouldNotBeNull();
+        jobs!.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Delete_JobTargetingCallingAgent_CreatedByOther_Succeeds()
+    {
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        store.Setup(s => s.GetAsync("job-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateJobWithTarget("job-1", createdBy: "nova", agentId: "farnsworth"));
+        store.Setup(s => s.DeleteAsync("job-1", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var tool = new CronTool(store.Object, scheduler, "farnsworth");
+
+        var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "delete",
+            ["jobId"] = "job-1"
+        });
+
+        ReadText(result).ShouldContain("Deleted cron job 'job-1'");
+        store.Verify(s => s.DeleteAsync("job-1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Delete_JobNeitherCreatedByNorTargetingCallingAgent_Denied()
+    {
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        store.Setup(s => s.GetAsync("job-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateJobWithTarget("job-1", createdBy: "nova", agentId: "nova"));
+        var tool = new CronTool(store.Object, scheduler, "farnsworth");
+
+        var act = () => tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "delete",
+            ["jobId"] = "job-1"
+        });
+
+        await act.ShouldThrowAsync<UnauthorizedAccessException>();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Update_JobTargetingCallingAgent_CreatedByOther_Succeeds()
+    {
+        var store = new Mock<ICronStore>();
+        var scheduler = CreateScheduler();
+        var existingJob = CreateJobWithTarget("job-1", createdBy: "nova", agentId: "farnsworth");
+        store.Setup(s => s.GetAsync("job-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingJob);
+        CronJob? saved = null;
+        store.Setup(s => s.UpdateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
+            .Callback<CronJob, CancellationToken>((job, _) => saved = job)
+            .ReturnsAsync((CronJob job, CancellationToken _) => job);
+        var tool = new CronTool(store.Object, scheduler, "farnsworth");
+
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "update",
+            ["jobId"] = "job-1",
+            ["name"] = "Updated name"
+        });
+
+        saved.ShouldNotBeNull();
+        saved!.Name.ShouldBe("Updated name");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Run_JobTargetingCallingAgent_CreatedByOther_Succeeds()
+    {
+        var store = new Mock<ICronStore>();
+        var existingJob = CreateJobWithTarget("job-1", createdBy: "nova", agentId: "farnsworth");
+        store.Setup(s => s.GetAsync("job-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingJob);
+        store.Setup(s => s.UpdateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CronJob job, CancellationToken _) => job);
+
+        var cronStore2 = store.Object;
+        var scopeFactory = new ServiceCollection()
+            .BuildServiceProvider()
+            .GetRequiredService<IServiceScopeFactory>();
+        var options = new StaticOptionsMonitor<CronOptions>(new CronOptions());
+        var scheduler = new CronScheduler(
+            cronStore2,
+            Array.Empty<ICronAction>(),
+            scopeFactory,
+            options,
+            NullLogger<CronScheduler>.Instance);
+
+        var tool = new CronTool(store.Object, scheduler, "farnsworth");
+
+        // run is permitted for target agent even when created by another
+        var act = () => tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        {
+            ["action"] = "run",
+            ["jobId"] = "job-1"
+        });
+
+        // Should not throw UnauthorizedAccessException (may throw other scheduling errors)
+        var ex = await Record.ExceptionAsync(act);
+        ex.ShouldNotBeOfType<UnauthorizedAccessException>();
+    }
     private static CronScheduler CreateScheduler()
     {
         var store = new Mock<ICronStore>().Object;
@@ -385,6 +526,20 @@ public sealed class CronToolTests
             NullLogger<CronScheduler>.Instance);
     }
 
+
+    private static CronJob CreateJobWithTarget(string id, string createdBy, string agentId)
+        => new()
+        {
+            Id = id,
+            Name = $"Job {id}",
+            Schedule = "*/1 * * * *",
+            ActionType = "agent-prompt",
+            AgentId = agentId,
+            Message = "Hello",
+            Enabled = true,
+            CreatedBy = createdBy,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
     private static CronJob CreateJob(string id, string createdBy)
         => new()
         {
