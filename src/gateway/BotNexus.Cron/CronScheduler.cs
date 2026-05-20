@@ -132,12 +132,26 @@ public sealed class CronScheduler(
             // concurrent changes (schedule updates, NextRunAt corrections, etc.)
             // that occurred while the action was executing.
             var latest = await _cronStore.GetAsync(job.Id, ct).ConfigureAwait(false) ?? job;
+
+            // Persist the resolved conversation ID back to the job record so subsequent
+            // runs skip the conversation lookup and use the fast path directly.
+            var resolvedConversationId = context.ConversationId;
+            var needsConversationPinback = !string.IsNullOrWhiteSpace(resolvedConversationId)
+                && (string.IsNullOrWhiteSpace(latest.ConversationId)
+                    || latest.ConversationId != resolvedConversationId);
+
             await _cronStore.UpdateAsync(latest with
             {
                 LastRunAt = triggeredAt,
                 LastRunStatus = "ok",
-                LastRunError = null
+                LastRunError = null,
+                ConversationId = needsConversationPinback ? resolvedConversationId : latest.ConversationId
             }, ct).ConfigureAwait(false);
+
+            if (needsConversationPinback)
+                _logger.LogInformation(
+                    "Cron job pinned conversation for future runs. JobName: {JobName}, JobId: {JobId}, ConversationId: {ConversationId}",
+                    job.Name, job.Id, resolvedConversationId);
             return run with { Status = "ok", CompletedAt = DateTimeOffset.UtcNow, SessionId = context.SessionId };
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)

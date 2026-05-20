@@ -41,11 +41,11 @@ public sealed class CronTriggerTests
         var sessionId = await trigger.CreateSessionAsync(
             AgentId.From("agent-a"),
             "Scheduled task",
-            request: new InternalTriggerRequest { CronJobId = "job-1", ModelOverride = "openai/gpt-4.1" });
+            request: new InternalTriggerRequest { CronJobId = "job-1", JobName = "Scheduled Maintenance", ModelOverride = "openai/gpt-4.1" });
 
-        // Assert: conversation created with stable per-job title
+        // Assert: conversation created with human-readable job name as title
         createdConversation.ShouldNotBeNull();
-        createdConversation!.Title.ShouldBe("cron:job-1");
+        createdConversation!.Title.ShouldBe("Scheduled Maintenance");
         createdConversation.AgentId.ShouldBe(AgentId.From("agent-a"));
         createdConversation.IsDefault.ShouldBeFalse();
         conversationStore.Verify(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Once);
@@ -72,7 +72,7 @@ public sealed class CronTriggerTests
         {
             ConversationId = ConversationId.From("conv-job-1"),
             AgentId = AgentId.From("agent-a"),
-            Title = "cron:job-1",
+            Title = "Scheduled Maintenance",
             IsDefault = false,
             Status = ConversationStatus.Active,
             CreatedAt = DateTimeOffset.UtcNow.AddDays(-1),
@@ -91,7 +91,7 @@ public sealed class CronTriggerTests
         var sessionId = await trigger.CreateSessionAsync(
             AgentId.From("agent-a"),
             "Scheduled task run 2",
-            request: new InternalTriggerRequest { CronJobId = "job-1" });
+            request: new InternalTriggerRequest { CronJobId = "job-1", JobName = "Scheduled Maintenance" });
 
         // Assert: no new conversation created — existing one reused
         conversationStore.Verify(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -151,7 +151,7 @@ public sealed class CronTriggerTests
         {
             ConversationId = ConversationId.From("conv-job"),
             AgentId = AgentId.From("agent-a"),
-            Title = "cron:job-1",
+            Title = "Scheduled Maintenance",
             IsDefault = false,
             Status = ConversationStatus.Active,
             CreatedAt = DateTimeOffset.UtcNow,
@@ -181,9 +181,9 @@ public sealed class CronTriggerTests
         var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
 
         var first = await trigger.CreateSessionAsync(AgentId.From("agent-a"), "Run 1",
-            request: new InternalTriggerRequest { CronJobId = "job-1" });
+            request: new InternalTriggerRequest { CronJobId = "job-1", JobName = "Scheduled Maintenance" });
         var second = await trigger.CreateSessionAsync(AgentId.From("agent-a"), "Run 2",
-            request: new InternalTriggerRequest { CronJobId = "job-1" });
+            request: new InternalTriggerRequest { CronJobId = "job-1", JobName = "Scheduled Maintenance" });
 
         // Different session IDs per run
         first.ShouldNotBe(second);
@@ -201,7 +201,7 @@ public sealed class CronTriggerTests
         {
             ConversationId = ConversationId.From("cronconv:agent-a:job-1"),
             AgentId = AgentId.From("agent-a"),
-            Title = "cron:job-1",
+            Title = "Scheduled Maintenance",
             IsDefault = false,
             Status = ConversationStatus.Active,
             CreatedAt = DateTimeOffset.UtcNow,
@@ -225,7 +225,7 @@ public sealed class CronTriggerTests
         var sessionId = await trigger.CreateSessionAsync(
             AgentId.From("agent-a"),
             "Scheduled task",
-            request: new InternalTriggerRequest { CronJobId = "job-1" });
+            request: new InternalTriggerRequest { CronJobId = "job-1", JobName = "Scheduled Maintenance" });
 
         sessionId.Value.ShouldStartWith("cron:job-1:");
         conversationStore.Verify(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Once);
@@ -238,7 +238,7 @@ public sealed class CronTriggerTests
         {
             ConversationId = ConversationId.From("conv-job-1-new"),
             AgentId = AgentId.From("agent-a"),
-            Title = "cron:job-1",
+            Title = "Scheduled Maintenance",
             IsDefault = false,
             Status = ConversationStatus.Active,
             CreatedAt = DateTimeOffset.UtcNow.AddHours(-2),
@@ -249,7 +249,7 @@ public sealed class CronTriggerTests
         {
             ConversationId = ConversationId.From("conv-job-1-old"),
             AgentId = AgentId.From("agent-a"),
-            Title = "cron:job-1",
+            Title = "Scheduled Maintenance",
             IsDefault = false,
             Status = ConversationStatus.Active,
             CreatedAt = DateTimeOffset.UtcNow.AddDays(-1),
@@ -280,7 +280,7 @@ public sealed class CronTriggerTests
         await trigger.CreateSessionAsync(
             AgentId.From("agent-a"),
             "Scheduled task",
-            request: new InternalTriggerRequest { CronJobId = "job-1" });
+            request: new InternalTriggerRequest { CronJobId = "job-1", JobName = "Scheduled Maintenance" });
 
         conversationStore.Verify(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Never);
         conversationStore.Verify(s => s.ArchiveAsync(duplicate.ConversationId, It.IsAny<CancellationToken>()), Times.Once);
@@ -290,6 +290,93 @@ public sealed class CronTriggerTests
             It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
+
+    [Fact]
+    public async Task CreateSessionAsync_WithJobName_UsesJobNameAsConversationTitle()
+    {
+        // Arrange: no existing conversations
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        Conversation? createdConversation = null;
+
+        conversationStore
+            .Setup(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Conversation>());
+        conversationStore
+            .Setup(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
+            .Callback<Conversation, CancellationToken>((c, _) => createdConversation = c)
+            .Returns<Conversation, CancellationToken>((c, _) => Task.FromResult(c));
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        // Act
+        await trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "Run task",
+            request: new InternalTriggerRequest { CronJobId = "job-abc", JobName = "Autonomous Issue and PR Maintenance" });
+
+        // Assert: conversation title is human-readable job name, not the job-id slug
+        createdConversation.ShouldNotBeNull();
+        createdConversation!.Title.ShouldBe("Autonomous Issue and PR Maintenance");
+    }
+
+    [Fact]
+    public async Task CreateSessionAsync_WithoutJobName_FallsBackToJobIdSlugTitle()
+    {
+        // Arrange: no existing conversations, no job name provided
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        Conversation? createdConversation = null;
+
+        conversationStore
+            .Setup(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Conversation>());
+        conversationStore
+            .Setup(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
+            .Callback<Conversation, CancellationToken>((c, _) => createdConversation = c)
+            .Returns<Conversation, CancellationToken>((c, _) => Task.FromResult(c));
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        // Act
+        await trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "Run task",
+            request: new InternalTriggerRequest { CronJobId = "job-1" });
+
+        // Assert: falls back to slug-based title
+        createdConversation.ShouldNotBeNull();
+        createdConversation!.Title.ShouldBe("cron:job-1");
+    }
+
+    [Fact]
+    public async Task CreateSessionAsync_AfterConversationResolved_SetsResolvedConversationIdOnRequest()
+    {
+        // Arrange: no existing conversations
+        var (sessionStore, conversationStore, supervisor) = BuildStandardMocks();
+        Conversation? createdConversation = null;
+
+        conversationStore
+            .Setup(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Conversation>());
+        conversationStore
+            .Setup(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))
+            .Callback<Conversation, CancellationToken>((c, _) => createdConversation = c)
+            .Returns<Conversation, CancellationToken>((c, _) => Task.FromResult(c));
+
+        var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
+
+        var request = new InternalTriggerRequest { CronJobId = "job-1", JobName = "My Job" };
+
+        // Act
+        await trigger.CreateSessionAsync(
+            AgentId.From("agent-a"),
+            "Run task",
+            request: request);
+
+        // Assert: ResolvedConversationId is set so the scheduler can pin it back to the job
+        request.ResolvedConversationId.ShouldNotBeNullOrWhiteSpace();
+        createdConversation.ShouldNotBeNull();
+        request.ResolvedConversationId.ShouldBe(createdConversation!.ConversationId.Value);
+    }
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private static (Mock<ISessionStore>, Mock<IConversationStore>, Mock<IAgentSupervisor>) BuildStandardMocks()
