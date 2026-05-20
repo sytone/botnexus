@@ -83,6 +83,8 @@ public static class StreamingSessionHelper
                         streamedContent.Clear();
                     }
                     session.AddEntries(turnSnapshot);
+                    // Remove crash sentinel before flushing partial turn state.
+                    session.RemoveCrashSentinels();
                     try
                     {
                         await sessionStore.SaveAsync(session, cancellationToken);
@@ -107,6 +109,8 @@ public static class StreamingSessionHelper
         session.AddEntries(streamedHistory);
         if (streamedContent.Length > 0)
             session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = streamedContent.ToString() });
+        // Remove crash sentinel on clean completion (#363).
+        session.RemoveCrashSentinels();
         await sessionStore.SaveAsync(session, cancellationToken);
         if (lifecycleEvents is not null)
         {

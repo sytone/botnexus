@@ -85,7 +85,8 @@ public sealed class GatewayHostTests
         session.History.ShouldContain(e => e.Role == MessageRole.Assistant && e.Content == "hello world");
         channel.Verify(c => c.SendStreamDeltaAsync("conv-1", "hello ", It.IsAny<CancellationToken>()), Times.Once);
         channel.Verify(c => c.SendStreamDeltaAsync("conv-1", "world", It.IsAny<CancellationToken>()), Times.Once);
-        sessions.Verify(s => s.SaveAsync(session, It.IsAny<CancellationToken>()), Times.Once);
+        // Write-ahead (user msg + sentinel) + ProcessAndSaveAsync final = at least 3 saves
+        sessions.Verify(s => s.SaveAsync(session, It.IsAny<CancellationToken>()), Times.AtLeast(1));
     }
 
     [Fact]
@@ -191,7 +192,11 @@ public sealed class GatewayHostTests
         await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1"));
 
         activity.Activities.ShouldContain(a => a.Type == GatewayActivityType.Error && a.Message == "boom");
-        sessions.Verify(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()), Times.Never);
+        // Write-ahead saves the user message + crash sentinel before the LLM call (#363),
+        // so SaveAsync is called even when the agent throws.
+        sessions.Verify(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()), Times.AtLeast(1));
+        // Crash sentinel survives in history because the turn did not complete cleanly.
+        session.History.ShouldContain(e => e.IsCrashSentinel, "crash sentinel must remain when agent throws");
     }
 
     [Fact]
@@ -1539,4 +1544,97 @@ public sealed class GatewayHostTests
         savedSession!.Session.ConversationId.ShouldNotBeNull("Session.ConversationId must be stamped after inbound message");
         savedSession.Session.ConversationId!.Value.Value.ShouldBe("c_stamptest1");
     }
+
+    [Fact]
+    public async Task DispatchAsync_PersistsUserMessageBeforeAgentCall()
+    {
+        // Arrange: capture SaveAsync calls to verify user message is persisted before LLM call
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-write-ahead"]);
+
+        var userMessageSavedBeforeLlm = false;
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.AgentId).Returns("agent-write-ahead");
+        handle.SetupGet(h => h.SessionId).Returns("session-wa");
+        handle.Setup(h => h.IsRunning).Returns(false);
+        handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "response" });
+
+        var session = new GatewaySession
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-wa"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-write-ahead")
+        };
+
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetOrCreateAsync(
+            BotNexus.Domain.Primitives.SessionId.From("session-wa"),
+            BotNexus.Domain.Primitives.AgentId.From("agent-write-ahead"),
+            It.IsAny<CancellationToken>())).ReturnsAsync(session);
+
+        // First SaveAsync call should be write-ahead with user message in history
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((s, _) =>
+            {
+                if (!userMessageSavedBeforeLlm && s.History.Any(e => e.Role == MessageRole.User && e.Content == "hello wa"))
+                    userMessageSavedBeforeLlm = true;
+            })
+            .Returns(Task.CompletedTask);
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(
+            BotNexus.Domain.Primitives.AgentId.From("agent-write-ahead"),
+            BotNexus.Domain.Primitives.SessionId.From("session-wa"),
+            It.IsAny<CancellationToken>())).ReturnsAsync(handle.Object);
+
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        await using var host = CreateHost(supervisor.Object, router.Object, sessions.Object, new RecordingActivityBroadcaster(), CreateChannelManager(channel.Object));
+
+        // Act
+        await host.DispatchAsync(CreateMessage("hello wa", sessionId: "session-wa"));
+
+        // Assert: user message was saved before PromptAsync was called
+        userMessageSavedBeforeLlm.ShouldBeTrue("user message must be persisted to session store before the LLM call (#363)");
+    }
+
+    [Fact]
+    public async Task DispatchAsync_RemovesCrashSentinelFromHistoryOnSuccess()
+    {
+        // Arrange
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-sentinel"]);
+
+        var handle = CreatePromptHandle("agent-sentinel", "session-sentinel", "response");
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(
+            BotNexus.Domain.Primitives.AgentId.From("agent-sentinel"),
+            BotNexus.Domain.Primitives.SessionId.From("session-sentinel"),
+            It.IsAny<CancellationToken>())).ReturnsAsync(handle.Object);
+
+        var session = new GatewaySession
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-sentinel"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-sentinel")
+        };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetOrCreateAsync(
+            BotNexus.Domain.Primitives.SessionId.From("session-sentinel"),
+            BotNexus.Domain.Primitives.AgentId.From("agent-sentinel"),
+            It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        await using var host = CreateHost(supervisor.Object, router.Object, sessions.Object, new RecordingActivityBroadcaster(), CreateChannelManager(channel.Object));
+
+        // Act
+        await host.DispatchAsync(CreateMessage("hello sentinel", sessionId: "session-sentinel"));
+
+        // Assert: no crash sentinel entries remain in history after clean completion
+        session.History.ShouldNotContain(e => e.IsCrashSentinel,
+            "crash sentinel must be removed from session history on clean turn completion (#363)");
+    }
+
 }
