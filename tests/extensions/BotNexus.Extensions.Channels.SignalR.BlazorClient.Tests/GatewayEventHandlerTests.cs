@@ -479,4 +479,54 @@ public sealed class GatewayEventHandlerTests
         // No em dash separator when task is empty
         Assert.DoesNotContain(" \u2014 ", msg.Content, StringComparison.Ordinal);
     }
+
+    // -- Fix #314 - Agent switch routes to correct conversation --
+
+    [Fact]
+    public void HandleMessageStart_AfterAgentSwitch_RoutesToNewActiveConversation()
+    {
+        // Arrange: agent has two conversations, conv-2 is newly active but has no ActiveSessionId yet
+        var agent = _store.GetAgent("agent-1")!;
+        agent.Conversations["conv-2"] = new ConversationState
+        {
+            ConversationId = "conv-2",
+            Title = "New Conversation",
+            ActiveSessionId = null   // not yet set before REST refresh
+        };
+        _store.SetActiveConversation("agent-1", "conv-2");
+        // Simulate RegisterSession being called after SendMessageAsync returns sess-2
+        _store.RegisterSession("agent-1", "sess-2");
+
+        // Act: streaming event arrives for sess-2 before REST refresh completes
+        _handler.HandleMessageStart(new AgentStreamEvent { SessionId = "sess-2" });
+
+        // Assert: streaming state is on conv-2, NOT on conv-1
+        var conv2 = agent.Conversations["conv-2"];
+        Assert.True(conv2.StreamState.IsStreaming, "conv-2 should be streaming");
+        var conv1 = agent.Conversations["conv-1"];
+        Assert.False(conv1.StreamState.IsStreaming, "conv-1 should NOT be streaming after agent switch");
+    }
+
+    [Fact]
+    public void RegisterSession_ImmediatelySetsActiveConversationSessionId()
+    {
+        // When RegisterSession is called after SendMessageAsync, the active conversation's
+        // ActiveSessionId should be updated immediately so TryResolveConversationBySession works
+        // without waiting for the async REST refresh (race condition fix for #314).
+        var agent = _store.GetAgent("agent-1")!;
+        agent.Conversations["conv-2"] = new ConversationState
+        {
+            ConversationId = "conv-2",
+            Title = "New Conversation",
+            ActiveSessionId = null
+        };
+        _store.SetActiveConversation("agent-1", "conv-2");
+
+        _store.RegisterSession("agent-1", "sess-2");
+
+        // TryResolveConversationBySession should now directly resolve conv-2 via ActiveSessionId
+        var found = _store.TryResolveConversationBySession("agent-1", "sess-2", out var resolvedConvId);
+        Assert.True(found, "session should be directly resolved to conv-2 after RegisterSession");
+        Assert.Equal("conv-2", resolvedConvId);
+    }
 }

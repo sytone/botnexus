@@ -342,8 +342,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     new KeyValuePair<string, object?>("botnexus.channel.type", message.ChannelType));
             }
             session.ChannelType ??= message.ChannelType;
-            // Stamp ConversationId from dispatch resolution when not already set on the session object.
-            if (resolution is not null && session.Session.ConversationId is null)
+            // Update session ConversationId from dispatch resolution.
+            // Always update (not just when null) so that switching conversations on the same
+            // session correctly routes messages to the new conversation (#314).
+            if (resolution is not null && session.Session.ConversationId != resolution.ConversationId)
                 session.Session.ConversationId = resolution.ConversationId;
             session.CallerId ??= message.SenderId;
             session.SessionType = ResolveSessionType(session, message);
