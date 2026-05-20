@@ -232,7 +232,14 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         if (includeCanvas)
         {
             var canvasNotifiers = _serviceProvider.GetServices<IAgentCanvasNotifier>().ToArray();
-            tools.Add(new CanvasTool(descriptor.AgentId, canvasNotifiers));
+            ConversationId? canvasConversationId = null;
+            var canvasConvStore = _serviceProvider.GetService<IConversationStore>();
+            if (canvasConvStore is not null)
+            {
+                canvasConversationId = await ResolveConversationIdAsync(canvasConvStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            tools.Add(new CanvasTool(descriptor.AgentId, canvasConversationId, canvasNotifiers));
         }
 
         List<object> extensionResourcesToDispose = [];

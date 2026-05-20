@@ -466,7 +466,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _store.NotifyChanged();
     }
 
-    public void HandleCanvasUpdated(string agentId, string html)
+    public void HandleCanvasUpdated(string agentId, string conversationId, string html)
     {
         var agent = string.IsNullOrWhiteSpace(agentId) ? null : _store.GetAgent(agentId);
 

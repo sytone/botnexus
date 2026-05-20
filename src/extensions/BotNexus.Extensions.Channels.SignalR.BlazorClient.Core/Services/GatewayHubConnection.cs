@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.AspNetCore.SignalR.Client;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
@@ -59,7 +59,7 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     public event Action<SteeringFeedbackPayload>? OnSteeringFeedback;
 
     /// <summary>Raised when the current canvas HTML is updated for an agent.</summary>
-    public event Action<string, string>? OnCanvasUpdated;
+    public event Action<string, string, string>? OnCanvasUpdated;
 
     /// <summary>Raised when a conversation is created, updated, or archived on the server.</summary>
     public event Action<ConversationChangedPayload>? OnConversationChanged;
@@ -119,7 +119,7 @@ public sealed class GatewayHubConnection : IAsyncDisposable
         _connection.On<SubAgentEventPayload>("SubAgentFailed", p => OnSubAgentFailed?.Invoke(p));
         _connection.On<SubAgentEventPayload>("SubAgentKilled", p => OnSubAgentKilled?.Invoke(p));
         _connection.On<SteeringFeedbackPayload>("SteeringFeedback", p => OnSteeringFeedback?.Invoke(p));
-        _connection.On<string, string>("CanvasUpdated", (agentId, html) => OnCanvasUpdated?.Invoke(agentId, html));
+        _connection.On<string, string, string>("CanvasUpdated", (agentId, conversationId, html) => OnCanvasUpdated?.Invoke(agentId, conversationId, html));
         _connection.On<AgentsChangedPayload>("AgentsChanged", p => OnAgentsChanged?.Invoke(p));
                 _connection.On<ConversationChangedPayload>("ConversationChanged", p => OnConversationChanged?.Invoke(p));
 
