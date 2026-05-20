@@ -1,4 +1,4 @@
-﻿using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Extensions.Channels.SignalR;
 
@@ -25,5 +25,5 @@ public interface IGatewayHubClient
     Task ConversationChanged(ConversationChangedPayload payload);
 
     Task SteeringFeedback(SteeringFeedbackPayload payload);
-    Task CanvasUpdated(string agentId, string html);
+    Task CanvasUpdated(string agentId, string conversationId, string html);
 }
