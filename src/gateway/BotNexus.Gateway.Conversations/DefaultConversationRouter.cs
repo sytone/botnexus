@@ -16,16 +16,19 @@ public sealed class DefaultConversationRouter : IConversationRouter
 {
     private readonly IConversationStore _conversationStore;
     private readonly ISessionStore _sessionStore;
+    private readonly IConversationChangeNotifier? _changeNotifier;
     private readonly ILogger<DefaultConversationRouter> _logger;
 
     public DefaultConversationRouter(
         IConversationStore conversationStore,
         ISessionStore sessionStore,
-        ILogger<DefaultConversationRouter> logger)
+        ILogger<DefaultConversationRouter> logger,
+        IConversationChangeNotifier? changeNotifier = null)
     {
         _conversationStore = conversationStore;
         _sessionStore = sessionStore;
         _logger = logger;
+        _changeNotifier = changeNotifier;
     }
 
     /// <inheritdoc />
@@ -46,7 +49,7 @@ public sealed class DefaultConversationRouter : IConversationRouter
             if (direct is null)
             {
                 _logger.LogWarning(
-                    "ResolveInbound: explicit conversationId {ConversationId} not found — falling back to binding lookup",
+                    "ResolveInbound: explicit conversationId {ConversationId} not found -- falling back to binding lookup",
                     conversationId);
                 // Fall through to binding lookup below
             }
@@ -65,11 +68,13 @@ public sealed class DefaultConversationRouter : IConversationRouter
                 {
                     direct.UpdatedAt = DateTimeOffset.UtcNow;
                     await _conversationStore.SaveAsync(direct, ct);
+                    await NotifyChangedAsync("updated", agentId, direct.ConversationId, ct);
                 }
                 else if (reactivated)
                 {
                     direct.UpdatedAt = DateTimeOffset.UtcNow;
                     await _conversationStore.SaveAsync(direct, ct);
+                    await NotifyChangedAsync("updated", agentId, direct.ConversationId, ct);
                 }
 
                 return new ConversationRoutingResult(direct, directSessionId, directIsNew);
@@ -88,7 +93,7 @@ public sealed class DefaultConversationRouter : IConversationRouter
         if (conversation is null)
         {
             // Every unique (channelType, channelAddress, threadId) gets its own conversation.
-            // There is no special "default" conversation for addressless channels — an empty
+            // There is no special "default" conversation for addressless channels -- an empty
             // address is a valid stable identity (e.g. a future channel with no external ID).
             var title = threadId is not null
                 ? $"{channelType}:{channelAddress}/{threadId}"
@@ -123,6 +128,7 @@ public sealed class DefaultConversationRouter : IConversationRouter
         {
             conversation.UpdatedAt = DateTimeOffset.UtcNow;
             await _conversationStore.SaveAsync(conversation, ct);
+            await NotifyChangedAsync("updated", agentId, conversation.ConversationId, ct);
         }
 
         // Resolve the originating binding so callers don't need a second lookup into the binding list.
@@ -145,21 +151,21 @@ public sealed class DefaultConversationRouter : IConversationRouter
         var session = await _sessionStore.GetAsync(sessionId, ct);
         if (session is null)
         {
-            _logger.LogDebug("GetOutboundBindings: session {SessionId} not found — returning empty", sessionId);
+            _logger.LogDebug("GetOutboundBindings: session {SessionId} not found -- returning empty", sessionId);
             return [];
         }
 
         var conversationId = session.Session.ConversationId;
         if (conversationId is null)
         {
-            _logger.LogDebug("GetOutboundBindings: session {SessionId} has no ConversationId — returning empty", sessionId);
+            _logger.LogDebug("GetOutboundBindings: session {SessionId} has no ConversationId -- returning empty", sessionId);
             return [];
         }
 
         var conversation = await _conversationStore.GetAsync(conversationId.Value, ct);
         if (conversation is null)
         {
-            _logger.LogDebug("GetOutboundBindings: conversation {ConversationId} not found — returning empty", conversationId);
+            _logger.LogDebug("GetOutboundBindings: conversation {ConversationId} not found -- returning empty", conversationId);
             return [];
         }
 
@@ -277,7 +283,7 @@ public sealed class DefaultConversationRouter : IConversationRouter
             var existingSession = await _sessionStore.GetAsync(conversation.ActiveSessionId.Value, ct);
             if (existingSession is { Status: not SessionStatus.Sealed })
             {
-                // Reuse Active AND Expired sessions — GatewayHost reactivates Expired sessions.
+                // Reuse Active AND Expired sessions -- GatewayHost reactivates Expired sessions.
                 // Only Sealed sessions (explicit reset/archive) should trigger a new session.
                 sessionId = conversation.ActiveSessionId.Value;
                 _logger.LogDebug("Reusing {Status} session {SessionId} for conversation {ConversationId}",
@@ -354,5 +360,17 @@ public sealed class DefaultConversationRouter : IConversationRouter
             archived.ConversationId, agentId, channelType, channelAddress, threadId);
 
         return archived;
+    }
+
+    private Task NotifyChangedAsync(string changeType, AgentId agentId, ConversationId conversationId, CancellationToken ct)
+    {
+        if (_changeNotifier is null)
+            return Task.CompletedTask;
+
+        return _changeNotifier.NotifyConversationChangedAsync(
+            changeType,
+            agentId.Value,
+            conversationId.Value,
+            ct);
     }
 }
