@@ -63,6 +63,9 @@ public sealed class CronScheduler(
         var jobs = await _cronStore.ListAsync(ct: ct).ConfigureAwait(false);
         var now = DateTimeOffset.UtcNow;
 
+        // Phase 1 (sequential): resolve NextRunAt for uninitialised or stale jobs.
+        // These are cheap store-only operations with no agent I/O.
+        var dueJobs = new List<(CronJob Job, CronExpression Expression)>();
         foreach (var job in jobs.Where(j => j.Enabled))
         {
             if (!TryGetSchedule(job, out var expression))
@@ -73,10 +76,7 @@ public sealed class CronScheduler(
 
             if (job.NextRunAt is null)
             {
-                var initialized = job with
-                {
-                    NextRunAt = computedNext
-                };
+                var initialized = job with { NextRunAt = computedNext };
                 await _cronStore.UpdateAsync(initialized, ct).ConfigureAwait(false);
                 continue;
             }
@@ -95,15 +95,26 @@ public sealed class CronScheduler(
             if (job.NextRunAt > now)
                 continue;
 
+            dueJobs.Add((job, expression));
+        }
+
+        if (dueJobs.Count == 0)
+            return;
+
+        // Phase 2 (concurrent): execute all due jobs in parallel so a long-running
+        // agent prompt for one job does not delay other due jobs or user-facing sessions.
+        var runTasks = dueJobs.Select(async entry =>
+        {
+            var (job, expression) = entry;
+            var tz = ResolveTimeZone(job);
             await RunActionAsync(job, CronTriggerType.Scheduled, now, ct).ConfigureAwait(false);
 
             var latest = await _cronStore.GetAsync(job.Id, ct).ConfigureAwait(false) ?? job;
-            var updated = latest with
-            {
-                NextRunAt = expression.GetNextOccurrence(now, tz)
-            };
+            var updated = latest with { NextRunAt = expression.GetNextOccurrence(now, tz) };
             await _cronStore.UpdateAsync(updated, ct).ConfigureAwait(false);
-        }
+        });
+
+        await Task.WhenAll(runTasks).ConfigureAwait(false);
     }
 
     private async Task<CronRun> RunActionAsync(CronJob job, CronTriggerType triggerType, DateTimeOffset triggeredAt, CancellationToken ct)
