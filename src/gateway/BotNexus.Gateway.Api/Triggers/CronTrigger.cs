@@ -69,12 +69,17 @@ public sealed class CronTrigger(
         if (!string.IsNullOrWhiteSpace(request?.ConversationId))
         {
             conversation = await conversations.GetAsync(ConversationId.From(request.ConversationId), ct).ConfigureAwait(false)
-                ?? await GetOrCreateCronConversationAsync(agentId, request.CronJobId, ct).ConfigureAwait(false);
+                ?? await GetOrCreateCronConversationAsync(agentId, request.CronJobId, request.JobName, ct).ConfigureAwait(false);
         }
         else
         {
-            conversation = await GetOrCreateCronConversationAsync(agentId, request?.CronJobId, ct).ConfigureAwait(false);
+            conversation = await GetOrCreateCronConversationAsync(agentId, request?.CronJobId, request?.JobName, ct).ConfigureAwait(false);
         }
+
+        // Write back the resolved conversation ID so the caller (e.g. scheduler) can persist it to the job
+        // record, enabling subsequent runs to skip the lookup entirely.
+        if (request is not null && string.IsNullOrWhiteSpace(request.ResolvedConversationId))
+            request.ResolvedConversationId = conversation.ConversationId.Value;
 
         if (session.Session.ConversationId is null || session.Session.ConversationId != conversation.ConversationId)
             session.Session.ConversationId = conversation.ConversationId;
@@ -111,11 +116,14 @@ public sealed class CronTrigger(
     /// All runs of the same job land in the same conversation.
     /// The conversation is identified by its title "cron:{jobId}" or "cron:unnamed" for jobs without an ID.
     /// </summary>
-    private async Task<Conversation> GetOrCreateCronConversationAsync(AgentId agentId, string? jobId, CancellationToken ct)
+    private async Task<Conversation> GetOrCreateCronConversationAsync(AgentId agentId, string? jobId, string? jobName, CancellationToken ct)
     {
-        var title = string.IsNullOrWhiteSpace(jobId)
-            ? $"cron:{agentId.Value}"
-            : $"cron:{SanitizeSessionIdPart(jobId) ?? agentId.Value}";
+        // Use human-readable job name as title when available; fall back to job-id slug.
+        var title = !string.IsNullOrWhiteSpace(jobName)
+            ? jobName
+            : string.IsNullOrWhiteSpace(jobId)
+                ? $"cron:{agentId.Value}"
+                : $"cron:{SanitizeSessionIdPart(jobId) ?? agentId.Value}";
         var stableConversationId = BuildCronConversationId(agentId, jobId);
 
         // Prefer deterministic lookup by stable conversation id.
