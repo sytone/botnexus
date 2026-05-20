@@ -287,13 +287,16 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         List<AgentMessage>? initialMessages = null;
         if (context.History.Count > 0)
         {
-            // Only inject user and assistant messages from history. Tool-role entries
-            // become orphaned ToolResultMessages (no matching tool_use in the preceding
-            // assistant message) which causes the LLM provider to reject the conversation.
-            // System entries are also excluded — the agent's system prompt is set separately.
+            // Inject compaction summary entries as system messages so the LLM retains
+            // summarised context when the handle is recreated (e.g. after a gateway restart).
+            // Tool-role entries are excluded: they become orphaned ToolResultMessages
+            // (no matching tool_use in the preceding assistant message) which causes
+            // LLM provider rejection. Regular system entries (IsCompactionSummary=false)
+            // are also excluded — the agent's system prompt is set separately.
             initialMessages = context.History
                 .Where(e => e.Role == Domain.Primitives.MessageRole.User
-                         || e.Role == Domain.Primitives.MessageRole.Assistant)
+                         || e.Role == Domain.Primitives.MessageRole.Assistant
+                         || (e.Role == Domain.Primitives.MessageRole.System && e.IsCompactionSummary))
                 .Select(ConvertSessionEntryToAgentMessage)
                 .ToList();
 
