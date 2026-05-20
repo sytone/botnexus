@@ -48,4 +48,16 @@ public sealed record InternalTriggerRequest
     /// When null, the trigger determines the conversation (e.g. per-job stable conversation for cron).
     /// </summary>
     public string? ConversationId { get; init; }
+
+    /// <summary>
+    /// Optional human-readable job name used as the conversation title when the trigger creates a new conversation.
+    /// Provided by the caller (e.g. cron scheduler) so the trigger does not need to perform a separate job lookup.
+    /// </summary>
+    public string? JobName { get; init; }
+
+    /// <summary>
+    /// Written back by the trigger after the conversation for this run has been resolved or created.
+    /// Callers can read this value to persist the conversation ID for fast-path reuse on subsequent runs.
+    /// </summary>
+    public string? ResolvedConversationId { get; set; }
 }

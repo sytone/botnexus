@@ -1,10 +1,12 @@
 using System.Text.Json;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Tools;
+using NSubstitute;
 
 namespace BotNexus.Gateway.Tests;
 
@@ -141,6 +143,95 @@ public sealed class ConversationToolTests
 
         var exception = await act.ShouldThrowAsync<InvalidOperationException>();
         exception.Message.ShouldContain("Session store is required");
+    }
+
+    [Fact]
+    public async Task New_WithMessage_AndDispatcher_DispatchesInboundMessageToTriggerAgentTurn()
+    {
+        // Arrange
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var dispatcher = Substitute.For<IChannelDispatcher>();
+        var tool = new ConversationTool(
+            conversationStore,
+            "orchestrator",
+            accessLevel: ConversationAccessLevel.All,
+            sessionStore: sessionStore,
+            channelDispatcher: dispatcher);
+
+        // Act
+        var result = await tool.ExecuteAsync("call-1", Args(
+            "new",
+            agentId: "nova",
+            displayName: "Handoff",
+            message: "Please investigate issue #285"));
+
+        using var document = JsonDocument.Parse(ReadText(result));
+        var conversationId = document.RootElement.GetProperty("conversationId").GetString()!;
+        var activeSessionId = document.RootElement.GetProperty("activeSessionId").GetString()!;
+
+        // Assert: dispatcher was called exactly once with the correct inbound message
+        await dispatcher.Received(1).DispatchAsync(
+            Arg.Is<InboundMessage>(m =>
+                m.TargetAgentId == "nova" &&
+                m.Content == "Please investigate issue #285" &&
+                m.SessionId == activeSessionId &&
+                m.ConversationId == conversationId &&
+                m.ChannelType.Equals(ChannelKey.From("internal"))),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task New_WithMessage_WithoutDispatcher_DoesNotThrowAndStillSeedsHistory()
+    {
+        // Arrange — no dispatcher: existing behaviour is preserved, no agent turn triggered
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var tool = new ConversationTool(
+            conversationStore,
+            "orchestrator",
+            accessLevel: ConversationAccessLevel.All,
+            sessionStore: sessionStore,
+            channelDispatcher: null);
+
+        // Act — must not throw
+        var result = await tool.ExecuteAsync("call-1", Args(
+            "new",
+            agentId: "nova",
+            message: "Seed message without turn trigger"));
+
+        // Assert: conversation and session created, history seeded
+        using var document = JsonDocument.Parse(ReadText(result));
+        var activeSessionId = document.RootElement.GetProperty("activeSessionId").GetString()!;
+        activeSessionId.ShouldNotBeNullOrWhiteSpace();
+
+        var session = await sessionStore.GetAsync(SessionId.From(activeSessionId));
+        session.ShouldNotBeNull();
+        var entry = session.GetHistorySnapshot().ShouldHaveSingleItem();
+        entry.Content.ShouldBe("Seed message without turn trigger");
+    }
+
+    [Fact]
+    public async Task New_WithoutMessage_DoesNotInvokeDispatcher()
+    {
+        // Arrange
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var dispatcher = Substitute.For<IChannelDispatcher>();
+        var tool = new ConversationTool(
+            conversationStore,
+            "orchestrator",
+            accessLevel: ConversationAccessLevel.All,
+            sessionStore: sessionStore,
+            channelDispatcher: dispatcher);
+
+        // Act
+        await tool.ExecuteAsync("call-1", Args("new", agentId: "nova", displayName: "Empty conv"));
+
+        // Assert: no dispatch when no message
+        await dispatcher.DidNotReceive().DispatchAsync(
+            Arg.Any<InboundMessage>(),
+            Arg.Any<CancellationToken>());
     }
 
     private static Conversation CreateConversation(string agentId, string title, string? purpose)

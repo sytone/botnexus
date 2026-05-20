@@ -205,7 +205,6 @@ public static class GatewayServiceCollectionExtensions
                 return new PlatformConfigAgentWriter(writer, home);
             }));
             services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
-            services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentWorkspaceScaffolder>());
         }
 
         return services;
@@ -300,7 +299,6 @@ public static class GatewayServiceCollectionExtensions
             return new PlatformConfigAgentWriter(writer, home);
         }));
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
-            services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentWorkspaceScaffolder>());
 
         return services;
     }
@@ -506,7 +504,6 @@ public static class GatewayServiceCollectionExtensions
     {
         services.AddSingleton<IAgentConfigurationSource, T>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
-            services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentWorkspaceScaffolder>());
         return services;
     }
 
@@ -541,7 +538,6 @@ public static class GatewayServiceCollectionExtensions
                 serviceProvider.GetRequiredService<IFileSystem>())));
 
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
-            services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentWorkspaceScaffolder>());
         return services;
     }
 }

@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Extensions;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Commands;
 
@@ -15,6 +16,7 @@ internal sealed class BuiltInCommandContributor(
     IAgentRegistry agentRegistry,
     IAgentSupervisor agentSupervisor,
     ISessionStore sessionStore,
+    IOptionsMonitor<CompactionOptions> compactionOptions,
     IServiceProvider serviceProvider) : ICommandContributor
 {
     private static readonly IReadOnlyList<CommandDescriptor> BuiltInCommands =
@@ -49,6 +51,12 @@ internal sealed class BuiltInCommandContributor(
             Description = "Reset the current chat (client-side only).",
             Category = "Session",
             ClientSideOnly = true
+        },
+        new CommandDescriptor
+        {
+            Name = "/context",
+            Description = "Show a breakdown of context window usage for the current session.",
+            Category = "Session"
         }
     ];
 
@@ -65,6 +73,7 @@ internal sealed class BuiltInCommandContributor(
             "/agents" => Task.FromResult(ExecuteAgents()),
             "/new" => ExecuteNewSessionAsync(context, cancellationToken),
             "/reset" => Task.FromResult(ClientSideOnlyCommandResult()),
+            "/context" => Task.FromResult(ExecuteContext(context)),
             _ => Task.FromResult(new CommandResult
             {
                 Title = "Command Not Found",
@@ -200,6 +209,89 @@ internal sealed class BuiltInCommandContributor(
         {
             Title = "New Session Created",
             Body = $"Created new session: {newSessionId.Value}",
+            IsError = false
+        };
+    }
+
+    private CommandResult ExecuteContext(CommandExecutionContext context)
+    {
+        if (string.IsNullOrWhiteSpace(context.AgentId) || string.IsNullOrWhiteSpace(context.SessionId))
+        {
+            return new CommandResult
+            {
+                Title = "Context Usage",
+                Body = "No active session. Start a conversation first.",
+                IsError = true
+            };
+        }
+
+        if (agentSupervisor is not IAgentHandleInspector inspector)
+        {
+            return new CommandResult
+            {
+                Title = "Context Usage",
+                Body = "Agent supervisor does not support context diagnostics.",
+                IsError = true
+            };
+        }
+
+        var agentId = AgentId.From(context.AgentId);
+        var sessionId = SessionId.From(context.SessionId);
+        var handle = inspector.GetHandle(agentId, sessionId);
+        if (handle is null)
+        {
+            return new CommandResult
+            {
+                Title = "Context Usage",
+                Body = "No active handle for this session. The session may not have started yet.",
+                IsError = true
+            };
+        }
+
+        var diag = (handle as IAgentHandleInspector)?.GetContextDiagnostics();
+        if (diag is null)
+        {
+            return new CommandResult
+            {
+                Title = "Context Usage",
+                Body = "Context diagnostics are not available for this handle type.",
+                IsError = true
+            };
+        }
+
+        var contextWindowTokens = compactionOptions.CurrentValue.ContextWindowTokens;
+        var totalUsed = diag.TotalEstimatedTokens;
+        var remaining = contextWindowTokens - totalUsed;
+        var usedPct = contextWindowTokens > 0
+            ? Math.Round((double)totalUsed / contextWindowTokens * 100, 1)
+            : 0.0;
+
+        static string Pct(int tokens, int window)
+            => window > 0 ? $"{Math.Round((double)tokens / window * 100, 1),5:F1}%" : "  n/a%";
+
+        static string Fmt(int n) => n.ToString("N0");
+
+        var separator = new string('-', 60);
+        var sb = new StringBuilder();
+        sb.AppendLine($"Context Window Usage  ({usedPct}% of {Fmt(contextWindowTokens)} token window)");
+        sb.AppendLine();
+        sb.AppendLine($"{"Section",-28} {"~Tokens",9}  {"Chars",9}  {"  %",6}");
+        sb.AppendLine(separator);
+        sb.AppendLine($"{"System instructions",-28} {Fmt(diag.SystemPromptTokens),9}  {Fmt(diag.SystemPromptChars),9}  {Pct(diag.SystemPromptTokens, contextWindowTokens),6}");
+        sb.AppendLine($"{"Tool definitions",-28} {Fmt(diag.ToolDefinitionTokens),9}  {Fmt(diag.ToolDefinitionChars),9}  {Pct(diag.ToolDefinitionTokens, contextWindowTokens),6}");
+        sb.AppendLine($"{"User/Assistant messages",-28} {Fmt(diag.UserAssistantTokens),9}  {Fmt(diag.UserAssistantChars),9}  {Pct(diag.UserAssistantTokens, contextWindowTokens),6}");
+        sb.AppendLine($"{"Tool results",-28} {Fmt(diag.ToolResultTokens),9}  {Fmt(diag.ToolResultChars),9}  {Pct(diag.ToolResultTokens, contextWindowTokens),6}");
+        sb.AppendLine(separator);
+        sb.AppendLine($"{"Total used",-28} {Fmt(totalUsed),9}  {"",9}  {Pct(totalUsed, contextWindowTokens),6}");
+        sb.AppendLine($"{"Remaining",-28} {Fmt(remaining),9}");
+        sb.AppendLine();
+        sb.AppendLine($"History: {diag.HistoryEntryCount} message(s)  |  Tools: {diag.ToolCount}");
+        sb.AppendLine("Note: token counts are estimates (chars / 4). Actual provider usage may differ.");
+
+        return new CommandResult
+        {
+            Title = "Context Window Usage",
+            Body = sb.ToString().TrimEnd(),
             IsError = false
         };
     }

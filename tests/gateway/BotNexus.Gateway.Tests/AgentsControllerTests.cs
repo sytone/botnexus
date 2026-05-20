@@ -1,3 +1,4 @@
+using BotNexus.Cron;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
@@ -493,4 +494,91 @@ public sealed class AgentsControllerTests
             new NoOpAgentConfigurationWriter(),
             [notifier.Object]);
     }
+
+    // ── Heartbeat re-provisioning tests (issue #384) ──────────────────────────
+
+    [Fact]
+    public async Task Register_WithHeartbeatProvisioner_CallsProvisionAsync()
+    {
+        var provisioner = new Mock<IHeartbeatProvisioner>();
+        provisioner
+            .Setup(p => p.ProvisionAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var descriptor = CreateDescriptorWithHeartbeat("agent-hb");
+        var notifier = CreateNotifier();
+        var controller = new AgentsController(
+            new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance),
+            Mock.Of<IAgentSupervisor>(),
+            new NoOpAgentConfigurationWriter(),
+            [notifier.Object],
+            provisioner.Object);
+
+        _ = await controller.Register(descriptor, CancellationToken.None);
+
+        provisioner.Verify(
+            p => p.ProvisionAsync(
+                It.Is<AgentDescriptor>(d => d.AgentId == "agent-hb"),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task Update_WithHeartbeatProvisioner_CallsProvisionAsync()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptorWithHeartbeat("agent-hb"));
+
+        var provisioner = new Mock<IHeartbeatProvisioner>();
+        provisioner
+            .Setup(p => p.ProvisionAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var notifier = CreateNotifier();
+        var controller = new AgentsController(
+            registry,
+            Mock.Of<IAgentSupervisor>(),
+            new NoOpAgentConfigurationWriter(),
+            [notifier.Object],
+            provisioner.Object);
+
+        var updatedDescriptor = CreateDescriptorWithHeartbeat("agent-hb") with
+        {
+            Heartbeat = new HeartbeatAgentConfig { Enabled = true, IntervalMinutes = 60 }
+        };
+        _ = await controller.Update("agent-hb", updatedDescriptor, CancellationToken.None);
+
+        provisioner.Verify(
+            p => p.ProvisionAsync(
+                It.Is<AgentDescriptor>(d => d.AgentId == "agent-hb"),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task Register_WithoutHeartbeatProvisioner_SucceedsWithoutError()
+    {
+        var descriptor = CreateDescriptorWithHeartbeat("agent-hb");
+        var notifier = CreateNotifier();
+        // No IHeartbeatProvisioner injected — backwards-compatible default.
+        var controller = new AgentsController(
+            new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance),
+            Mock.Of<IAgentSupervisor>(),
+            new NoOpAgentConfigurationWriter(),
+            [notifier.Object]);
+
+        var result = await controller.Register(descriptor, CancellationToken.None);
+
+        result.ShouldBeOfType<CreatedAtActionResult>();
+    }
+
+    private static AgentDescriptor CreateDescriptorWithHeartbeat(string agentId)
+        => new()
+        {
+            AgentId = agentId,
+            DisplayName = $"{agentId}-display",
+            ModelId = "test-model",
+            ApiProvider = "test-provider",
+            Heartbeat = new HeartbeatAgentConfig { Enabled = true, IntervalMinutes = 30 }
+        };
 }

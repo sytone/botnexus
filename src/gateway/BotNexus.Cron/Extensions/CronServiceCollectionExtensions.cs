@@ -22,6 +22,8 @@ public static class CronServiceCollectionExtensions
         });
         services.TryAddSingleton<HeartbeatCronProvisioner>();
         services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<HeartbeatCronProvisioner>());
+        // Also expose as IHeartbeatProvisioner so AgentsController can call ProvisionAsync at runtime.
+        services.TryAddSingleton<IHeartbeatProvisioner>(sp => sp.GetRequiredService<HeartbeatCronProvisioner>());
         services.TryAddSingleton<CronScheduler>();
         services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<CronScheduler>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICronAction, AgentPromptAction>());

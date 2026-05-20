@@ -277,6 +277,193 @@ public sealed class AgentExchangeServiceTests
             .Message.ShouldContain("not allowed");
     }
 
+
+    // ── IsObjectiveMet heuristic tests (issue #379) ─────────────────────────────────
+
+    [Theory]
+    [InlineData("We are done with the review.")]
+    [InlineData("I'm done")]
+    [InlineData("done")]
+    [InlineData("Almost done here")]
+    [InlineData("The work is done!")]
+    public async Task ConverseAsync_ResponseContainingDoneButNotObjectiveMet_DoesNotTerminateEarly(string targetResponse)
+    {
+        // Before fix, "done" caused premature termination — this must NOT terminate after 1 turn
+        var initiator = AgentId.From("test-agent");
+        var target = AgentId.From("agent-c");
+        var registry = CreateRegistry(initiator, target, ["agent-c"]);
+        var sessionStore = new InMemorySessionStore();
+
+        var callCount = 0;
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                return new AgentResponse { Content = callCount == 1 ? targetResponse : "OBJECTIVE MET" };
+            });
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(target, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var service = new AgentExchangeService(
+            registry.Object,
+            supervisor.Object,
+            sessionStore,
+            Options.Create(new GatewayOptions()),
+            NullLogger<AgentExchangeService>.Instance);
+
+        var result = await service.ConverseAsync(new AgentExchangeRequest
+        {
+            InitiatorId = initiator,
+            TargetId = target,
+            Message = "Do the thing",
+            Objective = "Complete the task",
+            MaxTurns = 3
+        });
+
+        // Should have continued past the first "done" response
+        callCount.ShouldBe(2);
+        result.CompletionReason.ShouldBe("objectiveMet");
+    }
+
+    [Fact]
+    public async Task ConverseAsync_ResponseContainsObjectiveMet_TerminatesEarly()
+    {
+        var initiator = AgentId.From("test-agent");
+        var target = AgentId.From("agent-c");
+        var registry = CreateRegistry(initiator, target, ["agent-c"]);
+        var sessionStore = new InMemorySessionStore();
+
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "All changes applied. OBJECTIVE MET" });
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(target, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var service = new AgentExchangeService(
+            registry.Object,
+            supervisor.Object,
+            sessionStore,
+            Options.Create(new GatewayOptions()),
+            NullLogger<AgentExchangeService>.Instance);
+
+        var result = await service.ConverseAsync(new AgentExchangeRequest
+        {
+            InitiatorId = initiator,
+            TargetId = target,
+            Message = "Do the thing",
+            Objective = "Complete the task",
+            MaxTurns = 5
+        });
+
+        handle.Verify(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        result.CompletionReason.ShouldBe("objectiveMet");
+    }
+
+    [Fact]
+    public async Task ConverseAsync_ResponseContainsCompletedObjective_TerminatesEarly()
+    {
+        var initiator = AgentId.From("test-agent");
+        var target = AgentId.From("agent-c");
+        var registry = CreateRegistry(initiator, target, ["agent-c"]);
+
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "I have completed objective successfully." });
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(target, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var service = new AgentExchangeService(
+            registry.Object,
+            supervisor.Object,
+            new InMemorySessionStore(),
+            Options.Create(new GatewayOptions()),
+            NullLogger<AgentExchangeService>.Instance);
+
+        var result = await service.ConverseAsync(new AgentExchangeRequest
+        {
+            InitiatorId = initiator,
+            TargetId = target,
+            Message = "Do the thing",
+            Objective = "Complete the task",
+            MaxTurns = 5
+        });
+
+        handle.Verify(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        result.CompletionReason.ShouldBe("objectiveMet");
+    }
+
+    [Fact]
+    public async Task ConverseAsync_MaxTurnsReachedWithoutObjectiveMet_SetsMaxTurnsReachedReason()
+    {
+        var initiator = AgentId.From("test-agent");
+        var target = AgentId.From("agent-c");
+        var registry = CreateRegistry(initiator, target, ["agent-c"]);
+
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "Still working on it." });
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(target, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var service = new AgentExchangeService(
+            registry.Object,
+            supervisor.Object,
+            new InMemorySessionStore(),
+            Options.Create(new GatewayOptions()),
+            NullLogger<AgentExchangeService>.Instance);
+
+        var result = await service.ConverseAsync(new AgentExchangeRequest
+        {
+            InitiatorId = initiator,
+            TargetId = target,
+            Message = "Do the thing",
+            Objective = "Complete the task",
+            MaxTurns = 2
+        });
+
+        handle.Verify(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+        result.CompletionReason.ShouldBe("maxTurnsReached");
+    }
+
+    [Fact]
+    public async Task ConverseAsync_NoObjectiveSet_ObjectiveMetReasonReturned()
+    {
+        // When no objective is set, IsObjectiveMet returns true immediately
+        var initiator = AgentId.From("test-agent");
+        var target = AgentId.From("agent-c");
+        var registry = CreateRegistry(initiator, target, ["agent-c"]);
+
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "Here is the answer." });
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(target, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var service = new AgentExchangeService(
+            registry.Object,
+            supervisor.Object,
+            new InMemorySessionStore(),
+            Options.Create(new GatewayOptions()),
+            NullLogger<AgentExchangeService>.Instance);
+
+        var result = await service.ConverseAsync(new AgentExchangeRequest
+        {
+            InitiatorId = initiator,
+            TargetId = target,
+            Message = "What is the answer?",
+            MaxTurns = 3
+        });
+
+        handle.Verify(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        result.CompletionReason.ShouldBe("objectiveMet");
+    }
+
     private static Mock<IAgentRegistry> CreateRegistry(AgentId initiator, AgentId target, IReadOnlyList<string> allowedTargets)
     {
         var registry = new Mock<IAgentRegistry>();

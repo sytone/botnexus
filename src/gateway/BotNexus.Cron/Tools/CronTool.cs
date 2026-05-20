@@ -105,7 +105,9 @@ public sealed class CronTool(
         var filtered = includeSystem ? jobs : jobs.Where(job => !job.System);
         var visible = allowCrossAgentCron
             ? filtered.ToList()
-            : filtered.Where(job => string.Equals(job.CreatedBy, _agentId, StringComparison.OrdinalIgnoreCase)).ToList();
+            : filtered.Where(job =>
+                string.Equals(job.CreatedBy, _agentId, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(job.AgentId, _agentId, StringComparison.OrdinalIgnoreCase)).ToList();
 
         return TextResult(JsonSerializer.Serialize(visible, JsonOptions));
     }
@@ -227,8 +229,10 @@ public sealed class CronTool(
         if (allowCrossAgentCron)
             return;
 
-        if (!string.Equals(job.CreatedBy, _agentId, StringComparison.OrdinalIgnoreCase))
-            throw new UnauthorizedAccessException("You can only manage cron jobs created by this agent.");
+        var isCreator = string.Equals(job.CreatedBy, _agentId, StringComparison.OrdinalIgnoreCase);
+        var isTarget = string.Equals(job.AgentId, _agentId, StringComparison.OrdinalIgnoreCase);
+        if (!isCreator && !isTarget)
+            throw new UnauthorizedAccessException("You can only manage cron jobs created by or targeting this agent.");
     }
 
     private static AgentToolResult TextResult(string text)

@@ -326,7 +326,97 @@ public sealed class InProcessIsolationStrategyTests
         options.ToolTimeout.ShouldBe(TimeSpan.FromSeconds(7));
     }
 
-    private static InProcessIsolationStrategy CreateStrategyWithRegisteredModel(
+
+    [Fact]
+    public async Task CreateAsync_WithCompactionSummaryInHistory_InjectsSummaryAsSystemMessage()
+    {
+        // Arrange: simulate a session that has been compacted — history starts with a
+        // compaction summary entry (Role=System, IsCompactionSummary=true) followed by
+        // recent user/assistant turns. After a gateway restart the handle is recreated;
+        // the compaction summary must survive so the LLM retains the summarised context.
+        var strategy = CreateStrategyWithRegisteredModel();
+        var context = new AgentExecutionContext
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-compact-restore"),
+            History =
+            [
+                new SessionEntry
+                {
+                    Role = BotNexus.Domain.Primitives.MessageRole.System,
+                    Content = "## Summary\nDecisions: picked option A. Open TODOs: deploy by Friday.",
+                    IsCompactionSummary = true
+                },
+                new SessionEntry { Role = BotNexus.Domain.Primitives.MessageRole.User, Content = "what was decided?" },
+                new SessionEntry { Role = BotNexus.Domain.Primitives.MessageRole.Assistant, Content = "Option A was chosen." }
+            ]
+        };
+
+        // Act
+        var handle = await strategy.CreateAsync(CreateDescriptor(), context);
+        var messages = GetMessages(handle);
+
+        // Assert: summary injected as a system message before user/assistant turns
+        messages.Count.ShouldBe(3);
+        messages[0].ShouldBeOfType<SystemAgentMessage>().Content.ShouldContain("Option A");
+        messages[1].ShouldBe(new AgentCoreUserMessage("what was decided?"));
+        messages[2].ShouldBe(new AssistantAgentMessage("Option A was chosen."));
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithOnlyCompactionSummary_InjectsSummaryOnly()
+    {
+        // Regression: a session with only a compaction summary (no preserved turns yet)
+        // should still have the summary injected so the LLM has prior context.
+        var strategy = CreateStrategyWithRegisteredModel();
+        var context = new AgentExecutionContext
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-summary-only"),
+            History =
+            [
+                new SessionEntry
+                {
+                    Role = BotNexus.Domain.Primitives.MessageRole.System,
+                    Content = "## Summary\nAgent helped user set up CI.",
+                    IsCompactionSummary = true
+                }
+            ]
+        };
+
+        var handle = await strategy.CreateAsync(CreateDescriptor(), context);
+        var messages = GetMessages(handle);
+
+        messages.Count.ShouldBe(1);
+        messages[0].ShouldBeOfType<SystemAgentMessage>().Content.ShouldContain("CI");
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithRegularSystemEntryInHistory_ExcludesNonSummarySystemMessages()
+    {
+        // Non-compaction system entries should still be excluded — only IsCompactionSummary=true
+        // entries are injected. This prevents duplicate system prompt content.
+        var strategy = CreateStrategyWithRegisteredModel();
+        var context = new AgentExecutionContext
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-non-summary-system"),
+            History =
+            [
+                new SessionEntry
+                {
+                    Role = BotNexus.Domain.Primitives.MessageRole.System,
+                    Content = "You are a helpful assistant.",
+                    IsCompactionSummary = false   // regular system entry — exclude
+                },
+                new SessionEntry { Role = BotNexus.Domain.Primitives.MessageRole.User, Content = "hello" }
+            ]
+        };
+
+        var handle = await strategy.CreateAsync(CreateDescriptor(), context);
+        var messages = GetMessages(handle);
+
+        // Only the user message; the plain system entry is excluded
+        messages.Count.ShouldBe(1);
+        messages[0].ShouldBe(new AgentCoreUserMessage("hello"));
+    }    private static InProcessIsolationStrategy CreateStrategyWithRegisteredModel(
         IReadOnlyList<IAgentToolContributor>? contributors = null)
     {
         var modelRegistry = new ModelRegistry();

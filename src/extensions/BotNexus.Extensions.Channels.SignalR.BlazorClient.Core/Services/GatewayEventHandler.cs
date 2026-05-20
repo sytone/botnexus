@@ -1,4 +1,4 @@
-﻿using System.Diagnostics.CodeAnalysis;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 
@@ -250,6 +250,9 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         conv.StreamState.IsStreaming = false;
         agent.IsStreaming = false;
         agent.ProcessingStage = null;
+
+        // Update timestamp client-side so sort order reflects recent activity (issue #382).
+        conv.UpdatedAt = DateTimeOffset.UtcNow;
 
         if (agent.AgentId != _store.ActiveAgentId)
             agent.UnreadCount++;
@@ -556,10 +559,25 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     public void HandleConversationChanged(ConversationChangedPayload payload)
     {
         // Server notified that a conversation was created, updated, or archived.
-        // Re-fetch conversation list for the affected agent so the sidebar stays current.
         var agentId = payload.AgentId;
         if (string.IsNullOrWhiteSpace(agentId)) return;
 
+        // Fast path: if the payload carries the new UpdatedAt, apply it directly
+        // to the client state without a REST round-trip (issue #382).
+        if (payload.UpdatedAt.HasValue && _store.GetAgent(agentId) is { } agent)
+        {
+            var convId = payload.ConversationId;
+            if (!string.IsNullOrWhiteSpace(convId) &&
+                agent.Conversations.TryGetValue(convId, out var conv))
+            {
+                conv.UpdatedAt = payload.UpdatedAt.Value;
+                _store.NotifyChanged();
+                return;
+            }
+        }
+
+        // Fallback: full conversation list refresh (covers create/archive and cases
+        // where the conversation is not yet in the local store).
         _ = RefreshConversationsAsync(agentId);
     }
 
@@ -591,3 +609,4 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub.OnDisconnected -= HandleDisconnected;
     }
 }
+

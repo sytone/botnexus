@@ -29,6 +29,17 @@ public sealed class BuiltInCommandContributorTests
     }
 
     [Fact]
+    public void GetCommands_IncludesContextCommand()
+    {
+        var contributor = CreateContributor(out _, out _, out _);
+
+        var commands = InvokeGetCommands(contributor);
+
+        var names = commands.Select(command => command.Name).ToList();
+        names.ShouldContain("/context");
+    }
+
+    [Fact]
     public void GetCommands_ResetHasClientSideOnlyTrue()
     {
         var contributor = CreateContributor(out _, out _, out _);
@@ -99,6 +110,43 @@ public sealed class BuiltInCommandContributorTests
 
         var result = await InvokeExecuteAsync(contributor, "/unknown", "/unknown");
 
+        result.IsError.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Context_WithNoAgentOrSession_ReturnsError()
+    {
+        var contributor = CreateContributor(out _, out _, out _);
+
+        var result = await InvokeExecuteAsync(contributor, "/context", "/context");
+
+        result.IsError.ShouldBeTrue();
+        result.Body.ShouldContain("No active session");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Context_WithSessionButNoHandle_ReturnsError()
+    {
+        var contributor = CreateContributor(out _, out _, out _);
+
+        var context = new CommandExecutionContext
+        {
+            RawInput = "/context",
+            AgentId = "test-agent",
+            SessionId = "test-session-id",
+            HomeDirectory = @"Q:\repos\botnexus"
+        };
+
+        var method = contributor.GetType().GetMethod(
+            "ExecuteAsync",
+            BindingFlags.Instance | BindingFlags.Public,
+            [typeof(string), typeof(CommandExecutionContext), typeof(CancellationToken)]);
+        method.ShouldNotBeNull();
+
+        var task = (Task<CommandResult>)method!.Invoke(contributor, ["/context", context, CancellationToken.None])!;
+        var result = await task;
+
+        // The default mock supervisor does not implement IAgentHandleInspector, so error is expected.
         result.IsError.ShouldBeTrue();
     }
 

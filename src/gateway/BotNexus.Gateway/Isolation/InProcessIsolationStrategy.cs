@@ -16,6 +16,7 @@ using BotNexus.Gateway.Abstractions.Hooks;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Agents;
@@ -162,13 +163,15 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             var conversationId = await ResolveConversationIdAsync(conversationStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken)
                 .ConfigureAwait(false);
             var (conversationAccessLevel, conversationAllowedAgents) = ResolveConversationAccess(descriptor);
+            var conversationDispatcher = _serviceProvider.GetService<IChannelDispatcher>();
             tools.Add(new ConversationTool(
                 conversationStore,
                 descriptor.AgentId,
                 conversationId,
                 conversationAccessLevel,
                 conversationAllowedAgents,
-                sessionStore));
+                sessionStore,
+                conversationDispatcher));
         }
 
         var delayToolOptions = _serviceProvider.GetService<IOptions<DelayToolOptions>>() ?? Options.Create(new DelayToolOptions());
@@ -287,13 +290,16 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         List<AgentMessage>? initialMessages = null;
         if (context.History.Count > 0)
         {
-            // Only inject user and assistant messages from history. Tool-role entries
-            // become orphaned ToolResultMessages (no matching tool_use in the preceding
-            // assistant message) which causes the LLM provider to reject the conversation.
-            // System entries are also excluded — the agent's system prompt is set separately.
+            // Inject compaction summary entries as system messages so the LLM retains
+            // summarised context when the handle is recreated (e.g. after a gateway restart).
+            // Tool-role entries are excluded: they become orphaned ToolResultMessages
+            // (no matching tool_use in the preceding assistant message) which causes
+            // LLM provider rejection. Regular system entries (IsCompactionSummary=false)
+            // are also excluded — the agent's system prompt is set separately.
             initialMessages = context.History
                 .Where(e => e.Role == Domain.Primitives.MessageRole.User
-                         || e.Role == Domain.Primitives.MessageRole.Assistant)
+                         || e.Role == Domain.Primitives.MessageRole.Assistant
+                         || (e.Role == Domain.Primitives.MessageRole.System && e.IsCompactionSummary))
                 .Select(ConvertSessionEntryToAgentMessage)
                 .ToList();
 
@@ -570,16 +576,23 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                 t.Definition.Parameters.GetRawText().Length))
             .ToList();
         var historyEntries = state.Messages.Count;
-        var historyChars = state.Messages.Sum(static message => message switch
+
+        var userAssistantChars = state.Messages.Sum(static message => message switch
         {
             AgentCoreUserMessage user => user.Content?.Length ?? 0,
             AssistantAgentMessage assistant => assistant.Content?.Length ?? 0,
             SystemAgentMessage system => system.Content?.Length ?? 0,
-            ToolResultAgentMessage tool => tool.Result.Content.Sum(static c => c.Value?.Length ?? 0),
             SubAgentCompletionMessage subAgent => subAgent.Content?.Length ?? 0,
             _ => 0
         });
 
+        var toolResultChars = state.Messages.Sum(static message => message switch
+        {
+            ToolResultAgentMessage tool => tool.Result.Content.Sum(static c => c.Value?.Length ?? 0),
+            _ => 0
+        });
+
+        var historyChars = userAssistantChars + toolResultChars;
         var totalChars = systemPromptChars
             + toolDefinitions.Sum(static t => t.SchemaChars + t.Name.Length + (t.Description?.Length ?? 0))
             + historyChars;
@@ -596,6 +609,10 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             HistoryEntryCount = historyEntries,
             HistoryChars = historyChars,
             HistoryTokens = historyChars / 4,
+            UserAssistantChars = userAssistantChars,
+            UserAssistantTokens = userAssistantChars / 4,
+            ToolResultChars = toolResultChars,
+            ToolResultTokens = toolResultChars / 4,
             TotalEstimatedTokens = estimatedTokens,
             SystemPrompt = state.SystemPrompt
         };

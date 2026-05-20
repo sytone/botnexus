@@ -53,20 +53,27 @@ public sealed class AgentPromptAction : ICronAction
                     ? "Soul internal trigger is not registered."
                     : "Cron internal trigger is not registered.");
 
+        var triggerRequest = new InternalTriggerRequest
+        {
+            CronJobId = context.Job.Id,
+            JobName = context.Job.Name,
+            ModelOverride = context.Job.Model,
+            ConversationId = context.Job.ConversationId
+        };
         var sessionId = await trigger
             .CreateSessionAsync(
                 AgentId.From(agentId),
                 message,
                 cancellationToken,
-                new InternalTriggerRequest
-                {
-                    CronJobId = context.Job.Id,
-                    ModelOverride = context.Job.Model,
-                    ConversationId = context.Job.ConversationId
-                })
+                triggerRequest)
             .ConfigureAwait(false);
 
         context.RecordSessionId(sessionId);
+
+        // Surface the resolved conversation ID back to the execution context so the
+        // scheduler can persist it to the job record, eliminating the lookup on future runs.
+        if (!string.IsNullOrWhiteSpace(triggerRequest.ResolvedConversationId))
+            context.RecordConversationId(triggerRequest.ResolvedConversationId);
     }
 
     private static bool IsInQuietHours(QuietHoursConfig config, string timezoneId)
