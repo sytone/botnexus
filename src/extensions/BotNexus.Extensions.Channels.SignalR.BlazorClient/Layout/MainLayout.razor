@@ -498,7 +498,7 @@
         // The desktop and mobile portals are separate apps served at "/" and "/mobile/".
         var target = _isMobile ? "/mobile/" + relPath : relPath;
 
-        var current = Nav.ToBaseRelativePath(Nav.Uri).TrimEnd("/");
+        var current = Nav.ToBaseRelativePath(Nav.Uri).TrimEnd('/');
         if (!string.Equals(current, relPath, StringComparison.OrdinalIgnoreCase))
             Nav.NavigateTo(target, forceLoad: _isMobile);
     }
