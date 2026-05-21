@@ -113,7 +113,6 @@ public sealed class ConversationRoutingScenarios
         var conv = await convStore.GetAsync(secondaryConv.ConversationId);
         conv!.ChannelBindings.Count.ShouldBe(1,
             "direct conversationId routing must add exactly one channel-address binding for reconnect, not a ThreadId hack");
-            "direct conversationId routing must NOT add a binding — no binding hack");
     }
 
     // ──────────────────────────────────────────────────────────────────────────────
