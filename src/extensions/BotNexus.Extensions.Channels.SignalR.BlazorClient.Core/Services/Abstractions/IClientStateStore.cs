@@ -1,4 +1,4 @@
-namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+﻿namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 /// <summary>
 /// Single in-memory source of truth for all portal state.
@@ -253,6 +253,7 @@ public sealed class ConversationState
     public ConversationStreamState StreamState { get; } = new();
 }
 
+
 /// <summary>Stream-buffer state for an active or recently active conversation.</summary>
 public sealed class ConversationStreamState
 {
@@ -267,4 +268,10 @@ public sealed class ConversationStreamState
 
     /// <summary>In-progress tool calls for this conversation keyed by tool-call ID.</summary>
     public Dictionary<string, ActiveToolCall> ActiveToolCalls { get; } = new();
+
+    /// <summary>Whether the agent turn is still active -- either streaming or awaiting tool results.
+    /// Use this instead of IsStreaming to keep Steer/Abort controls visible
+    /// between the end of an LLM generation and the start of the next one while tools run.</summary>
+    public bool IsTurnActive => IsStreaming || ActiveToolCalls.Count > 0;
 }
+

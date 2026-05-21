@@ -13,6 +13,14 @@ public sealed record ChannelBinding
     /// <summary>Gets or sets the channel type for this binding.</summary>
     public ChannelKey ChannelType { get; set; }
 
+    /// <summary>
+    /// Gets or sets the optional adapter instance identifier.
+    /// When multiple adapters of the same <see cref="ChannelType"/> are registered (e.g., two Telegram bots),
+    /// this value selects the correct adapter for outbound delivery via <see cref="IChannelManager.Get(ChannelKey, string?)"/>.
+    /// Null for single-instance channel types.
+    /// </summary>
+    public string? AdapterId { get; set; }
+
     /// <summary>Gets or sets the channel-specific address (e.g. chat id, phone number). Use <see cref="ChannelAddress.Empty"/> for addressless channels.</summary>
     public ChannelAddress ChannelAddress { get; set; } = ChannelAddress.Empty;
 

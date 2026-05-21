@@ -25,6 +25,14 @@ public interface IChannelAdapter
     /// <summary>The channel type identifier (e.g., "telegram", "discord", "tui").</summary>
     ChannelKey ChannelType { get; }
 
+    /// <summary>
+    /// Optional adapter instance identifier used to distinguish multiple adapters of the same
+    /// <see cref="ChannelType"/> (e.g., two Telegram bots). When set, <see cref="IChannelManager"/>
+    /// can select the correct adapter for a given binding.
+    /// Returns <c>null</c> for single-instance channel types.
+    /// </summary>
+    string? AdapterId => null;
+
     /// <summary>Human-readable display name for this channel.</summary>
     string DisplayName { get; }
 
@@ -108,4 +116,3 @@ public interface IStreamEventChannelAdapter
     /// </summary>
     Task SendStreamEventAsync(string conversationId, AgentStreamEvent streamEvent, CancellationToken cancellationToken = default);
 }
-

@@ -25,7 +25,7 @@ public sealed record RuntimeInfo
     public IReadOnlyList<string>? Capabilities { get; init; }
 }
 
-public sealed record ConversationContext(string ConversationId, string Title, string? Purpose);
+public sealed record ConversationContext(string ConversationId, string Title, string? Purpose, string? Instructions = null);
 
 public sealed record SystemPromptParams
 {
@@ -128,6 +128,7 @@ public static class SystemPromptBuilder
             .Add(new LambdaPromptSection(110, static context => buildUserIdentitySection(GetGatewayData(context).Parameters.OwnerIdentity, GetGatewayData(context).IsMinimal)))
             .Add(new LambdaPromptSection(120, static context => buildTimeSection(GetGatewayData(context).Parameters.UserTimezone)))
             .Add(new LambdaPromptSection(125, BuildConversationContextSection, HasConversationContext))
+            .Add(new LambdaPromptSection(127, BuildConversationInstructionsSection, HasConversationInstructions))
             .Add(new LambdaPromptSection(130, static _ => ["## Workspace Files (injected)", "These user-editable files are loaded by BotNexus and included below in Project Context.", string.Empty]))
             .Add(new LambdaPromptSection(140, static context => buildReplyTagsSection(GetGatewayData(context).IsMinimal), static _ => IncludeReplyTagsSectionByDefault))
             .Add(new LambdaPromptSection(150, static context => buildMessagingSection(GetGatewayData(context).IsMinimal, GetGatewayData(context).NormalizedTools, GetGatewayData(context).RuntimeChannel, GetGatewayData(context).InlineButtonsEnabled)))
@@ -625,6 +626,25 @@ public static class SystemPromptBuilder
             lines.Add($"- **Purpose**: {conversationContext.Purpose}");
 
         return lines;
+    }
+
+    private static bool HasConversationInstructions(PromptContext context)
+    {
+        var conversationContext = GetGatewayData(context).Parameters.ConversationContext;
+        return conversationContext is not null &&
+               !string.IsNullOrWhiteSpace(conversationContext.Instructions);
+    }
+
+    private static IReadOnlyList<string> BuildConversationInstructionsSection(PromptContext context)
+    {
+        var conversationContext = GetGatewayData(context).Parameters.ConversationContext
+            ?? throw new InvalidOperationException("ConversationContext is required for BuildConversationInstructionsSection.");
+
+        return
+        [
+            "## Conversation Instructions",
+            conversationContext.Instructions!
+        ];
     }
 
     private sealed class LambdaPromptSection(
