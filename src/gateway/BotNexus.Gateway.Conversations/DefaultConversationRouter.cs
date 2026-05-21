@@ -63,7 +63,40 @@ public sealed class DefaultConversationRouter : IConversationRouter
                     reactivated = true;
                 }
 
-                var (directSessionId, directIsNew, changed) = await ResolveOrCreateSessionAsync(direct, agentId, ct);
+                // Bind-on-first-use: if the conversation has no active binding for (channelType, channelAddress),
+                // add one so future reconnects can find it without an explicit conversationId (#441).
+                var bindingChanged = false;
+                var existingBinding = direct.ChannelBindings.FirstOrDefault(b =>
+                    b.ChannelType.Equals(channelType) &&
+                    b.ChannelAddress == channelAddress &&
+                    (threadId is null ? b.ThreadId is null : b.ThreadId == threadId));
+
+                if (existingBinding is null)
+                {
+                    direct.ChannelBindings.Add(new ChannelBinding
+                    {
+                        ChannelType = channelType,
+                        ChannelAddress = channelAddress,
+                        ThreadId = threadId,
+                        Mode = BindingMode.Interactive
+                    });
+                    bindingChanged = true;
+                    _logger.LogDebug(
+                        "ResolveInbound: added binding ({ChannelType}:{ChannelAddress}) to conversation {ConversationId} on first use",
+                        channelType, channelAddress, direct.ConversationId);
+                }
+                else if (existingBinding.Mode == BindingMode.Muted)
+                {
+                    // Reactivate a previously-muted binding when the conversation is explicitly re-used.
+                    existingBinding.Mode = BindingMode.Interactive;
+                    bindingChanged = true;
+                    _logger.LogDebug(
+                        "ResolveInbound: reactivated muted binding ({ChannelType}:{ChannelAddress}) in conversation {ConversationId}",
+                        channelType, channelAddress, direct.ConversationId);
+                }
+
+                var (directSessionId, directIsNew, directSessionChanged) = await ResolveOrCreateSessionAsync(direct, agentId, ct);
+                var changed = bindingChanged || directSessionChanged;
                 if (changed)
                 {
                     direct.UpdatedAt = DateTimeOffset.UtcNow;
