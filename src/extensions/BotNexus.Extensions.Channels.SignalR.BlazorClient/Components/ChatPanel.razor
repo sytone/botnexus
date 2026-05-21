@@ -320,7 +320,7 @@
                           @ref="_inputElement"
                           @bind="_inputText"
                           @bind:event="oninput"
-                          @oninput="HandleInputChanged"
+                          @bind:after="HandleInputChanged"
                           @onkeydown="HandleKeyDown"
                           placeholder="@InputPlaceholder"
                           disabled="@(!IsConnected)" />
