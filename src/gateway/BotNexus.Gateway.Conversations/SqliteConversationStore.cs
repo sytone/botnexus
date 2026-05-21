@@ -490,7 +490,7 @@ public sealed class SqliteConversationStore : IConversationStore
             Metadata = DeserializeMetadata(reader.IsDBNull(7) ? null : reader.GetString(7)),
             CreatedAt = ParseTimestamp(reader.GetString(8)),
             UpdatedAt = ParseTimestamp(reader.GetString(9)),
-            CanvasHtml = reader.ColumnCount > 10 && !reader.IsDBNull(10) ? reader.GetString(10) : null
+            CanvasHtml = reader.FieldCount > 10 && !reader.IsDBNull(10) ? reader.GetString(10) : null
         };
         if (!reader.IsDBNull(6))
             conversation.ActiveSessionId = SessionId.From(reader.GetString(6));

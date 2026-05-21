@@ -505,8 +505,8 @@ public sealed class ConversationsController : ControllerBase
             .Take(take)
             .ToList();
     }
-
-    [HttpGet(`~/api/agents/{agentId}/conversations/{conversationId}/canvas`)]
+    [HttpGet("~/api/agents/{agentId}/conversations/{conversationId}/canvas")]
+    [HttpGet("~/api/agents/{agentId}/conversations/{conversationId}/canvas")]
     [ProducesResponseType(typeof(string), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -517,7 +517,7 @@ public sealed class ConversationsController : ControllerBase
             return NotFound();
         if (string.IsNullOrEmpty(conversation.CanvasHtml))
             return NoContent();
-        return Content(conversation.CanvasHtml, `text/html`);
+        return Content(conversation.CanvasHtml, "text/html");
     }
 
     private static bool TryParseVirtualCronConversationId(string conversationId, out SessionId sessionId)
