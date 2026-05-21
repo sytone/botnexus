@@ -30,24 +30,32 @@ public sealed record CompactionOptions
 }
 
 /// <summary>
-/// Configuration for the pre-compaction memory flush turn.
+/// Configuration for memory flush turns.
+/// Used for both pre-compaction flush (Phase 1) and session-end flush (Phase 2).
 /// When enabled, the agent is given a brief turn to write important context to
 /// memory files (e.g. <c>memory/YYYY-MM-DD.md</c>) before the session history
-/// is summarised and truncated.
+/// is summarised or discarded.
 /// </summary>
 public sealed record MemoryFlushOptions
 {
-    /// <summary>Whether pre-compaction memory flush is enabled (default: true).</summary>
+    /// <summary>Whether memory flush is enabled (default: true).</summary>
     public bool Enabled { get; init; } = true;
 
     /// <summary>
-    /// The prompt sent to the agent during the flush turn.
-    /// The agent should use this turn to write important context to memory files.
+    /// The prompt sent to the agent during the pre-compaction flush turn.
     /// </summary>
     public string PromptText { get; init; } =
         "Session compaction is about to run. " +
         "Write any important context, decisions, or open items from this conversation to your daily memory file " +
         "(memory/YYYY-MM-DD.md) now. Keep it brief and focused on what must survive compaction.";
+
+    /// <summary>
+    /// The prompt sent to the agent during the session-end flush turn (on /reset or explicit session close).
+    /// </summary>
+    public string SessionEndPromptText { get; init; } =
+        "This session is ending. " +
+        "Write any important context, decisions, or open items from this conversation to your daily memory file " +
+        "(memory/YYYY-MM-DD.md) now. Keep it brief and focused on what should persist.";
 
     /// <summary>Maximum seconds to wait for the flush turn to complete (default: 60).</summary>
     public int TimeoutSeconds { get; init; } = 60;
