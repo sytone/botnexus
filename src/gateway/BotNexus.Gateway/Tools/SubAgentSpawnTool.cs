@@ -40,7 +40,8 @@ public sealed class SubAgentSpawnTool(
                   "type": "string",
                   "enum": ["researcher", "coder", "planner", "reviewer", "writer", "general"],
                   "description": "Optional behavioral archetype for the sub-agent."
-                }
+                },
+                "targetAgentId": { "type": "string", "description": "Optional registered agent ID to use as the sub-agent identity. When set, the sub-agent runs as this agent's descriptor instead of cloning the parent." }
               },
               "required": ["task"]
             }
@@ -79,7 +80,8 @@ public sealed class SubAgentSpawnTool(
             SystemPromptOverride = ReadString(arguments, "systemPrompt"),
             MaxTurns = ReadInt(arguments, "maxTurns", 30),
             TimeoutSeconds = ReadInt(arguments, "timeoutSeconds", 600),
-            Archetype = ReadArchetype(arguments)
+            Archetype = ReadArchetype(arguments),
+            TargetAgentId = ReadString(arguments, "targetAgentId")
         };
 
         var spawned = await subAgentManager.SpawnAsync(request, cancellationToken).ConfigureAwait(false);

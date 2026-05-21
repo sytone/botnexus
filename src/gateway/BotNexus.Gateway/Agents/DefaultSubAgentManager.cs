@@ -104,12 +104,24 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         var subAgentId = uniqueId;
         var childAgentId = AgentId.From($"{request.ParentAgentId}--subagent--{archetype.Value}--{uniqueId}");
 
+        AgentDescriptor baseDescriptor;
+        if (!string.IsNullOrWhiteSpace(request.TargetAgentId))
+        {
+            var targetId = AgentId.From(request.TargetAgentId);
+            baseDescriptor = _registry.Get(targetId)
+                ?? throw new KeyNotFoundException($"Target agent '{request.TargetAgentId}' is not registered.");
+        }
+        else
+        {
+            baseDescriptor = parentDescriptor;
+        }
+
         if (!_registry.Contains(childAgentId))
         {
-            _registry.Register(parentDescriptor with
+            _registry.Register(baseDescriptor with
             {
                 AgentId = childAgentId,
-                DisplayName = $"{parentDescriptor.DisplayName} ({archetype.Value})"
+                DisplayName = $"{baseDescriptor.DisplayName} ({archetype.Value})"
             });
         }
 
