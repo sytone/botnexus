@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Linq;
 using System.Text.Json;
@@ -227,6 +227,15 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 || effectiveToolIds.Contains("agent_converse", StringComparer.OrdinalIgnoreCase);
             if (includeConverse)
                 tools.Add(new AgentConverseTool(conversationService, sessionStore, descriptor.AgentId, context.SessionId));
+        }
+
+        var agentRegistry = _serviceProvider.GetService<IAgentRegistry>();
+        if (agentRegistry is not null)
+        {
+            var includeListAgents = effectiveToolIds.Count == 0
+                || effectiveToolIds.Contains("list_agents", StringComparer.OrdinalIgnoreCase);
+            if (includeListAgents)
+                tools.Add(new ListAgentsTool(agentRegistry, descriptor.AgentId));
         }
 
         var includeCanvas = effectiveToolIds.Count == 0
@@ -918,4 +927,5 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         }
     }
 }
+
 
