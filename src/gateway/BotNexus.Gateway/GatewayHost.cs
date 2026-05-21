@@ -56,6 +56,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
     private readonly IConversationRouter? _conversationRouter;
     private readonly SessionLifecycleEvents? _sessionLifecycleEvents;
     private readonly PendingAskUserInterceptor? _pendingAskUserInterceptor;
+    private readonly IPreCompactionMemoryFlusher? _memoryFlusher;
     private readonly ConcurrentDictionary<string, SessionQueueState> _sessionQueues = new(StringComparer.OrdinalIgnoreCase);
 
     public GatewayHost(
@@ -72,7 +73,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         IMediaPipeline? mediaPipeline = null,
         IConversationDispatcher? conversationDispatcher = null,
         IConversationRouter? conversationRouter = null,
-        PendingAskUserInterceptor? pendingAskUserInterceptor = null)
+        PendingAskUserInterceptor? pendingAskUserInterceptor = null,
+        IPreCompactionMemoryFlusher? memoryFlusher = null)
     {
         _supervisor = supervisor;
         _router = router;
@@ -87,6 +89,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         _conversationRouter = conversationRouter;
         _sessionLifecycleEvents = sessionLifecycleEvents;
         _pendingAskUserInterceptor = pendingAskUserInterceptor;
+        _memoryFlusher = memoryFlusher;
         SessionQueueCapacity = Math.Max(sessionQueueCapacity, 1);
     }
 
@@ -423,6 +426,17 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 _logger.LogInformation("Auto-compacting session {SessionId}", sessionId);
                 try
                 {
+                    if (_memoryFlusher is not null && _memoryFlusher.ShouldFlush(session.Session, _compactionOptions.CurrentValue))
+                    {
+                        try
+                        {
+                            await _memoryFlusher.FlushAsync(session.Session.AgentId, session.Session, _compactionOptions.CurrentValue, cancellationToken).ConfigureAwait(false);
+                        }
+                        catch (Exception flushEx)
+                        {
+                            _logger.LogWarning(flushEx, "Pre-compaction memory flush failed for session {SessionId}, compaction will proceed", sessionId);
+                        }
+                    }
                     var result = await _compactor.CompactAsync(session.Session, _compactionOptions.CurrentValue, cancellationToken);
                     if (result.Succeeded && result.CompactedHistory is not null)
                     {
