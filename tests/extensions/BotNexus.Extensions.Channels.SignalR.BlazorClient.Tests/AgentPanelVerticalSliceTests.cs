@@ -38,6 +38,7 @@ public sealed class AgentPanelVerticalSliceTests : IDisposable
         _ctx.Services.AddSingleton<IClientStateStore>(_store);
         _ctx.Services.AddSingleton(_portalLoad);
         _ctx.Services.AddSingleton(Substitute.For<IAgentInteractionService>());
+        _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
         _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
         _ctx.Services.AddSingleton(new HttpClient { BaseAddress = new Uri("http://localhost/") });
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
