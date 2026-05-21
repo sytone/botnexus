@@ -3,6 +3,7 @@ using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
+using Bunit.TestDoubles;
 using NSubstitute;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
