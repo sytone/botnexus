@@ -522,7 +522,7 @@ public sealed class GatewayHostTests
     }
 
     [Fact]
-    public async Task DispatchAsync_WithSteerControl_WhenAgentNotRunning_FallsThroughToNormalProcessing()
+    public async Task DispatchAsync_WithSteerControl_WhenAgentNotRunning_DoesNotFallThroughToNormalProcessing()
     {
         var router = new Mock<IMessageRouter>();
         router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
