@@ -70,6 +70,12 @@ public sealed record SubAgentSpawnRequest
     public int SpawnDepth { get; init; }
 
     /// <summary>
+    /// Optional registered agent ID to use as the sub-agent identity. When set, the sub-agent
+    /// runs as this agent's descriptor (system prompt, model, tools) rather than as a clone of the parent.
+    /// </summary>
+    public string? TargetAgentId { get; init; }
+
+    /// <summary>
     /// Gets the union of tool names that the parent agent is denied, inherited from the
     /// parent's effective deny-list. The spawned sub-agent must not be granted any of these tools.
     /// </summary>
