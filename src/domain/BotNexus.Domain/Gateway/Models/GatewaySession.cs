@@ -154,6 +154,12 @@ public sealed class GatewaySession
     /// </summary>
     public SessionReplayBuffer ReplayBuffer => Runtime.ReplayBuffer;
 
+    /// <summary>
+    /// Removes any crash-sentinel entries from the session history.
+    /// Call on clean turn completion to prevent sentinels from persisting after a successful run.
+    /// </summary>
+    public void RemoveCrashSentinels() => Runtime.RemoveCrashSentinels();
+
     /// <summary>Thread-safe append to conversation history. Content is redacted before storage when a redactor is configured.</summary>
     public void AddEntry(SessionEntry entry) => Runtime.AddEntry(Redact(entry));
 
@@ -270,6 +276,13 @@ public sealed record SessionEntry
 
     /// <summary>True if this entry is a compaction summary (not a real conversation message).</summary>
     public bool IsCompactionSummary { get; init; }
+
+    /// <summary>
+    /// True if this entry is a crash sentinel written before an agent turn begins.
+    /// A sentinel that survives a gateway restart indicates the previous run was interrupted.
+    /// Sentinels are removed on clean turn completion and must not be forwarded to the LLM.
+    /// </summary>
+    public bool IsCrashSentinel { get; init; }
 }
 
 /// <summary>

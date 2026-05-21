@@ -383,7 +383,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 {
                     if (await HandleSteeringAsync(message, agentId, sessionId, cancellationToken))
                         continue;
-                    // Agent not running — fall through to normal message processing.
+                    // Steering must not fall through to normal message processing.
+                    // Steering is control-plane metadata; discard it rather than converting to a user prompt.
+                    _logger.LogWarning("Steering discarded for session {SessionId} because agent is not running. Control messages must not enter the data plane.", sessionId);
+                    continue;
                 }
                 else if (string.Equals(controlCommand, ControlCompact, StringComparison.OrdinalIgnoreCase))
                 {
@@ -423,6 +426,11 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 OriginalContentParts = originalParts,
                 ProcessedContentParts = processedParts
             });
+
+            // Write-ahead Layer 1: persist user message before starting the LLM call.
+            // Ensures user input survives a gateway restart mid-turn (#363).
+            await _sessions.SaveAsync(session, cancellationToken);
+
             if (_compactor.ShouldCompact(session.Session, _compactionOptions.CurrentValue))
             {
                 _logger.LogInformation("Auto-compacting session {SessionId}", sessionId);
@@ -455,6 +463,18 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     _logger.LogWarning(ex, "Auto-compaction failed for session {SessionId}, continuing without compaction", sessionId);
                 }
             }
+
+            // Write-ahead Layer 2: crash sentinel written before the LLM call.
+            // If the gateway restarts mid-turn, this sentinel survives in the session store,
+            // showing an interrupted-turn marker to the user rather than a silent gap (#363).
+            var crashSentinel = new SessionEntry
+            {
+                Role = MessageRole.System,
+                Content = "[agent turn in progress — gateway restarted if visible]",
+                IsCrashSentinel = true
+            };
+            session.AddEntry(crashSentinel);
+            await _sessions.SaveAsync(session, cancellationToken);
 
             try
             {
@@ -601,6 +621,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
                 }
 
+                // Remove crash sentinel on clean turn completion (#363).
+                session.RemoveCrashSentinels();
+
                 if (!sessionSaved)
                 {
                     using var saveActivity = GatewayDiagnostics.Source.StartActivity("session.save", ActivityKind.Internal);
@@ -737,7 +760,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         if (handle is null || !handle.IsRunning)
         {
             _logger.LogInformation(
-                "Steering received but agent is not running (instance={HasInstance}, running={IsRunning}). Falling through to normal processing for session {SessionId}",
+                "Steering received but agent is not running (instance={HasInstance}, running={IsRunning}). Steering will be discarded for session {SessionId}.",
                 instance is not null, handle?.IsRunning ?? false, sessionId);
 
             await _activity.PublishAsync(new GatewayActivity
@@ -880,7 +903,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
 
         foreach (var binding in outboundBindings)
         {
-            var adapter = ResolveChannelAdapter(binding.ChannelType);
+            var adapter = ResolveChannelAdapter(binding.ChannelType, binding.AdapterId);
             if (adapter is null)
                 continue;
 
@@ -1075,7 +1098,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             {
                 try
                 {
-                    var adapter = ResolveChannelAdapter(binding.ChannelType);
+                    var adapter = ResolveChannelAdapter(binding.ChannelType, binding.AdapterId);
                     if (adapter is null)
                     {
                         _logger.LogWarning(
@@ -1128,14 +1151,15 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         }
     }
 
-    private IChannelAdapter? ResolveChannelAdapter(ChannelKey channelType)
+    private IChannelAdapter? ResolveChannelAdapter(ChannelKey channelType, string? adapterId = null)
     {
-        var adapter = _channelManager.Get(channelType);
+        var adapter = _channelManager.Get(channelType, adapterId);
         if (adapter is not null)
             return adapter;
 
-        _logger.LogWarning("No channel adapter found for type '{ChannelType}'. Available: {Available}",
+        _logger.LogWarning("No channel adapter found for type '{ChannelType}' (adapterId: '{AdapterId}'). Available: {Available}",
             channelType,
+            adapterId ?? "<any>",
             string.Join(", ", _channelManager.Adapters.Select(a => a.ChannelType)));
         return null;
     }
@@ -1198,3 +1222,4 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 }
+
