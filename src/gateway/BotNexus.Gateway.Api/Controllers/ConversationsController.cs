@@ -505,6 +505,21 @@ public sealed class ConversationsController : ControllerBase
             .Take(take)
             .ToList();
     }
+
+    [HttpGet(`~/api/agents/{agentId}/conversations/{conversationId}/canvas`)]
+    [ProducesResponseType(typeof(string), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> GetCanvas(string agentId, string conversationId, CancellationToken cancellationToken)
+    {
+        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken).ConfigureAwait(false);
+        if (conversation is null)
+            return NotFound();
+        if (string.IsNullOrEmpty(conversation.CanvasHtml))
+            return NoContent();
+        return Content(conversation.CanvasHtml, `text/html`);
+    }
+
     private static bool TryParseVirtualCronConversationId(string conversationId, out SessionId sessionId)
     {
         const string prefix = "cron-session:";

@@ -132,6 +132,7 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<IChannelManager, ChannelManager>();
         services.TryAddSingleton<ISessionStore, InMemorySessionStore>();
         services.TryAddSingleton<IConversationStore, InMemoryConversationStore>();
+        services.AddSingleton<IAgentCanvasNotifier, ConversationCanvasNotifier>();
         services.TryAddSingleton<IConversationRouter, DefaultConversationRouter>();
         services.TryAddSingleton<IConversationDispatcher, DefaultConversationDispatcher>();
         services.TryAddSingleton<IAskUserResponseRegistry, AskUserResponseRegistry>();
