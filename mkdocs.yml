@@ -128,6 +128,7 @@ nav:
       - WebUI Connection: development/webui-connection.md
   - Guides:
       - Audio Recording: guides/audio-recording.md
+      - Watchdog Setup: guides/watchdog-setup.md
   - Features:
       - Sub-Agent Spawning: features/sub-agent-spawning.md
   - Extensions:

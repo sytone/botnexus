@@ -22,6 +22,7 @@ public sealed class ChatPanelTests : IDisposable
         _ctx.Services.AddSingleton(_interaction);
         _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
         _ctx.Services.AddSingleton(new HttpClient());
+        _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }
 
@@ -609,6 +610,56 @@ public sealed class ChatPanelTests : IDisposable
 
         var ex = Record.Exception(() => store.NotifyChanged());
         ex.ShouldBeNull();
+    }
+
+    [Fact]
+    public void Renders_ask_user_prompt_and_hides_standard_chat_input_when_pending_prompt_exists()
+    {
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SetPendingAskUser(new AskUserPromptState
+        {
+            RequestId = "req-1",
+            ConversationId = "conv-1",
+            Prompt = "What should I do next?",
+            InputType = "FreeForm",
+            AllowFreeForm = true
+        });
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        cut.Find(".ask-user-prompt");
+        Assert.Empty(cut.FindAll(".chat-input"));
+    }
+
+    [Fact]
+    public async Task Submitting_ask_user_prompt_calls_interaction_service_and_appends_summary_message()
+    {
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SetPendingAskUser(new AskUserPromptState
+        {
+            RequestId = "req-1",
+            ConversationId = "conv-1",
+            Prompt = "Share details",
+            InputType = "FreeForm",
+            AllowFreeForm = true
+        });
+
+        _interaction
+            .RespondToAskUserAsync("conv-1", "req-1", "My answer", null, false)
+            .Returns(Task.CompletedTask);
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        cut.Find(".ask-user-free-form").Input("My answer");
+
+        await cut.InvokeAsync(() => cut.Find(".ask-user-actions .send-btn").Click());
+
+        await _interaction.Received(1).RespondToAskUserAsync("conv-1", "req-1", "My answer", null, false);
+        Assert.Null(_store.GetPendingAskUser("conv-1"));
+        Assert.Contains(_store.GetMessages("conv-1"), message => message.Content.Contains("You answered:", StringComparison.Ordinal));
     }
 
 }

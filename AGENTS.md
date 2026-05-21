@@ -4,6 +4,13 @@
 
 BotNexus runs on **Windows and Linux**. All code, tests, scripts, and documentation must be portable across both platforms. Do not assume a single OS — CI runs on both, and developer machines vary.
 
+## Helper Scripts
+
+- If this is a new install run `scripts/repo/init.ps1`
+- To build the solution, run `scripts/repo/build.ps1`
+- To run tests, run `scripts/repo/test.ps1`
+
+
 ## Document Ownership
 
 Some docs have a YAML front-matter header indicating ownership:

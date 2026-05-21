@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Dispatching;
+using BotNexus.Gateway.Abstractions.Services;
 using AgentId = BotNexus.Domain.Primitives.AgentId;
 using ChannelKey = BotNexus.Domain.Primitives.ChannelKey;
 using ParticipantType = BotNexus.Domain.Primitives.ParticipantType;
@@ -38,6 +39,8 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     private readonly ISessionWarmupService _warmup;
     private readonly IConversationDispatcher _conversationDispatcher;
     private readonly IConversationRouter _conversationRouter;
+    private readonly IConversationStore? _conversationStore;
+    private readonly IAskUserResponseRegistry? _askUserResponseRegistry;
     private readonly IOptionsMonitor<CompactionOptions> _compactionOptions;
     private readonly ILogger<GatewayHub> _logger;
 
@@ -52,7 +55,9 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         IConversationDispatcher conversationDispatcher,
         IConversationRouter conversationRouter,
         IOptionsMonitor<CompactionOptions> compactionOptions,
-        ILogger<GatewayHub> logger)
+        ILogger<GatewayHub> logger,
+        IConversationStore? conversationStore = null,
+        IAskUserResponseRegistry? askUserResponseRegistry = null)
     {
         _supervisor = supervisor;
         _registry = registry;
@@ -65,6 +70,8 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         _conversationRouter = conversationRouter;
         _compactionOptions = compactionOptions;
         _logger = logger;
+        _conversationStore = conversationStore;
+        _askUserResponseRegistry = askUserResponseRegistry;
     }
 
     /// <summary>
@@ -207,6 +214,52 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             session.SessionId.Value,
             session.AgentId.Value,
             session.ChannelType?.Value);
+    }
+
+    /// <summary>
+    /// Completes a pending <c>ask_user</c> request for the active conversation without
+    /// entering the normal session dispatch queue.
+    /// </summary>
+    public async Task RespondToAskUser(
+        string conversationId,
+        string requestId,
+        string? freeFormText,
+        string[]? selectedValues,
+        bool cancelled)
+    {
+        if (_askUserResponseRegistry is null || _conversationStore is null)
+            throw new HubException("ask_user response handling is not available.");
+
+        if (string.IsNullOrWhiteSpace(conversationId))
+            throw new HubException("Conversation ID is required.");
+        if (string.IsNullOrWhiteSpace(requestId))
+            throw new HubException("Request ID is required.");
+
+        var normalizedConversationId = ConversationId.From(conversationId.Trim());
+        var conversation = await _conversationStore.GetAsync(normalizedConversationId, Context.ConnectionAborted);
+        if (conversation is null)
+            throw new HubException($"Conversation '{normalizedConversationId.Value}' not found.");
+
+        var hasSignalRBinding = conversation.ChannelBindings.Any(binding =>
+            binding.ChannelType.Equals(ChannelKey.From("signalr")));
+        if (!hasSignalRBinding)
+            throw new HubException("Caller does not have access to this conversation.");
+
+        var response = new AskUserResponse
+        {
+            RequestId = requestId.Trim(),
+            FreeFormText = string.IsNullOrWhiteSpace(freeFormText) ? null : freeFormText.Trim(),
+            SelectedValues = selectedValues is { Length: > 0 }
+                ? selectedValues
+                    .Where(value => !string.IsNullOrWhiteSpace(value))
+                    .Select(value => value.Trim())
+                    .ToArray()
+                : null,
+            WasCancelled = cancelled
+        };
+
+        if (!_askUserResponseRegistry.TryComplete(normalizedConversationId, response.RequestId, response))
+            throw new HubException("No matching ask_user request is pending for this conversation.");
     }
 
     /// <summary>
@@ -446,6 +499,11 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         var options = requestServices?.GetService<IOptionsMonitor<CompactionOptions>>()?.CurrentValue ?? _compactionOptions.CurrentValue;
 
         var result = await compactor.CompactAsync(session.Session, options, CancellationToken.None);
+        if (result.Succeeded && result.CompactedHistory is not null)
+        {
+            session.ReplaceHistory(result.CompactedHistory);
+            session.Session.UpdatedAt = DateTimeOffset.UtcNow;
+        }
         await _sessions.SaveAsync(session, CancellationToken.None);
 
         return new CompactSessionResult(

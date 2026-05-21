@@ -9,6 +9,7 @@ using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Media;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Abstractions.Extensions;
@@ -21,6 +22,7 @@ using BotNexus.Gateway.Hooks;
 using BotNexus.Gateway.Isolation;
 using BotNexus.Gateway.Media;
 using BotNexus.Gateway.Routing;
+using BotNexus.Gateway.Services;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Security;
 using BotNexus.Gateway.Federation;
@@ -130,11 +132,15 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<IChannelManager, ChannelManager>();
         services.TryAddSingleton<ISessionStore, InMemorySessionStore>();
         services.TryAddSingleton<IConversationStore, InMemoryConversationStore>();
+        services.AddSingleton<IAgentCanvasNotifier, ConversationCanvasNotifier>();
         services.TryAddSingleton<IConversationRouter, DefaultConversationRouter>();
         services.TryAddSingleton<IConversationDispatcher, DefaultConversationDispatcher>();
+        services.TryAddSingleton<IAskUserResponseRegistry, AskUserResponseRegistry>();
+        services.TryAddSingleton<PendingAskUserInterceptor>();
         services.AddSingleton<InternalChannelAdapter>();
         services.AddSingleton<IChannelAdapter>(serviceProvider => serviceProvider.GetRequiredService<InternalChannelAdapter>());
         services.AddSingleton<ISessionCompactor, LlmSessionCompactor>();
+        services.AddSingleton<IPreCompactionMemoryFlusher, PreCompactionMemoryFlusher>();
         services.AddSingleton<IMediaPipeline, MediaPipeline>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICommandContributor, BuiltInCommandContributor>());
         services.TryAddSingleton<CommandRegistry>();
@@ -155,6 +161,7 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<DefaultToolPolicyProvider>();
         services.TryAddSingleton<IToolPolicyProvider>(sp => sp.GetRequiredService<DefaultToolPolicyProvider>());
         services.AddSingleton<ToolPolicyHookHandler>();
+        services.TryAddSingleton<ISecretRedactor, SecretRedactor>();
 
         // Built-in isolation strategies
         services.AddSingleton<IIsolationStrategy, InProcessIsolationStrategy>();

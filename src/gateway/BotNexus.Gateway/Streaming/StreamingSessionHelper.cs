@@ -69,6 +69,33 @@ public static class StreamingSessionHelper
                         Content = $"Agent stream error: {evt.ErrorMessage}"
                     });
                     break;
+                case AgentStreamEventType.TurnEnd when streamedHistory.Count > 0 || streamedContent.Length > 0:
+                    // Flush accumulated entries at each turn boundary so a second client
+                    // opening the session mid-run sees partial progress rather than nothing.
+                    // The final SaveAsync below remains the authoritative write for the
+                    // completed assistant message; this flush persists tool calls eagerly.
+                    // Fixes #362.
+                    var turnSnapshot = streamedHistory.ToList();
+                    streamedHistory.Clear();
+                    if (streamedContent.Length > 0)
+                    {
+                        turnSnapshot.Add(new SessionEntry { Role = MessageRole.Assistant, Content = streamedContent.ToString() });
+                        streamedContent.Clear();
+                    }
+                    session.AddEntries(turnSnapshot);
+                    // Remove crash sentinel before flushing partial turn state.
+                    session.RemoveCrashSentinels();
+                    try
+                    {
+                        await sessionStore.SaveAsync(session, cancellationToken);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // Best-effort mid-run flush — log but don't abort the stream.
+                        // The final SaveAsync at AgentEnd is still authoritative.
+                        _ = ex; // Suppress unused-variable warning; caller's logger not available here.
+                    }
+                    break;
             }
 
             if (options.OnEventAsync is not null)
@@ -77,9 +104,13 @@ public static class StreamingSessionHelper
             }
         }
 
+        // Final write: append any remaining content not yet flushed by a TurnEnd
+        // (single-turn runs, or the last partial turn before AgentEnd).
         session.AddEntries(streamedHistory);
         if (streamedContent.Length > 0)
             session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = streamedContent.ToString() });
+        // Remove crash sentinel on clean completion (#363).
+        session.RemoveCrashSentinels();
         await sessionStore.SaveAsync(session, cancellationToken);
         if (lifecycleEvents is not null)
         {

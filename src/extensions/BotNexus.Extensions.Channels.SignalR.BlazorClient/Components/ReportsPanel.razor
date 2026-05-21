@@ -1,9 +1,9 @@
-@inject IGatewayRestClient GatewayRestClient
+﻿@inject IGatewayRestClient GatewayRestClient
 @inject IJSRuntime JS
 @using Microsoft.AspNetCore.Components
 @implements IDisposable
 
-<div class="reports-panel @MobilePaneClass" data-testid="reports-panel">
+<div id="@_containerId" class="reports-panel @MobilePaneClass" data-testid="reports-panel">
     <section class="reports-list-pane">
         @if (_isLoadingReports)
         {
@@ -35,6 +35,8 @@
             </ul>
         }
     </section>
+
+    <div class="panel-splitter" role="separator" aria-orientation="vertical" aria-label="Resize reports panels" title="Drag to resize"></div>
 
     <section class="reports-viewer-pane">
         @if (_showMobileViewer)
@@ -88,7 +90,7 @@
 </div>
 
 @code {
-    private const int MaxPreviewCharacters = 200_000;
+    private const int MaxPreviewCharacters = 512 * 1024;
 
     private readonly CancellationTokenSource _cts = new();
     private IReadOnlyList<ReportListItemDto> _reports = [];
@@ -102,13 +104,23 @@
     private string? _markdownRenderNotice;
     private bool _showMobileViewer;
 
+    // Issue #345: turn-end refresh tracking
+    private bool _wasStreaming;
+
+    /// <summary>Optional state store for turn-end auto-refresh (issue #345).</summary>
+    [Parameter]
+    public IClientStateStore? Store { get; set; }
+
     [Parameter, EditorRequired]
     public string AgentId { get; set; } = default!;
+
+    private string _containerId => $"reports-panel-{AgentId}";
+    private string _storageKey => $"bn-reports-list-width-{AgentId}";
 
     private string MobilePaneClass => _showMobileViewer ? "mobile-viewer" : "mobile-list";
 
     private bool ShowServerTruncationNotice =>
-        _selectedReport is { } report && report.Content.Length < report.Size;
+        _selectedReport is { IsTruncated: true };
 
     private bool ShowClientTruncationNotice =>
         !string.IsNullOrEmpty(_selectedReport?.Content)
@@ -127,11 +139,46 @@
 
     protected override async Task OnInitializedAsync()
     {
+        if (Store is not null)
+        {
+            _wasStreaming = Store.GetAgent(AgentId)?.IsStreaming == true;
+            Store.OnChanged += HandleStateChanged;
+        }
         await LoadReportsAsync();
+    }
+
+    private void HandleStateChanged()
+    {
+        var agent = Store?.GetAgent(AgentId);
+        if (agent is null) return;
+
+        var isStreaming = agent.IsStreaming;
+        if (_wasStreaming && !isStreaming)
+        {
+            _wasStreaming = false;
+            _ = InvokeAsync(async () =>
+            {
+                await LoadReportsAsync();
+                StateHasChanged();
+            });
+            return;
+        }
+
+        _wasStreaming = isStreaming;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await JS.InvokeVoidAsync("BotNexus.splitter.init", _containerId, _storageKey, 384, 140, 0.65, 0.33);
+        }
     }
 
     public void Dispose()
     {
+        if (Store is not null)
+            Store.OnChanged -= HandleStateChanged;
         _cts.Cancel();
         _cts.Dispose();
     }

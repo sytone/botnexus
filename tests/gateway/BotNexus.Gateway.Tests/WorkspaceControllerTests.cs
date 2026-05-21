@@ -123,3 +123,276 @@ public sealed class WorkspaceControllerTests
         return new WorkspaceController(registry, workspaceManager.Object, fileSystem);
     }
 }
+
+public sealed class WorkspaceControllerDeleteTests
+{
+    private const string WorkspacePath = @"C:\workspace\agent-a";
+
+    // ── happy paths ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public void DeleteItem_WhenFileExists_Returns204()
+    {
+        var filePath = Path.Combine(WorkspacePath, "notes.md");
+        var fileSystem = new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            [filePath] = new("hello")
+        });
+        var controller = CreateController(fileSystem, WorkspacePath);
+
+        var result = controller.DeleteItem("agent-a", "notes.md", force: false);
+
+        result.ShouldBeOfType<NoContentResult>();
+        fileSystem.File.Exists(filePath).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void DeleteItem_WhenEmptyDirectoryExists_Returns204()
+    {
+        var dirPath = Path.Combine(WorkspacePath, "emptydir");
+        var fileSystem = new MockFileSystem();
+        fileSystem.Directory.CreateDirectory(dirPath);
+        var controller = CreateController(fileSystem, WorkspacePath);
+
+        var result = controller.DeleteItem("agent-a", "emptydir", force: false);
+
+        result.ShouldBeOfType<NoContentResult>();
+        fileSystem.Directory.Exists(dirPath).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void DeleteItem_WhenNonEmptyDirectoryAndForceTrue_Returns204()
+    {
+        var fileSystem = new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            [Path.Combine(WorkspacePath, "logs", "app.log")] = new("log data")
+        });
+        var controller = CreateController(fileSystem, WorkspacePath);
+
+        var result = controller.DeleteItem("agent-a", "logs", force: true);
+
+        result.ShouldBeOfType<NoContentResult>();
+        fileSystem.Directory.Exists(Path.Combine(WorkspacePath, "logs")).ShouldBeFalse();
+    }
+
+    // ── sad paths ─────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void DeleteItem_WhenAgentUnknown_Returns404()
+    {
+        var controller = CreateController(new MockFileSystem(), WorkspacePath);
+
+        var result = controller.DeleteItem("unknown-agent", "notes.md", force: false);
+
+        result.ShouldBeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public void DeleteItem_WhenPathEmpty_Returns400()
+    {
+        var controller = CreateController(new MockFileSystem(), WorkspacePath);
+
+        var result = controller.DeleteItem("agent-a", "   ", force: false);
+
+        result.ShouldBeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void DeleteItem_WhenPathRooted_Returns400()
+    {
+        var controller = CreateController(new MockFileSystem(), WorkspacePath);
+
+        var result = controller.DeleteItem("agent-a", @"C:\absolute\path.md", force: false);
+
+        result.ShouldBeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void DeleteItem_WhenPathContainsNullByte_Returns400()
+    {
+        var controller = CreateController(new MockFileSystem(), WorkspacePath);
+
+        var result = controller.DeleteItem("agent-a", "bad\0path", force: false);
+
+        result.ShouldBeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void DeleteItem_WhenFileDoesNotExist_Returns404()
+    {
+        var controller = CreateController(new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            // workspace root exists but target file does not
+            [Path.Combine(WorkspacePath, "other.md")] = new("x")
+        }), WorkspacePath);
+
+        var result = controller.DeleteItem("agent-a", "missing.md", force: false);
+
+        result.ShouldBeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public void DeleteItem_WhenNonEmptyDirectoryAndForceFalse_Returns409()
+    {
+        var fileSystem = new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            [Path.Combine(WorkspacePath, "logs", "app.log")] = new("log data")
+        });
+        var controller = CreateController(fileSystem, WorkspacePath);
+
+        var result = controller.DeleteItem("agent-a", "logs", force: false);
+
+        result.ShouldBeOfType<ConflictObjectResult>();
+    }
+
+    private static WorkspaceController CreateController(MockFileSystem fileSystem, string workspacePath)
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(new AgentDescriptor
+        {
+            AgentId = AgentId.From("agent-a"),
+            DisplayName = "Agent A",
+            ModelId = "gpt-4.1",
+            ApiProvider = "openai"
+        });
+
+        var workspaceManager = new Mock<IAgentWorkspaceManager>();
+        workspaceManager.Setup(manager => manager.GetWorkspacePath("agent-a")).Returns(workspacePath);
+
+        return new WorkspaceController(registry, workspaceManager.Object, fileSystem);
+    }
+}
+
+public sealed class WorkspaceControllerWriteTests
+{
+    private const string WorkspacePath = @"C:\workspace\agent-a";
+
+    // ── happy paths ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public void WriteFile_WhenNewFile_Returns204AndFileExists()
+    {
+        var fileSystem = new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            // workspace root must exist; create a dummy so directory exists
+            [Path.Combine(WorkspacePath, ".keep")] = new(string.Empty)
+        });
+        var controller = CreateController(fileSystem, WorkspacePath);
+
+        var result = controller.WriteFile("agent-a", "newfile.md",
+            new BotNexus.Gateway.Api.Models.WorkspaceWriteRequest { Content = "# Hello" });
+
+        result.ShouldBeOfType<NoContentResult>();
+        fileSystem.File.ReadAllText(Path.Combine(WorkspacePath, "newfile.md")).ShouldBe("# Hello");
+    }
+
+    [Fact]
+    public void WriteFile_WhenExistingFile_OverwritesContent()
+    {
+        var fileSystem = new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            [Path.Combine(WorkspacePath, "notes.md")] = new("old content")
+        });
+        var controller = CreateController(fileSystem, WorkspacePath);
+
+        var result = controller.WriteFile("agent-a", "notes.md",
+            new BotNexus.Gateway.Api.Models.WorkspaceWriteRequest { Content = "new content" });
+
+        result.ShouldBeOfType<NoContentResult>();
+        fileSystem.File.ReadAllText(Path.Combine(WorkspacePath, "notes.md")).ShouldBe("new content");
+    }
+
+    // ── sad paths ─────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void WriteFile_WhenAgentUnknown_Returns404()
+    {
+        var controller = CreateController(new MockFileSystem(), WorkspacePath);
+
+        var result = controller.WriteFile("unknown-agent", "notes.md",
+            new BotNexus.Gateway.Api.Models.WorkspaceWriteRequest { Content = "x" });
+
+        result.ShouldBeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public void WriteFile_WhenPathEmpty_Returns400()
+    {
+        var controller = CreateController(new MockFileSystem(), WorkspacePath);
+
+        var result = controller.WriteFile("agent-a", "  ",
+            new BotNexus.Gateway.Api.Models.WorkspaceWriteRequest { Content = "x" });
+
+        result.ShouldBeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void WriteFile_WhenPathRooted_Returns400()
+    {
+        var controller = CreateController(new MockFileSystem(), WorkspacePath);
+
+        var result = controller.WriteFile("agent-a", @"C:\absolute\file.md",
+            new BotNexus.Gateway.Api.Models.WorkspaceWriteRequest { Content = "x" });
+
+        result.ShouldBeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void WriteFile_WhenPathContainsNullByte_Returns400()
+    {
+        var controller = CreateController(new MockFileSystem(), WorkspacePath);
+
+        var result = controller.WriteFile("agent-a", "bad\0file",
+            new BotNexus.Gateway.Api.Models.WorkspaceWriteRequest { Content = "x" });
+
+        result.ShouldBeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void WriteFile_WhenPathIsDirectory_Returns400()
+    {
+        var fileSystem = new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            [Path.Combine(WorkspacePath, "subdir", "child.md")] = new("x")
+        });
+        var controller = CreateController(fileSystem, WorkspacePath);
+
+        var result = controller.WriteFile("agent-a", "subdir",
+            new BotNexus.Gateway.Api.Models.WorkspaceWriteRequest { Content = "x" });
+
+        result.ShouldBeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void WriteFile_WhenParentDirectoryMissing_Returns400()
+    {
+        // Only workspace root exists, no "nonexistent" subdirectory
+        var fileSystem = new MockFileSystem(new Dictionary<string, MockFileData>
+        {
+            [Path.Combine(WorkspacePath, ".keep")] = new(string.Empty)
+        });
+        var controller = CreateController(fileSystem, WorkspacePath);
+
+        var result = controller.WriteFile("agent-a", "nonexistent/file.md",
+            new BotNexus.Gateway.Api.Models.WorkspaceWriteRequest { Content = "x" });
+
+        result.ShouldBeOfType<BadRequestObjectResult>();
+    }
+
+    private static WorkspaceController CreateController(MockFileSystem fileSystem, string workspacePath)
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(new AgentDescriptor
+        {
+            AgentId = AgentId.From("agent-a"),
+            DisplayName = "Agent A",
+            ModelId = "gpt-4.1",
+            ApiProvider = "openai"
+        });
+
+        var workspaceManager = new Mock<IAgentWorkspaceManager>();
+        workspaceManager.Setup(manager => manager.GetWorkspacePath("agent-a")).Returns(workspacePath);
+
+        return new WorkspaceController(registry, workspaceManager.Object, fileSystem);
+    }
+}

@@ -61,4 +61,17 @@ public sealed record SubAgentSpawnRequest
     /// Gets the behavioral archetype to apply to the sub-agent.
     /// </summary>
     public SubAgentArchetype Archetype { get; init; } = SubAgentArchetype.General;
+
+    /// <summary>
+    /// Gets the spawn depth of this request within the sub-agent tree.
+    /// Zero means the parent is a top-level session; one means the parent is itself a sub-agent.
+    /// Used to enforce <see cref="BotNexus.Gateway.Configuration.SubAgentOptions.MaxDepth"/>.
+    /// </summary>
+    public int SpawnDepth { get; init; }
+
+    /// <summary>
+    /// Gets the union of tool names that the parent agent is denied, inherited from the
+    /// parent's effective deny-list. The spawned sub-agent must not be granted any of these tools.
+    /// </summary>
+    public IReadOnlyList<string>? ParentToolDenyList { get; init; }
 }

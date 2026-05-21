@@ -239,6 +239,60 @@ public sealed class SkillToolTests
         result.ShouldBeSameAs(config);
     }
 
+    // ── #227 path resolution ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task List_AvailableSkills_IncludePath()
+    {
+        var skill = MakeSkill("calendar");
+        var tool = new SkillTool([skill], config: null);
+
+        var result = await tool.ExecuteAsync("call-1", Args("list"));
+        var text = ResultText(result);
+
+        text.ShouldContain("Path:");
+        text.ShouldContain("/skills/calendar");
+    }
+
+    [Fact]
+    public async Task List_LoadedSkills_IncludePath()
+    {
+        var skills = new[] { MakeSkill("email-triage") };
+        var config = new SkillsConfig { AutoLoad = ["email-triage"] };
+        var tool = new SkillTool(skills, config);
+
+        var result = await tool.ExecuteAsync("call-1", Args("list"));
+        var text = ResultText(result);
+
+        text.ShouldContain("Path:");
+        text.ShouldContain("/skills/email-triage");
+    }
+
+    [Fact]
+    public async Task Load_ResponseIncludesPath()
+    {
+        var skill = MakeSkill("git-workflow");
+        var tool = new SkillTool([skill], config: null);
+
+        var result = await tool.ExecuteAsync("call-1", Args("load", "git-workflow"));
+        var text = ResultText(result);
+
+        text.ShouldContain("**Path:**");
+        text.ShouldContain("/skills/git-workflow");
+    }
+
+    [Fact]
+    public async Task Load_UnknownSkill_DoesNotIncludePath()
+    {
+        var tool = new SkillTool([], config: null);
+
+        var result = await tool.ExecuteAsync("call-1", Args("load", "nonexistent"));
+        var text = ResultText(result);
+
+        text.ShouldContain("not found");
+        text.ShouldNotContain("**Path:**");
+    }
+
     private static bool InvokeTryUnload(SkillTool tool, string skillName)
     {
         var method = tool.GetType().GetMethod("TryUnload", BindingFlags.Public | BindingFlags.Instance);

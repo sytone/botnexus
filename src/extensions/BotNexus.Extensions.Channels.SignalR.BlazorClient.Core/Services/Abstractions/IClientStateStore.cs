@@ -1,4 +1,4 @@
-namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+﻿namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 /// <summary>
 /// Single in-memory source of truth for all portal state.
@@ -89,6 +89,26 @@ public interface IClientStateStore
 
     /// <summary>Commit the stream buffer as a final assistant message in the conversation.</summary>
     void CommitStreamBuffer(string conversationId, string? thinkingContent = null);
+
+    // ── ask_user prompt state ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Set or replace the pending <c>ask_user</c> prompt for a conversation so
+    /// the chat panel can render inline response controls.
+    /// </summary>
+    void SetPendingAskUser(AskUserPromptState prompt);
+
+    /// <summary>
+    /// Clear the pending <c>ask_user</c> prompt for a conversation after submit,
+    /// cancellation, timeout, or stream termination.
+    /// </summary>
+    void ClearPendingAskUser(string conversationId);
+
+    /// <summary>
+    /// Get the active <c>ask_user</c> prompt for the conversation, or <c>null</c>
+    /// when no interactive prompt is waiting.
+    /// </summary>
+    AskUserPromptState? GetPendingAskUser(string conversationId);
 }
 
 /// <summary>Agent-level state for the portal sidebar and chat panel.</summary>
@@ -224,6 +244,7 @@ public sealed class ConversationState
     public ConversationStreamState StreamState { get; } = new();
 }
 
+
 /// <summary>Stream-buffer state for an active or recently active conversation.</summary>
 public sealed class ConversationStreamState
 {
@@ -238,4 +259,10 @@ public sealed class ConversationStreamState
 
     /// <summary>In-progress tool calls for this conversation keyed by tool-call ID.</summary>
     public Dictionary<string, ActiveToolCall> ActiveToolCalls { get; } = new();
+
+    /// <summary>Whether the agent turn is still active -- either streaming or awaiting tool results.
+    /// Use this instead of IsStreaming to keep Steer/Abort controls visible
+    /// between the end of an LLM generation and the start of the next one while tools run.</summary>
+    public bool IsTurnActive => IsStreaming || ActiveToolCalls.Count > 0;
 }
+

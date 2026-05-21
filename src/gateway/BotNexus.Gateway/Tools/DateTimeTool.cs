@@ -46,7 +46,7 @@ public sealed class DateTimeTool : IAgentTool
               "properties": {
                 "timezone": {
                   "type": "string",
-                  "description": "Optional IANA timezone ID (for example, 'America/Los_Angeles'). Defaults to the agent timezone, or UTC when no agent timezone is configured."
+                  "description": "Optional IANA timezone ID (for example, 'America/Los_Angeles'). Defaults to the agent timezone, or the server default timezone, or UTC when neither is configured."
                 }
               }
             }

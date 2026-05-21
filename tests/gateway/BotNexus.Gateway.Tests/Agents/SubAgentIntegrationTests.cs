@@ -131,7 +131,9 @@ public sealed class SubAgentIntegrationTests
         var manager = CreateManager(supervisor.Object, registry.Object, workspaceManager: workspaceManager.Object);
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
 
-        await Task.Delay(100);
+        await WaitUntilAsync(
+            async () => (await manager.GetAsync(spawned.SubAgentId))?.Status == SubAgentStatus.Completed,
+            TimeSpan.FromSeconds(2));
         var completed = await manager.GetAsync(spawned.SubAgentId);
 
         completed.ShouldNotBeNull();

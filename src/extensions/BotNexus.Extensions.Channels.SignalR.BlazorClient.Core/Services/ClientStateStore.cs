@@ -8,6 +8,7 @@ public sealed class ClientStateStore : IClientStateStore
 {
     private readonly Dictionary<string, AgentState> _agents = new();
     private readonly Dictionary<string, string> _sessionToAgent = new(); // sessionId → agentId
+    private readonly Dictionary<string, AskUserPromptState> _pendingAskUserByConversation = new();
 
     // ── IClientStateStore ────────────────────────────────────────────────────
 
@@ -287,6 +288,26 @@ public sealed class ClientStateStore : IClientStateStore
         NotifyChanged();
     }
 
+    // ── ask_user prompt state ────────────────────────────────────────────────
+
+    /// <inheritdoc />
+    public void SetPendingAskUser(AskUserPromptState prompt)
+    {
+        _pendingAskUserByConversation[prompt.ConversationId] = prompt;
+        NotifyChanged();
+    }
+
+    /// <inheritdoc />
+    public void ClearPendingAskUser(string conversationId)
+    {
+        if (_pendingAskUserByConversation.Remove(conversationId))
+            NotifyChanged();
+    }
+
+    /// <inheritdoc />
+    public AskUserPromptState? GetPendingAskUser(string conversationId) =>
+        _pendingAskUserByConversation.GetValueOrDefault(conversationId);
+
     // ── Session resolution ─────────────────────────────────────────────────────
 
     /// <inheritdoc />
@@ -300,6 +321,14 @@ public sealed class ClientStateStore : IClientStateStore
             agent.ChannelType = channelType;
         if (sessionType is not null)
             agent.SessionType = sessionType;
+        // Immediately bind session to active conversation so TryResolveConversationBySession works
+        // without waiting for the async REST refresh. This eliminates the race condition (#314)
+        // where MessageStart arrives before RefreshConversationsForAgentAsync completes.
+        if (agent.ActiveConversationId is not null &&
+            agent.Conversations.TryGetValue(agent.ActiveConversationId, out var activeConv))
+        {
+            activeConv.ActiveSessionId = sessionId;
+        }
     }
 
     /// <inheritdoc />

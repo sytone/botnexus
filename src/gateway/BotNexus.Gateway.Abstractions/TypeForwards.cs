@@ -1,7 +1,11 @@
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.AgentExchangeResult))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.AgentExchangeTranscriptEntry))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.AskUserChoice))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.AskUserInputType))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.AskUserRequest))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.AskUserResponse))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.AgentDescriptor))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.AgentExecutionContext))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Models.AgentResponse))]
@@ -52,6 +56,8 @@ using System.Runtime.CompilerServices;
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentHandle))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentHandleInspector))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentChangeNotifier))]
+[assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Conversations.IConversationChangeNotifier))]
+
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentCanvasNotifier))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentRegistry))]
 [assembly: TypeForwardedTo(typeof(BotNexus.Gateway.Abstractions.Agents.IAgentSupervisor))]

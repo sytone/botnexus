@@ -55,6 +55,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
     private readonly IConversationDispatcher? _conversationDispatcher;
     private readonly IConversationRouter? _conversationRouter;
     private readonly SessionLifecycleEvents? _sessionLifecycleEvents;
+    private readonly PendingAskUserInterceptor? _pendingAskUserInterceptor;
+    private readonly IPreCompactionMemoryFlusher? _memoryFlusher;
     private readonly ConcurrentDictionary<string, SessionQueueState> _sessionQueues = new(StringComparer.OrdinalIgnoreCase);
 
     public GatewayHost(
@@ -70,7 +72,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         SessionLifecycleEvents? sessionLifecycleEvents = null,
         IMediaPipeline? mediaPipeline = null,
         IConversationDispatcher? conversationDispatcher = null,
-        IConversationRouter? conversationRouter = null)
+        IConversationRouter? conversationRouter = null,
+        PendingAskUserInterceptor? pendingAskUserInterceptor = null,
+        IPreCompactionMemoryFlusher? memoryFlusher = null)
     {
         _supervisor = supervisor;
         _router = router;
@@ -84,6 +88,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         _conversationDispatcher = conversationDispatcher;
         _conversationRouter = conversationRouter;
         _sessionLifecycleEvents = sessionLifecycleEvents;
+        _pendingAskUserInterceptor = pendingAskUserInterceptor;
+        _memoryFlusher = memoryFlusher;
         SessionQueueCapacity = Math.Max(sessionQueueCapacity, 1);
     }
 
@@ -342,8 +348,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     new KeyValuePair<string, object?>("botnexus.channel.type", message.ChannelType));
             }
             session.ChannelType ??= message.ChannelType;
-            // Stamp ConversationId from dispatch resolution when not already set on the session object.
-            if (resolution is not null && session.Session.ConversationId is null)
+            // Update session ConversationId from dispatch resolution.
+            // Always update (not just when null) so that switching conversations on the same
+            // session correctly routes messages to the new conversation (#314).
+            if (resolution is not null && session.Session.ConversationId != resolution.ConversationId)
                 session.Session.ConversationId = resolution.ConversationId;
             session.CallerId ??= message.SenderId;
             session.SessionType = ResolveSessionType(session, message);
@@ -375,13 +383,26 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 {
                     if (await HandleSteeringAsync(message, agentId, sessionId, cancellationToken))
                         continue;
-                    // Agent not running — fall through to normal message processing.
+                    // Steering must not fall through to normal message processing.
+                    // Steering is control-plane metadata; discard it rather than converting to a user prompt.
+                    _logger.LogWarning("Steering discarded for session {SessionId} because agent is not running. Control messages must not enter the data plane.", sessionId);
+                    continue;
                 }
                 else if (string.Equals(controlCommand, ControlCompact, StringComparison.OrdinalIgnoreCase))
                 {
                     await HandleCompactionAsync(message, session, sessionId, cancellationToken);
                     continue;
                 }
+            }
+
+            if (_pendingAskUserInterceptor is not null &&
+                session.Session.ConversationId is { } activeConversationId &&
+                _pendingAskUserInterceptor.TryIntercept(message, activeConversationId))
+            {
+                _logger.LogInformation(
+                    "Captured ask_user response for conversation {ConversationId}; skipping normal agent dispatch.",
+                    activeConversationId);
+                continue;
             }
 
             IReadOnlyList<MessageContentPart>? originalParts = message.ContentParts;
@@ -406,17 +427,39 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 ProcessedContentParts = processedParts
             });
 
+
             // Fan-out user message to other conversation bindings so channel adapters
             // that cannot receive injected user input (e.g. Telegram) can echo it.
             // Only fan out for real user-agent turns — not sub-agents, cron, or soul sessions.
             if (session.SessionType == SessionType.UserAgent)
                 await FanOutUserMessageAsync(message, sessionId, cancellationToken);
+
+            // Write-ahead Layer 1: persist user message before starting the LLM call.
+            // Ensures user input survives a gateway restart mid-turn (#363).
+            await _sessions.SaveAsync(session, cancellationToken);
+
             if (_compactor.ShouldCompact(session.Session, _compactionOptions.CurrentValue))
             {
                 _logger.LogInformation("Auto-compacting session {SessionId}", sessionId);
                 try
                 {
+                    if (_memoryFlusher is not null && _memoryFlusher.ShouldFlush(session.Session, _compactionOptions.CurrentValue))
+                    {
+                        try
+                        {
+                            await _memoryFlusher.FlushAsync(session.Session.AgentId, session.Session, _compactionOptions.CurrentValue, cancellationToken).ConfigureAwait(false);
+                        }
+                        catch (Exception flushEx)
+                        {
+                            _logger.LogWarning(flushEx, "Pre-compaction memory flush failed for session {SessionId}, compaction will proceed", sessionId);
+                        }
+                    }
                     var result = await _compactor.CompactAsync(session.Session, _compactionOptions.CurrentValue, cancellationToken);
+                    if (result.Succeeded && result.CompactedHistory is not null)
+                    {
+                        session.ReplaceHistory(result.CompactedHistory);
+                        session.Session.UpdatedAt = DateTimeOffset.UtcNow;
+                    }
                     await _sessions.SaveAsync(session, cancellationToken);
                     _logger.LogInformation(
                         "Session {SessionId} compacted: {Summarized} entries summarized, {Preserved} preserved",
@@ -427,6 +470,18 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     _logger.LogWarning(ex, "Auto-compaction failed for session {SessionId}, continuing without compaction", sessionId);
                 }
             }
+
+            // Write-ahead Layer 2: crash sentinel written before the LLM call.
+            // If the gateway restarts mid-turn, this sentinel survives in the session store,
+            // showing an interrupted-turn marker to the user rather than a silent gap (#363).
+            var crashSentinel = new SessionEntry
+            {
+                Role = MessageRole.System,
+                Content = "[agent turn in progress — gateway restarted if visible]",
+                IsCrashSentinel = true
+            };
+            session.AddEntry(crashSentinel);
+            await _sessions.SaveAsync(session, cancellationToken);
 
             try
             {
@@ -452,6 +507,37 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     // Capture the resolved source for the lambda closure so the
                     // streaming conversationId includes the ThreadId (fixes #125).
                     var streamingSource = resolvedSource;
+
+                    // Resolve SignalR observer bindings for cross-channel live update (#332).
+                    // When the originating channel is not SignalR (e.g. Telegram), any SignalR
+                    // bindings on the conversation receive stream events so connected web
+                    // clients update in real-time without a page reload.
+                    IReadOnlyList<(IStreamEventChannelAdapter Adapter, string SessionAddress)> signalRObservers = [];
+                    if (_conversationRouter is not null && message.ChannelType.Value != "signalr")
+                    {
+                        try
+                        {
+                            var observerBindings = await _conversationRouter.GetOutboundBindingsAsync(
+                                Domain.Primitives.SessionId.From(sessionId),
+                                message.BindingId,
+                                cancellationToken);
+
+                            signalRObservers = observerBindings
+                                .Where(b => b.ChannelType.Value == "signalr")
+                                .Select(b =>
+                                {
+                                    var adapter = ResolveChannelAdapter(b.ChannelType) as IStreamEventChannelAdapter;
+                                    return (Adapter: adapter!, Address: b.ChannelAddress.Value);
+                                })
+                                .Where(x => x.Adapter is not null)
+                                .ToList();
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to resolve SignalR observer bindings for session {SessionId}. Live update disabled for this turn.", sessionId);
+                        }
+                    }
+
                     var userMessage = BuildUserMessage(message, processedParts ?? originalParts);
                     await StreamingSessionHelper.ProcessAndSaveAsync(
                         handle.StreamAsync(userMessage, cancellationToken),
@@ -459,7 +545,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                         _sessions,
                         new StreamingSessionOptions(
                             IncludeErrorsInHistory: true,
-                            OnEventAsync: (evt, ct) =>
+                            OnEventAsync: async (AgentStreamEvent evt, CancellationToken ct) =>
                             {
                                 // Enrich with agentId so the client can route events
                                 // even before session registration completes.
@@ -476,17 +562,40 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                                 // For channels like Telegram that support forum topics, the
                                 // bare chatId is not enough — we encode threadId into the key
                                 // so the adapter can split them apart (fixes #125).
-                                var streamConversationId = streamingSource.ThreadId is not null
-                                    ? $"{message.ChannelAddress}:{streamingSource.ThreadId}"
-                                    : message.ChannelAddress.Value;
+                                 var streamConversationId = streamingSource.ThreadId is not null
+                                     ? $"{message.ChannelAddress}:{streamingSource.ThreadId}"
+                                     : message.ChannelAddress.Value;
+
+                                if (enriched.Type == AgentStreamEventType.UserInputRequired)
+                                {
+                                    await HandleUserInputRequiredAsync(
+                                        message,
+                                        sessionId,
+                                        streamingSource,
+                                        enriched,
+                                        ct);
+                                    return;
+                                }
 
                                 if (channel is IStreamEventChannelAdapter streamEventChannel)
-                                    return new ValueTask(streamEventChannel.SendStreamEventAsync(streamConversationId, enriched, ct));
+                                    await streamEventChannel.SendStreamEventAsync(streamConversationId, enriched, ct);
+                                else if (evt.Type == AgentStreamEventType.ContentDelta && evt.ContentDelta is not null)
+                                    await channel.SendStreamDeltaAsync(streamConversationId, evt.ContentDelta, ct);
 
-                                if (evt.Type == AgentStreamEventType.ContentDelta && evt.ContentDelta is not null)
-                                    return new ValueTask(channel.SendStreamDeltaAsync(streamConversationId, evt.ContentDelta, ct));
-
-                                return ValueTask.CompletedTask;
+                                // Fan-out stream events to SignalR observer bindings (#332).
+                                // Each observer gets the event keyed by its own channel address
+                                // (SignalR connection/session ID) so the portal can route it correctly.
+                                foreach (var (observerAdapter, observerAddress) in signalRObservers)
+                                {
+                                    try
+                                    {
+                                        await observerAdapter.SendStreamEventAsync(observerAddress, enriched, ct);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        _logger.LogWarning(ex, "SignalR observer fan-out failed for address {Address}. Skipping.", observerAddress);
+                                    }
+                                }
                             }),
                         _sessionLifecycleEvents,
                         cancellationToken);
@@ -518,6 +627,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
 
                     session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
                 }
+
+                // Remove crash sentinel on clean turn completion (#363).
+                session.RemoveCrashSentinels();
 
                 if (!sessionSaved)
                 {
@@ -655,7 +767,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         if (handle is null || !handle.IsRunning)
         {
             _logger.LogInformation(
-                "Steering received but agent is not running (instance={HasInstance}, running={IsRunning}). Falling through to normal processing for session {SessionId}",
+                "Steering received but agent is not running (instance={HasInstance}, running={IsRunning}). Steering will be discarded for session {SessionId}.",
                 instance is not null, handle?.IsRunning ?? false, sessionId);
 
             await _activity.PublishAsync(new GatewayActivity
@@ -713,9 +825,16 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         CancellationToken cancellationToken)
     {
         var result = await _compactor.CompactAsync(session.Session, _compactionOptions.CurrentValue, cancellationToken);
+        if (result.Succeeded && result.CompactedHistory is not null)
+        {
+            session.ReplaceHistory(result.CompactedHistory);
+            session.Session.UpdatedAt = DateTimeOffset.UtcNow;
+        }
         await _sessions.SaveAsync(session, cancellationToken);
 
-        var feedback = $"Session compacted: {result.EntriesSummarized} entries summarized, {result.EntriesPreserved} preserved.";
+        var feedback = result.Succeeded
+            ? $"Session compacted: {result.EntriesSummarized} entries summarized, {result.EntriesPreserved} preserved."
+            : "Compaction aborted: the summarization model returned an empty response. Session history was not modified.";
         if (ResolveChannelAdapter(message.ChannelType) is { } channel)
         {
             await channel.SendAsync(new OutboundMessage
@@ -765,6 +884,105 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         => !string.IsNullOrWhiteSpace(message.SessionId)
             ? message.SessionId
             : $"{message.ChannelType}:{message.ChannelAddress}";
+
+    private async Task HandleUserInputRequiredAsync(
+        InboundMessage message,
+        string sessionId,
+        ChannelSource source,
+        AgentStreamEvent streamEvent,
+        CancellationToken cancellationToken)
+    {
+        var request = streamEvent.UserInputRequest;
+        var sourceConversationId = source.ThreadId is not null
+            ? $"{message.ChannelAddress}:{source.ThreadId}"
+            : message.ChannelAddress.Value;
+
+        if (ResolveChannelAdapter(message.ChannelType) is { } sourceAdapter)
+            await SendAskUserToBindingAsync(sourceAdapter, sourceConversationId, source, sessionId, streamEvent, request, cancellationToken);
+
+        if (_conversationRouter is null)
+            return;
+
+        var outboundBindings = await _conversationRouter.GetOutboundBindingsAsync(
+            SessionId.From(sessionId),
+            source.BindingId,
+            cancellationToken);
+
+        foreach (var binding in outboundBindings)
+        {
+            var adapter = ResolveChannelAdapter(binding.ChannelType, binding.AdapterId);
+            if (adapter is null)
+                continue;
+
+            var bindingConversationId = binding.ThreadId is not null
+                ? $"{binding.ChannelAddress}:{binding.ThreadId}"
+                : binding.ChannelAddress.Value;
+            var bindingSource = new ChannelSource(
+                binding.ChannelType,
+                binding.ChannelAddress,
+                message.SenderId,
+                binding.ThreadId,
+                binding.BindingId,
+                binding.DisplayPrefix);
+            await SendAskUserToBindingAsync(adapter, bindingConversationId, bindingSource, sessionId, streamEvent, request, cancellationToken);
+        }
+    }
+
+    private static async Task SendAskUserToBindingAsync(
+        IChannelAdapter adapter,
+        string conversationId,
+        ChannelSource source,
+        string sessionId,
+        AgentStreamEvent streamEvent,
+        AskUserRequest? request,
+        CancellationToken cancellationToken)
+    {
+        if (adapter is IStreamEventChannelAdapter streamAdapter)
+        {
+            await streamAdapter.SendStreamEventAsync(conversationId, streamEvent, cancellationToken);
+            return;
+        }
+
+        if (request is null)
+            return;
+
+        await adapter.SendAsync(new OutboundMessage
+        {
+            ChannelType = source.ChannelType,
+            ChannelAddress = source.ChannelAddress,
+            Content = FormatAskUserFallbackPrompt(request),
+            SessionId = sessionId,
+            ThreadId = source.ThreadId,
+            BindingId = source.BindingId,
+            DisplayPrefix = source.DisplayPrefix
+        }, cancellationToken);
+    }
+
+    private static string FormatAskUserFallbackPrompt(AskUserRequest request)
+    {
+        var lines = new List<string>
+        {
+            "❓ Agent question:",
+            request.Prompt
+        };
+
+        if (request.Choices is { Count: > 0 })
+        {
+            lines.Add(string.Empty);
+            for (var index = 0; index < request.Choices.Count; index++)
+            {
+                var choice = request.Choices[index];
+                var label = string.IsNullOrWhiteSpace(choice.Label) ? choice.Value : choice.Label;
+                lines.Add($"{index + 1}. {label}");
+            }
+        }
+
+        lines.Add(string.Empty);
+        lines.Add(request.AllowMultiple
+            ? "Reply with one or more answers."
+            : "Reply with your answer.");
+        return string.Join(Environment.NewLine, lines);
+    }
 
     private async Task SendBusyAsync(InboundMessage message, CancellationToken cancellationToken)
     {
@@ -887,7 +1105,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             {
                 try
                 {
-                    var adapter = ResolveChannelAdapter(binding.ChannelType);
+                    var adapter = ResolveChannelAdapter(binding.ChannelType, binding.AdapterId);
                     if (adapter is null)
                     {
                         _logger.LogWarning(
@@ -939,6 +1157,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             _logger.LogWarning(ex, "Fan-out resolution failed for session {SessionId}. Continuing.", sessionId);
         }
     }
+
 
     /// <summary>
     /// Best-effort fan-out of a user message to other conversation bindings.
@@ -1008,14 +1227,16 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         }
     }
 
-    private IChannelAdapter? ResolveChannelAdapter(ChannelKey channelType)
+    private IChannelAdapter? ResolveChannelAdapter(ChannelKey channelType, string? adapterId = null)
+
     {
-        var adapter = _channelManager.Get(channelType);
+        var adapter = _channelManager.Get(channelType, adapterId);
         if (adapter is not null)
             return adapter;
 
-        _logger.LogWarning("No channel adapter found for type '{ChannelType}'. Available: {Available}",
+        _logger.LogWarning("No channel adapter found for type '{ChannelType}' (adapterId: '{AdapterId}'). Available: {Available}",
             channelType,
+            adapterId ?? "<any>",
             string.Join(", ", _channelManager.Adapters.Select(a => a.ChannelType)));
         return null;
     }
@@ -1078,3 +1299,4 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 }
+

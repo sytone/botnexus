@@ -803,8 +803,17 @@ html, body, #app {
     min-height: 0;
 }
 
+.workspace-tree-row-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    min-width: 0;
+}
+
 .workspace-tree-row {
     width: 100%;
+    flex: 1 1 auto;
+    min-width: 0;
     display: flex;
     align-items: center;
     gap: 0.35rem;
@@ -854,6 +863,29 @@ html, body, #app {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.workspace-tree-delete {
+    flex: 0 0 auto;
+    width: 1.6rem;
+    height: 1.6rem;
+    margin-right: 0.45rem;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    line-height: 1;
+}
+
+.workspace-tree-delete:hover {
+    background: rgba(255, 90, 90, 0.12);
+    color: #ff8e8e;
+}
+
+.workspace-tree-delete:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
 }
 
 .workspace-viewer {
@@ -933,6 +965,40 @@ html, body, #app {
 .reports-list-pane {
     border-right: 1px solid var(--border);
     background: var(--bg-secondary);
+}
+/* -- Panel splitter (resizable divider) --------------------------------- */
+.panel-splitter {
+    flex: 0 0 8px;
+    width: 8px;
+    min-width: 8px;
+    cursor: col-resize;
+    background: transparent;
+    position: relative;
+    z-index: 1;
+    transition: background 0.15s;
+    display: none;
+}
+
+.panel-splitter::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 3px;
+    width: 2px;
+    background: var(--border);
+    transition: background 0.15s, width 0.1s, left 0.1s;
+}
+
+.panel-splitter:hover::after,
+.panel-splitter.dragging::after {
+    left: 2px;
+    width: 4px;
+    background: var(--accent);
+}
+
+.panel-splitter.dragging {
+    background: rgba(0, 180, 216, 0.06);
 }
 
 .reports-list {
@@ -1177,6 +1243,92 @@ html, body, #app {
     padding: 0.75rem 1rem;
     border-top: 1px solid var(--border);
     background: var(--bg-secondary);
+}
+
+.chat-input-area.ask-user-input-area {
+    display: block;
+}
+
+.ask-user-prompt {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-surface);
+    padding: 0.85rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+}
+
+.ask-user-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+}
+
+.ask-user-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.ask-user-timeout {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+.ask-user-text {
+    margin: 0;
+    color: var(--text-primary);
+    line-height: 1.45;
+    white-space: pre-wrap;
+}
+
+.ask-user-choices {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
+.ask-user-choice {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.45rem;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.ask-user-choice input {
+    margin-top: 0.15rem;
+}
+
+.ask-user-choice-label {
+    line-height: 1.35;
+}
+
+.ask-user-free-form {
+    width: 100%;
+    min-height: 70px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    padding: 0.6rem 0.75rem;
+    font-family: var(--font-sans);
+    font-size: 0.9rem;
+    resize: vertical;
+}
+
+.ask-user-error {
+    color: var(--error);
+    font-size: 0.8rem;
+}
+
+.ask-user-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
 }
 
 .chat-input {
@@ -1868,13 +2020,15 @@ html, body, #app {
         flex-direction: row;
     }
 
+    .panel-splitter {
+        display: flex;
+    }
+
     .workspace-tree-pane {
-        flex: 0 0 min(33%, 24rem);
         border-right: 1px solid var(--border);
     }
 
     .reports-list-pane {
-        flex: 0 0 min(33%, 24rem);
         border-right: 1px solid var(--border);
     }
 
@@ -2799,6 +2953,19 @@ details[open] > .thinking-summary::before {
     color: var(--accent);
 }
 
+.pcfg-entry-id {
+    font-weight: 400;
+    font-size: 0.75rem;
+    color: var(--text-muted, #888);
+    margin-left: 0.35rem;
+    user-select: all;
+}
+
+.pcfg-entry-id code {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.72rem;
+}
+
 .pcfg-entry-delete {
     background: transparent;
     border: none;
@@ -3593,4 +3760,66 @@ h3.conversation-title.editable:hover {
 .update-confirm-btn:disabled {
     background: var(--text-muted, #888);
     cursor: default;
+}
+
+/* ---- Auto-expanding textarea ---- */
+.chat-input.expanding {
+    resize: none;
+    overflow-y: hidden;
+    transition: height 0.1s ease;
+}
+
+/* ---- Portal settings ---- */
+.banner-settings-btn {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--text-muted, #999);
+    font-size: 1rem;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+.banner-settings-btn:hover { background: var(--hover-bg, rgba(255,255,255,0.08)); }
+
+.portal-settings-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 2000;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-end;
+}
+.portal-settings-panel {
+    background: var(--panel-bg, #1e1e2e);
+    border-left: 1px solid var(--border, #333);
+    width: 320px;
+    height: 100%;
+    padding: 1.5rem;
+    overflow-y: auto;
+}
+.portal-settings-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+}
+.portal-settings-close {
+    background: none;
+    border: none;
+    color: var(--text-muted, #999);
+    font-size: 1.2rem;
+    cursor: pointer;
+}
+.portal-settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+}
+.portal-settings-hint {
+    font-size: 0.8rem;
+    color: var(--text-muted, #999);
+    padding-bottom: 0.5rem;
 }

@@ -29,6 +29,30 @@
     {
         <header class="workspace-file-header">
             <h3>@DisplayPath</h3>
+            <div class="workspace-file-actions">
+                @if (IsEditing)
+                {
+                    <button type="button"
+                            class="workspace-btn workspace-btn-save"
+                            disabled="@(!HasUnsavedChanges)"
+                            @onclick="() => OnSaveRequested.InvokeAsync(EditContent ?? string.Empty)">
+                        Save
+                    </button>
+                    <button type="button"
+                            class="workspace-btn workspace-btn-discard"
+                            @onclick="() => OnDiscardRequested.InvokeAsync()">
+                        Discard
+                    </button>
+                }
+                else
+                {
+                    <button type="button"
+                            class="workspace-btn workspace-btn-edit"
+                            @onclick="() => OnEditRequested.InvokeAsync()">
+                        Edit
+                    </button>
+                }
+            </div>
             @if (ShowServerTruncationNotice || ShowClientTruncationNotice)
             {
                 <p class="workspace-file-truncation">
@@ -36,7 +60,18 @@
                 </p>
             }
         </header>
-        <pre class="workspace-file-content">@DisplayContent</pre>
+
+        @if (IsEditing)
+        {
+            <textarea class="workspace-file-editor"
+                      value="@EditContent"
+                      @oninput="OnEditorInput"
+                      spellcheck="false"></textarea>
+        }
+        else
+        {
+            <pre class="workspace-file-content">@DisplayContent</pre>
+        }
     }
 </div>
 
@@ -58,9 +93,30 @@
     [Parameter]
     public EventCallback BackRequested { get; set; }
 
+    [Parameter]
+    public bool IsEditing { get; set; }
+
+    [Parameter]
+    public string? EditContent { get; set; }
+
+    [Parameter]
+    public EventCallback<string> OnSaveRequested { get; set; }
+
+    [Parameter]
+    public EventCallback OnDiscardRequested { get; set; }
+
+    [Parameter]
+    public EventCallback OnEditRequested { get; set; }
+
+    [Parameter]
+    public EventCallback<string> OnEditContentChanged { get; set; }
+
     private bool IsBinaryFile =>
         string.Equals(FileResponse?.Type, "binary", StringComparison.OrdinalIgnoreCase)
         || FileResponse?.Binary == true;
+
+    private bool HasUnsavedChanges =>
+        EditContent != (FileResponse?.Content ?? string.Empty);
 
     private bool ShowServerTruncationNotice => FileResponse?.IsTruncated == true;
 
@@ -79,5 +135,11 @@
                 ? content
                 : content[..MaxPreviewCharacters];
         }
+    }
+
+    private async Task OnEditorInput(ChangeEventArgs e)
+    {
+        var value = e.Value?.ToString() ?? string.Empty;
+        await OnEditContentChanged.InvokeAsync(value);
     }
 }

@@ -1,8 +1,10 @@
-using Bunit;
+﻿using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
+using System.Globalization;
+using Shouldly;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
 
@@ -14,6 +16,7 @@ public sealed class WorkspacePanelTests : IDisposable
     public WorkspacePanelTests()
     {
         _ctx.Services.AddSingleton(_restClient);
+        _ctx.JSInterop.SetupVoid("BotNexus.splitter.init", _ => true);
     }
 
     public void Dispose() => _ctx.Dispose();
@@ -40,6 +43,23 @@ public sealed class WorkspacePanelTests : IDisposable
         var cut = _ctx.Render<WorkspacePanel>(parameters => parameters.Add(x => x.AgentId, "agent-1"));
 
         cut.WaitForAssertion(() => cut.Markup.ShouldContain("Workspace is empty."));
+    }
+
+    [Fact]
+    public void First_render_initializes_splitter_with_legacy_default_width_baseline()
+    {
+        _restClient.GetWorkspaceAsync("agent-1", Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(_ => Task.FromResult<WorkspaceResponseDto?>(new WorkspaceResponseDto("directory", "", [], null, null, null, null, null)));
+
+        _ctx.Render<WorkspacePanel>(parameters => parameters.Add(x => x.AgentId, "agent-1"));
+
+        var invocation = Assert.Single(_ctx.JSInterop.Invocations, i => i.Identifier == "BotNexus.splitter.init");
+        Assert.Equal("workspace-panel-agent-1", Assert.IsType<string>(invocation.Arguments[0]));
+        Assert.Equal("bn-workspace-tree-width-agent-1", Assert.IsType<string>(invocation.Arguments[1]));
+        Assert.Equal(384, Convert.ToInt32(invocation.Arguments[2], CultureInfo.InvariantCulture));
+        Assert.Equal(120, Convert.ToInt32(invocation.Arguments[3], CultureInfo.InvariantCulture));
+        Assert.Equal(0.7d, Convert.ToDouble(invocation.Arguments[4], CultureInfo.InvariantCulture), 3);
+        Assert.Equal(0.33d, Convert.ToDouble(invocation.Arguments[5], CultureInfo.InvariantCulture), 3);
     }
 
     [Fact]
@@ -218,6 +238,73 @@ public sealed class WorkspacePanelTests : IDisposable
         css.ShouldContain(".workspace-panel.mobile-tree .workspace-viewer-pane");
         css.ShouldContain(".workspace-panel.mobile-viewer .workspace-tree-pane");
         css.ShouldContain(".workspace-mobile-back");
+        css.ShouldContain(".workspace-tree-row-wrapper");
+        css.ShouldContain(".workspace-tree-delete");
+    }
+
+    // ── Issue #345: auto-refresh on turn-end ───────────────────────────────────
+
+    [Fact]
+    public void Refreshes_workspace_when_active_agent_turn_ends()
+    {
+        // Arrange: set up store with active agent that starts streaming
+        var store = new ClientStateStore();
+        store.UpsertAgent(new AgentState { AgentId = "agent-1", IsStreaming = true });
+        store.ActiveAgentId = "agent-1";
+
+        var callCount = 0;
+        _restClient.GetWorkspaceAsync("agent-1", Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                callCount++;
+                return Task.FromResult<WorkspaceResponseDto?>(new WorkspaceResponseDto(
+                    "directory", "", [], null, null, null, null, null));
+            });
+
+        var cut = _ctx.Render<WorkspacePanel>(parameters => parameters
+            .Add(x => x.AgentId, "agent-1")
+            .Add(x => x.Store, store));
+        cut.WaitForAssertion(() => callCount.ShouldBeGreaterThan(0));
+        var loadCountAfterMount = callCount;
+
+        // Act: agent turn ends (IsStreaming transitions false)
+        store.GetAgent("agent-1")!.IsStreaming = false;
+        store.NotifyChanged();
+
+        // Assert: workspace was reloaded
+        cut.WaitForAssertion(() => callCount.ShouldBeGreaterThan(loadCountAfterMount));
+    }
+
+    [Fact]
+    public void Does_not_refresh_workspace_when_background_agent_turn_ends()
+    {
+        // Arrange: store has agent-1 as active, agent-2 is background
+        var store = new ClientStateStore();
+        store.UpsertAgent(new AgentState { AgentId = "agent-1", IsStreaming = false });
+        store.UpsertAgent(new AgentState { AgentId = "agent-2", IsStreaming = true });
+        store.ActiveAgentId = "agent-1";
+
+        var callCount = 0;
+        _restClient.GetWorkspaceAsync("agent-1", Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                callCount++;
+                return Task.FromResult<WorkspaceResponseDto?>(new WorkspaceResponseDto(
+                    "directory", "", [], null, null, null, null, null));
+            });
+
+        var cut = _ctx.Render<WorkspacePanel>(parameters => parameters
+            .Add(x => x.AgentId, "agent-1")
+            .Add(x => x.Store, store));
+        cut.WaitForAssertion(() => callCount.ShouldBeGreaterThan(0));
+        var loadCountAfterMount = callCount;
+
+        // Act: background agent-2 turn ends
+        store.GetAgent("agent-2")!.IsStreaming = false;
+        store.NotifyChanged();
+
+        // Small delay to confirm no reload fired
+        cut.WaitForAssertion(() => callCount.ShouldBe(loadCountAfterMount));
     }
 
     private static string FindRepositoryRoot()

@@ -17,11 +17,14 @@ public interface IGatewayHubClient
     Task ToolEnd(AgentStreamEvent evt);
     Task MessageEnd(AgentStreamEvent evt);
     Task Error(AgentStreamEvent evt);
+    Task UserInputRequired(AgentStreamEvent evt);
     Task SubAgentSpawned(SubAgentEventPayload payload);
     Task SubAgentCompleted(SubAgentEventPayload payload);
     Task SubAgentFailed(SubAgentEventPayload payload);
     Task SubAgentKilled(SubAgentEventPayload payload);
     Task AgentsChanged(AgentsChangedPayload payload);
+    Task ConversationChanged(ConversationChangedPayload payload);
+
     Task SteeringFeedback(SteeringFeedbackPayload payload);
-    Task CanvasUpdated(string agentId, string html);
+    Task CanvasUpdated(string agentId, string conversationId, string html);
 }

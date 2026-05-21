@@ -592,6 +592,8 @@ public sealed class MultiChannelFanOutTests
         manager.SetupGet(m => m.Adapters).Returns(adapters);
         manager.Setup(m => m.Get(It.IsAny<ChannelKey>()))
             .Returns((ChannelKey key) => adapters.FirstOrDefault(a => a.ChannelType == key));
+        manager.Setup(m => m.Get(It.IsAny<ChannelKey>(), It.IsAny<string?>()))
+            .Returns((ChannelKey key, string? _) => adapters.FirstOrDefault(a => a.ChannelType == key));
         return manager.Object;
     }
 
@@ -717,4 +719,5 @@ public sealed class MultiChannelFanOutTests
         }
     }
 }
+
 

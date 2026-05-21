@@ -1,10 +1,12 @@
 using System.Text.Json;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Tools;
+using NSubstitute;
 
 namespace BotNexus.Gateway.Tests;
 
@@ -141,6 +143,230 @@ public sealed class ConversationToolTests
 
         var exception = await act.ShouldThrowAsync<InvalidOperationException>();
         exception.Message.ShouldContain("Session store is required");
+    }
+
+    [Fact]
+    public async Task New_WithMessage_AndDispatcher_DispatchesInboundMessageToTriggerAgentTurn()
+    {
+        // Arrange
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var dispatcher = Substitute.For<IChannelDispatcher>();
+        var tool = new ConversationTool(
+            conversationStore,
+            "orchestrator",
+            accessLevel: ConversationAccessLevel.All,
+            sessionStore: sessionStore,
+            channelDispatcher: dispatcher);
+
+        // Act
+        var result = await tool.ExecuteAsync("call-1", Args(
+            "new",
+            agentId: "nova",
+            displayName: "Handoff",
+            message: "Please investigate issue #285"));
+
+        using var document = JsonDocument.Parse(ReadText(result));
+        var conversationId = document.RootElement.GetProperty("conversationId").GetString()!;
+        var activeSessionId = document.RootElement.GetProperty("activeSessionId").GetString()!;
+
+        // Assert: dispatcher was called exactly once with the correct inbound message
+        await dispatcher.Received(1).DispatchAsync(
+            Arg.Is<InboundMessage>(m =>
+                m.TargetAgentId == "nova" &&
+                m.Content == "Please investigate issue #285" &&
+                m.SessionId == activeSessionId &&
+                m.ConversationId == conversationId &&
+                m.ChannelType.Equals(ChannelKey.From("internal"))),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task New_WithMessage_WithoutDispatcher_DoesNotThrowAndStillSeedsHistory()
+    {
+        // Arrange — no dispatcher: existing behaviour is preserved, no agent turn triggered
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var tool = new ConversationTool(
+            conversationStore,
+            "orchestrator",
+            accessLevel: ConversationAccessLevel.All,
+            sessionStore: sessionStore,
+            channelDispatcher: null);
+
+        // Act — must not throw
+        var result = await tool.ExecuteAsync("call-1", Args(
+            "new",
+            agentId: "nova",
+            message: "Seed message without turn trigger"));
+
+        // Assert: conversation and session created, history seeded
+        using var document = JsonDocument.Parse(ReadText(result));
+        var activeSessionId = document.RootElement.GetProperty("activeSessionId").GetString()!;
+        activeSessionId.ShouldNotBeNullOrWhiteSpace();
+
+        var session = await sessionStore.GetAsync(SessionId.From(activeSessionId));
+        session.ShouldNotBeNull();
+        var entry = session.GetHistorySnapshot().ShouldHaveSingleItem();
+        entry.Content.ShouldBe("Seed message without turn trigger");
+    }
+
+    [Fact]
+    public async Task New_WithoutMessage_DoesNotInvokeDispatcher()
+    {
+        // Arrange
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var dispatcher = Substitute.For<IChannelDispatcher>();
+        var tool = new ConversationTool(
+            conversationStore,
+            "orchestrator",
+            accessLevel: ConversationAccessLevel.All,
+            sessionStore: sessionStore,
+            channelDispatcher: dispatcher);
+
+        // Act
+        await tool.ExecuteAsync("call-1", Args("new", agentId: "nova", displayName: "Empty conv"));
+
+        // Assert: no dispatch when no message
+        await dispatcher.DidNotReceive().DispatchAsync(
+            Arg.Any<InboundMessage>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SendMessage_DispatchesInboundMessageToTargetConversation()
+    {
+        // Arrange
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var dispatcher = Substitute.For<IChannelDispatcher>();
+        var conversation = await conversationStore.CreateAsync(CreateConversation("nova", "Planning", null));
+
+        var tool = new ConversationTool(
+            conversationStore,
+            "orchestrator",
+            accessLevel: ConversationAccessLevel.All,
+            sessionStore: sessionStore,
+            channelDispatcher: dispatcher);
+
+        // Act
+        var result = await tool.ExecuteAsync("call-1", Args(
+            "message",
+            conversationId: conversation.ConversationId.Value,
+            message: "Hello Nova!"));
+
+        // Assert: dispatcher called with the user message
+        await dispatcher.Received(1).DispatchAsync(
+            Arg.Is<InboundMessage>(m =>
+                m.Content == "Hello Nova!" &&
+                m.TargetAgentId == "nova" &&
+                m.ChannelType == ChannelKey.From("internal")),
+            Arg.Any<CancellationToken>());
+
+        // Result includes conversation and session IDs
+        using var document = JsonDocument.Parse(ReadText(result));
+        document.RootElement.GetProperty("conversationId").GetString().ShouldBe(conversation.ConversationId.Value);
+        document.RootElement.GetProperty("sessionId").GetString().ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public async Task SendMessage_WithoutMessage_Throws()
+    {
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var conversation = await conversationStore.CreateAsync(CreateConversation("nova", "Planning", null));
+
+        var tool = new ConversationTool(
+            conversationStore,
+            "orchestrator",
+            accessLevel: ConversationAccessLevel.All,
+            sessionStore: sessionStore,
+            channelDispatcher: null);
+
+        Func<Task> act = () => tool.ExecuteAsync("call-1", Args(
+            "message",
+            conversationId: conversation.ConversationId.Value));
+
+        await act.ShouldThrowAsync<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task SendMessage_WithoutDispatcher_Throws()
+    {
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var conversation = await conversationStore.CreateAsync(CreateConversation("nova", "Planning", null));
+
+        var tool = new ConversationTool(
+            conversationStore,
+            "orchestrator",
+            accessLevel: ConversationAccessLevel.All,
+            sessionStore: sessionStore,
+            channelDispatcher: null);
+
+        Func<Task> act = () => tool.ExecuteAsync("call-1", Args(
+            "message",
+            conversationId: conversation.ConversationId.Value,
+            message: "Hi!"));
+
+        await act.ShouldThrowAsync<InvalidOperationException>();
+    }
+
+    [Fact]
+    public async Task SendMessage_DeniedByAccessLevel_Throws()
+    {
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var dispatcher = Substitute.For<IChannelDispatcher>();
+        var conversation = await conversationStore.CreateAsync(CreateConversation("nova", "Planning", null));
+
+        // agent-a with Own access cannot message nova's conversation
+        var tool = new ConversationTool(
+            conversationStore,
+            "agent-a",
+            accessLevel: ConversationAccessLevel.Own,
+            sessionStore: sessionStore,
+            channelDispatcher: dispatcher);
+
+        Func<Task> act = () => tool.ExecuteAsync("call-1", Args(
+            "message",
+            conversationId: conversation.ConversationId.Value,
+            message: "Sneak message"));
+
+        await act.ShouldThrowAsync<UnauthorizedAccessException>();
+    }
+
+    [Fact]
+    public async Task SendMessage_ReusesExistingActiveSession_WhenPresent()
+    {
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var dispatcher = Substitute.For<IChannelDispatcher>();
+
+        var session = await sessionStore.GetOrCreateAsync(SessionId.Create(), AgentId.From("nova"), default);
+        var conversation = await conversationStore.CreateAsync(
+            CreateConversation("nova", "Planning", null) with
+            {
+                ActiveSessionId = session.SessionId
+            });
+        session.Session.ConversationId = conversation.ConversationId;
+        await sessionStore.SaveAsync(session, default);
+
+        var tool = new ConversationTool(
+            conversationStore,
+            "orchestrator",
+            accessLevel: ConversationAccessLevel.All,
+            sessionStore: sessionStore,
+            channelDispatcher: dispatcher);
+
+        var result = await tool.ExecuteAsync("call-1", Args(
+            "message",
+            conversationId: conversation.ConversationId.Value,
+            message: "Use existing session"));
+
+        using var document = JsonDocument.Parse(ReadText(result));
+        document.RootElement.GetProperty("sessionId").GetString().ShouldBe(session.SessionId.Value);
     }
 
     private static Conversation CreateConversation(string agentId, string title, string? purpose)

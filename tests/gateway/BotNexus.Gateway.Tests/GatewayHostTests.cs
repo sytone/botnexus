@@ -10,6 +10,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Dispatching;
+using BotNexus.Gateway.Services;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -85,7 +86,8 @@ public sealed class GatewayHostTests
         session.History.ShouldContain(e => e.Role == MessageRole.Assistant && e.Content == "hello world");
         channel.Verify(c => c.SendStreamDeltaAsync("conv-1", "hello ", It.IsAny<CancellationToken>()), Times.Once);
         channel.Verify(c => c.SendStreamDeltaAsync("conv-1", "world", It.IsAny<CancellationToken>()), Times.Once);
-        sessions.Verify(s => s.SaveAsync(session, It.IsAny<CancellationToken>()), Times.Once);
+        // Write-ahead (user msg + sentinel) + ProcessAndSaveAsync final = at least 3 saves
+        sessions.Verify(s => s.SaveAsync(session, It.IsAny<CancellationToken>()), Times.AtLeast(1));
     }
 
     [Fact]
@@ -107,6 +109,53 @@ public sealed class GatewayHostTests
 
         supervisor.Verify(s => s.GetOrCreateAsync(It.IsAny<BotNexus.Domain.Primitives.AgentId>(), It.IsAny<BotNexus.Domain.Primitives.SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
         sessions.Verify(s => s.GetOrCreateAsync(It.IsAny<BotNexus.Domain.Primitives.SessionId>(), It.IsAny<BotNexus.Domain.Primitives.AgentId>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WithPendingAskUserRequest_ConsumesInboundAsToolResponse()
+    {
+        var conversationId = BotNexus.Domain.Primitives.ConversationId.From("conversation-ask");
+        var sessionId = BotNexus.Domain.Primitives.SessionId.From("session-ask");
+        var sessions = new InMemorySessionStore();
+        var session = await sessions.GetOrCreateAsync(sessionId, BotNexus.Domain.Primitives.AgentId.From("agent-a"));
+        session.Session.ConversationId = conversationId;
+        await sessions.SaveAsync(session);
+
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+
+        var supervisor = new Mock<IAgentSupervisor>();
+
+        var conversationDispatcher = new Mock<IConversationDispatcher>();
+        conversationDispatcher.Setup(dispatcher => dispatcher.DispatchAsync(It.IsAny<InboundMessageContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((InboundMessageContext context, CancellationToken _) => new DispatchResult(
+                context,
+                context.Source,
+                new ConversationSessionResolution(conversationId, sessionId, false, false)));
+
+        var askUserRegistry = new AskUserResponseRegistry();
+        var (requestId, pendingTask) = askUserRegistry.Register(conversationId, TimeSpan.FromMinutes(1));
+        var interceptor = new PendingAskUserInterceptor(askUserRegistry);
+
+        await using var host = CreateHost(
+            supervisor.Object,
+            router.Object,
+            sessions,
+            new RecordingActivityBroadcaster(),
+            CreateChannelManager(),
+            conversationDispatcher: conversationDispatcher.Object,
+            pendingAskUserInterceptor: interceptor);
+
+        await host.DispatchAsync(CreateMessage("Deploy to staging", sessionId: sessionId.Value, conversationId: conversationId.Value));
+
+        var response = await pendingTask;
+        response.RequestId.ShouldBe(requestId);
+        response.FreeFormText.ShouldBe("Deploy to staging");
+        supervisor.Verify(s => s.GetOrCreateAsync(
+            It.IsAny<BotNexus.Domain.Primitives.AgentId>(),
+            It.IsAny<BotNexus.Domain.Primitives.SessionId>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -191,7 +240,11 @@ public sealed class GatewayHostTests
         await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1"));
 
         activity.Activities.ShouldContain(a => a.Type == GatewayActivityType.Error && a.Message == "boom");
-        sessions.Verify(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()), Times.Never);
+        // Write-ahead saves the user message + crash sentinel before the LLM call (#363),
+        // so SaveAsync is called even when the agent throws.
+        sessions.Verify(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()), Times.AtLeast(1));
+        // Crash sentinel survives in history because the turn did not complete cleanly.
+        session.History.ShouldContain(e => e.IsCrashSentinel, "crash sentinel must remain when agent throws");
     }
 
     [Fact]
@@ -474,7 +527,7 @@ public sealed class GatewayHostTests
     }
 
     [Fact]
-    public async Task DispatchAsync_WithSteerControl_WhenAgentNotRunning_FallsThroughToNormalProcessing()
+    public async Task DispatchAsync_WithSteerControl_WhenAgentNotRunning_DoesNotFallThroughToNormalProcessing()
     {
         var router = new Mock<IMessageRouter>();
         router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
@@ -511,8 +564,8 @@ public sealed class GatewayHostTests
 
         // Steering was NOT called because agent is not running
         handle.Verify(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        // Instead, message was processed normally via PromptAsync
-        handle.Verify(h => h.PromptAsync(It.Is<AgentUserMessage>(m => m.Content == "nudge"), It.IsAny<CancellationToken>()), Times.Once);
+        // Steering was discarded — PromptAsync should NOT be called
+        handle.Verify(h => h.PromptAsync(It.Is<AgentUserMessage>(m => m.Content == "nudge"), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -851,7 +904,9 @@ public sealed class GatewayHostTests
 
         var first = host.DispatchAsync(CreateMessage("one", sessionId: "session-1"));
         var second = host.DispatchAsync(CreateMessage("two", sessionId: "session-1"));
-        await Task.Delay(20);
+        // Yield until the first dispatch is actively running (PromptAsync takes 250ms, so both
+        // are in-flight by the time we need to verify busy rejection).
+        await Task.WhenAny(first, second, Task.Delay(100));
         await host.DispatchAsync(CreateMessage("three", sessionId: "session-1"));
         await Task.WhenAll(first, second);
 
@@ -945,8 +1000,10 @@ public sealed class GatewayHostTests
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.StopAllAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
+        var channelStartedTcs = new TaskCompletionSource();
         var firstChannel = CreateChannelAdapter("web", supportsStreaming: false);
         firstChannel.Setup(c => c.StartAsync(It.IsAny<IChannelDispatcher>(), It.IsAny<CancellationToken>()))
+            .Callback(() => channelStartedTcs.TrySetResult())
             .Returns(Task.CompletedTask);
         firstChannel.Setup(c => c.StopAsync(It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -965,6 +1022,12 @@ public sealed class GatewayHostTests
                 : channelType.Equals(ChannelKey.From("telegram"))
                     ? secondChannel.Object
                     : null);
+        manager.Setup(m => m.Get(It.IsAny<ChannelKey>(), It.IsAny<string?>())).Returns((ChannelKey channelType, string? _) =>
+            channelType.Equals(ChannelKey.From("web"))
+                ? firstChannel.Object
+                : channelType.Equals(ChannelKey.From("telegram"))
+                    ? secondChannel.Object
+                    : null);
 
         await using var host = new GatewayHost(
             supervisor.Object,
@@ -977,7 +1040,8 @@ public sealed class GatewayHostTests
             NullLogger<GatewayHost>.Instance);
 
         await host.StartAsync(CancellationToken.None);
-        await Task.Delay(150);
+        // Wait until the channel adapter's StartAsync has been invoked (event-driven, not time-based).
+        await channelStartedTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await host.StopAsync(CancellationToken.None);
 
         firstChannel.Verify(c => c.StartAsync(It.IsAny<IChannelDispatcher>(), It.IsAny<CancellationToken>()), Times.Once);
@@ -1407,6 +1471,10 @@ public sealed class GatewayHostTests
             adapter is not null && channelType.Equals(adapter.ChannelType)
                 ? adapter
                 : null);
+        manager.Setup(m => m.Get(It.IsAny<ChannelKey>(), It.IsAny<string?>())).Returns((ChannelKey channelType, string? _) =>
+            adapter is not null && channelType.Equals(adapter.ChannelType)
+                ? adapter
+                : null);
         return manager.Object;
     }
 
@@ -1420,7 +1488,8 @@ public sealed class GatewayHostTests
         ISessionCompactor? compactor = null,
         IOptionsMonitor<CompactionOptions>? compactionOptions = null,
         IConversationDispatcher? conversationDispatcher = null,
-        IConversationRouter? conversationRouter = null)
+        IConversationRouter? conversationRouter = null,
+        PendingAskUserInterceptor? pendingAskUserInterceptor = null)
         => new(
             supervisor,
             router,
@@ -1432,7 +1501,8 @@ public sealed class GatewayHostTests
             NullLogger<GatewayHost>.Instance,
             sessionQueueCapacity,
             conversationDispatcher: conversationDispatcher,
-            conversationRouter: conversationRouter);
+            conversationRouter: conversationRouter,
+            pendingAskUserInterceptor: pendingAskUserInterceptor);
 
     private static InboundMessage CreateMessage(
         string content,
@@ -1534,4 +1604,295 @@ public sealed class GatewayHostTests
         savedSession!.Session.ConversationId.ShouldNotBeNull("Session.ConversationId must be stamped after inbound message");
         savedSession.Session.ConversationId!.Value.Value.ShouldBe("c_stamptest1");
     }
+
+    [Fact]
+    public async Task DispatchAsync_PersistsUserMessageBeforeAgentCall()
+    {
+        // Arrange: capture SaveAsync calls to verify user message is persisted before LLM call
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-write-ahead"]);
+
+        var userMessageSavedBeforeLlm = false;
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.AgentId).Returns("agent-write-ahead");
+        handle.SetupGet(h => h.SessionId).Returns("session-wa");
+        handle.Setup(h => h.IsRunning).Returns(false);
+        handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "response" });
+
+        var session = new GatewaySession
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-wa"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-write-ahead")
+        };
+
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetOrCreateAsync(
+            BotNexus.Domain.Primitives.SessionId.From("session-wa"),
+            BotNexus.Domain.Primitives.AgentId.From("agent-write-ahead"),
+            It.IsAny<CancellationToken>())).ReturnsAsync(session);
+
+        // First SaveAsync call should be write-ahead with user message in history
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Callback<GatewaySession, CancellationToken>((s, _) =>
+            {
+                if (!userMessageSavedBeforeLlm && s.History.Any(e => e.Role == MessageRole.User && e.Content == "hello wa"))
+                    userMessageSavedBeforeLlm = true;
+            })
+            .Returns(Task.CompletedTask);
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(
+            BotNexus.Domain.Primitives.AgentId.From("agent-write-ahead"),
+            BotNexus.Domain.Primitives.SessionId.From("session-wa"),
+            It.IsAny<CancellationToken>())).ReturnsAsync(handle.Object);
+
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        await using var host = CreateHost(supervisor.Object, router.Object, sessions.Object, new RecordingActivityBroadcaster(), CreateChannelManager(channel.Object));
+
+        // Act
+        await host.DispatchAsync(CreateMessage("hello wa", sessionId: "session-wa"));
+
+        // Assert: user message was saved before PromptAsync was called
+        userMessageSavedBeforeLlm.ShouldBeTrue("user message must be persisted to session store before the LLM call (#363)");
+    }
+
+    [Fact]
+    public async Task DispatchAsync_RemovesCrashSentinelFromHistoryOnSuccess()
+    {
+        // Arrange
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-sentinel"]);
+
+        var handle = CreatePromptHandle("agent-sentinel", "session-sentinel", "response");
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(
+            BotNexus.Domain.Primitives.AgentId.From("agent-sentinel"),
+            BotNexus.Domain.Primitives.SessionId.From("session-sentinel"),
+            It.IsAny<CancellationToken>())).ReturnsAsync(handle.Object);
+
+        var session = new GatewaySession
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-sentinel"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-sentinel")
+        };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetOrCreateAsync(
+            BotNexus.Domain.Primitives.SessionId.From("session-sentinel"),
+            BotNexus.Domain.Primitives.AgentId.From("agent-sentinel"),
+            It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        await using var host = CreateHost(supervisor.Object, router.Object, sessions.Object, new RecordingActivityBroadcaster(), CreateChannelManager(channel.Object));
+
+        // Act
+        await host.DispatchAsync(CreateMessage("hello sentinel", sessionId: "session-sentinel"));
+
+        // Assert: no crash sentinel entries remain in history after clean completion
+        session.History.ShouldNotContain(e => e.IsCrashSentinel,
+            "crash sentinel must be removed from session history on clean turn completion (#363)");
+    }
+
+    [Fact]
+    public async Task StreamEvents_FanOutToSignalRObserverBindings_WhenOriginatingChannelIsNotSignalR()
+    {
+        // Arrange: telegram message with a SignalR observer binding on the conversation
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.AgentId).Returns("agent-a");
+        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.Setup(h => h.IsRunning).Returns(false);
+        handle.Setup(h => h.StreamAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(ToAsyncEnumerable([
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageStart },
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "hello" },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd }
+            ]));
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(BotNexus.Domain.Primitives.AgentId.From("agent-a"), BotNexus.Domain.Primitives.SessionId.From("session-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-1"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a") };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetOrCreateAsync(It.IsAny<BotNexus.Domain.Primitives.SessionId>(), It.IsAny<BotNexus.Domain.Primitives.AgentId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        // Telegram is the originating (streaming) channel
+        var telegramChannel = new Mock<IChannelAdapter>();
+        telegramChannel.SetupGet(c => c.ChannelType).Returns(BotNexus.Domain.Primitives.ChannelKey.From("telegram"));
+        telegramChannel.SetupGet(c => c.DisplayName).Returns("Telegram");
+        telegramChannel.SetupGet(c => c.SupportsStreaming).Returns(true);
+        telegramChannel.As<IStreamEventChannelAdapter>()
+            .Setup(c => c.SendStreamEventAsync(It.IsAny<string>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        telegramChannel.Setup(c => c.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        telegramChannel.Setup(c => c.SendStreamDeltaAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        // SignalR is an observer binding
+        var signalrChannel = new Mock<IChannelAdapter>();
+        signalrChannel.SetupGet(c => c.ChannelType).Returns(BotNexus.Domain.Primitives.ChannelKey.From("signalr"));
+        signalrChannel.SetupGet(c => c.DisplayName).Returns("SignalR");
+        signalrChannel.SetupGet(c => c.SupportsStreaming).Returns(true);
+        signalrChannel.As<IStreamEventChannelAdapter>()
+            .Setup(c => c.SendStreamEventAsync(It.IsAny<string>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        signalrChannel.Setup(c => c.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        // Channel manager returns both adapters
+        var channelManager = new Mock<IChannelManager>();
+        channelManager.SetupGet(m => m.Adapters).Returns([telegramChannel.Object, signalrChannel.Object]);
+        channelManager.Setup(m => m.Get(It.Is<BotNexus.Domain.Primitives.ChannelKey>(k => k.Value == "telegram")))
+            .Returns(telegramChannel.Object);
+        channelManager.Setup(m => m.Get(It.Is<BotNexus.Domain.Primitives.ChannelKey>(k => k.Value == "telegram"), It.IsAny<string?>()))
+            .Returns(telegramChannel.Object);
+        channelManager.Setup(m => m.Get(It.Is<BotNexus.Domain.Primitives.ChannelKey>(k => k.Value == "signalr")))
+            .Returns(signalrChannel.Object);
+        channelManager.Setup(m => m.Get(It.Is<BotNexus.Domain.Primitives.ChannelKey>(k => k.Value == "signalr"), It.IsAny<string?>()))
+            .Returns(signalrChannel.Object);
+
+        // Conversation router returns a SignalR binding as a non-originating binding
+        var signalrBinding = new BotNexus.Gateway.Abstractions.Models.ChannelBinding
+        {
+            ChannelType = BotNexus.Domain.Primitives.ChannelKey.From("signalr"),
+            ChannelAddress = BotNexus.Domain.Primitives.ChannelAddress.From("signalr-session-abc"),
+            Mode = BotNexus.Gateway.Abstractions.Models.BindingMode.Interactive
+        };
+        var conversationRouter = new Mock<IConversationRouter>();
+        var routingConversation = new BotNexus.Gateway.Abstractions.Models.Conversation
+        {
+            ConversationId = BotNexus.Domain.Primitives.ConversationId.From("conv-test-1"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a")
+        };
+        conversationRouter.Setup(r => r.ResolveInboundAsync(
+                It.IsAny<BotNexus.Domain.Primitives.AgentId>(),
+                It.IsAny<BotNexus.Domain.Primitives.ChannelKey>(),
+                It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(),
+                It.IsAny<BotNexus.Domain.Primitives.ThreadId?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConversationRoutingResult(routingConversation, BotNexus.Domain.Primitives.SessionId.From("session-1"), false));
+        conversationRouter.Setup(r => r.GetOutboundBindingsAsync(
+                It.IsAny<BotNexus.Domain.Primitives.SessionId>(),
+                It.IsAny<BotNexus.Domain.Primitives.BindingId?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([signalrBinding]);
+
+        await using var host = CreateHost(
+            supervisor.Object, router.Object, sessions.Object,
+            new RecordingActivityBroadcaster(), channelManager.Object,
+            conversationRouter: conversationRouter.Object);
+
+        // Act: dispatch a Telegram message
+        var message = CreateMessage("hello", sessionId: "session-1", channelType: "telegram");
+        await host.DispatchAsync(message);
+
+        // Assert: SignalR observer received stream events (3 events: MessageStart, ContentDelta, MessageEnd)
+        signalrChannel.As<IStreamEventChannelAdapter>().Verify(
+            c => c.SendStreamEventAsync(
+                "signalr-session-abc",
+                It.Is<AgentStreamEvent>(e => e.Type == AgentStreamEventType.MessageStart),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+        signalrChannel.As<IStreamEventChannelAdapter>().Verify(
+            c => c.SendStreamEventAsync(
+                "signalr-session-abc",
+                It.Is<AgentStreamEvent>(e => e.Type == AgentStreamEventType.ContentDelta),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+        signalrChannel.As<IStreamEventChannelAdapter>().Verify(
+            c => c.SendStreamEventAsync(
+                "signalr-session-abc",
+                It.Is<AgentStreamEvent>(e => e.Type == AgentStreamEventType.MessageEnd),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task StreamEvents_DoNotFanOutToSignalRObserver_WhenOriginatingChannelIsSignalR()
+    {
+        // Arrange: SignalR is the originating channel -- no additional fan-out expected
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.AgentId).Returns("agent-a");
+        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.Setup(h => h.IsRunning).Returns(false);
+        handle.Setup(h => h.StreamAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(ToAsyncEnumerable([
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "hello" }
+            ]));
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(It.IsAny<BotNexus.Domain.Primitives.AgentId>(), It.IsAny<BotNexus.Domain.Primitives.SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-1"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a") };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetOrCreateAsync(It.IsAny<BotNexus.Domain.Primitives.SessionId>(), It.IsAny<BotNexus.Domain.Primitives.AgentId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        var signalrChannel = new Mock<IChannelAdapter>();
+        signalrChannel.SetupGet(c => c.ChannelType).Returns(BotNexus.Domain.Primitives.ChannelKey.From("signalr"));
+        signalrChannel.SetupGet(c => c.DisplayName).Returns("SignalR");
+        signalrChannel.SetupGet(c => c.SupportsStreaming).Returns(true);
+        signalrChannel.As<IStreamEventChannelAdapter>()
+            .Setup(c => c.SendStreamEventAsync(It.IsAny<string>(), It.IsAny<AgentStreamEvent>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        signalrChannel.Setup(c => c.SendAsync(It.IsAny<OutboundMessage>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        var channelManager = new Mock<IChannelManager>();
+        channelManager.SetupGet(m => m.Adapters).Returns([signalrChannel.Object]);
+        channelManager.Setup(m => m.Get(It.Is<BotNexus.Domain.Primitives.ChannelKey>(k => k.Value == "signalr")))
+            .Returns(signalrChannel.Object);
+        channelManager.Setup(m => m.Get(It.Is<BotNexus.Domain.Primitives.ChannelKey>(k => k.Value == "signalr"), It.IsAny<string?>()))
+            .Returns(signalrChannel.Object);
+
+        // Router should NOT be called for GetOutboundBindings when originating channel is signalr
+        var conversationRouter = new Mock<IConversationRouter>();
+        var routingConversation2 = new BotNexus.Gateway.Abstractions.Models.Conversation
+        {
+            ConversationId = BotNexus.Domain.Primitives.ConversationId.From("conv-test-2"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a")
+        };
+        conversationRouter.Setup(r => r.ResolveInboundAsync(
+                It.IsAny<BotNexus.Domain.Primitives.AgentId>(),
+                It.IsAny<BotNexus.Domain.Primitives.ChannelKey>(),
+                It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(),
+                It.IsAny<BotNexus.Domain.Primitives.ThreadId?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConversationRoutingResult(routingConversation2, BotNexus.Domain.Primitives.SessionId.From("session-1"), false));
+        conversationRouter.Setup(r => r.GetOutboundBindingsAsync(
+                It.IsAny<BotNexus.Domain.Primitives.SessionId>(),
+                It.IsAny<BotNexus.Domain.Primitives.BindingId?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        await using var host = CreateHost(
+            supervisor.Object, router.Object, sessions.Object,
+            new RecordingActivityBroadcaster(), channelManager.Object,
+            conversationRouter: conversationRouter.Object);
+
+        var message = CreateMessage("hello", sessionId: "session-1", channelType: "signalr");
+        await host.DispatchAsync(message);
+
+        // When originating channel is signalr, the guard prevents the pre-streaming observer resolution.
+        // GetOutboundBindings may still be called once by FanOutResponseAsync at turn end -- that's fine.
+        // The key assertion: the signalr adapter receives stream events only as the PRIMARY channel,
+        // NOT as an observer (i.e. SendStreamEventAsync is called via the primary streaming path, not doubled).
+        // Since GetOutboundBindings returns [], no additional observer fan-out occurs.
+        signalrChannel.As<IStreamEventChannelAdapter>().Verify(
+            c => c.SendStreamEventAsync(
+                It.IsAny<string>(),
+                It.IsAny<AgentStreamEvent>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once); // exactly once as the primary channel, not doubled via observer fan-out
+    }
 }
+

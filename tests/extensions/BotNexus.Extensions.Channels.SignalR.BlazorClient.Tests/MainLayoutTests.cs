@@ -36,6 +36,7 @@ public sealed class MainLayoutTests : IDisposable
         _ctx.Services.AddSingleton(hub);
         _ctx.Services.AddSingleton(gatewayInfo);
         _ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());
+        _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
         _ctx.Services.AddSingleton(restClient);
         _ctx.Services.AddSingleton(http);
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
@@ -527,5 +528,42 @@ public sealed class MainLayoutTests : IDisposable
 
         // Assert: SelectConversationAsync was called for Beta's auto-selected conversation
         _interaction.Received(1).SelectConversationAsync("a-2", "c-2");
+    }
+
+    [Fact]
+    public void Sub_agents_in_store_are_not_shown_in_top_level_agent_dropdown()
+    {
+        // A real agent and a sub-agent (IsReadOnly via SessionType=agent-subagent) are both in the store
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.UpsertAgent(new AgentState
+        {
+            AgentId = "sub-xyz",
+            DisplayName = "SubTask",
+            SessionType = "agent-subagent",
+            IsConnected = true
+        });
+
+        var cut = RenderLayout();
+
+        var options = cut.FindAll(".agent-dropdown-select option");
+        Assert.Contains(options, o => o.GetAttribute("value") == "a-1");
+        Assert.DoesNotContain(options, o => o.GetAttribute("value") == "sub-xyz");
+    }
+
+    [Fact]
+    public void Sub_agent_only_store_renders_no_agent_dropdown()
+    {
+        // If the only entries are sub-agents the dropdown should not appear at all
+        _store.UpsertAgent(new AgentState
+        {
+            AgentId = "sub-xyz",
+            DisplayName = "SubTask",
+            SessionType = "agent-subagent",
+            IsConnected = true
+        });
+
+        var cut = RenderLayout();
+
+        Assert.Empty(cut.FindAll(".agent-dropdown-select"));
     }
 }

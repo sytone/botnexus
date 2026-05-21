@@ -1,6 +1,7 @@
-@inject IJSRuntime JS
+﻿@inject IJSRuntime JS
 @inject IClientStateStore Store
 @inject IAgentInteractionService Interaction
+@inject IPortalPreferencesService Prefs
 @implements IDisposable
 
 <div class="chat-panel">
@@ -301,53 +302,66 @@
         </div>
     }
 
-    <div class="chat-input-area">
-        @if (!IsReadOnly)
-        {
-            <textarea class="chat-input"
-                      @ref="_inputElement"
-                      @bind="_inputText"
-                      @bind:event="oninput"
-                      @onkeydown="HandleKeyDown"
-                      placeholder="@InputPlaceholder"
-                      disabled="@(!IsConnected)" />
-            @if (_isRecording)
+    @if (!IsReadOnly && PendingAskUserPrompt is not null)
+    {
+        <div class="chat-input-area ask-user-input-area">
+            <AskUserPrompt Prompt="PendingAskUserPrompt"
+                           ErrorMessage="_askUserError"
+                           OnSubmit="HandleAskUserSubmit"
+                           OnTimeout="HandleAskUserTimeout" />
+        </div>
+    }
+    else
+    {
+        <div class="chat-input-area">
+            @if (!IsReadOnly)
             {
-                <button class="recording-btn" @onclick="StopRecording" title="Stop recording">
-                    🔴 Stop
-                </button>
+                <textarea class="chat-input @ExpandingInputClass"
+                          @ref="_inputElement"
+                          @bind="_inputText"
+                          @bind:event="oninput"
+                          @bind:after="HandleInputChanged"
+                          @onkeydown="HandleKeyDown"
+                          placeholder="@InputPlaceholder"
+                          disabled="@(!IsConnected)" />
+                @if (_isRecording)
+                {
+                    <button class="recording-btn" @onclick="StopRecording" title="Stop recording">
+                        🔴 Stop
+                    </button>
+                }
+                else
+                {
+                    <button class="mic-btn" @onclick="StartRecording" title="Record audio message"
+                            disabled="@(!IsConnected)">
+                        🎤
+                    </button>
+                }
+                @if (IsStreaming)
+                {
+                    <button class="steer-btn"
+                            @onclick="SteerAgent"
+                            disabled="@(string.IsNullOrWhiteSpace(_inputText))"
+                            title="Redirect the agent's response (Shift+Enter for newline)">
+                        🔀 Steer
+                    </button>
+                    <button class="abort-btn"
+                            @onclick="AbortAgent"
+                            title="Stop the agent (Escape)">
+                        ⏹ Stop
+                    </button>
+                }
+                else
+                {
+                    <button class="send-btn"
+                            @onclick="SendMessage"
+                            disabled="@(!IsConnected || string.IsNullOrWhiteSpace(_inputText))">
+                        Send
+                    </button>
+                }
             }
-            else
-            {
-                <button class="mic-btn" @onclick="StartRecording" title="Record audio message"
-                        disabled="@(!IsConnected)">
-                    🎤
-                </button>
-            }
-            @if (IsStreaming)
-            {
-                <button class="steer-btn"
-                        @onclick="SteerAgent"
-                        disabled="@(string.IsNullOrWhiteSpace(_inputText))"
-                        title="Redirect the agent's response (Shift+Enter for newline)">
-                    🔀 Steer
-                </button>
-                <button class="abort-btn"
-                        @onclick="AbortAgent"
-                        title="Stop the agent (Escape)">
-                    ⏹ Stop
-                </button>
-            }
-            else
-            {
-                <button class="send-btn"
-                        @onclick="SendMessage"
-                        disabled="@(!IsConnected || string.IsNullOrWhiteSpace(_inputText))">
-                    Send
-                </button>
-            }
-        }
-    </div>
+        </div>
+    }
 </div>
 
 <AgentConfigPanel @ref="_configPanel" AgentId="@AgentId" />
@@ -363,7 +377,13 @@
         Store.OnChanged += HandleStoreChanged;
     }
 
-    private void HandleStoreChanged() => InvokeAsync(StateHasChanged);
+    private void HandleStoreChanged()
+    {
+        if (PendingAskUserPrompt is null)
+            _askUserError = null;
+
+        _ = InvokeAsync(StateHasChanged);
+    }
 
     public void Dispose()
     {
@@ -378,8 +398,8 @@
     private string? ActiveConversationTitle => ActiveConversation?.Title;
 private bool IsStreaming =>
         Agent?.ActiveConversationId is string activeConvId
-            ? Store.GetStreamState(activeConvId).IsStreaming
-            : false; // no active conversation = not streaming
+            ? Store.GetStreamState(activeConvId).IsTurnActive
+            : false; // no active conversation = not in turn
     private bool IsReadOnly => (Agent?.IsReadOnly ?? false) || (ActiveConversation?.IsVirtualSession ?? false);
     private bool IsConnected => Agent?.IsConnected ?? false;
     private bool ShowThinking => Agent?.ShowThinking ?? true;
@@ -388,14 +408,27 @@ private bool IsStreaming =>
     private bool IsLoadingHistory => ActiveConversation?.IsLoadingHistory ?? false;
     private string? ProcessingStage => Agent?.ProcessingStage;
     private IReadOnlyList<ChatMessage> Messages => ActiveConversation?.Messages ?? [];
+    private AskUserPromptState? PendingAskUserPrompt =>
+        ActiveConversationId is not null ? Store.GetPendingAskUser(ActiveConversationId) : null;
     private string ThinkingBuffer => ActiveConversation?.StreamState.ThinkingBuffer ?? string.Empty;
     private string CurrentStreamBuffer => ActiveConversation?.StreamState.Buffer ?? string.Empty;
+    private string ExpandingInputClass => Prefs?.Current?.ExpandingInput == true ? "expanding" : string.Empty;
 
     private string _inputText = "";
     private ElementReference _messagesContainer;
-    private ElementReference _inputElement;
+        private ElementReference _inputElement;
+
+    private async Task HandleInputChanged()
+    {
+        if (Prefs?.Current?.ExpandingInput == true)
+            await JS.InvokeVoidAsync("chatScroll.autoResizeTextarea", _inputElement, Prefs.Current.ExpandingInputMaxLines);
+    }
+
+    private async Task ToggleExpandingInput()
+        => await Prefs.SetExpandingInputAsync(!Prefs.Current.ExpandingInput);
     private bool _enterPreventionBound;
     private bool _wasReadOnly;
+    private bool _hadAskUserPrompt;
     private AgentConfigPanel? _configPanel;
     private bool _editingTitle;
     private string _titleDraft = "";
@@ -412,6 +445,7 @@ private bool IsStreaming =>
     private bool _showMobileActionsMenu;
     private string? _copiedMessageId;
     private string? _copiedSectionId;
+    private string? _askUserError;
     private static readonly TimeSpan s_copyFeedbackDuration = TimeSpan.FromSeconds(2);
     private const string CopySectionArgs = "args";
     private const string CopySectionResult = "result";
@@ -685,11 +719,13 @@ private bool IsStreaming =>
         try
         {
             // Reset enter-prevention binding when textarea is recreated (read-only → interactive)
-            if (_wasReadOnly && !IsReadOnly)
+            var hasInlinePrompt = PendingAskUserPrompt is not null;
+            if ((_wasReadOnly && !IsReadOnly) || (_hadAskUserPrompt && !hasInlinePrompt))
                 _enterPreventionBound = false;
             _wasReadOnly = IsReadOnly;
+            _hadAskUserPrompt = hasInlinePrompt;
 
-            if (!_enterPreventionBound && !IsReadOnly)
+            if (!_enterPreventionBound && !IsReadOnly && !hasInlinePrompt)
             {
                 await JS.InvokeVoidAsync("chatScroll.preventEnterSubmit", _inputElement);
                 _enterPreventionBound = true;
@@ -807,6 +843,68 @@ private bool IsStreaming =>
     }
 
     private async Task AbortAgent() => await Interaction.AbortAsync(AgentId);
+
+    private async Task HandleAskUserSubmit(AskUserPromptSubmission submission)
+    {
+        var prompt = PendingAskUserPrompt;
+        if (prompt is null)
+            return;
+
+        _askUserError = null;
+        prompt.IsSubmitting = true;
+        Store.NotifyChanged();
+
+        try
+        {
+            await Interaction.RespondToAskUserAsync(
+                prompt.ConversationId,
+                prompt.RequestId,
+                submission.FreeFormText,
+                submission.SelectedValues,
+                submission.Cancelled);
+
+            Store.ClearPendingAskUser(prompt.ConversationId);
+            Store.AppendMessage(prompt.ConversationId, new ChatMessage("System", BuildAskUserSummary(submission), DateTimeOffset.UtcNow));
+            _forceScrollNext = true;
+        }
+        catch (Exception ex)
+        {
+            prompt.IsSubmitting = false;
+            _askUserError = $"Failed to submit response: {ex.Message}";
+            Store.NotifyChanged();
+        }
+    }
+
+    private Task HandleAskUserTimeout()
+    {
+        var prompt = PendingAskUserPrompt;
+        if (prompt is null)
+            return Task.CompletedTask;
+
+        Store.ClearPendingAskUser(prompt.ConversationId);
+        Store.AppendMessage(prompt.ConversationId, new ChatMessage("System", "Prompt timed out before you could answer.", DateTimeOffset.UtcNow));
+        _forceScrollNext = true;
+        return Task.CompletedTask;
+    }
+
+    private static string BuildAskUserSummary(AskUserPromptSubmission submission)
+    {
+        if (submission.Cancelled)
+            return "You cancelled the prompt.";
+
+        var selected = submission.SelectedValues is { Length: > 0 }
+            ? string.Join(", ", submission.SelectedValues)
+            : null;
+        var freeForm = string.IsNullOrWhiteSpace(submission.FreeFormText) ? null : submission.FreeFormText.Trim();
+
+        return (selected, freeForm) switch
+        {
+            (not null, not null) => $"You answered: {selected} | {freeForm}",
+            (not null, null) => $"You answered: {selected}",
+            (null, not null) => $"You answered: {freeForm}",
+            _ => "You answered."
+        };
+    }
 
     private string GetSubAgentStatus() => IsStreaming ? "⏳ Running" : "✅ Completed";
 }

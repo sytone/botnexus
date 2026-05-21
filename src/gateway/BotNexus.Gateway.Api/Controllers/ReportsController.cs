@@ -4,9 +4,11 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Api.Models;
+using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Security;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Api.Controllers;
 
@@ -17,12 +19,12 @@ namespace BotNexus.Gateway.Api.Controllers;
 [Route("api/agents/{agentId}/reports")]
 public sealed class ReportsController : ControllerBase
 {
-    private const int MaximumFileReadBytes = 512 * 1024;
     private const string ReportsDirectoryName = "reports";
 
     private readonly IAgentRegistry _agentRegistry;
     private readonly IAgentWorkspaceManager _workspaceManager;
     private readonly IFileSystem _fileSystem;
+    private readonly int _maxFileReadBytes;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ReportsController"/> class.
@@ -30,14 +32,17 @@ public sealed class ReportsController : ControllerBase
     /// <param name="agentRegistry">Agent registry used to validate known agent identifiers.</param>
     /// <param name="workspaceManager">Workspace manager used to resolve per-agent workspace roots.</param>
     /// <param name="fileSystem">Filesystem abstraction used for testable file-system reads.</param>
+    /// <param name="platformConfig">Platform configuration (provides workspace portal limits).</param>
     public ReportsController(
         IAgentRegistry agentRegistry,
         IAgentWorkspaceManager workspaceManager,
-        IFileSystem fileSystem)
+        IFileSystem fileSystem,
+        IOptions<PlatformConfig> platformConfig)
     {
         _agentRegistry = agentRegistry;
         _workspaceManager = workspaceManager;
         _fileSystem = fileSystem;
+        _maxFileReadBytes = platformConfig.Value.Workspace?.MaxReportFileSizeBytes ?? 512 * 1024;
     }
 
     /// <summary>
@@ -142,19 +147,23 @@ public sealed class ReportsController : ControllerBase
             return NotFound();
 
         var info = _fileSystem.FileInfo.New(resolvedFinalPath);
-        var bytesToRead = (int)Math.Min(info.Length, MaximumFileReadBytes);
+        var bytesToRead = (int)Math.Min(info.Length, _maxFileReadBytes);
         var buffer = new byte[bytesToRead];
         using var stream = _fileSystem.File.OpenRead(resolvedFinalPath);
         var bytesRead = stream.Read(buffer, 0, bytesToRead);
         if (IsBinary(buffer, bytesRead))
             return BadRequest(new { error = "report content must be UTF-8 text." });
 
+        var content = Encoding.UTF8.GetString(buffer, 0, bytesRead);
         return Ok(new ReportContentResponse
         {
             Name = _fileSystem.Path.GetFileName(resolvedFinalPath),
-            Size = info.Length,
+            // Size is the decoded character count of what was returned.
+            // IsTruncated can be inferred by the caller when bytesRead < info.Length.
+            Size = content.Length,
+            IsTruncated = bytesRead < info.Length,
             LastModifiedUtc = info.LastWriteTimeUtc,
-            Content = Encoding.UTF8.GetString(buffer, 0, bytesRead),
+            Content = content,
             Encoding = "utf-8"
         });
     }

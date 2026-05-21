@@ -9,6 +9,7 @@ using SessionParticipant = BotNexus.Domain.Primitives.SessionParticipant;
 using ConversationId = BotNexus.Domain.Primitives.ConversationId;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
@@ -39,6 +40,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
 
     private readonly IConversationStore? _conversationStore;
     private readonly ILogger<SqliteSessionStore> _logger;
+    private readonly ISecretRedactor? _redactor;
 
     /// <summary>
     /// Initialises a new <see cref="SqliteSessionStore"/>.
@@ -49,14 +51,17 @@ public sealed class SqliteSessionStore : SessionStoreBase
     /// When provided, a startup migration links any orphaned sessions (those with no
     /// <c>conversation_id</c>) to their agent's default conversation.
     /// </param>
+    /// <param name="redactor">When provided, secrets in content are redacted before storage.</param>
     public SqliteSessionStore(
         string connectionString,
         ILogger<SqliteSessionStore> logger,
-        IConversationStore? conversationStore = null)
+        IConversationStore? conversationStore = null,
+        ISecretRedactor? redactor = null)
     {
         _connectionString = connectionString;
         _logger = logger;
         _conversationStore = conversationStore;
+        _redactor = redactor;
     }
 
     /// <inheritdoc />
@@ -104,7 +109,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
                 return loaded;
             }
 
-            var session = CreateSession(sessionId, agentId, null);
+            var session = CreateSession(sessionId, agentId, null, _redactor);
             _cache[sessionId] = session;
             return session;
         }
@@ -207,7 +212,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
         {
             var sessionId = SessionId.From(reader.GetString(0));
             var session = _cache.GetValueOrDefault(sessionId)
-                ?? await LoadSessionAsync(connection, sessionId, cancellationToken).ConfigureAwait(false);
+                ?? await LoadSessionAsync(connection, sessionId, _redactor, cancellationToken).ConfigureAwait(false);
             if (session is not null)
             {
                 _cache[sessionId] = session;
@@ -258,7 +263,8 @@ public sealed class SqliteSessionStore : SessionStoreBase
                     timestamp TEXT,
                     tool_name TEXT,
                     tool_call_id TEXT,
-                    is_compaction_summary INTEGER NOT NULL DEFAULT 0
+                    is_compaction_summary INTEGER NOT NULL DEFAULT 0,
+                    is_crash_sentinel INTEGER NOT NULL DEFAULT 0
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_session_history_session_id ON session_history(session_id);
@@ -290,7 +296,8 @@ public sealed class SqliteSessionStore : SessionStoreBase
                      ("tool_call_id", "TEXT"),
                      ("is_compaction_summary", "INTEGER NOT NULL DEFAULT 0"),
                      ("tool_args", "TEXT"),
-                     ("tool_is_error", "INTEGER NOT NULL DEFAULT 0")
+                     ("tool_is_error", "INTEGER NOT NULL DEFAULT 0"),
+                     ("is_crash_sentinel", "INTEGER NOT NULL DEFAULT 0")
                  })
         {
             try
@@ -424,10 +431,10 @@ public sealed class SqliteSessionStore : SessionStoreBase
     {
         await using var connection = CreateConnection();
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        return await LoadSessionAsync(connection, sessionId, cancellationToken).ConfigureAwait(false);
+        return await LoadSessionAsync(connection, sessionId, _redactor, cancellationToken).ConfigureAwait(false);
     }
 
-    private static async Task<GatewaySession?> LoadSessionAsync(SqliteConnection connection, SessionId sessionId, CancellationToken cancellationToken)
+    private static async Task<GatewaySession?> LoadSessionAsync(SqliteConnection connection, SessionId sessionId, ISecretRedactor? redactor, CancellationToken cancellationToken)
     {
         await using var sessionCommand = connection.CreateCommand();
         sessionCommand.CommandText = """
@@ -458,26 +465,29 @@ public sealed class SqliteSessionStore : SessionStoreBase
         if (reader.FieldCount > 10 && !reader.IsDBNull(10))
             conversationId = ConversationId.From(reader.GetString(10));
 
-        var session = new GatewaySession
+        var domainSession = new Session
         {
             SessionId = SessionId.From(reader.GetString(0)),
             AgentId = AgentId.From(agentIdValue),
             ChannelType = channelType,
-            CallerId = reader.IsDBNull(3) ? null : reader.GetString(3),
             SessionType = sessionType,
             Participants = participants,
             Status = status,
             CreatedAt = createdAt,
             UpdatedAt = updatedAt,
-            Metadata = metadata
+            Metadata = metadata,
+            ConversationId = conversationId
         };
-        session.Session.ConversationId = conversationId;
+        var session = new GatewaySession(domainSession, redactor)
+        {
+            CallerId = reader.IsDBNull(3) ? null : reader.GetString(3)
+        };
 
         await reader.DisposeAsync().ConfigureAwait(false);
 
         await using var historyCommand = connection.CreateCommand();
         historyCommand.CommandText = """
-            SELECT role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error
+            SELECT role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel
             FROM session_history
             WHERE session_id = $sessionId
             ORDER BY id ASC
@@ -497,7 +507,8 @@ public sealed class SqliteSessionStore : SessionStoreBase
                 ToolCallId = historyReader.IsDBNull(4) ? null : historyReader.GetString(4),
                 IsCompactionSummary = !historyReader.IsDBNull(5) && historyReader.GetInt64(5) != 0,
                 ToolArgs = historyReader.FieldCount > 6 && !historyReader.IsDBNull(6) ? historyReader.GetString(6) : null,
-                ToolIsError = historyReader.FieldCount > 7 && !historyReader.IsDBNull(7) && historyReader.GetInt64(7) != 0
+                ToolIsError = historyReader.FieldCount > 7 && !historyReader.IsDBNull(7) && historyReader.GetInt64(7) != 0,
+                IsCrashSentinel = historyReader.FieldCount > 8 && !historyReader.IsDBNull(8) && historyReader.GetInt64(8) != 0
             });
         }
 
@@ -560,8 +571,8 @@ public sealed class SqliteSessionStore : SessionStoreBase
             await using var insertCommand = connection.CreateCommand();
             insertCommand.Transaction = transaction;
             insertCommand.CommandText = """
-                INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error)
-                VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError)
+                INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel)
+                VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError, $isCrashSentinel)
                 """;
             insertCommand.Parameters.AddWithValue("$sessionId", session.SessionId.Value);
             insertCommand.Parameters.AddWithValue("$role", entry.Role.Value);
@@ -572,6 +583,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
             insertCommand.Parameters.AddWithValue("$isCompactionSummary", entry.IsCompactionSummary ? 1 : 0);
             insertCommand.Parameters.AddWithValue("$toolArgs", (object?)entry.ToolArgs ?? DBNull.Value);
             insertCommand.Parameters.AddWithValue("$toolIsError", entry.ToolIsError ? 1 : 0);
+            insertCommand.Parameters.AddWithValue("$isCrashSentinel", entry.IsCrashSentinel ? 1 : 0);
             await insertCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 

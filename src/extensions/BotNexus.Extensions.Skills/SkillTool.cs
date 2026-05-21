@@ -118,7 +118,11 @@ public sealed class SkillTool(
             lines.Add("## Available Skills (not loaded)");
             lines.Add("Use `skills` tool with action `load` and the skill name to activate.");
             foreach (var s in resolution.Available)
+            {
                 lines.Add($"- **{s.Name}**: {s.Description}");
+                if (!string.IsNullOrEmpty(s.SourcePath))
+                    lines.Add($"  Path: {s.SourcePath}");
+            }
             lines.Add("");
         }
 

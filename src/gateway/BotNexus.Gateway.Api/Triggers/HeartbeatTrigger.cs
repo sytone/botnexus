@@ -1,0 +1,264 @@
+using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Abstractions.Triggers;
+using BotNexus.Domain.Primitives;
+using Microsoft.Extensions.Logging;
+using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
+
+namespace BotNexus.Gateway.Api.Triggers;
+
+/// <summary>
+/// Internal trigger for heartbeat-scheduled sessions (<see cref="TriggerType.Heartbeat"/>).
+/// Routes into the agent's active soul session when soul is enabled, keeping heartbeat turns
+/// in today's soul context.  Falls back to a stable per-agent heartbeat conversation otherwise.
+///
+/// Phase 2: after each heartbeat turn, if the assistant response is a heartbeat acknowledgement
+/// (contains "HEARTBEAT_OK" within <see cref="AckMaxCharsDefault"/> chars), the user+assistant
+/// entries are pruned from the session history and <c>UpdatedAt</c> is restored to its
+/// pre-turn value so the session does not appear active.
+/// </summary>
+public sealed class HeartbeatTrigger(
+    IAgentSupervisor supervisor,
+    IAgentRegistry registry,
+    IConversationStore conversations,
+    ISessionStore sessions,
+    ILogger<HeartbeatTrigger> logger) : IInternalTrigger
+{
+    /// <summary>Default max-chars threshold for heartbeat ack classification.</summary>
+    public const int AckMaxCharsDefault = 300;
+
+    /// <inheritdoc/>
+    public TriggerType Type => TriggerType.Heartbeat;
+
+    /// <inheritdoc/>
+    public string DisplayName => "Heartbeat";
+
+    /// <inheritdoc/>
+    public async Task<SessionId> CreateSessionAsync(
+        AgentId agentId,
+        string prompt,
+        CancellationToken ct = default,
+        InternalTriggerRequest? request = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
+
+        var descriptor = registry.Get(agentId);
+        if (descriptor?.Soul?.Enabled == true)
+            return await RunInSoulSessionAsync(agentId, prompt, descriptor, request, ct).ConfigureAwait(false);
+
+        return await RunInHeartbeatSessionAsync(agentId, prompt, descriptor, request, ct).ConfigureAwait(false);
+    }
+
+    // -----------------------------------------------------------------
+    // Soul path - reuse today's active soul session
+    // -----------------------------------------------------------------
+    private async Task<SessionId> RunInSoulSessionAsync(
+        AgentId agentId,
+        string prompt,
+        AgentDescriptor? descriptor,
+        InternalTriggerRequest? request,
+        CancellationToken ct)
+    {
+        var allSessions = await sessions.ListAsync(agentId, ct).ConfigureAwait(false);
+        var soulSession = allSessions
+            .Where(s => s.SessionType == SessionType.Soul && s.Status == GatewaySessionStatus.Active)
+            .OrderByDescending(s => s.UpdatedAt)
+            .FirstOrDefault();
+
+        if (soulSession is null)
+        {
+            logger.LogDebug(
+                "HeartbeatTrigger: no active soul session for '{AgentId}', falling back to heartbeat session.",
+                agentId);
+            return await RunInHeartbeatSessionAsync(agentId, prompt, descriptor, request, ct).ConfigureAwait(false);
+        }
+
+        return await ExecuteInSessionAsync(agentId, soulSession.SessionId, prompt, descriptor, request, ct).ConfigureAwait(false);
+    }
+
+    // -----------------------------------------------------------------
+    // Heartbeat path - stable per-agent heartbeat conversation
+    // -----------------------------------------------------------------
+    private async Task<SessionId> RunInHeartbeatSessionAsync(
+        AgentId agentId,
+        string prompt,
+        AgentDescriptor? descriptor,
+        InternalTriggerRequest? request,
+        CancellationToken ct)
+    {
+        var conversation = await GetOrCreateHeartbeatConversationAsync(agentId, ct).ConfigureAwait(false);
+        var sessionId = BuildHeartbeatSessionId(agentId);
+        var session = await sessions.GetOrCreateAsync(sessionId, agentId, ct).ConfigureAwait(false);
+
+        session.ChannelType = null;
+        session.CallerId ??= $"heartbeat:{agentId.Value}";
+        session.SessionType = SessionType.Heartbeat;
+        session.Session.ConversationId = conversation.ConversationId;
+        session.Metadata["triggerType"] = Type.Value;
+
+        if (string.IsNullOrWhiteSpace(request?.ModelOverride))
+            session.Metadata.Remove("modelOverride");
+        else
+            session.Metadata["modelOverride"] = request!.ModelOverride;
+
+        if (string.IsNullOrWhiteSpace(request?.CronJobId))
+            session.Metadata.Remove("cronJobId");
+        else
+            session.Metadata["cronJobId"] = request!.CronJobId;
+
+        if (conversation.ActiveSessionId != sessionId)
+        {
+            conversation.ActiveSessionId = sessionId;
+            conversation.UpdatedAt = DateTimeOffset.UtcNow;
+            await conversations.SaveAsync(conversation, ct).ConfigureAwait(false);
+        }
+
+        return await ExecuteInSessionAsync(agentId, sessionId, prompt, descriptor, request, ct, session).ConfigureAwait(false);
+    }
+
+    // -----------------------------------------------------------------
+    // Shared execution — with Phase 2 transcript pruning
+    // -----------------------------------------------------------------
+    private async Task<SessionId> ExecuteInSessionAsync(
+        AgentId agentId,
+        SessionId sessionId,
+        string prompt,
+        AgentDescriptor? descriptor,
+        InternalTriggerRequest? request,
+        CancellationToken ct,
+        GatewaySession? preloadedSession = null)
+    {
+        var session = preloadedSession
+            ?? await sessions.GetOrCreateAsync(sessionId, agentId, ct).ConfigureAwait(false);
+
+        // --- Phase 2: snapshot pre-turn state ---
+        var preHeartbeatHistory = session.GetHistorySnapshot();
+        var preHeartbeatUpdatedAt = session.UpdatedAt;
+
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = prompt });
+        await sessions.SaveAsync(session, ct).ConfigureAwait(false);
+
+        var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);
+        var response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
+
+        var ackMaxChars = descriptor?.Heartbeat?.AckMaxChars ?? AckMaxCharsDefault;
+
+        if (IsHeartbeatAck(response.Content, ackMaxChars))
+        {
+            // --- Phase 2: prune the heartbeat turn and restore UpdatedAt ---
+            session.ReplaceHistory(preHeartbeatHistory);
+            session.UpdatedAt = preHeartbeatUpdatedAt;
+            await sessions.SaveAsync(session, ct).ConfigureAwait(false);
+
+            logger.LogDebug(
+                "HeartbeatTrigger: ack from agent '{AgentId}' session '{SessionId}' — turn pruned.",
+                agentId, sessionId);
+        }
+        else
+        {
+            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
+            await sessions.SaveAsync(session, ct).ConfigureAwait(false);
+
+            logger.LogInformation(
+                "HeartbeatTrigger: substantive response from agent '{AgentId}' session '{SessionId}' (jobId: {JobId}).",
+                agentId, sessionId, request?.CronJobId);
+        }
+
+        return sessionId;
+    }
+
+    // -----------------------------------------------------------------
+    // Ack classification (Phase 2)
+    // -----------------------------------------------------------------
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="response"/> is a heartbeat
+    /// acknowledgement: it contains "HEARTBEAT_OK" and is no longer than
+    /// <paramref name="maxChars"/> characters.
+    /// </summary>
+    public static bool IsHeartbeatAck(string? response, int maxChars = AckMaxCharsDefault)
+    {
+        if (string.IsNullOrWhiteSpace(response))
+            return false;
+
+        var trimmed = response.Trim();
+
+        if (trimmed.Length > maxChars)
+            return false;
+
+        return trimmed.Equals("HEARTBEAT_OK", StringComparison.Ordinal)
+               || trimmed.StartsWith("HEARTBEAT_OK", StringComparison.Ordinal)
+               || trimmed.Contains("HEARTBEAT_OK", StringComparison.Ordinal);
+    }
+
+    // -----------------------------------------------------------------
+    // Conversation management
+    // -----------------------------------------------------------------
+    private async Task<Conversation> GetOrCreateHeartbeatConversationAsync(AgentId agentId, CancellationToken ct)
+    {
+        var stableId = BuildHeartbeatConversationId(agentId);
+        var existing = await conversations.GetAsync(stableId, ct).ConfigureAwait(false);
+        if (existing is not null)
+        {
+            if (existing.Status == BotNexus.Gateway.Abstractions.Models.ConversationStatus.Archived)
+            {
+                existing.Status = BotNexus.Gateway.Abstractions.Models.ConversationStatus.Active;
+                existing.UpdatedAt = DateTimeOffset.UtcNow;
+                await conversations.SaveAsync(existing, ct).ConfigureAwait(false);
+            }
+            return existing;
+        }
+
+        var conversation = new Conversation
+        {
+            ConversationId = stableId,
+            AgentId = agentId,
+            Title = $"heartbeat:{agentId.Value}",
+            IsDefault = false
+        };
+        try
+        {
+            await conversations.CreateAsync(conversation, ct).ConfigureAwait(false);
+            logger.LogInformation(
+                "HeartbeatTrigger: created heartbeat conversation '{ConversationId}' for agent '{AgentId}'.",
+                stableId, agentId);
+            return conversation;
+        }
+        catch (Exception ex)
+        {
+            // Race: another run created it first - re-resolve
+            logger.LogDebug(ex, "HeartbeatTrigger: create race for conversation '{ConversationId}', retrying.", stableId);
+            var resolved = await conversations.GetAsync(stableId, ct).ConfigureAwait(false);
+            if (resolved is not null) return resolved; throw;
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // ID helpers
+    // -----------------------------------------------------------------
+    private static SessionId BuildHeartbeatSessionId(AgentId agentId)
+    {
+        var timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss");
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        return SessionId.From($"heartbeat:{Sanitize(agentId.Value)}:{timestamp}:{suffix}");
+    }
+
+    private static ConversationId BuildHeartbeatConversationId(AgentId agentId)
+        => ConversationId.From($"heartbeatconv:{Sanitize(agentId.Value)}");
+
+    private static string Sanitize(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return "agent";
+        Span<char> buf = stackalloc char[Math.Min(40, value.Length)];
+        var len = 0;
+        foreach (var ch in value)
+        {
+            if (len >= buf.Length) break;
+            buf[len++] = char.IsLetterOrDigit(ch) || ch is '-' or '_' ? ch : '-';
+        }
+        return new string(buf[..len]).Trim('-');
+    }
+}

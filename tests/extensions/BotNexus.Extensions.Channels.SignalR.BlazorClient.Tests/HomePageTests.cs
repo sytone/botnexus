@@ -1,4 +1,4 @@
-using Bunit;
+﻿using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Pages;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -119,6 +119,7 @@ public sealed class HomePageTests : IDisposable
         _ctx.Services.AddSingleton(Substitute.For<IAgentInteractionService>());
         _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
         _ctx.Services.AddSingleton(new HttpClient());
+        _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
 
         var cut = _ctx.Render<Home>();
 
@@ -141,6 +142,7 @@ public sealed class HomePageTests : IDisposable
         _ctx.Services.AddSingleton(Substitute.For<IAgentInteractionService>());
         _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
         _ctx.Services.AddSingleton(new HttpClient());
+        _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
 
         var cut = _ctx.Render<Home>();
 
@@ -164,6 +166,7 @@ public sealed class HomePageTests : IDisposable
 
         _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
         _ctx.Services.AddSingleton(new HttpClient());
+        _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
 
         _ctx.Render<Home>(p => p.Add(c => c.AgentId, "agent-2"));
 
@@ -196,6 +199,7 @@ public sealed class HomePageTests : IDisposable
 
         _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
         _ctx.Services.AddSingleton(new HttpClient());
+        _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
 
         _ctx.Render<Home>(p => p
             .Add(c => c.AgentId, "agent-2")
@@ -223,6 +227,7 @@ public sealed class HomePageTests : IDisposable
 
         _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
         _ctx.Services.AddSingleton(new HttpClient());
+        _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
 
         _ctx.Render<Home>(p => p.Add(c => c.AgentId, "agent-2"));
 
@@ -259,6 +264,7 @@ public sealed class HomePageTests : IDisposable
 
         _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
         _ctx.Services.AddSingleton(new HttpClient());
+        _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
 
         _ctx.Render<Home>(p => p
             .Add(c => c.AgentId, encodedAgentId)
@@ -297,6 +303,7 @@ public sealed class HomePageTests : IDisposable
 
         _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
         _ctx.Services.AddSingleton(new HttpClient());
+        _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
 
         _ctx.Render<Home>(p => p
             .Add(c => c.AgentId, "missing-agent")
@@ -335,6 +342,7 @@ public sealed class HomePageTests : IDisposable
 
         _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
         _ctx.Services.AddSingleton(new HttpClient());
+        _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
 
         _ctx.Render<Home>(p => p
             .Add(c => c.AgentId, "missing-agent")
@@ -345,3 +353,4 @@ public sealed class HomePageTests : IDisposable
         _interaction.DidNotReceive().SelectConversationAsync(Arg.Any<string>(), Arg.Any<string>());
     }
 }
+

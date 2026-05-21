@@ -242,7 +242,8 @@ The configuration is loaded automatically. BotNexus creates a workspace director
 ├── MEMORY.md         # Long-term distilled knowledge
 ├── HEARTBEAT.md      # Periodic task instructions
 └── memory/
-    └── daily/        # Daily memory logs (YYYY-MM-DD.md)
+    ├── 2026-04-01.md    # Daily memory notes (YYYY-MM-DD.md)
+    └── ...            (one per day)
 ```
 
 ### Customize your agent

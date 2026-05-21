@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
 
 namespace BotNexus.Gateway.Sessions;
@@ -14,6 +15,16 @@ public sealed class InMemorySessionStore : SessionStoreBase
     private static readonly ActivitySource ActivitySource = new("BotNexus.Gateway");
     private readonly Dictionary<SessionId, GatewaySession> _sessions = [];
     private readonly Lock _sync = new();
+    private readonly ISecretRedactor? _redactor;
+
+    /// <summary>Creates an in-memory session store without secret redaction.</summary>
+    public InMemorySessionStore() : this(null) { }
+
+    /// <summary>Creates an in-memory session store that redacts secrets at write time.</summary>
+    public InMemorySessionStore(ISecretRedactor? redactor)
+    {
+        _redactor = redactor;
+    }
 
     /// <inheritdoc />
     public override Task<GatewaySession?> GetAsync(SessionId sessionId, CancellationToken cancellationToken = default)
@@ -34,7 +45,7 @@ public sealed class InMemorySessionStore : SessionStoreBase
             if (_sessions.TryGetValue(sessionId, out var existing))
                 return Task.FromResult(existing);
 
-            var session = CreateSession(sessionId, agentId, null);
+            var session = CreateSession(sessionId, agentId, null, _redactor);
             _sessions[sessionId] = session;
             return Task.FromResult(session);
         }

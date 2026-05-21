@@ -56,8 +56,46 @@ public sealed class DateTimeToolTests
         json.GetProperty("offset").GetString().ShouldBe("00:00:00");
     }
 
-    private static DateTimeTool CreateTool(string? defaultTimezone = null)
-        => new(defaultTimezone, () => FixedUtcNow);
+
+    [Fact]
+    public async Task ExecuteAsync_WithServerTimezone_FallsBackToServerDefault_WhenNoAgentTimezone()
+    {
+        // Simulates: server has DefaultTimezone configured, agent has no Soul.Timezone
+        var tool = CreateTool(serverTimezone: "Europe/London");
+
+        var json = await ExecuteJsonAsync(tool, new Dictionary<string, object?>());
+
+        json.GetProperty("timezone").GetString().ShouldBe("Europe/London");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AgentTimezoneOverridesServerDefault()
+    {
+        // Agent Soul.Timezone takes precedence over server DefaultTimezone
+        var tool = CreateTool(agentTimezone: "America/New_York", serverTimezone: "Europe/London");
+
+        var json = await ExecuteJsonAsync(tool, new Dictionary<string, object?>());
+
+        json.GetProperty("timezone").GetString().ShouldBe("America/New_York");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_NoAgentOrServerTimezone_FallsBackToUtc()
+    {
+        var tool = CreateTool();
+
+        var json = await ExecuteJsonAsync(tool, new Dictionary<string, object?>());
+
+        json.GetProperty("timezone").GetString().ShouldBe("UTC");
+    }
+
+    private static DateTimeTool CreateTool(string? agentTimezone = null, string? serverTimezone = null)
+    {
+        var effectiveTimezone = agentTimezone ?? serverTimezone;
+        return new(effectiveTimezone, () => FixedUtcNow);
+    }
+
+
 
     private static async Task<JsonElement> ExecuteJsonAsync(
         IAgentTool tool,

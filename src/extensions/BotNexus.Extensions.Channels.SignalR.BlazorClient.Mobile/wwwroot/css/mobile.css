@@ -1,4 +1,4 @@
-/* ── Reset & base ─────────────────────────────────────────────────────────── */
+﻿/* ── Reset & base ─────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
 
 body {
@@ -214,6 +214,12 @@ body {
     text-align: right;
 }
 
+.message.assistant .message-time,
+.message.tool .message-time,
+.message.thinking .message-time {
+    text-align: left;
+}
+
 .stream-cursor {
     display: inline-block;
     animation: blink 0.8s step-end infinite;
@@ -295,3 +301,158 @@ body {
 }
 
 #blazor-error-ui .reload { color: #ffcc88; margin-left: 8px; }
+/* ── Tool call pill (collapsed, tappable) ─────────────────────────────────── */
+.tool-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #0f1a25;
+    border: 1px solid rgba(100, 160, 220, 0.2);
+    border-radius: 20px;
+    color: #7ab3e0;
+    font-size: 12px;
+    padding: 4px 10px 4px 8px;
+    cursor: pointer;
+    align-self: flex-start;
+    max-width: 90%;
+    text-align: left;
+    transition: background 0.15s, border-color 0.15s;
+    white-space: nowrap;
+    overflow: hidden;
+    margin: 2px 0;
+}
+
+.tool-pill:hover, .tool-pill:active {
+    background: #152232;
+    border-color: rgba(100, 160, 220, 0.4);
+}
+
+.tool-pill.tool-pill-error {
+    border-color: rgba(248, 113, 113, 0.3);
+    color: #f87171;
+}
+
+.tool-pill-icon { font-size: 13px; flex-shrink: 0; }
+
+.tool-pill-name {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 1;
+}
+
+.tool-pill-duration {
+    color: rgba(120, 170, 220, 0.6);
+    font-size: 11px;
+    flex-shrink: 0;
+}
+
+.tool-pill-chevron {
+    color: rgba(100, 160, 220, 0.5);
+    font-size: 10px;
+    flex-shrink: 0;
+    margin-left: 2px;
+}
+
+/* ── Tool call modal ──────────────────────────────────────────────────────── */
+.tool-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(5, 12, 22, 0.75);
+    z-index: 200;
+}
+
+.tool-modal {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: #111d2e;
+    border: 1px solid rgba(100, 160, 220, 0.2);
+    border-radius: 16px 16px 0 0;
+    width: 100%;
+    max-height: 80dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.6);
+    z-index: 201;
+}
+
+.tool-modal-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 16px 12px;
+    border-bottom: 1px solid rgba(100, 160, 220, 0.1);
+    flex-shrink: 0;
+}
+
+.tool-modal-name {
+    font-weight: 700;
+    font-size: 15px;
+    color: #d0dff0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tool-modal-close {
+    background: transparent;
+    border: none;
+    color: rgba(208, 223, 240, 0.5);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 4px 6px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.tool-modal-close:hover { color: #d0dff0; }
+
+.tool-modal-section {
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(100, 160, 220, 0.07);
+    overflow-y: auto;
+    flex-shrink: 1;
+}
+
+.tool-modal-section:last-child { border-bottom: none; }
+
+.tool-modal-section-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #4a7aaa;
+    margin-bottom: 8px;
+}
+
+.tool-modal-content {
+    margin: 0;
+    font-size: 12px;
+    font-family: ui-monospace, monospace;
+    color: #a8c4e0;
+    white-space: pre-wrap;
+    word-break: break-all;
+    line-height: 1.5;
+    max-height: 45dvh;
+    overflow-y: auto;
+}
+
+.tool-modal-content.tool-modal-content--error {
+    color: #f87171;
+}
+
+.tool-modal-duration {
+    font-size: 12px;
+    color: rgba(120, 170, 220, 0.6);
+}
+
+.tool-modal-empty {
+    padding: 16px;
+    color: rgba(120, 170, 220, 0.5);
+    font-size: 13px;
+    text-align: center;
+}

@@ -1,4 +1,4 @@
-﻿using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Hooks;
@@ -181,7 +181,7 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
 
         return conversation is null
             ? null
-            : new ConversationContext(conversation.ConversationId.Value, conversation.Title, conversation.Purpose);
+            : new ConversationContext(conversation.ConversationId.Value, conversation.Title, conversation.Purpose, conversation.Instructions);
     }
 
     private static async Task<ContextFile[]> LoadContextFilesAsync(
