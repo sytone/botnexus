@@ -63,7 +63,29 @@ public sealed class DefaultConversationRouter : IConversationRouter
                     reactivated = true;
                 }
 
-                var (directSessionId, directIsNew, changed) = await ResolveOrCreateSessionAsync(direct, agentId, ct);
+                // Bind-on-first-use for explicit conversationId path:
+                // Add a channel address binding if none exists; reactivate a muted binding.
+                // This ensures reconnects without explicit conversationId can find this conversation.
+                var existingBinding = direct.ChannelBindings.FirstOrDefault(b =>
+                    b.ChannelType == channelType && b.ChannelAddress == channelAddress);
+                if (existingBinding is null)
+                {
+                    direct.ChannelBindings.Add(new ChannelBinding
+                    {
+                        ChannelType = channelType,
+                        ChannelAddress = channelAddress,
+                        ThreadId = threadId,
+                        Mode = BindingMode.Interactive
+                    });
+                    reactivated = true;
+                }
+                else if (existingBinding.Mode == BindingMode.Muted)
+                {
+                    existingBinding.Mode = BindingMode.Interactive;
+                    reactivated = true;
+                }
+                var (directSessionId, directIsNew, directSessionChanged) = await ResolveOrCreateSessionAsync(direct, agentId, ct);
+                var changed = directSessionChanged;
                 if (changed)
                 {
                     direct.UpdatedAt = DateTimeOffset.UtcNow;

@@ -107,13 +107,12 @@ public sealed class ConversationRoutingScenarios
         // Assert — routes to the correct conversation with NO new binding added
         result.Conversation.ConversationId.ShouldBe(secondaryConv.ConversationId,
             "explicit conversationId must route directly to that conversation");
-
-        // The critical invariant: no duplicate thread binding was added
+        // The critical invariant: a channel address binding IS added (for reconnect),
+        // but NOT a ThreadId=conversationId binding (old design causing double fan-out)
         // (old design added a binding with ThreadId=conversationId, causing double fan-out)
         var conv = await convStore.GetAsync(secondaryConv.ConversationId);
-        conv.ShouldNotBeNull();
-        conv!.ChannelBindings.Count.ShouldBe(0,
-            "direct conversationId routing must NOT add a binding — no binding hack");
+        conv!.ChannelBindings.Count.ShouldBe(1,
+            "direct conversationId routing must add exactly one channel-address binding for reconnect, not a ThreadId hack");
     }
 
     // ──────────────────────────────────────────────────────────────────────────────
