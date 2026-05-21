@@ -541,7 +541,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
 
         await Clients.Caller.Connected(new ConnectedPayload(
             Context.ConnectionId,
-            _registry.GetAll().Select(a => new AgentSummary(a.AgentId.Value, a.DisplayName, a.Emoji)),
+            _registry.GetAll().Select(a => new AgentSummary(a.AgentId.Value, a.DisplayName, a.Emoji, a.Description)),
             typeof(GatewayHub).Assembly.GetName().Version?.ToString() ?? "dev",
             new HubCapabilities(MultiSession: true)));
 
@@ -724,3 +724,4 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     private static bool ChannelMatches(ChannelKey candidate, ChannelKey target)
         => candidate.Equals(target);
 }
+

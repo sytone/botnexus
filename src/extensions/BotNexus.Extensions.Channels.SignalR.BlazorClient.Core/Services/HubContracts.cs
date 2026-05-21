@@ -18,7 +18,8 @@ public sealed record ConnectedPayload(
 public sealed record AgentSummary(
     [property: JsonPropertyName("agentId")] string AgentId,
     [property: JsonPropertyName("displayName")] string DisplayName,
-    [property: JsonPropertyName("emoji")] string? Emoji = null);
+    [property: JsonPropertyName("emoji")] string? Emoji = null,
+    [property: JsonPropertyName("description")] string? Description = null);
 
 /// <summary>Hub capabilities advertised on connect.</summary>
 public sealed record HubCapabilities(

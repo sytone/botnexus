@@ -27,9 +27,7 @@ else
 {
     @if (Store.ActiveAgentId is null)
     {
-        <div class="empty-state">
-            <p>Select an agent from the sidebar to start chatting.</p>
-        </div>
+        <AgentDashboard />
     }
 
     @foreach (var (agentId, _) in Store.Agents)

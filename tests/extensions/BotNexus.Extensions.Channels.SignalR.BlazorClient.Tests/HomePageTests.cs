@@ -88,7 +88,7 @@ public sealed class HomePageTests : IDisposable
         var cut = _ctx.Render<Home>();
 
         Assert.Empty(cut.FindAll(".portal-loading"));
-        Assert.Contains("Select an agent", cut.Markup);
+        cut.Find(".agent-dashboard");
     }
 
     [Fact]
