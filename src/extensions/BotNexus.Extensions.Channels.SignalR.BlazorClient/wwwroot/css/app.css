@@ -3761,3 +3761,65 @@ h3.conversation-title.editable:hover {
     background: var(--text-muted, #888);
     cursor: default;
 }
+
+/* ---- Auto-expanding textarea ---- */
+.chat-input.expanding {
+    resize: none;
+    overflow-y: hidden;
+    transition: height 0.1s ease;
+}
+
+/* ---- Portal settings ---- */
+.banner-settings-btn {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--text-muted, #999);
+    font-size: 1rem;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+.banner-settings-btn:hover { background: var(--hover-bg, rgba(255,255,255,0.08)); }
+
+.portal-settings-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 2000;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-end;
+}
+.portal-settings-panel {
+    background: var(--panel-bg, #1e1e2e);
+    border-left: 1px solid var(--border, #333);
+    width: 320px;
+    height: 100%;
+    padding: 1.5rem;
+    overflow-y: auto;
+}
+.portal-settings-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+}
+.portal-settings-close {
+    background: none;
+    border: none;
+    color: var(--text-muted, #999);
+    font-size: 1.2rem;
+    cursor: pointer;
+}
+.portal-settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+}
+.portal-settings-hint {
+    font-size: 0.8rem;
+    color: var(--text-muted, #999);
+    padding-bottom: 0.5rem;
+}

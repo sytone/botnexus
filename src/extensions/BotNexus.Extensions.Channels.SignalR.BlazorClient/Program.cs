@@ -19,5 +19,6 @@ builder.Services.AddScoped<GatewayInfoService>();
 builder.Services.AddScoped<IUpdateStatusService, UpdateStatusService>();
 builder.Services.AddScoped<LocationsApiClient>();
 builder.Services.AddScoped<CronApiClient>();
+builder.Services.AddScoped<IPortalPreferencesService, PortalPreferencesService>();
 
 await builder.Build().RunAsync();

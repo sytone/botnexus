@@ -11,6 +11,7 @@
 @implements IAsyncDisposable
 
 <div class="app-shell">
+<PortalSettingsPanel @ref="_settingsPanel" />
     @* Top bar with burger + logo *@
     <header class="app-banner">
         <div class="banner-header">
@@ -21,6 +22,7 @@
             </button>
             <span class="banner-logo">🤖</span>
             <span class="banner-title">BotNexus</span>
+            <button class="banner-settings-btn" @onclick="OpenSettings" title="Portal settings">x</button>
         </div>
     </header>
 
@@ -260,7 +262,8 @@
 @code {
     private record Announcement(string Id, string Text, string Type = "info");
     private List<Announcement> _announcements = [];
-    private bool _restarting;
+        private bool _restarting;
+    private PortalSettingsPanel? _settingsPanel;
     private bool _sidebarOpen = false;
     private bool _isMobile = false;
     private const string SidebarKey = "botnexus-sidebar-open";
@@ -531,6 +534,8 @@
             return $"yesterday {local:HH:mm}";
         return local.ToString("MMM d HH:mm");
     }
+
+    private void OpenSettings() => _settingsPanel?.Open();
 
     private void ShowUpdateConfirm() => _showUpdateConfirm = true;
     private void CancelUpdate() => _showUpdateConfirm = false;

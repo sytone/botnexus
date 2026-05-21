@@ -1,6 +1,7 @@
 @inject IJSRuntime JS
 @inject IClientStateStore Store
 @inject IAgentInteractionService Interaction
+@inject IPortalPreferencesService Prefs
 @implements IDisposable
 
 <div class="chat-panel">
@@ -315,10 +316,11 @@
         <div class="chat-input-area">
             @if (!IsReadOnly)
             {
-                <textarea class="chat-input"
+                <textarea class="chat-input @(Prefs.Current.ExpandingInput ? ""expanding"" : """")"
                           @ref="_inputElement"
                           @bind="_inputText"
                           @bind:event="oninput"
+                          @oninput="HandleInputChanged"
                           @onkeydown="HandleKeyDown"
                           placeholder="@InputPlaceholder"
                           disabled="@(!IsConnected)" />
@@ -413,7 +415,16 @@ private bool IsStreaming =>
 
     private string _inputText = "";
     private ElementReference _messagesContainer;
-    private ElementReference _inputElement;
+        private ElementReference _inputElement;
+
+    private async Task HandleInputChanged()
+    {
+        if (Prefs.Current.ExpandingInput)
+            await JS.InvokeVoidAsync("chatScroll.autoResizeTextarea", _inputElement, Prefs.Current.ExpandingInputMaxLines);
+    }
+
+    private async Task ToggleExpandingInput()
+        => await Prefs.SetExpandingInputAsync(!Prefs.Current.ExpandingInput);
     private bool _enterPreventionBound;
     private bool _wasReadOnly;
     private bool _hadAskUserPrompt;

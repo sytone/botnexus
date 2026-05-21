@@ -1,0 +1,60 @@
+@inject IPortalPreferencesService Prefs
+@inject IJSRuntime JS
+@implements IDisposable
+
+@if (_show)
+{
+    <div class="portal-settings-overlay" @onclick="Close">
+        <div class="portal-settings-panel" @onclick:stopPropagation="true">
+            <div class="portal-settings-header">
+                <h3>Portal Settings</h3>
+                <button class="portal-settings-close" @onclick="Close" title="Close">x</button>
+            </div>
+            <div class="portal-settings-body">
+                <div class="portal-settings-row">
+                    <label class="portal-settings-label">Auto-expand chat input</label>
+                    <input type="checkbox"
+                           checked="@Prefs.Current.ExpandingInput"
+                           @onchange="ToggleExpandingInput" />
+                </div>
+                <div class="portal-settings-hint">
+                    Textarea grows as you type, up to @Prefs.Current.ExpandingInputMaxLines rows.
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool _show;
+
+    protected override void OnInitialized()
+    {
+        Prefs.OnChanged += HandleChanged;
+    }
+
+    public void Open()
+    {
+        _show = true;
+        StateHasChanged();
+    }
+
+    private void Close()
+    {
+        _show = false;
+        StateHasChanged();
+    }
+
+    private async Task ToggleExpandingInput(ChangeEventArgs e)
+    {
+        var enabled = e.Value is bool b ? b : bool.Parse(e.Value?.ToString() ?? "false");
+        await Prefs.SetExpandingInputAsync(enabled);
+    }
+
+    private void HandleChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Prefs.OnChanged -= HandleChanged;
+    }
+}
