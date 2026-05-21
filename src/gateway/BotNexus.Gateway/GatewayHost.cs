@@ -383,7 +383,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 {
                     if (await HandleSteeringAsync(message, agentId, sessionId, cancellationToken))
                         continue;
-                    // Agent not running — fall through to normal message processing.
+                    // Steering must not fall through to normal message processing.
+                    // Steering is control-plane metadata; discard it rather than converting to a user prompt.
+                    _logger.LogWarning("Steering discarded for session {SessionId} because agent is not running. Control messages must not enter the data plane.", sessionId);
+                    continue;
                 }
                 else if (string.Equals(controlCommand, ControlCompact, StringComparison.OrdinalIgnoreCase))
                 {
@@ -757,7 +760,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         if (handle is null || !handle.IsRunning)
         {
             _logger.LogInformation(
-                "Steering received but agent is not running (instance={HasInstance}, running={IsRunning}). Falling through to normal processing for session {SessionId}",
+                "Steering received but agent is not running (instance={HasInstance}, running={IsRunning}). Steering will be discarded for session {SessionId}.",
                 instance is not null, handle?.IsRunning ?? false, sessionId);
 
             await _activity.PublishAsync(new GatewayActivity
