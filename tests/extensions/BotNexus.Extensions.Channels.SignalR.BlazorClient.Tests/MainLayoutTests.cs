@@ -566,4 +566,37 @@ public sealed class MainLayoutTests : IDisposable
 
         Assert.Empty(cut.FindAll(".agent-dropdown-select"));
     }
+
+    [Fact]
+    public void AgentDropdown_NotRendered_WhenIsMobileIsTrue()
+    {
+        // Arrange: seed an agent so the dropdown would normally appear
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.NotifyChanged();
+
+        // Simulate JS isMobileView returning true (fires in OnAfterRenderAsync)
+        _ctx.JSInterop.Setup<bool>("chatScroll.isMobileView").SetResult(true);
+
+        // Act
+        var cut = RenderLayout();
+        // Wait for after-render to fire (_isMobile to be set)
+        cut.WaitForAssertion(() =>
+            Assert.Empty(cut.FindAll(".agent-dropdown-select")),
+            TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public void AgentDropdown_Rendered_WhenIsMobileIsFalse()
+    {
+        // Desktop default: isMobileView returns false (default Loose mock behavior)
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.NotifyChanged();
+
+        _ctx.JSInterop.Setup<bool>("chatScroll.isMobileView").SetResult(false);
+
+        var cut = RenderLayout();
+
+        // Dropdown should be visible on desktop
+        cut.Find(".agent-dropdown-select");
+    }
 }

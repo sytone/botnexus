@@ -61,7 +61,7 @@
                 @* Scrollable agent/conversation section *@
                 <div class="sidebar-scroll-region">
                 @* Agent dropdown + session list nested under Chat *@
-                @if (Store.Agents.Values.Any(a => !a.IsReadOnly))
+                @if (!_isMobile && Store.Agents.Values.Any(a => !a.IsReadOnly))
                 {
                     <div class="agent-dropdown-container">
                         <select class="agent-dropdown-select"
@@ -490,13 +490,17 @@
     private void NavigateToChat(string agentId, string? conversationId = null)
     {
         var encodedAgentId = Uri.EscapeDataString(agentId);
-        var target = string.IsNullOrWhiteSpace(conversationId)
+        var relPath = string.IsNullOrWhiteSpace(conversationId)
             ? $"chat/{encodedAgentId}"
             : $"chat/{encodedAgentId}/{Uri.EscapeDataString(conversationId)}";
 
+        // On mobile, navigate to the mobile app path (/mobile/chat/...).
+        // The desktop and mobile portals are separate apps served at "/" and "/mobile/".
+        var target = _isMobile ? "/mobile/" + relPath : relPath;
+
         var current = Nav.ToBaseRelativePath(Nav.Uri).TrimEnd('/');
-        if (!string.Equals(current, target, StringComparison.OrdinalIgnoreCase))
-            Nav.NavigateTo(target);
+        if (!string.Equals(current, relPath, StringComparison.OrdinalIgnoreCase))
+            Nav.NavigateTo(target, forceLoad: _isMobile);
     }
 
     private async Task ArchiveConversationAsync(string agentId, string conversationId, string title, bool isVirtualSession)
