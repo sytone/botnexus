@@ -464,7 +464,186 @@ public sealed class AgentExchangeServiceTests
         result.CompletionReason.ShouldBe("objectiveMet");
     }
 
-    private static Mock<IAgentRegistry> CreateRegistry(AgentId initiator, AgentId target, IReadOnlyList<string> allowedTargets)
+    [Fact]
+    public async Task ConverseAsync_WithSubAgentRole_Succeeds()
+    {
+        var initiator = AgentId.From("test-agent");
+        var target = AgentId.From("specialist-agent");
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(r => r.Get(initiator)).Returns(new AgentDescriptor
+        {
+            AgentId = initiator,
+            DisplayName = "Initiator",
+            ModelId = "gpt-5-mini",
+            ApiProvider = "copilot",
+            SubAgentRoles = ["specialist"]
+        });
+        registry.Setup(r => r.Get(target)).Returns(new AgentDescriptor
+        {
+            AgentId = target,
+            DisplayName = "Specialist",
+            ModelId = "gpt-5-mini",
+            ApiProvider = "copilot",
+            Metadata = new Dictionary<string, object?> { ["role"] = "specialist" }
+        });
+        registry.Setup(r => r.Contains(target)).Returns(true);
+
+        var sessionStore = new InMemorySessionStore();
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "OBJECTIVE MET" });
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(target, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var service = new AgentExchangeService(
+            registry.Object,
+            supervisor.Object,
+            sessionStore,
+            Options.Create(new GatewayOptions()),
+            NullLogger<AgentExchangeService>.Instance);
+
+        var result = await service.ConverseAsync(new AgentExchangeRequest
+        {
+            InitiatorId = initiator,
+            TargetId = target,
+            Message = "hello",
+            MaxTurns = 1
+        });
+
+        result.Status.ShouldBe("sealed");
+    }
+
+    [Fact]
+    public async Task ConverseAsync_WithSubAgentRole_JsonElementRole_Succeeds()
+    {
+        var initiator = AgentId.From("test-agent");
+        var target = AgentId.From("specialist-agent");
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(r => r.Get(initiator)).Returns(new AgentDescriptor
+        {
+            AgentId = initiator,
+            DisplayName = "Initiator",
+            ModelId = "gpt-5-mini",
+            ApiProvider = "copilot",
+            SubAgentRoles = ["specialist"]
+        });
+        // role stored as a JsonElement (as it would be when loaded from JSON config)
+        var meta = new Dictionary<string, object?>
+        {
+            ["role"] = System.Text.Json.JsonDocument.Parse("\"specialist\"").RootElement
+        };
+        registry.Setup(r => r.Get(target)).Returns(new AgentDescriptor
+        {
+            AgentId = target,
+            DisplayName = "Specialist",
+            ModelId = "gpt-5-mini",
+            ApiProvider = "copilot",
+            Metadata = meta
+        });
+        registry.Setup(r => r.Contains(target)).Returns(true);
+
+        var sessionStore = new InMemorySessionStore();
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "OBJECTIVE MET" });
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(target, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var service = new AgentExchangeService(
+            registry.Object,
+            supervisor.Object,
+            sessionStore,
+            Options.Create(new GatewayOptions()),
+            NullLogger<AgentExchangeService>.Instance);
+
+        var result = await service.ConverseAsync(new AgentExchangeRequest
+        {
+            InitiatorId = initiator,
+            TargetId = target,
+            Message = "hello",
+            MaxTurns = 1
+        });
+
+        result.Status.ShouldBe("sealed");
+    }
+
+    [Fact]
+    public async Task ConverseAsync_WithSubAgentRole_NoMatchFails()
+    {
+        var initiator = AgentId.From("test-agent");
+        var target = AgentId.From("researcher-agent");
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(r => r.Get(initiator)).Returns(new AgentDescriptor
+        {
+            AgentId = initiator,
+            DisplayName = "Initiator",
+            ModelId = "gpt-5-mini",
+            ApiProvider = "copilot",
+            SubAgentRoles = ["specialist"]
+        });
+        registry.Setup(r => r.Get(target)).Returns(new AgentDescriptor
+        {
+            AgentId = target,
+            DisplayName = "Researcher",
+            ModelId = "gpt-5-mini",
+            ApiProvider = "copilot",
+            Metadata = new Dictionary<string, object?> { ["role"] = "researcher" }
+        });
+        registry.Setup(r => r.Contains(target)).Returns(true);
+
+        var service = new AgentExchangeService(
+            registry.Object,
+            Mock.Of<IAgentSupervisor>(),
+            new InMemorySessionStore(),
+            Options.Create(new GatewayOptions()),
+            NullLogger<AgentExchangeService>.Instance);
+
+        Func<Task> action = () => service.ConverseAsync(new AgentExchangeRequest
+        {
+            InitiatorId = initiator,
+            TargetId = target,
+            Message = "hello"
+        });
+
+        await action.ShouldThrowAsync<UnauthorizedAccessException>();
+    }
+
+    [Fact]
+    public async Task ConverseAsync_WithEmptySubAgentRoles_StillChecksIds()
+    {
+        var initiator = AgentId.From("test-agent");
+        var target = AgentId.From("agent-c");
+        var registry = CreateRegistry(initiator, target, ["agent-c"]);
+        var sessionStore = new InMemorySessionStore();
+
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "OBJECTIVE MET" });
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(target, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var service = new AgentExchangeService(
+            registry.Object,
+            supervisor.Object,
+            sessionStore,
+            Options.Create(new GatewayOptions()),
+            NullLogger<AgentExchangeService>.Instance);
+
+        var result = await service.ConverseAsync(new AgentExchangeRequest
+        {
+            InitiatorId = initiator,
+            TargetId = target,
+            Message = "hello",
+            MaxTurns = 1
+        });
+
+        result.Status.ShouldBe("sealed");
+    }
+
+        private static Mock<IAgentRegistry> CreateRegistry(AgentId initiator, AgentId target, IReadOnlyList<string> allowedTargets)
     {
         var registry = new Mock<IAgentRegistry>();
         registry.Setup(r => r.Get(initiator)).Returns(new AgentDescriptor

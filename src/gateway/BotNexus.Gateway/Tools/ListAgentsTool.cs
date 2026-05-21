@@ -60,6 +60,7 @@ public sealed class ListAgentsTool(
 
         var callerDescriptor = agentRegistry.Get(callerAgentId);
         var subAgentIds = callerDescriptor?.SubAgentIds ?? [];
+        var subAgentRoles = callerDescriptor?.SubAgentRoles ?? [];
 
         var agents = agentRegistry.GetAll()
             .Where(d => MatchesFilter(d, filter))
@@ -70,7 +71,8 @@ public sealed class ListAgentsTool(
                 Description: d.Description,
                 Emoji: d.Emoji,
                 Capabilities: ResolveCapabilities(d),
-                CanConverse: subAgentIds.Contains(d.AgentId.ToString(), StringComparer.OrdinalIgnoreCase)))
+                CanConverse: subAgentIds.Contains(d.AgentId.ToString(), StringComparer.OrdinalIgnoreCase)
+                    || IsRoleGranted(subAgentRoles, d)))
             .OrderBy(e => e.AgentId, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -115,6 +117,22 @@ public sealed class ListAgentsTool(
                 return [single];
         }
         return [];
+    }
+
+    private static bool IsRoleGranted(IReadOnlyList<string> subAgentRoles, AgentDescriptor target)
+    {
+        if (subAgentRoles.Count == 0)
+            return false;
+
+        if (!target.Metadata.TryGetValue("role", out var roleRaw) || roleRaw is null)
+            return false;
+
+        var targetRole = roleRaw is JsonElement je
+            ? je.GetString()
+            : roleRaw.ToString();
+
+        return !string.IsNullOrWhiteSpace(targetRole)
+            && subAgentRoles.Contains(targetRole, StringComparer.OrdinalIgnoreCase);
     }
 
     private static string? ReadString(IReadOnlyDictionary<string, object?> args, string key)

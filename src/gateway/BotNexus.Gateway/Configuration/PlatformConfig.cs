@@ -422,6 +422,8 @@ public sealed class AgentDefinitionConfig
     public int? ToolTimeoutSeconds { get; set; }
     /// <summary>Agent IDs this agent can call as sub-agents.</summary>
     public List<string>? SubAgents { get; set; }
+    /// <summary>Role names this agent can converse with (role-based grants for agent_converse).</summary>
+    public List<string>? SubAgentRoles { get; set; }
     /// <summary>Isolation strategy name (e.g. 'in-process').</summary>
     public string? IsolationStrategy { get; set; }
     /// <summary>Maximum concurrent sessions for this agent.</summary>

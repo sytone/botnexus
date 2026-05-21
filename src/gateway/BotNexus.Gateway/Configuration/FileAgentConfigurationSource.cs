@@ -153,6 +153,7 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
             SystemPromptFile = config.SystemPromptFile,
             ToolIds = config.ToolIds ?? [],
             SubAgentIds = subAgentIds,
+            SubAgentRoles = config.SubAgentRoles ?? [],
             IsolationStrategy = string.IsNullOrWhiteSpace(config.IsolationStrategy) ? "in-process" : config.IsolationStrategy,
             MaxConcurrentSessions = config.MaxConcurrentSessions ?? 0,
             Metadata = ConvertObject(config.Metadata),
@@ -378,6 +379,8 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
         public IReadOnlyList<string>? SubAgents { get; init; }
 
         public IReadOnlyList<string>? SubAgentIds { get; init; }
+
+        public IReadOnlyList<string>? SubAgentRoles { get; init; }
 
         public FileAccessPolicyConfig? FileAccess { get; init; }
     }

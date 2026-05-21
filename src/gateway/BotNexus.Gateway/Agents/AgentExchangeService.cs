@@ -63,8 +63,10 @@ public sealed class AgentExchangeService : IAgentExchangeService
         var hasCrossWorldTarget = CrossWorldAgentReference.TryParse(request.TargetId, out var parsedCrossWorldTarget);
         if (!isLocalTarget && !hasCrossWorldTarget)
             throw new KeyNotFoundException($"Target agent '{request.TargetId}' is not registered.");
+        var targetDescriptor = isLocalTarget ? _registry.Get(request.TargetId) : null;
 
-        if (!initiatorDescriptor.SubAgentIds.Contains(request.TargetId.Value, StringComparer.OrdinalIgnoreCase))
+        if (!initiatorDescriptor.SubAgentIds.Contains(request.TargetId.Value, StringComparer.OrdinalIgnoreCase)
+            && !IsRoleGranted(initiatorDescriptor, targetDescriptor))
             throw new UnauthorizedAccessException(
                 $"Agent '{request.InitiatorId}' is not allowed to converse with '{request.TargetId}'.");
 
@@ -384,5 +386,25 @@ public sealed class AgentExchangeService : IAgentExchangeService
             WorldId = configuredTarget.WorldId,
             AgentId = AgentId.From(configuredTarget.AgentId)
         };
+    }
+
+    /// <summary>
+    /// Returns true when the initiator's <c>SubAgentRoles</c> list contains at least one role
+    /// that matches the target's <c>metadata.role</c> value.
+    /// </summary>
+    private static bool IsRoleGranted(AgentDescriptor initiator, AgentDescriptor? target)
+    {
+        if (initiator.SubAgentRoles.Count == 0 || target is null)
+            return false;
+
+        if (!target.Metadata.TryGetValue("role", out var roleRaw) || roleRaw is null)
+            return false;
+
+        var targetRole = roleRaw is System.Text.Json.JsonElement je
+            ? je.GetString()
+            : roleRaw.ToString();
+
+        return !string.IsNullOrWhiteSpace(targetRole)
+            && initiator.SubAgentRoles.Contains(targetRole, StringComparer.OrdinalIgnoreCase);
     }
 }
