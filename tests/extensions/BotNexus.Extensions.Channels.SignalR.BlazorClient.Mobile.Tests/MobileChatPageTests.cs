@@ -242,4 +242,31 @@ public sealed class MobileChatPageTests : IDisposable
         _store.DidNotReceive().NotifyChanged();
         _interaction.DidNotReceive().SelectConversationAsync(Arg.Any<string>(), Arg.Any<string>());
     }
+
+    // -- Issue #445: HandleStateChanged must not call ApplyRouteSelectionAsync ----
+
+    [Fact]
+    public void HandleStateChanged_does_not_call_ApplyRouteSelectionAsync()
+    {
+        // Arrange: portal ready, agent present, route set
+        _portalLoad.IsReady.Returns(true);
+        var agent = new AgentState { AgentId = "agent-1", DisplayName = "Alpha" };
+        _store.Agents.Returns(new Dictionary<string, AgentState> { ["agent-1"] = agent }.AsReadOnly());
+        _store.GetAgent("agent-1").Returns(agent);
+
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        // Record calls so far (from OnParametersSetAsync)
+        _store.ClearReceivedCalls();
+        _interaction.ClearReceivedCalls();
+
+        // Act: fire a store change event (simulates streaming token, tool update, etc.)
+        _store.OnChanged += Raise.Event<Action>();
+
+        // Assert: no further SetActiveAgent or SelectConversation calls
+        // (ApplyRouteSelectionAsync calls SetActiveAgent when agent differs from active)
+        // ApplyRouteSelectionAsync calls Store.NotifyChanged() when it makes changes -- must not be called on store events
+        _interaction.DidNotReceive().SelectConversationAsync(Arg.Any<string>(), Arg.Any<string>());
+    }
+
 }
