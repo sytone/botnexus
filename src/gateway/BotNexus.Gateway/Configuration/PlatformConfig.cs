@@ -131,6 +131,13 @@ public sealed class GatewaySettingsConfig
     /// Example: <c>"America/Los_Angeles"</c>.
     /// </summary>
     public string? DefaultTimezone { get; set; }
+
+    /// <summary>
+    /// When true, all provider HTTP requests and responses are logged at Debug level.
+    /// Auth headers are always redacted. Response bodies are not buffered for streaming calls.
+    /// Off by default; enable only for debugging unexpected provider responses.
+    /// </summary>
+    public bool EnableProviderRequestLogging { get; set; } = false;
 }
 
 /// <summary>

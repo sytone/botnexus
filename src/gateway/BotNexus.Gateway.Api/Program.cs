@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Extensions;
+using BotNexus.Agent.Providers.Core.Logging;
 using BotNexus.Agent.Providers.Anthropic;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
@@ -197,9 +198,19 @@ builder.Services.AddSingleton<ApiProviderRegistry>();
 builder.Services.AddSingleton<ModelRegistry>();
 builder.Services.AddSingleton<BuiltInModels>();
 builder.Services.AddHttpClient();
+builder.Services.AddTransient<ProviderLoggingHandler>();
 builder.Services.AddHttpClient("BotNexus", client =>
 {
     client.Timeout = TimeSpan.FromMinutes(10);
+}).AddHttpMessageHandler(sp =>
+{
+    // Conditionally attach the logging handler based on gateway config.
+    // The handler checks IsEnabled(Debug) internally — no log entries emitted when debug is off.
+    var config = sp.GetService<IOptionsMonitor<PlatformConfig>>()?.CurrentValue;
+    if (config?.Gateway?.EnableProviderRequestLogging == true)
+        return sp.GetRequiredService<ProviderLoggingHandler>();
+    // Return a no-op pass-through handler when logging is disabled.
+    return new NoOpDelegatingHandler();
 });
 builder.Services.AddSingleton<HttpClient>(sp =>
 {
@@ -458,3 +469,11 @@ static string? GetGitCommitHash()
 /// Entry point marker for integration testing.
 /// </summary>
 public partial class Program;
+
+/// <summary>No-op delegating handler used when provider HTTP logging is disabled.</summary>
+file sealed class NoOpDelegatingHandler : DelegatingHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+        => base.SendAsync(request, cancellationToken);
+}
