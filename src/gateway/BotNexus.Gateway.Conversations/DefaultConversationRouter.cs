@@ -63,9 +63,26 @@ public sealed class DefaultConversationRouter : IConversationRouter
                     reactivated = true;
                 }
 
-                // Explicit conversationId path: do NOT add bindings here.
-                // The portal always sends the known conversationId, so no binding is needed.
-                // Bind-on-first-use lives in the implicit path (below) for channel reconnects (#441).
+                // Bind-on-first-use for explicit conversationId path:
+                // Add a binding if none exists; reactivate a muted binding.
+                var existingBinding = direct.ChannelBindings.FirstOrDefault(b =>
+                    b.ChannelType == channelType && b.ChannelAddress == channelAddress);
+                if (existingBinding is null)
+                {
+                    direct.ChannelBindings.Add(new ChannelBinding
+                    {
+                        ChannelType = channelType,
+                        ChannelAddress = channelAddress,
+                        ThreadId = threadId,
+                        Mode = BindingMode.Interactive
+                    });
+                    reactivated = true;
+                }
+                else if (existingBinding.Mode == BindingMode.Muted)
+                {
+                    existingBinding.Mode = BindingMode.Interactive;
+                    reactivated = true;
+                }
 
                 var (directSessionId, directIsNew, directSessionChanged) = await ResolveOrCreateSessionAsync(direct, agentId, ct);
                 var changed = directSessionChanged;
