@@ -1749,7 +1749,11 @@ public sealed class GatewayHostTests
         channelManager.SetupGet(m => m.Adapters).Returns([telegramChannel.Object, signalrChannel.Object]);
         channelManager.Setup(m => m.Get(It.Is<BotNexus.Domain.Primitives.ChannelKey>(k => k.Value == "telegram")))
             .Returns(telegramChannel.Object);
+        channelManager.Setup(m => m.Get(It.Is<BotNexus.Domain.Primitives.ChannelKey>(k => k.Value == "telegram"), It.IsAny<string?>()))
+            .Returns(telegramChannel.Object);
         channelManager.Setup(m => m.Get(It.Is<BotNexus.Domain.Primitives.ChannelKey>(k => k.Value == "signalr")))
+            .Returns(signalrChannel.Object);
+        channelManager.Setup(m => m.Get(It.Is<BotNexus.Domain.Primitives.ChannelKey>(k => k.Value == "signalr"), It.IsAny<string?>()))
             .Returns(signalrChannel.Object);
 
         // Conversation router returns a SignalR binding as a non-originating binding
@@ -1845,6 +1849,8 @@ public sealed class GatewayHostTests
         var channelManager = new Mock<IChannelManager>();
         channelManager.SetupGet(m => m.Adapters).Returns([signalrChannel.Object]);
         channelManager.Setup(m => m.Get(It.Is<BotNexus.Domain.Primitives.ChannelKey>(k => k.Value == "signalr")))
+            .Returns(signalrChannel.Object);
+        channelManager.Setup(m => m.Get(It.Is<BotNexus.Domain.Primitives.ChannelKey>(k => k.Value == "signalr"), It.IsAny<string?>()))
             .Returns(signalrChannel.Object);
 
         // Router should NOT be called for GetOutboundBindings when originating channel is signalr
