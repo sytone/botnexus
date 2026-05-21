@@ -559,8 +559,8 @@ public sealed class GatewayHostTests
 
         // Steering was NOT called because agent is not running
         handle.Verify(h => h.SteerAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        // Instead, message was processed normally via PromptAsync
-        handle.Verify(h => h.PromptAsync(It.Is<AgentUserMessage>(m => m.Content == "nudge"), It.IsAny<CancellationToken>()), Times.Once);
+        // Steering was discarded — PromptAsync should NOT be called
+        handle.Verify(h => h.PromptAsync(It.Is<AgentUserMessage>(m => m.Content == "nudge"), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
