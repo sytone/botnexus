@@ -20,6 +20,25 @@ public sealed class GatewayRestClient : IGatewayRestClient
     public string? ApiBaseUrl => _apiBaseUrl;
 
     /// <inheritdoc />
+    public async Task<string?> GetConversationCanvasAsync(
+        string agentId,
+        string conversationId,
+        CancellationToken ct = default)
+    {
+        var url = $"{_apiBase}/api/agents/{Uri.EscapeDataString(agentId)}/conversations/{Uri.EscapeDataString(conversationId)}/canvas";
+        try
+        {
+            var response = await _http.GetAsync(url, ct);
+            if (response.StatusCode == System.Net.HttpStatusCode.NoContent) return null;
+            if (!response.IsSuccessStatusCode) return null;
+            return await response.Content.ReadAsStringAsync(ct);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public void Configure(string apiBaseUrl)
     {
         _apiBaseUrl = apiBaseUrl.TrimEnd('/') + "/";

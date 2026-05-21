@@ -221,6 +221,15 @@ public sealed class ConversationState
     /// <summary>Virtual session kind label (for example, "cron"). Null for normal conversations.</summary>
     public string? VirtualSessionKind { get; set; }
 
+
+    // ── Canvas ──────────────────────────────────────────────────────────────────
+
+    /// <summary>Latest HTML payload published to the Canvas tab for this conversation.</summary>
+    public string? CanvasHtml { get; set; }
+
+    /// <summary>When the latest canvas payload was published to this conversation.</summary>
+    public DateTimeOffset? CanvasUpdatedAt { get; set; }
+
     // ── History flags ────────────────────────────────────────────────────────
 
     /// <summary>Whether the latest page of history has been loaded.</summary>

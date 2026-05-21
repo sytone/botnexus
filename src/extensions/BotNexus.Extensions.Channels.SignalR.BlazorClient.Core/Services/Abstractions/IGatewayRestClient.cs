@@ -85,6 +85,13 @@ public interface IGatewayRestClient
         string fileName,
         CancellationToken cancellationToken = default);
 
+    /// <summary>GET /api/agents/{agentId}/conversations/{conversationId}/canvas</summary>
+    /// <returns>The canvas HTML string, or null if none exists.</returns>
+    Task<string?> GetConversationCanvasAsync(
+        string agentId,
+        string conversationId,
+        CancellationToken ct = default);
+
     /// <summary>Current API base URL (set via Configure). Null if not yet configured.</summary>
     string? ApiBaseUrl { get; }
 }
