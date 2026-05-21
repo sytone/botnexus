@@ -1,7 +1,8 @@
-﻿using BotNexus.Domain.Primitives;
+using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.AspNetCore.Http;
@@ -12,7 +13,7 @@ using SessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 namespace BotNexus.Gateway.Api.Controllers;
 
 /// <summary>
-/// REST API for conversation management — listing, creating, updating, and inspecting conversations
+/// REST API for conversation management ΓÇö listing, creating, updating, and inspecting conversations
 /// along with their channel bindings and assembled history.
 /// </summary>
 [ApiController]
@@ -23,6 +24,7 @@ public sealed class ConversationsController : ControllerBase
     private readonly ISessionStore _sessions;
     private readonly IReadOnlyList<IConversationChangeNotifier> _conversationChangeNotifiers;
     private readonly ILogger<ConversationsController> _logger;
+    private readonly IAskUserResponseRegistry? _askUserResponseRegistry;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ConversationsController"/> class.
@@ -31,16 +33,19 @@ public sealed class ConversationsController : ControllerBase
     /// <param name="sessions">The session store (used for history assembly).</param>
     /// <param name="conversationChangeNotifiers">Publishes conversation lifecycle notifications to connected channel clients.</param>
     /// <param name="logger">Logs best-effort transport notification failures.</param>
+    /// <param name="askUserResponseRegistry">Optional registry used to cancel pending ask_user prompts on archive.</param>
     public ConversationsController(
         IConversationStore conversations,
         ISessionStore sessions,
         IEnumerable<IConversationChangeNotifier>? conversationChangeNotifiers = null,
-        ILogger<ConversationsController>? logger = null)
+        ILogger<ConversationsController>? logger = null,
+        IAskUserResponseRegistry? askUserResponseRegistry = null)
     {
         _conversations = conversations;
         _sessions = sessions;
         _conversationChangeNotifiers = conversationChangeNotifiers?.ToArray() ?? [];
         _logger = logger ?? NullLogger<ConversationsController>.Instance;
+        _askUserResponseRegistry = askUserResponseRegistry;
     }
 
     /// <summary>
@@ -361,11 +366,12 @@ public sealed class ConversationsController : ControllerBase
         await SealConversationSessionsAsync(conversation.ConversationId, cancellationToken);
 
         await _conversations.ArchiveAsync(conversation.ConversationId, cancellationToken);
+        _askUserResponseRegistry?.CancelAllForConversation(conversation.ConversationId);
         await NotifyConversationChangedBestEffortAsync("archived", conversation.AgentId.Value, conversation.ConversationId.Value, cancellationToken);
         return NoContent();
     }
 
-    // ── Notification helpers ──────────────────────────────────────────────────
+    // ΓöÇΓöÇ Notification helpers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
     private async Task NotifyConversationChangedBestEffortAsync(string changeType, string agentId, string conversationId, CancellationToken cancellationToken)
     {
@@ -389,7 +395,7 @@ public sealed class ConversationsController : ControllerBase
             }
         }
     }
-    // ── Helpers ──────────────────────────────────────────────────────────────
+    // ΓöÇΓöÇ Helpers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
     private static ConversationResponse ToResponse(Conversation c) => new(
         ConversationId: c.ConversationId.Value,
@@ -499,6 +505,35 @@ public sealed class ConversationsController : ControllerBase
             .Take(take)
             .ToList();
     }
+    /// <summary>Gets the current canvas HTML for a conversation.</summary>
+    [HttpGet("~/api/agents/{agentId}/conversations/{conversationId}/canvas")]
+    [ProducesResponseType(typeof(string), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> GetCanvas(string agentId, string conversationId, CancellationToken cancellationToken)
+    {
+        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken).ConfigureAwait(false);
+        if (conversation is null)
+            return NotFound();
+        if (string.IsNullOrEmpty(conversation.CanvasHtml))
+            return NoContent();
+        return Content(conversation.CanvasHtml, "text/html");
+    }
+
+    /// <summary>Saves canvas HTML for a conversation.</summary>
+    [HttpPut("~/api/agents/{agentId}/conversations/{conversationId}/canvas")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> PutCanvas(string agentId, string conversationId, [FromBody] string html, CancellationToken cancellationToken)
+    {
+        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken).ConfigureAwait(false);
+        if (conversation is null)
+            return NotFound();
+        conversation.CanvasHtml = string.IsNullOrEmpty(html) ? null : html;
+        await _conversations.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
+        return NoContent();
+    }
+
     private static bool TryParseVirtualCronConversationId(string conversationId, out SessionId sessionId)
     {
         const string prefix = "cron-session:";
@@ -514,3 +549,4 @@ public sealed class ConversationsController : ControllerBase
     }
 
 }
+

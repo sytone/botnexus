@@ -1,12 +1,11 @@
 namespace BotNexus.Gateway.Abstractions.Agents;
-
 /// <summary>
-/// Broadcasts agent-scoped canvas HTML updates to interested transports.
+/// Broadcasts canvas HTML updates to interested transports, scoped to agent and conversation.
 /// </summary>
 public interface IAgentCanvasNotifier
 {
     /// <summary>
-    /// Publishes the latest canvas HTML for a specific agent.
+    /// Publishes the latest canvas HTML for a specific agent and conversation.
     /// </summary>
-    Task NotifyCanvasUpdatedAsync(string agentId, string html, CancellationToken cancellationToken = default);
+    Task NotifyCanvasUpdatedAsync(string agentId, string conversationId, string html, CancellationToken cancellationToken = default);
 }

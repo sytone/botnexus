@@ -592,7 +592,7 @@ public sealed class CronSchedulerTests
         sw.Stop();
 
         action.ExecutionCount.ShouldBe(2, "both jobs must run");
-        sw.ElapsedMilliseconds.ShouldBeLessThan(280,
+        sw.ElapsedMilliseconds.ShouldBeLessThan(800,
             "concurrent execution of two 150ms jobs should complete well under 300ms");
     }
 

@@ -1,4 +1,6 @@
 @page "/"
+@page "/chat/{AgentId}"
+@page "/chat/{AgentId}/{ConversationId}"
 @inject IClientStateStore Store
 @inject IAgentInteractionService Interaction
 @inject IPortalLoadService PortalLoad
@@ -154,6 +156,9 @@ else
     }
 }
 @code {
+    [Parameter] public string? AgentId { get; set; }
+    [Parameter] public string? ConversationId { get; set; }
+
     private string _inputText = "";
     private bool _isSending;
     private bool _menuOpen;
@@ -161,19 +166,39 @@ else
     private readonly Dictionary<string, string> _markdownCache = new();
     private ChatMessage? _modalToolMessage;
 
-    // Scroll guard state — tracks last-known active context to prevent cross-agent scroll
+    // Route application guard -- prevents re-applying the same route key twice.
+    private string? _appliedRouteKey;
+
+    // Scroll guard state -- tracks last-known active context to prevent cross-agent scroll
     private string? _lastActiveAgentId;
     private string? _lastActiveConversationId;
     private int _lastRenderedMessageCount;
 
+    protected override void OnInitialized()
+    {
+        PortalLoad.OnReadyChanged += HandleReadyChanged;
+        Store.OnChanged += HandleStateChanged;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await ApplyRouteSelectionAsync();
+    }
+
     protected override async Task OnInitializedAsync()
     {
-        Store.OnChanged += HandleStateChanged;
-        PortalLoad.OnReadyChanged += HandleStateChanged;
         var origin = new Uri(Nav.BaseUri).GetLeftPart(UriPartial.Authority);
         var hubUrl = $"{origin}/hub/gateway";
         await PortalLoad.InitializeAsync(hubUrl);
+        await ApplyRouteSelectionAsync();
     }
+
+    private void HandleReadyChanged() =>
+        _ = InvokeAsync(async () =>
+        {
+            await ApplyRouteSelectionAsync();
+            StateHasChanged();
+        });
 
     private void HandleStateChanged()
     {
@@ -183,6 +208,7 @@ else
             {
                 try
                 {
+                    await ApplyRouteSelectionAsync();
                     StateHasChanged();
                     await RenderMarkdownAsync();
                     await ConditionalScrollAsync();
@@ -198,37 +224,54 @@ else
     }
 
     /// <summary>
-    /// Scrolls to the bottom only when the active agent/conversation has changed or
-    /// new messages have arrived for the currently-viewed conversation.
-    /// Does NOT scroll when a background agent's state fires the global OnChanged event.
+    /// Applies agent and conversation selection from route parameters, mirroring
+    /// the desktop Home.razor ApplyRouteSelectionAsync logic (issue #400).
     /// </summary>
-    private async Task ConditionalScrollAsync()
+    private async Task ApplyRouteSelectionAsync()
     {
-        var activeAgentId = Store.ActiveAgentId;
-        var activeConvId = activeAgentId is not null
-            ? Store.GetAgent(activeAgentId)?.ActiveConversationId
-            : null;
+        if (!PortalLoad.IsReady || string.IsNullOrWhiteSpace(AgentId))
+            return;
 
-        // Agent or conversation switched → force scroll immediately
-        bool switched = activeAgentId != _lastActiveAgentId || activeConvId != _lastActiveConversationId;
-        if (switched)
+        var routeAgentId = Uri.UnescapeDataString(AgentId);
+        var routeConversationId = string.IsNullOrWhiteSpace(ConversationId)
+            ? null
+            : Uri.UnescapeDataString(ConversationId);
+        var routeKey = $"{routeAgentId}|{routeConversationId ?? ""}";
+        if (string.Equals(_appliedRouteKey, routeKey, StringComparison.Ordinal))
+            return;
+
+        if (!Store.Agents.ContainsKey(routeAgentId))
         {
-            _lastActiveAgentId = activeAgentId;
-            _lastActiveConversationId = activeConvId;
-            _lastRenderedMessageCount = activeConvId is not null ? Store.GetMessages(activeConvId).Count : 0;
-            await ForceScrollToBottomAsync();
+            // Unknown agent -- fall back to first known agent if nothing is selected yet.
+            if (Store.ActiveAgentId is null && Store.Agents.Keys.FirstOrDefault() is { } fallback)
+            {
+                Store.ActiveAgentId = fallback;
+                Store.NotifyChanged();
+            }
+
             return;
         }
 
-        // Same agent/conv — only scroll if message count grew for the active conversation
-        if (activeConvId is null) return;
-        var currentCount = Store.GetMessages(activeConvId).Count;
-        var isStreaming = Store.GetStreamState(activeConvId)?.IsStreaming == true;
-        if (currentCount > _lastRenderedMessageCount || isStreaming)
+        if (!string.Equals(Store.ActiveAgentId, routeAgentId, StringComparison.Ordinal))
         {
-            _lastRenderedMessageCount = currentCount;
-            await ScrollToBottomAsync(isStreaming);
+            Store.ActiveAgentId = routeAgentId;
+            Store.NotifyChanged();
         }
+
+        if (routeConversationId is null)
+        {
+            _appliedRouteKey = routeKey;
+            return;
+        }
+
+        var agent = Store.GetAgent(routeAgentId);
+        if (agent is null || !agent.Conversations.ContainsKey(routeConversationId))
+            return;
+
+        if (!string.Equals(agent.ActiveConversationId, routeConversationId, StringComparison.Ordinal))
+            await Interaction.SelectConversationAsync(routeAgentId, routeConversationId);
+
+        _appliedRouteKey = routeKey;
     }
 
     private async Task OnAgentChanged(ChangeEventArgs e)
@@ -244,7 +287,14 @@ else
             .OrderByDescending(c => c.UpdatedAt)
             .FirstOrDefault();
         if (firstConv is not null)
+        {
             await Interaction.SelectConversationAsync(agentId, firstConv.ConversationId);
+            Nav.NavigateTo($"/chat/{Uri.EscapeDataString(agentId)}/{Uri.EscapeDataString(firstConv.ConversationId)}");
+        }
+        else
+        {
+            Nav.NavigateTo($"/chat/{Uri.EscapeDataString(agentId)}");
+        }
     }
 
     private async Task OnConvChanged(ChangeEventArgs e)
@@ -252,6 +302,7 @@ else
         var convId = e.Value?.ToString();
         if (string.IsNullOrEmpty(convId) || Store.ActiveAgentId is null) return;
         await Interaction.SelectConversationAsync(Store.ActiveAgentId, convId);
+        Nav.NavigateTo($"/chat/{Uri.EscapeDataString(Store.ActiveAgentId)}/{Uri.EscapeDataString(convId)}");
     }
 
     private async Task SendMessage()
@@ -331,8 +382,41 @@ else
     }
 
     /// <summary>
+    /// Scrolls to the bottom only when the active agent/conversation has changed or
+    /// new messages have arrived for the currently-viewed conversation.
+    /// Does NOT scroll when a background agent's state fires the global OnChanged event.
+    /// </summary>
+    private async Task ConditionalScrollAsync()
+    {
+        var activeAgentId = Store.ActiveAgentId;
+        var activeConvId = activeAgentId is not null
+            ? Store.GetAgent(activeAgentId)?.ActiveConversationId
+            : null;
+
+        // Agent or conversation switched -- force scroll immediately
+        bool switched = activeAgentId != _lastActiveAgentId || activeConvId != _lastActiveConversationId;
+        if (switched)
+        {
+            _lastActiveAgentId = activeAgentId;
+            _lastActiveConversationId = activeConvId;
+            _lastRenderedMessageCount = activeConvId is not null ? Store.GetMessages(activeConvId).Count : 0;
+            await ForceScrollToBottomAsync();
+            return;
+        }
+
+        // Same agent/conv -- only scroll if message count grew for the active conversation
+        if (activeConvId is null) return;
+        var currentCount = Store.GetMessages(activeConvId).Count;
+        var isStreaming = Store.GetStreamState(activeConvId)?.IsStreaming == true;
+        if (currentCount > _lastRenderedMessageCount || isStreaming)
+        {
+            _lastRenderedMessageCount = currentCount;
+            await ScrollToBottomAsync(isStreaming);
+        }
+    }
+
+    /// <summary>
     /// Smart scroll: only scrolls if near the bottom (user-scroll-aware).
-    /// Uses the shared chatScroll JS interop helper.
     /// </summary>
     private async Task ScrollToBottomAsync(bool isStreaming = false)
     {
@@ -358,6 +442,6 @@ else
     public void Dispose()
     {
         Store.OnChanged -= HandleStateChanged;
-        PortalLoad.OnReadyChanged -= HandleStateChanged;
+        PortalLoad.OnReadyChanged -= HandleReadyChanged;
     }
 }

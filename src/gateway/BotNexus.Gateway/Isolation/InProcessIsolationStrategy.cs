@@ -17,6 +17,7 @@ using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Agents;
@@ -37,7 +38,7 @@ using GatewayAfterToolCallResult = BotNexus.Gateway.Abstractions.Hooks.AfterTool
 namespace BotNexus.Gateway.Isolation;
 
 /// <summary>
-/// In-process isolation strategy — runs agents directly in the Gateway process
+/// In-process isolation strategy ΓÇö runs agents directly in the Gateway process
 /// by wrapping <see cref="BotNexus.Agent.Core.Agent"/>.
 /// </summary>
 /// <remarks>
@@ -127,7 +128,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         if (descriptor.Memory?.Enabled == true)
         {
             var memoryStore = _memoryStoreFactory.Create(descriptor.AgentId);
-            // Initialize asynchronously — don't block handle creation.
+            // Initialize asynchronously ΓÇö don't block handle creation.
             // Memory tools work immediately; the store initializes in the background.
             _ = memoryStore.InitializeAsync(CancellationToken.None);
             tools.Add(new MemorySaveTool(_workspaceManager, descriptor.AgentId, descriptor.Memory.Path));
@@ -149,7 +150,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             }
         }
 
-        // Session tool — always available, access level from config
+        // Session tool ΓÇö always available, access level from config
         var sessionStore = _serviceProvider.GetService<ISessionStore>();
         if (sessionStore is not null)
         {
@@ -174,6 +175,20 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 conversationDispatcher));
         }
 
+        var includeAskUser = effectiveToolIds.Count == 0
+            || effectiveToolIds.Contains("ask_user", StringComparer.OrdinalIgnoreCase);
+        var askUserRegistry = _serviceProvider.GetService<IAskUserResponseRegistry>();
+        if (includeAskUser && askUserRegistry is not null)
+        {
+            var askUserConversationId = conversationStore is not null
+                ? await ResolveConversationIdAsync(conversationStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken).ConfigureAwait(false)
+                : null;
+            tools.Add(new AskUserTool(
+                askUserRegistry,
+                descriptor.AgentId,
+                context.SessionId,
+                askUserConversationId));
+        }
         var delayToolOptions = _serviceProvider.GetService<IOptions<DelayToolOptions>>() ?? Options.Create(new DelayToolOptions());
         tools.Add(new DelayTool(delayToolOptions));
         tools.Add(new DateTimeTool(descriptor.Soul?.Timezone));
@@ -217,7 +232,14 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         if (includeCanvas)
         {
             var canvasNotifiers = _serviceProvider.GetServices<IAgentCanvasNotifier>().ToArray();
-            tools.Add(new CanvasTool(descriptor.AgentId, canvasNotifiers));
+            ConversationId? canvasConversationId = null;
+            var canvasConvStore = _serviceProvider.GetService<IConversationStore>();
+            if (canvasConvStore is not null)
+            {
+                canvasConversationId = await ResolveConversationIdAsync(canvasConvStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            tools.Add(new CanvasTool(descriptor.AgentId, canvasConversationId, canvasNotifiers));
         }
 
         List<object> extensionResourcesToDispose = [];
@@ -295,7 +317,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // Tool-role entries are excluded: they become orphaned ToolResultMessages
             // (no matching tool_use in the preceding assistant message) which causes
             // LLM provider rejection. Regular system entries (IsCompactionSummary=false)
-            // are also excluded — the agent's system prompt is set separately.
+            // are also excluded ΓÇö the agent's system prompt is set separately.
             initialMessages = context.History
                 .Where(e => !e.IsCrashSentinel
                          && (e.Role == Domain.Primitives.MessageRole.User
@@ -349,7 +371,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
     }
 
     /// <summary>
-    /// Returns true when <paramref name="toolIds"/> represents the all-tools wildcard — either an
+    /// Returns true when <paramref name="toolIds"/> represents the all-tools wildcard ΓÇö either an
     /// empty list (legacy behaviour) or a list whose sole entry is <c>"*"</c> (intuitive form).
     /// </summary>
     private static bool IsWildcardToolIds(IReadOnlyList<string> toolIds)
@@ -894,3 +916,4 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         }
     }
 }
+

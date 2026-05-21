@@ -187,6 +187,45 @@ public sealed class ClientStateStoreTests
     }
 
     [Fact]
+    public void SetPendingAskUser_and_GetPendingAskUser_round_trip_prompt()
+    {
+        var store = CreateConversationStore();
+        var prompt = new AskUserPromptState
+        {
+            RequestId = "req-1",
+            ConversationId = "c-1",
+            Prompt = "Need input",
+            InputType = "FreeForm",
+            AllowFreeForm = true
+        };
+
+        store.SetPendingAskUser(prompt);
+
+        var pending = store.GetPendingAskUser("c-1");
+        Assert.NotNull(pending);
+        Assert.Equal("req-1", pending.RequestId);
+        Assert.Equal("Need input", pending.Prompt);
+    }
+
+    [Fact]
+    public void ClearPendingAskUser_removes_prompt()
+    {
+        var store = CreateConversationStore();
+        store.SetPendingAskUser(new AskUserPromptState
+        {
+            RequestId = "req-1",
+            ConversationId = "c-1",
+            Prompt = "Need input",
+            InputType = "FreeForm",
+            AllowFreeForm = true
+        });
+
+        store.ClearPendingAskUser("c-1");
+
+        Assert.Null(store.GetPendingAskUser("c-1"));
+    }
+
+    [Fact]
     public void ActiveConversationId_returns_active_conversation_for_active_agent()
     {
         var store = CreateSeededStore();

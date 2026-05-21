@@ -104,3 +104,54 @@ public sealed record ChatMessage(string Role, string Content, DateTimeOffset Tim
     /// <summary>CSS class derived from the message role.</summary>
     public string CssClass => Role.ToLowerInvariant();
 }
+
+/// <summary>
+/// Represents a pending <c>ask_user</c> checkpoint that blocks the agent until
+/// the user submits an answer or cancels from the chat panel.
+/// </summary>
+public record AskUserPromptState
+{
+    /// <summary>Unique request identifier used when posting the response to the hub.</summary>
+    public required string RequestId { get; init; }
+
+    /// <summary>Conversation that owns this prompt and can satisfy it.</summary>
+    public required string ConversationId { get; init; }
+
+    /// <summary>Prompt text rendered inline in the chat stream.</summary>
+    public required string Prompt { get; init; }
+
+    /// <summary>Input mode requested by the tool (FreeForm, SingleChoice, MultipleChoice, ChoiceOrFreeForm).</summary>
+    public required string InputType { get; init; }
+
+    /// <summary>Optional structured choices for choice-based prompts.</summary>
+    public IReadOnlyList<AskUserChoiceState>? Choices { get; init; }
+
+    /// <summary>Whether the user may select multiple predefined choices.</summary>
+    public bool AllowMultiple { get; init; }
+
+    /// <summary>Whether a custom free-form response is allowed.</summary>
+    public bool AllowFreeForm { get; init; }
+
+    /// <summary>Absolute expiration timestamp if the prompt has a timeout.</summary>
+    public DateTimeOffset? ExpiresAt { get; init; }
+
+    /// <summary>True while a response is being submitted to prevent duplicate sends.</summary>
+    public bool IsSubmitting { get; set; }
+}
+
+/// <summary>
+/// Single choice item shown in an inline <c>ask_user</c> prompt.
+/// </summary>
+/// <param name="Value">Stable value returned to the tool when selected.</param>
+/// <param name="Label">Display label shown to the user.</param>
+/// <param name="Description">Optional helper text describing the option.</param>
+public record AskUserChoiceState(string Value, string Label, string? Description);
+
+/// <summary>
+/// User response payload emitted by the inline ask-user component and sent to
+/// the gateway hub to satisfy a pending request.
+/// </summary>
+/// <param name="FreeFormText">Optional free-form text response.</param>
+/// <param name="SelectedValues">Optional set of selected choice values.</param>
+/// <param name="Cancelled">True when the user cancelled instead of submitting an answer.</param>
+public record AskUserPromptSubmission(string? FreeFormText, string[]? SelectedValues, bool Cancelled);
