@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -316,13 +316,13 @@ public sealed class LlmSessionCompactor : ISessionCompactor
 
     private static int EstimateTokenCount(Session session)
     {
-        var totalChars = session.History.Sum(entry => entry.Content?.Length ?? 0);
-        return totalChars / 4;
+        var totalChars = session.History.Sum(entry => (long)(entry.Content?.Length ?? 0));
+        return (int)Math.Min(totalChars / 4, int.MaxValue);
     }
 
     private static int EstimateTokenCountFromEntries(IEnumerable<SessionEntry> entries)
     {
-        var totalChars = entries.Sum(entry => entry.Content?.Length ?? 0);
-        return totalChars / 4;
+        var totalChars = entries.Sum(entry => (long)(entry.Content?.Length ?? 0));
+        return (int)Math.Min(totalChars / 4, int.MaxValue);
     }
 }

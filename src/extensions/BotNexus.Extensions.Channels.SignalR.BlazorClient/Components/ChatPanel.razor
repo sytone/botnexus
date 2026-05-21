@@ -1,6 +1,7 @@
-@inject IJSRuntime JS
+﻿@inject IJSRuntime JS
 @inject IClientStateStore Store
 @inject IAgentInteractionService Interaction
+@inject IPortalPreferencesService Prefs
 @implements IDisposable
 
 <div class="chat-panel">
@@ -315,10 +316,11 @@
         <div class="chat-input-area">
             @if (!IsReadOnly)
             {
-                <textarea class="chat-input"
+                <textarea class="chat-input @ExpandingInputClass"
                           @ref="_inputElement"
                           @bind="_inputText"
                           @bind:event="oninput"
+                          @bind:after="HandleInputChanged"
                           @onkeydown="HandleKeyDown"
                           placeholder="@InputPlaceholder"
                           disabled="@(!IsConnected)" />
@@ -396,8 +398,8 @@
     private string? ActiveConversationTitle => ActiveConversation?.Title;
 private bool IsStreaming =>
         Agent?.ActiveConversationId is string activeConvId
-            ? Store.GetStreamState(activeConvId).IsStreaming
-            : false; // no active conversation = not streaming
+            ? Store.GetStreamState(activeConvId).IsTurnActive
+            : false; // no active conversation = not in turn
     private bool IsReadOnly => (Agent?.IsReadOnly ?? false) || (ActiveConversation?.IsVirtualSession ?? false);
     private bool IsConnected => Agent?.IsConnected ?? false;
     private bool ShowThinking => Agent?.ShowThinking ?? true;
@@ -410,10 +412,20 @@ private bool IsStreaming =>
         ActiveConversationId is not null ? Store.GetPendingAskUser(ActiveConversationId) : null;
     private string ThinkingBuffer => ActiveConversation?.StreamState.ThinkingBuffer ?? string.Empty;
     private string CurrentStreamBuffer => ActiveConversation?.StreamState.Buffer ?? string.Empty;
+    private string ExpandingInputClass => Prefs?.Current?.ExpandingInput == true ? "expanding" : string.Empty;
 
     private string _inputText = "";
     private ElementReference _messagesContainer;
-    private ElementReference _inputElement;
+        private ElementReference _inputElement;
+
+    private async Task HandleInputChanged()
+    {
+        if (Prefs?.Current?.ExpandingInput == true)
+            await JS.InvokeVoidAsync("chatScroll.autoResizeTextarea", _inputElement, Prefs.Current.ExpandingInputMaxLines);
+    }
+
+    private async Task ToggleExpandingInput()
+        => await Prefs.SetExpandingInputAsync(!Prefs.Current.ExpandingInput);
     private bool _enterPreventionBound;
     private bool _wasReadOnly;
     private bool _hadAskUserPrompt;

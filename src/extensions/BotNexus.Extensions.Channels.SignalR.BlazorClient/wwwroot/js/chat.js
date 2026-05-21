@@ -47,6 +47,21 @@ window.chatScroll = {
         return window.innerWidth <= 768;
     },
 
+        /** Auto-resizes a textarea to fit its content, capped at maxRows rows. */
+    autoResizeTextarea: function (element, maxRows) {
+        if (!element) return;
+        element.style.height = 'auto';
+        var lineHeight = parseInt(getComputedStyle(element).lineHeight) || 20;
+        var maxHeight = lineHeight * maxRows;
+        element.style.height = Math.min(element.scrollHeight, maxHeight) + 'px';
+        element.style.overflowY = element.scrollHeight > maxHeight ? 'auto' : 'hidden';
+    },
+
+    /** Resets a textarea height to its natural (CSS) default. */
+    resetTextareaHeight: function (element) {
+        if (element) { element.style.height = ''; element.style.overflowY = ''; }
+    }
+
     preventEnterSubmit: function (element) {
         if (!element || typeof element.addEventListener !== 'function' || element._preventEnterBound) return;
         element.addEventListener('keydown', function (e) {
@@ -56,4 +71,9 @@ window.chatScroll = {
         });
         element._preventEnterBound = true;
     }
+};
+
+window.portalPrefs = {
+    load: function (key) { return localStorage.getItem(key); },
+    save: function (key, value) { localStorage.setItem(key, value); }
 };

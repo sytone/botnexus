@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Linq;
 using System.Text.Json;
@@ -191,7 +191,9 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         }
         var delayToolOptions = _serviceProvider.GetService<IOptions<DelayToolOptions>>() ?? Options.Create(new DelayToolOptions());
         tools.Add(new DelayTool(delayToolOptions));
-        tools.Add(new DateTimeTool(descriptor.Soul?.Timezone));
+        var platformConfig = _serviceProvider.GetService<IOptions<PlatformConfig>>();
+        var serverTimezone = platformConfig?.Value.Gateway?.DefaultTimezone;
+        tools.Add(new DateTimeTool(descriptor.Soul?.Timezone ?? serverTimezone));
 
         var fileWatcherToolOptions = _serviceProvider.GetService<IOptions<FileWatcherToolOptions>>() ?? Options.Create(new FileWatcherToolOptions());
         tools.Add(new FileWatcherTool(fileWatcherToolOptions, pathValidator));
@@ -225,6 +227,15 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 || effectiveToolIds.Contains("agent_converse", StringComparer.OrdinalIgnoreCase);
             if (includeConverse)
                 tools.Add(new AgentConverseTool(conversationService, sessionStore, descriptor.AgentId, context.SessionId));
+        }
+
+        var agentRegistry = _serviceProvider.GetService<IAgentRegistry>();
+        if (agentRegistry is not null)
+        {
+            var includeListAgents = effectiveToolIds.Count == 0
+                || effectiveToolIds.Contains("list_agents", StringComparer.OrdinalIgnoreCase);
+            if (includeListAgents)
+                tools.Add(new ListAgentsTool(agentRegistry, descriptor.AgentId));
         }
 
         var includeCanvas = effectiveToolIds.Count == 0
@@ -319,9 +330,10 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // LLM provider rejection. Regular system entries (IsCompactionSummary=false)
             // are also excluded ΓÇö the agent's system prompt is set separately.
             initialMessages = context.History
-                .Where(e => e.Role == Domain.Primitives.MessageRole.User
+                .Where(e => !e.IsCrashSentinel
+                         && (e.Role == Domain.Primitives.MessageRole.User
                          || e.Role == Domain.Primitives.MessageRole.Assistant
-                         || (e.Role == Domain.Primitives.MessageRole.System && e.IsCompactionSummary))
+                         || (e.Role == Domain.Primitives.MessageRole.System && e.IsCompactionSummary)))
                 .Select(ConvertSessionEntryToAgentMessage)
                 .ToList();
 
@@ -915,4 +927,5 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         }
     }
 }
+
 

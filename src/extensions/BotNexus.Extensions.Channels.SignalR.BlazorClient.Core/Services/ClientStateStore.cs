@@ -323,6 +323,14 @@ public sealed class ClientStateStore : IClientStateStore
             agent.ChannelType = channelType;
         if (sessionType is not null)
             agent.SessionType = sessionType;
+        // Immediately bind session to active conversation so TryResolveConversationBySession works
+        // without waiting for the async REST refresh. This eliminates the race condition (#314)
+        // where MessageStart arrives before RefreshConversationsForAgentAsync completes.
+        if (agent.ActiveConversationId is not null &&
+            agent.Conversations.TryGetValue(agent.ActiveConversationId, out var activeConv))
+        {
+            activeConv.ActiveSessionId = sessionId;
+        }
     }
 
     /// <inheritdoc />

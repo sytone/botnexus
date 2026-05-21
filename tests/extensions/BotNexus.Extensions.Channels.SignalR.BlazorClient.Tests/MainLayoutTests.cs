@@ -36,6 +36,7 @@ public sealed class MainLayoutTests : IDisposable
         _ctx.Services.AddSingleton(hub);
         _ctx.Services.AddSingleton(gatewayInfo);
         _ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());
+        _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
         _ctx.Services.AddSingleton(restClient);
         _ctx.Services.AddSingleton(http);
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;

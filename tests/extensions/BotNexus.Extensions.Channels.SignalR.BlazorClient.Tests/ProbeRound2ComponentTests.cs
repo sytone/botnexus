@@ -29,6 +29,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         _ctx.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
         _ctx.Services.AddSingleton(new HttpClient());
         _ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());
+        _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }
 
@@ -178,6 +179,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         ctx.Services.AddSingleton(restClient);
         ctx.Services.AddSingleton(http);
         ctx.Services.AddSingleton(Substitute.For<IUpdateStatusService>());
+        ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
         ctx.JSInterop.Mode = JSRuntimeMode.Loose;
 
         store.SeedAgents([new AgentSummary("a-1", "Agent One")]);

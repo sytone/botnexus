@@ -107,6 +107,7 @@ public sealed class ConversationsController : ControllerBase
             AgentId = AgentId.From(request.AgentId),
             Title = string.IsNullOrWhiteSpace(request.Title) ? "New conversation" : request.Title,
             Purpose = NormalizePurpose(request.Purpose),
+            Instructions = NormalizeInstructions(request.Instructions),
             Status = ConversationStatus.Active,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
@@ -133,7 +134,7 @@ public sealed class ConversationsController : ControllerBase
         [FromBody] PatchConversationRequest request,
         CancellationToken cancellationToken)
     {
-        if (request.Title is null && request.Purpose is null)
+        if (request.Title is null && request.Purpose is null && request.Instructions is null)
             return BadRequest(new { error = "title or purpose is required." });
 
         if (request.Title is not null && string.IsNullOrWhiteSpace(request.Title))
@@ -150,6 +151,8 @@ public sealed class ConversationsController : ControllerBase
             conversation.Title = request.Title;
         if (request.Purpose is not null)
             conversation.Purpose = NormalizePurpose(request.Purpose);
+        if (request.Instructions is not null)
+            conversation.Instructions = NormalizeInstructions(request.Instructions);
         conversation.UpdatedAt = DateTimeOffset.UtcNow;
         await _conversations.SaveAsync(conversation, cancellationToken);
         await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversation.ConversationId.Value, cancellationToken);
@@ -402,6 +405,7 @@ public sealed class ConversationsController : ControllerBase
         AgentId: c.AgentId.Value,
         Title: c.Title,
         Purpose: c.Purpose,
+        Instructions: c.Instructions,
         IsDefault: c.IsDefault,
         Status: c.Status.ToString(),
         ActiveSessionId: c.ActiveSessionId?.Value,
@@ -421,6 +425,9 @@ public sealed class ConversationsController : ControllerBase
 
     private static string? NormalizePurpose(string? purpose)
         => string.IsNullOrWhiteSpace(purpose) ? null : purpose.Trim();
+
+    private static string? NormalizeInstructions(string? instructions)
+        => string.IsNullOrWhiteSpace(instructions) ? null : instructions.Trim();
 
     private async Task SealSessionAsync(SessionId sessionId, CancellationToken cancellationToken)
     {
@@ -505,6 +512,35 @@ public sealed class ConversationsController : ControllerBase
             .Take(take)
             .ToList();
     }
+    /// <summary>Gets the current canvas HTML for a conversation.</summary>
+    [HttpGet("~/api/agents/{agentId}/conversations/{conversationId}/canvas")]
+    [ProducesResponseType(typeof(string), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> GetCanvas(string agentId, string conversationId, CancellationToken cancellationToken)
+    {
+        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken).ConfigureAwait(false);
+        if (conversation is null)
+            return NotFound();
+        if (string.IsNullOrEmpty(conversation.CanvasHtml))
+            return NoContent();
+        return Content(conversation.CanvasHtml, "text/html");
+    }
+
+    /// <summary>Saves canvas HTML for a conversation.</summary>
+    [HttpPut("~/api/agents/{agentId}/conversations/{conversationId}/canvas")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> PutCanvas(string agentId, string conversationId, [FromBody] string html, CancellationToken cancellationToken)
+    {
+        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken).ConfigureAwait(false);
+        if (conversation is null)
+            return NotFound();
+        conversation.CanvasHtml = string.IsNullOrEmpty(html) ? null : html;
+        await _conversations.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
+        return NoContent();
+    }
+
     private static bool TryParseVirtualCronConversationId(string conversationId, out SessionId sessionId)
     {
         const string prefix = "cron-session:";

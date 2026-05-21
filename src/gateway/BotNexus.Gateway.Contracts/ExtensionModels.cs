@@ -1,5 +1,4 @@
 namespace BotNexus.Gateway.Abstractions.Extensions;
-
 /// <summary>
 /// Manifest format stored in botnexus-extension.json.
 /// </summary>
@@ -29,8 +28,37 @@ public sealed record ExtensionManifest
     /// Gets or sets the dependencies.
     /// </summary>
     public IReadOnlyList<string> Dependencies { get; init; } = [];
+    /// <summary>
+    /// Whether this extension is enabled. When false, the extension is discovered but not loaded.
+    /// Defaults to true.
+    /// </summary>
+    public bool Enabled { get; init; } = true;
+    /// <summary>
+    /// Configuration field schema declared by this extension.
+    /// Used to validate operator config and apply defaults at startup.
+    /// </summary>
+    public IReadOnlyList<ExtensionConfigFieldSchema> ConfigSchema { get; init; } = [];
 }
-
+/// <summary>
+/// Schema declaration for a single extension configuration field.
+/// Extensions declare these in their botnexus-extension.json manifest so the
+/// gateway can validate operator config and apply defaults at startup.
+/// </summary>
+public sealed record ExtensionConfigFieldSchema
+{
+    /// <summary>Field identifier (key in the extension config object).</summary>
+    public string Id { get; init; } = string.Empty;
+    /// <summary>Expected value type: string, integer, bool, object, array.</summary>
+    public string Type { get; init; } = "string";
+    /// <summary>Default value as a string. Applied when the field is absent and not required.</summary>
+    public string? Default { get; init; }
+    /// <summary>Whether this field must be present in operator config. Missing required fields produce a warning.</summary>
+    public bool Required { get; init; }
+    /// <summary>Whether this field contains a secret/credential (masked in logs and UI).</summary>
+    public bool Sensitive { get; init; }
+    /// <summary>Human-readable description of the field's purpose.</summary>
+    public string? Description { get; init; }
+}
 /// <summary>
 /// Metadata for a discovered extension on disk.
 /// </summary>
@@ -53,7 +81,6 @@ public sealed record ExtensionInfo
     /// </summary>
     public required ExtensionManifest Manifest { get; init; }
 }
-
 /// <summary>
 /// Result of attempting to load an extension.
 /// </summary>
@@ -76,7 +103,6 @@ public sealed record ExtensionLoadResult
     /// </summary>
     public IReadOnlyList<string> RegisteredServices { get; init; } = [];
 }
-
 /// <summary>
 /// Runtime information about an extension that is currently loaded.
 /// </summary>
