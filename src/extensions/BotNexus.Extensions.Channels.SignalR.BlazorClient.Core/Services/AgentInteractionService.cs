@@ -39,6 +39,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
 
         var convIdNow = agent.ActiveConversationId!;
+        var conv = _store.GetConversation(convIdNow);
         if (conv is null) return;
 
         conv.Messages.Add(new ChatMessage("User", content, DateTimeOffset.UtcNow));

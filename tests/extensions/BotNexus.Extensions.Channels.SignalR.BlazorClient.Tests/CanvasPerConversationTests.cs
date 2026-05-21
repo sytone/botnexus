@@ -1,5 +1,5 @@
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
-using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services.Abstractions;
+
 using NSubstitute;
 using Xunit;
 
