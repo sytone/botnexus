@@ -134,7 +134,6 @@ public sealed class SystemPromptBuilderSnapshotTests
                 new ContextFile("AGENTS.md", "Agent instructions"),
                 new ContextFile("SOUL.md", "Persona guidance")
             ],
-            SkillsPrompt = "## Available Skills\n- skill-a\n- skill-b",
             HeartbeatPrompt = "HEARTBEAT?",
             DocsPath = Path.Combine(Path.GetTempPath(), "repo", "docs"),
             WorkspaceNotes = ["Note one", "Note two"],
@@ -176,7 +175,6 @@ public sealed class SystemPromptBuilderSnapshotTests
                 new ContextFile("HEARTBEAT.md", "Heartbeat context"),
                 new ContextFile("AGENTS.md", "Agent instructions")
             ],
-            SkillsPrompt = "## Available Skills\n- skill-a",
             HeartbeatPrompt = "HEARTBEAT?",
             DocsPath = Path.Combine(Path.GetTempPath(), "repo", "docs"),
             WorkspaceNotes = ["Minimal note"],

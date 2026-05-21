@@ -34,7 +34,6 @@ public sealed record SystemPromptParams
     public IReadOnlyList<string>? ToolNames { get; init; }
     public string? UserTimezone { get; init; }
     public IReadOnlyList<ContextFile>? ContextFiles { get; init; }
-    public string? SkillsPrompt { get; init; }
     public string? HeartbeatPrompt { get; init; }
     public string? DocsPath { get; init; }
     public IReadOnlyList<string>? WorkspaceNotes { get; init; }
@@ -116,7 +115,6 @@ public static class SystemPromptBuilder
             .Add(new LambdaPromptSection(20, BuildToolCallStyleSection))
             .Add(new LambdaPromptSection(30, static context => buildOverridablePromptSection(null, buildExecutionBiasSection(GetGatewayData(context).IsMinimal))))
             .Add(new LambdaPromptSection(40, BuildSafetyAndCliSection))
-            .Add(new LambdaPromptSection(50, static context => buildSkillsSection(GetGatewayData(context).Parameters.SkillsPrompt, GetGatewayData(context).ReadToolName)))
             .Add(new LambdaPromptSection(60, static context => buildMemorySection(
                 GetGatewayData(context).IsMinimal,
                 GetGatewayData(context).Parameters.MemoryPromptInjection,
@@ -187,25 +185,6 @@ public static class SystemPromptBuilder
         return lines;
     }
 
-    public static IReadOnlyList<string> buildSkillsSection(string? skillsPrompt, string readToolName)
-    {
-        var trimmed = NormalizeStructuredPromptSection(skillsPrompt);
-        if (string.IsNullOrWhiteSpace(trimmed))
-            return [];
-
-        return
-        [
-            "## Skills (mandatory)",
-            "Before replying: scan <available_skills> <description> entries.",
-            $"- If exactly one skill clearly applies: read its SKILL.md at <location> with `{readToolName}`, then follow it.",
-            "- If multiple could apply: choose the most specific one, then read/follow it.",
-            "- If none clearly apply: do not read any SKILL.md.",
-            "Constraints: never read more than one skill up front; only read after selecting.",
-            "- When a skill drives external API writes, assume rate limits: prefer fewer larger writes, avoid tight one-item loops, serialize bursts when possible, and respect 429/Retry-After.",
-            trimmed,
-            ""
-        ];
-    }
 
     public static IReadOnlyList<string> buildMemorySection(bool isMinimal, IReadOnlySet<string> availableTools)
     {
