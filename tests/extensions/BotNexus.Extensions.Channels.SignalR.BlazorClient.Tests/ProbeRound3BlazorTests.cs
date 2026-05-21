@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text.Json.Nodes;
 using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
@@ -33,6 +33,7 @@ public sealed class ProbeRound3BlazorTests : IDisposable
             BaseAddress = new Uri("http://gateway.test")
         };
         _ctx.Services.AddSingleton(new CronApiClient(cronHttp));
+        _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }
 

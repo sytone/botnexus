@@ -412,7 +412,7 @@ private bool IsStreaming =>
         ActiveConversationId is not null ? Store.GetPendingAskUser(ActiveConversationId) : null;
     private string ThinkingBuffer => ActiveConversation?.StreamState.ThinkingBuffer ?? string.Empty;
     private string CurrentStreamBuffer => ActiveConversation?.StreamState.Buffer ?? string.Empty;
-    private string ExpandingInputClass => Prefs.Current.ExpandingInput ? "expanding" : string.Empty;
+    private string ExpandingInputClass => Prefs?.Current?.ExpandingInput == true ? "expanding" : string.Empty;
 
     private string _inputText = "";
     private ElementReference _messagesContainer;
@@ -420,7 +420,7 @@ private bool IsStreaming =>
 
     private async Task HandleInputChanged()
     {
-        if (Prefs.Current.ExpandingInput)
+        if (Prefs?.Current?.ExpandingInput == true)
             await JS.InvokeVoidAsync("chatScroll.autoResizeTextarea", _inputElement, Prefs.Current.ExpandingInputMaxLines);
     }
 
