@@ -25,6 +25,7 @@ public record class StreamOptions
         Headers = original.Headers is null ? null : new Dictionary<string, string>(original.Headers);
         MaxRetryDelayMs = original.MaxRetryDelayMs;
         Metadata = original.Metadata is null ? null : new Dictionary<string, object>(original.Metadata);
+        StreamSetupTimeoutMs = original.StreamSetupTimeoutMs;
     }
 
     /// <summary>
@@ -71,6 +72,13 @@ public record class StreamOptions
     /// Gets or sets the metadata.
     /// </summary>
     public Dictionary<string, object>? Metadata { get; init; }
+    /// <summary>
+    /// Gets or sets the stream setup timeout in milliseconds.
+    /// If the provider does not emit the first token within this window after
+    /// response headers are received, the stream is aborted.
+    /// Set to 0 or leave unset to disable (no setup-phase timeout).
+    /// </summary>
+    public int StreamSetupTimeoutMs { get; init; } = 0;
 }
 
 /// <summary>

@@ -21,7 +21,8 @@ internal static class AnthropicStreamParser
         bool isOAuthToken,
         Func<LlmModel, List<ContentBlock>, Usage, StopReason, string?, string?, AssistantMessage> buildMessage,
         Func<string?, StopReason> mapStopReason,
-        CancellationToken ct)
+        CancellationToken ct,
+        Action? onFirstToken = null)
     {
         var usage = initialUsage;
         var blockTypes = new Dictionary<int, string>();
@@ -32,6 +33,7 @@ internal static class AnthropicStreamParser
         string? responseId = null;
         var stopReason = StopReason.Stop;
         string? currentEvent = null;
+        var firstTokenFired = false;
 
         while (!ct.IsCancellationRequested)
         {
@@ -54,6 +56,13 @@ internal static class AnthropicStreamParser
             JsonDocument? doc = null;
             try { doc = JsonDocument.Parse(data); }
             catch { continue; }
+
+            // Signal the setup-phase timeout to cancel now that we have our first token.
+            if (!firstTokenFired)
+            {
+                firstTokenFired = true;
+                onFirstToken?.Invoke();
+            }
 
             using (doc)
             {

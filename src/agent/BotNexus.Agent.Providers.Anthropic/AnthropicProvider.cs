@@ -92,6 +92,7 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
             Headers = baseOptions.Headers,
             MaxRetryDelayMs = baseOptions.MaxRetryDelayMs,
             Metadata = baseOptions.Metadata,
+            StreamSetupTimeoutMs = baseOptions.StreamSetupTimeoutMs,
         };
 
         if (options?.Reasoning is { } reasoning)
@@ -185,18 +186,37 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
                 httpRequest.Headers.TryAddWithoutValidation(key, value);
         }
 
+        // Build a setup-phase CTS: if configured, abort if no first token arrives within the timeout.
+        var setupTimeoutMs = options?.StreamSetupTimeoutMs ?? 0;
+        using var setupTimeoutCts = setupTimeoutMs > 0
+            ? new CancellationTokenSource(setupTimeoutMs)
+            : null;
+        using var linkedCts = setupTimeoutCts is not null
+            ? CancellationTokenSource.CreateLinkedTokenSource(ct, setupTimeoutCts.Token)
+            : null;
+        var effectiveCt = linkedCts?.Token ?? ct;
+
         using var response = await _httpClient.SendAsync(
-            httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+            httpRequest, HttpCompletionOption.ResponseHeadersRead, effectiveCt);
 
         if (!response.IsSuccessStatusCode)
         {
-            var errorBody = await response.Content.ReadAsStringAsync(ct);
+            var errorBody = await response.Content.ReadAsStringAsync(effectiveCt);
             throw new HttpRequestException(
                 $"Anthropic API returned {(int)response.StatusCode}: {errorBody}");
         }
 
-        using var responseStream = await response.Content.ReadAsStreamAsync(ct);
+        using var responseStream = await response.Content.ReadAsStreamAsync(effectiveCt);
         using var reader = new StreamReader(responseStream, Encoding.UTF8);
+
+        // Cancel the setup-phase timeout once the first token arrives.
+        Action? onFirstToken = setupTimeoutCts is not null
+            ? () =>
+            {
+                try { setupTimeoutCts.Cancel(); }
+                catch (ObjectDisposedException) { }
+            }
+            : null;
 
         var (usage, responseId, stopReason) = await AnthropicStreamParser.ProcessStreamAsync(
             reader,
@@ -208,7 +228,8 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
             isOAuthToken,
             BuildMessage,
             MapStopReason,
-            ct);
+            effectiveCt,
+            onFirstToken);
 
         setUsage(usage);
         setResponseId(responseId);
