@@ -505,7 +505,7 @@ public sealed class ConversationsController : ControllerBase
             .Take(take)
             .ToList();
     }
-    [HttpGet("~/api/agents/{agentId}/conversations/{conversationId}/canvas")]
+    /// <summary>Gets the current canvas HTML for a conversation.</summary>
     [HttpGet("~/api/agents/{agentId}/conversations/{conversationId}/canvas")]
     [ProducesResponseType(typeof(string), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
@@ -518,6 +518,20 @@ public sealed class ConversationsController : ControllerBase
         if (string.IsNullOrEmpty(conversation.CanvasHtml))
             return NoContent();
         return Content(conversation.CanvasHtml, "text/html");
+    }
+
+    /// <summary>Saves canvas HTML for a conversation.</summary>
+    [HttpPut("~/api/agents/{agentId}/conversations/{conversationId}/canvas")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> PutCanvas(string agentId, string conversationId, [FromBody] string html, CancellationToken cancellationToken)
+    {
+        var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken).ConfigureAwait(false);
+        if (conversation is null)
+            return NotFound();
+        conversation.CanvasHtml = string.IsNullOrEmpty(html) ? null : html;
+        await _conversations.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
+        return NoContent();
     }
 
     private static bool TryParseVirtualCronConversationId(string conversationId, out SessionId sessionId)

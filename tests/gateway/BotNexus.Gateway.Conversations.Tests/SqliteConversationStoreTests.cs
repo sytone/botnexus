@@ -354,42 +354,4 @@ public sealed class SqliteConversationStoreTests
             ThreadingMode = threadId is null ? ThreadingMode.Single : ThreadingMode.NativeThread
         };
 
-    /// <summary>
-    /// Disposable SQLite store fixture backed by a temporary file.
-    /// </summary>
-    private sealed class StoreFixture : IDisposable
-    {
-        /// <summary>
-        /// Initialises a new instance of the <see cref="StoreFixture"/> class.
-        /// </summary>
-        public StoreFixture()
-        {
-            DatabasePath = TempDb();
-            ConnectionString = $"Data Source={DatabasePath};Pooling=False";
-        }
-
-        /// <summary>
-        /// Gets the database file path.
-        /// </summary>
-        public string DatabasePath { get; }
-
-        /// <summary>
-        /// Gets the SQLite connection string.
-        /// </summary>
-        public string ConnectionString { get; }
-
-        /// <summary>
-        /// Creates a new store instance over the fixture database.
-        /// </summary>
-        /// <returns>A fresh <see cref="SqliteConversationStore"/>.</returns>
-        public SqliteConversationStore CreateStore()
-            => new(ConnectionString, NullLogger<SqliteConversationStore>.Instance);
-
-        /// <inheritdoc />
-        public void Dispose()
-        {
-            if (File.Exists(DatabasePath))
-                File.Delete(DatabasePath);
-        }
-    }
 }
