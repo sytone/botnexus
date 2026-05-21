@@ -612,5 +612,60 @@ public sealed class GatewayEventHandlerTests
         Assert.True(found, "session should be directly resolved to conv-2 after RegisterSession");
         Assert.Equal("conv-2", resolvedConvId);
     }
-}
 
+    // -- Fix #456 - Deferred conversation refresh during streaming --------
+
+    [Fact]
+    public void HandleConversationChanged_DefersRefresh_WhenAgentIsStreaming()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.IsStreaming = true;
+
+        var refreshCalled = false;
+        _handler.ConversationRefreshDelegate = _ => { refreshCalled = true; return Task.CompletedTask; };
+
+        // A new conversation arrives that is not in local state (fast path misses)
+        _handler.HandleConversationChanged(new ConversationChangedPayload("create", "agent-1", "new-conv-99"));
+
+        // Must NOT refresh while streaming
+        Assert.False(refreshCalled, "refresh must be deferred during active stream");
+    }
+
+    [Fact]
+    public async Task HandleConversationChanged_DrainsPendingRefresh_AfterMessageEnd()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+        agent.IsStreaming = true;
+        conv.StreamState.IsStreaming = true;
+        conv.StreamState.Buffer = "hello";
+
+        var refreshCount = 0;
+        _handler.ConversationRefreshDelegate = _ => { refreshCount++; return Task.CompletedTask; };
+
+        // Conversation change arrives mid-stream
+        _handler.HandleConversationChanged(new ConversationChangedPayload("create", "agent-1", "new-conv-99"));
+        Assert.Equal(0, refreshCount); // deferred
+
+        // Stream ends
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+
+        await Task.Delay(20); // allow fire-and-forget refresh to execute
+        Assert.Equal(1, refreshCount); // drained after turn end
+    }
+
+    [Fact]
+    public void HandleConversationChanged_RefreshesImmediately_WhenNotStreaming()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        agent.IsStreaming = false;
+
+        var refreshCalled = false;
+        _handler.ConversationRefreshDelegate = _ => { refreshCalled = true; return Task.CompletedTask; };
+
+        _handler.HandleConversationChanged(new ConversationChangedPayload("create", "agent-1", "new-conv-99"));
+
+        Assert.True(refreshCalled, "refresh must fire immediately when not streaming");
+    }
+
+}

@@ -20,6 +20,11 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     private readonly GatewayHubConnection _hub;
     private readonly HashSet<string> _streamingWhenDisconnected = new();
 
+    // Conversation refreshes that arrive during a streaming turn are deferred
+    // until HandleMessageEnd/HandleError to avoid overwriting ActiveSessionId
+    // mid-turn (breaks stream event routing -- issue #456).
+    private readonly HashSet<string> _pendingConversationRefresh = new();
+
     public GatewayEventHandler(IClientStateStore store, GatewayHubConnection hub)
     {
         _store = store;
@@ -263,6 +268,10 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         _store.ClearPendingAskUser(convId);
         _store.NotifyChanged();
+
+        // Drain any conversation-list refreshes that were deferred during the stream
+        // (e.g., conversation(action=new) called mid-turn -- issue #456).
+        DrainPendingConversationRefreshes(agentId!);
     }
 
     public void HandleError(AgentStreamEvent evt)
@@ -286,6 +295,10 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         }
 
         _store.NotifyChanged();
+
+        // Drain deferred refreshes on error-exit as well.
+        if (agentId is not null)
+            DrainPendingConversationRefreshes(agentId);
     }
 
     public void HandleUserInputRequired(AgentStreamEvent evt)
@@ -759,6 +772,16 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         // Fallback: full conversation list refresh (covers create/archive and cases
         // where the conversation is not yet in the local store).
+        // Guard: defer refresh if the agent is mid-stream -- SeedConversations overwrites
+        // ActiveSessionId from server state, which breaks TryResolveConversationBySession
+        // and causes stream events to stop rendering in the portal (issue #456).
+        var streamingAgent = _store.GetAgent(agentId);
+        if (streamingAgent?.IsStreaming == true)
+        {
+            _pendingConversationRefresh.Add(agentId);
+            return;
+        }
+
         _ = RefreshConversationsAsync(agentId);
     }
 
@@ -767,6 +790,14 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     private Task RefreshConversationsAsync(string agentId)
         => ConversationRefreshDelegate?.Invoke(agentId) ?? Task.CompletedTask;
+
+    private void DrainPendingConversationRefreshes(string agentId)
+    {
+        if (!_pendingConversationRefresh.Remove(agentId))
+            return;
+        _ = RefreshConversationsAsync(agentId);
+    }
+
     public void Dispose()
     {
         _hub.OnConnected -= HandleConnected;
