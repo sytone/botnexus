@@ -214,16 +214,7 @@ public sealed class SystemPromptBuilder
         var builder = new StringBuilder();
         foreach (var skill in skills)
         {
-            var parsed = SkillsParser.Parse(skill);
-            builder.AppendLine("---");
-            builder.AppendLine($"name: {parsed.Name}");
-            if (!string.IsNullOrWhiteSpace(parsed.Description))
-            {
-                builder.AppendLine($"description: {parsed.Description}");
-            }
-
-            builder.AppendLine("---");
-            builder.AppendLine(parsed.Content.Trim());
+            builder.AppendLine(skill.Trim());
             builder.AppendLine();
         }
 

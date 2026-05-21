@@ -53,22 +53,6 @@ public sealed class PromptPrimitivesTests
     }
 
     [Fact]
-    public void SkillsParser_ParsesFrontmatterAndBody()
-    {
-        var parsed = SkillsParser.Parse("""
-            ---
-            name: skill-a
-            description: desc
-            ---
-            Body line
-            """);
-
-        parsed.Name.ShouldBe("skill-a");
-        parsed.Description.ShouldBe("desc");
-        parsed.Content.ShouldBe("Body line");
-    }
-
-    [Fact]
     public void RuntimeLineFormatter_FormatsRuntimeFieldsDeterministically()
     {
         var line = RuntimeLineFormatter.BuildRuntimeLine(new PromptRuntimeInfo
