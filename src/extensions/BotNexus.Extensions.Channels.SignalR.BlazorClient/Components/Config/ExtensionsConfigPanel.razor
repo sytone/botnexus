@@ -1,0 +1,149 @@
+@using System.Net.Http.Json
+@using System.Text.Json
+@inject HttpClient Http
+
+<div class="pcfg-section">
+    <h3 class="pcfg-section-title">Loaded Extensions</h3>
+
+    @if (_loading)
+    {
+        <div class="config-loading">
+            <div class="loading-spinner small"></div>
+            <span>Loading extensions...</span>
+        </div>
+    }
+    else if (_error is not null)
+    {
+        <div class="pcfg-empty-state">@_error</div>
+    }
+    else if (_extensions.Count == 0)
+    {
+        <div class="pcfg-empty-state">No extensions loaded.</div>
+    }
+    else
+    {
+        foreach (var ext in _extensions)
+        {
+            <div class="ext-card @(ext.Enabled ? "" : "ext-card--disabled")">
+                <div class="ext-card-header">
+                    <span class="ext-name">@ext.Name</span>
+                    <span class="ext-version">v@(ext.Version)</span>
+                    @if (!ext.Enabled)
+                    {
+                        <span class="ext-badge ext-badge--disabled">Disabled</span>
+                    }
+                    else
+                    {
+                        <span class="ext-badge ext-badge--enabled">Loaded</span>
+                    }
+                </div>
+
+                @if (ext.ExtensionTypes.Count > 0)
+                {
+                    <div class="ext-types">
+                        @foreach (var t in ext.ExtensionTypes)
+                        {
+                            <span class="ext-type-chip">@t</span>
+                        }
+                    </div>
+                }
+
+                @if (ext.RegisteredServices.Count > 0)
+                {
+                    <details class="ext-services">
+                        <summary>@ext.RegisteredServices.Count registered service(s)</summary>
+                        <ul>
+                            @foreach (var svc in ext.RegisteredServices)
+                            {
+                                <li>@svc</li>
+                            }
+                        </ul>
+                    </details>
+                }
+
+                @if (ext.ConfigSchema.Count > 0)
+                {
+                    <div class="ext-schema">
+                        <h4>Configuration Schema</h4>
+                        <table class="ext-schema-table">
+                            <thead>
+                                <tr>
+                                    <th>Field</th>
+                                    <th>Type</th>
+                                    <th>Required</th>
+                                    <th>Default</th>
+                                    <th>Description</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var field in ext.ConfigSchema)
+                                {
+                                    <tr>
+                                        <td><code>@field.Id</code>@(field.Sensitive ? " 🔒" : "")</td>
+                                        <td>@field.Type</td>
+                                        <td>@(field.Required ? "✓" : "")</td>
+                                        <td>@(field.Default ?? "—")</td>
+                                        <td>@(field.Description ?? "")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private bool _loading = true;
+    private string? _error;
+    private List<ExtensionDetailDto> _extensions = [];
+
+    private static readonly JsonSerializerOptions s_jsonOpts = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadExtensionsAsync();
+    }
+
+    private async Task LoadExtensionsAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            var result = await Http.GetFromJsonAsync<List<ExtensionDetailDto>>("/api/extensions/details", s_jsonOpts);
+            _extensions = result ?? [];
+        }
+        catch (Exception ex)
+        {
+            _error = $"Failed to load extensions: {ex.Message}";
+            _extensions = [];
+        }
+        _loading = false;
+    }
+
+    private sealed record ExtensionDetailDto(
+        string Id,
+        string Name,
+        string Version,
+        bool Enabled,
+        List<string> ExtensionTypes,
+        List<string> RegisteredServices,
+        List<ExtensionConfigFieldDto> ConfigSchema,
+        string AssemblyFileName);
+
+    private sealed record ExtensionConfigFieldDto(
+        string Id,
+        string Type,
+        string? Default,
+        bool Required,
+        bool Sensitive,
+        string? Description);
+}

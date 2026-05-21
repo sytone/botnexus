@@ -60,6 +60,9 @@
                     case "apikey":
                         <ApiKeyConfigPanel Config="@_config" OnChanged="MarkDirty" />
                         break;
+                    case "extensions":
+                        <ExtensionsConfigPanel OnChanged="MarkDirty" />
+                        break;
                     default:
                         <GatewayConfigPanel Config="@_config" OnChanged="MarkDirty" />
                         break;

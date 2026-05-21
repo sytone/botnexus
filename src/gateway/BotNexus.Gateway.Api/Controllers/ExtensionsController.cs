@@ -8,9 +8,6 @@ namespace BotNexus.Gateway.Api.Controllers;
 /// <summary>
 /// REST API for inspecting loaded runtime extensions.
 /// </summary>
-/// <summary>
-/// Represents extensions controller.
-/// </summary>
 [ApiController]
 [Route("api/[controller]")]
 public sealed class ExtensionsController : ControllerBase
@@ -26,11 +23,6 @@ public sealed class ExtensionsController : ControllerBase
     /// <summary>
     /// Lists loaded extensions and their declared extension types.
     /// </summary>
-    /// <returns>Loaded extension metadata for each extension type.</returns>
-    /// <summary>
-    /// Executes list.
-    /// </summary>
-    /// <returns>The list result.</returns>
     [HttpGet]
     [ProducesResponseType(typeof(IReadOnlyList<ExtensionResponse>), StatusCodes.Status200OK)]
     public ActionResult<IReadOnlyList<ExtensionResponse>> List()
@@ -46,10 +38,32 @@ public sealed class ExtensionsController : ControllerBase
 
         return Ok(responses);
     }
+
+    /// <summary>
+    /// Lists loaded extensions with full manifest details including config schema.
+    /// </summary>
+    [HttpGet("details")]
+    [ProducesResponseType(typeof(IReadOnlyList<ExtensionDetailResponse>), StatusCodes.Status200OK)]
+    public ActionResult<IReadOnlyList<ExtensionDetailResponse>> Details()
+    {
+        var responses = _extensionLoader.GetLoaded()
+            .Select(ext => new ExtensionDetailResponse(
+                ext.ExtensionId,
+                ext.Name,
+                ext.Version,
+                ext.Enabled,
+                ext.ExtensionTypes,
+                ext.RegisteredServices,
+                ext.ConfigSchema,
+                Path.GetFileName(ext.EntryAssemblyPath)))
+            .ToArray();
+
+        return Ok(responses);
+    }
 }
 
 /// <summary>
-/// Loaded extension response payload.
+/// Loaded extension response payload (legacy flat format).
 /// </summary>
 /// <param name="Name">The extension display name.</param>
 /// <param name="Version">The extension version.</param>
@@ -60,3 +74,24 @@ public sealed record ExtensionResponse(
     string Version,
     string Type,
     string AssemblyPath);
+
+/// <summary>
+/// Loaded extension detail response payload — includes config schema and enabled status.
+/// </summary>
+/// <param name="Id">The extension ID.</param>
+/// <param name="Name">The extension display name.</param>
+/// <param name="Version">The extension version.</param>
+/// <param name="Enabled">Whether the extension is enabled per its manifest.</param>
+/// <param name="ExtensionTypes">Extension type identifiers declared in the manifest.</param>
+/// <param name="RegisteredServices">Service contract names registered by this extension.</param>
+/// <param name="ConfigSchema">Configuration field schema declared by this extension.</param>
+/// <param name="AssemblyFileName">The entry assembly filename.</param>
+public sealed record ExtensionDetailResponse(
+    string Id,
+    string Name,
+    string Version,
+    bool Enabled,
+    IReadOnlyList<string> ExtensionTypes,
+    IReadOnlyList<string> RegisteredServices,
+    IReadOnlyList<ExtensionConfigFieldSchema> ConfigSchema,
+    string AssemblyFileName);

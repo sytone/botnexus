@@ -169,7 +169,9 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
                 EntryAssemblyPath = extension.EntryAssemblyPath,
                 ExtensionTypes = extension.Manifest.ExtensionTypes,
                 LoadedAtUtc = DateTimeOffset.UtcNow,
-                RegisteredServices = registeredServiceNames
+                RegisteredServices = registeredServiceNames,
+                Enabled = extension.Manifest.Enabled,
+                ConfigSchema = extension.Manifest.ConfigSchema
             };
 
             lock (_sync)
