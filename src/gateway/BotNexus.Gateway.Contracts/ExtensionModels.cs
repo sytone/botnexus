@@ -140,4 +140,12 @@ public sealed record LoadedExtension
     /// Gets or sets the registered services.
     /// </summary>
     public IReadOnlyList<string> RegisteredServices { get; init; } = [];
+    /// <summary>
+    /// Whether this extension is enabled. Sourced from the manifest.
+    /// </summary>
+    public bool Enabled { get; init; } = true;
+    /// <summary>
+    /// Configuration field schema declared by this extension in the manifest.
+    /// </summary>
+    public IReadOnlyList<ExtensionConfigFieldSchema> ConfigSchema { get; init; } = [];
 }
