@@ -380,6 +380,7 @@ public sealed class SqliteConversationStore : IConversationStore
 
             await EnsurePurposeColumnAsync(connection, ct).ConfigureAwait(false);
             await EnsureInstructionsColumnAsync(connection, ct).ConfigureAwait(false);
+            await EnsureCanvasHtmlColumnAsync(connection, ct).ConfigureAwait(false);
 
             // One-time migration: archive stale signalr:connection-id conversations created
             // before binding-first routing (#148). Those conversations have a title matching
@@ -461,6 +462,32 @@ public sealed class SqliteConversationStore : IConversationStore
         await alterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 
+    private static async Task EnsureCanvasHtmlColumnAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        await using var tableInfoCommand2 = connection.CreateCommand();
+        tableInfoCommand2.CommandText = "PRAGMA table_info(conversations);";
+
+        var hasCanvasColumn = false;
+        await using (var reader2 = await tableInfoCommand2.ExecuteReaderAsync(ct).ConfigureAwait(false))
+        {
+            while (await reader2.ReadAsync(ct).ConfigureAwait(false))
+            {
+                if (string.Equals(reader2.GetString(1), "canvas_html", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasCanvasColumn = true;
+                    break;
+                }
+            }
+        }
+
+        if (hasCanvasColumn)
+            return;
+
+        await using var canvasAlterCommand = connection.CreateCommand();
+        canvasAlterCommand.CommandText = "ALTER TABLE conversations ADD COLUMN canvas_html TEXT;";
+        await canvasAlterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
+
     private async Task<Conversation?> LoadConversationAsync(ConversationId conversationId, CancellationToken ct)
     {
         await using var connection = CreateConnection();
@@ -472,7 +499,7 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions
+            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html
             FROM conversations
             WHERE id = $id
             """;
@@ -493,7 +520,8 @@ public sealed class SqliteConversationStore : IConversationStore
             Metadata = DeserializeMetadata(reader.IsDBNull(7) ? null : reader.GetString(7)),
             CreatedAt = ParseTimestamp(reader.GetString(8)),
             UpdatedAt = ParseTimestamp(reader.GetString(9)),
-            Instructions = reader.IsDBNull(10) ? null : reader.GetString(10)
+            Instructions = reader.IsDBNull(10) ? null : reader.GetString(10),
+            CanvasHtml = reader.FieldCount > 11 && !reader.IsDBNull(11) ? reader.GetString(11) : null
         };
         if (!reader.IsDBNull(6))
             conversation.ActiveSessionId = SessionId.From(reader.GetString(6));
@@ -544,8 +572,8 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Transaction = transaction;
         conversationCommand.CommandText = upsert
             ? """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml)
                 ON CONFLICT(id) DO UPDATE SET
                     agent_id = excluded.agent_id,
                     title = excluded.title,
@@ -556,11 +584,12 @@ public sealed class SqliteConversationStore : IConversationStore
                     metadata = excluded.metadata,
                     created_at = excluded.created_at,
                     updated_at = excluded.updated_at,
-                    instructions = excluded.instructions
+                    instructions = excluded.instructions,
+                    canvas_html = excluded.canvas_html
                 """
             : """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml)
                 """;
         conversationCommand.Parameters.AddWithValue("$id", conversation.ConversationId.Value);
         conversationCommand.Parameters.AddWithValue("$agentId", conversation.AgentId.Value);
@@ -573,6 +602,7 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Parameters.AddWithValue("$createdAt", conversation.CreatedAt.ToString("O"));
         conversationCommand.Parameters.AddWithValue("$updatedAt", conversation.UpdatedAt.ToString("O"));
         conversationCommand.Parameters.AddWithValue("$instructions", conversation.Instructions is null ? (object)DBNull.Value : conversation.Instructions);
+        conversationCommand.Parameters.AddWithValue("$canvasHtml", conversation.CanvasHtml is null ? (object)DBNull.Value : conversation.CanvasHtml);
         await conversationCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
         await using var deleteBindingsCommand = connection.CreateCommand();
@@ -651,6 +681,7 @@ public sealed class SqliteConversationStore : IConversationStore
             UpdatedAt = conversation.UpdatedAt,
             ActiveSessionId = conversation.ActiveSessionId,
             Metadata = JsonSerializer.Deserialize<Dictionary<string, object?>>(JsonSerializer.Serialize(conversation.Metadata, JsonOptions), JsonOptions) ?? [],
+            CanvasHtml = conversation.CanvasHtml,
             ChannelBindings = conversation.ChannelBindings.Select(binding => new ChannelBinding
             {
                 BindingId = binding.BindingId,
