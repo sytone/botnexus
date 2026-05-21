@@ -15,6 +15,7 @@ public sealed class TriggerType : IEquatable<TriggerType>
     public static readonly TriggerType Cron = Register("cron");
     public static readonly TriggerType Soul = Register("soul");
     public static readonly TriggerType Heartbeat = Register("heartbeat");
+    public static readonly TriggerType Memory = Register("memory");
 
     /// <summary>
     /// Gets the value.

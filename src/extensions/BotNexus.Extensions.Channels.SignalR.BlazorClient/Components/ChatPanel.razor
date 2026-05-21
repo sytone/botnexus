@@ -1,4 +1,4 @@
-@inject IJSRuntime JS
+﻿@inject IJSRuntime JS
 @inject IClientStateStore Store
 @inject IAgentInteractionService Interaction
 @inject IPortalPreferencesService Prefs
@@ -398,8 +398,8 @@
     private string? ActiveConversationTitle => ActiveConversation?.Title;
 private bool IsStreaming =>
         Agent?.ActiveConversationId is string activeConvId
-            ? Store.GetStreamState(activeConvId).IsStreaming
-            : false; // no active conversation = not streaming
+            ? Store.GetStreamState(activeConvId).IsTurnActive
+            : false; // no active conversation = not in turn
     private bool IsReadOnly => (Agent?.IsReadOnly ?? false) || (ActiveConversation?.IsVirtualSession ?? false);
     private bool IsConnected => Agent?.IsConnected ?? false;
     private bool ShowThinking => Agent?.ShowThinking ?? true;

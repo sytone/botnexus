@@ -43,4 +43,7 @@ public sealed record Conversation
 
     /// <summary>Gets or sets the last canvas HTML rendered for this conversation, if any.</summary>
     public string? CanvasHtml { get; set; }
+
+    /// <summary>Gets or sets conversation-scoped instructions injected into the system prompt on session start.</summary>
+    public string? Instructions { get; set; }
 }

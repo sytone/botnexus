@@ -132,6 +132,7 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<IChannelManager, ChannelManager>();
         services.TryAddSingleton<ISessionStore, InMemorySessionStore>();
         services.TryAddSingleton<IConversationStore, InMemoryConversationStore>();
+        services.AddSingleton<IAgentCanvasNotifier, ConversationCanvasNotifier>();
         services.TryAddSingleton<IConversationRouter, DefaultConversationRouter>();
         services.TryAddSingleton<IConversationDispatcher, DefaultConversationDispatcher>();
         services.TryAddSingleton<IAskUserResponseRegistry, AskUserResponseRegistry>();
@@ -139,6 +140,7 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<InternalChannelAdapter>();
         services.AddSingleton<IChannelAdapter>(serviceProvider => serviceProvider.GetRequiredService<InternalChannelAdapter>());
         services.AddSingleton<ISessionCompactor, LlmSessionCompactor>();
+        services.AddSingleton<IPreCompactionMemoryFlusher, PreCompactionMemoryFlusher>();
         services.AddSingleton<IMediaPipeline, MediaPipeline>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICommandContributor, BuiltInCommandContributor>());
         services.TryAddSingleton<CommandRegistry>();

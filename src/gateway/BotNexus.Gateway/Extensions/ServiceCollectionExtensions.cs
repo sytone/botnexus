@@ -77,16 +77,30 @@ public static class ServiceCollectionExtensions
             }
         }
 
+        // Filter out extensions disabled via manifest Enabled = false
+        var enabledExtensions = discovered
+            .Where(ext => ext.Manifest.Enabled)
+            .ToList();
+        if (enabledExtensions.Count < discovered.Count)
+        {
+            foreach (var disabled in discovered.Where(ext => !ext.Manifest.Enabled))
+            {
+                deduplicationLogger?.LogInformation(
+                    "Skipping extension '{ExtensionId}' because its manifest has Enabled = false.",
+                    disabled.Manifest.Id);
+            }
+        }
+
         IReadOnlyList<ExtensionInfo> ordered;
         try
         {
-            ordered = TopologicallySort(discovered);
+            ordered = TopologicallySort(enabledExtensions);
         }
         catch (Exception ex)
         {
             loggerFactory?.CreateLogger("BotNexus.Gateway.Extensions")
                 .LogWarning(ex, "Extension dependency graph could not be fully ordered. Falling back to discovery order.");
-            ordered = discovered;
+            ordered = enabledExtensions;
         }
 
         List<ExtensionLoadResult> results = [];
