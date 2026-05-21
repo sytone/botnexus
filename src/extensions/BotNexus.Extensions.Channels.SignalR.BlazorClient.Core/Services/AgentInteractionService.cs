@@ -39,7 +39,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
 
         var convIdNow = agent.ActiveConversationId!;
-        var conv = agent.Conversations.GetValueOrDefault(convIdNow);
+        var conv = _store.GetConversation(convIdNow);
         if (conv is null) return;
 
         conv.Messages.Add(new ChatMessage("User", content, DateTimeOffset.UtcNow));
@@ -204,8 +204,25 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         _store.SetActiveConversation(agentId, conversationId);
 
-        // Load history if not already loaded
         var conv = agent.Conversations.GetValueOrDefault(conversationId);
+
+        // Fetch canvas from REST if not already loaded (Phase 3, #413)
+        if (conv is not null && conv.CanvasHtml is null)
+        {
+            try
+            {
+                var canvasHtml = await _restClient.GetConversationCanvasAsync(agentId, conversationId);
+                if (canvasHtml is not null)
+                {
+                    conv.CanvasHtml = canvasHtml;
+                    conv.CanvasUpdatedAt = DateTimeOffset.UtcNow;
+                    _store.NotifyChanged();
+                }
+            }
+            catch { /* canvas fetch is best-effort */ }
+        }
+
+        // Load history if not already loaded
         if (conv is not null && !conv.HistoryLoaded && !conv.IsLoadingHistory)
             await LoadConversationHistoryAsync(agentId, conversationId);
     }

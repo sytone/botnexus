@@ -22,7 +22,27 @@
     [Parameter, EditorRequired]
     public string AgentId { get; set; } = default!;
 
-    private string? CanvasHtml => Store.GetAgent(AgentId)?.CanvasHtml;
+    /// <summary>
+    /// Optional conversation ID. When set, canvas is read from the conversation state.
+    /// Falls back to agent-level canvas when null (legacy support).
+    /// </summary>
+    [Parameter]
+    public string? ConversationId { get; set; }
+
+    private string? CanvasHtml
+    {
+        get
+        {
+            if (ConversationId is not null)
+            {
+                var conv = Store.GetConversation(ConversationId);
+                if (conv is not null)
+                    return conv.CanvasHtml;
+            }
+            // Legacy fallback: agent-level canvas
+            return Store.GetAgent(AgentId)?.CanvasHtml;
+        }
+    }
 
     protected override void OnInitialized()
     {

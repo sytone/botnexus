@@ -473,8 +473,18 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         if (agent is null)
             return;
 
-        agent.CanvasHtml = string.IsNullOrWhiteSpace(html) ? null : html;
-        agent.CanvasUpdatedAt = DateTimeOffset.UtcNow;
+        // Route canvas to conversation (Phase 3, #413)
+        var conv = string.IsNullOrWhiteSpace(conversationId)
+            ? null
+            : agent.Conversations.GetValueOrDefault(conversationId);
+        if (conv is null)
+        {
+            // Fallback: unknown conversation — nothing to update
+            _store.NotifyChanged();
+            return;
+        }
+        conv.CanvasHtml = string.IsNullOrWhiteSpace(html) ? null : html;
+        conv.CanvasUpdatedAt = DateTimeOffset.UtcNow;
         _store.NotifyChanged();
     }
 
