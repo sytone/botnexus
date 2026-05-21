@@ -900,7 +900,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
 
         foreach (var binding in outboundBindings)
         {
-            var adapter = ResolveChannelAdapter(binding.ChannelType);
+            var adapter = ResolveChannelAdapter(binding.ChannelType, binding.AdapterId);
             if (adapter is null)
                 continue;
 
@@ -1095,7 +1095,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             {
                 try
                 {
-                    var adapter = ResolveChannelAdapter(binding.ChannelType);
+                    var adapter = ResolveChannelAdapter(binding.ChannelType, binding.AdapterId);
                     if (adapter is null)
                     {
                         _logger.LogWarning(
@@ -1148,14 +1148,15 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         }
     }
 
-    private IChannelAdapter? ResolveChannelAdapter(ChannelKey channelType)
+    private IChannelAdapter? ResolveChannelAdapter(ChannelKey channelType, string? adapterId = null)
     {
-        var adapter = _channelManager.Get(channelType);
+        var adapter = _channelManager.Get(channelType, adapterId);
         if (adapter is not null)
             return adapter;
 
-        _logger.LogWarning("No channel adapter found for type '{ChannelType}'. Available: {Available}",
+        _logger.LogWarning("No channel adapter found for type '{ChannelType}' (adapterId: '{AdapterId}'). Available: {Available}",
             channelType,
+            adapterId ?? "<any>",
             string.Join(", ", _channelManager.Adapters.Select(a => a.ChannelType)));
         return null;
     }
@@ -1218,3 +1219,4 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 }
+

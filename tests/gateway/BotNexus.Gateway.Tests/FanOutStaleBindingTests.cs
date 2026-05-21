@@ -108,6 +108,8 @@ public sealed class FanOutStaleBindingTests
         channelManager.SetupGet(m => m.Adapters).Returns([primaryAdapter.Object, signalrAdapter.Object]);
         channelManager.Setup(m => m.Get(ChannelKey.From("web"))).Returns(primaryAdapter.Object);
         channelManager.Setup(m => m.Get(ChannelKey.From("signalr"))).Returns(signalrAdapter.Object);
+        channelManager.Setup(m => m.Get(ChannelKey.From("web"), It.IsAny<string?>())).Returns(primaryAdapter.Object);
+        channelManager.Setup(m => m.Get(ChannelKey.From("signalr"), It.IsAny<string?>())).Returns(signalrAdapter.Object);
 
         // Conversation with a stale signalr binding
         var staleBinding = new ChannelBinding
@@ -183,6 +185,8 @@ public sealed class FanOutStaleBindingTests
         channelManager.SetupGet(m => m.Adapters).Returns([primaryAdapter.Object, signalrAdapter.Object]);
         channelManager.Setup(m => m.Get(ChannelKey.From("web"))).Returns(primaryAdapter.Object);
         channelManager.Setup(m => m.Get(ChannelKey.From("signalr"))).Returns(signalrAdapter.Object);
+        channelManager.Setup(m => m.Get(ChannelKey.From("web"), It.IsAny<string?>())).Returns(primaryAdapter.Object);
+        channelManager.Setup(m => m.Get(ChannelKey.From("signalr"), It.IsAny<string?>())).Returns(signalrAdapter.Object);
 
         var conversation = new Conversation
         {
@@ -211,3 +215,5 @@ public sealed class FanOutStaleBindingTests
             "Muted/absent bindings must not receive fan-out");
     }
 }
+
+

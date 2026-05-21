@@ -1022,6 +1022,12 @@ public sealed class GatewayHostTests
                 : channelType.Equals(ChannelKey.From("telegram"))
                     ? secondChannel.Object
                     : null);
+        manager.Setup(m => m.Get(It.IsAny<ChannelKey>(), It.IsAny<string?>())).Returns((ChannelKey channelType, string? _) =>
+            channelType.Equals(ChannelKey.From("web"))
+                ? firstChannel.Object
+                : channelType.Equals(ChannelKey.From("telegram"))
+                    ? secondChannel.Object
+                    : null);
 
         await using var host = new GatewayHost(
             supervisor.Object,
@@ -1462,6 +1468,10 @@ public sealed class GatewayHostTests
         var manager = new Mock<IChannelManager>();
         manager.SetupGet(m => m.Adapters).Returns(adapter is null ? [] : [adapter]);
         manager.Setup(m => m.Get(It.IsAny<ChannelKey>())).Returns((ChannelKey channelType) =>
+            adapter is not null && channelType.Equals(adapter.ChannelType)
+                ? adapter
+                : null);
+        manager.Setup(m => m.Get(It.IsAny<ChannelKey>(), It.IsAny<string?>())).Returns((ChannelKey channelType, string? _) =>
             adapter is not null && channelType.Equals(adapter.ChannelType)
                 ? adapter
                 : null);
