@@ -124,6 +124,13 @@ public sealed class GatewaySettingsConfig
 
     /// <summary>Auto-update settings for self-updating the gateway via the BotNexus CLI.</summary>
     public AutoUpdateConfig? AutoUpdate { get; set; }
+
+    /// <summary>
+    /// Server-wide default IANA timezone ID used when an agent has no Soul timezone configured.
+    /// Falls back to UTC when null or invalid.
+    /// Example: <c>"America/Los_Angeles"</c>.
+    /// </summary>
+    public string? DefaultTimezone { get; set; }
 }
 
 /// <summary>
