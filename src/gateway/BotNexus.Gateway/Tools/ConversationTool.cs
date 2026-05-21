@@ -35,7 +35,7 @@ public sealed class ConversationTool(
               "properties": {
                 "action": {
                   "type": "string",
-                  "enum": ["get", "set_title", "set_purpose", "list", "new"],
+                  "enum": ["get", "set_title", "set_purpose", "set", "list", "new"],
                   "description": "Action to perform."
                 },
                 "conversationId": {
@@ -58,6 +58,10 @@ public sealed class ConversationTool(
                   "type": "string",
                   "description": "Conversation purpose for set_purpose or new."
                 },
+                "instructions": {
+                  "type": ["string", "null"],
+                  "description": "Conversation-scoped instructions injected into the system prompt. Pass null to clear."
+                },
                 "message": {
                   "type": "string",
                   "description": "Optional initial user message to seed the new conversation."
@@ -77,7 +81,8 @@ public sealed class ConversationTool(
             !action.Equals("set_title", StringComparison.OrdinalIgnoreCase) &&
             !action.Equals("set_purpose", StringComparison.OrdinalIgnoreCase) &&
             !action.Equals("list", StringComparison.OrdinalIgnoreCase) &&
-            !action.Equals("new", StringComparison.OrdinalIgnoreCase))
+            !action.Equals("new", StringComparison.OrdinalIgnoreCase) &&
+            !action.Equals("set", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException($"Unsupported conversation action '{action}'.");
 
         return Task.FromResult(arguments);
@@ -97,6 +102,7 @@ public sealed class ConversationTool(
             "set_purpose" => await SetPurposeAsync(arguments, cancellationToken).ConfigureAwait(false),
             "list" => await ListAsync(arguments, cancellationToken).ConfigureAwait(false),
             "new" => await NewAsync(arguments, cancellationToken).ConfigureAwait(false),
+            "set" => await SetAsync(arguments, cancellationToken).ConfigureAwait(false),
             _ => throw new InvalidOperationException($"Unsupported conversation action '{action}'.")
         };
     }
@@ -218,6 +224,20 @@ public sealed class ConversationTool(
         return TextResult(JsonSerializer.Serialize(ToToolResponse(created), JsonOptions));
     }
 
+    private async Task<AgentToolResult> SetAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken ct)
+    {
+        var conversation = await ResolveConversationAsync(arguments, ct).ConfigureAwait(false);
+        EnsureCanAccess(conversation.AgentId);
+        var instructions = ReadString(arguments, "instructions");
+        if (arguments.ContainsKey("instructions"))
+        {
+            conversation.Instructions = string.IsNullOrWhiteSpace(instructions) ? null : instructions.Trim();
+            conversation.UpdatedAt = DateTimeOffset.UtcNow;
+        }
+        await conversationStore.SaveAsync(conversation, ct).ConfigureAwait(false);
+        return TextResult("Conversation updated.");
+    }
+
     private async Task<Conversation> ResolveConversationAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken ct)
     {
         ConversationId conversationId;
@@ -262,6 +282,7 @@ public sealed class ConversationTool(
         DisplayName = conversation.Title,
         Title = conversation.Title,
         conversation.Purpose,
+        conversation.Instructions,
         Status = conversation.Status.ToString(),
         conversation.IsDefault,
         ActiveSessionId = conversation.ActiveSessionId?.Value,

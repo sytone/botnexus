@@ -274,11 +274,12 @@ public sealed class SqliteConversationStore : IConversationStore
                     c.active_session_id,
                     c.created_at,
                     c.updated_at,
-                    COUNT(b.binding_id)
+                    COUNT(b.binding_id),
+                    c.instructions
                 FROM conversations c
                 LEFT JOIN conversation_bindings b ON b.conversation_id = c.id
                 WHERE c.status = 'Active'
-                GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at
+                GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at, c.instructions
                 ORDER BY c.updated_at DESC
                 """
             : """
@@ -292,11 +293,12 @@ public sealed class SqliteConversationStore : IConversationStore
                     c.active_session_id,
                     c.created_at,
                     c.updated_at,
-                    COUNT(b.binding_id)
+                    COUNT(b.binding_id),
+                    c.instructions
                 FROM conversations c
                 LEFT JOIN conversation_bindings b ON b.conversation_id = c.id
                 WHERE c.agent_id = $agentId AND c.status = 'Active'
-                GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at
+                GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at, c.instructions
                 ORDER BY c.updated_at DESC
                 """;
         if (agentId is not null)
@@ -377,6 +379,7 @@ public sealed class SqliteConversationStore : IConversationStore
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
             await EnsurePurposeColumnAsync(connection, ct).ConfigureAwait(false);
+            await EnsureInstructionsColumnAsync(connection, ct).ConfigureAwait(false);
 
             // One-time migration: archive stale signalr:connection-id conversations created
             // before binding-first routing (#148). Those conversations have a title matching
@@ -432,6 +435,32 @@ public sealed class SqliteConversationStore : IConversationStore
         await alterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 
+    private static async Task EnsureInstructionsColumnAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        await using var tableInfoCommand = connection.CreateCommand();
+        tableInfoCommand.CommandText = "PRAGMA table_info(conversations);";
+
+        var hasColumn = false;
+        await using (var reader = await tableInfoCommand.ExecuteReaderAsync(ct).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                if (string.Equals(reader.GetString(1), "instructions", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasColumn = true;
+                    break;
+                }
+            }
+        }
+
+        if (hasColumn)
+            return;
+
+        await using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = "ALTER TABLE conversations ADD COLUMN instructions TEXT;";
+        await alterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
+
     private async Task<Conversation?> LoadConversationAsync(ConversationId conversationId, CancellationToken ct)
     {
         await using var connection = CreateConnection();
@@ -443,7 +472,7 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at
+            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions
             FROM conversations
             WHERE id = $id
             """;
@@ -463,7 +492,8 @@ public sealed class SqliteConversationStore : IConversationStore
             Status = ParseConversationStatus(reader.GetString(5)),
             Metadata = DeserializeMetadata(reader.IsDBNull(7) ? null : reader.GetString(7)),
             CreatedAt = ParseTimestamp(reader.GetString(8)),
-            UpdatedAt = ParseTimestamp(reader.GetString(9))
+            UpdatedAt = ParseTimestamp(reader.GetString(9)),
+            Instructions = reader.IsDBNull(10) ? null : reader.GetString(10)
         };
         if (!reader.IsDBNull(6))
             conversation.ActiveSessionId = SessionId.From(reader.GetString(6));
@@ -514,8 +544,8 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Transaction = transaction;
         conversationCommand.CommandText = upsert
             ? """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions)
                 ON CONFLICT(id) DO UPDATE SET
                     agent_id = excluded.agent_id,
                     title = excluded.title,
@@ -525,11 +555,12 @@ public sealed class SqliteConversationStore : IConversationStore
                     active_session_id = excluded.active_session_id,
                     metadata = excluded.metadata,
                     created_at = excluded.created_at,
-                    updated_at = excluded.updated_at
+                    updated_at = excluded.updated_at,
+                    instructions = excluded.instructions
                 """
             : """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions)
                 """;
         conversationCommand.Parameters.AddWithValue("$id", conversation.ConversationId.Value);
         conversationCommand.Parameters.AddWithValue("$agentId", conversation.AgentId.Value);
@@ -541,6 +572,7 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Parameters.AddWithValue("$metadata", JsonSerializer.Serialize(conversation.Metadata, JsonOptions));
         conversationCommand.Parameters.AddWithValue("$createdAt", conversation.CreatedAt.ToString("O"));
         conversationCommand.Parameters.AddWithValue("$updatedAt", conversation.UpdatedAt.ToString("O"));
+        conversationCommand.Parameters.AddWithValue("$instructions", conversation.Instructions is null ? (object)DBNull.Value : conversation.Instructions);
         await conversationCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
         await using var deleteBindingsCommand = connection.CreateCommand();
@@ -611,6 +643,8 @@ public sealed class SqliteConversationStore : IConversationStore
             AgentId = conversation.AgentId,
             Title = conversation.Title,
             Purpose = conversation.Purpose,
+            Instructions = conversation.Instructions,
+            CanvasHtml = conversation.CanvasHtml,
             IsDefault = conversation.IsDefault,
             Status = conversation.Status,
             CreatedAt = conversation.CreatedAt,
