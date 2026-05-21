@@ -316,7 +316,7 @@
         <div class="chat-input-area">
             @if (!IsReadOnly)
             {
-                <textarea class="chat-input @(Prefs.Current.ExpandingInput ? ""expanding"" : """")"
+                <textarea class="chat-input @ExpandingInputClass"
                           @ref="_inputElement"
                           @bind="_inputText"
                           @bind:event="oninput"
@@ -412,6 +412,7 @@ private bool IsStreaming =>
         ActiveConversationId is not null ? Store.GetPendingAskUser(ActiveConversationId) : null;
     private string ThinkingBuffer => ActiveConversation?.StreamState.ThinkingBuffer ?? string.Empty;
     private string CurrentStreamBuffer => ActiveConversation?.StreamState.Buffer ?? string.Empty;
+    private string ExpandingInputClass => Prefs.Current.ExpandingInput ? "expanding" : string.Empty;
 
     private string _inputText = "";
     private ElementReference _messagesContainer;
