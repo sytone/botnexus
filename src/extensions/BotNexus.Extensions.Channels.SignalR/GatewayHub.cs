@@ -42,6 +42,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     private readonly IConversationStore? _conversationStore;
     private readonly IAskUserResponseRegistry? _askUserResponseRegistry;
     private readonly IOptionsMonitor<CompactionOptions> _compactionOptions;
+    private readonly ISessionEndMemoryFlusher? _sessionEndFlusher;
     private readonly ILogger<GatewayHub> _logger;
 
     public GatewayHub(
@@ -57,7 +58,8 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         IOptionsMonitor<CompactionOptions> compactionOptions,
         ILogger<GatewayHub> logger,
         IConversationStore? conversationStore = null,
-        IAskUserResponseRegistry? askUserResponseRegistry = null)
+        IAskUserResponseRegistry? askUserResponseRegistry = null,
+        ISessionEndMemoryFlusher? sessionEndFlusher = null)
     {
         _supervisor = supervisor;
         _registry = registry;
@@ -72,6 +74,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         _logger = logger;
         _conversationStore = conversationStore;
         _askUserResponseRegistry = askUserResponseRegistry;
+        _sessionEndFlusher = sessionEndFlusher;
     }
 
     /// <summary>
@@ -476,6 +479,25 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         var typedAgentId = NormalizeAgentId(agentId);
         var typedSessionId = NormalizeSessionId(sessionId);
         await _supervisor.StopAsync(typedAgentId, typedSessionId, CancellationToken.None);
+
+        // Phase 2: session-end memory flush before archiving
+        if (_sessionEndFlusher is not null)
+        {
+            var gatewaySession = await _sessions.GetAsync(typedSessionId, CancellationToken.None);
+            if (gatewaySession is not null && _sessionEndFlusher.ShouldFlush(gatewaySession.Session, _compactionOptions.CurrentValue))
+            {
+                try
+                {
+                    await _sessionEndFlusher.FlushAsync(typedAgentId, gatewaySession.Session, _compactionOptions.CurrentValue, CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Session-end memory flush failed for session {SessionId}, reset will proceed.", typedSessionId);
+                }
+            }
+        }
+
         await _sessions.ArchiveAsync(typedSessionId, CancellationToken.None);
         await Clients.Caller.SessionReset(new SessionResetPayload(typedAgentId.Value, typedSessionId.Value));
     }
