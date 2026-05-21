@@ -70,6 +70,19 @@ public sealed class GatewaySessionRuntime
     }
 
     /// <summary>
+    /// Removes any crash-sentinel entries from the session history.
+    /// Called on clean turn completion to ensure the sentinel does not persist
+    /// as a real history entry after a successful run (#363).
+    /// </summary>
+    public void RemoveCrashSentinels()
+    {
+        lock (_lock)
+        {
+            Session.History.RemoveAll(static e => e.IsCrashSentinel);
+        }
+    }
+
+    /// <summary>
     /// Executes get history snapshot.
     /// </summary>
     /// <returns>The get history snapshot result.</returns>

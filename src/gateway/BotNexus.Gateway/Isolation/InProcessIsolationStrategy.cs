@@ -319,9 +319,10 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // LLM provider rejection. Regular system entries (IsCompactionSummary=false)
             // are also excluded ΓÇö the agent's system prompt is set separately.
             initialMessages = context.History
-                .Where(e => e.Role == Domain.Primitives.MessageRole.User
+                .Where(e => !e.IsCrashSentinel
+                         && (e.Role == Domain.Primitives.MessageRole.User
                          || e.Role == Domain.Primitives.MessageRole.Assistant
-                         || (e.Role == Domain.Primitives.MessageRole.System && e.IsCompactionSummary))
+                         || (e.Role == Domain.Primitives.MessageRole.System && e.IsCompactionSummary)))
                 .Select(ConvertSessionEntryToAgentMessage)
                 .ToList();
 

@@ -423,6 +423,11 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 OriginalContentParts = originalParts,
                 ProcessedContentParts = processedParts
             });
+
+            // Write-ahead Layer 1: persist user message before starting the LLM call.
+            // Ensures user input survives a gateway restart mid-turn (#363).
+            await _sessions.SaveAsync(session, cancellationToken);
+
             if (_compactor.ShouldCompact(session.Session, _compactionOptions.CurrentValue))
             {
                 _logger.LogInformation("Auto-compacting session {SessionId}", sessionId);
@@ -455,6 +460,18 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     _logger.LogWarning(ex, "Auto-compaction failed for session {SessionId}, continuing without compaction", sessionId);
                 }
             }
+
+            // Write-ahead Layer 2: crash sentinel written before the LLM call.
+            // If the gateway restarts mid-turn, this sentinel survives in the session store,
+            // showing an interrupted-turn marker to the user rather than a silent gap (#363).
+            var crashSentinel = new SessionEntry
+            {
+                Role = MessageRole.System,
+                Content = "[agent turn in progress — gateway restarted if visible]",
+                IsCrashSentinel = true
+            };
+            session.AddEntry(crashSentinel);
+            await _sessions.SaveAsync(session, cancellationToken);
 
             try
             {
@@ -600,6 +617,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
 
                     session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
                 }
+
+                // Remove crash sentinel on clean turn completion (#363).
+                session.RemoveCrashSentinels();
 
                 if (!sessionSaved)
                 {
