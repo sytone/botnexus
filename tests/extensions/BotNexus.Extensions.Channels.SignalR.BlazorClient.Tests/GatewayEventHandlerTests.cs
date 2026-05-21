@@ -1,4 +1,4 @@
-﻿using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
 
@@ -313,26 +313,28 @@ public sealed class GatewayEventHandlerTests
     }
 
     [Fact]
-    public void HandleCanvasUpdated_updates_canvas_for_matching_agent()
+    public void HandleCanvasUpdated_updates_canvas_for_matching_conversation()
     {
         var agent = _store.GetAgent("agent-1")!;
-        agent.CanvasHtml = null;
+        var conv = agent.Conversations["conv-1"];
+        conv.CanvasHtml = null;
 
         _handler.HandleCanvasUpdated("agent-1", "conv-1", "<div>Canvas</div>");
 
-        Assert.Equal("<div>Canvas</div>", agent.CanvasHtml);
-        Assert.NotNull(agent.CanvasUpdatedAt);
+        Assert.Equal("<div>Canvas</div>", conv.CanvasHtml);
+        Assert.NotNull(conv.CanvasUpdatedAt);
     }
 
     [Fact]
     public void HandleCanvasUpdated_ignores_unknown_agent()
     {
         var agent = _store.GetAgent("agent-1")!;
-        agent.CanvasHtml = "<p>existing</p>";
+        var conv = agent.Conversations["conv-1"];
+        conv.CanvasHtml = "<p>existing</p>";
 
         _handler.HandleCanvasUpdated("missing-agent", "conv-1", "<div>new</div>");
 
-        Assert.Equal("<p>existing</p>", agent.CanvasHtml);
+        Assert.Equal("<p>existing</p>", conv.CanvasHtml);
     }
 
     [Fact]
@@ -495,11 +497,12 @@ public sealed class GatewayEventHandlerTests
     public void HandleCanvasUpdated_empty_html_clears_canvas_state()
     {
         var agent = _store.GetAgent("agent-1")!;
-        agent.CanvasHtml = "<html><body>existing</body></html>";
+        var conv = agent.Conversations["conv-1"];
+        conv.CanvasHtml = "<html><body>existing</body></html>";
 
         _handler.HandleCanvasUpdated("agent-1", "conv-1", " ");
 
-        Assert.Null(agent.CanvasHtml);
+        Assert.Null(conv.CanvasHtml);
     }
 
     // -- Fix #235 - Sub-agent spawn notification task truncation -----------

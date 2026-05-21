@@ -28,13 +28,18 @@ public sealed class CanvasPerConversationTests
         return _store.GetAgent(agentId)!;
     }
 
-    private ConversationState SeedConversation(AgentState agent, string convId)
+    private static ConversationState SeedConversation(AgentState agent, string convId)
     {
-        _store.SeedConversations(agent.AgentId, [
-            new ConversationSummaryDto(convId, agent.AgentId, "Test", false, "Active", null, 0,
-                DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
-        ]);
-        return agent.Conversations[convId];
+        // Add directly to avoid SeedConversations removing previously added conversations
+        var conv = new ConversationState
+        {
+            ConversationId = convId,
+            Title = "Test",
+            IsDefault = false,
+            Status = "Active"
+        };
+        agent.Conversations[convId] = conv;
+        return conv;
     }
 
     // ── HandleCanvasUpdated routes to conversation ────────────────────────
