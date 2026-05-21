@@ -66,6 +66,12 @@ public sealed record AgentDescriptor
     public IReadOnlyList<string> SubAgentIds { get; init; } = [];
 
     /// <summary>
+    /// Role names this agent can converse with. Any agent whose <c>metadata.role</c> matches
+    /// one of these values is authorized as a sub-agent, in addition to those listed in <see cref="SubAgentIds" />.
+    /// </summary>
+    public IReadOnlyList<string> SubAgentRoles { get; init; } = [];
+
+    /// <summary>
     /// The isolation strategy to use when running this agent.
     /// Defaults to <c>"in-process"</c> if not specified.
     /// </summary>

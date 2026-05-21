@@ -95,6 +95,7 @@ public sealed class PlatformConfigAgentSource(
                 ToolIds = effectiveConfig.ToolIds?.ToArray() ?? [],
                 AllowedModelIds = effectiveConfig.AllowedModels?.ToArray() ?? [],
                 SubAgentIds = effectiveConfig.SubAgents?.ToArray() ?? [],
+                SubAgentRoles = effectiveConfig.SubAgentRoles?.ToArray() ?? [],
                 IsolationStrategy = string.IsNullOrWhiteSpace(effectiveConfig.IsolationStrategy)
                     ? "in-process"
                     : effectiveConfig.IsolationStrategy,

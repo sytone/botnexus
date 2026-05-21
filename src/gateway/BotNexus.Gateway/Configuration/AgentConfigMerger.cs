@@ -48,6 +48,7 @@ public static class AgentConfigMerger
             SystemPromptFile = agent.SystemPromptFile,
             SystemPromptFiles = agent.SystemPromptFiles,
             SubAgents = agent.SubAgents,
+            SubAgentRoles = agent.SubAgentRoles,
             IsolationStrategy = agent.IsolationStrategy,
             MaxConcurrentSessions = agent.MaxConcurrentSessions,
             ToolTimeoutSeconds = MergeToolTimeoutSeconds(defaults.ToolTimeoutSeconds, agent.ToolTimeoutSeconds, agentObj),
