@@ -166,6 +166,7 @@ public sealed class StreamingPipelineTests
         var channelManager = new Mock<IChannelManager>();
         channelManager.SetupGet(c => c.Adapters).Returns(streamingChannel is null ? [] : [streamingChannel]);
         channelManager.Setup(c => c.Get("web")).Returns(streamingChannel);
+        channelManager.Setup(c => c.Get(It.IsAny<ChannelKey>(), It.IsAny<string?>())).Returns((ChannelKey _, string? __) => streamingChannel);
         return new GatewayHost(
             supervisor.Object,
             router.Object,
@@ -233,5 +234,6 @@ public sealed class StreamingPipelineTests
         }
     }
 }
+
 
 
