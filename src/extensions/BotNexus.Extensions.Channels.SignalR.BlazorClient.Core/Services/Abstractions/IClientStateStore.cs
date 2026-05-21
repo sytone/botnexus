@@ -123,6 +123,9 @@ public sealed class AgentState
     /// <summary>Optional emoji that visually identifies this agent.</summary>
     public string? Emoji { get; set; }
 
+    /// <summary>Short description of this agent's purpose.</summary>
+    public string? Description { get; set; }
+
     /// <summary>Active session ID (last established).</summary>
     public string? SessionId { get; set; }
 

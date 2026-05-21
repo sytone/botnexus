@@ -33,6 +33,7 @@ public sealed class ClientStateStore : IClientStateStore
                     AgentId = a.AgentId,
                     DisplayName = a.DisplayName,
                     Emoji = a.Emoji,
+                    Description = a.Description,
                     IsConnected = true
                 };
             }
@@ -40,6 +41,7 @@ public sealed class ClientStateStore : IClientStateStore
             {
                 existing.DisplayName = a.DisplayName;
                 existing.Emoji = a.Emoji;
+                existing.Description = a.Description;
             }
         }
 
@@ -355,3 +357,4 @@ public sealed class ClientStateStore : IClientStateStore
     /// <inheritdoc />
     public void NotifyChanged() => OnChanged?.Invoke();
 }
+
