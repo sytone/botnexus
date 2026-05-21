@@ -1,4 +1,5 @@
 using System.Text.Json;
+using BotNexus.Gateway.Abstractions.Extensions;
 
 namespace BotNexus.Gateway.Extensions;
 
