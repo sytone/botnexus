@@ -681,7 +681,6 @@ public sealed class SqliteConversationStore : IConversationStore
             UpdatedAt = conversation.UpdatedAt,
             ActiveSessionId = conversation.ActiveSessionId,
             Metadata = JsonSerializer.Deserialize<Dictionary<string, object?>>(JsonSerializer.Serialize(conversation.Metadata, JsonOptions), JsonOptions) ?? [],
-            CanvasHtml = conversation.CanvasHtml,
             ChannelBindings = conversation.ChannelBindings.Select(binding => new ChannelBinding
             {
                 BindingId = binding.BindingId,
