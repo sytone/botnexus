@@ -228,7 +228,7 @@ public sealed partial class AnthropicProvider(HttpClient httpClient) : IApiProvi
             isOAuthToken,
             BuildMessage,
             MapStopReason,
-            effectiveCt,
+            ct,
             onFirstToken);
 
         setUsage(usage);
