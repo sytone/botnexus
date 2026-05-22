@@ -67,6 +67,10 @@
   <Folder Name="/tests/domain/">
     <Project Path="tests/domain/BotNexus.Domain.Tests/BotNexus.Domain.Tests.csproj" />
   </Folder>
+  <Folder Name="/tests/scenarios/">
+    <Project Path="tests/scenarios/BotNexus.Scenarios.Harness/BotNexus.Scenarios.Harness.csproj" />
+    <Project Path="tests/scenarios/BotNexus.Scenarios.Tests/BotNexus.Scenarios.Tests.csproj" />
+  </Folder>
   <Folder Name="/tests/extensions/">
     <Project Path="tests/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests/BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.ExecTool.Tests/BotNexus.Extensions.ExecTool.Tests.csproj" />
