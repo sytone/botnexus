@@ -198,6 +198,15 @@ builder.Services.AddSingleton<ApiProviderRegistry>();
 builder.Services.AddSingleton<ModelRegistry>();
 builder.Services.AddSingleton<BuiltInModels>();
 builder.Services.AddHttpClient();
+// Webhook ingress options
+builder.Services.Configure<WebhookOptions>(options =>
+{
+    var webhookConfig = startupPlatformConfig.Gateway?.Webhooks;
+    if (webhookConfig is null) return;
+    options.Enabled = webhookConfig.Enabled;
+    options.Keys = webhookConfig.Keys;
+});
+
 builder.Services.AddTransient<ProviderLoggingHandler>();
 builder.Services.AddHttpClient("BotNexus", client =>
 {

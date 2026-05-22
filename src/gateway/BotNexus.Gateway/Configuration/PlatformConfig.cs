@@ -138,6 +138,12 @@ public sealed class GatewaySettingsConfig
     /// Off by default; enable only for debugging unexpected provider responses.
     /// </summary>
     public bool EnableProviderRequestLogging { get; set; } = false;
+
+    /// <summary>
+    /// Webhook ingress configuration for POST /api/webhooks/message.
+    /// Disabled by default. Configure keys here to allow external services to trigger agent conversations.
+    /// </summary>
+    public WebhookConfig? Webhooks { get; set; }
 }
 
 /// <summary>
