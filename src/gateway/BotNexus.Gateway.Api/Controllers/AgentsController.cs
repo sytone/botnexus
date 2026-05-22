@@ -85,8 +85,7 @@ public sealed class AgentsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<AgentDescriptor>> Update(string agentId, [FromBody] AgentDescriptor descriptor, CancellationToken cancellationToken)
     {
-        if (!string.IsNullOrWhiteSpace(descriptor.AgentId) &&
-            !string.Equals(agentId, descriptor.AgentId, StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(agentId, descriptor.AgentId.Value, StringComparison.OrdinalIgnoreCase))
         {
             return BadRequest(new
             {
@@ -94,9 +93,7 @@ public sealed class AgentsController : ControllerBase
             });
         }
 
-        var updatedDescriptor = string.IsNullOrWhiteSpace(descriptor.AgentId)
-            ? descriptor with { AgentId = AgentId.From(agentId) }
-            : descriptor;
+        var updatedDescriptor = descriptor;
 
         var wasUpdated = _registry.Update(AgentId.From(agentId), updatedDescriptor);
         if (!wasUpdated)
@@ -147,7 +144,7 @@ public sealed class AgentsController : ControllerBase
             return NotFound();
 
         var instances = (_supervisor.GetAllInstances() ?? [])
-            .Where(instance => string.Equals(instance.AgentId, agentId, StringComparison.OrdinalIgnoreCase))
+            .Where(instance => string.Equals(instance.AgentId.Value, agentId, StringComparison.OrdinalIgnoreCase))
             .ToList();
 
         if (instances.Count == 0)

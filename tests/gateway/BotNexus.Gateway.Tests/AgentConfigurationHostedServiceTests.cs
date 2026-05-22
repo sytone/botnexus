@@ -43,8 +43,8 @@ public sealed class AgentConfigurationHostedServiceTests
 
         await service.StartAsync(CancellationToken.None);
 
-        registry.Contains("code-agent").ShouldBeTrue();
-        registry.Contains("config-agent").ShouldBeTrue();
+        registry.Contains(AgentId.From("code-agent")).ShouldBeTrue();
+        registry.Contains(AgentId.From("config-agent")).ShouldBeTrue();
         registry.RegisterOperations.Where(o => o == "config-agent").ShouldHaveSingleItem();
     }
 
@@ -70,10 +70,10 @@ public sealed class AgentConfigurationHostedServiceTests
             CreateDescriptor("agent-c")
         ]);
 
-        registry.Contains("agent-a").ShouldBeTrue();
-        registry.Get("agent-a")!.DisplayName.ShouldBe("Agent A v2");
-        registry.Contains("agent-b").ShouldBeFalse();
-        registry.Contains("agent-c").ShouldBeTrue();
+        registry.Contains(AgentId.From("agent-a")).ShouldBeTrue();
+        registry.Get(AgentId.From("agent-a"))!.DisplayName.ShouldBe("Agent A v2");
+        registry.Contains(AgentId.From("agent-b")).ShouldBeFalse();
+        registry.Contains(AgentId.From("agent-c")).ShouldBeTrue();
         registry.UnregisterOperations.ShouldContain("agent-b");
         registry.UnregisterOperations.ShouldContain("agent-a");
         registry.RegisterOperations.ShouldContain("agent-a");
@@ -101,7 +101,7 @@ public sealed class AgentConfigurationHostedServiceTests
 
         callback!([CreateDescriptor("agent-new")]);
 
-        registry.Contains("agent-new").ShouldBeTrue();
+        registry.Contains(AgentId.From("agent-new")).ShouldBeTrue();
         registry.RegisterOperations.ShouldContain("agent-new");
     }
 
@@ -153,7 +153,7 @@ public sealed class AgentConfigurationHostedServiceTests
             if (initialDescriptors is not null)
             {
                 foreach (var descriptor in initialDescriptors)
-                    _agents[descriptor.AgentId] = descriptor;
+                    _agents[descriptor.AgentId.Value] = descriptor;
             }
         }
 
@@ -163,27 +163,27 @@ public sealed class AgentConfigurationHostedServiceTests
 
         public void Register(AgentDescriptor descriptor)
         {
-            if (_agents.ContainsKey(descriptor.AgentId))
+            if (_agents.ContainsKey(descriptor.AgentId.Value))
                 throw new InvalidOperationException($"Agent '{descriptor.AgentId}' already exists.");
 
-            _agents[descriptor.AgentId] = descriptor;
-            RegisterOperations.Add(descriptor.AgentId);
+            _agents[descriptor.AgentId.Value] = descriptor;
+            RegisterOperations.Add(descriptor.AgentId.Value);
         }
 
         public void Unregister(AgentId agentId)
         {
-            _agents.Remove(agentId);
-            UnregisterOperations.Add(agentId);
+            _agents.Remove(agentId.Value);
+            UnregisterOperations.Add(agentId.Value);
         }
 
         public AgentDescriptor? Get(AgentId agentId)
-            => _agents.TryGetValue(agentId, out var descriptor) ? descriptor : null;
+            => _agents.TryGetValue(agentId.Value, out var descriptor) ? descriptor : null;
 
         public IReadOnlyList<AgentDescriptor> GetAll()
             => _agents.Values.ToArray();
 
         public bool Contains(AgentId agentId)
-            => _agents.ContainsKey(agentId);
+            => _agents.ContainsKey(agentId.Value);
     }
 }
 

@@ -139,8 +139,8 @@ public sealed class GatewayHostBindingRoutingTests
             .ReturnsAsync([]);
 
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns(AgentIdStr);
-        handle.SetupGet(h => h.SessionId).Returns(SessionIdStr);
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From(AgentIdStr));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From(SessionIdStr));
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.StreamAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(ToAsyncEnumerable([
@@ -263,8 +263,8 @@ public sealed class GatewayHostBindingRoutingTests
     private static Mock<IAgentHandle> CreatePromptHandle(string agentId, string sessionId, string content)
     {
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns(agentId);
-        handle.SetupGet(h => h.SessionId).Returns(sessionId);
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From(agentId));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From(sessionId));
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = content });

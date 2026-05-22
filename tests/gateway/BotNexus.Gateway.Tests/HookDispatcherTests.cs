@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Hooks;
 using BotNexus.Gateway.Hooks;
 
@@ -30,7 +31,7 @@ public sealed class HookDispatcherTests
                     return new BeforePromptBuildResult { PrependSystemContext = "A" };
                 }));
 
-        var evt = new BeforePromptBuildEvent("agent-1", "prompt", []);
+        var evt = new BeforePromptBuildEvent(AgentId.From("agent-1"), "prompt", []);
         var results = await _dispatcher.DispatchAsync<BeforePromptBuildEvent, BeforePromptBuildResult>(evt);
 
         executionOrder.ToList().ShouldBe(new[] { "first", "second" });
@@ -44,7 +45,7 @@ public sealed class HookDispatcherTests
     [Fact]
     public async Task Dispatch_NoHandlers_ReturnsEmpty()
     {
-        var evt = new AfterToolCallEvent("agent-1", "tool", "tc-1", null, false);
+        var evt = new AfterToolCallEvent(AgentId.From("agent-1"), "tool", "tc-1", null, false);
         var results = await _dispatcher.DispatchAsync<AfterToolCallEvent, AfterToolCallResult>(evt);
 
         results.ShouldBeEmpty();
@@ -63,7 +64,7 @@ public sealed class HookDispatcherTests
             new DelegateHookHandler<AfterToolCallEvent, AfterToolCallResult>(
                 priority: 1, _ => new AfterToolCallResult()));
 
-        var evt = new AfterToolCallEvent("agent-1", "tool", "tc-1", "ok", false);
+        var evt = new AfterToolCallEvent(AgentId.From("agent-1"), "tool", "tc-1", "ok", false);
         var results = await _dispatcher.DispatchAsync<AfterToolCallEvent, AfterToolCallResult>(evt);
 
         results.Count().ShouldBe(1);
@@ -86,7 +87,7 @@ public sealed class HookDispatcherTests
                     AppendSystemContext = "Suffix-B"
                 }));
 
-        var evt = new BeforePromptBuildEvent("agent-1", "prompt", []);
+        var evt = new BeforePromptBuildEvent(AgentId.From("agent-1"), "prompt", []);
         var results = await _dispatcher.DispatchAsync<BeforePromptBuildEvent, BeforePromptBuildResult>(evt);
 
         results.Count().ShouldBe(2);
@@ -128,7 +129,7 @@ public sealed class HookDispatcherTests
                 }));
 
         var args = new Dictionary<string, object?> { ["file"] = "secret.txt" };
-        var evt = new BeforeToolCallEvent("agent-1", "read_file", "tc-1", args);
+        var evt = new BeforeToolCallEvent(AgentId.From("agent-1"), "read_file", "tc-1", args);
         var results = await _dispatcher.DispatchAsync<BeforeToolCallEvent, BeforeToolCallResult>(evt);
 
         // Consumer short-circuits: check first result with Denied == true

@@ -64,7 +64,7 @@ public sealed class MemoryIndexer(
         var store = _storeFactory.Create(lifecycleEvent.AgentId);
         await store.InitializeAsync(cancellationToken).ConfigureAwait(false);
 
-        await IndexSessionCoreAsync(session, lifecycleEvent.AgentId, lifecycleEvent.SessionId, store, cancellationToken).ConfigureAwait(false);
+        await IndexSessionCoreAsync(session, AgentId.From(lifecycleEvent.AgentId), SessionId.From(lifecycleEvent.SessionId), store, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -112,8 +112,8 @@ public sealed class MemoryIndexer(
                 var memory = new MemoryEntry
                 {
                     Id = string.Empty,
-                    AgentId = agentId,
-                    SessionId = sessionId,
+                    AgentId = agentId.Value,
+                    SessionId = sessionId.Value,
                     TurnIndex = pendingTurnIndex,
                     SourceType = "conversation",
                     Content = $"User: {pendingUser.Content}\nAssistant: {entry.Content}",
@@ -169,7 +169,7 @@ public sealed class MemoryIndexer(
 
             try
             {
-                var store = storeFactory.Create(agentId);
+                var store = storeFactory.Create(agentId.Value);
                 await store.InitializeAsync(ct).ConfigureAwait(false);
 
                 var turnsIndexed = await IndexSessionCoreAsync(session, agentId, sessionId, store, ct).ConfigureAwait(false);

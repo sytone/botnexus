@@ -23,12 +23,12 @@ public sealed class FileAgentConfigurationWriter(string directoryPath, BotNexusH
     public async Task SaveAsync(AgentDescriptor descriptor, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(descriptor);
-        ArgumentException.ThrowIfNullOrWhiteSpace(descriptor.AgentId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(descriptor.AgentId.Value);
 
         _fileSystem.Directory.CreateDirectory(_directoryPath);
-        _ = _botNexusHome.GetAgentDirectory(descriptor.AgentId);
+        _ = _botNexusHome.GetAgentDirectory(descriptor.AgentId.Value);
 
-        var configPath = GetConfigPath(descriptor.AgentId);
+        var configPath = GetConfigPath(descriptor.AgentId.Value);
         var tempPath = configPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
 
         await _writeGate.WaitAsync(cancellationToken);
@@ -108,7 +108,7 @@ public sealed class FileAgentConfigurationWriter(string directoryPath, BotNexusH
         public static AgentConfigurationFile FromDescriptor(AgentDescriptor descriptor)
             => new()
             {
-                AgentId = descriptor.AgentId,
+                AgentId = descriptor.AgentId.Value,
                 DisplayName = descriptor.DisplayName,
                 Emoji = descriptor.Emoji,
                 Description = descriptor.Description,

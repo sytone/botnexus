@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Api;
@@ -194,8 +195,8 @@ public sealed class ChannelHistoryTests
     {
         var session = new GatewaySession
         {
-            SessionId = sessionId,
-            AgentId = agentId,
+            SessionId = SessionId.From(sessionId),
+            AgentId = AgentId.From(agentId),
             ChannelType = channelType,
             CreatedAt = createdAt,
             UpdatedAt = createdAt

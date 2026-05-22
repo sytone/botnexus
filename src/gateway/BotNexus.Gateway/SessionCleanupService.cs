@@ -61,8 +61,8 @@ public sealed class SessionCleanupService(
                 {
                     await _lifecycleEvents.PublishAsync(
                         new SessionLifecycleEvent(
-                            session.SessionId,
-                            session.AgentId,
+                            session.SessionId.Value,
+                            session.AgentId.Value,
                             SessionLifecycleEventType.Expired,
                             session),
                         cancellationToken);
@@ -80,8 +80,8 @@ public sealed class SessionCleanupService(
                 {
                     await _lifecycleEvents.PublishAsync(
                         new SessionLifecycleEvent(
-                            session.SessionId,
-                            session.AgentId,
+                            session.SessionId.Value,
+                            session.AgentId.Value,
                             SessionLifecycleEventType.Deleted,
                             session),
                         cancellationToken);

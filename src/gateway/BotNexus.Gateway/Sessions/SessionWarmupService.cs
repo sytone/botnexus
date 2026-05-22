@@ -160,8 +160,8 @@ public sealed class SessionWarmupService : ISessionWarmupService, IHostedService
             .OrderByDescending(static session => session.UpdatedAt)
             .Take(maxSessions)
             .Select(static session => new SessionSummary(
-                session.SessionId,
-                session.AgentId,
+                session.SessionId.Value,
+                session.AgentId.Value,
                 session.ChannelType,
                 session.Status,
                 session.SessionType,

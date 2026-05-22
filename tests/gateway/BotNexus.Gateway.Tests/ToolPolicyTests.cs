@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Hooks;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Configuration;
@@ -181,7 +182,7 @@ public sealed class ToolPolicyTests
             NullLogger<ToolPolicyHookHandler>.Instance);
 
         var evt = new BeforeToolCallEvent(
-            "test-agent-1", "exec", "tc-1",
+            AgentId.From("test-agent-1"), "exec", "tc-1",
             new Dictionary<string, object?> { ["cmd"] = "rm -rf /" });
 
         var result = await handler.HandleAsync(evt);
@@ -203,7 +204,7 @@ public sealed class ToolPolicyTests
             NullLogger<ToolPolicyHookHandler>.Instance);
 
         var evt = new BeforeToolCallEvent(
-            "test-agent-1", "read", "tc-2",
+            AgentId.From("test-agent-1"), "read", "tc-2",
             new Dictionary<string, object?> { ["file"] = "readme.md" });
 
         var result = await handler.HandleAsync(evt);
@@ -220,7 +221,7 @@ public sealed class ToolPolicyTests
             NullLogger<ToolPolicyHookHandler>.Instance);
 
         var evt = new BeforeToolCallEvent(
-            "test-agent-1", "exec", "tc-3",
+            AgentId.From("test-agent-1"), "exec", "tc-3",
             new Dictionary<string, object?> { ["cmd"] = "echo hello" });
 
         var result = await handler.HandleAsync(evt);

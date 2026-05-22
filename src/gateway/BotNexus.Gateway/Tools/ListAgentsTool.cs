@@ -71,7 +71,7 @@ public sealed class ListAgentsTool(
                 Description: d.Description,
                 Emoji: d.Emoji,
                 Capabilities: ResolveCapabilities(d),
-                CanConverse: subAgentIds.Contains(d.AgentId.ToString(), StringComparer.OrdinalIgnoreCase)
+                CanConverse: subAgentIds.Contains(d.AgentId.Value, StringComparer.OrdinalIgnoreCase)
                     || IsRoleGranted(subAgentRoles, d)))
             .OrderBy(e => e.AgentId, StringComparer.OrdinalIgnoreCase)
             .ToList();

@@ -62,7 +62,7 @@ public sealed class Phase5IntegrationTests
     public async Task SessionLifecycle_TransitionsToExpired_WhenIdleBeyondTtl()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("phase5-session", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("phase5-session"), AgentId.From("agent-a"));
         session.Status = GatewaySessionStatus.Active;
         session.UpdatedAt = DateTimeOffset.UtcNow - TimeSpan.FromHours(2);
         await store.SaveAsync(session);
@@ -74,7 +74,7 @@ public sealed class Phase5IntegrationTests
 
         await cleanup.RunCleanupOnceAsync();
 
-        var reloaded = await store.GetAsync("phase5-session");
+        var reloaded = await store.GetAsync(SessionId.From("phase5-session"));
         reloaded.ShouldNotBeNull();
         reloaded!.Status.ShouldBe(GatewaySessionStatus.Expired);
         reloaded.ExpiresAt.ShouldNotBeNull();

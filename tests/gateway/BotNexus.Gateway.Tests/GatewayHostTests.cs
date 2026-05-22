@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using ChannelAddress = BotNexus.Domain.Primitives.ChannelAddress;
 using ThreadId = BotNexus.Domain.Primitives.ThreadId;
 using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
@@ -60,8 +61,8 @@ public sealed class GatewayHostTests
         router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["agent-a"]);
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("agent-a");
-        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.StreamAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .Returns(ToAsyncEnumerable(
@@ -188,8 +189,8 @@ public sealed class GatewayHostTests
         router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["agent-a"]);
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("agent-a");
-        handle.SetupGet(h => h.SessionId).Returns("dynamic");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("dynamic"));
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string msg, CancellationToken _) => new AgentResponse { Content = $"echo:{msg}" });
@@ -220,8 +221,8 @@ public sealed class GatewayHostTests
         router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["agent-a"]);
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("agent-a");
-        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("boom"));
@@ -312,7 +313,7 @@ public sealed class GatewayHostTests
             .ReturnsAsync(handle.Object);
 
         var sessions = new InMemorySessionStore();
-        var session = await sessions.GetOrCreateAsync("session-1", "agent-a");
+        var session = await sessions.GetOrCreateAsync(SessionId.From("session-1"), AgentId.From("agent-a"));
         session.Status = SessionStatus.Expired;
         session.ExpiresAt = DateTimeOffset.UtcNow.AddHours(-1);
         await sessions.SaveAsync(session);
@@ -344,7 +345,7 @@ public sealed class GatewayHostTests
         supervisor.Setup(s => s.GetOrCreateAsync(BotNexus.Domain.Primitives.AgentId.From("agent-a"), BotNexus.Domain.Primitives.SessionId.From("session-1"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(handle.Object);
         var sessions = new InMemorySessionStore();
-        var session = await sessions.GetOrCreateAsync("session-1", "agent-a");
+        var session = await sessions.GetOrCreateAsync(SessionId.From("session-1"), AgentId.From("agent-a"));
         session.Status = SessionStatus.Sealed;
         await sessions.SaveAsync(session);
         var channel = CreateChannelAdapter("web", supportsStreaming: false);
@@ -365,7 +366,7 @@ public sealed class GatewayHostTests
             .ReturnsAsync(["agent-a"]);
         var supervisor = new Mock<IAgentSupervisor>();
         var sessions = new InMemorySessionStore();
-        var session = await sessions.GetOrCreateAsync("session-1", "agent-a");
+        var session = await sessions.GetOrCreateAsync(SessionId.From("session-1"), AgentId.From("agent-a"));
         session.Status = SessionStatus.Suspended;
         await sessions.SaveAsync(session);
         var channel = CreateChannelAdapter("web", supportsStreaming: false);
@@ -391,7 +392,7 @@ public sealed class GatewayHostTests
         supervisor.Setup(s => s.GetOrCreateAsync(BotNexus.Domain.Primitives.AgentId.From("agent-a"), BotNexus.Domain.Primitives.SessionId.From("session-1"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(handle.Object);
         var sessions = new InMemorySessionStore();
-        var session = await sessions.GetOrCreateAsync("session-1", "agent-a");
+        var session = await sessions.GetOrCreateAsync(SessionId.From("session-1"), AgentId.From("agent-a"));
         session.Status = SessionStatus.Expired;
         session.ExpiresAt = DateTimeOffset.UtcNow.AddHours(1);
         await sessions.SaveAsync(session);
@@ -501,8 +502,8 @@ public sealed class GatewayHostTests
         router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["agent-a"]);
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("agent-a");
-        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
         handle.SetupGet(h => h.IsRunning).Returns(true);
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.GetInstance(BotNexus.Domain.Primitives.AgentId.From("agent-a"), BotNexus.Domain.Primitives.SessionId.From("session-1")))
@@ -533,8 +534,8 @@ public sealed class GatewayHostTests
         router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["agent-a"]);
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("agent-a");
-        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
         handle.SetupGet(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = "response" });
@@ -685,7 +686,7 @@ public sealed class GatewayHostTests
             ChannelType = BotNexus.Domain.Primitives.ChannelKey.From("internal"),
             SenderId = "subagent:test",
             ChannelAddress = ChannelAddress.From("parent-session"),
-            SessionId = "parent-session",
+            SessionId = SessionId.From("parent-session"),
             TargetAgentId = "agent-a",
             Content = "subagent completion wake-up",
             Metadata = new Dictionary<string, object?> { ["messageType"] = "subagent-completion" }
@@ -872,8 +873,8 @@ public sealed class GatewayHostTests
         router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["agent-a"]);
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("agent-a");
-        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(async () =>
             {
@@ -891,7 +892,7 @@ public sealed class GatewayHostTests
             .ReturnsAsync(handle.Object);
 
         var sessions = new InMemorySessionStore();
-        await sessions.GetOrCreateAsync("session-1", "agent-a");
+        await sessions.GetOrCreateAsync(SessionId.From("session-1"), AgentId.From("agent-a"));
 
         var channel = CreateChannelAdapter("web", supportsStreaming: false);
         await using var host = CreateHost(
@@ -926,8 +927,8 @@ public sealed class GatewayHostTests
         var inFlight = 0;
         var maxInFlight = 0;
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("agent-a");
-        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns<string, CancellationToken>(async (message, _) =>
             {
@@ -951,7 +952,7 @@ public sealed class GatewayHostTests
             .ReturnsAsync(handle.Object);
 
         var sessions = new InMemorySessionStore();
-        await sessions.GetOrCreateAsync("session-1", "agent-a");
+        await sessions.GetOrCreateAsync(SessionId.From("session-1"), AgentId.From("agent-a"));
         var channel = CreateChannelAdapter("web", supportsStreaming: false);
         await using var host = CreateHost(
             supervisor.Object,
@@ -978,7 +979,7 @@ public sealed class GatewayHostTests
             .ReturnsAsync(["agent-a"]);
         var supervisor = new Mock<IAgentSupervisor>();
         var sessions = new InMemorySessionStore();
-        var session = await sessions.GetOrCreateAsync("session-1", "agent-a");
+        var session = await sessions.GetOrCreateAsync(SessionId.From("session-1"), AgentId.From("agent-a"));
         session.Status = SessionStatus.Suspended;
         await sessions.SaveAsync(session);
         var channel = CreateChannelAdapter("web", supportsStreaming: false);
@@ -1060,8 +1061,8 @@ public sealed class GatewayHostTests
 
         AgentUserMessage? capturedMessage = null;
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("agent-a");
-        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .Callback<AgentUserMessage, CancellationToken>((m, _) => capturedMessage = m)
@@ -1116,8 +1117,8 @@ public sealed class GatewayHostTests
 
         AgentUserMessage? capturedMessage = null;
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("agent-a");
-        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .Callback<AgentUserMessage, CancellationToken>((m, _) => capturedMessage = m)
@@ -1214,8 +1215,8 @@ public sealed class GatewayHostTests
 
         AgentUserMessage? capturedMessage = null;
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("agent-a");
-        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .Callback<AgentUserMessage, CancellationToken>((m, _) => capturedMessage = m)
@@ -1268,8 +1269,8 @@ public sealed class GatewayHostTests
 
         AgentUserMessage? capturedMessage = null;
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("agent-a");
-        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .Callback<AgentUserMessage, CancellationToken>((m, _) => capturedMessage = m)
@@ -1329,8 +1330,8 @@ public sealed class GatewayHostTests
 
         AgentUserMessage? capturedMessage = null;
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("agent-a");
-        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .Callback<AgentUserMessage, CancellationToken>((m, _) => capturedMessage = m)
@@ -1395,8 +1396,8 @@ public sealed class GatewayHostTests
 
         AgentUserMessage? capturedMessage = null;
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("agent-a");
-        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .Callback<AgentUserMessage, CancellationToken>((m, _) => capturedMessage = m)
@@ -1442,8 +1443,8 @@ public sealed class GatewayHostTests
     private static Mock<IAgentHandle> CreatePromptHandle(string agentId, string sessionId, string content)
     {
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns(agentId);
-        handle.SetupGet(h => h.SessionId).Returns(sessionId);
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From(agentId));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From(sessionId));
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = content });
@@ -1615,8 +1616,8 @@ public sealed class GatewayHostTests
 
         var userMessageSavedBeforeLlm = false;
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("agent-write-ahead");
-        handle.SetupGet(h => h.SessionId).Returns("session-wa");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-write-ahead"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-wa"));
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = "response" });
@@ -1705,8 +1706,8 @@ public sealed class GatewayHostTests
         router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["agent-a"]);
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("agent-a");
-        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.StreamAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .Returns(ToAsyncEnumerable([
@@ -1821,8 +1822,8 @@ public sealed class GatewayHostTests
         router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["agent-a"]);
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("agent-a");
-        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.StreamAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
             .Returns(ToAsyncEnumerable([

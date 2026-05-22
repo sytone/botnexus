@@ -15,15 +15,9 @@ public sealed class AgentDescriptorValidatorTests
         errors.ShouldBeEmpty();
     }
 
-    [Fact]
-    public void Validate_WithoutAgentId_ReturnsAgentIdError()
-    {
-        var descriptor = CreateValidDescriptor() with { AgentId = default };
-
-        var errors = AgentDescriptorValidator.Validate(descriptor);
-
-        errors.ShouldContain("AgentId is required.");
-    }
+    // Validate_WithoutAgentId_ReturnsAgentIdError was removed: AgentId is now a Vogen value
+    // object (BotNexus.Domain.Primitives.AgentId) and cannot be constructed as default. Missing
+    // / null / whitespace agent IDs are rejected at construction time; see AgentIdTests.From_RejectsNullEmptyOrWhitespace.
 
     [Fact]
     public void Validate_WithoutDisplayName_ReturnsDisplayNameError()

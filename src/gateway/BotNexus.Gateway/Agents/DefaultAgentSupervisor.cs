@@ -187,11 +187,11 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
     {
         var activeInstanceKeys = _instances
             .Where(pair =>
-                string.Equals(pair.Value.Instance.AgentId, agentId, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(pair.Value.Instance.AgentId.Value, agentId.Value, StringComparison.OrdinalIgnoreCase) &&
                 pair.Value.Instance.Status is not AgentInstanceStatus.Stopped and not AgentInstanceStatus.Faulted)
             .Select(pair => pair.Key.SessionId);
 
-        var pendingKeys = _pendingCreates.Keys.Where(key => string.Equals(key.AgentId, agentId, StringComparison.OrdinalIgnoreCase))
+        var pendingKeys = _pendingCreates.Keys.Where(key => string.Equals(key.AgentId.Value, agentId.Value, StringComparison.OrdinalIgnoreCase))
             .Select(key => key.SessionId);
 
         return activeInstanceKeys

@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Abstractions.Activity;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Activity;
@@ -17,7 +18,7 @@ public sealed class DefaultAgentRegistryTests
 
         registry.Register(descriptor);
 
-        registry.Get("agent-a").ShouldBe(descriptor);
+        registry.Get(AgentId.From("agent-a")).ShouldBe(descriptor);
     }
 
     [Fact]
@@ -26,9 +27,9 @@ public sealed class DefaultAgentRegistryTests
         var registry = CreateRegistry();
         registry.Register(CreateDescriptor("agent-a"));
 
-        registry.Unregister("agent-a");
+        registry.Unregister(AgentId.From("agent-a"));
 
-        registry.Contains("agent-a").ShouldBeFalse();
+        registry.Contains(AgentId.From("agent-a")).ShouldBeFalse();
     }
 
     [Fact]
@@ -48,7 +49,7 @@ public sealed class DefaultAgentRegistryTests
     {
         var registry = CreateRegistry();
 
-        var agent = registry.Get("unknown");
+        var agent = registry.Get(AgentId.From("unknown"));
 
         agent.ShouldBeNull();
     }
@@ -71,7 +72,7 @@ public sealed class DefaultAgentRegistryTests
         var registry = CreateRegistry();
         registry.Register(CreateDescriptor("agent-a"));
 
-        var contains = registry.Contains("agent-a") && !registry.Contains("unknown");
+        var contains = registry.Contains(AgentId.From("agent-a")) && !registry.Contains(AgentId.From("unknown"));
 
         contains.ShouldBeTrue();
     }
@@ -87,8 +88,8 @@ public sealed class DefaultAgentRegistryTests
             {
                 var agentId = $"agent-{i}";
                 registry.Register(CreateDescriptor(agentId));
-                _ = registry.Get(agentId);
-                _ = registry.Contains(agentId);
+                _ = registry.Get(AgentId.From(agentId));
+                _ = registry.Contains(AgentId.From(agentId));
             }));
 
         await Task.WhenAll(tasks);
@@ -117,7 +118,7 @@ public sealed class DefaultAgentRegistryTests
         registry.Register(CreateDescriptor("agent-a"));
         broadcaster.Activities.Clear();
 
-        registry.Unregister("agent-a");
+        registry.Unregister(AgentId.From("agent-a"));
 
         broadcaster.Activities.Where(activity =>
             activity.Type == GatewayActivityType.AgentUnregistered &&
@@ -132,7 +133,7 @@ public sealed class DefaultAgentRegistryTests
         registry.Register(CreateDescriptor("agent-a"));
         broadcaster.Activities.Clear();
 
-        var updated = registry.Update("agent-a", CreateDescriptor("agent-a") with { DisplayName = "updated" });
+        var updated = registry.Update(AgentId.From("agent-a"), CreateDescriptor("agent-a") with { DisplayName = "updated" });
 
         updated.ShouldBeTrue();
         broadcaster.Activities.Where(activity =>
@@ -169,7 +170,7 @@ public sealed class DefaultAgentRegistryTests
         var readTask = subscription.MoveNextAsync().AsTask();
         await Task.Delay(20, cts.Token);
 
-        registry.Unregister("agent-a");
+        registry.Unregister(AgentId.From("agent-a"));
 
         (await readTask).ShouldBeTrue();
         subscription.Current.Type.ShouldBe(GatewayActivityType.AgentUnregistered);
@@ -185,7 +186,7 @@ public sealed class DefaultAgentRegistryTests
     private static AgentDescriptor CreateDescriptor(string agentId)
         => new()
         {
-            AgentId = agentId,
+            AgentId = AgentId.From(agentId),
             DisplayName = $"{agentId}-display",
             ModelId = "test-model",
             ApiProvider = "test-provider"

@@ -186,7 +186,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             GatewayActivityType.SubAgentSpawned,
             "subagent_spawned",
             info,
-            request.ParentAgentId,
+            request.ParentAgentId.Value,
             $"Sub-agent '{subAgentId}' spawned.");
 
         return info;
@@ -260,7 +260,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             GatewayActivityType.SubAgentKilled,
             "subagent_killed",
             updatedInfo,
-            parentAgentId,
+            parentAgentId.Value,
             $"Sub-agent '{subAgentId}' was killed.");
 
         return true;
@@ -311,7 +311,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 GatewayActivityType.SubAgentCompleted,
                 "subagent_completed",
                 updated,
-                parentAgentId,
+                parentAgentId.Value,
                 $"Sub-agent '{subAgentId}' completed.");
         }
         else if (updated.Status is SubAgentStatus.Failed or SubAgentStatus.TimedOut)
@@ -320,11 +320,11 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 GatewayActivityType.SubAgentFailed,
                 "subagent_failed",
                 updated,
-                parentAgentId,
+                parentAgentId.Value,
                 $"Sub-agent '{subAgentId}' failed.");
         }
 
-        if (string.IsNullOrWhiteSpace(parentAgentId))
+        if (string.IsNullOrWhiteSpace(parentAgentId.Value))
             return;
 
         var completionMessage = new SubAgentCompletionMessage
@@ -360,7 +360,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 SenderId = $"subagent:{subAgentId}",
                 ChannelAddress = ChannelAddress.From(updated.ParentSessionId.Value),
                 SessionId = updated.ParentSessionId,
-                TargetAgentId = parentAgentId,
+                TargetAgentId = parentAgentId.Value,
                 Content = followUp,
                 Metadata = new Dictionary<string, object?>
                 {

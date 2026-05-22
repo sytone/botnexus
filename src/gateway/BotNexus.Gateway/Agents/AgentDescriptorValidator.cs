@@ -10,9 +10,6 @@ internal static class AgentDescriptorValidator
     {
         List<string> errors = [];
 
-        if (string.IsNullOrWhiteSpace(descriptor.AgentId))
-            errors.Add("AgentId is required.");
-
         if (string.IsNullOrWhiteSpace(descriptor.DisplayName))
             errors.Add("DisplayName is required.");
 

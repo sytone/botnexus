@@ -1,4 +1,5 @@
 using System.Reflection;
+using BotNexus.Domain.Primitives;
 using BotNexus.Agent.Core;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
@@ -115,8 +116,8 @@ public sealed class SubAgentIntegrationTests
     {
         var registry = CreateRegistry();
         var childHandle = new Mock<IAgentHandle>();
-        childHandle.SetupGet(h => h.AgentId).Returns("parent-agent");
-        childHandle.SetupGet(h => h.SessionId).Returns("child-session");
+        childHandle.SetupGet(h => h.AgentId).Returns(AgentId.From("parent-agent"));
+        childHandle.SetupGet(h => h.SessionId).Returns(SessionId.From("child-session"));
         childHandle.SetupGet(h => h.IsRunning).Returns(true);
         childHandle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = "done" });
@@ -241,7 +242,7 @@ public sealed class SubAgentIntegrationTests
     {
         var descriptor = CreateDescriptor();
         var registry = new Mock<IAgentRegistry>();
-        registry.Setup(r => r.Get("parent-agent")).Returns(descriptor);
+        registry.Setup(r => r.Get(AgentId.From("parent-agent"))).Returns(descriptor);
         return registry;
     }
 
@@ -267,8 +268,8 @@ public sealed class SubAgentIntegrationTests
     private static Mock<IAgentHandle> CreateHangingHandle()
     {
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("parent-agent");
-        handle.SetupGet(h => h.SessionId).Returns("child-session");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("parent-agent"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("child-session"));
         handle.SetupGet(h => h.IsRunning).Returns(true);
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns<string, CancellationToken>(async (_, cancellationToken) =>
@@ -282,8 +283,8 @@ public sealed class SubAgentIntegrationTests
     private static Mock<IAgentHandle> CreateFailingHandle()
     {
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("parent-agent");
-        handle.SetupGet(h => h.SessionId).Returns("child-session");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("parent-agent"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("child-session"));
         handle.SetupGet(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("boom"));

@@ -219,12 +219,12 @@ public sealed class SessionTool(
         if (accessLevel == SessionAccessLevel.All)
             return;
 
-        if (string.Equals(targetAgentId, agentId, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(targetAgentId.Value, agentId.Value, StringComparison.OrdinalIgnoreCase))
             return;
 
         if (accessLevel == SessionAccessLevel.Allowlist &&
             allowedAgents is not null &&
-            allowedAgents.Any(a => string.Equals(a, targetAgentId, StringComparison.OrdinalIgnoreCase)))
+            allowedAgents.Any(a => string.Equals(a, targetAgentId.Value, StringComparison.OrdinalIgnoreCase)))
             return;
 
         throw new UnauthorizedAccessException($"Agent '{agentId}' does not have access to sessions for agent '{targetAgentId}'.");

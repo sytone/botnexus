@@ -52,8 +52,8 @@ public sealed class SessionModelWave3TypedIdTests
         listed.ShouldHaveSingleItem();
         byChannel.ShouldHaveSingleItem();
 
-        string sessionIdString = loaded.SessionId;
-        string agentIdString = loaded.AgentId;
+        string sessionIdString = loaded.SessionId.Value;
+        string agentIdString = loaded.AgentId.Value;
         sessionIdString.ShouldBe("typed-session");
         agentIdString.ShouldBe("typed-agent");
     }

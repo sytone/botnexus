@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
@@ -34,11 +35,11 @@ public sealed class DefaultAgentSupervisorTests
         var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], Mock.Of<ISessionStore>(), NullLogger<DefaultAgentSupervisor>.Instance);
 
         var tasks = Enumerable.Range(0, 25)
-            .Select(_ => supervisor.GetOrCreateAsync("agent-a", "session-1"));
+            .Select(_ => supervisor.GetOrCreateAsync(AgentId.From("agent-a"), SessionId.From("session-1")));
         var results = await Task.WhenAll(tasks);
 
         results.ShouldAllBe(h => ReferenceEquals(h, handle.Object));
-        strategy.Verify(s => s.CreateAsync(It.IsAny<AgentDescriptor>(), It.Is<AgentExecutionContext>(c => c.SessionId == "session-1"), It.IsAny<CancellationToken>()), Times.Once);
+        strategy.Verify(s => s.CreateAsync(It.IsAny<AgentDescriptor>(), It.Is<AgentExecutionContext>(c => c.SessionId.Value == "session-1"), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -56,12 +57,12 @@ public sealed class DefaultAgentSupervisorTests
         var strategy = new Mock<IIsolationStrategy>();
         strategy.SetupGet(s => s.Name).Returns("test");
         strategy.Setup(s => s.CreateAsync(It.IsAny<AgentDescriptor>(), It.IsAny<AgentExecutionContext>(), It.IsAny<CancellationToken>()))
-            .Returns((AgentDescriptor _, AgentExecutionContext context, CancellationToken _) => Task.FromResult(CreateHandleMock("agent-a", context.SessionId).Object));
+            .Returns((AgentDescriptor _, AgentExecutionContext context, CancellationToken _) => Task.FromResult(CreateHandleMock("agent-a", context.SessionId.Value).Object));
         var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], Mock.Of<ISessionStore>(), NullLogger<DefaultAgentSupervisor>.Instance);
 
         await Task.WhenAll(
-            supervisor.GetOrCreateAsync("agent-a", "session-1"),
-            supervisor.GetOrCreateAsync("agent-a", "session-2"));
+            supervisor.GetOrCreateAsync(AgentId.From("agent-a"), SessionId.From("session-1")),
+            supervisor.GetOrCreateAsync(AgentId.From("agent-a"), SessionId.From("session-2")));
 
         strategy.Verify(s => s.CreateAsync(It.IsAny<AgentDescriptor>(), It.IsAny<AgentExecutionContext>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
@@ -87,8 +88,8 @@ public sealed class DefaultAgentSupervisorTests
             .ReturnsAsync(firstHandle.Object);
         var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], Mock.Of<ISessionStore>(), NullLogger<DefaultAgentSupervisor>.Instance);
 
-        await supervisor.GetOrCreateAsync("agent-a", "session-1");
-        Func<Task> act = () => supervisor.GetOrCreateAsync("agent-a", "session-2");
+        await supervisor.GetOrCreateAsync(AgentId.From("agent-a"), SessionId.From("session-1"));
+        Func<Task> act = () => supervisor.GetOrCreateAsync(AgentId.From("agent-a"), SessionId.From("session-2"));
 
         (await act.ShouldThrowAsync<AgentConcurrencyLimitExceededException>())
             .Message.ShouldContain("MaxConcurrentSessions (1)");
@@ -111,7 +112,7 @@ public sealed class DefaultAgentSupervisorTests
         strategy.SetupGet(s => s.Name).Returns("test");
         var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], Mock.Of<ISessionStore>(), NullLogger<DefaultAgentSupervisor>.Instance);
 
-        Func<Task> act = () => supervisor.GetOrCreateAsync("agent-a", "session-1");
+        Func<Task> act = () => supervisor.GetOrCreateAsync(AgentId.From("agent-a"), SessionId.From("session-1"));
 
         var ex = await act.ShouldThrowAsync<InvalidOperationException>();
         ex.Message.ShouldContain("IsolationStrategy 'missing' is not registered");
@@ -133,11 +134,11 @@ public sealed class DefaultAgentSupervisorTests
 
         var sessionStore = new Mock<ISessionStore>();
         sessionStore
-            .Setup(s => s.GetAsync("session-1", It.IsAny<CancellationToken>()))
+            .Setup(s => s.GetAsync(SessionId.From("session-1"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new GatewaySession
             {
-                SessionId = "session-1",
-                AgentId = "agent-a",
+                SessionId = SessionId.From("session-1"),
+                AgentId = AgentId.From("agent-a"),
                 History =
                 [
                     new SessionEntry { Role = BotNexus.Domain.Primitives.MessageRole.User, Content = "hello" },
@@ -153,7 +154,7 @@ public sealed class DefaultAgentSupervisorTests
             .ReturnsAsync(CreateHandleMock("agent-a", "session-1").Object);
         var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], sessionStore.Object, NullLogger<DefaultAgentSupervisor>.Instance);
 
-        await supervisor.GetOrCreateAsync("agent-a", "session-1");
+        await supervisor.GetOrCreateAsync(AgentId.From("agent-a"), SessionId.From("session-1"));
 
         capturedContext.ShouldNotBeNull();
         capturedContext!.History.Count().ShouldBe(2);
@@ -164,8 +165,8 @@ public sealed class DefaultAgentSupervisorTests
     private static Mock<IAgentHandle> CreateHandleMock(string agentId, string sessionId)
     {
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns(agentId);
-        handle.SetupGet(h => h.SessionId).Returns(sessionId);
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From(agentId));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From(sessionId));
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = "ok" });
@@ -208,7 +209,7 @@ public sealed class DefaultAgentSupervisorTests
 
         // Fire 5 concurrent requests — first starts creation, others wait
         var tasks = Enumerable.Range(0, 5)
-            .Select(_ => supervisor.GetOrCreateAsync("agent-fail", "session-1"))
+            .Select(_ => supervisor.GetOrCreateAsync(AgentId.From("agent-fail"), SessionId.From("session-1")))
             .ToArray();
 
         Func<Task> act = () => Task.WhenAll(tasks);
@@ -247,11 +248,11 @@ public sealed class DefaultAgentSupervisorTests
         var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], Mock.Of<ISessionStore>(), NullLogger<DefaultAgentSupervisor>.Instance);
 
         // First call fails
-        var firstAct = () => supervisor.GetOrCreateAsync("agent-retry", "session-1");
+        var firstAct = () => supervisor.GetOrCreateAsync(AgentId.From("agent-retry"), SessionId.From("session-1"));
         await firstAct.ShouldThrowAsync<InvalidOperationException>();
 
         // Second call should retry creation (not return cached error)
-        var result = await supervisor.GetOrCreateAsync("agent-retry", "session-1");
+        var result = await supervisor.GetOrCreateAsync(AgentId.From("agent-retry"), SessionId.From("session-1"));
         result.ShouldBeSameAs(handle.Object);
         attempt.ShouldBe(2, "second attempt should create successfully");
     }
@@ -282,9 +283,9 @@ public sealed class DefaultAgentSupervisorTests
 
         var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], Mock.Of<ISessionStore>(), NullLogger<DefaultAgentSupervisor>.Instance);
 
-        await supervisor.GetOrCreateAsync("agent-stop", "session-1");
-        await supervisor.GetOrCreateAsync("agent-stop", "session-2");
-        await supervisor.GetOrCreateAsync("agent-stop", "session-3");
+        await supervisor.GetOrCreateAsync(AgentId.From("agent-stop"), SessionId.From("session-1"));
+        await supervisor.GetOrCreateAsync(AgentId.From("agent-stop"), SessionId.From("session-2"));
+        await supervisor.GetOrCreateAsync(AgentId.From("agent-stop"), SessionId.From("session-3"));
 
         handles.Count().ShouldBe(3);
 
@@ -324,9 +325,9 @@ public sealed class DefaultAgentSupervisorTests
 
         var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], Mock.Of<ISessionStore>(), NullLogger<DefaultAgentSupervisor>.Instance);
 
-        await supervisor.GetOrCreateAsync("agent-stop-err", "s1");
-        await supervisor.GetOrCreateAsync("agent-stop-err", "s2");
-        await supervisor.GetOrCreateAsync("agent-stop-err", "s3");
+        await supervisor.GetOrCreateAsync(AgentId.From("agent-stop-err"), SessionId.From("s1"));
+        await supervisor.GetOrCreateAsync(AgentId.From("agent-stop-err"), SessionId.From("s2"));
+        await supervisor.GetOrCreateAsync(AgentId.From("agent-stop-err"), SessionId.From("s3"));
 
         // StopAllAsync should not throw even if one dispose fails
         Func<Task> act = () => supervisor.StopAllAsync();
@@ -352,12 +353,12 @@ public sealed class DefaultAgentSupervisorTests
         strategy.Setup(s => s.CreateAsync(It.IsAny<AgentDescriptor>(), It.IsAny<AgentExecutionContext>(), It.IsAny<CancellationToken>()))
             .Callback<AgentDescriptor, AgentExecutionContext, CancellationToken>((descriptor, _, _) => createdDescriptors.Add(descriptor))
             .Returns((AgentDescriptor descriptor, AgentExecutionContext context, CancellationToken _) =>
-                Task.FromResult(CreateHandleMock(descriptor.AgentId, context.SessionId).Object));
+                Task.FromResult(CreateHandleMock(descriptor.AgentId.Value, context.SessionId).Object));
 
         var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], Mock.Of<ISessionStore>(), NullLogger<DefaultAgentSupervisor>.Instance);
 
-        var firstHandle = await supervisor.GetOrCreateAsync("agent-a", "session-1");
-        var updated = registry.Update("agent-a", new AgentDescriptor
+        var firstHandle = await supervisor.GetOrCreateAsync(AgentId.From("agent-a"), SessionId.From("session-1"));
+        var updated = registry.Update(AgentId.From("agent-a"), new AgentDescriptor
         {
             AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a"),
             DisplayName = "Agent A Updated",
@@ -366,8 +367,8 @@ public sealed class DefaultAgentSupervisorTests
             IsolationStrategy = "test"
         });
 
-        var secondHandle = await supervisor.GetOrCreateAsync("agent-a", "session-2");
-        var refreshedFirstSessionHandle = await supervisor.GetOrCreateAsync("agent-a", "session-1");
+        var secondHandle = await supervisor.GetOrCreateAsync(AgentId.From("agent-a"), SessionId.From("session-2"));
+        var refreshedFirstSessionHandle = await supervisor.GetOrCreateAsync(AgentId.From("agent-a"), SessionId.From("session-1"));
 
         updated.ShouldBeTrue();
         createdDescriptors.Count.ShouldBe(3);

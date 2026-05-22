@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using System.Diagnostics;
 using System.Text.Json;
 using BotNexus.Domain.World;
@@ -758,7 +759,7 @@ public sealed class PlatformConfigurationTests
             {
                 Gateway = new GatewaySettingsConfig
                 {
-                    DefaultAgentId = BotNexus.Domain.Primitives.AgentId.From("config-agent"),
+                    DefaultAgentId = "config-agent",
                     AgentsDirectory = "agents",
                     SessionsDirectory = "sessions",
                     LogLevel = "Information",

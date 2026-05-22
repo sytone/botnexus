@@ -1,4 +1,5 @@
 using BotNexus.Cron;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Api.Controllers;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
@@ -151,7 +152,7 @@ public sealed class CronControllerTests
             Name = "Test Job",
             Schedule = "*/1 * * * *",
             ActionType = actionType,
-            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a"),
+            AgentId = "agent-a",
             Message = "run",
             Enabled = true,
             CreatedBy = "tester",

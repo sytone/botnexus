@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -262,7 +263,7 @@ public sealed class SessionWarmupServiceTests
         registry.Setup(value => value.GetAll())
             .Returns(agentIds.Select(agentId => new AgentDescriptor
             {
-                AgentId = agentId,
+                AgentId = AgentId.From(agentId),
                 DisplayName = agentId,
                 ModelId = "gpt-4.1",
                 ApiProvider = "copilot"
@@ -279,8 +280,8 @@ public sealed class SessionWarmupServiceTests
         BotNexus.Domain.Primitives.ChannelKey? channelType = null)
         => new()
         {
-            SessionId = sessionId,
-            AgentId = agentId,
+            SessionId = SessionId.From(sessionId),
+            AgentId = AgentId.From(agentId),
             Status = status,
             UpdatedAt = updatedAt,
             SessionType = sessionType ?? BotNexus.Domain.Primitives.SessionType.UserAgent,

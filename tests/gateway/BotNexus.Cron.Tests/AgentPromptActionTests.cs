@@ -17,7 +17,7 @@ public sealed class AgentPromptActionTests
         var action = new AgentPromptAction();
         var trigger = new Mock<IInternalTrigger>();
         var registry = new Mock<IAgentRegistry>();
-        AgentId capturedAgentId = default;
+        AgentId? capturedAgentId = null;
         string? capturedPrompt = null;
         InternalTriggerRequest? capturedRequest = null;
         var createdSession = SessionId.From("cron:job-1:run-1");

@@ -70,7 +70,7 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
         activity?.SetTag("botnexus.session.id", parentSessionId);
         activity?.SetTag("botnexus.correlation.id", System.Diagnostics.Activity.Current?.TraceId.ToString());
 
-        var childSessionId = SessionId.ForSubAgent(parentSessionId, childAgentId);
+        var childSessionId = SessionId.ForSubAgent(parentSessionId, childAgentId.Value);
         using (_logger.BeginScope(new Dictionary<string, object?>
         {
             ["ParentAgentId"] = parentAgentId.Value,
@@ -128,7 +128,7 @@ public sealed class DefaultAgentCommunicator : IAgentCommunicator
         if (!_registry.Contains(targetAgentId))
             throw new KeyNotFoundException($"Agent '{targetAgentId}' is not registered.");
 
-        var crossSessionId = SessionId.From($"{SessionId.ForCrossAgent(sourceAgentId, targetAgentId)}::{Guid.NewGuid():N}");
+        var crossSessionId = SessionId.From($"{SessionId.ForCrossAgent(sourceAgentId.Value, targetAgentId.Value)}::{Guid.NewGuid():N}");
         using (_logger.BeginScope(new Dictionary<string, object?>
         {
             ["SourceAgentId"] = sourceAgentId.Value,

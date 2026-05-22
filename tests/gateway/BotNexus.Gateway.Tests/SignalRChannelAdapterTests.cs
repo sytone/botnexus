@@ -55,8 +55,8 @@ public sealed class SignalRChannelAdapterTests
             UserInputRequest = new AskUserRequest
             {
                 RequestId = "request-1",
-                AgentId = "agent-a",
-                SessionId = "session-2",
+                AgentId = AgentId.From("agent-a"),
+                SessionId = SessionId.From("session-2"),
                 ConversationId = ConversationId.From("conversation-2"),
                 Prompt = "Pick one"
             }

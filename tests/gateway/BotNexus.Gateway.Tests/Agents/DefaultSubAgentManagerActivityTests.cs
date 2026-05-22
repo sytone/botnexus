@@ -4,6 +4,7 @@ using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
 using BotNexus.Agent.Core.Types;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -121,8 +122,8 @@ public sealed class DefaultSubAgentManagerActivityTests
     private static Mock<IAgentHandle> CreateSuccessfulHandle()
     {
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("parent-agent");
-        handle.SetupGet(h => h.SessionId).Returns("session");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("parent-agent"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session"));
         handle.SetupGet(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = "completed" });
@@ -136,8 +137,8 @@ public sealed class DefaultSubAgentManagerActivityTests
     private static Mock<IAgentHandle> CreateFailingHandle()
     {
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("parent-agent");
-        handle.SetupGet(h => h.SessionId).Returns("session");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("parent-agent"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session"));
         handle.SetupGet(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("boom"));
@@ -151,8 +152,8 @@ public sealed class DefaultSubAgentManagerActivityTests
     private static Mock<IAgentHandle> CreateHangingHandle()
     {
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("parent-agent");
-        handle.SetupGet(h => h.SessionId).Returns("session");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("parent-agent"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session"));
         handle.SetupGet(h => h.IsRunning).Returns(true);
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns<string, CancellationToken>(async (_, cancellationToken) =>

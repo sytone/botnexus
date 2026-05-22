@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
@@ -18,7 +19,7 @@ public sealed class SessionsControllerTests
     public async Task List_WithExistingSessions_ReturnsSessions()
     {
         var store = new InMemorySessionStore();
-        await store.GetOrCreateAsync("s1", "agent-a");
+        await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         var controller = new SessionsController(store);
 
         var actionResult = await controller.List(null, cancellationToken: CancellationToken.None);
@@ -44,7 +45,7 @@ public sealed class SessionsControllerTests
     public async Task Delete_WithAnySession_ReturnsNoContent()
     {
         var store = new InMemorySessionStore();
-        await store.GetOrCreateAsync("s1", "agent-a");
+        await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         var controller = new SessionsController(store);
 
         var result = await controller.Delete("s1", CancellationToken.None);
@@ -67,12 +68,12 @@ public sealed class SessionsControllerTests
     public async Task ListSubAgents_WithKnownSession_ReturnsSessionSubAgents()
     {
         var store = new InMemorySessionStore();
-        await store.GetOrCreateAsync("s1", "agent-a");
+        await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         var expected = new[]
         {
             new SubAgentInfo
             {
-                SubAgentId = BotNexus.Domain.Primitives.AgentId.From("sub-1"),
+                SubAgentId = "sub-1",
                 ParentSessionId = BotNexus.Domain.Primitives.SessionId.From("s1"),
                 ChildSessionId = BotNexus.Domain.Primitives.SessionId.From("s1::subagent::sub-1"),
                 Task = "task",
@@ -83,7 +84,7 @@ public sealed class SessionsControllerTests
 
         var subAgentManager = new Mock<ISubAgentManager>();
         subAgentManager
-            .Setup(manager => manager.ListAsync("s1", It.IsAny<CancellationToken>()))
+            .Setup(manager => manager.ListAsync(SessionId.From("s1"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(expected);
 
         var controller = new SessionsController(store, subAgentManager.Object);
@@ -98,13 +99,13 @@ public sealed class SessionsControllerTests
     public async Task KillSubAgent_WithMismatchedParent_ReturnsForbidden()
     {
         var store = new InMemorySessionStore();
-        await store.GetOrCreateAsync("s1", "agent-a");
+        await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         var subAgentManager = new Mock<ISubAgentManager>();
         subAgentManager
             .Setup(manager => manager.GetAsync("sub-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new SubAgentInfo
             {
-                SubAgentId = BotNexus.Domain.Primitives.AgentId.From("sub-1"),
+                SubAgentId = "sub-1",
                 ParentSessionId = BotNexus.Domain.Primitives.SessionId.From("different-session"),
                 ChildSessionId = BotNexus.Domain.Primitives.SessionId.From("different-session::subagent::sub-1"),
                 Task = "task",
@@ -123,7 +124,7 @@ public sealed class SessionsControllerTests
     public async Task KillSubAgent_WithUnknownSubAgent_ReturnsNotFound()
     {
         var store = new InMemorySessionStore();
-        await store.GetOrCreateAsync("s1", "agent-a");
+        await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         var subAgentManager = new Mock<ISubAgentManager>();
         subAgentManager
             .Setup(manager => manager.GetAsync("missing-sub", It.IsAny<CancellationToken>()))
@@ -139,13 +140,13 @@ public sealed class SessionsControllerTests
     public async Task KillSubAgent_WhenOwnedAndKilled_ReturnsNoContent()
     {
         var store = new InMemorySessionStore();
-        await store.GetOrCreateAsync("s1", "agent-a");
+        await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         var subAgentManager = new Mock<ISubAgentManager>();
         subAgentManager
             .Setup(manager => manager.GetAsync("sub-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new SubAgentInfo
             {
-                SubAgentId = BotNexus.Domain.Primitives.AgentId.From("sub-1"),
+                SubAgentId = "sub-1",
                 ParentSessionId = BotNexus.Domain.Primitives.SessionId.From("s1"),
                 ChildSessionId = BotNexus.Domain.Primitives.SessionId.From("s1::subagent::sub-1"),
                 Task = "task",
@@ -153,7 +154,7 @@ public sealed class SessionsControllerTests
                 StartedAt = DateTimeOffset.UtcNow
             });
         subAgentManager
-            .Setup(manager => manager.KillAsync("sub-1", "s1", It.IsAny<CancellationToken>()))
+            .Setup(manager => manager.KillAsync("sub-1", SessionId.From("s1"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
         var controller = new SessionsController(store, subAgentManager.Object);
@@ -166,7 +167,7 @@ public sealed class SessionsControllerTests
     public async Task GetHistory_WithDefaults_ReturnsPagedHistoryAndTotalCount()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         for (var i = 0; i < 60; i++)
             session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"m-{i}" });
 
@@ -187,7 +188,7 @@ public sealed class SessionsControllerTests
     public async Task GetHistory_WithOffsetAndLargeLimit_AppliesPaginationAndLimitCap()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         for (var i = 0; i < 260; i++)
             session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"m-{i}" });
 
@@ -209,7 +210,7 @@ public sealed class SessionsControllerTests
     public async Task GetHistory_WithOffsetBeyondTotal_ReturnsEmptyPageWithTotalCount()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         for (var i = 0; i < 3; i++)
             session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"m-{i}" });
 
@@ -228,7 +229,7 @@ public sealed class SessionsControllerTests
     public async Task GetHistory_WithEmptySession_ReturnsEmptyEntriesAndZeroTotal()
     {
         var store = new InMemorySessionStore();
-        await store.GetOrCreateAsync("s1", "agent-a");
+        await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         var controller = new SessionsController(store);
 
         var result = await controller.GetHistory("s1", cancellationToken: CancellationToken.None);
@@ -243,7 +244,7 @@ public sealed class SessionsControllerTests
     public async Task Suspend_WithActiveSession_TransitionsToSuspended()
     {
         var store = new InMemorySessionStore();
-        await store.GetOrCreateAsync("s1", "agent-a");
+        await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         var controller = new SessionsController(store);
 
         var result = await controller.Suspend("s1", CancellationToken.None);
@@ -267,7 +268,7 @@ public sealed class SessionsControllerTests
     public async Task Suspend_WithInvalidState_ReturnsConflict()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.Status = SessionStatus.Suspended;
         var controller = new SessionsController(store);
 
@@ -280,7 +281,7 @@ public sealed class SessionsControllerTests
     public async Task Resume_WithSuspendedSession_TransitionsToActive()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.Status = SessionStatus.Suspended;
         var controller = new SessionsController(store);
 
@@ -295,7 +296,7 @@ public sealed class SessionsControllerTests
     public async Task Resume_WithInvalidState_ReturnsConflict()
     {
         var store = new InMemorySessionStore();
-        await store.GetOrCreateAsync("s1", "agent-a");
+        await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         var controller = new SessionsController(store);
 
         var result = await controller.Resume("s1", CancellationToken.None);
@@ -317,7 +318,7 @@ public sealed class SessionsControllerTests
     public async Task GetMetadata_WithExistingSession_ReturnsMetadata()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.Metadata["tenantId"] = "tenant-a";
         var controller = new SessionsController(store);
 
@@ -333,7 +334,7 @@ public sealed class SessionsControllerTests
     public async Task GetMetadata_WithEmptyMetadata_ReturnsEmptyDictionary()
     {
         var store = new InMemorySessionStore();
-        await store.GetOrCreateAsync("s1", "agent-a");
+        await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         var controller = new SessionsController(store);
 
         var result = await controller.GetMetadata("s1", CancellationToken.None);
@@ -357,7 +358,7 @@ public sealed class SessionsControllerTests
     public async Task GetMetadata_WithMismatchedCaller_ReturnsForbidden()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.CallerId = "caller-a";
         var controller = new SessionsController(store);
         controller.ControllerContext = CreateControllerContext("caller-b");
@@ -372,7 +373,7 @@ public sealed class SessionsControllerTests
     public async Task GetMetadata_WithMatchingCaller_ReturnsMetadata()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.CallerId = "caller-a";
         session.Metadata["locale"] = "en-US";
 
@@ -392,7 +393,7 @@ public sealed class SessionsControllerTests
     public async Task GetMetadata_WithMissingCallerIdentity_SkipsAuthorizationCheck()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.CallerId = "caller-a";
         session.Metadata["locale"] = "en-US";
 
@@ -418,7 +419,7 @@ public sealed class SessionsControllerTests
     public async Task PatchMetadata_WithMismatchedCaller_ReturnsForbidden()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.CallerId = "caller-a";
         var controller = new SessionsController(store);
         controller.ControllerContext = CreateControllerContext("caller-b");
@@ -434,7 +435,7 @@ public sealed class SessionsControllerTests
     public async Task PatchMetadata_WithMatchingCaller_UpdatesMetadata()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.CallerId = "caller-a";
 
         var controller = new SessionsController(store)
@@ -455,7 +456,7 @@ public sealed class SessionsControllerTests
     public async Task PatchMetadata_WithMissingCallerIdentity_SkipsAuthorizationCheck()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.CallerId = "caller-a";
 
         var controller = new SessionsController(store);
@@ -470,7 +471,7 @@ public sealed class SessionsControllerTests
     public async Task PatchMetadata_WithObjectBody_MergesAndRemovesKeys()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.Metadata["removeMe"] = "x";
         var controller = new SessionsController(store);
         using var patchDocument = JsonDocument.Parse("""{"theme":"dark","removeMe":null,"nested":{"key":"value"}}""");
@@ -490,7 +491,7 @@ public sealed class SessionsControllerTests
     public async Task PatchMetadata_WithNonObjectBody_ReturnsBadRequest()
     {
         var store = new InMemorySessionStore();
-        await store.GetOrCreateAsync("s1", "agent-a");
+        await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         var controller = new SessionsController(store);
         using var patchDocument = JsonDocument.Parse("""["not","an","object"]""");
 
@@ -503,7 +504,7 @@ public sealed class SessionsControllerTests
     public async Task PatchMetadata_WithObjectBody_MergesWithoutRemovingExistingKeys()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.Metadata["existing"] = "value";
         var controller = new SessionsController(store);
         using var patchDocument = JsonDocument.Parse("""{"theme":"dark"}""");
@@ -520,7 +521,7 @@ public sealed class SessionsControllerTests
     public async Task PatchMetadata_WithNullValue_RemovesOnlyTargetedKey()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.Metadata["removeMe"] = "value";
         session.Metadata["keepMe"] = "value";
         var controller = new SessionsController(store);
@@ -538,7 +539,7 @@ public sealed class SessionsControllerTests
     public async Task PatchMetadata_PersistsChangesInSessionStore()
     {
         var store = new InMemorySessionStore();
-        await store.GetOrCreateAsync("s1", "agent-a");
+        await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         var controller = new SessionsController(store);
         using var patchDocument = JsonDocument.Parse("""{"locale":"en-US"}""");
 
@@ -553,7 +554,7 @@ public sealed class SessionsControllerTests
     public async Task PatchMetadata_ConvertsJsonValuesToExpectedTypes()
     {
         var store = new InMemorySessionStore();
-        await store.GetOrCreateAsync("s1", "agent-a");
+        await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         var controller = new SessionsController(store);
         using var patchDocument = JsonDocument.Parse("""{"count":2,"enabled":true,"threshold":1.5,"tags":["a","b"]}""");
 
@@ -573,7 +574,7 @@ public sealed class SessionsControllerTests
     public async Task Seal_ExpiredSubAgent_Returns200()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("parent::subagent::child1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("parent::subagent::child1"), AgentId.From("agent-a"));
         session.Status = SessionStatus.Expired;
         var controller = new SessionsController(store);
         var before = DateTimeOffset.UtcNow;
@@ -589,7 +590,7 @@ public sealed class SessionsControllerTests
     public async Task Seal_AlreadySealed_Returns204()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("parent::subagent::child2", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("parent::subagent::child2"), AgentId.From("agent-a"));
         session.Status = SessionStatus.Sealed;
         var controller = new SessionsController(store);
 
@@ -612,7 +613,7 @@ public sealed class SessionsControllerTests
     public async Task Seal_NonSubAgentSession_Returns400()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("regular-session-id", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("regular-session-id"), AgentId.From("agent-a"));
         session.Status = SessionStatus.Expired;
         var controller = new SessionsController(store);
 
@@ -625,7 +626,7 @@ public sealed class SessionsControllerTests
     public async Task Seal_ActiveSession_Returns409()
     {
         var store = new InMemorySessionStore();
-        await store.GetOrCreateAsync("parent::subagent::child3", "agent-a");
+        await store.GetOrCreateAsync(SessionId.From("parent::subagent::child3"), AgentId.From("agent-a"));
         var controller = new SessionsController(store);
 
         var result = await controller.Seal("parent::subagent::child3", CancellationToken.None);
@@ -637,7 +638,7 @@ public sealed class SessionsControllerTests
     public async Task Seal_SuspendedSession_Returns409()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("parent::subagent::child4", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("parent::subagent::child4"), AgentId.From("agent-a"));
         session.Status = SessionStatus.Suspended;
         var controller = new SessionsController(store);
 
@@ -650,7 +651,7 @@ public sealed class SessionsControllerTests
     public async Task Seal_PersistsChangesInSessionStore()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("parent::subagent::child5", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("parent::subagent::child5"), AgentId.From("agent-a"));
         session.Status = SessionStatus.Expired;
         var controller = new SessionsController(store);
 
@@ -665,7 +666,7 @@ public sealed class SessionsControllerTests
     public async Task Seal_ReturnsSessionIdAndStatusInBody()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("parent::subagent::child6", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("parent::subagent::child6"), AgentId.From("agent-a"));
         session.Status = SessionStatus.Expired;
         var controller = new SessionsController(store);
 
@@ -687,7 +688,7 @@ public sealed class SessionsControllerTests
     public async Task Seal_ConcurrentSealRequests_SecondReturns204()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("parent::subagent::concurrent1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("parent::subagent::concurrent1"), AgentId.From("agent-a"));
         session.Status = SessionStatus.Expired;
         var controller = new SessionsController(store);
 
@@ -703,7 +704,7 @@ public sealed class SessionsControllerTests
     public async Task Seal_PreservesOtherSessionProperties()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("parent::subagent::preserve1", "agent-b");
+        var session = await store.GetOrCreateAsync(SessionId.From("parent::subagent::preserve1"), AgentId.From("agent-b"));
         session.Status = SessionStatus.Expired;
         session.Metadata["key1"] = "value1";
         var originalCreatedAt = session.CreatedAt;
@@ -728,7 +729,7 @@ public sealed class SessionsControllerTests
     public async Task Seal_SubAgentSessionId_VariousFormats(string sessionId)
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync(sessionId, "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From("agent-a"));
         session.Status = SessionStatus.Expired;
         var controller = new SessionsController(store);
 
@@ -742,7 +743,7 @@ public sealed class SessionsControllerTests
     public async Task Seal_UpdatesTimestamp()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("parent::subagent::timestamp1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("parent::subagent::timestamp1"), AgentId.From("agent-a"));
         session.Status = SessionStatus.Expired;
         var pastTimestamp = session.UpdatedAt.AddMinutes(-5);
         session.UpdatedAt = pastTimestamp;
@@ -758,7 +759,7 @@ public sealed class SessionsControllerTests
     public async Task GetSessions_ReturnsConversationId_WhenSet()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s-conv-1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s-conv-1"), AgentId.From("agent-a"));
         var knownConvId = BotNexus.Domain.Primitives.ConversationId.From("c_testconvid123");
         session.Session.ConversationId = knownConvId;
         await store.SaveAsync(session);
@@ -778,7 +779,7 @@ public sealed class SessionsControllerTests
     public async Task GetSession_ById_ReturnsConversationId()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s-conv-2", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s-conv-2"), AgentId.From("agent-a"));
         var knownConvId = BotNexus.Domain.Primitives.ConversationId.From("c_testconvid456");
         session.Session.ConversationId = knownConvId;
         await store.SaveAsync(session);
@@ -796,15 +797,15 @@ public sealed class SessionsControllerTests
     public async Task List_ByDefault_ExcludesSealedAndExpiredSessions()
     {
         var store = new InMemorySessionStore();
-        var activeSession = await store.GetOrCreateAsync("s-active", "agent-a");
+        var activeSession = await store.GetOrCreateAsync(SessionId.From("s-active"), AgentId.From("agent-a"));
         activeSession.Status = SessionStatus.Active;
         await store.SaveAsync(activeSession);
 
-        var sealedSession = await store.GetOrCreateAsync("s-sealed", "agent-a");
+        var sealedSession = await store.GetOrCreateAsync(SessionId.From("s-sealed"), AgentId.From("agent-a"));
         sealedSession.Status = SessionStatus.Sealed;
         await store.SaveAsync(sealedSession);
 
-        var expiredSession = await store.GetOrCreateAsync("s-expired", "agent-a");
+        var expiredSession = await store.GetOrCreateAsync(SessionId.From("s-expired"), AgentId.From("agent-a"));
         expiredSession.Status = SessionStatus.Expired;
         await store.SaveAsync(expiredSession);
 
@@ -828,15 +829,15 @@ public sealed class SessionsControllerTests
     public async Task List_WithIncludeInactive_ReturnsSealedAndExpiredSessions()
     {
         var store = new InMemorySessionStore();
-        var activeSession = await store.GetOrCreateAsync("s-active", "agent-a");
+        var activeSession = await store.GetOrCreateAsync(SessionId.From("s-active"), AgentId.From("agent-a"));
         activeSession.Status = SessionStatus.Active;
         await store.SaveAsync(activeSession);
 
-        var sealedSession = await store.GetOrCreateAsync("s-sealed", "agent-a");
+        var sealedSession = await store.GetOrCreateAsync(SessionId.From("s-sealed"), AgentId.From("agent-a"));
         sealedSession.Status = SessionStatus.Sealed;
         await store.SaveAsync(sealedSession);
 
-        var expiredSession = await store.GetOrCreateAsync("s-expired", "agent-a");
+        var expiredSession = await store.GetOrCreateAsync(SessionId.From("s-expired"), AgentId.From("agent-a"));
         expiredSession.Status = SessionStatus.Expired;
         await store.SaveAsync(expiredSession);
 

@@ -27,7 +27,7 @@ public sealed class DefaultAgentRegistry : IAgentRegistry
     {
         lock (_sync)
         {
-            if (!_agents.TryAdd(descriptor.AgentId, descriptor))
+            if (!_agents.TryAdd(descriptor.AgentId.Value, descriptor))
                 throw new InvalidOperationException($"Agent '{descriptor.AgentId}' is already registered.");
 
             _logger.LogInformation("Registered agent '{AgentId}' ({DisplayName})", descriptor.AgentId, descriptor.DisplayName);
@@ -44,7 +44,7 @@ public sealed class DefaultAgentRegistry : IAgentRegistry
     {
         lock (_sync)
         {
-            if (_agents.Remove(agentId))
+            if (_agents.Remove(agentId.Value))
             {
                 _logger.LogInformation("Unregistered agent '{AgentId}'", agentId);
                 PublishActivity(
@@ -59,15 +59,15 @@ public sealed class DefaultAgentRegistry : IAgentRegistry
     /// <inheritdoc />
     public bool Update(AgentId agentId, AgentDescriptor descriptor)
     {
-        if (!string.Equals(agentId, descriptor.AgentId, StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(agentId.Value, descriptor.AgentId.Value, StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("The descriptor AgentId must match the route agentId.", nameof(descriptor));
 
         lock (_sync)
         {
-            if (!_agents.ContainsKey(agentId))
+            if (!_agents.ContainsKey(agentId.Value))
                 return false;
 
-            _agents[agentId] = descriptor;
+            _agents[agentId.Value] = descriptor;
             _logger.LogInformation("Updated agent '{AgentId}' ({DisplayName})", descriptor.AgentId, descriptor.DisplayName);
             PublishActivity(
                 GatewayActivityType.AgentConfigChanged,
@@ -81,7 +81,7 @@ public sealed class DefaultAgentRegistry : IAgentRegistry
     /// <inheritdoc />
     public AgentDescriptor? Get(AgentId agentId)
     {
-        lock (_sync) return _agents.GetValueOrDefault(agentId);
+        lock (_sync) return _agents.GetValueOrDefault(agentId.Value);
     }
 
     /// <inheritdoc />
@@ -93,7 +93,7 @@ public sealed class DefaultAgentRegistry : IAgentRegistry
     /// <inheritdoc />
     public bool Contains(AgentId agentId)
     {
-        lock (_sync) return _agents.ContainsKey(agentId);
+        lock (_sync) return _agents.ContainsKey(agentId.Value);
     }
 
     private void PublishActivity(GatewayActivityType type, AgentId agentId, string message, IReadOnlyDictionary<string, object?>? data)
@@ -106,7 +106,7 @@ public sealed class DefaultAgentRegistry : IAgentRegistry
             _activity.PublishAsync(new GatewayActivity
             {
                 Type = type,
-                AgentId = agentId,
+                AgentId = agentId.Value,
                 Message = message,
                 Data = data
             }).GetAwaiter().GetResult();

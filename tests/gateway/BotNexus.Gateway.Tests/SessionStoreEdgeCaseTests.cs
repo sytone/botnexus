@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Api.Controllers;
 using BotNexus.Gateway.Sessions;
@@ -16,7 +17,7 @@ public sealed class SessionStoreEdgeCaseTests
         var store = fixture.CreateStore();
         const string sessionId = "../../../etc/shadow";
 
-        var session = await store.GetOrCreateAsync(sessionId, "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From("agent-a"));
         await store.SaveAsync(session);
 
         var encodedName = Uri.EscapeDataString(sessionId);
@@ -28,16 +29,15 @@ public sealed class SessionStoreEdgeCaseTests
     }
 
     [Fact]
-    public async Task FileStore_NullAndEmptySessionIds_AreHandledDeterministically()
+    public void SessionId_NullAndEmpty_AreRejectedByValueObject()
     {
-        using var fixture = new StoreFixture();
-        var store = fixture.CreateStore();
-
-        var nullAct = async () => await store.GetOrCreateAsync(null!, "agent-a");
-        await nullAct.ShouldThrowAsync<ArgumentException>();
-
-        var emptyAct = async () => await store.GetOrCreateAsync(string.Empty, "agent-a");
-        await emptyAct.ShouldThrowAsync<ArgumentException>();
+        // Validation previously enforced by FileSessionStore has moved into the
+        // SessionId value object; bad ids never reach the store. SessionId is still hand-rolled
+        // and throws ArgumentException; the Vogen migration of SessionId will switch this to
+        // ValueObjectValidationException in a later batch.
+        Should.Throw<ArgumentException>(() => SessionId.From(null!));
+        Should.Throw<ArgumentException>(() => SessionId.From(string.Empty));
+        Should.Throw<ArgumentException>(() => SessionId.From("   "));
     }
 
     [Fact]
@@ -47,7 +47,7 @@ public sealed class SessionStoreEdgeCaseTests
         var store = fixture.CreateStore();
 
         var sessions = await Task.WhenAll(Enumerable.Range(0, 50)
-            .Select(_ => store.GetOrCreateAsync("shared-session", "agent-a")));
+            .Select(_ => store.GetOrCreateAsync(SessionId.From("shared-session"), AgentId.From("agent-a"))));
 
         var first = sessions[0];
         sessions.ShouldAllBe(session => ReferenceEquals(session, first));
@@ -61,7 +61,7 @@ public sealed class SessionStoreEdgeCaseTests
     public async Task SessionsController_GetHistory_WithLargeHistory_PaginatesCorrectly()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("large-history", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("large-history"), AgentId.From("agent-a"));
         for (var i = 0; i < 1200; i++)
             session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"m-{i}" });
 

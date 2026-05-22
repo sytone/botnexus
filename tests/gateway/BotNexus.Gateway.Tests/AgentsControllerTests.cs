@@ -1,4 +1,5 @@
 using BotNexus.Cron;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
@@ -89,20 +90,12 @@ public sealed class AgentsControllerTests
         result.Result.ShouldBeOfType<BadRequestObjectResult>();
     }
 
-     [Fact]
-    public async Task Update_WithEmptyPayloadAgentId_UsesRouteAgentId()
-    {
-        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
-        registry.Register(CreateDescriptor("agent-a"));
-        var controller = CreateController(registry);
-        var payload = CreateDescriptor("agent-a") with { AgentId = default };
-
-        var result = await controller.Update("agent-a", payload, CancellationToken.None);
-        var updated = (result.Result as OkObjectResult)?.Value as AgentDescriptor;
-
-        updated.ShouldNotBeNull();
-        updated!.AgentId.Value.ShouldBe("agent-a");
-    }
+    // Update_WithEmptyPayloadAgentId_UsesRouteAgentId was removed: AgentId is now a Vogen value
+    // object that cannot be default. The "empty payload AgentId" branch (which the route param
+    // backfilled) is no longer reachable; if a client wants to update an agent they must send
+    // the AgentId in the payload, otherwise the JSON deserializer or AgentId.From throws first.
+    // The route-vs-payload mismatch path (Update_WithMismatchedAgentIds_ReturnsBadRequest) still
+    // covers the meaningful behaviour.
 
      [Fact]
     public async Task Register_WithValidDescriptor_PersistsConfiguration()
@@ -375,8 +368,8 @@ public sealed class AgentsControllerTests
         ]);
 
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("agent-a");
-        handle.SetupGet(h => h.SessionId).Returns("s1");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("s1"));
 
         supervisor.As<IAgentHandleInspector>()
             .Setup(s => s.GetHandle(BotNexus.Domain.Primitives.AgentId.From("agent-a"), BotNexus.Domain.Primitives.SessionId.From("s1")))
@@ -410,8 +403,8 @@ public sealed class AgentsControllerTests
         ]);
 
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("agent-a");
-        handle.SetupGet(h => h.SessionId).Returns("s1");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("s1"));
         handle.As<IHealthCheckable>()
             .Setup(h => h.PingAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
@@ -448,8 +441,8 @@ public sealed class AgentsControllerTests
         ]);
 
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("agent-a");
-        handle.SetupGet(h => h.SessionId).Returns("s1");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("s1"));
         handle.As<IHealthCheckable>()
             .Setup(h => h.PingAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
@@ -471,7 +464,7 @@ public sealed class AgentsControllerTests
     private static AgentDescriptor CreateDescriptor(string agentId)
         => new()
         {
-            AgentId = agentId,
+            AgentId = AgentId.From(agentId),
             DisplayName = $"{agentId}-display",
             ModelId = "test-model",
             ApiProvider = "test-provider"
@@ -575,7 +568,7 @@ public sealed class AgentsControllerTests
     private static AgentDescriptor CreateDescriptorWithHeartbeat(string agentId)
         => new()
         {
-            AgentId = agentId,
+            AgentId = AgentId.From(agentId),
             DisplayName = $"{agentId}-display",
             ModelId = "test-model",
             ApiProvider = "test-provider",

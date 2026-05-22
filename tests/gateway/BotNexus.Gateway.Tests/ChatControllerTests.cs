@@ -74,7 +74,7 @@ public sealed class ChatControllerTests
     {
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.GetOrCreateAsync(BotNexus.Domain.Primitives.AgentId.From("agent-a"), It.IsAny<BotNexus.Domain.Primitives.SessionId>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new AgentConcurrencyLimitExceededException("agent-a", 1));
+            .ThrowsAsync(new AgentConcurrencyLimitExceededException(BotNexus.Domain.Primitives.AgentId.From("agent-a"), 1));
 
         var sessionStore = new Mock<ISessionStore>();
         sessionStore.Setup(s => s.GetOrCreateAsync(It.IsAny<BotNexus.Domain.Primitives.SessionId>(), BotNexus.Domain.Primitives.AgentId.From("agent-a"), It.IsAny<CancellationToken>()))

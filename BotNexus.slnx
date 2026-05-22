@@ -61,6 +61,9 @@
     <Project Path="tests/agent/BotNexus.Agent.Providers.OpenAI.Tests/BotNexus.Agent.Providers.OpenAI.Tests.csproj" />
     <Project Path="tests/agent/BotNexus.Agent.Providers.OpenAICompat.Tests/BotNexus.Agent.Providers.OpenAICompat.Tests.csproj" />
   </Folder>
+  <Folder Name="/tests/architecture/">
+    <Project Path="tests/architecture/BotNexus.Architecture.Tests/BotNexus.Architecture.Tests.csproj" />
+  </Folder>
   <Folder Name="/tests/domain/">
     <Project Path="tests/domain/BotNexus.Domain.Tests/BotNexus.Domain.Tests.csproj" />
   </Folder>

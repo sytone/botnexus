@@ -52,7 +52,7 @@ public sealed class DefaultMessageRouter : IMessageRouter
         {
             var targetAgentId = AgentId.From(message.TargetAgentId);
             if (_registry.Contains(targetAgentId))
-                return Complete([targetAgentId]);
+                return Complete([targetAgentId.Value]);
 
             _logger.LogWarning("Explicit target agent '{AgentId}' not found", message.TargetAgentId);
             return Complete([]);
@@ -65,7 +65,7 @@ public sealed class DefaultMessageRouter : IMessageRouter
             sessionActivity?.SetTag("botnexus.session.id", message.SessionId);
             var session = await _sessions.GetAsync(SessionId.From(message.SessionId), cancellationToken);
             if (session is not null && _registry.Contains(session.AgentId))
-                return Complete([session.AgentId]);
+                return Complete([session.AgentId.Value]);
         }
 
         // Priority 3: Default agent
@@ -74,7 +74,7 @@ public sealed class DefaultMessageRouter : IMessageRouter
         {
             var typedDefaultAgentId = AgentId.From(defaultAgentId);
             if (_registry.Contains(typedDefaultAgentId))
-                return Complete([typedDefaultAgentId]);
+                return Complete([typedDefaultAgentId.Value]);
         }
 
         _logger.LogWarning("No routable agent found for message from {ChannelType}:{SenderId}", message.ChannelType, message.SenderId);
