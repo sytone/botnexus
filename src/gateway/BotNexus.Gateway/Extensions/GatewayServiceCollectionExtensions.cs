@@ -173,6 +173,10 @@ public static class GatewayServiceCollectionExtensions
         // Built-in tools
         services.AddBotNexusTools();
 
+        // Built-in platform agents (researcher, coder, planner, reviewer, writer, analyst)
+        services.AddSingleton<IAgentConfigurationSource, BuiltInAgentConfigurationSource>();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, AgentConfigurationHostedService>());
+
         // Gateway host
         services.TryAddSingleton<GatewayHost>();
         services.TryAddSingleton<IChannelDispatcher>(serviceProvider => serviceProvider.GetRequiredService<GatewayHost>());
