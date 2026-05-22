@@ -234,6 +234,57 @@ public sealed class ConversationsController : ControllerBase
     }
 
     /// <summary>
+    /// Moves a channel binding from one conversation to another.
+    /// The binding is removed from the source conversation and added to the target.
+    /// If source and target are the same conversation, the operation succeeds as a no-op.
+    /// </summary>
+    /// <param name="conversationId">The source conversation identifier.</param>
+    /// <param name="bindingId">The binding identifier to move.</param>
+    /// <param name="request">The move request body containing the target conversation ID.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>204 No Content on success, 400 if request is invalid, 404 if conversation or binding not found.</returns>
+    [HttpPost("{conversationId}/bindings/{bindingId}/move")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> MoveBinding(
+        string conversationId,
+        string bindingId,
+        [FromBody] MoveBindingRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.TargetConversationId))
+            return BadRequest(new { error = "targetConversationId is required." });
+
+        var source = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
+        if (source is null)
+            return NotFound();
+
+        var binding = source.ChannelBindings.FirstOrDefault(b =>
+            string.Equals(b.BindingId.Value, bindingId, StringComparison.Ordinal));
+        if (binding is null)
+            return NotFound();
+
+        // Same conversation — no-op
+        if (string.Equals(conversationId, request.TargetConversationId, StringComparison.OrdinalIgnoreCase))
+            return NoContent();
+
+        var target = await _conversations.GetAsync(ConversationId.From(request.TargetConversationId), cancellationToken);
+        if (target is null)
+            return NotFound();
+
+        source.ChannelBindings.Remove(binding);
+        source.UpdatedAt = DateTimeOffset.UtcNow;
+        target.ChannelBindings.Add(binding);
+        target.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await _conversations.SaveAsync(source, cancellationToken);
+        await _conversations.SaveAsync(target, cancellationToken);
+
+        return NoContent();
+    }
+
+    /// <summary>
     /// Returns assembled conversation history across all sessions linked to this conversation,
     /// ordered chronologically with session boundary markers between sessions.
     /// </summary>

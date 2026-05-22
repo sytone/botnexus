@@ -22,6 +22,10 @@ public sealed record AddBindingRequest(
     string? ThreadingMode,
     string? DisplayPrefix);
 
+/// <summary>Request body for moving a channel binding to a different conversation.</summary>
+/// <param name="TargetConversationId">The conversation to receive the binding.</param>
+public sealed record MoveBindingRequest(string TargetConversationId);
+
 /// <summary>Full conversation response including bindings.</summary>
 public sealed record ConversationResponse(
     string ConversationId,
