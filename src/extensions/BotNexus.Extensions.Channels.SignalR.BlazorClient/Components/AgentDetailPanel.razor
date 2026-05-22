@@ -1,4 +1,4 @@
-@inject NavigationManager Nav
+﻿@inject NavigationManager Nav
 @inject HttpClient Http
 @implements IDisposable
 
@@ -195,6 +195,94 @@ else if (_form is not null)
             </div>
         </section>
 
+        @* -- Tools & Sub-Agents -- *@
+        <section class="agent-detail-section">
+            <h3 class="agent-detail-section-title">Tools &amp; Sub-Agents</h3>
+            <div class="agent-detail-field">
+                <label class="agent-detail-label">Tool IDs</label>
+                <div class="agent-detail-tag-list" data-testid="tool-ids-list">
+                    @foreach (var toolId in _form!.ToolIds)
+                    {
+                        <span class="agent-tag">
+                            @toolId
+                            <button class="agent-tag-remove" @onclick="() => RemoveToolId(toolId)" title="Remove">&times;</button>
+                        </span>
+                    }
+                    <input class="agent-tag-input" placeholder="Add tool id..." @bind="_newToolId" @bind:event="oninput"
+                           @onkeydown="OnToolIdKeyDown" />
+                </div>
+            </div>
+            <div class="agent-detail-field">
+                <label class="agent-detail-label">Sub-Agent IDs</label>
+                <div class="agent-detail-tag-list" data-testid="sub-agent-ids-list">
+                    @foreach (var subId in _form!.SubAgentIds)
+                    {
+                        <span class="agent-tag">
+                            @subId
+                            <button class="agent-tag-remove" @onclick="() => RemoveSubAgentId(subId)" title="Remove">&times;</button>
+                        </span>
+                    }
+                    <input class="agent-tag-input" placeholder="Add sub-agent id..." @bind="_newSubAgentId" @bind:event="oninput"
+                           @onkeydown="OnSubAgentIdKeyDown" />
+                </div>
+            </div>
+        </section>
+
+        @* -- File Access -- *@
+        <section class="agent-detail-section">
+            <h3 class="agent-detail-section-title">File Access</h3>
+            <div class="agent-detail-field">
+                <label class="agent-detail-label">Allowed Read Paths</label>
+                <div class="agent-detail-path-list" data-testid="read-paths-list">
+                    @foreach (var path in _form!.AllowedReadPaths)
+                    {
+                        <div class="agent-path-row">
+                            <span class="agent-path-value">@path</span>
+                            <button class="agent-tag-remove" @onclick="() => RemoveReadPath(path)" title="Remove">&times;</button>
+                        </div>
+                    }
+                    <div class="agent-path-add-row">
+                        <input class="agent-path-input" placeholder="/path/to/allow..." @bind="_newReadPath" @bind:event="oninput"
+                               @onkeydown="OnReadPathKeyDown" />
+                        <button class="toolbar-btn" @onclick="AddReadPath">+</button>
+                    </div>
+                </div>
+            </div>
+            <div class="agent-detail-field">
+                <label class="agent-detail-label">Allowed Write Paths</label>
+                <div class="agent-detail-path-list" data-testid="write-paths-list">
+                    @foreach (var path in _form!.AllowedWritePaths)
+                    {
+                        <div class="agent-path-row">
+                            <span class="agent-path-value">@path</span>
+                            <button class="agent-tag-remove" @onclick="() => RemoveWritePath(path)" title="Remove">&times;</button>
+                        </div>
+                    }
+                    <div class="agent-path-add-row">
+                        <input class="agent-path-input" placeholder="/path/to/allow..." @bind="_newWritePath" @bind:event="oninput"
+                               @onkeydown="OnWritePathKeyDown" />
+                        <button class="toolbar-btn" @onclick="AddWritePath">+</button>
+                    </div>
+                </div>
+            </div>
+            <div class="agent-detail-field">
+                <label class="agent-detail-label">Denied Paths</label>
+                <div class="agent-detail-path-list" data-testid="denied-paths-list">
+                    @foreach (var path in _form!.DeniedPaths)
+                    {
+                        <div class="agent-path-row">
+                            <span class="agent-path-value">@path</span>
+                            <button class="agent-tag-remove" @onclick="() => RemoveDeniedPath(path)" title="Remove">&times;</button>
+                        </div>
+                    }
+                    <div class="agent-path-add-row">
+                        <input class="agent-path-input" placeholder="/path/to/deny..." @bind="_newDeniedPath" @bind:event="oninput"
+                               @onkeydown="OnDeniedPathKeyDown" />
+                        <button class="toolbar-btn" @onclick="AddDeniedPath">+</button>
+                    </div>
+                </div>
+            </div>
+        </section>
         @* ── Danger zone ─────────────────────────────────────────────────────── *@
         <section class="agent-detail-section agent-detail-danger-zone">
             <h3 class="agent-detail-section-title danger">Danger Zone</h3>
@@ -231,8 +319,29 @@ else if (_form is not null)
         public bool MemoryEnabled { get; set; }
         public bool HeartbeatEnabled { get; set; }
         public int HeartbeatIntervalMinutes { get; set; } = 60;
+        public List<string> ToolIds { get; set; } = [];
+        public List<string> SubAgentIds { get; set; } = [];
+        public List<string> AllowedReadPaths { get; set; } = [];
+        public List<string> AllowedWritePaths { get; set; } = [];
+        public List<string> DeniedPaths { get; set; } = [];
 
-        public AgentFormModel Clone() => (AgentFormModel)MemberwiseClone();
+        public AgentFormModel Clone() => new AgentFormModel
+        {
+            DisplayName = DisplayName,
+            Description = Description,
+            Emoji = Emoji,
+            ApiProvider = ApiProvider,
+            ModelId = ModelId,
+            SystemPrompt = SystemPrompt,
+            MemoryEnabled = MemoryEnabled,
+            HeartbeatEnabled = HeartbeatEnabled,
+            HeartbeatIntervalMinutes = HeartbeatIntervalMinutes,
+            ToolIds = [..ToolIds],
+            SubAgentIds = [..SubAgentIds],
+            AllowedReadPaths = [..AllowedReadPaths],
+            AllowedWritePaths = [..AllowedWritePaths],
+            DeniedPaths = [..DeniedPaths]
+        };
 
         public bool Equals(AgentFormModel? other) =>
             other is not null &&
@@ -244,7 +353,12 @@ else if (_form is not null)
             SystemPrompt == other.SystemPrompt &&
             MemoryEnabled == other.MemoryEnabled &&
             HeartbeatEnabled == other.HeartbeatEnabled &&
-            HeartbeatIntervalMinutes == other.HeartbeatIntervalMinutes;
+            HeartbeatIntervalMinutes == other.HeartbeatIntervalMinutes &&
+            ToolIds.SequenceEqual(other.ToolIds) &&
+            SubAgentIds.SequenceEqual(other.SubAgentIds) &&
+            AllowedReadPaths.SequenceEqual(other.AllowedReadPaths) &&
+            AllowedWritePaths.SequenceEqual(other.AllowedWritePaths) &&
+            DeniedPaths.SequenceEqual(other.DeniedPaths);
     }
 
     private AgentFormModel? _form;
@@ -332,7 +446,12 @@ else if (_form is not null)
                 SystemPrompt = descriptor.SystemPrompt ?? "",
                 MemoryEnabled = descriptor.Memory?.Enabled ?? false,
                 HeartbeatEnabled = descriptor.Heartbeat?.Enabled ?? false,
-                HeartbeatIntervalMinutes = descriptor.Heartbeat?.IntervalMinutes ?? 60
+                HeartbeatIntervalMinutes = descriptor.Heartbeat?.IntervalMinutes ?? 60,
+                ToolIds = descriptor.ToolIds is not null ? [..descriptor.ToolIds] : [],
+                SubAgentIds = descriptor.SubAgentIds is not null ? [..descriptor.SubAgentIds] : [],
+                AllowedReadPaths = descriptor.FileAccess?.AllowedReadPaths is not null ? [..descriptor.FileAccess.AllowedReadPaths] : [],
+                AllowedWritePaths = descriptor.FileAccess?.AllowedWritePaths is not null ? [..descriptor.FileAccess.AllowedWritePaths] : [],
+                DeniedPaths = descriptor.FileAccess?.DeniedPaths is not null ? [..descriptor.FileAccess.DeniedPaths] : []
             };
             _originalForm = _form.Clone();
 
@@ -420,7 +539,16 @@ else if (_form is not null)
                 modelId = _form.ModelId,
                 systemPrompt = string.IsNullOrWhiteSpace(_form.SystemPrompt) ? null : _form.SystemPrompt,
                 memory = new { enabled = _form.MemoryEnabled },
-                heartbeat = new { enabled = _form.HeartbeatEnabled, intervalMinutes = _form.HeartbeatIntervalMinutes }
+                heartbeat = new { enabled = _form.HeartbeatEnabled, intervalMinutes = _form.HeartbeatIntervalMinutes },
+                toolIds = _form.ToolIds.Count > 0 ? _form.ToolIds : null,
+                subAgentIds = _form.SubAgentIds.Count > 0 ? _form.SubAgentIds : null,
+                fileAccess = (_form.AllowedReadPaths.Count + _form.AllowedWritePaths.Count + _form.DeniedPaths.Count) > 0
+                    ? new {
+                        allowedReadPaths = _form.AllowedReadPaths.Count > 0 ? (object)_form.AllowedReadPaths : null,
+                        allowedWritePaths = _form.AllowedWritePaths.Count > 0 ? (object)_form.AllowedWritePaths : null,
+                        deniedPaths = _form.DeniedPaths.Count > 0 ? (object)_form.DeniedPaths : null
+                    }
+                    : null
             };
             var response = await Http.PutAsJsonAsync(url, payload);
             if (!response.IsSuccessStatusCode)
@@ -469,6 +597,35 @@ else if (_form is not null)
         }
     }
 
+    // ── Tools & Sub-Agents state
+    private string _newToolId = "";
+    private string _newSubAgentId = "";
+
+    private void RemoveToolId(string id) { _form!.ToolIds.Remove(id); }
+    private void AddToolId() { var v = _newToolId.Trim(); if (!string.IsNullOrEmpty(v) && !_form!.ToolIds.Contains(v)) { _form.ToolIds.Add(v); } _newToolId = ""; }
+    private void OnToolIdKeyDown(KeyboardEventArgs e) { if (e.Key == "Enter") AddToolId(); }
+
+    private void RemoveSubAgentId(string id) { _form!.SubAgentIds.Remove(id); }
+    private void AddSubAgentId() { var v = _newSubAgentId.Trim(); if (!string.IsNullOrEmpty(v) && !_form!.SubAgentIds.Contains(v)) { _form.SubAgentIds.Add(v); } _newSubAgentId = ""; }
+    private void OnSubAgentIdKeyDown(KeyboardEventArgs e) { if (e.Key == "Enter") AddSubAgentId(); }
+
+    // ── File Access state
+    private string _newReadPath = "";
+    private string _newWritePath = "";
+    private string _newDeniedPath = "";
+
+    private void RemoveReadPath(string p) { _form!.AllowedReadPaths.Remove(p); }
+    private void AddReadPath() { var v = _newReadPath.Trim(); if (!string.IsNullOrEmpty(v) && !_form!.AllowedReadPaths.Contains(v)) { _form.AllowedReadPaths.Add(v); } _newReadPath = ""; }
+    private void OnReadPathKeyDown(KeyboardEventArgs e) { if (e.Key == "Enter") AddReadPath(); }
+
+    private void RemoveWritePath(string p) { _form!.AllowedWritePaths.Remove(p); }
+    private void AddWritePath() { var v = _newWritePath.Trim(); if (!string.IsNullOrEmpty(v) && !_form!.AllowedWritePaths.Contains(v)) { _form.AllowedWritePaths.Add(v); } _newWritePath = ""; }
+    private void OnWritePathKeyDown(KeyboardEventArgs e) { if (e.Key == "Enter") AddWritePath(); }
+
+    private void RemoveDeniedPath(string p) { _form!.DeniedPaths.Remove(p); }
+    private void AddDeniedPath() { var v = _newDeniedPath.Trim(); if (!string.IsNullOrEmpty(v) && !_form!.DeniedPaths.Contains(v)) { _form.DeniedPaths.Add(v); } _newDeniedPath = ""; }
+    private void OnDeniedPathKeyDown(KeyboardEventArgs e) { if (e.Key == "Enter") AddDeniedPath(); }
+
     private void SetStatus(string msg, string cssClass)
     {
         _statusMessage = msg;
@@ -505,10 +662,14 @@ else if (_form is not null)
         public string? SystemPrompt { get; init; }
         public MemoryConfigDto? Memory { get; init; }
         public HeartbeatConfigDto? Heartbeat { get; init; }
+        public List<string>? ToolIds { get; init; }
+        public List<string>? SubAgentIds { get; init; }
+        public FileAccessDto? FileAccess { get; init; }
     }
 
     private sealed class MemoryConfigDto { public bool Enabled { get; init; } }
     private sealed class HeartbeatConfigDto { public bool Enabled { get; init; } public int IntervalMinutes { get; init; } = 60; }
+    private sealed class FileAccessDto { public List<string>? AllowedReadPaths { get; init; } public List<string>? AllowedWritePaths { get; init; } public List<string>? DeniedPaths { get; init; } }
 
     private sealed class EffectiveAgentConfigResponse
     {

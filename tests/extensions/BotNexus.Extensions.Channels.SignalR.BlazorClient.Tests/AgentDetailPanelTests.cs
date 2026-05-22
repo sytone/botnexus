@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Bunit;
@@ -158,6 +158,98 @@ public sealed class AgentDetailPanelTests : IDisposable
         }
     }
 
+    [Fact]
+    public void Tools_section_renders_with_tool_ids_from_agent()
+    {
+        var agentJson = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            agentId = "farnsworth",
+            displayName = "Farnsworth",
+            apiProvider = "copilot",
+            modelId = "gpt-4.1",
+            toolIds = new[] { "exec", "read", "write" }
+        });
+        _httpHandler.SetupGet("/api/agents/farnsworth", agentJson);
+        _httpHandler.SetupGet("/api/providers", "[]");
+        _httpHandler.SetupGet("/api/config/agents/farnsworth/effective", "{\"sources\":{}}");
+
+        var cut = _ctx.Render<AgentDetailPanel>(p => p.Add(c => c.AgentId, "farnsworth"));
+        cut.WaitForState(() => cut.FindAll("[data-testid='tool-ids-list']").Count > 0);
+
+        var toolList = cut.Find("[data-testid='tool-ids-list']");
+        var tags = toolList.QuerySelectorAll(".agent-tag");
+        Assert.Equal(3, tags.Length);
+        Assert.Contains(tags, t => t.TextContent.Contains("exec"));
+        Assert.Contains(tags, t => t.TextContent.Contains("read"));
+        Assert.Contains(tags, t => t.TextContent.Contains("write"));
+    }
+
+    [Fact]
+    public void Tools_section_renders_empty_when_no_tool_ids()
+    {
+        SetupDefaultAgent();  // no toolIds in default fixture
+
+        var cut = _ctx.Render<AgentDetailPanel>(p => p.Add(c => c.AgentId, "farnsworth"));
+        cut.WaitForState(() => cut.FindAll("[data-testid='tool-ids-list']").Count > 0);
+
+        var toolList = cut.Find("[data-testid='tool-ids-list']");
+        Assert.Empty(toolList.QuerySelectorAll(".agent-tag"));
+    }
+
+    [Fact]
+    public void SubAgents_section_renders_with_sub_agent_ids()
+    {
+        var agentJson = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            agentId = "farnsworth",
+            displayName = "Farnsworth",
+            apiProvider = "copilot",
+            modelId = "gpt-4.1",
+            subAgentIds = new[] { "nova", "spark" }
+        });
+        _httpHandler.SetupGet("/api/agents/farnsworth", agentJson);
+        _httpHandler.SetupGet("/api/providers", "[]");
+        _httpHandler.SetupGet("/api/config/agents/farnsworth/effective", "{\"sources\":{}}");
+
+        var cut = _ctx.Render<AgentDetailPanel>(p => p.Add(c => c.AgentId, "farnsworth"));
+        cut.WaitForState(() => cut.FindAll("[data-testid='sub-agent-ids-list']").Count > 0);
+
+        var list = cut.Find("[data-testid='sub-agent-ids-list']");
+        var tags = list.QuerySelectorAll(".agent-tag");
+        Assert.Equal(2, tags.Length);
+        Assert.Contains(tags, t => t.TextContent.Contains("nova"));
+        Assert.Contains(tags, t => t.TextContent.Contains("spark"));
+    }
+
+    [Fact]
+    public void FileAccess_section_renders_read_write_denied_paths()
+    {
+        var agentJson = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            agentId = "farnsworth",
+            displayName = "Farnsworth",
+            apiProvider = "copilot",
+            modelId = "gpt-4.1",
+            fileAccess = new
+            {
+                allowedReadPaths = new[] { "/workspace" },
+                allowedWritePaths = new[] { "/workspace/output" },
+                deniedPaths = new[] { "/etc/secrets" }
+            }
+        });
+        _httpHandler.SetupGet("/api/agents/farnsworth", agentJson);
+        _httpHandler.SetupGet("/api/providers", "[]");
+        _httpHandler.SetupGet("/api/config/agents/farnsworth/effective", "{\"sources\":{}}");
+
+        var cut = _ctx.Render<AgentDetailPanel>(p => p.Add(c => c.AgentId, "farnsworth"));
+        cut.WaitForState(() => cut.FindAll("[data-testid='read-paths-list']").Count > 0);
+
+        Assert.Contains("/workspace", cut.Find("[data-testid='read-paths-list']").TextContent);
+        Assert.Contains("/workspace/output", cut.Find("[data-testid='write-paths-list']").TextContent);
+        Assert.Contains("/etc/secrets", cut.Find("[data-testid='denied-paths-list']").TextContent);
+    }
+    }
+
     // ── Private mock handler ────────────────────────────────────────────────
 
     internal sealed class AgentDetailMockHttp : HttpMessageHandler
@@ -193,4 +285,3 @@ public sealed class AgentDetailPanelTests : IDisposable
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
         }
     }
-}
