@@ -42,7 +42,13 @@ public sealed class SubAgentSpawnTool(
                   "enum": ["researcher", "coder", "planner", "reviewer", "writer", "general"],
                   "description": "Optional behavioral archetype for the sub-agent."
                 },
-                "targetAgentId": { "type": "string", "description": "Optional registered agent ID to use as the sub-agent identity. When set, the sub-agent runs as this agent's descriptor instead of cloning the parent." }
+                "targetAgentId": { "type": "string", "description": "Optional registered agent ID to use as the sub-agent identity. When set, the sub-agent runs as this agent's descriptor instead of cloning the parent." },
+                "shareWorkspace": { "type": "boolean", "description": "When true, grants the sub-agent read and write access to the parent's workspace. Default: false." },
+                "grantedPaths": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Optional list of absolute paths the sub-agent may read and write. Paths outside the parent's allowed set are silently filtered."
+                }
               },
               "required": ["task"]
             }
@@ -83,7 +89,9 @@ public sealed class SubAgentSpawnTool(
             TimeoutSeconds = ReadInt(arguments, "timeoutSeconds", 600),
             Archetype = ReadArchetype(arguments),
             TargetAgentId = ReadString(arguments, "targetAgentId"),
-            InheritedConversationId = conversationId?.Value
+            InheritedConversationId = conversationId?.Value,
+            ShareParentWorkspace = ReadBool(arguments, "shareWorkspace"),
+            GrantedPaths = ReadStringArray(arguments, "grantedPaths") ?? []
         };
 
         var spawned = await subAgentManager.SpawnAsync(request, cancellationToken).ConfigureAwait(false);
@@ -153,6 +161,20 @@ public sealed class SubAgentSpawnTool(
         }
 
         return null;
+    }
+
+    private static bool ReadBool(IReadOnlyDictionary<string, object?> args, string key)
+    {
+        if (!args.TryGetValue(key, out var value) || value is null)
+            return false;
+
+        return value switch
+        {
+            JsonElement { ValueKind: JsonValueKind.True } => true,
+            JsonElement { ValueKind: JsonValueKind.False } => false,
+            bool b => b,
+            _ => false
+        };
     }
 
     private static SubAgentArchetype ReadArchetype(IReadOnlyDictionary<string, object?> args)

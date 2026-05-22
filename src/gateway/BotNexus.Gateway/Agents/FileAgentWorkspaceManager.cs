@@ -71,6 +71,15 @@ public sealed class FileAgentWorkspaceManager : IAgentWorkspaceManager
         return Path.Combine(_botNexusHome.GetAgentDirectory(normalizedAgentName), "workspace");
     }
 
+    string IAgentWorkspaceManager.ProvisionWorkspace(string agentName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(agentName);
+        var path = GetWorkspacePath(agentName);
+        if (!_fileSystem.Directory.Exists(path))
+            _fileSystem.Directory.CreateDirectory(path);
+        return path;
+    }
+
     public bool TryCleanupWorkspace(string agentName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(agentName);

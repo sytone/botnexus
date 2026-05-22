@@ -87,4 +87,18 @@ public sealed record SubAgentSpawnRequest
     /// instead of creating a new one — keeping all output visible in the same portal thread.
     /// </summary>
     public string? InheritedConversationId { get; init; }
+
+    /// <summary>
+    /// When <c>true</c>, grants the sub-agent read and write access to the parent agent's
+    /// workspace directory in addition to its own temp workspace.
+    /// Defaults to <c>false</c> (isolated by default).
+    /// </summary>
+    public bool ShareParentWorkspace { get; init; }
+
+    /// <summary>
+    /// Additional absolute paths the sub-agent may read and write beyond its temp workspace.
+    /// Paths that are not within the parent's own <see cref="BotNexus.Gateway.Abstractions.Security.FileAccessPolicy"/>
+    /// are silently filtered to prevent privilege escalation.
+    /// </summary>
+    public IReadOnlyList<string> GrantedPaths { get; init; } = [];
 }

@@ -9,6 +9,7 @@ using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Security;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Security;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -120,12 +121,30 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             baseDescriptor = parentDescriptor;
         }
 
+        // Provision temporary workspace directory for the sub-agent.
+        // Sub-agents identify as "--subagent--" names, which GetWorkspacePath routes
+        // to a temp directory under the platform temp root.
+        string? childWorkspacePath = null;
+        if (_workspaceManager is not null)
+        {
+            childWorkspacePath = _workspaceManager.ProvisionWorkspace(childAgentId.Value);
+        }
+
+        // Build FileAccess for the child: always includes its own temp workspace.
+        // Optionally includes parent workspace (shareWorkspace) and caller-granted paths.
+        var childFileAccess = BuildChildFileAccess(
+            request,
+            childWorkspacePath,
+            baseDescriptor,
+            parentDescriptor);
+
         if (!_registry.Contains(childAgentId))
         {
             _registry.Register(baseDescriptor with
             {
                 AgentId = childAgentId,
-                DisplayName = $"{baseDescriptor.DisplayName} ({archetype.Value})"
+                DisplayName = $"{baseDescriptor.DisplayName} ({archetype.Value})",
+                FileAccess = childFileAccess
             });
         }
 
@@ -572,5 +591,103 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             searchFrom += separator.Length;
         }
         return depth;
+    }
+
+    /// <summary>
+    /// Builds a <see cref="FileAccessPolicy"/> for a newly-spawned sub-agent.
+    /// Always grants the sub-agent its own temp workspace (read + write).
+    /// Optionally shares the parent workspace when <see cref="SubAgentSpawnRequest.ShareParentWorkspace"/> is true.
+    /// Additional <see cref="SubAgentSpawnRequest.GrantedPaths"/> are filtered against the parent's allowed set
+    /// to prevent privilege escalation.
+    /// </summary>
+    private FileAccessPolicy? BuildChildFileAccess(
+        SubAgentSpawnRequest request,
+        string? childWorkspacePath,
+        AgentDescriptor baseDescriptor,
+        AgentDescriptor parentDescriptor)
+    {
+        var readPaths = new List<string>();
+        var writePaths = new List<string>();
+
+        // Always include child's own temp workspace.
+        if (!string.IsNullOrWhiteSpace(childWorkspacePath))
+        {
+            readPaths.Add(childWorkspacePath);
+            writePaths.Add(childWorkspacePath);
+        }
+
+        // Optionally share parent workspace.
+        if (request.ShareParentWorkspace && _workspaceManager is not null)
+        {
+            var parentWorkspace = _workspaceManager.GetWorkspacePath(parentDescriptor.AgentId.Value);
+            if (!string.IsNullOrWhiteSpace(parentWorkspace))
+            {
+                readPaths.Add(parentWorkspace);
+                writePaths.Add(parentWorkspace);
+            }
+        }
+
+        // Merge caller-granted paths, filtered against parent's allowed set (privilege confinement).
+        if (request.GrantedPaths.Count > 0)
+        {
+            var parentPolicy = parentDescriptor.FileAccess;
+            foreach (var path in request.GrantedPaths)
+            {
+                if (string.IsNullOrWhiteSpace(path))
+                    continue;
+
+                // If parent has no FileAccess restriction, all paths are permitted.
+                // If parent has a policy, the path must be within parent's allowed set.
+                if (parentPolicy is null || IsWithinParentGrant(path, parentPolicy))
+                {
+                    if (!readPaths.Contains(path, StringComparer.OrdinalIgnoreCase))
+                        readPaths.Add(path);
+                    if (!writePaths.Contains(path, StringComparer.OrdinalIgnoreCase))
+                        writePaths.Add(path);
+                }
+                else
+                {
+                    _logger.LogDebug(
+                        "GrantedPath '{Path}' is outside parent's FileAccess grant and was filtered for sub-agent.",
+                        path);
+                }
+            }
+        }
+
+        // If no workspace or paths were resolved, return null (workspace-only default).
+        if (readPaths.Count == 0 && writePaths.Count == 0)
+            return null;
+
+        // Carry through any denied paths from the base descriptor.
+        return new FileAccessPolicy
+        {
+            AllowedReadPaths = readPaths,
+            AllowedWritePaths = writePaths,
+            DeniedPaths = baseDescriptor.FileAccess?.DeniedPaths ?? []
+        };
+    }
+
+    private static bool IsWithinParentGrant(string path, FileAccessPolicy parentPolicy)
+    {
+        var fullPath = Path.GetFullPath(path);
+        foreach (var allowed in parentPolicy.AllowedReadPaths)
+        {
+            var allowedFull = Path.GetFullPath(allowed);
+            var prefix = allowedFull.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                + Path.DirectorySeparatorChar;
+            if (fullPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
+                fullPath.Equals(allowedFull, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        foreach (var allowed in parentPolicy.AllowedWritePaths)
+        {
+            var allowedFull = Path.GetFullPath(allowed);
+            var prefix = allowedFull.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                + Path.DirectorySeparatorChar;
+            if (fullPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
+                fullPath.Equals(allowedFull, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
     }
 }

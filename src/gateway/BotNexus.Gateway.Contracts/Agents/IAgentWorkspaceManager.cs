@@ -61,4 +61,17 @@ public interface IAgentWorkspaceManager
     /// <param name="agentName">The agent identifier.</param>
     /// <returns><c>true</c> when the workspace was removed or did not exist; otherwise <c>false</c>.</returns>
     bool TryCleanupWorkspace(string agentName) => false;
+
+    /// <summary>
+    /// Provisions (creates) the workspace directory for an agent if it does not already exist.
+    /// </summary>
+    /// <param name="agentName">The agent identifier.</param>
+    /// <returns>The absolute workspace path.</returns>
+    string ProvisionWorkspace(string agentName)
+    {
+        var path = GetWorkspacePath(agentName);
+        if (!Directory.Exists(path))
+            Directory.CreateDirectory(path);
+        return path;
+    }
 }
