@@ -599,4 +599,33 @@ public sealed class MainLayoutTests : IDisposable
         // Dropdown should be visible on desktop
         cut.Find(".agent-dropdown-select");
     }
+    [Fact]
+    public void Agents_sidebar_subnav_not_shown_when_not_on_agents_page()
+    {
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.NotifyChanged();
+
+        var cut = RenderLayout();
+
+        // Not on the agents page — subnav should not appear
+        Assert.Empty(cut.FindAll(".sidebar-subnav-add"));
+    }
+
+    [Fact]
+    public void AgentsSidebar_ExpandsWhenOnAgentsRoute()
+    {
+        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
+        _store.NotifyChanged();
+
+        var nav = _ctx.Services.GetRequiredService<NavigationManager>();
+        nav.NavigateTo("http://localhost/agents/a-1");
+
+        var cut = RenderLayout();
+
+        // The agents subnav should be visible because IsOnPage("agents") is true
+        Assert.Contains("sidebar-subnav", cut.Markup);
+        Assert.Contains("a-1", cut.Markup);
+    }
+
+
 }

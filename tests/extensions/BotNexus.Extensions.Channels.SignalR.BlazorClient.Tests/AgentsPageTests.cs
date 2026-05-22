@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using System.Linq;
 using System.Reflection;
@@ -305,5 +305,50 @@ public sealed class AgentsPageTests : IDisposable
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
         }
     }
+    [Fact]
+    public void AgentsPage_WithAgentId_RendersDetailPlaceholder()
+    {
+        _httpHandler.SetupResponse("/api/agents", "[]");
+        _httpHandler.SetupResponse("/api/providers", "[]");
+
+        var cut = _ctx.Render<Agents>(p => p.Add(c => c.AgentId, "bot-1"));
+        cut.WaitForState(() => !cut.Markup.Contains("Loading agents"));
+
+        Assert.Contains("agents-detail-placeholder", cut.Markup);
+        Assert.Contains("bot-1", cut.Markup);
+        Assert.Contains("Agent configuration panel coming soon", cut.Markup);
+    }
+
+    [Fact]
+    public void AgentsPage_WithNew_ShowsAddForm()
+    {
+        _httpHandler.SetupResponse("/api/agents", "[]");
+        _httpHandler.SetupResponse("/api/providers", "[]");
+
+        var cut = _ctx.Render<Agents>(p => p.Add(c => c.AgentId, "new"));
+        cut.WaitForState(() => cut.Markup.Contains("Agent ID"));
+
+        Assert.Contains("Agent ID", cut.Markup);
+        Assert.Contains("Display Name", cut.Markup);
+    }
+
+    [Fact]
+    public void AgentsPage_WithNoAgentId_RendersTable()
+    {
+        var agents = System.Text.Json.JsonSerializer.Serialize(new[]
+        {
+            new { agentId = "bot-1", displayName = "Bot One", description = "", apiProvider = "openai", modelId = "gpt-4", systemPrompt = "" }
+        });
+        _httpHandler.SetupResponse("/api/agents", agents);
+        _httpHandler.SetupResponse("/api/providers", "[]");
+
+        var cut = _ctx.Render<Agents>();
+        cut.WaitForState(() => cut.Markup.Contains("bot-1"));
+
+        Assert.Contains("agents-table", cut.Markup);
+        Assert.DoesNotContain("agents-detail-placeholder", cut.Markup);
+    }
+
+
 }
 

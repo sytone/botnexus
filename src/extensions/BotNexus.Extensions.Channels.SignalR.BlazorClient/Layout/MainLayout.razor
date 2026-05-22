@@ -1,4 +1,4 @@
-@inherits LayoutComponentBase
+﻿@inherits LayoutComponentBase
 @inject NavigationManager Nav
 @inject IClientStateStore Store
 @inject IAgentInteractionService Interaction
@@ -194,7 +194,27 @@
                     </div>
                 }
 
-                <a href="agents" class="sidebar-nav-item @NavClass("agents")" @onclick="OnNavClick">🤖 Agents</a>
+                @* Agents section - expand/collapse *@
+                <div class="sidebar-nav-item @(IsOnPage("agents") ? "active" : "")"
+                     style="cursor:pointer; display:flex; justify-content:space-between; align-items:center;"
+                     @onclick="ToggleAgentsSidebar">
+                    <span>Agents</span>
+                    <span>@(_agentsSidebarExpanded ? "v" : ">")</span>
+                </div>
+                @if (_agentsSidebarExpanded || IsOnPage("agents"))
+                {
+                    <div class="sidebar-subnav">
+                        @foreach (var (agentId, agent) in Store.Agents.Where(kv => !kv.Value.IsReadOnly))
+                        {
+                            <a href="agents/@Uri.EscapeDataString(agentId)"
+                               class="sidebar-subnav-item @(IsOnPage("agents/" + Uri.EscapeDataString(agentId)) ? "active" : "")"
+                               @onclick="CloseSidebar">
+                                @FormatAgentName(agent)
+                            </a>
+                        }
+                        <a href="agents/new" class="sidebar-subnav-item" @onclick="CloseSidebar">+ Add Agent</a>
+                    </div>
+                }
             </nav>
 
             @* Restart button + build info at bottom *@
@@ -297,6 +317,12 @@
     }
 
     private bool _gatewayInfoLoaded;
+    private bool _agentsSidebarExpanded = false;
+
+    private void ToggleAgentsSidebar()
+    {
+        _agentsSidebarExpanded = !_agentsSidebarExpanded;
+    }
     private bool _showUpdateConfirm;
     private bool _updatePollingStarted;
 
@@ -358,7 +384,13 @@
     private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
     {
         var relative = Nav.ToBaseRelativePath(e.Location).TrimEnd('/');
-        if (relative == "" || relative.Equals("chat", StringComparison.OrdinalIgnoreCase))
+        if (relative.StartsWith("agents/", StringComparison.OrdinalIgnoreCase) || 
+                relative.Equals("agents", StringComparison.OrdinalIgnoreCase))
+            {
+                _agentsSidebarExpanded = true;
+                InvokeAsync(StateHasChanged);
+            }
+            if (relative == "" || relative.Equals("chat", StringComparison.OrdinalIgnoreCase))
         {
             _ = InvokeAsync(async () =>
             {

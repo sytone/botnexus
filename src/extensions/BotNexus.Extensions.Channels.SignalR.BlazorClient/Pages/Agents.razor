@@ -1,4 +1,6 @@
 @page "/agents"
+@page "/agents/{AgentId}"
+@page "/agents/new"
 @inject NavigationManager Nav
 @inject HttpClient Http
 @inject GatewayHubConnection Hub
@@ -6,6 +8,21 @@
 
 <PageTitle>BotNexus — Agents</PageTitle>
 
+@if (AgentId is not null && AgentId != "new")
+{
+    <div class="agents-page">
+        <header class="agents-toolbar">
+            <h2>🤖 @(_agents.FirstOrDefault(a => a.AgentId == AgentId)?.DisplayName ?? AgentId)</h2>
+            <a href="agents" class="toolbar-btn">← Back to Agents</a>
+        </header>
+        <div class="agents-detail-placeholder">
+            <p>Agent configuration panel coming soon.</p>
+            <p><strong>Agent ID:</strong> @AgentId</p>
+        </div>
+    </div>
+}
+else
+{
 <div class="agents-page">
     <header class="agents-toolbar">
         <h2>🤖 Agents</h2>
@@ -199,7 +216,18 @@
     }
 </div>
 
+}
 @code {
+    [Parameter] public string? AgentId { get; set; }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (AgentId == "new" && !_showForm)
+            ShowAddForm();
+        else if (AgentId is not null && AgentId != "new" && _agents.Count == 0)
+            await LoadAgentsAsync();
+    }
+
     private record ProviderItem(string Id, string Name);
     private record ModelItem(string ModelId, string Name);
 
