@@ -36,7 +36,7 @@ External Channel (Slack, Discord, etc.)
    └──────────┬──────────────┘
               ↓
    IIsolationStrategy
-   (in-process/sandbox/container)
+   (security boundary: in-process/sandbox/container/remote)
               ↓
    Agent executes with LLM provider
               ↓
@@ -49,7 +49,7 @@ External Channel (Slack, Discord, etc.)
 The Gateway is **fully extensible** through pluggable interfaces:
 
 ### 1. IIsolationStrategy
-Controls how agent code is executed and isolated.
+Controls the security boundary between the agent and the user's environment. Agents cannot be fully trusted (prompt-injection, hostile tool output, mistakes), so the isolation strategy bounds what the agent can reach and what it can leak. Pick a stricter strategy as the trust in the agent decreases.
 
 ```csharp
 public interface IIsolationStrategy
@@ -62,11 +62,11 @@ public interface IIsolationStrategy
 }
 ```
 
-**Built-in strategies:**
-- **in-process** — Runs agent directly in Gateway process (default, fastest)
-- **sandbox** — Restricted AppDomain or process with limited permissions (Phase 2)
-- **container** — Docker container isolation (Phase 2)
-- **remote** — HTTP/gRPC delegation to remote service (Phase 2)
+**Built-in strategies (fastest → most isolated):**
+- **in-process** — Runs agent directly in Gateway process. No security boundary; shared memory and OS identity. Default, fastest. Suitable for trusted single-user deployments.
+- **sandbox** — Separate OS process with IPC and OS-level confinement (reduced privileges, restricted file system, syscall filtering). Planned.
+- **container** — Docker container. Host file system, network, and other agents invisible unless granted. Planned.
+- **remote** — Agent runs on a remote machine via HTTP/gRPC. Strongest isolation from user-local resources. Planned.
 
 **To add a custom strategy:**
 1. Implement `IIsolationStrategy`

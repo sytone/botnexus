@@ -164,14 +164,18 @@ A World may host a single agent in splendid isolation, or it may be a shared env
 - **Isolated World** - one agent, one Gateway. The agent has full run of the environment. Common for personal assistants or security-sensitive workloads.
 - **Shared World** - multiple agents on the same Gateway. Agents share the infrastructure but have separate workspaces, sessions, and memory. Communication between co-located agents is local and fast.
 
-### Agent Execution Strategies
+### Agent Isolation Strategies
 
-How an agent runs within its World is determined by its execution strategy (configured via the Descriptor). This controls the isolation boundary between the agent's code and the Gateway process:
+How an agent runs within its World is determined by its isolation strategy (configured via the Descriptor). **Isolation is a security boundary that protects the user from the agent** — it bounds what the agent can reach, do, and leak. Agents act on the user's behalf but cannot be fully trusted: they may be prompt-injected by hostile tool output, may make mistakes, or may simply be wrong. The isolation strategy determines the blast radius if any of those things happen, and it is the platform's primary defense against an agent accessing data it should not see or taking actions the user did not sanction.
 
-- **In-Process** - the agent runs directly inside the Gateway process. Fastest, no isolation. The default for simple deployments.
-- **Sandbox** - the agent runs in a restricted process with limited permissions. A middle ground between speed and safety.
-- **Container** - the agent runs in a Docker container. Strong isolation, suitable for untrusted or resource-intensive agents.
-- **Remote** - the agent delegates to a remote service. The Instance is a proxy; the real work happens elsewhere.
+The strategy spectrum runs from fastest/least-isolated to slowest/most-isolated:
+
+- **In-Process** - the agent runs directly inside the Gateway process. No security boundary; the agent shares memory, file handles, and OS identity with the Gateway. Fastest. The default for development and trusted single-user deployments.
+- **Sandbox** - the agent runs in a separate OS process communicating over IPC, confined by OS-level controls (reduced privileges, restricted file system view, syscall filtering). Protects the host process from agent crashes and limits what the agent can read or write directly. *Planned.*
+- **Container** - the agent runs in a Docker container. The agent sees only the volumes and network it is granted; the host file system and other agents are invisible. Suitable for untrusted agents and multi-tenant hosts. *Planned.*
+- **Remote** - the agent runs on a remote machine over HTTP/gRPC. The strongest isolation from user-local resources — local files, credentials, and processes are invisible unless explicitly forwarded. Appropriate for sensitive data domains and centrally-managed agent fleets. *Planned.*
+
+Additional strategies (e.g., hardened container runtimes like gVisor or Firecracker) may be added later via the same interface.
 
 Satellite nodes - remote processes that extend a World's capabilities without being full Worlds themselves - are considered part of the World they serve. A coding agent container spawned by a Gateway is a satellite of that Gateway's World, not a separate World.
 

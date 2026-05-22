@@ -23,7 +23,7 @@ This is a leaf dependency — it references no other BotNexus packages.
 | `IChannelAdapter` | Channels | Pluggable adapter for external communication channels (Telegram, Discord, TUI, etc.). |
 | `IChannelDispatcher` | Channels | Callback interface for channel adapters to dispatch inbound messages into routing. |
 | `IChannelManager` | Channels | Read-only registry for looking up registered channel adapters. |
-| `IIsolationStrategy` | Isolation | Defines an execution environment for running agents (in-process, sandbox, container, remote). |
+| `IIsolationStrategy` | Isolation | Security boundary between agent and user — bounds what the agent can reach and leak (in-process, sandbox, container, remote). |
 | `IMessageRouter` | Routing | Routes inbound messages to the appropriate agent(s) based on targeting, session, and defaults. |
 | `IGatewayAuthHandler` | Security | Authenticates API and WebSocket requests; returns a caller identity. |
 | `ISessionStore` | Sessions | Persistence interface for gateway sessions (get, create, save, delete, list). |

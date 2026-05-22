@@ -4,7 +4,7 @@
 
 ## Overview
 
-This package implements the core BotNexus Gateway runtime. It orchestrates agent instances, manages message routing, handles session persistence, broadcasts activity events, and enforces isolation strategies. All functionality is exposed via interfaces in `BotNexus.Gateway.Abstractions`.
+This package implements the core BotNexus Gateway runtime. It orchestrates agent instances, manages message routing, handles session persistence, broadcasts activity events, and enforces isolation boundaries that protect users from agent actions. All functionality is exposed via interfaces in `BotNexus.Gateway.Abstractions`.
 
 This package depends on abstractions, session management, channel adapters, and agent providers, but contains no ASP.NET Core concerns — those are in `BotNexus.Gateway.Api`.
 

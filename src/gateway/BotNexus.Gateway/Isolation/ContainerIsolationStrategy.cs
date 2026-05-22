@@ -5,11 +5,17 @@ using BotNexus.Gateway.Abstractions.Models;
 namespace BotNexus.Gateway.Isolation;
 
 /// <summary>
-/// Container isolation strategy — runs an agent in a Docker container.
+/// Container isolation strategy — runs the agent in a Docker container. The container
+/// boundary protects the user by hiding the host file system, network, and other agents;
+/// the agent sees only the volumes and ports explicitly granted to it.
 /// </summary>
 /// <remarks>
-/// Phase 2 stub. When implemented, this will pull/build an image, mount volumes for agent context,
-/// and communicate with the isolated agent process over gRPC/HTTP.
+/// Planned. When implemented, this will pull/build an image, mount only the volumes the
+/// agent needs (workspace, mounted secrets), restrict network egress per agent policy,
+/// and communicate with the isolated agent process over gRPC/HTTP. Suitable for untrusted
+/// agents, multi-tenant hosts, and workloads where a clean blast radius is required.
+/// Hardened container runtimes (e.g., gVisor, Firecracker, Kata Containers) may be exposed
+/// as separate strategies or as a configuration option on this strategy.
 /// </remarks>
 public sealed class ContainerIsolationStrategy : IIsolationStrategy
 {
