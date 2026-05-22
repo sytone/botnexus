@@ -19,6 +19,7 @@ public sealed class SessionType : IEquatable<SessionType>
     public static readonly SessionType Soul = Register("soul");
     public static readonly SessionType Cron = Register("cron");
     public static readonly SessionType Heartbeat = Register("heartbeat");
+    public static readonly SessionType MultiAgent = Register("multi-agent");
 
     /// <summary>
     /// Gets the value.

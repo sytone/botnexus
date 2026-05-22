@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Linq;
 using System.Text.Json;
@@ -238,6 +238,14 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 || effectiveToolIds.Contains("list_agents", StringComparer.OrdinalIgnoreCase);
             if (includeListAgents)
                 tools.Add(new ListAgentsTool(agentRegistry, descriptor.AgentId));
+
+            if (conversationService is not null && sessionStore is not null)
+            {
+                var includeInvite = effectiveToolIds.Count == 0
+                    || effectiveToolIds.Contains("invite_agent", StringComparer.OrdinalIgnoreCase);
+                if (includeInvite)
+                    tools.Add(new InviteAgentTool(agentRegistry, conversationService, sessionStore, descriptor.AgentId, context.SessionId));
+            }
         }
 
         var includeCanvas = effectiveToolIds.Count == 0
