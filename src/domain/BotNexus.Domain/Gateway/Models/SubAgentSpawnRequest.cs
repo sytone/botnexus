@@ -80,4 +80,11 @@ public sealed record SubAgentSpawnRequest
     /// parent's effective deny-list. The spawned sub-agent must not be granted any of these tools.
     /// </summary>
     public IReadOnlyList<string>? ParentToolDenyList { get; init; }
+
+    /// <summary>
+    /// Gets the optional conversation ID inherited from the parent session.
+    /// When set, the sub-agent will route its task into this existing conversation
+    /// instead of creating a new one — keeping all output visible in the same portal thread.
+    /// </summary>
+    public string? InheritedConversationId { get; init; }
 }

@@ -1,3 +1,4 @@
+﻿using BotNexus.Gateway.Abstractions.Sessions;
 using System.Collections.Concurrent;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Activity;
@@ -26,6 +27,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     private readonly IOptionsMonitor<GatewayOptions> _options;
     private readonly ILogger<DefaultSubAgentManager> _logger;
     private readonly DefaultToolPolicyProvider? _policyProvider;
+    private readonly ISessionStore? _sessionStore;
     private readonly ConcurrentDictionary<string, SubAgentInfo> _subAgents = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<SessionId, ConcurrentBag<string>> _parentChildren = [];
     private readonly ConcurrentDictionary<string, AgentId> _parentAgentIds = new(StringComparer.OrdinalIgnoreCase);
@@ -41,7 +43,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         IOptionsMonitor<GatewayOptions> options,
         ILogger<DefaultSubAgentManager> logger,
         IAgentWorkspaceManager? workspaceManager = null,
-        DefaultToolPolicyProvider? policyProvider = null)
+        DefaultToolPolicyProvider? policyProvider = null,
+        ISessionStore? sessionStore = null)
     {
         _supervisor = supervisor;
         _registry = registry;
@@ -51,6 +54,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         _options = options;
         _logger = logger;
         _policyProvider = policyProvider;
+        _sessionStore = sessionStore;
     }
 
     /// <inheritdoc />
@@ -170,7 +174,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         _timeouts[subAgentId] = timeoutCts;
 
-        _ = Task.Run(() => RunSubAgentAsync(subAgentId, handle, request.Task, timeoutSeconds), CancellationToken.None);
+        _ = Task.Run(() => RunSubAgentAsync(subAgentId, handle, request.Task, timeoutSeconds, request.InheritedConversationId), CancellationToken.None);
 
         _logger.LogInformation(
             "Spawned sub-agent '{SubAgentId}' for parent session '{ParentSessionId}' in child session '{ChildSessionId}'.",
@@ -382,14 +386,24 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             await CleanupChildAgentAsync(subAgentId, updated.ChildSessionId, CancellationToken.None);
         }
     }
-
-    private async Task RunSubAgentAsync(string subAgentId, IAgentHandle handle, string task, int timeoutSeconds)
+    private async Task RunSubAgentAsync(string subAgentId, IAgentHandle handle, string task, int timeoutSeconds, string? inheritedConversationId = null)
     {
         if (!_timeouts.TryGetValue(subAgentId, out var timeoutCts))
             return;
 
         try
         {
+            // Pin the sub-agent session to the parent conversation before running (#468).
+            if (!string.IsNullOrWhiteSpace(inheritedConversationId) && _sessionStore is not null)
+            {
+                var session = await _sessionStore.GetAsync(handle.SessionId, timeoutCts.Token).ConfigureAwait(false);
+                if (session is not null)
+                {
+                    session.Session.ConversationId = new BotNexus.Domain.Primitives.ConversationId(inheritedConversationId);
+                    await _sessionStore.SaveAsync(session, timeoutCts.Token).ConfigureAwait(false);
+                }
+            }
+
             var response = await handle.PromptAsync(task, timeoutCts.Token);
             await OnCompletedAsync(subAgentId, response.Content);
         }

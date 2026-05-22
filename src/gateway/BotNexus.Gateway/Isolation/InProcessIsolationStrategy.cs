@@ -211,9 +211,11 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 || effectiveToolIds.Contains("list_subagents", StringComparer.OrdinalIgnoreCase);
             var includeManage = effectiveToolIds.Count == 0
                 || effectiveToolIds.Contains("manage_subagent", StringComparer.OrdinalIgnoreCase);
-
             if (includeSpawn)
-                tools.Add(new SubAgentSpawnTool(subAgentManager, descriptor.AgentId, context.SessionId));
+            {
+                ConversationId? spawnConversationId = conversationStore is not null ? await ResolveConversationIdAsync(conversationStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken).ConfigureAwait(false) : null;
+                tools.Add(new SubAgentSpawnTool(subAgentManager, descriptor.AgentId, context.SessionId, spawnConversationId));
+            }
             if (includeList)
                 tools.Add(new SubAgentListTool(subAgentManager, context.SessionId));
             if (includeManage)
