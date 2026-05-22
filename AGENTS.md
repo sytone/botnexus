@@ -228,6 +228,24 @@ structurally prevent regressions.
 
 See `src/domain/AGENTS.md` for the full convention and a worked example.
 
+### Scenario Test Suite
+
+Channel-agnostic acceptance tests for the citizen → conversation → session model live under
+`tests/scenarios/`. The harness (`BotNexus.Scenarios.Harness`) and the spec project
+(`BotNexus.Scenarios.Tests`) are governed by `tests/scenarios/AGENTS.md` and four
+architecture fitness functions in
+`tests/architecture/BotNexus.Architecture.Tests/ScenarioSuiteArchitectureTests.cs`:
+
+- Scenario tests must not reference any `BotNexus.Extensions.Channels.*` assembly.
+- The harness must not reference any channel extension either.
+- `VirtualChannelAdapter` must implement `IChannelAdapter`.
+- Scenario tests must drive the platform through the harness DSL, never through
+  `IServiceProvider` directly.
+
+If a future PR adds scenarios or extends the harness, read `tests/scenarios/AGENTS.md`
+first — the conventions there are the answer to "how do I add a new scenario without
+recreating the slop?"
+
 ### Memory Tool Naming
 
 - The agent-facing tool for persisting notes is **`memory_save`**. Do not call it "memory store."
