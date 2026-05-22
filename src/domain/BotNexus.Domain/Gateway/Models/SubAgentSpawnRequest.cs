@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Security;
 
 namespace BotNexus.Gateway.Abstractions.Models;
 
@@ -87,4 +88,18 @@ public sealed record SubAgentSpawnRequest
     /// instead of creating a new one — keeping all output visible in the same portal thread.
     /// </summary>
     public string? InheritedConversationId { get; init; }
+
+    /// <summary>
+    /// Gets additional file paths the sub-agent is allowed to read.
+    /// These are merged with the parent's <see cref="FileAccessPolicy.AllowedReadPaths" /> at spawn time.
+    /// Only paths the parent itself can read are accepted; others are silently filtered.
+    /// </summary>
+    public IReadOnlyList<string> AdditionalReadPaths { get; init; } = [];
+
+    /// <summary>
+    /// Gets additional file paths the sub-agent is allowed to write.
+    /// These are merged with the parent's <see cref="FileAccessPolicy.AllowedWritePaths" /> at spawn time.
+    /// Only paths the parent itself can write are accepted; others are silently filtered.
+    /// </summary>
+    public IReadOnlyList<string> AdditionalWritePaths { get; init; } = [];
 }

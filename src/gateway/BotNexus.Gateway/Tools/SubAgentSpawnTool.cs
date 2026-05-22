@@ -42,7 +42,17 @@ public sealed class SubAgentSpawnTool(
                   "enum": ["researcher", "coder", "planner", "reviewer", "writer", "general"],
                   "description": "Optional behavioral archetype for the sub-agent."
                 },
-                "targetAgentId": { "type": "string", "description": "Optional registered agent ID to use as the sub-agent identity. When set, the sub-agent runs as this agent's descriptor instead of cloning the parent." }
+                "targetAgentId": { "type": "string", "description": "Optional registered agent ID to use as the sub-agent identity. When set, the sub-agent runs as this agent's descriptor instead of cloning the parent." },
+                "additionalReadPaths": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Additional absolute paths the sub-agent may read. Merged with parent workspace access. Only paths the parent can read are accepted."
+                },
+                "additionalWritePaths": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Additional absolute paths the sub-agent may write. Merged with parent workspace access. Only paths the parent can write are accepted."
+                }
               },
               "required": ["task"]
             }
@@ -83,7 +93,9 @@ public sealed class SubAgentSpawnTool(
             TimeoutSeconds = ReadInt(arguments, "timeoutSeconds", 600),
             Archetype = ReadArchetype(arguments),
             TargetAgentId = ReadString(arguments, "targetAgentId"),
-            InheritedConversationId = conversationId?.Value
+            InheritedConversationId = conversationId?.Value,
+            AdditionalReadPaths = ReadStringArray(arguments, "additionalReadPaths") ?? [],
+            AdditionalWritePaths = ReadStringArray(arguments, "additionalWritePaths") ?? []
         };
 
         var spawned = await subAgentManager.SpawnAsync(request, cancellationToken).ConfigureAwait(false);

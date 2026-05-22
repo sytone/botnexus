@@ -4,6 +4,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Security;
@@ -122,10 +123,17 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
         if (!_registry.Contains(childAgentId))
         {
+            var childFileAccess = MergeFileAccess(
+                parentDescriptor.FileAccess,
+                baseDescriptor.FileAccess,
+                request.AdditionalReadPaths,
+                request.AdditionalWritePaths);
+
             _registry.Register(baseDescriptor with
             {
                 AgentId = childAgentId,
-                DisplayName = $"{baseDescriptor.DisplayName} ({archetype.Value})"
+                DisplayName = $"{baseDescriptor.DisplayName} ({archetype.Value})",
+                FileAccess = childFileAccess
             });
         }
 
@@ -572,5 +580,53 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             searchFrom += separator.Length;
         }
         return depth;
+    }
+
+    /// <summary>
+    /// Merges parent and base descriptor file access policies with the additional paths requested
+    /// by the spawn request. The result is constrained to what the parent agent is allowed:
+    /// sub-agents cannot exceed their parent's permissions (privilege escalation prevention).
+    /// </summary>
+    private static FileAccessPolicy? MergeFileAccess(
+        FileAccessPolicy? parentAccess,
+        FileAccessPolicy? baseAccess,
+        IReadOnlyList<string> additionalReadPaths,
+        IReadOnlyList<string> additionalWritePaths)
+    {
+        // Start with the base descriptor's access (parent clone or target agent)
+        var baseRead = baseAccess?.AllowedReadPaths ?? [];
+        var baseWrite = baseAccess?.AllowedWritePaths ?? [];
+        var denied = baseAccess?.DeniedPaths ?? [];
+
+        if (additionalReadPaths.Count == 0 && additionalWritePaths.Count == 0)
+        {
+            // No additions requested -- return base access as-is
+            return baseAccess;
+        }
+
+        // Filter additional paths to only those the parent can access (privilege confinement).
+        // If parentAccess is null, the parent has no restrictions -- allow any path.
+        var parentAllowedRead = parentAccess?.AllowedReadPaths;
+        var parentAllowedWrite = parentAccess?.AllowedWritePaths;
+
+        var grantedRead = additionalReadPaths
+            .Where(p => parentAllowedRead is null || parentAllowedRead.Any(allowed =>
+                p.StartsWith(allowed, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
+        var grantedWrite = additionalWritePaths
+            .Where(p => parentAllowedWrite is null || parentAllowedWrite.Any(allowed =>
+                p.StartsWith(allowed, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
+        var mergedRead = baseRead.Concat(grantedRead).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var mergedWrite = baseWrite.Concat(grantedWrite).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        return new FileAccessPolicy
+        {
+            AllowedReadPaths = mergedRead,
+            AllowedWritePaths = mergedWrite,
+            DeniedPaths = denied
+        };
     }
 }
