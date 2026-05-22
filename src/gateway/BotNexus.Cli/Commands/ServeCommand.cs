@@ -15,10 +15,10 @@ internal sealed class ServeCommand
         _gatewayCommand = gatewayCommand;
     }
 
-    public Command Build(Option<bool> verboseOption)
+    public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
         // Gateway lifecycle management
-        var gatewayCommand = _gatewayCommand.Build(verboseOption);
+        var gatewayCommand = _gatewayCommand.Build(verboseOption, targetOption);
 
         var probePortOption = new Option<int>("--port", () => 5050, "Port for the Probe web UI.");
         var probeSourceOption = new Option<string?>("--source", () => null, "Path to the BotNexus repository root. Defaults to ~/botnexus.");
@@ -43,20 +43,18 @@ internal sealed class ServeCommand
         // serve (default = gateway)
         var servePortOption = new Option<int>("--port", () => 5005, "Port to listen on.");
         var serveSourceOption = new Option<string?>("--source", () => null, "Path to the BotNexus repository root. Defaults to ~/botnexus.");
-        var serveTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
 
         var command = new Command("serve", "Start a BotNexus service. Defaults to the gateway.")
         {
             servePortOption,
-            serveSourceOption,
-            serveTargetOption
+            serveSourceOption
         };
 
         command.SetHandler(async context =>
         {
             var port = context.ParseResult.GetValueForOption(servePortOption);
             var source = context.ParseResult.GetValueForOption(serveSourceOption);
-            var target = context.ParseResult.GetValueForOption(serveTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var repoRoot = CliPaths.ResolveSource(source);
             var home = CliPaths.ResolveTarget(target);

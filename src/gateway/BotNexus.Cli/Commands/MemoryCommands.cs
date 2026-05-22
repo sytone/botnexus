@@ -12,17 +12,15 @@ namespace BotNexus.Cli.Commands;
 
 internal sealed class MemoryCommands
 {
-    public Command Build(Option<bool> verboseOption)
+    public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
         var command = new Command("memory", "Memory store operations.");
 
         var agentOption = new Option<string?>("--agent", "Backfill only this agent. If omitted, backfill all agents.");
-        var targetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
 
         var backfillCommand = new Command("backfill", "Index conversation turns from existing sessions into memory stores.")
         {
-            agentOption,
-            targetOption
+            agentOption
         };
 
         backfillCommand.SetHandler(async context =>

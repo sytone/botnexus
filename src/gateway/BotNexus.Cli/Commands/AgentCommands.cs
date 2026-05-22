@@ -9,17 +9,15 @@ namespace BotNexus.Cli.Commands;
 
 internal sealed class AgentCommands
 {
-    public Command Build(Option<bool> verboseOption)
+    public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
         var command = new Command("agent", "Manage configured agents.");
 
         var listCommand = new Command("list", "List configured agents.");
-        var listTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
-        listCommand.Add(listTargetOption);
         listCommand.SetHandler(async context =>
         {
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(listTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
             context.ExitCode = await ExecuteListAsync(configPath, verbose, CancellationToken.None);
@@ -30,14 +28,12 @@ internal sealed class AgentCommands
         var modelOption = new Option<string>("--model", () => "gpt-4.1", "Agent model name.");
         var enabledOption = new Option<bool>("--enabled", () => true, "Whether the agent is enabled.");
 
-        var addTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
         var addCommand = new Command("add", "Add an agent to config.json.")
         {
             idArgument,
             providerOption,
             modelOption,
-            enabledOption,
-            addTargetOption
+            enabledOption
         };
         addCommand.SetHandler(async context =>
         {
@@ -46,37 +42,31 @@ internal sealed class AgentCommands
             var model = context.ParseResult.GetValueForOption(modelOption) ?? "gpt-4.1";
             var enabled = context.ParseResult.GetValueForOption(enabledOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(addTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
             context.ExitCode = await ExecuteAddAsync(id, provider, model, enabled, configPath, verbose, CancellationToken.None);
         });
 
-        var removeTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
         var removeCommand = new Command("remove", "Remove an agent from config.json.")
         {
-            idArgument,
-            removeTargetOption
+            idArgument
         };
         removeCommand.SetHandler(async context =>
         {
             var id = context.ParseResult.GetValueForArgument(idArgument);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(removeTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
             context.ExitCode = await ExecuteRemoveAsync(id, configPath, verbose, CancellationToken.None);
         });
 
-        var wizardTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
-        var wizardCommand = new Command("wizard", "Interactively create a new agent using a step-by-step wizard.")
-        {
-            wizardTargetOption
-        };
+        var wizardCommand = new Command("wizard", "Interactively create a new agent using a step-by-step wizard.");
         wizardCommand.SetHandler(async context =>
         {
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(wizardTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
             context.ExitCode = await ExecuteWizardAsync(configPath, verbose, CancellationToken.None);

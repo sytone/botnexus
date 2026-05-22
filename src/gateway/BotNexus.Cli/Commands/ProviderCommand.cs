@@ -27,29 +27,25 @@ internal sealed class ProviderCommand
         ["anthropic"] = "apikey"
     };
 
-    public Command Build(Option<bool> verboseOption)
+    public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
         var command = new Command("provider", "Configure and authenticate LLM providers.");
 
         var setupCommand = new Command("setup", "Interactively add and authenticate a new provider.");
-        var setupTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
-        setupCommand.Add(setupTargetOption);
         setupCommand.SetHandler(async context =>
         {
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(setupTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
             context.ExitCode = await ExecuteSetupAsync(configPath, home, verbose, CancellationToken.None);
         });
 
         var listCommand = new Command("list", "List configured providers.");
-        var listTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
-        listCommand.Add(listTargetOption);
         listCommand.SetHandler(async context =>
         {
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(listTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
             context.ExitCode = await ExecuteListAsync(configPath, verbose, CancellationToken.None);
@@ -59,12 +55,10 @@ internal sealed class ProviderCommand
         command.AddCommand(listCommand);
 
         // Default to setup when no subcommand given
-        var defaultTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
-        command.Add(defaultTargetOption);
         command.SetHandler(async context =>
         {
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            var target = context.ParseResult.GetValueForOption(defaultTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
             context.ExitCode = await ExecuteDefaultAsync(configPath, home, verbose, CancellationToken.None);

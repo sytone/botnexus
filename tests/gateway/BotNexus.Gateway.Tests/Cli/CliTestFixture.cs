@@ -70,6 +70,52 @@ internal sealed class CliTestFixture : IAsyncDisposable
         return new CliResult(process.ExitCode, await stdoutTask, await stderrTask);
     }
 
+    /// <summary>
+    /// Runs the CLI with <c>BOTNEXUS_HOME</c> cleared so the caller can test the global <c>--target</c> option
+    /// without environment variable interference.
+    /// </summary>
+    public async Task<CliResult> RunCliWithTargetFlagAsync(params string[] args)
+    {
+        // Prepend --target <rootPath> to the args list so the global option is set explicitly.
+        var allArgs = new List<string> { "--target", _rootPath };
+        allArgs.AddRange(args);
+
+        var process = new Process
+        {
+            StartInfo = new ProcessStartInfo("dotnet")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+
+        process.StartInfo.ArgumentList.Add(ResolveCliAssemblyPath());
+        foreach (var arg in allArgs)
+            process.StartInfo.ArgumentList.Add(arg);
+
+        // Do NOT set BOTNEXUS_HOME — we want the global --target to be the sole source.
+        process.StartInfo.Environment["BOTNEXUS_HOME"] = string.Empty;
+
+        process.Start();
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            process.Kill(entireProcessTree: true);
+            throw new TimeoutException("CLI command timed out.");
+        }
+
+        return new CliResult(process.ExitCode, await stdoutTask, await stderrTask);
+    }
+
     private static string ResolveCliAssemblyPath()
     {
         var localCopy = Path.Combine(AppContext.BaseDirectory, "BotNexus.Cli.dll");

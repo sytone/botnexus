@@ -9,14 +9,12 @@ namespace BotNexus.Cli.Commands;
 
 internal sealed class InitCommand
 {
-    public Command Build(Option<bool> verboseOption)
+    public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
         var forceOption = new Option<bool>("--force", "Overwrite existing config.json.");
-        var targetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
         var command = new Command("init", "Initialize ~/.botnexus with a default config and required directories.")
         {
-            forceOption,
-            targetOption
+            forceOption
         };
 
         command.SetHandler(async context =>

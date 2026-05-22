@@ -17,14 +17,13 @@ internal sealed class GatewayCommand
         _processManager = processManager;
     }
 
-    public Command Build(Option<bool> verboseOption)
+    public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
         var command = new Command("gateway", "Manage the BotNexus Gateway lifecycle");
 
         // Common options for start/restart
         var portOption = new Option<int>("--port", () => 5005, "Port to listen on.");
         var sourceOption = new Option<string?>("--source", () => null, "Path to the BotNexus repository root. Defaults to ~/botnexus.");
-        var targetOption = new Option<string?>("--target", () => null, "BotNexus home directory (config, workspace, extensions). Defaults to ~/.botnexus.");
 
         // Start command
         var attachedOption = new Option<bool>("--attached", "Run in foreground instead of detached mode.");
@@ -32,7 +31,6 @@ internal sealed class GatewayCommand
         {
             portOption,
             sourceOption,
-            targetOption,
             attachedOption
         };
         startCommand.SetHandler(async context =>
@@ -48,46 +46,36 @@ internal sealed class GatewayCommand
         });
 
         // Stop command
-        var stopTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory. Defaults to ~/.botnexus.");
-        var stopCommand = new Command("stop", "Stop the gateway process")
-        {
-            stopTargetOption
-        };
+        var stopCommand = new Command("stop", "Stop the gateway process");
         stopCommand.SetHandler(async context =>
         {
-            var target = context.ParseResult.GetValueForOption(stopTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var home = CliPaths.ResolveTarget(target);
             context.ExitCode = await StopAsync(home, verbose, context.GetCancellationToken());
         });
 
         // Status command
-        var statusTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory. Defaults to ~/.botnexus.");
-        var statusCommand = new Command("status", "Check gateway process status")
-        {
-            statusTargetOption
-        };
+        var statusCommand = new Command("status", "Check gateway process status");
         statusCommand.SetHandler(async context =>
         {
-            var target = context.ParseResult.GetValueForOption(statusTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var home = CliPaths.ResolveTarget(target);
             context.ExitCode = await StatusAsync(home, verbose, context.GetCancellationToken());
         });
 
         // Restart command
-        var restartTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory. Defaults to ~/.botnexus.");
         var restartCommand = new Command("restart", "Restart the gateway process")
         {
             portOption,
-            sourceOption,
-            restartTargetOption
+            sourceOption
         };
         restartCommand.SetHandler(async context =>
         {
             var port = context.ParseResult.GetValueForOption(portOption);
             var source = context.ParseResult.GetValueForOption(sourceOption);
-            var target = context.ParseResult.GetValueForOption(restartTargetOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var repoRoot = CliPaths.ResolveSource(source);
             var home = CliPaths.ResolveTarget(target);
