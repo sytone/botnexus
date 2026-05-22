@@ -85,7 +85,7 @@ try {
     Write-Host "[main] Preparing local main branch..."
     Invoke-Git -Arguments @('checkout', 'main')
     Invoke-Git -Arguments @('clean', '-fdx')
-    Invoke-Git -Arguments @('reset', 'HEAD~1', '--hard')
+    Invoke-Git -Arguments @('reset', '--hard', 'HEAD~1')
     Invoke-Git -Arguments @('pull')
 
     $mainFailureInstruction = @'
