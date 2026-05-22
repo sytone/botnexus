@@ -1,0 +1,379 @@
+@page "/conversations/{ConversationId}/bindings"
+@inject NavigationManager Nav
+@inject HttpClient Http
+@implements IDisposable
+
+<div class="bindings-panel">
+    <header class="bindings-toolbar">
+        <h3>🔗 Channel Bindings</h3>
+        <div class="bindings-toolbar-actions">
+            @if (!string.IsNullOrEmpty(_statusMessage))
+            {
+                <span class="bindings-status @_statusClass" role="status">@_statusMessage</span>
+            }
+            <button class="toolbar-btn" @onclick="LoadAsync" disabled="@_loading" title="Refresh">↻ Reload</button>
+            <button class="toolbar-btn primary add-binding-btn" @onclick="ShowAddForm" disabled="@(_loading || _showForm)" title="Add a channel binding">+ Add Binding</button>
+        </div>
+    </header>
+
+    @if (_loading)
+    {
+        <div class="bindings-loading" aria-live="polite">
+            <div class="loading-spinner small"></div>
+            <span>Loading bindings…</span>
+        </div>
+    }
+    else if (_error is not null)
+    {
+        <div class="bindings-error" role="alert">⚠️ Failed to load bindings: @_error</div>
+    }
+    else
+    {
+        @* Add Binding form *@
+        @if (_showForm)
+        {
+            <div class="binding-form-card">
+                <h4>Add Channel Binding</h4>
+                <div class="binding-form-grid">
+                    <label for="channel-type-input">Channel Type <span class="required">*</span></label>
+                    <div>
+                        <input id="channel-type-input"
+                               class="cfg-input @(HasFieldError("ChannelType") ? "field-error" : "")"
+                               value="@_addChannelType"
+                               @oninput="OnChannelTypeInput"
+                               placeholder="e.g. telegram, signalr" aria-required="true" />
+                        @if (HasFieldError("ChannelType"))
+                        {
+                            <span class="bindings-field-error" role="alert">@GetFieldError("ChannelType")</span>
+                        }
+                    </div>
+
+                    <label for="channel-address-input">Channel Address <span class="required">*</span></label>
+                    <div>
+                        <input id="channel-address-input"
+                               class="cfg-input @(HasFieldError("ChannelAddress") ? "field-error" : "")"
+                               value="@_addChannelAddress"
+                               @oninput="OnChannelAddressInput"
+                               placeholder="e.g. chat ID, user ID" aria-required="true" />
+                        @if (HasFieldError("ChannelAddress"))
+                        {
+                            <span class="bindings-field-error" role="alert">@GetFieldError("ChannelAddress")</span>
+                        }
+                    </div>
+
+                    <label for="thread-id-input">Thread ID</label>
+                    <input id="thread-id-input" class="cfg-input"
+                           value="@_addThreadId"
+                           @oninput="OnThreadIdInput"
+                           placeholder="optional" />
+
+                    <label for="mode-input">Mode</label>
+                    <select id="mode-input" class="cfg-input"
+                            value="@_addMode"
+                            @onchange="OnModeChange">
+                        <option value="Interactive">Interactive</option>
+                        <option value="Notify">Notify</option>
+                        <option value="ReadOnly">ReadOnly</option>
+                    </select>
+                </div>
+                @if (!string.IsNullOrEmpty(_formError))
+                {
+                    <div class="bindings-form-error" role="alert">⚠️ @_formError</div>
+                }
+                <div class="binding-form-actions">
+                    <button class="toolbar-btn primary" @onclick="SaveAddFormAsync" disabled="@_saving">
+                        @(_saving ? "Saving…" : "✓ Add Binding")
+                    </button>
+                    <button class="toolbar-btn cancel-add-btn" @onclick="CancelForm" disabled="@_saving">Cancel</button>
+                </div>
+            </div>
+        }
+
+        @* Delete confirmation dialog *@
+        @if (_confirmDeleteId is not null)
+        {
+            <div class="binding-confirm-overlay" @onclick="CancelDelete">
+                <div class="binding-confirm-dialog" @onclick:stopPropagation="true" role="alertdialog"
+                     aria-labelledby="binding-delete-title">
+                    <h4 id="binding-delete-title">Remove Binding</h4>
+                    <p>Remove this channel binding from the conversation? The channel address will no longer route to this conversation.</p>
+                    <div class="binding-confirm-actions">
+                        <button class="toolbar-btn danger confirm-delete-btn" @onclick="ConfirmDeleteAsync" disabled="@_deleting">
+                            @(_deleting ? "Removing…" : "Remove")
+                        </button>
+                        <button class="toolbar-btn" @onclick="CancelDelete" disabled="@_deleting">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        }
+
+        @* Bindings list *@
+        @if (_bindings.Count == 0 && !_showForm)
+        {
+            <div class="bindings-empty">
+                <p>No channel bindings for this conversation. Click <strong>+ Add Binding</strong> to add one.</p>
+            </div>
+        }
+        else if (_bindings.Count > 0)
+        {
+            <table class="bindings-table" aria-label="Channel bindings">
+                <thead>
+                    <tr>
+                        <th>Channel Type</th>
+                        <th>Address</th>
+                        <th>Thread ID</th>
+                        <th>Mode</th>
+                        <th>Bound At</th>
+                        <th><span class="sr-only">Actions</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var b in _bindings)
+                    {
+                        var bId = b.BindingId;
+                        <tr data-binding-id="@b.BindingId">
+                            <td class="binding-channel-type">@b.ChannelType</td>
+                            <td class="binding-address mono">@b.ChannelAddress</td>
+                            <td>@(b.ThreadId ?? "—")</td>
+                            <td>@b.Mode</td>
+                            <td>@b.BoundAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                            <td class="binding-actions">
+                                <button class="agents-btn-delete delete-binding-btn"
+                                        @onclick="() => RequestDelete(bId)"
+                                        title="Remove binding @b.BindingId"
+                                        aria-label="Remove binding">🗑️</button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public string ConversationId { get; set; } = default!;
+
+    // ── Form state (flat fields instead of a record to avoid Razor lambda issues) ─────
+    private string _addChannelType = "";
+    private string _addChannelAddress = "";
+    private string? _addThreadId;
+    private string _addMode = "Interactive";
+
+    private List<BindingRow> _bindings = [];
+    private bool _loading = true;
+    private string? _error;
+    private string? _statusMessage;
+    private string _statusClass = "";
+    private bool _showForm;
+    private bool _saving;
+    private bool _deleting;
+    private string? _formError;
+    private string? _confirmDeleteId;
+    private Dictionary<string, string> _fieldErrors = new();
+    private CancellationTokenSource? _statusDismissCts;
+
+    private sealed record BindingRow(
+        string BindingId,
+        string ChannelType,
+        string ChannelAddress,
+        string? ThreadId,
+        string Mode,
+        DateTimeOffset BoundAt);
+
+    private bool HasFieldError(string field) => _fieldErrors.ContainsKey(field);
+    private string GetFieldError(string field) => _fieldErrors.GetValueOrDefault(field, "");
+
+    private void OnChannelTypeInput(ChangeEventArgs e)    => _addChannelType    = e.Value?.ToString() ?? "";
+    private void OnChannelAddressInput(ChangeEventArgs e) => _addChannelAddress = e.Value?.ToString() ?? "";
+    private void OnThreadIdInput(ChangeEventArgs e)       => _addThreadId       = e.Value?.ToString();
+    private void OnModeChange(ChangeEventArgs e)          => _addMode           = e.Value?.ToString() ?? "Interactive";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadAsync();
+    }
+
+    public void Dispose()
+    {
+        _statusDismissCts?.Cancel();
+        _statusDismissCts?.Dispose();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        StateHasChanged();
+
+        try
+        {
+            var url = Nav.BaseUri.TrimEnd('/') + $"/api/conversations/{ConversationId}";
+            var opts = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var response = await Http.GetAsync(url);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = $"HTTP {(int)response.StatusCode}";
+                return;
+            }
+
+            var conv = await response.Content.ReadFromJsonAsync<ConversationDetail>(opts);
+            _bindings = conv?.Bindings?.Select(b => new BindingRow(
+                b.BindingId ?? "",
+                b.ChannelType ?? "",
+                b.ChannelAddress ?? "",
+                b.ThreadId,
+                b.Mode ?? "Interactive",
+                b.BoundAt)).ToList() ?? [];
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void ShowAddForm()
+    {
+        _addChannelType = "";
+        _addChannelAddress = "";
+        _addThreadId = null;
+        _addMode = "Interactive";
+        _fieldErrors.Clear();
+        _formError = null;
+        _showForm = true;
+    }
+
+    private void CancelForm()
+    {
+        _showForm = false;
+        _fieldErrors.Clear();
+        _formError = null;
+    }
+
+    private bool ValidateAddForm()
+    {
+        _fieldErrors.Clear();
+        if (string.IsNullOrWhiteSpace(_addChannelType))
+            _fieldErrors["ChannelType"] = "Channel Type is required.";
+        if (string.IsNullOrWhiteSpace(_addChannelAddress))
+            _fieldErrors["ChannelAddress"] = "Channel Address is required.";
+        return _fieldErrors.Count == 0;
+    }
+
+    private async Task SaveAddFormAsync()
+    {
+        _formError = null;
+        if (!ValidateAddForm()) return;
+
+        _saving = true;
+        try
+        {
+            var url = Nav.BaseUri.TrimEnd('/') + $"/api/conversations/{ConversationId}/bindings";
+            var payload = new
+            {
+                channelType = _addChannelType,
+                channelAddress = _addChannelAddress,
+                threadId = string.IsNullOrWhiteSpace(_addThreadId) ? null : _addThreadId,
+                mode = _addMode,
+                threadingMode = "Single"
+            };
+            var response = await Http.PostAsJsonAsync(url, payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                var body = await response.Content.ReadAsStringAsync();
+                _formError = $"Error {(int)response.StatusCode}: {body}";
+                return;
+            }
+
+            _showForm = false;
+            SetStatus("Binding added.", "success");
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _formError = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void RequestDelete(string bindingId) => _confirmDeleteId = bindingId;
+    private void CancelDelete() => _confirmDeleteId = null;
+
+    private async Task ConfirmDeleteAsync()
+    {
+        if (_confirmDeleteId is null) return;
+
+        _deleting = true;
+        var id = _confirmDeleteId;
+        try
+        {
+            var url = Nav.BaseUri.TrimEnd('/') + $"/api/conversations/{ConversationId}/bindings/{id}";
+            var response = await Http.DeleteAsync(url);
+            if (!response.IsSuccessStatusCode)
+            {
+                SetStatus($"Delete failed: {(int)response.StatusCode}", "error");
+                return;
+            }
+            SetStatus("Binding removed.", "success");
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Error: {ex.Message}", "error");
+        }
+        finally
+        {
+            _deleting = false;
+            _confirmDeleteId = null;
+        }
+    }
+
+    private void SetStatus(string msg, string cssClass)
+    {
+        _statusMessage = msg;
+        _statusClass = cssClass;
+        _statusDismissCts?.Cancel();
+        _statusDismissCts?.Dispose();
+        _statusDismissCts = new CancellationTokenSource();
+        var token = _statusDismissCts.Token;
+        _ = DismissStatusAfterDelay(token);
+    }
+
+    private async Task DismissStatusAfterDelay(CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(4000, token);
+            _statusMessage = null;
+            _statusClass = "";
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (TaskCanceledException) { }
+    }
+
+    // ── Local DTOs for deserialization ─────────────────────────────────────
+
+    private sealed class ConversationDetail
+    {
+        public List<BindingDetail>? Bindings { get; init; }
+    }
+
+    private sealed class BindingDetail
+    {
+        public string? BindingId { get; init; }
+        public string? ChannelType { get; init; }
+        public string? ChannelAddress { get; init; }
+        public string? ThreadId { get; init; }
+        public string? Mode { get; init; }
+        public DateTimeOffset BoundAt { get; init; }
+    }
+}
