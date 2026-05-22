@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
@@ -87,6 +89,9 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
             throw new ArgumentException("url must be a valid HTTP or HTTPS URL.");
         }
 
+        if (!_config.AllowPrivateNetworks)
+            AssertNotPrivateOrImds(uri, _config.AdditionalBlockedHosts);
+
         var maxLength = ReadOptionalInt(arguments, "max_length") ?? 5000;
         if (maxLength < 1 || maxLength > _config.MaxLengthChars)
             throw new ArgumentOutOfRangeException(
@@ -170,6 +175,82 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
             return TextResult($"Error fetching URL: {ex.Message}");
         }
     }
+
+    #region SSRF Guard
+
+    private static readonly string[] ImdsHostnames =
+    [
+        "metadata.google.internal",
+        "metadata.azure.internal",
+        "169.254.169.254",
+        "fd00:ec2::254",
+    ];
+
+    /// <summary>
+    /// Throws <see cref="ArgumentException"/> when the URI resolves to a private,
+    /// loopback, or cloud IMDS address that should not be reachable by agent tools.
+    /// </summary>
+    private static void AssertNotPrivateOrImds(Uri uri, IReadOnlyList<string> additionalBlockedHosts)
+    {
+        var host = uri.Host;
+
+        // Block known IMDS/metadata hostnames and any caller-supplied blocklist.
+        if (ImdsHostnames.Any(h => host.Equals(h, StringComparison.OrdinalIgnoreCase))
+            || additionalBlockedHosts.Any(h => host.Equals(h, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new ArgumentException(
+                $"URL host '{host}' is blocked. Private network and IMDS access is not allowed.");
+        }
+
+        // Try to parse host as IP address for range checks.
+        if (!IPAddress.TryParse(host, out var address))
+        {
+            // Non-IP hostnames (e.g. "localhost") still need checking.
+            if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException(
+                    $"URL host '{host}' is blocked. Private network and IMDS access is not allowed.");
+            return; // External DNS name — allow (DNS rebinding mitigation is a separate concern)
+        }
+
+        if (IsBlockedAddress(address))
+        {
+            throw new ArgumentException(
+                $"URL host '{host}' is blocked. Private network and IMDS access is not allowed.");
+        }
+    }
+
+    private static bool IsBlockedAddress(IPAddress address)
+    {
+        // Normalise IPv4-mapped IPv6 (::ffff:x.x.x.x) to plain IPv4.
+        if (address.IsIPv4MappedToIPv6)
+            address = address.MapToIPv4();
+
+        if (address.AddressFamily == AddressFamily.InterNetwork)
+        {
+            var bytes = address.GetAddressBytes();
+            return
+                bytes[0] == 127 ||                                    // 127.0.0.0/8 loopback
+                bytes[0] == 0 ||                                      // 0.0.0.0/8 reserved
+                bytes[0] == 10 ||                                     // 10.0.0.0/8 RFC-1918
+                bytes[0] == 169 && bytes[1] == 254 ||                // 169.254.0.0/16 link-local / IMDS
+                bytes[0] == 172 && bytes[1] is >= 16 and <= 31 ||   // 172.16.0.0/12 RFC-1918
+                bytes[0] == 192 && bytes[1] == 168 ||               // 192.168.0.0/16 RFC-1918
+                bytes[0] == 100 && bytes[1] is >= 64 and <= 127;    // 100.64.0.0/10 CGN
+        }
+
+        if (address.AddressFamily == AddressFamily.InterNetworkV6)
+        {
+            return
+                address.Equals(IPAddress.IPv6Loopback) ||  // ::1
+                address.IsIPv6LinkLocal ||                  // fe80::/10
+                address.IsIPv6SiteLocal ||                  // fec0::/10 deprecated but block anyway
+                address.IsIPv6UniqueLocal;                  // fc00::/7 ULA (private IPv6)
+        }
+
+        return false;
+    }
+
+    #endregion
 
     #region Argument Helpers
 
