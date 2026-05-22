@@ -1,5 +1,7 @@
+using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Api.Models;
 using BotNexus.Gateway.Configuration;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
@@ -86,6 +88,10 @@ public sealed class ConfigController : ControllerBase
         [FromServices] PlatformConfigWriter writer,
         CancellationToken ct)
     {
+        var adminCheck = RequireAdminScope();
+        if (adminCheck is not null)
+            return adminCheck;
+
         // Prevent updating agents via this endpoint (use /api/agents instead)
         if (section.Equals("agents", StringComparison.OrdinalIgnoreCase))
             return BadRequest("Use /api/agents for agent management.");
@@ -105,6 +111,10 @@ public sealed class ConfigController : ControllerBase
         [FromServices] PlatformConfigWriter writer,
         CancellationToken ct)
     {
+        var adminCheck = RequireAdminScope();
+        if (adminCheck is not null)
+            return adminCheck;
+
         await writer.UpdateSectionEntryAsync(section, key, value, ct);
         return Ok(new { message = $"Entry '{key}' in section '{section}' updated." });
     }
@@ -119,6 +129,10 @@ public sealed class ConfigController : ControllerBase
         [FromServices] PlatformConfigWriter writer,
         CancellationToken ct)
     {
+        var adminCheck = RequireAdminScope();
+        if (adminCheck is not null)
+            return adminCheck;
+
         await writer.RemoveSectionEntryAsync(section, key, ct);
         return Ok(new { message = $"Entry '{key}' removed from section '{section}'." });
     }
@@ -346,6 +360,26 @@ public sealed class ConfigController : ControllerBase
                 : ex.Message;
             return Ok(new ConfigValidationResponse(false, resolvedPath, [], [$"Invalid JSON in config file: {parseMessage}"]));
         }
+    }
+
+    /// <summary>
+    /// Returns a 403 ObjectResult if the caller identity is present but is not an admin.
+    /// Returns <see langword="null"/> to allow the request through (admin, or no identity = dev mode).
+    /// </summary>
+    private ObjectResult? RequireAdminScope()
+    {
+        if (HttpContext?.Items is not { } items)
+            return null;
+
+        if (items[GatewayAuthMiddleware.CallerIdentityItemKey] is not GatewayCallerIdentity identity)
+            return null; // no identity present — dev mode / auth disabled
+
+        if (identity.IsAdmin)
+            return null;
+
+        return StatusCode(
+            StatusCodes.Status403Forbidden,
+            new { error = "forbidden", message = "Admin scope required for config write operations." });
     }
 
     private static string ResolveConfiguredPath(IConfiguration configuration)
