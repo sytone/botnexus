@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Linq;
 using System.Text.Json;
@@ -159,9 +159,10 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         }
 
         var conversationStore = _serviceProvider.GetService<IConversationStore>();
+        ConversationId? conversationId = null;
         if (conversationStore is not null)
         {
-            var conversationId = await ResolveConversationIdAsync(conversationStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken)
+            conversationId = await ResolveConversationIdAsync(conversationStore, sessionStore, descriptor.AgentId, context.SessionId, cancellationToken)
                 .ConfigureAwait(false);
             var (conversationAccessLevel, conversationAllowedAgents) = ResolveConversationAccess(descriptor);
             var conversationDispatcher = _serviceProvider.GetService<IChannelDispatcher>();
@@ -213,7 +214,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 || effectiveToolIds.Contains("manage_subagent", StringComparer.OrdinalIgnoreCase);
 
             if (includeSpawn)
-                tools.Add(new SubAgentSpawnTool(subAgentManager, descriptor.AgentId, context.SessionId));
+                tools.Add(new SubAgentSpawnTool(subAgentManager, descriptor.AgentId, context.SessionId, conversationId));
             if (includeList)
                 tools.Add(new SubAgentListTool(subAgentManager, context.SessionId));
             if (includeManage)

@@ -11,7 +11,8 @@ namespace BotNexus.Gateway.Tools;
 public sealed class SubAgentSpawnTool(
     ISubAgentManager subAgentManager,
     AgentId agentId,
-    SessionId sessionId) : IAgentTool
+    SessionId sessionId,
+    ConversationId? conversationId = null) : IAgentTool
 {
     public string Name => "spawn_subagent";
     public string Label => "Spawn Sub-Agent";
@@ -81,7 +82,8 @@ public sealed class SubAgentSpawnTool(
             MaxTurns = ReadInt(arguments, "maxTurns", 30),
             TimeoutSeconds = ReadInt(arguments, "timeoutSeconds", 600),
             Archetype = ReadArchetype(arguments),
-            TargetAgentId = ReadString(arguments, "targetAgentId")
+            TargetAgentId = ReadString(arguments, "targetAgentId"),
+            ConversationId = conversationId
         };
 
         var spawned = await subAgentManager.SpawnAsync(request, cancellationToken).ConfigureAwait(false);

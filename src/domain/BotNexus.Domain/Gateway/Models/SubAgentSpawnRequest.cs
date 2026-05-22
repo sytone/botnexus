@@ -65,7 +65,7 @@ public sealed record SubAgentSpawnRequest
     /// <summary>
     /// Gets the spawn depth of this request within the sub-agent tree.
     /// Zero means the parent is a top-level session; one means the parent is itself a sub-agent.
-    /// Used to enforce <see cref="BotNexus.Gateway.Configuration.SubAgentOptions.MaxDepth"/>.
+    /// Used to enforce <see cref=`BotNexus.Gateway.Configuration.SubAgentOptions.MaxDepth`/>.
     /// </summary>
     public int SpawnDepth { get; init; }
 
@@ -74,6 +74,13 @@ public sealed record SubAgentSpawnRequest
     /// runs as this agent's descriptor (system prompt, model, tools) rather than as a clone of the parent.
     /// </summary>
     public string? TargetAgentId { get; init; }
+
+    /// <summary>
+    /// Gets an optional conversation ID that the sub-agent should inherit from the parent.
+    /// When set, sub-agent output will be routed into the parent's conversation rather than
+    /// creating a new standalone conversation.
+    /// </summary>
+    public ConversationId? ConversationId { get; init; }
 
     /// <summary>
     /// Gets the union of tool names that the parent agent is denied, inherited from the

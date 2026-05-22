@@ -6,6 +6,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Security;
+using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.Logging;
@@ -26,6 +27,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     private readonly IOptionsMonitor<GatewayOptions> _options;
     private readonly ILogger<DefaultSubAgentManager> _logger;
     private readonly DefaultToolPolicyProvider? _policyProvider;
+    private readonly ISessionStore? _sessionStore;
     private readonly ConcurrentDictionary<string, SubAgentInfo> _subAgents = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<SessionId, ConcurrentBag<string>> _parentChildren = [];
     private readonly ConcurrentDictionary<string, AgentId> _parentAgentIds = new(StringComparer.OrdinalIgnoreCase);
@@ -41,13 +43,15 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         IOptionsMonitor<GatewayOptions> options,
         ILogger<DefaultSubAgentManager> logger,
         IAgentWorkspaceManager? workspaceManager = null,
-        DefaultToolPolicyProvider? policyProvider = null)
+        DefaultToolPolicyProvider? policyProvider = null,
+        ISessionStore? sessionStore = null)
     {
         _supervisor = supervisor;
         _registry = registry;
         _activity = activity;
         _dispatcher = dispatcher;
         _workspaceManager = workspaceManager;
+        _sessionStore = sessionStore;
         _options = options;
         _logger = logger;
         _policyProvider = policyProvider;
@@ -126,6 +130,17 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         }
 
         var handle = await _supervisor.GetOrCreateAsync(childAgentId, childSessionId, ct);
+
+        // Inherit parent conversation ID if specified, so sub-agent output routes to the same conversation.
+        if (request.ConversationId is { } inheritedConvId && _sessionStore is not null)
+        {
+            var childSession = await _sessionStore.GetAsync(childSessionId, ct).ConfigureAwait(false);
+            if (childSession is not null)
+            {
+                childSession.Session.ConversationId = inheritedConvId;
+                await _sessionStore.SaveAsync(childSession, ct).ConfigureAwait(false);
+            }
+        }
 
         var configuredDefaultModel = string.IsNullOrWhiteSpace(_options.CurrentValue.SubAgents.DefaultModel)
             ? null
