@@ -349,9 +349,12 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             }
             session.ChannelType ??= message.ChannelType;
             // Update session ConversationId from dispatch resolution.
-            // Always update (not just when null) so that switching conversations on the same
-            // session correctly routes messages to the new conversation (#314).
-            if (resolution is not null && session.Session.ConversationId != resolution.ConversationId)
+            // Set-once: only stamp when null. Conversation switching is driven by the client
+            // passing explicit conversationId in the message payload (#314). Re-stamping on every
+            // message allows an out-of-order implicit-routing message to overwrite the session's
+            // ConversationId, causing subsequent implicit reconnects to route to the wrong
+            // conversation (#472).
+            if (resolution is not null && session.Session.ConversationId is null)
                 session.Session.ConversationId = resolution.ConversationId;
             session.CallerId ??= message.SenderId;
             session.SessionType = ResolveSessionType(session, message);

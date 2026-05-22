@@ -10,9 +10,9 @@ using Shouldly;
 namespace BotNexus.Gateway.Conversations.Tests.Conversations;
 
 /// <summary>
-/// Tests for SignalR portal reconnect duplicate conversation bug (#441).
-/// When the portal uses an explicit conversationId, the router must bind that
-/// conversation to the (channelType, channelAddress) so reconnects can find it.
+/// Tests for conversation routing with explicit conversationId (#441, #472).
+/// The router must NOT add bindings in the explicit conversationId path (#472 regression fix).
+/// The portal always passes an explicit conversationId, so reconnects always use it too.
 /// </summary>
 public sealed class PortalReconnectTests
 {
@@ -25,11 +25,13 @@ public sealed class PortalReconnectTests
             NullLogger<DefaultConversationRouter>.Instance);
 
     /// <summary>
-    /// First send: conversationId provided, conversation has no binding.
-    /// Router should add a binding so future reconnects can find it.
+    /// Explicit conversationId path must NOT add a binding (#472 regression fix).
+    /// Adding a binding causes the implicit reconnect path to hijack this conversation
+    /// when the user switches to a different conversation.
+    /// The portal always passes conversationId explicitly, so no binding is needed.
     /// </summary>
     [Fact]
-    public async Task ResolveInbound_WithExplicitConversationId_AddsBindingWhenNoneExists()
+    public async Task ResolveInbound_WithExplicitConversationId_DoesNotAddBinding()
     {
         var store = new InMemoryConversationStore();
         var agentId = AgentId.From("nova");
@@ -48,36 +50,31 @@ public sealed class PortalReconnectTests
 
         var router = CreateRouter(store);
 
-        // First send with explicit conversationId, no existing binding
+        // Send with explicit conversationId
         var result = await router.ResolveInboundAsync(agentId, channel, address, threadId: null, conversationId: conv.ConversationId.Value);
 
         result.ShouldNotBeNull();
         result.Conversation.ConversationId.ShouldBe(conv.ConversationId);
 
-        // Binding should now exist on the conversation
+        // Binding must NOT be added (#472 regression guard)
         var updated = await store.GetAsync(conv.ConversationId);
         updated.ShouldNotBeNull();
-        updated!.ChannelBindings.ShouldNotBeEmpty();
-        updated.ChannelBindings.ShouldContain(b =>
-            b.ChannelType == channel &&
-            b.ChannelAddress == address &&
-            b.Mode != BindingMode.Muted,
-            "a binding must be added so reconnects can find this conversation without an explicit conversationId");
+        updated!.ChannelBindings.ShouldBeEmpty(
+            "explicit conversationId path must not add bindings -- would cause cross-routing on conversation switch (#472)");
     }
 
     /// <summary>
-    /// After the binding is created, reconnect without conversationId must find the same conversation.
-    /// This is the core scenario: no duplicate should be created.
+    /// Explicit path must still route correctly even with no binding.
+    /// The portal always passes conversationId, so no binding lookup is needed.
     /// </summary>
     [Fact]
-    public async Task ReconnectWithoutConversationId_FindsExistingConversation_AfterFirstSend()
+    public async Task ResolveInbound_WithExplicitConversationId_RoutesCorrectly_WithoutBinding()
     {
         var store = new InMemoryConversationStore();
         var agentId = AgentId.From("nova");
         var channel = ChannelKey.From("signalr");
         var address = ChannelAddress.From("nova");
 
-        // Pre-create a REST conversation with no bindings
         var conv = new Conversation
         {
             ConversationId = ConversationId.Create(),
@@ -89,15 +86,14 @@ public sealed class PortalReconnectTests
 
         var router = CreateRouter(store);
 
-        // First send: explicit conversationId (adds binding)
-        await router.ResolveInboundAsync(agentId, channel, address, threadId: null, conversationId: conv.ConversationId.Value);
+        // First send with explicit conversationId
+        var result1 = await router.ResolveInboundAsync(agentId, channel, address, threadId: null, conversationId: conv.ConversationId.Value);
+        result1.Conversation.ConversationId.ShouldBe(conv.ConversationId);
 
-        // Reconnect: NO conversationId - must find the same conversation
-        var reconnectResult = await router.ResolveInboundAsync(agentId, channel, address, threadId: null, conversationId: null);
-
-        reconnectResult.ShouldNotBeNull();
-        reconnectResult.Conversation.ConversationId.ShouldBe(conv.ConversationId,
-            "reconnect without conversationId must return the same conversation, not create signalr:nova duplicate");
+        // Second send (reconnect) with same explicit conversationId -- must route to same conversation
+        var result2 = await router.ResolveInboundAsync(agentId, channel, address, threadId: null, conversationId: conv.ConversationId.Value);
+        result2.Conversation.ConversationId.ShouldBe(conv.ConversationId,
+            "repeated explicit conversationId must always route to the same conversation");
     }
 
     /// <summary>
@@ -140,10 +136,11 @@ public sealed class PortalReconnectTests
     }
 
     /// <summary>
-    /// A muted binding should be reactivated (not duplicated) when the conversation is re-used explicitly.
+    /// A muted binding is not reactivated in the explicit path (#472 regression fix).
+    /// Muted binding management belongs in the binding management layer, not the routing layer.
     /// </summary>
     [Fact]
-    public async Task ResolveInbound_WithExplicitConversationId_ReactivatesMutedBinding()
+    public async Task ResolveInbound_WithExplicitConversationId_DoesNotReactivateMutedBinding()
     {
         var store = new InMemoryConversationStore();
         var agentId = AgentId.From("nova");
@@ -167,11 +164,17 @@ public sealed class PortalReconnectTests
 
         var router = CreateRouter(store);
 
-        await router.ResolveInboundAsync(agentId, channel, address, threadId: null, conversationId: conv.ConversationId.Value);
+        var result = await router.ResolveInboundAsync(agentId, channel, address, threadId: null, conversationId: conv.ConversationId.Value);
+
+        result.ShouldNotBeNull();
+        result.Conversation.ConversationId.ShouldBe(conv.ConversationId,
+            "explicit path must still route to the correct conversation even when binding is muted");
 
         var updated = await store.GetAsync(conv.ConversationId);
         updated.ShouldNotBeNull();
-        updated!.ChannelBindings.Count.ShouldBe(1, "muted binding should be reactivated, not duplicated");
-        updated.ChannelBindings[0].Mode.ShouldBe(BindingMode.Interactive, "muted binding must be reactivated to Interactive");
+        updated!.ChannelBindings.Count.ShouldBe(1, "no new binding should be added");
+        // Muted binding stays muted -- reactivation is not the router's job in the explicit path
+        updated.ChannelBindings[0].Mode.ShouldBe(BindingMode.Muted,
+            "muted binding must not be changed in explicit conversationId path");
     }
 }

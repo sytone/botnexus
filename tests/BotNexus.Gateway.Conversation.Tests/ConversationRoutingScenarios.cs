@@ -104,15 +104,14 @@ public sealed class ConversationRoutingScenarios
             agentId, SignalR(), ChannelAddress.From("agent1"), null,
             conversationId: secondaryConv.ConversationId.Value);
 
-        // Assert — routes to the correct conversation with NO new binding added
+        // Assert - routes to the correct conversation with NO binding added (#472 regression fix)
         result.Conversation.ConversationId.ShouldBe(secondaryConv.ConversationId,
             "explicit conversationId must route directly to that conversation");
-        // The critical invariant: a channel address binding IS added (for reconnect),
-        // but NOT a ThreadId=conversationId binding (old design causing double fan-out)
-        // (old design added a binding with ThreadId=conversationId, causing double fan-out)
+        // No binding must be added in the explicit path -- adding one causes cross-routing
+        // when the user switches conversations (regression #472).
         var conv = await convStore.GetAsync(secondaryConv.ConversationId);
-        conv!.ChannelBindings.Count.ShouldBe(1,
-            "direct conversationId routing must add exactly one channel-address binding for reconnect, not a ThreadId hack");
+        conv!.ChannelBindings.Count.ShouldBe(0,
+            "explicit conversationId path must not add any channel bindings (#472)");
     }
 
     // ──────────────────────────────────────────────────────────────────────────────

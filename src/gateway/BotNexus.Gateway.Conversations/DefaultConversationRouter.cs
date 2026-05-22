@@ -63,36 +63,16 @@ public sealed class DefaultConversationRouter : IConversationRouter
                     reactivated = true;
                 }
 
-                // Bind-on-first-use for explicit conversationId path:
-                // Add a channel address binding if none exists; reactivate a muted binding.
-                // This ensures reconnects without explicit conversationId can find this conversation.
-                var existingBinding = direct.ChannelBindings.FirstOrDefault(b =>
-                    b.ChannelType == channelType && b.ChannelAddress == channelAddress);
-                if (existingBinding is null)
-                {
-                    direct.ChannelBindings.Add(new ChannelBinding
-                    {
-                        ChannelType = channelType,
-                        ChannelAddress = channelAddress,
-                        ThreadId = threadId,
-                        Mode = BindingMode.Interactive
-                    });
-                    reactivated = true;
-                }
-                else if (existingBinding.Mode == BindingMode.Muted)
-                {
-                    existingBinding.Mode = BindingMode.Interactive;
-                    reactivated = true;
-                }
+                // Do NOT bind-on-first-use in the explicit conversationId path.
+                // Bindings represent stable channel identities. Adding a binding here means that
+                // switching to a *different* conversation causes both conversations to share the
+                // same (channelType, channelAddress) binding pair -- the next implicit reconnect
+                // resolves whichever binding sorts first, which is often the wrong one (#472).
+                // If a caller wants a binding, it should be added through ReattachBindingAsync.
+
                 var (directSessionId, directIsNew, directSessionChanged) = await ResolveOrCreateSessionAsync(direct, agentId, ct);
                 var changed = directSessionChanged;
-                if (changed)
-                {
-                    direct.UpdatedAt = DateTimeOffset.UtcNow;
-                    await _conversationStore.SaveAsync(direct, ct);
-                    await NotifyChangedAsync("updated", agentId, direct.ConversationId, ct);
-                }
-                else if (reactivated)
+                if (changed || reactivated)
                 {
                     direct.UpdatedAt = DateTimeOffset.UtcNow;
                     await _conversationStore.SaveAsync(direct, ct);

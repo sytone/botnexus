@@ -326,7 +326,12 @@ public sealed class ClientStateStore : IClientStateStore
         // Immediately bind session to active conversation so TryResolveConversationBySession works
         // without waiting for the async REST refresh. This eliminates the race condition (#314)
         // where MessageStart arrives before RefreshConversationsForAgentAsync completes.
-        if (agent.ActiveConversationId is not null &&
+        // Guard: only stamp if agent.SessionId still points to this session after the assignment
+        // above -- if the user switched conversations between message-send and HandleConnected firing,
+        // agent.SessionId would have been overwritten by a newer session, and we must not cross-stamp
+        // the new active conversation with the old session id (#472).
+        if (agent.SessionId == sessionId &&
+            agent.ActiveConversationId is not null &&
             agent.Conversations.TryGetValue(agent.ActiveConversationId, out var activeConv))
         {
             activeConv.ActiveSessionId = sessionId;

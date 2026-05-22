@@ -185,6 +185,110 @@ public sealed class SignalRConversationRoutingTests : IAsyncDisposable
             "after reset, sending to same conversationId should still dispatch with the correct ConversationId");
     }
 
+    // ── Regression #472: switching conversations does not cross-route messages ──
+
+    [Fact]
+    public async Task Hub_SwitchConversation_DoesNotCrossRouteMessages()
+    {
+        // Regression guard for #472:
+        // Sending to conv-A then conv-B must not stamp the session with conv-B's ID,
+        // which would cause subsequent implicit-route messages to land in conv-B.
+        var dispatcher = new RecordingDispatcher();
+        await using var factory = CreateTestFactory(services =>
+        {
+            services.RemoveAll<IChannelDispatcher>();
+            services.AddSingleton<IChannelDispatcher>(dispatcher);
+        });
+        using var cts = CreateTimeout();
+        await RegisterAgentAsync(factory, cts.Token);
+
+        using var client = factory.CreateClient();
+
+        // Create two conversations
+        var convAResp = await client.PostAsJsonAsync("/api/conversations",
+            new { agentId = TestAgentId, title = "Conversation A" }, cts.Token);
+        convAResp.EnsureSuccessStatusCode();
+        var convAId = JsonDocument.Parse(await convAResp.Content.ReadAsStringAsync(cts.Token))
+            .RootElement.GetProperty("conversationId").GetString()!;
+
+        var convBResp = await client.PostAsJsonAsync("/api/conversations",
+            new { agentId = TestAgentId, title = "Conversation B" }, cts.Token);
+        convBResp.EnsureSuccessStatusCode();
+        var convBId = JsonDocument.Parse(await convBResp.Content.ReadAsStringAsync(cts.Token))
+            .RootElement.GetProperty("conversationId").GetString()!;
+
+        await using var connection = await CreateStartedConnection(factory, cts.Token);
+
+        // Send to conv-A first
+        await connection.InvokeAsync<JsonElement>(
+            "SendMessage", TestAgentId, "signalr", "message to A", convAId, cts.Token);
+
+        // Switch: send to conv-B
+        await connection.InvokeAsync<JsonElement>(
+            "SendMessage", TestAgentId, "signalr", "message to B", convBId, cts.Token);
+
+        // Both messages must carry their respective conversationIds
+        dispatcher.Messages.Count.ShouldBe(2);
+        dispatcher.Messages[0].ConversationId.ShouldBe(convAId,
+            "first message should be routed to conv-A");
+        dispatcher.Messages[1].ConversationId.ShouldBe(convBId,
+            "second message should be routed to conv-B, not conv-A");
+
+        // Conv-A bindings must not have been polluted with conv-B's channel address
+        var convStore = factory.Services.GetRequiredService<IConversationStore>();
+        var convA = await convStore.GetAsync(ConversationId.From(convAId), cts.Token);
+        convA.ShouldNotBeNull();
+        var convB = await convStore.GetAsync(ConversationId.From(convBId), cts.Token);
+        convB.ShouldNotBeNull();
+
+        // Both conversations should have at most one binding each (not cross-contaminated)
+        convA!.ChannelBindings.Count.ShouldBeLessThanOrEqualTo(1,
+            "conv-A must not accumulate bindings from other conversations");
+        convB!.ChannelBindings.Count.ShouldBeLessThanOrEqualTo(1,
+            "conv-B must not accumulate bindings from other conversations");
+    }
+
+    [Fact]
+    public async Task Hub_ImplicitRouting_AfterSwitch_DoesNotRouteToOldConversation()
+    {
+        // Regression guard for #472:
+        // A REST-created conversation opened via explicit conversationId must NOT
+        // accumulate a channel binding. Without the fix, bind-on-first-use would add
+        // a signalr binding to conv-B, which would then intercept subsequent implicit
+        // reconnects that should route to the default conversation.
+        var dispatcher = new RecordingDispatcher();
+        await using var factory = CreateTestFactory(services =>
+        {
+            services.RemoveAll<IChannelDispatcher>();
+            services.AddSingleton<IChannelDispatcher>(dispatcher);
+        });
+        using var cts = CreateTimeout();
+        await RegisterAgentAsync(factory, cts.Token);
+
+        using var client = factory.CreateClient();
+
+        // Create conv-B via REST (no channel binding)
+        var convBResp = await client.PostAsJsonAsync("/api/conversations",
+            new { agentId = TestAgentId, title = "Explicit Conv B" }, cts.Token);
+        convBResp.EnsureSuccessStatusCode();
+        var convBId = JsonDocument.Parse(await convBResp.Content.ReadAsStringAsync(cts.Token))
+            .RootElement.GetProperty("conversationId").GetString()!;
+
+        await using var connection = await CreateStartedConnection(factory, cts.Token);
+
+        // Send to conv-B via explicit conversationId
+        await connection.InvokeAsync<JsonElement>(
+            "SendMessage", TestAgentId, "signalr", "explicit to B", convBId, cts.Token);
+
+        // conv-B must NOT have acquired a channel binding from the explicit path
+        var convStore = factory.Services.GetRequiredService<IConversationStore>();
+        var convB = await convStore.GetAsync(ConversationId.From(convBId), cts.Token);
+        convB.ShouldNotBeNull(
+            "conv-B must exist in the store after being opened via explicit conversationId");
+        convB!.ChannelBindings.ShouldBeEmpty(
+            "explicit conversationId path must not add bindings -- would intercept future implicit reconnects");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static WebApplicationFactory<Program> CreateTestFactory(Action<IServiceCollection>? configureServices = null)
