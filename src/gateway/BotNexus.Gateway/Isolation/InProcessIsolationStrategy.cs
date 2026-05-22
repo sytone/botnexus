@@ -238,6 +238,17 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 || effectiveToolIds.Contains("list_agents", StringComparer.OrdinalIgnoreCase);
             if (includeListAgents)
                 tools.Add(new ListAgentsTool(agentRegistry, descriptor.AgentId));
+
+            var includeAdminTool = effectiveToolIds.Count == 0
+                || effectiveToolIds.Contains("botnexus_admin", StringComparer.OrdinalIgnoreCase);
+            if (includeAdminTool)
+            {
+                var adminSupervisor = _serviceProvider.GetService<IAgentSupervisor>();
+                var adminConfigWriter = _serviceProvider.GetService<IAgentConfigurationWriter>();
+                var adminPlatformConfig = _serviceProvider.GetService<IOptionsMonitor<PlatformConfig>>();
+                if (adminSupervisor is not null && adminConfigWriter is not null && adminPlatformConfig is not null)
+                    tools.Add(new PlatformAdminTool(agentRegistry, adminSupervisor, adminConfigWriter, adminPlatformConfig));
+            }
         }
 
         var includeCanvas = effectiveToolIds.Count == 0
