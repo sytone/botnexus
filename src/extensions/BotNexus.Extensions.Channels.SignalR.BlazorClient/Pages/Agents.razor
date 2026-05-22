@@ -1,4 +1,5 @@
 @page "/agents"
+@page "/agents/{AgentId}"
 @inject NavigationManager Nav
 @inject HttpClient Http
 @inject GatewayHubConnection Hub
@@ -7,6 +8,12 @@
 <PageTitle>BotNexus — Agents</PageTitle>
 
 <div class="agents-page">
+@if (!string.IsNullOrEmpty(AgentId))
+{
+    <AgentDetailPanel AgentId="@AgentId" OnDeleted="HandleAgentDeleted" />
+}
+else
+{
     <header class="agents-toolbar">
         <h2>🤖 Agents</h2>
         <div class="agents-toolbar-actions">
@@ -197,9 +204,13 @@
             </table>
         }
     }
+}
 </div>
 
 @code {
+    [Parameter]
+    public string? AgentId { get; set; }
+
     private record ProviderItem(string Id, string Name);
     private record ModelItem(string ModelId, string Name);
 
@@ -252,6 +263,17 @@
         Hub.OnAgentsChanged -= HandleAgentsChanged;
         _statusDismissCts?.Cancel();
         _statusDismissCts?.Dispose();
+    }
+
+    private void HandleAgentDeleted(string deletedAgentId)
+    {
+        Nav.NavigateTo("/agents");
+        _ = InvokeAsync(async () =>
+        {
+            await LoadAgentsAsync();
+            SetStatus($"Agent \u0027{deletedAgentId}\u0027 deleted.", "success");
+            StateHasChanged();
+        });
     }
 
     private void HandleAgentsChanged(AgentsChangedPayload payload)
@@ -508,3 +530,6 @@
         }
     }
 }
+
+
+

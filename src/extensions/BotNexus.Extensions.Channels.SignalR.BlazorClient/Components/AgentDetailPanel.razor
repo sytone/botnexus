@@ -1,0 +1,518 @@
+@inject NavigationManager Nav
+@inject HttpClient Http
+@implements IDisposable
+
+@if (_loading)
+{
+    <div class="agent-detail-loading" aria-live="polite">
+        <div class="loading-spinner small"></div>
+        <span>Loading agent configuration…</span>
+    </div>
+}
+else if (_error is not null)
+{
+    <div class="agent-detail-error" role="alert">⚠️ Failed to load agent: @_error</div>
+}
+else if (_form is not null)
+{
+    <div class="agent-detail-panel">
+        <header class="agent-detail-header">
+            <h2 class="agent-detail-title">
+                @(string.IsNullOrEmpty(_form.Emoji) ? "🤖" : _form.Emoji)
+                @(_form.DisplayName.Length > 0 ? _form.DisplayName : AgentId)
+            </h2>
+            <div class="agent-detail-header-actions">
+                @if (!string.IsNullOrEmpty(_statusMessage))
+                {
+                    <span class="agent-detail-status @_statusClass" role="status">@_statusMessage</span>
+                }
+                <button class="toolbar-btn primary agent-detail-save-btn"
+                        @onclick="SaveAsync"
+                        disabled="@(!IsDirty || _saving)">
+                    @(_saving ? "Saving…" : "💾 Save Changes")
+                </button>
+                @if (IsDirty)
+                {
+                    <span class="agents-dirty-indicator" title="Unsaved changes">● Unsaved</span>
+                }
+            </div>
+        </header>
+
+        @* Delete confirmation *@
+        @if (_confirmDelete)
+        {
+            <div class="agents-confirm-overlay" @onclick="() => _confirmDelete = false">
+                <div class="agents-confirm-dialog" @onclick:stopPropagation="true" role="alertdialog">
+                    <h4>Delete Agent</h4>
+                    <p>Delete agent <strong>@AgentId</strong>? This cannot be undone.</p>
+                    <div class="agents-confirm-actions">
+                        <button class="toolbar-btn danger agent-detail-confirm-delete-btn"
+                                @onclick="ConfirmDeleteAsync" disabled="@_deleting">
+                            @(_deleting ? "Deleting…" : "Delete")
+                        </button>
+                        <button class="toolbar-btn" @onclick="() => _confirmDelete = false" disabled="@_deleting">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        }
+
+        @* ── Core identity section ───────────────────────────────────────────── *@
+        <section class="agent-detail-section">
+            <h3 class="agent-detail-section-title">Identity</h3>
+            <div class="agents-form-grid">
+                <label>Agent ID</label>
+                <span class="config-value mono agent-detail-agent-id">@AgentId</span>
+
+                <label for="adp-display-name">Display Name <span class="required">*</span></label>
+                <div>
+                    <input id="adp-display-name" class="cfg-input @(HasFieldError("DisplayName") ? "field-error" : "")"
+                           value="@_form.DisplayName" @oninput="OnDisplayNameInput" aria-required="true" />
+                    @if (HasFieldError("DisplayName"))
+                    {
+                        <span class="agents-field-error" role="alert">@GetFieldError("DisplayName")</span>
+                    }
+                </div>
+
+                <label for="adp-description">Description</label>
+                <input id="adp-description" class="cfg-input"
+                       value="@_form.Description" @oninput="OnDescriptionInput" />
+
+                <label for="adp-emoji">Emoji</label>
+                <input id="adp-emoji" class="cfg-input" style="max-width:4rem;"
+                       value="@_form.Emoji" @oninput="OnEmojiInput" placeholder="🤖" maxlength="2" />
+            </div>
+        </section>
+
+        @* ── Model & Provider section ────────────────────────────────────────── *@
+        <section class="agent-detail-section">
+            <h3 class="agent-detail-section-title">Model &amp; Provider</h3>
+            <div class="agents-form-grid">
+                <label for="adp-provider">Provider <span class="required">*</span></label>
+                <div>
+                    @if (_providers.Count > 0)
+                    {
+                        <select id="adp-provider" class="cfg-input @(HasFieldError("ApiProvider") ? "field-error" : "")"
+                                value="@_form.ApiProvider" @onchange="OnProviderChange" aria-required="true">
+                            <option value="">— select provider —</option>
+                            @foreach (var p in _providers)
+                            {
+                                <option value="@p.Id">@p.Name</option>
+                            }
+                        </select>
+                    }
+                    else
+                    {
+                        <input id="adp-provider" class="cfg-input @(HasFieldError("ApiProvider") ? "field-error" : "")"
+                               value="@_form.ApiProvider" @oninput="OnProviderInput" placeholder="e.g. copilot" aria-required="true" />
+                    }
+                    @if (HasFieldError("ApiProvider"))
+                    {
+                        <span class="agents-field-error" role="alert">@GetFieldError("ApiProvider")</span>
+                    }
+                </div>
+
+                <label for="adp-model">Model <span class="required">*</span></label>
+                <div>
+                    @if (_models.Count > 0)
+                    {
+                        <select id="adp-model" class="cfg-input @(HasFieldError("ModelId") ? "field-error" : "")"
+                                value="@_form.ModelId" @onchange="OnModelChange" aria-required="true">
+                            <option value="">— select model —</option>
+                            @foreach (var m in _models)
+                            {
+                                <option value="@m.ModelId">@m.Name</option>
+                            }
+                        </select>
+                    }
+                    else if (!string.IsNullOrEmpty(_form.ApiProvider) && !_loadingModels)
+                    {
+                        <input id="adp-model" class="cfg-input @(HasFieldError("ModelId") ? "field-error" : "")"
+                               value="@_form.ModelId" @oninput="OnModelIdInput" placeholder="e.g. gpt-4.1" aria-required="true" />
+                    }
+                    else if (_loadingModels)
+                    {
+                        <span class="agents-field-loading">Loading models…</span>
+                    }
+                    else
+                    {
+                        <input id="adp-model" class="cfg-input" value="@_form.ModelId" @oninput="OnModelIdInput"
+                               placeholder="Select a provider first" disabled />
+                    }
+                    @if (HasFieldError("ModelId"))
+                    {
+                        <span class="agents-field-error" role="alert">@GetFieldError("ModelId")</span>
+                    }
+                </div>
+            </div>
+        </section>
+
+        @* ── System Prompt section ───────────────────────────────────────────── *@
+        <section class="agent-detail-section">
+            <h3 class="agent-detail-section-title">System Prompt</h3>
+            <textarea class="cfg-textarea agent-detail-system-prompt" rows="8"
+                      @oninput="OnSystemPromptInput">@_form.SystemPrompt</textarea>
+        </section>
+
+        @* ── Memory section ─────────────────────────────────────────────────── *@
+        <section class="agent-detail-section">
+            <h3 class="agent-detail-section-title">Memory</h3>
+            <div class="agents-form-grid">
+                <label for="adp-memory-enabled">Memory Enabled</label>
+                <div class="config-field-with-badge">
+                    <input id="adp-memory-enabled" type="checkbox"
+                           checked="@_form.MemoryEnabled" @onchange="OnMemoryEnabledChange" />
+                    @if (IsInherited("memory.enabled"))
+                    {
+                        <span class="world-default-badge" title="Inherited from agents.defaults">World default</span>
+                    }
+                </div>
+            </div>
+        </section>
+
+        @* ── Heartbeat section ───────────────────────────────────────────────── *@
+        <section class="agent-detail-section">
+            <h3 class="agent-detail-section-title">Heartbeat</h3>
+            <div class="agents-form-grid">
+                <label for="adp-hb-enabled">Enabled</label>
+                <div class="config-field-with-badge">
+                    <input id="adp-hb-enabled" type="checkbox"
+                           checked="@_form.HeartbeatEnabled" @onchange="OnHeartbeatEnabledChange" />
+                    @if (IsInherited("heartbeat.enabled"))
+                    {
+                        <span class="world-default-badge" title="Inherited from agents.defaults">World default</span>
+                    }
+                </div>
+
+                <label for="adp-hb-interval">Interval (minutes)</label>
+                <div class="config-field-with-badge">
+                    <input id="adp-hb-interval" type="number" class="cfg-input" style="max-width:8rem;"
+                           value="@_form.HeartbeatIntervalMinutes" @oninput="OnHeartbeatIntervalInput" min="1" />
+                    @if (IsInherited("heartbeat.intervalMinutes"))
+                    {
+                        <span class="world-default-badge" title="Inherited from agents.defaults">World default</span>
+                    }
+                </div>
+            </div>
+        </section>
+
+        @* ── Danger zone ─────────────────────────────────────────────────────── *@
+        <section class="agent-detail-section agent-detail-danger-zone">
+            <h3 class="agent-detail-section-title danger">Danger Zone</h3>
+            <button class="toolbar-btn danger agent-detail-delete-btn" @onclick="RequestDelete">
+                🗑️ Delete Agent
+            </button>
+        </section>
+
+        @if (!string.IsNullOrEmpty(_saveError))
+        {
+            <div class="agents-form-error" role="alert">⚠️ @_saveError</div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public string AgentId { get; set; } = default!;
+
+    [Parameter]
+    public EventCallback<string> OnDeleted { get; set; }
+
+    private record ProviderItem(string Id, string Name);
+    private record ModelItem(string ModelId, string Name);
+
+    private sealed class AgentFormModel
+    {
+        public string DisplayName { get; set; } = "";
+        public string Description { get; set; } = "";
+        public string Emoji { get; set; } = "";
+        public string ApiProvider { get; set; } = "";
+        public string ModelId { get; set; } = "";
+        public string SystemPrompt { get; set; } = "";
+        public bool MemoryEnabled { get; set; }
+        public bool HeartbeatEnabled { get; set; }
+        public int HeartbeatIntervalMinutes { get; set; } = 60;
+
+        public AgentFormModel Clone() => (AgentFormModel)MemberwiseClone();
+
+        public bool Equals(AgentFormModel? other) =>
+            other is not null &&
+            DisplayName == other.DisplayName &&
+            Description == other.Description &&
+            Emoji == other.Emoji &&
+            ApiProvider == other.ApiProvider &&
+            ModelId == other.ModelId &&
+            SystemPrompt == other.SystemPrompt &&
+            MemoryEnabled == other.MemoryEnabled &&
+            HeartbeatEnabled == other.HeartbeatEnabled &&
+            HeartbeatIntervalMinutes == other.HeartbeatIntervalMinutes;
+    }
+
+    private AgentFormModel? _form;
+    private AgentFormModel? _originalForm;
+    private List<ProviderItem> _providers = [];
+    private List<ModelItem> _models = [];
+    private bool _loading = true;
+    private bool _loadingModels;
+    private bool _saving;
+    private bool _deleting;
+    private bool _confirmDelete;
+    private string? _error;
+    private string? _statusMessage;
+    private string _statusClass = "";
+    private string? _saveError;
+    private Dictionary<string, string> _fieldErrors = new();
+    private Dictionary<string, bool> _inheritedFields = new(StringComparer.OrdinalIgnoreCase);
+    private CancellationTokenSource? _statusDismissCts;
+
+    private bool IsDirty => _form is not null && _originalForm is not null && !_form.Equals(_originalForm);
+    private bool HasFieldError(string field) => _fieldErrors.ContainsKey(field);
+    private string GetFieldError(string field) => _fieldErrors.GetValueOrDefault(field, "");
+    private bool IsInherited(string path) => _inheritedFields.TryGetValue(path, out var v) && v;
+
+    private void OnDisplayNameInput(ChangeEventArgs e) => _form!.DisplayName = e.Value?.ToString() ?? "";
+    private void OnDescriptionInput(ChangeEventArgs e) => _form!.Description = e.Value?.ToString() ?? "";
+    private void OnEmojiInput(ChangeEventArgs e)       => _form!.Emoji = e.Value?.ToString() ?? "";
+    private void OnProviderInput(ChangeEventArgs e)    => _form!.ApiProvider = e.Value?.ToString() ?? "";
+    private void OnModelIdInput(ChangeEventArgs e)     => _form!.ModelId = e.Value?.ToString() ?? "";
+    private void OnSystemPromptInput(ChangeEventArgs e)=> _form!.SystemPrompt = e.Value?.ToString() ?? "";
+    private void OnMemoryEnabledChange(ChangeEventArgs e) => _form!.MemoryEnabled = (bool)(e.Value ?? false);
+    private void OnHeartbeatEnabledChange(ChangeEventArgs e) => _form!.HeartbeatEnabled = (bool)(e.Value ?? false);
+    private void OnHeartbeatIntervalInput(ChangeEventArgs e) =>
+        _form!.HeartbeatIntervalMinutes = int.TryParse(e.Value?.ToString(), out var v) ? v : 60;
+    private void OnModelChange(ChangeEventArgs e) => _form!.ModelId = e.Value?.ToString() ?? "";
+
+    private async Task OnProviderChange(ChangeEventArgs e)
+    {
+        _form!.ApiProvider = e.Value?.ToString() ?? "";
+        _form!.ModelId = "";
+        _models = [];
+        if (!string.IsNullOrEmpty(_form.ApiProvider))
+            await LoadModelsAsync(_form.ApiProvider);
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _error = null;
+        _form = null;
+        StateHasChanged();
+        await Task.WhenAll(LoadAgentAsync(), LoadProvidersAsync());
+    }
+
+    public void Dispose()
+    {
+        _statusDismissCts?.Cancel();
+        _statusDismissCts?.Dispose();
+    }
+
+    private async Task LoadAgentAsync()
+    {
+        try
+        {
+            var base_ = Nav.BaseUri.TrimEnd('/');
+            var opts = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+
+            // Load agent descriptor
+            var agentResp = await Http.GetAsync($"{base_}/api/agents/{AgentId}");
+            if (!agentResp.IsSuccessStatusCode)
+            {
+                _error = $"Agent not found (HTTP {(int)agentResp.StatusCode})";
+                return;
+            }
+            var descriptor = await agentResp.Content.ReadFromJsonAsync<AgentDescriptorDto>(opts);
+            if (descriptor is null) { _error = "Empty response from server."; return; }
+
+            _form = new AgentFormModel
+            {
+                DisplayName = descriptor.DisplayName ?? "",
+                Description = descriptor.Description ?? "",
+                Emoji = descriptor.Emoji ?? "",
+                ApiProvider = descriptor.ApiProvider ?? "",
+                ModelId = descriptor.ModelId ?? "",
+                SystemPrompt = descriptor.SystemPrompt ?? "",
+                MemoryEnabled = descriptor.Memory?.Enabled ?? false,
+                HeartbeatEnabled = descriptor.Heartbeat?.Enabled ?? false,
+                HeartbeatIntervalMinutes = descriptor.Heartbeat?.IntervalMinutes ?? 60
+            };
+            _originalForm = _form.Clone();
+
+            // Load models for this provider
+            if (!string.IsNullOrEmpty(_form.ApiProvider))
+                await LoadModelsAsync(_form.ApiProvider);
+
+            // Load inheritance information
+            try
+            {
+                var effectiveResp = await Http.GetFromJsonAsync<EffectiveAgentConfigResponse>(
+                    $"{base_}/api/config/agents/{AgentId}/effective", opts);
+                _inheritedFields.Clear();
+                if (effectiveResp?.Sources is not null)
+                    foreach (var (field, source) in effectiveResp.Sources)
+                        _inheritedFields[field] = string.Equals(source, "inherited", StringComparison.OrdinalIgnoreCase);
+            }
+            catch { _inheritedFields.Clear(); }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task LoadProvidersAsync()
+    {
+        try
+        {
+            var opts = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var items = await Http.GetFromJsonAsync<List<ProviderItem>>(
+                Nav.BaseUri.TrimEnd('/') + "/api/providers", opts);
+            _providers = items ?? [];
+        }
+        catch { _providers = []; }
+    }
+
+    private async Task LoadModelsAsync(string provider)
+    {
+        _loadingModels = true;
+        StateHasChanged();
+        try
+        {
+            var opts = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var items = await Http.GetFromJsonAsync<List<ModelItem>>(
+                Nav.BaseUri.TrimEnd('/') + $"/api/models?provider={Uri.EscapeDataString(provider)}", opts);
+            _models = items ?? [];
+        }
+        catch { _models = []; }
+        finally { _loadingModels = false; }
+    }
+
+    private bool ValidateForm()
+    {
+        _fieldErrors.Clear();
+        if (string.IsNullOrWhiteSpace(_form?.DisplayName))
+            _fieldErrors["DisplayName"] = "Display Name is required.";
+        if (string.IsNullOrWhiteSpace(_form?.ApiProvider))
+            _fieldErrors["ApiProvider"] = "Provider is required.";
+        if (string.IsNullOrWhiteSpace(_form?.ModelId))
+            _fieldErrors["ModelId"] = "Model ID is required.";
+        return _fieldErrors.Count == 0;
+    }
+
+    private async Task SaveAsync()
+    {
+        _saveError = null;
+        if (!ValidateForm()) return;
+
+        _saving = true;
+        try
+        {
+            var url = Nav.BaseUri.TrimEnd('/') + $"/api/agents/{AgentId}";
+            var payload = new
+            {
+                agentId = AgentId,
+                displayName = _form!.DisplayName,
+                description = string.IsNullOrWhiteSpace(_form.Description) ? null : _form.Description,
+                emoji = string.IsNullOrWhiteSpace(_form.Emoji) ? null : _form.Emoji,
+                apiProvider = _form.ApiProvider,
+                modelId = _form.ModelId,
+                systemPrompt = string.IsNullOrWhiteSpace(_form.SystemPrompt) ? null : _form.SystemPrompt,
+                memory = new { enabled = _form.MemoryEnabled },
+                heartbeat = new { enabled = _form.HeartbeatEnabled, intervalMinutes = _form.HeartbeatIntervalMinutes }
+            };
+            var response = await Http.PutAsJsonAsync(url, payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                var body = await response.Content.ReadAsStringAsync();
+                _saveError = $"Save failed ({(int)response.StatusCode}): {body}";
+                return;
+            }
+            _originalForm = _form.Clone();
+            SetStatus("Changes saved.", "success");
+        }
+        catch (Exception ex)
+        {
+            _saveError = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void RequestDelete() => _confirmDelete = true;
+
+    private async Task ConfirmDeleteAsync()
+    {
+        _deleting = true;
+        try
+        {
+            var url = Nav.BaseUri.TrimEnd('/') + $"/api/agents/{AgentId}";
+            var response = await Http.DeleteAsync(url);
+            if (!response.IsSuccessStatusCode)
+            {
+                SetStatus($"Delete failed: {(int)response.StatusCode}", "error");
+                return;
+            }
+            await OnDeleted.InvokeAsync(AgentId);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Error: {ex.Message}", "error");
+        }
+        finally
+        {
+            _deleting = false;
+            _confirmDelete = false;
+        }
+    }
+
+    private void SetStatus(string msg, string cssClass)
+    {
+        _statusMessage = msg;
+        _statusClass = cssClass;
+        _statusDismissCts?.Cancel();
+        _statusDismissCts?.Dispose();
+        _statusDismissCts = new CancellationTokenSource();
+        var token = _statusDismissCts.Token;
+        _ = DismissStatusAfterDelay(token);
+    }
+
+    private async Task DismissStatusAfterDelay(CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(4000, token);
+            _statusMessage = null;
+            _statusClass = "";
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (TaskCanceledException) { }
+    }
+
+    // ── Local DTOs ─────────────────────────────────────────────────────────
+
+    private sealed class AgentDescriptorDto
+    {
+        public string? AgentId { get; init; }
+        public string? DisplayName { get; init; }
+        public string? Description { get; init; }
+        public string? Emoji { get; init; }
+        public string? ApiProvider { get; init; }
+        public string? ModelId { get; init; }
+        public string? SystemPrompt { get; init; }
+        public MemoryConfigDto? Memory { get; init; }
+        public HeartbeatConfigDto? Heartbeat { get; init; }
+    }
+
+    private sealed class MemoryConfigDto { public bool Enabled { get; init; } }
+    private sealed class HeartbeatConfigDto { public bool Enabled { get; init; } public int IntervalMinutes { get; init; } = 60; }
+
+    private sealed class EffectiveAgentConfigResponse
+    {
+        public Dictionary<string, string>? Sources { get; init; }
+    }
+}
+
