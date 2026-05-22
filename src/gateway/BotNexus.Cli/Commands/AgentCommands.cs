@@ -201,6 +201,8 @@ internal sealed class AgentCommands
         if (saveCode != 0)
             return saveCode;
 
+        await ScaffoldWorkspaceAsync(id, string.IsNullOrWhiteSpace(displayName) ? id : displayName, configPath, cancellationToken);
+
         AnsiConsole.MarkupLine($"[green]✓[/] Agent [green]{Markup.Escape(id)}[/] added successfully.");
         return 0;
     }
@@ -237,6 +239,8 @@ internal sealed class AgentCommands
         var saveCode = await SaveAndValidateAsync(config, configPath, verbose, cancellationToken);
         if (saveCode != 0)
             return saveCode;
+
+        await ScaffoldWorkspaceAsync(id, id, configPath, cancellationToken);
 
         AnsiConsole.MarkupLine($"[green]\u2713[/] Added agent [green]{Markup.Escape(id)}[/].");
         return 0;
@@ -369,6 +373,22 @@ internal sealed class AgentCommands
 
         matchedKey = default!;
         return false;
+    }
+
+    private static Task ScaffoldWorkspaceAsync(string agentId, string displayName, string configPath, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var homePath = Path.GetDirectoryName(configPath) ?? CliPaths.DefaultTarget;
+            var botNexusHome = new BotNexusHome(homePath);
+            // GetAgentDirectory triggers eager workspace scaffold from embedded templates
+            botNexusHome.GetAgentDirectory(agentId);
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[yellow]Warning:[/] Workspace scaffold failed: {Markup.Escape(ex.Message)}");
+        }
+        return Task.CompletedTask;
     }
 
 }

@@ -22,6 +22,7 @@ public sealed class AgentsController : ControllerBase
     private readonly IAgentConfigurationWriter _configurationWriter;
     private readonly IReadOnlyList<IAgentChangeNotifier> _agentChangeNotifiers;
     private readonly IHeartbeatProvisioner? _heartbeatProvisioner;
+    private readonly IAgentWorkspaceScaffolder? _scaffolder;
     private readonly ILogger<AgentsController> _logger;
 
     /// <summary>
@@ -33,6 +34,7 @@ public sealed class AgentsController : ControllerBase
         IAgentConfigurationWriter configurationWriter,
         IEnumerable<IAgentChangeNotifier>? agentChangeNotifiers = null,
         IHeartbeatProvisioner? heartbeatProvisioner = null,
+        IAgentWorkspaceScaffolder? scaffolder = null,
         ILogger<AgentsController>? logger = null)
     {
         _registry = registry;
@@ -40,6 +42,7 @@ public sealed class AgentsController : ControllerBase
         _configurationWriter = configurationWriter;
         _agentChangeNotifiers = agentChangeNotifiers?.ToArray() ?? [];
         _heartbeatProvisioner = heartbeatProvisioner;
+        _scaffolder = scaffolder;
         _logger = logger ?? NullLogger<AgentsController>.Instance;
     }
 
@@ -66,6 +69,21 @@ public sealed class AgentsController : ControllerBase
 
             if (_heartbeatProvisioner is not null)
                 await _heartbeatProvisioner.ProvisionAsync(descriptor, cancellationToken);
+
+            if (_scaffolder is not null)
+            {
+                var displayName = string.IsNullOrWhiteSpace(descriptor.DisplayName)
+                    ? descriptor.AgentId.Value
+                    : descriptor.DisplayName;
+                try
+                {
+                    await _scaffolder.ScaffoldAsync(descriptor.AgentId.Value, displayName, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Workspace scaffold failed for agent {AgentId} — agent was registered successfully.", descriptor.AgentId.Value);
+                }
+            }
 
             await NotifyAgentsChangedBestEffortAsync("added", descriptor.AgentId.Value, cancellationToken);
             return CreatedAtAction(nameof(Get), new { agentId = descriptor.AgentId }, descriptor);

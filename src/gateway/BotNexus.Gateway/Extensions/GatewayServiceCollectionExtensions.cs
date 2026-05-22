@@ -106,6 +106,7 @@ public static class GatewayServiceCollectionExtensions
             });
         });
         services.AddSingleton<IAgentWorkspaceManager, FileAgentWorkspaceManager>();
+        services.AddSingleton<IAgentWorkspaceScaffolder, AgentWorkspaceScaffolder>();
          services.AddSingleton<IContextBuilder, WorkspaceContextBuilder>();
          services.AddSingleton<IAgentRegistry, DefaultAgentRegistry>();
          services.TryAddSingleton<IAgentConfigurationWriter, NoOpAgentConfigurationWriter>();
