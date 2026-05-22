@@ -431,6 +431,45 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             // Ensures user input survives a gateway restart mid-turn (#363).
             await _sessions.SaveAsync(session, cancellationToken);
 
+            // Mid-turn steering injection (#228): if the agent is already running a turn on this
+            // session, inject the user message directly into the steering queue so it is visible
+            // to the LLM before the next tool invocation rather than waiting for the turn to settle.
+            var existingInstance = _supervisor.GetInstance(AgentId.From(agentId), SessionId.From(sessionId));
+            if (existingInstance is not null)
+            {
+                try
+                {
+                    IAgentHandle? runningHandle = null;
+                    try
+                    {
+                        runningHandle = await _supervisor.GetOrCreateAsync(AgentId.From(agentId), SessionId.From(sessionId), cancellationToken);
+                    }
+                    catch { /* handle creation failure — fall through to normal processing */ }
+
+                    if (runningHandle is { IsRunning: true })
+                    {
+                        await runningHandle.SteerAsync(message.Content, cancellationToken);
+                        _logger.LogInformation(
+                            "User message injected as mid-turn steering for session {SessionId}",
+                            sessionId);
+                        await _activity.PublishAsync(new GatewayActivity
+                        {
+                            Type = GatewayActivityType.SteeringInjected,
+                            AgentId = agentId,
+                            SessionId = sessionId,
+                            Message = "User message injected as mid-turn steering"
+                        }, cancellationToken);
+                        continue;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "Mid-turn steering injection failed for session {SessionId}; falling through to normal processing",
+                        sessionId);
+                }
+            }
+
             if (_compactor.ShouldCompact(session.Session, _compactionOptions.CurrentValue))
             {
                 _logger.LogInformation("Auto-compacting session {SessionId}", sessionId);
