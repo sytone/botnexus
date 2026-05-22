@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using System.Net;
 using System.Net.Http.Json;
 using BotNexus.Gateway;
@@ -53,7 +54,7 @@ public sealed class LiveGatewayIntegrationTests
 
         var descriptor = new AgentDescriptor
         {
-            AgentId = $"integration-agent-{Guid.NewGuid():N}",
+            AgentId = AgentId.From($"integration-agent-{Guid.NewGuid():N}"),
             DisplayName = "Integration Agent",
             ModelId = "gpt-4.1",
             ApiProvider = "copilot",
@@ -73,7 +74,7 @@ public sealed class LiveGatewayIntegrationTests
         using var client = factory.CreateClient();
         var descriptor = new AgentDescriptor
         {
-            AgentId = $"hub-agent-{Guid.NewGuid():N}",
+            AgentId = AgentId.From($"hub-agent-{Guid.NewGuid():N}"),
             DisplayName = "Hub Agent",
             ModelId = "gpt-4.1",
             ApiProvider = "copilot",

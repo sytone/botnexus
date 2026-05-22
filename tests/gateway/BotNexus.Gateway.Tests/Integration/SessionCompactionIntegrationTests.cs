@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using System.IO.Abstractions;
 using System.IO.Abstractions.TestingHelpers;
 using System.Text.Json;
@@ -36,7 +37,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
     {
         using var fixture = new MockFileStoreFixture();
         var store = fixture.CreateStore();
-        var session = await store.GetOrCreateAsync("compaction-persist", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("compaction-persist"), AgentId.From("agent-a"));
 
         for (var i = 0; i < 10; i++)
             session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"before-{i}" });
@@ -66,7 +67,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
     {
         using var fixture = new MockFileStoreFixture();
         var store = fixture.CreateStore();
-        var session = await store.GetOrCreateAsync("multi-compaction", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("multi-compaction"), AgentId.From("agent-a"));
 
         session.AddEntries(
         [
@@ -95,7 +96,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         var storePath = CreateStorePath();
         var sessionId = "raw-disk";
         var store = new FileSessionStore(storePath, NullLogger<FileSessionStore>.Instance, new FileSystem());
-        var session = await store.GetOrCreateAsync(sessionId, "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From("agent-a"));
 
         for (var i = 0; i < 6; i++)
             session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"pre-{i}" });
@@ -126,7 +127,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
     {
         using var fixture = new SqliteStoreFixture();
         var store = fixture.CreateStore();
-        var session = await store.GetOrCreateAsync("sqlite-compaction", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("sqlite-compaction"), AgentId.From("agent-a"));
 
         for (var i = 0; i < 10; i++)
             session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"before-{i}" });
@@ -249,7 +250,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         const string sessionId = "compact-archive";
         var encodedSessionId = Uri.EscapeDataString(sessionId);
         var store = new FileSessionStore(storePath, NullLogger<FileSessionStore>.Instance, new FileSystem());
-        var session = await store.GetOrCreateAsync(sessionId, "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From("agent-a"));
         session.AddEntries(
         [
             new SessionEntry { Role = MessageRole.User, Content = "u1" },
@@ -271,7 +272,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         await store.SaveAsync(session);
 
         await store.ArchiveAsync(sessionId);
-        var newSession = await store.GetOrCreateAsync(sessionId, "agent-a");
+        var newSession = await store.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From("agent-a"));
 
         Directory.GetFiles(storePath, $"{encodedSessionId}.jsonl.archived.*").ShouldHaveSingleItem();
         Directory.GetFiles(storePath, $"{encodedSessionId}.meta.json.archived.*").ShouldHaveSingleItem();

@@ -83,28 +83,28 @@ internal sealed class AgentConfigurationHostedService(
             HashSet<string> seenSourceIds = new(StringComparer.OrdinalIgnoreCase);
             foreach (var descriptor in descriptors)
             {
-                if (!seenSourceIds.Add(descriptor.AgentId))
+                if (!seenSourceIds.Add(descriptor.AgentId.Value))
                 {
                     _logger.LogWarning(
                         "Agent '{AgentId}' is duplicated within source '{SourceType}'. Using the first occurrence.",
-                        descriptor.AgentId,
+                        descriptor.AgentId.Value,
                         source.GetType().Name);
                     continue;
                 }
 
-                if (_codeBasedAgentIds.Contains(descriptor.AgentId))
+                if (_codeBasedAgentIds.Contains(descriptor.AgentId.Value))
                 {
                     _logger.LogDebug(
                         "Config-based agent '{AgentId}' is shadowed by code-based registration.",
-                        descriptor.AgentId);
+                        descriptor.AgentId.Value);
                     continue;
                 }
 
-                if (!merged.TryAdd(descriptor.AgentId, descriptor))
+                if (!merged.TryAdd(descriptor.AgentId.Value, descriptor))
                 {
                     _logger.LogWarning(
                         "Config-based agent '{AgentId}' from source '{SourceType}' is shadowed by an earlier source.",
-                        descriptor.AgentId,
+                        descriptor.AgentId.Value,
                         source.GetType().Name);
                 }
             }

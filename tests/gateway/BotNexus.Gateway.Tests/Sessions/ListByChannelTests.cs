@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using System.Reflection;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -55,8 +56,8 @@ public sealed class ListByChannelTests
     {
         var session = new GatewaySession
         {
-            SessionId = sessionId,
-            AgentId = agentId,
+            SessionId = SessionId.From(sessionId),
+            AgentId = AgentId.From(agentId),
             ChannelType = channelType,
             CreatedAt = createdAt,
             UpdatedAt = createdAt

@@ -167,7 +167,7 @@ public sealed class PrimitiveBoundaryTests
     [InlineData("   ")]
     public void SessionId_ForAgentConversation_EmptyUniqueId_Throws(string? uniqueId)
     {
-        Action act = () => SessionId.ForAgentConversation("agent-a", "agent-b", uniqueId!);
+        Action act = () => SessionId.ForAgentConversation(AgentId.From("agent-a"), AgentId.From("agent-b"), uniqueId!);
         act.ShouldThrow<ArgumentException>();
     }
 
@@ -331,7 +331,10 @@ public sealed class PrimitiveBoundaryTests
     {
         var whitespace = "\t  \n  ";
 
-        ((Action)(() => AgentId.From(whitespace))).ShouldThrow<ArgumentException>();
+        // AgentId / SessionId / ConversationId are Vogen value objects and throw
+        // ValueObjectValidationException; the remaining hand-rolled primitives throw
+        // ArgumentException. They migrate to Vogen in later batches of the value-object refactor.
+        ((Action)(() => AgentId.From(whitespace))).ShouldThrow<Vogen.ValueObjectValidationException>();
         ((Action)(() => SessionId.From(whitespace))).ShouldThrow<ArgumentException>();
         ((Action)(() => ConversationId.From(whitespace))).ShouldThrow<ArgumentException>();
         ((Action)(() => SenderId.From(whitespace))).ShouldThrow<ArgumentException>();

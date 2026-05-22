@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Sessions;
@@ -14,7 +15,7 @@ public sealed class FileSessionStoreTests
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
 
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         await store.SaveAsync(session);
         var reloaded = await fixture.CreateStore().GetAsync("s1");
 
@@ -27,9 +28,9 @@ public sealed class FileSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        var created = await store.GetOrCreateAsync("s1", "agent-a");
+        var created = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
 
-        var loaded = await store.GetOrCreateAsync("s1", "agent-b");
+        var loaded = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-b"));
 
         loaded.ShouldBeSameAs(created);
     }
@@ -39,7 +40,7 @@ public sealed class FileSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.History.Add(new SessionEntry { Role = MessageRole.User, Content = "hello" });
 
         await store.SaveAsync(session);
@@ -54,7 +55,7 @@ public sealed class FileSessionStoreTests
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
 
-        var session = await store.GetAsync("missing");
+        var session = await store.GetAsync(SessionId.From("missing"));
 
         session.ShouldBeNull();
     }
@@ -65,7 +66,7 @@ public sealed class FileSessionStoreTests
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
         var sessionId = "session/with special";
-        var session = await store.GetOrCreateAsync(sessionId, "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From("agent-a"));
         await store.SaveAsync(session);
         var encodedName = SessionFileNames.SanitizeSessionId(sessionId);
 
@@ -82,7 +83,7 @@ public sealed class FileSessionStoreTests
         var store = fixture.CreateStore();
         const string sessionId = "archive-me";
         var encodedName = SessionFileNames.SanitizeSessionId(sessionId);
-        var session = await store.GetOrCreateAsync(sessionId, "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From("agent-a"));
         session.History.Add(new SessionEntry { Role = MessageRole.User, Content = "persist-me" });
         await store.SaveAsync(session);
 
@@ -101,7 +102,7 @@ public sealed class FileSessionStoreTests
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
 
-        Func<Task> act = () => store.ArchiveAsync("missing");
+        Func<Task> act = () => store.ArchiveAsync(SessionId.From("missing"));
 
         await act.ShouldNotThrowAsync();
     }
@@ -111,12 +112,12 @@ public sealed class FileSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        var oldSession = await store.GetOrCreateAsync("s1", "agent-a");
+        var oldSession = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         oldSession.History.Add(new SessionEntry { Role = MessageRole.User, Content = "old-message" });
         await store.SaveAsync(oldSession);
 
-        await store.ArchiveAsync("s1");
-        var newSession = await store.GetOrCreateAsync("s1", "agent-a");
+        await store.ArchiveAsync(SessionId.From("s1"));
+        var newSession = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
 
         newSession.ShouldNotBeSameAs(oldSession);
         newSession.History.ShouldBeEmpty();
@@ -127,15 +128,15 @@ public sealed class FileSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        await CreateAndSaveAsync(store, "s1", "agent-a");
-        await CreateAndSaveAsync(store, "s2", "agent-b");
-        await CreateAndSaveAsync(store, "s3", "agent-a");
+        await CreateAndSaveAsync(store, "s1", AgentId.From("agent-a"));
+        await CreateAndSaveAsync(store, "s2", AgentId.From("agent-b"));
+        await CreateAndSaveAsync(store, "s3", AgentId.From("agent-a"));
 
         var allSessions = await store.ListAsync();
-        var filtered = await store.ListAsync("agent-a");
+        var filtered = await store.ListAsync(AgentId.From("agent-a"));
 
         allSessions.Count().ShouldBe(3);
-        filtered.ShouldAllBe(s => s.AgentId == "agent-a");
+        filtered.ShouldAllBe(s => s.AgentId.Value == "agent-a");
     }
 
     [Fact]
@@ -169,7 +170,7 @@ public sealed class FileSessionStoreTests
             AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a")
         });
 
-        var sessions = await store.ListByChannelAsync("agent-a", ChannelKey.From("web chat"));
+        var sessions = await store.ListByChannelAsync(AgentId.From("agent-a"), ChannelKey.From("web chat"));
 
         sessions.Select(s => s.SessionId.Value).ShouldBe(new[] { "s-new", "s-old" }, ignoreOrder: false);
     }
@@ -183,7 +184,7 @@ public sealed class FileSessionStoreTests
         var tasks = Enumerable.Range(0, 25)
             .Select(async i =>
             {
-                var session = await store.GetOrCreateAsync($"s{i}", "agent-a");
+                var session = await store.GetOrCreateAsync(SessionId.From($"s{i}"), AgentId.From("agent-a"));
                 session.History.Add(new SessionEntry { Role = MessageRole.User, Content = $"msg-{i}" });
                 await store.SaveAsync(session);
             });
@@ -200,7 +201,7 @@ public sealed class FileSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        var session = await store.GetOrCreateAsync("large", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("large"), AgentId.From("agent-a"));
         for (var i = 0; i < 1000; i++)
             session.History.Add(new SessionEntry { Role = MessageRole.User, Content = $"line-{i}" });
 
@@ -217,7 +218,7 @@ public sealed class FileSessionStoreTests
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
         const string sessionId = "s/日本語?:*&%20";
-        var created = await store.GetOrCreateAsync(sessionId, "agent-a");
+        var created = await store.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From("agent-a"));
         created.History.Add(new SessionEntry { Role = MessageRole.User, Content = "hello" });
 
         await store.SaveAsync(created);
@@ -233,13 +234,13 @@ public sealed class FileSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        await store.GetOrCreateAsync("shared", "agent-a");
+        await store.GetOrCreateAsync(SessionId.From("shared"), AgentId.From("agent-a"));
 
         var writer = Task.Run(async () =>
         {
             for (var i = 0; i < 40; i++)
             {
-                var session = await store.GetOrCreateAsync("shared", "agent-a");
+                var session = await store.GetOrCreateAsync(SessionId.From("shared"), AgentId.From("agent-a"));
                 session.UpdatedAt = DateTimeOffset.UtcNow;
                 await store.SaveAsync(session);
             }
@@ -247,7 +248,7 @@ public sealed class FileSessionStoreTests
         var reader = Task.Run(async () =>
         {
             for (var i = 0; i < 40; i++)
-                _ = await store.GetAsync("shared");
+                _ = await store.GetAsync(SessionId.From("shared"));
         });
 
         await Task.WhenAll(writer, reader);
@@ -293,9 +294,9 @@ public sealed class FileSessionStoreTests
         sessions.Select(session => session.SessionId.Value).ShouldHaveSingleItem().ShouldBe("participant");
     }
 
-    private static async Task CreateAndSaveAsync(FileSessionStore store, string sessionId, string agentId)
+    private static async Task CreateAndSaveAsync(FileSessionStore store, string sessionId, AgentId agentId)
     {
-        var session = await store.GetOrCreateAsync(sessionId, agentId);
+        var session = await store.GetOrCreateAsync(SessionId.From(sessionId), agentId);
         await store.SaveAsync(session);
     }
 

@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Sessions;
@@ -22,14 +23,14 @@ public sealed class SessionLifecycleTests
     public async Task SessionStatus_TransitionsToExpired_AfterTTL()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.UpdatedAt = DateTimeOffset.UtcNow - TimeSpan.FromHours(30);
         await store.SaveAsync(session);
 
         var service = CreateService(store, new SessionCleanupOptions { SessionTtl = TimeSpan.FromHours(24) });
         await service.RunCleanupOnceAsync();
 
-        var updated = await store.GetAsync("s1");
+        var updated = await store.GetAsync(SessionId.From("s1"));
         updated!.Status.ShouldBe(SessionStatus.Expired);
         updated.ExpiresAt.ShouldNotBeNull();
     }
@@ -38,7 +39,7 @@ public sealed class SessionLifecycleTests
     public async Task SessionCleanupService_RunsPeriodically()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.UpdatedAt = DateTimeOffset.UtcNow - TimeSpan.FromMinutes(1);
         await store.SaveAsync(session);
 
@@ -55,7 +56,7 @@ public sealed class SessionLifecycleTests
         {
             var expired = await WaitForConditionAsync(async () =>
             {
-                var current = await store.GetAsync("s1");
+                var current = await store.GetAsync(SessionId.From("s1"));
                 return current?.Status == SessionStatus.Expired;
             });
 
@@ -71,14 +72,14 @@ public sealed class SessionLifecycleTests
     public async Task SessionCleanupService_SkipsActiveSessions_WithRecentActivity()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.UpdatedAt = DateTimeOffset.UtcNow - TimeSpan.FromMinutes(2);
         await store.SaveAsync(session);
 
         var service = CreateService(store, new SessionCleanupOptions { SessionTtl = TimeSpan.FromHours(1) });
         await service.RunCleanupOnceAsync();
 
-        var updated = await store.GetAsync("s1");
+        var updated = await store.GetAsync(SessionId.From("s1"));
         updated!.Status.ShouldBe(SessionStatus.Active);
         updated.ExpiresAt.ShouldBeNull();
     }
@@ -87,7 +88,7 @@ public sealed class SessionLifecycleTests
     public async Task ClosedSessions_AreDeletedAfterRetention()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("closed", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("closed"), AgentId.From("agent-a"));
         session.Status = SessionStatus.Sealed;
         session.UpdatedAt = DateTimeOffset.UtcNow - TimeSpan.FromDays(8);
         await store.SaveAsync(session);
@@ -100,7 +101,7 @@ public sealed class SessionLifecycleTests
 
         await service.RunCleanupOnceAsync();
 
-        (await store.GetAsync("closed")).ShouldBeNull();
+        (await store.GetAsync(SessionId.From("closed"))).ShouldBeNull();
     }
 
     [Fact]
@@ -108,7 +109,7 @@ public sealed class SessionLifecycleTests
     {
         using var fixture = new SessionStoreFixture();
         var store = fixture.CreateStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.Status = SessionStatus.Suspended;
         session.ExpiresAt = DateTimeOffset.UtcNow.AddHours(1);
         await store.SaveAsync(session);

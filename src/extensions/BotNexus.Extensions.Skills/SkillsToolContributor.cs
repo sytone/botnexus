@@ -18,7 +18,7 @@ public sealed class SkillsToolContributor : IAgentToolContributor
 
         var homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var globalSkillsDir = Path.Combine(homeDir, ".botnexus", "skills");
-        var agentSkillsDir = Path.Combine(homeDir, ".botnexus", "agents", context.Descriptor.AgentId, "skills");
+        var agentSkillsDir = Path.Combine(homeDir, ".botnexus", "agents", context.Descriptor.AgentId.Value, "skills");
         var workspaceSkillsDir = Path.Combine(context.WorkspacePath, "skills");
         var config = ResolveExtensionConfig<SkillsConfig>(context.Descriptor, "botnexus-skills");
 

@@ -74,7 +74,7 @@ public sealed class SubAgentModelsTests
     {
         var info = new SubAgentInfo
         {
-            SubAgentId = BotNexus.Domain.Primitives.AgentId.From("sub-123"),
+            SubAgentId = "sub-123",
             ParentSessionId = BotNexus.Domain.Primitives.SessionId.From("parent-session"),
             ChildSessionId = BotNexus.Domain.Primitives.SessionId.From("parent-session::sub::sub-123"),
             Task = "Analyze issue"
@@ -100,7 +100,7 @@ public sealed class SubAgentModelsTests
     {
         var running = new SubAgentInfo
         {
-            SubAgentId = BotNexus.Domain.Primitives.AgentId.From("sub-123"),
+            SubAgentId = "sub-123",
             ParentSessionId = BotNexus.Domain.Primitives.SessionId.From("parent-session"),
             ChildSessionId = BotNexus.Domain.Primitives.SessionId.From("parent-session::sub::sub-123"),
             Task = "Analyze issue",

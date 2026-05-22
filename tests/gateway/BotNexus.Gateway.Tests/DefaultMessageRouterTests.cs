@@ -28,7 +28,7 @@ public sealed class DefaultMessageRouterTests
     {
         var registry = CreateRegistryWithAgents("agent-a", "agent-b");
         var sessions = new InMemorySessionStore();
-        await sessions.GetOrCreateAsync("s1", "agent-b");
+        await sessions.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-b"));
         var router = CreateRouter(registry, sessions);
 
         var route = await router.ResolveAsync(CreateMessage(sessionId: "s1"));
@@ -90,7 +90,7 @@ public sealed class DefaultMessageRouterTests
     private static AgentDescriptor CreateDescriptor(string agentId)
         => new()
         {
-            AgentId = agentId,
+            AgentId = AgentId.From(agentId),
             DisplayName = agentId,
             ModelId = "test-model",
             ApiProvider = "test-provider"

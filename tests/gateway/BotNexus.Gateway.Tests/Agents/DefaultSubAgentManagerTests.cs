@@ -126,7 +126,7 @@ public sealed class DefaultSubAgentManagerTests
         killed.ShouldBeTrue();
         updated.ShouldNotBeNull();
         updated!.Status.ShouldBe(SubAgentStatus.Killed);
-        supervisor.Verify(s => s.StopAsync("parent-agent", spawned.ChildSessionId, It.IsAny<CancellationToken>()), Times.Once);
+        supervisor.Verify(s => s.StopAsync(AgentId.From("parent-agent"), spawned.ChildSessionId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -241,8 +241,8 @@ public sealed class DefaultSubAgentManagerTests
     private static Mock<IAgentHandle> CreateHangingHandle()
     {
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("parent-agent");
-        handle.SetupGet(h => h.SessionId).Returns("session");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("parent-agent"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session"));
         handle.SetupGet(h => h.IsRunning).Returns(true);
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns<string, CancellationToken>(async (_, cancellationToken) =>
@@ -422,7 +422,7 @@ public sealed class DefaultSubAgentManagerTests
         }
 
         private sealed record RuntimeEntry(
-            string ParentAgentId,
+            AgentId ParentAgentId,
             SubAgentInfo Info,
             IAgentHandle Handle,
             CancellationTokenSource LifetimeCts);

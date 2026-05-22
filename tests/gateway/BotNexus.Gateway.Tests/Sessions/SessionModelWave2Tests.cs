@@ -62,7 +62,7 @@ public sealed class SessionModelWave2Tests
     public async Task SessionStatusLifecycle_SuspendedToActive_Works()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.Status = GatewaySessionStatus.Suspended;
         var controller = new SessionsController(store);
 
@@ -77,7 +77,7 @@ public sealed class SessionModelWave2Tests
     public async Task SessionStatusLifecycle_SealedIsTerminal_CannotResumeFromSealed()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.Status = GatewaySessionStatus.Sealed;
         var controller = new SessionsController(store);
 

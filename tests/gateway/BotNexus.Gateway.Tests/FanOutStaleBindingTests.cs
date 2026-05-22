@@ -27,8 +27,8 @@ public sealed class FanOutStaleBindingTests
     private static Mock<IAgentHandle> CreatePromptHandle(string agentId, string sessionId, string content)
     {
         var h = new Mock<IAgentHandle>();
-        h.SetupGet(x => x.AgentId).Returns(agentId);
-        h.SetupGet(x => x.SessionId).Returns(sessionId);
+        h.SetupGet(x => x.AgentId).Returns(AgentId.From(agentId));
+        h.SetupGet(x => x.SessionId).Returns(SessionId.From(sessionId));
         h.Setup(x => x.IsRunning).Returns(false);
         h.Setup(x => x.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = content });
@@ -44,7 +44,7 @@ public sealed class FanOutStaleBindingTests
             SenderId = "sender-1",
             ChannelAddress = ChannelAddress.From(conversationId),
             Content = content,
-            SessionId = sessionId,
+            SessionId = SessionId.From(sessionId),
             Metadata = new Dictionary<string, object?>()
         };
 
@@ -87,7 +87,7 @@ public sealed class FanOutStaleBindingTests
             .ReturnsAsync(handle.Object);
 
         var sessions = new InMemorySessionStore();
-        var session = await sessions.GetOrCreateAsync(sessionId, agentId);
+        var session = await sessions.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From(agentId));
         session.Session.ConversationId = ConversationId.From(convId);
         await sessions.SaveAsync(session);
 
@@ -169,7 +169,7 @@ public sealed class FanOutStaleBindingTests
             .ReturnsAsync(handle.Object);
 
         var sessions = new InMemorySessionStore();
-        var session = await sessions.GetOrCreateAsync(sessionId, agentId);
+        var session = await sessions.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From(agentId));
         session.Session.ConversationId = ConversationId.From(convId);
         await sessions.SaveAsync(session);
 

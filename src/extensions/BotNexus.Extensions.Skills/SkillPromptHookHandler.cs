@@ -37,12 +37,12 @@ public sealed class SkillPromptHookHandler
         if (descriptor is null)
             return Task.FromResult<BeforePromptBuildResult?>(null);
 
-        var workspacePath = _workspaceManager.GetWorkspacePath(hookEvent.AgentId);
+        var workspacePath = _workspaceManager.GetWorkspacePath(hookEvent.AgentId.Value);
 
         var botnexusHome = Path.Combine(ResolveUserHomePath(), ".botnexus");
 
         var globalSkillsDir = Path.Combine(botnexusHome, "skills");
-        var agentSkillsDir = Path.Combine(botnexusHome, "agents", hookEvent.AgentId, "skills");
+        var agentSkillsDir = Path.Combine(botnexusHome, "agents", hookEvent.AgentId.Value, "skills");
         var workspaceSkillsDir = Path.Combine(workspacePath, "skills");
 
         var allSkills = SkillDiscovery.Discover(globalSkillsDir, agentSkillsDir, workspaceSkillsDir, _fileSystem);

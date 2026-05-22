@@ -27,7 +27,7 @@ public sealed class ToolPolicyHookHandler : IHookHandler<BeforeToolCallEvent, Be
     public Task<BeforeToolCallResult?> HandleAsync(BeforeToolCallEvent hookEvent, CancellationToken ct = default)
     {
         // Check if tool is completely denied for this agent
-        if (_policyProvider.IsDenied(hookEvent.ToolName, hookEvent.AgentId))
+        if (_policyProvider.IsDenied(hookEvent.ToolName, hookEvent.AgentId.Value))
         {
             _logger.LogWarning(
                 "Tool {ToolName} is denied for agent {AgentId} by tool policy",
@@ -41,7 +41,7 @@ public sealed class ToolPolicyHookHandler : IHookHandler<BeforeToolCallEvent, Be
         }
 
         // Check if tool requires approval — log a warning for now (full approval UI comes later)
-        if (_policyProvider.RequiresApproval(hookEvent.ToolName, hookEvent.AgentId))
+        if (_policyProvider.RequiresApproval(hookEvent.ToolName, hookEvent.AgentId.Value))
         {
             _logger.LogWarning(
                 "Tool {ToolName} requires approval for agent {AgentId} (risk level: {RiskLevel}). " +

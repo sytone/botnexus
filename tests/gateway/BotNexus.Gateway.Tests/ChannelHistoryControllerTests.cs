@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Api.Controllers;
 using BotNexus.Gateway.Sessions;
@@ -111,8 +112,8 @@ public sealed class ChannelHistoryControllerTests
     {
         var session = new GatewaySession
         {
-            SessionId = sessionId,
-            AgentId = agentId,
+            SessionId = SessionId.From(sessionId),
+            AgentId = AgentId.From(agentId),
             ChannelType = channelType,
             CreatedAt = createdAt
         };

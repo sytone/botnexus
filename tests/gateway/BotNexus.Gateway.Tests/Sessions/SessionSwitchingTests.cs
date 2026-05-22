@@ -114,7 +114,7 @@ public sealed class SessionSwitchingTests : IAsyncDisposable
         await connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionB, cts.Token);
 
         var store = factory.Services.GetRequiredService<ISessionStore>();
-        var sessions = await store.ListAsync(TestAgentId, cts.Token);
+        var sessions = await store.ListAsync(AgentId.From(TestAgentId), cts.Token);
 
         sessions.Select(s => s.SessionId.Value).ShouldBe(new[] { sessionA, sessionB });
     }

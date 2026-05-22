@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
@@ -15,8 +16,8 @@ public sealed class MaxConcurrentSessionsTests
     {
         var supervisor = CreateSupervisor(maxConcurrentSessions: 1);
 
-        await supervisor.GetOrCreateAsync("agent-a", "session-1");
-        Func<Task> act = () => supervisor.GetOrCreateAsync("agent-a", "session-2");
+        await supervisor.GetOrCreateAsync(AgentId.From("agent-a"), SessionId.From("session-1"));
+        Func<Task> act = () => supervisor.GetOrCreateAsync(AgentId.From("agent-a"), SessionId.From("session-2"));
 
         await act.ShouldThrowAsync<AgentConcurrencyLimitExceededException>();
     }
@@ -26,7 +27,7 @@ public sealed class MaxConcurrentSessionsTests
     {
         var supervisor = CreateSupervisor();
 
-        var handle = await supervisor.GetOrCreateAsync("agent-a", "session-1");
+        var handle = await supervisor.GetOrCreateAsync(AgentId.From("agent-a"), SessionId.From("session-1"));
 
         handle.ShouldNotBeNull();
     }
@@ -37,7 +38,7 @@ public sealed class MaxConcurrentSessionsTests
         var supervisor = CreateSupervisor(maxConcurrentSessions: 0);
 
         var createTasks = Enumerable.Range(1, 20)
-            .Select(i => supervisor.GetOrCreateAsync("agent-a", $"session-{i}"));
+            .Select(i => supervisor.GetOrCreateAsync(AgentId.From("agent-a"), SessionId.From($"session-{i}")));
         await Task.WhenAll(createTasks);
 
         supervisor.GetAllInstances().Count().ShouldBe(20);
@@ -49,7 +50,7 @@ public sealed class MaxConcurrentSessionsTests
         var supervisor = CreateSupervisor();
 
         var createTasks = Enumerable.Range(1, 20)
-            .Select(i => supervisor.GetOrCreateAsync("agent-a", $"session-{i}"));
+            .Select(i => supervisor.GetOrCreateAsync(AgentId.From("agent-a"), SessionId.From($"session-{i}")));
         await Task.WhenAll(createTasks);
 
         supervisor.GetAllInstances().Count().ShouldBe(20);
@@ -60,8 +61,8 @@ public sealed class MaxConcurrentSessionsTests
     {
         var supervisor = CreateSupervisor(maxConcurrentSessions: 1);
 
-        var first = await supervisor.GetOrCreateAsync("agent-a", "session-1");
-        var second = await supervisor.GetOrCreateAsync("agent-a", "session-1");
+        var first = await supervisor.GetOrCreateAsync(AgentId.From("agent-a"), SessionId.From("session-1"));
+        var second = await supervisor.GetOrCreateAsync(AgentId.From("agent-a"), SessionId.From("session-1"));
 
         second.ShouldBeSameAs(first);
     }
@@ -90,7 +91,7 @@ public sealed class MaxConcurrentSessionsTests
             .Returns((AgentDescriptor _, AgentExecutionContext context, CancellationToken _) =>
             {
                 var handle = new Mock<IAgentHandle>();
-                handle.SetupGet(h => h.AgentId).Returns("agent-a");
+                handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
                 handle.SetupGet(h => h.SessionId).Returns(context.SessionId);
                 handle.Setup(h => h.IsRunning).Returns(false);
                 return Task.FromResult(handle.Object);

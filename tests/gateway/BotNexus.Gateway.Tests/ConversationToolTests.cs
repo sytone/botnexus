@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Channels;
@@ -17,7 +17,7 @@ public sealed class ConversationToolTests
     {
         var store = new InMemoryConversationStore();
         var conversation = await store.CreateAsync(CreateConversation("agent-a", "Release Planning", "Coordinate releases"));
-        var tool = new ConversationTool(store, "agent-a", conversation.ConversationId);
+        var tool = new ConversationTool(store, AgentId.From("agent-a"), conversation.ConversationId);
 
         var result = await tool.ExecuteAsync("call-1", Args("get"));
         using var document = JsonDocument.Parse(ReadText(result));
@@ -32,7 +32,7 @@ public sealed class ConversationToolTests
     {
         var store = new InMemoryConversationStore();
         var conversation = await store.CreateAsync(CreateConversation("agent-a", "Planning", null));
-        var tool = new ConversationTool(store, "agent-a", conversation.ConversationId);
+        var tool = new ConversationTool(store, AgentId.From("agent-a"), conversation.ConversationId);
 
         await tool.ExecuteAsync("call-1", Args("set_purpose", purpose: "Plan the sprint"));
 
@@ -46,7 +46,7 @@ public sealed class ConversationToolTests
     {
         var store = new InMemoryConversationStore();
         var conversation = await store.CreateAsync(CreateConversation("agent-a", "Old", null));
-        var tool = new ConversationTool(store, "agent-a", conversation.ConversationId);
+        var tool = new ConversationTool(store, AgentId.From("agent-a"), conversation.ConversationId);
 
         await tool.ExecuteAsync("call-1", Args("set_title", displayName: "New display name"));
 
@@ -59,7 +59,7 @@ public sealed class ConversationToolTests
     public async Task List_OwnAccess_DeniesOtherAgent()
     {
         var store = new InMemoryConversationStore();
-        var tool = new ConversationTool(store, "agent-a", accessLevel: ConversationAccessLevel.Own);
+        var tool = new ConversationTool(store, AgentId.From("agent-a"), accessLevel: ConversationAccessLevel.Own);
 
         Func<Task> act = () => tool.ExecuteAsync("call-1", Args("list", agentId: "agent-b"));
 
@@ -71,7 +71,7 @@ public sealed class ConversationToolTests
     {
         var store = new InMemoryConversationStore();
         await store.CreateAsync(CreateConversation("agent-b", "Nova Planning", "Plan with Nova"));
-        var tool = new ConversationTool(store, "agent-a", accessLevel: ConversationAccessLevel.Allowlist, allowedAgents: ["agent-b"]);
+        var tool = new ConversationTool(store, AgentId.From("agent-a"), accessLevel: ConversationAccessLevel.Allowlist, allowedAgents: ["agent-b"]);
 
         var result = await tool.ExecuteAsync("call-1", Args("list", agentId: "agent-b"));
         var text = ReadText(result);
@@ -84,7 +84,7 @@ public sealed class ConversationToolTests
     public async Task New_AllAccess_CreatesConversationForRequestedAgent()
     {
         var store = new InMemoryConversationStore();
-        var tool = new ConversationTool(store, "orchestrator", accessLevel: ConversationAccessLevel.All);
+        var tool = new ConversationTool(store, AgentId.From("orchestrator"), accessLevel: ConversationAccessLevel.All);
 
         var result = await tool.ExecuteAsync("call-1", Args(
             "new",
@@ -106,7 +106,7 @@ public sealed class ConversationToolTests
     {
         var conversationStore = new InMemoryConversationStore();
         var sessionStore = new InMemorySessionStore();
-        var tool = new ConversationTool(conversationStore, "orchestrator", accessLevel: ConversationAccessLevel.All, sessionStore: sessionStore);
+        var tool = new ConversationTool(conversationStore, AgentId.From("orchestrator"), accessLevel: ConversationAccessLevel.All, sessionStore: sessionStore);
 
         var result = await tool.ExecuteAsync("call-1", Args(
             "new",
@@ -134,7 +134,7 @@ public sealed class ConversationToolTests
     public async Task New_WithMessage_WithoutSessionStore_Throws()
     {
         var conversationStore = new InMemoryConversationStore();
-        var tool = new ConversationTool(conversationStore, "orchestrator", accessLevel: ConversationAccessLevel.All);
+        var tool = new ConversationTool(conversationStore, AgentId.From("orchestrator"), accessLevel: ConversationAccessLevel.All);
 
         Func<Task> act = () => tool.ExecuteAsync("call-1", Args(
             "new",
@@ -154,7 +154,7 @@ public sealed class ConversationToolTests
         var dispatcher = Substitute.For<IChannelDispatcher>();
         var tool = new ConversationTool(
             conversationStore,
-            "orchestrator",
+            AgentId.From("orchestrator"),
             accessLevel: ConversationAccessLevel.All,
             sessionStore: sessionStore,
             channelDispatcher: dispatcher);
@@ -189,7 +189,7 @@ public sealed class ConversationToolTests
         var sessionStore = new InMemorySessionStore();
         var tool = new ConversationTool(
             conversationStore,
-            "orchestrator",
+            AgentId.From("orchestrator"),
             accessLevel: ConversationAccessLevel.All,
             sessionStore: sessionStore,
             channelDispatcher: null);
@@ -220,7 +220,7 @@ public sealed class ConversationToolTests
         var dispatcher = Substitute.For<IChannelDispatcher>();
         var tool = new ConversationTool(
             conversationStore,
-            "orchestrator",
+            AgentId.From("orchestrator"),
             accessLevel: ConversationAccessLevel.All,
             sessionStore: sessionStore,
             channelDispatcher: dispatcher);
@@ -245,7 +245,7 @@ public sealed class ConversationToolTests
 
         var tool = new ConversationTool(
             conversationStore,
-            "orchestrator",
+            AgentId.From("orchestrator"),
             accessLevel: ConversationAccessLevel.All,
             sessionStore: sessionStore,
             channelDispatcher: dispatcher);
@@ -279,7 +279,7 @@ public sealed class ConversationToolTests
 
         var tool = new ConversationTool(
             conversationStore,
-            "orchestrator",
+            AgentId.From("orchestrator"),
             accessLevel: ConversationAccessLevel.All,
             sessionStore: sessionStore,
             channelDispatcher: null);
@@ -300,7 +300,7 @@ public sealed class ConversationToolTests
 
         var tool = new ConversationTool(
             conversationStore,
-            "orchestrator",
+            AgentId.From("orchestrator"),
             accessLevel: ConversationAccessLevel.All,
             sessionStore: sessionStore,
             channelDispatcher: null);
@@ -324,7 +324,7 @@ public sealed class ConversationToolTests
         // agent-a with Own access cannot message nova's conversation
         var tool = new ConversationTool(
             conversationStore,
-            "agent-a",
+            AgentId.From("agent-a"),
             accessLevel: ConversationAccessLevel.Own,
             sessionStore: sessionStore,
             channelDispatcher: dispatcher);
@@ -355,7 +355,7 @@ public sealed class ConversationToolTests
 
         var tool = new ConversationTool(
             conversationStore,
-            "orchestrator",
+            AgentId.From("orchestrator"),
             accessLevel: ConversationAccessLevel.All,
             sessionStore: sessionStore,
             channelDispatcher: dispatcher);

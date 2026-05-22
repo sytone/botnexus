@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using System.IO.Abstractions.TestingHelpers;
 using System.Text.Json;
 using BotNexus.Gateway.Abstractions.Models;
@@ -86,7 +87,7 @@ public sealed class CompactionModelTests
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.ReplaceHistory([
             new SessionEntry { Role = MessageRole.User, Content = "before-1" },
             new SessionEntry { Role = MessageRole.Assistant, Content = "before-2" },
@@ -107,7 +108,7 @@ public sealed class CompactionModelTests
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.ReplaceHistory([
             new SessionEntry { Role = MessageRole.User, Content = "before-1" },
             new SessionEntry { Role = MessageRole.System, Content = "summary-1", IsCompactionSummary = true },
@@ -129,7 +130,7 @@ public sealed class CompactionModelTests
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.ReplaceHistory([
             new SessionEntry { Role = MessageRole.User, Content = "one" },
             new SessionEntry { Role = MessageRole.Assistant, Content = "two" }

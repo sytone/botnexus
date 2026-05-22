@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Api.Controllers;
@@ -89,7 +90,7 @@ public sealed class ModelsControllerTests
             new LlmModelInfo("gpt-4o", "GPT-4o", "openai")
         ]);
         var agentRegistry = new Mock<IAgentRegistry>();
-        agentRegistry.Setup(registry => registry.Get("agent-a")).Returns(new AgentDescriptor
+        agentRegistry.Setup(registry => registry.Get(AgentId.From("agent-a"))).Returns(new AgentDescriptor
         {
             AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a"),
             DisplayName = "Agent A",
@@ -126,7 +127,7 @@ public sealed class ModelsControllerTests
             new LlmModelInfo("gpt-4o", "GPT-4o", "openai")
         ]);
         var agentRegistry = new Mock<IAgentRegistry>();
-        agentRegistry.Setup(registry => registry.Get("agent-a")).Returns(new AgentDescriptor
+        agentRegistry.Setup(registry => registry.Get(AgentId.From("agent-a"))).Returns(new AgentDescriptor
         {
             AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a"),
             DisplayName = "Agent A",

@@ -16,7 +16,7 @@ public sealed class ConversationsControllerHistoryTests
         var conversationId = ConversationId.From("c_history_latest_page");
         var sessions = new InMemorySessionStore();
         var conversationStore = new StubConversationStore(CreateConversation(conversationId, "quill"));
-        var session = await sessions.GetOrCreateAsync("s-history-1", "quill");
+        var session = await sessions.GetOrCreateAsync(SessionId.From("s-history-1"), AgentId.From("quill"));
         session.Session.ConversationId = conversationId;
 
         for (var i = 0; i < 250; i++)
@@ -48,7 +48,7 @@ public sealed class ConversationsControllerHistoryTests
         var conversationId = ConversationId.From("c_history_offset_page");
         var sessions = new InMemorySessionStore();
         var conversationStore = new StubConversationStore(CreateConversation(conversationId, "quill"));
-        var session = await sessions.GetOrCreateAsync("s-history-2", "quill");
+        var session = await sessions.GetOrCreateAsync(SessionId.From("s-history-2"), AgentId.From("quill"));
         session.Session.ConversationId = conversationId;
 
         for (var i = 0; i < 250; i++)

@@ -337,8 +337,8 @@ public sealed class MultiChannelFanOutTests
             .ReturnsAsync([AgentName]);
 
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns(AgentName);
-        handle.SetupGet(h => h.SessionId).Returns("dynamic");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From(AgentName));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("dynamic"));
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = responseContent });

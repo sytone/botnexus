@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using System.Text.Json.Nodes;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
@@ -127,7 +128,7 @@ public sealed class PlatformConfigAgentWriterTests : IDisposable
     private static AgentDescriptor CreateDescriptor(string agentId)
         => new()
         {
-            AgentId = agentId,
+            AgentId = AgentId.From(agentId),
             DisplayName = agentId,
             ModelId = "claude-sonnet-4.5",
             ApiProvider = "github-copilot",

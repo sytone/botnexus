@@ -1,70 +1,90 @@
 using System.Text.Json;
 using BotNexus.Domain.Primitives;
+using Vogen;
 
 namespace BotNexus.Domain.Tests;
 
 public sealed class AgentIdTests
 {
     [Fact]
-    public void AgentId_From_WhenValueIsValid_ShouldCreateInstance()
+    public void From_TrimsLeadingAndTrailingWhitespace()
     {
         var result = AgentId.From(" agent-1 ");
+
         result.Value.ShouldBe("agent-1");
     }
 
+    [Fact]
+    public void From_RejectsNull()
+    {
+        // Vogen throws its built-in "cannot create with null" message for the null path,
+        // which does not run through our custom Validate; assert the exception type only.
+        Action act = () => AgentId.From(null!);
+
+        act.ShouldThrow<ValueObjectValidationException>();
+    }
+
     [Theory]
-    [InlineData(null)]
     [InlineData("")]
     [InlineData(" ")]
-    public void AgentId_From_WhenValueIsEmpty_ShouldThrowArgumentException(string? value)
+    [InlineData("\t")]
+    [InlineData("   \n   ")]
+    public void From_RejectsEmptyOrWhitespace(string value)
     {
-        Action action = () => AgentId.From(value!);
-        action.ShouldThrow<ArgumentException>();
+        Action act = () => AgentId.From(value);
+
+        var ex = act.ShouldThrow<ValueObjectValidationException>();
+        ex.Message.ShouldContain("AgentId");
     }
 
     [Fact]
-    public void AgentId_Equals_WhenValuesMatch_ShouldBeTrue()
+    public void Equality_MatchesByValue()
     {
-        var left = AgentId.From("agent-1");
-        var right = AgentId.From("agent-1");
-        left.ShouldBe(right);
+        AgentId.From("agent-1").ShouldBe(AgentId.From("agent-1"));
+        AgentId.From("agent-1").ShouldNotBe(AgentId.From("agent-2"));
     }
 
     [Fact]
-    public void AgentId_Equals_WhenValuesDiffer_ShouldBeFalse()
+    public void ToString_ReturnsRawValue()
     {
-        var left = AgentId.From("agent-1");
-        var right = AgentId.From("agent-2");
-        left.ShouldNotBe(right);
+        AgentId.From("agent-1").ToString().ShouldBe("agent-1");
     }
 
     [Fact]
-    public void AgentId_ImplicitConversion_WhenConvertedToString_ShouldReturnValue()
+    public void Json_SerializesAsBareString()
     {
-        var id = AgentId.From("agent-1");
-        string value = id;
-        value.ShouldBe("agent-1");
+        var json = JsonSerializer.Serialize(AgentId.From("agent-1"));
+
+        json.ShouldBe("\"agent-1\"");
     }
 
     [Fact]
-    public void AgentId_ExplicitConversion_WhenConvertedFromString_ShouldCreateInstance()
+    public void Json_DeserializesFromBareString()
     {
-        var id = (AgentId)"agent-1";
-        id.Value.ShouldBe("agent-1");
+        var id = JsonSerializer.Deserialize<AgentId>("\"agent-1\"");
+
+        id.ShouldBe(AgentId.From("agent-1"));
     }
 
     [Fact]
-    public void AgentId_ToString_WhenCalled_ShouldReturnValue()
-    {
-        var id = AgentId.From("agent-1");
-        id.ToString().ShouldBe("agent-1");
-    }
-
-    [Fact]
-    public void AgentId_JsonRoundTrip_WhenSerializedAndDeserialized_ShouldBeEqual()
+    public void Json_RoundTripPreservesValue()
     {
         var original = AgentId.From("agent-1");
+
         var roundTrip = JsonSerializer.Deserialize<AgentId>(JsonSerializer.Serialize(original));
+
         roundTrip.ShouldBe(original);
+    }
+
+    [Fact]
+    public void Json_PropertyOnDtoUsesBareStringWithCamelCase()
+    {
+        var dto = new { agent = AgentId.From("agent-1"), label = "hello" };
+
+        var json = JsonSerializer.Serialize(
+            dto,
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+        json.ShouldBe("{\"agent\":\"agent-1\",\"label\":\"hello\"}");
     }
 }

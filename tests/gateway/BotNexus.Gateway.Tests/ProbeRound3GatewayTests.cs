@@ -177,7 +177,7 @@ public sealed class ProbeRound3GatewayTests
     {
         // Covered by existing tests — just verify Seal endpoint path is tested
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("parent::subagent::child1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("parent::subagent::child1"), AgentId.From("agent-a"));
         session.Status = GatewaySessionStatus.Expired;
         await store.SaveAsync(session);
 
@@ -185,7 +185,7 @@ public sealed class ProbeRound3GatewayTests
         var result = await controller.Seal("parent::subagent::child1", CancellationToken.None);
 
         result.ShouldBeOfType<OkObjectResult>();
-        var loaded = await store.GetAsync("parent::subagent::child1");
+        var loaded = await store.GetAsync(SessionId.From("parent::subagent::child1"));
         loaded!.Status.ShouldBe(GatewaySessionStatus.Sealed);
     }
 
@@ -193,7 +193,7 @@ public sealed class ProbeRound3GatewayTests
     public async Task Suspend_WithActiveSession_TransitionsToSuspended()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.Status = GatewaySessionStatus.Active;
         await store.SaveAsync(session);
 
@@ -201,7 +201,7 @@ public sealed class ProbeRound3GatewayTests
         var result = await controller.Suspend("s1", CancellationToken.None);
 
         result.Result.ShouldBeOfType<OkObjectResult>();
-        var loaded = await store.GetAsync("s1");
+        var loaded = await store.GetAsync(SessionId.From("s1"));
         loaded!.Status.ShouldBe(GatewaySessionStatus.Suspended);
     }
 
@@ -209,7 +209,7 @@ public sealed class ProbeRound3GatewayTests
     public async Task Resume_WithSuspendedSession_TransitionsToActive()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.Status = GatewaySessionStatus.Suspended;
         await store.SaveAsync(session);
 
@@ -217,7 +217,7 @@ public sealed class ProbeRound3GatewayTests
         var result = await controller.Resume("s1", CancellationToken.None);
 
         result.Result.ShouldBeOfType<OkObjectResult>();
-        var loaded = await store.GetAsync("s1");
+        var loaded = await store.GetAsync(SessionId.From("s1"));
         loaded!.Status.ShouldBe(GatewaySessionStatus.Active);
     }
 
@@ -227,7 +227,7 @@ public sealed class ProbeRound3GatewayTests
         // The chat controller should check session status and return 409 for sealed sessions.
         // Currently no such check exists — this test documents the expected behavior.
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("sealed-session", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("sealed-session"), AgentId.From("agent-a"));
         session.Status = GatewaySessionStatus.Sealed;
         await store.SaveAsync(session);
 
@@ -246,7 +246,7 @@ public sealed class ProbeRound3GatewayTests
     public async Task SendMessageToSuspendedSession_ChatController_RejectsWithConflict()
     {
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("suspended-session", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("suspended-session"), AgentId.From("agent-a"));
         session.Status = GatewaySessionStatus.Suspended;
         await store.SaveAsync(session);
 

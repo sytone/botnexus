@@ -626,17 +626,11 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
 
         return SessionId.From(sessionId);
     }
-    private static AgentId NormalizeAgentId(AgentId agentId)
-    {
-        try
-        {
-            return AgentId.From(agentId.Value);
-        }
-        catch (ArgumentException)
-        {
-            throw new HubException("Agent ID is required.");
-        }
-    }
+    // AgentId is a Vogen value object; the parameter cannot be default(AgentId) (compile-time
+    // VOG009) and is already validated and trimmed at construction. The defensive re-construction
+    // step is therefore a pass-through. SessionId and ChannelKey are still hand-rolled and need
+    // the try/catch below until they migrate to Vogen.
+    private static AgentId NormalizeAgentId(AgentId agentId) => agentId;
 
     private static SessionId NormalizeSessionId(SessionId sessionId)
     {

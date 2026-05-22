@@ -29,7 +29,7 @@ public sealed class StreamingPipelineTests
             out _);
 
         await host.DispatchAsync(CreateMessage("hello"));
-        var session = await sessionStore.GetAsync("session-1");
+        var session = await sessionStore.GetAsync(SessionId.From("session-1"));
 
         session!.History.ShouldContain(e => e.Role == MessageRole.Assistant && e.Content == "stream works");
     }
@@ -50,7 +50,7 @@ public sealed class StreamingPipelineTests
             out _);
 
         await host.DispatchAsync(CreateMessage("what time"));
-        var session = await sessionStore.GetAsync("session-1");
+        var session = await sessionStore.GetAsync(SessionId.From("session-1"));
 
         session!.History.ShouldContain(e => e.Role == MessageRole.Tool && e.ToolName == "clock" && e.ToolCallId == "call-1");
         session.History.ShouldContain(e => e.Role == MessageRole.Tool && e.Content == "12:00");
@@ -73,7 +73,7 @@ public sealed class StreamingPipelineTests
             out _);
 
         await host.DispatchAsync(CreateMessage("solve"));
-        var session = await sessionStore.GetAsync("session-1");
+        var session = await sessionStore.GetAsync(SessionId.From("session-1"));
 
         session!.History.Select(h => h.Role).ShouldBe(new[] {
             MessageRole.User,
@@ -110,7 +110,7 @@ public sealed class StreamingPipelineTests
         await using var host = CreateStreamingHost([], sessionStore, channel.Object, out _);
 
         await host.DispatchAsync(CreateMessage("empty"));
-        var session = await sessionStore.GetAsync("session-1");
+        var session = await sessionStore.GetAsync(SessionId.From("session-1"));
 
         session!.History.Count().ShouldBe(1);
         session.History[0].Role.ShouldBe(MessageRole.User);
@@ -155,8 +155,8 @@ public sealed class StreamingPipelineTests
         router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["agent-a"]);
         var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.AgentId).Returns("agent-a");
-        handle.SetupGet(h => h.SessionId).Returns("session-1");
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
         handle.Setup(h => h.IsRunning).Returns(false);
         handle.Setup(h => h.StreamAsync(It.IsAny<BotNexus.Agent.Core.Types.UserMessage>(), It.IsAny<CancellationToken>()))
             .Returns(streamEvents);

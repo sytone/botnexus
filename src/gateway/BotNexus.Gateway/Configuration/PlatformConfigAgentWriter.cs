@@ -28,14 +28,14 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
     public async Task SaveAsync(AgentDescriptor descriptor, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(descriptor);
-        ArgumentException.ThrowIfNullOrWhiteSpace(descriptor.AgentId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(descriptor.AgentId.Value);
 
-        _ = _botNexusHome.GetAgentDirectory(descriptor.AgentId);
+        _ = _botNexusHome.GetAgentDirectory(descriptor.AgentId.Value);
 
         await _configWriter.MutateAsync(root =>
         {
             var agents = EnsureAgentsObject(root);
-            var entry = GetOrCreateAgentEntry(agents, descriptor.AgentId);
+            var entry = GetOrCreateAgentEntry(agents, descriptor.AgentId.Value);
 
             entry["provider"] = descriptor.ApiProvider;
             entry["model"] = descriptor.ModelId;

@@ -102,7 +102,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 
         var enrichedSystemPrompt = await _contextBuilder.BuildSystemPromptAsync(descriptor, context, cancellationToken);
 
-        var workspacePath = _workspaceManager.GetWorkspacePath(descriptor.AgentId);
+        var workspacePath = _workspaceManager.GetWorkspacePath(descriptor.AgentId.Value);
         var pathValidator = new DefaultPathValidator(descriptor.FileAccess, workspacePath);
         var workspaceTools = _toolFactory.CreateTools(workspacePath, pathValidator);
         var workspaceToolNames = new HashSet<string>(workspaceTools.Select(tool => tool.Name), StringComparer.OrdinalIgnoreCase);
@@ -131,11 +131,11 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 
         if (descriptor.Memory?.Enabled == true)
         {
-            var memoryStore = _memoryStoreFactory.Create(descriptor.AgentId);
+            var memoryStore = _memoryStoreFactory.Create(descriptor.AgentId.Value);
             // Initialize asynchronously ΓÇö don't block handle creation.
             // Memory tools work immediately; the store initializes in the background.
             _ = memoryStore.InitializeAsync(CancellationToken.None);
-            tools.Add(new MemorySaveTool(_workspaceManager, descriptor.AgentId, descriptor.Memory.Path));
+            tools.Add(new MemorySaveTool(_workspaceManager, descriptor.AgentId.Value, descriptor.Memory.Path));
             tools.Add(new MemorySearchTool(memoryStore, descriptor.Memory));
             tools.Add(new MemoryGetTool(memoryStore));
         }
@@ -150,7 +150,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             if (cronStore is not null && cronScheduler is not null)
             {
                 var allowCrossAgentCron = ResolveAllowCrossAgentCron(descriptor);
-                tools.Add(new CronTool(cronStore, cronScheduler, descriptor.AgentId, allowCrossAgentCron));
+                tools.Add(new CronTool(cronStore, cronScheduler, descriptor.AgentId.Value, allowCrossAgentCron));
             }
         }
 
@@ -586,16 +586,16 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
 
     /// <inheritdoc />
     public IAgentHandle? GetHandle(AgentId agentId, SessionId sessionId)
-        => string.Equals(AgentId, agentId, StringComparison.OrdinalIgnoreCase) &&
-           string.Equals(SessionId, sessionId, StringComparison.OrdinalIgnoreCase)
+        => string.Equals(AgentId.Value, agentId.Value, StringComparison.OrdinalIgnoreCase) &&
+           string.Equals(SessionId.Value, sessionId.Value, StringComparison.OrdinalIgnoreCase)
             ? this
             : null;
 
     /// <inheritdoc />
     public IAgentTool? ResolveTool(AgentId agentId, SessionId sessionId, string toolName)
     {
-        if (!string.Equals(AgentId, agentId, StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(SessionId, sessionId, StringComparison.OrdinalIgnoreCase) ||
+        if (!string.Equals(AgentId.Value, agentId.Value, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(SessionId.Value, sessionId.Value, StringComparison.OrdinalIgnoreCase) ||
             string.IsNullOrWhiteSpace(toolName))
         {
             return null;

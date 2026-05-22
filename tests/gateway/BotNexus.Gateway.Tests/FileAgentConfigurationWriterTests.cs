@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -98,7 +99,7 @@ public sealed class FileAgentConfigurationWriterTests : IDisposable
     private static AgentDescriptor CreateDescriptor(string agentId)
         => new()
         {
-            AgentId = agentId,
+            AgentId = AgentId.From(agentId),
             DisplayName = agentId,
             ModelId = "claude-sonnet-4.5",
             ApiProvider = "github-copilot",

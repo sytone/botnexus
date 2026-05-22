@@ -116,8 +116,8 @@ public static class StreamingSessionHelper
         {
             await lifecycleEvents.PublishAsync(
                 new SessionLifecycleEvent(
-                    session.SessionId,
-                    session.AgentId,
+                    session.SessionId.Value,
+                    session.AgentId.Value,
                     SessionLifecycleEventType.Closed,
                     session),
                 cancellationToken);

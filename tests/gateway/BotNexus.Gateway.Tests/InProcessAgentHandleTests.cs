@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Agent.Core;
 using BotNexus.Agent.Core.Configuration;
 using BotNexus.Agent.Core.Types;
@@ -168,7 +169,7 @@ public sealed class InProcessAgentHandleTests
             SessionId: "session-1");
 
         var agent = new BotNexus.Agent.Core.Agent(options);
-        var handle = new InProcessAgentHandle(agent, "agent-a", "session-1", NullLogger.Instance);
+        var handle = new InProcessAgentHandle(agent, AgentId.From("agent-a"), SessionId.From("session-1"), NullLogger.Instance);
         return (agent, handle);
     }
 

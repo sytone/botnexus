@@ -64,7 +64,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         await SeedSessionAsync(factory, new GatewaySession
         {
             SessionId = BotNexus.Domain.Primitives.SessionId.From("manifest-1"),
-            AgentId = TestAgentId,
+            AgentId = AgentId.From(TestAgentId),
             Status = GatewaySessionStatus.Active,
             ChannelType = ChannelKey.From("signalr")
         }, cts.Token);
@@ -85,8 +85,8 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
 
         const string sessionA = "subscribe-all-a";
         const string sessionB = "subscribe-all-b";
-        await SeedSessionAsync(factory, new GatewaySession { SessionId = sessionA, AgentId = TestAgentId, Status = GatewaySessionStatus.Active }, cts.Token);
-        await SeedSessionAsync(factory, new GatewaySession { SessionId = sessionB, AgentId = TestAgentId, Status = GatewaySessionStatus.Active }, cts.Token);
+        await SeedSessionAsync(factory, new GatewaySession { SessionId = SessionId.From(sessionA), AgentId = AgentId.From(TestAgentId), Status = GatewaySessionStatus.Active }, cts.Token);
+        await SeedSessionAsync(factory, new GatewaySession { SessionId = SessionId.From(sessionB), AgentId = AgentId.From(TestAgentId), Status = GatewaySessionStatus.Active }, cts.Token);
 
         await using var connection = await CreateStartedConnection(factory, cts.Token);
         await connection.InvokeAsync<JsonElement>("SubscribeAll", cts.Token);
@@ -118,8 +118,8 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
 
         const string sessionTarget = "subscribe-one-target";
         const string sessionOther = "subscribe-one-other";
-        await SeedSessionAsync(factory, new GatewaySession { SessionId = sessionTarget, AgentId = TestAgentId, Status = GatewaySessionStatus.Active }, cts.Token);
-        await SeedSessionAsync(factory, new GatewaySession { SessionId = sessionOther, AgentId = TestAgentId, Status = GatewaySessionStatus.Active }, cts.Token);
+        await SeedSessionAsync(factory, new GatewaySession { SessionId = SessionId.From(sessionTarget), AgentId = AgentId.From(TestAgentId), Status = GatewaySessionStatus.Active }, cts.Token);
+        await SeedSessionAsync(factory, new GatewaySession { SessionId = SessionId.From(sessionOther), AgentId = AgentId.From(TestAgentId), Status = GatewaySessionStatus.Active }, cts.Token);
 
         await using var connection = await CreateStartedConnection(factory, cts.Token);
         var subscribed = await connection.InvokeAsync<JsonElement>("SubscribeAll", cts.Token);
@@ -171,7 +171,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
 
         const string joinedSession = "legacy-join-session";
         const string subscribedSession = "legacy-subscribe-session";
-        await SeedSessionAsync(factory, new GatewaySession { SessionId = subscribedSession, AgentId = TestAgentId, Status = GatewaySessionStatus.Active }, cts.Token);
+        await SeedSessionAsync(factory, new GatewaySession { SessionId = SessionId.From(subscribedSession), AgentId = AgentId.From(TestAgentId), Status = GatewaySessionStatus.Active }, cts.Token);
 
         await using var connection = await CreateStartedConnection(factory, cts.Token);
         var joinResult = await connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, joinedSession, cts.Token);
@@ -448,8 +448,8 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         const string sessionA = "stale-session-a";
         await SeedSessionAsync(factory, new GatewaySession
         {
-            SessionId = sessionA,
-            AgentId = TestAgentId,
+            SessionId = SessionId.From(sessionA),
+            AgentId = AgentId.From(TestAgentId),
             ChannelType = ChannelKey.From("signalr"),
             SessionType = BotNexus.Domain.Primitives.SessionType.UserAgent,
             Status = GatewaySessionStatus.Active
@@ -934,7 +934,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
             Status = AgentInstanceStatus.Running
         };
 
-        public AbortAwareHandle Handle { get; } = new(agentId, sessionId);
+        public AbortAwareHandle Handle { get; } = new(AgentId.From(agentId), SessionId.From(sessionId));
         public bool GetOrCreateCalled { get; private set; }
 
         public Task<IAgentHandle> GetOrCreateAsync(AgentId requestedAgentId, SessionId requestedSessionId, CancellationToken cancellationToken = default)

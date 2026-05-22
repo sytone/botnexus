@@ -80,7 +80,7 @@ public sealed class SignalRHubTests
 
         var hub = CreateHub(dispatcher: dispatcher.Object, connectionId: "conn-1");
 
-        var result = await hub.SendMessage("agent-a", "signalr", "hello");
+        var result = await hub.SendMessage(AgentId.From("agent-a"), ChannelKey.From("signalr"), "hello");
 
         result.SessionId.ShouldNotBeNullOrWhiteSpace();
         result.AgentId.ShouldBe("agent-a");
@@ -105,7 +105,7 @@ public sealed class SignalRHubTests
 
         var hub = CreateHub(groups: groups.Object, dispatcher: dispatcher.Object, connectionId: "conn-1");
 
-        var result = await hub.SendMessage("agent-a", "signalr", "hello");
+        var result = await hub.SendMessage(AgentId.From("agent-a"), ChannelKey.From("signalr"), "hello");
 
         result.SessionId.ShouldNotBeNullOrWhiteSpace();
         result.ChannelType.ShouldBe("signalr");
@@ -125,7 +125,7 @@ public sealed class SignalRHubTests
 
         var hub = CreateHub(dispatcher: dispatcher.Object, connectionId: "conn-1");
 
-        await hub.SendMessage("agent-a", "signalr", "hello");
+        await hub.SendMessage(AgentId.From("agent-a"), ChannelKey.From("signalr"), "hello");
 
         dispatcher.Verify(value => value.DispatchAsync(
                 It.Is<InboundMessage>(m =>
@@ -148,9 +148,9 @@ public sealed class SignalRHubTests
         var hub = CreateHub(dispatcher: dispatcher.Object, connectionId: "conn-1");
 
         // First message creates the session
-        var result1 = await hub.SendMessage("agent-a", "telegram", "first");
+        var result1 = await hub.SendMessage(AgentId.From("agent-a"), ChannelKey.From("telegram"), "first");
         // Second message should reuse the same session (same connection = same channel address)
-        var result2 = await hub.SendMessage("agent-a", "telegram", "second");
+        var result2 = await hub.SendMessage(AgentId.From("agent-a"), ChannelKey.From("telegram"), "second");
 
         result1.SessionId.ShouldNotBeNullOrWhiteSpace();
         result2.SessionId.ShouldBe(result1.SessionId);
@@ -194,7 +194,7 @@ public sealed class SignalRHubTests
 
         var hub = CreateHub(dispatcher: dispatcher.Object, conversationDispatcher: conversationDispatcher.Object, connectionId: "conn-1");
 
-        var result = await hub.SendMessage("agent-a", "signalr", "hello targeted", targetConversationId);
+        var result = await hub.SendMessage(AgentId.From("agent-a"), ChannelKey.From("signalr"), "hello targeted", targetConversationId);
 
         result.SessionId.ShouldBe(targetSessionId,
             "explicit conversation routing should resolve the conversation session instead of the default portal session");
@@ -224,7 +224,7 @@ public sealed class SignalRHubTests
 
         var hub = CreateHub(dispatcher: dispatcher.Object, conversationDispatcher: conversationDispatcher.Object, connectionId: "conn-1");
 
-        var result = await hub.SendMessage("agent-a", "signalr", "hello default");
+        var result = await hub.SendMessage(AgentId.From("agent-a"), ChannelKey.From("signalr"), "hello default");
 
         result.SessionId.ShouldBe(defaultSessionId,
             "when no conversationId is supplied, hub routing should still return the default conversation session");
@@ -285,8 +285,8 @@ public sealed class SignalRHubTests
             Context = new TestHubCallerContext("conn-2")
         };
 
-        var result1 = await hub1.SendMessage("agent-a", "signalr", "from conn-1");
-        var result2 = await hub2.SendMessage("agent-a", "signalr", "from conn-2");
+        var result1 = await hub1.SendMessage(AgentId.From("agent-a"), ChannelKey.From("signalr"), "from conn-1");
+        var result2 = await hub2.SendMessage(AgentId.From("agent-a"), ChannelKey.From("signalr"), "from conn-2");
 
         // Both connections route to the same session (same agent conversation)
         result1.SessionId.ShouldBe(result2.SessionId);
@@ -304,7 +304,7 @@ public sealed class SignalRHubTests
 
         var hub = CreateHub(dispatcher: dispatcher.Object, connectionId: "conn-1");
 
-        var result = await hub.SendMessage("agent-a", "telegram", "needs-new-session");
+        var result = await hub.SendMessage(AgentId.From("agent-a"), ChannelKey.From("telegram"), "needs-new-session");
 
         result.SessionId.ShouldNotBeNullOrWhiteSpace();
         result.ChannelType.ShouldBe("telegram");
@@ -326,7 +326,7 @@ public sealed class SignalRHubTests
 
         var hub = CreateHub(dispatcher: dispatcher.Object, connectionId: "conn-1");
 
-        await hub.SendMessage("  agent-a  ", "  signalr  ", "hello");
+        await hub.SendMessage(AgentId.From("  agent-a  "), ChannelKey.From("  signalr  "), "hello");
 
         dispatcher.Verify(value => value.DispatchAsync(
                 It.Is<InboundMessage>(m =>
@@ -366,16 +366,10 @@ public sealed class SignalRHubTests
         response.FreeFormText.ShouldBe("staging");
     }
 
-    [Fact]
-    public async Task GatewayHub_SendMessage_DefaultAgentId_ThrowsHubException()
-    {
-        var hub = CreateHub();
-
-        Func<Task> act = () => hub.SendMessage(default, ChannelKey.From("signalr"), "hello");
-
-        (await act.ShouldThrowAsync<HubException>())
-            .Message.ShouldBe("Agent ID is required.");
-    }
+    // GatewayHub_SendMessage_DefaultAgentId_ThrowsHubException was removed: AgentId is now a Vogen
+    // value object and `default(AgentId)` is rejected by the analyser (VOG009). The hub method
+    // signature `SendMessage(AgentId agentId, ...)` cannot receive a default instance from any
+    // code path. Construction-time validation is asserted in AgentIdTests.From_RejectsNullEmptyOrWhitespace.
 
     [Fact]
     public async Task GatewayHub_SendMessage_DefaultChannelType_ThrowsHubException()
@@ -401,7 +395,7 @@ public sealed class SignalRHubTests
 
         var hub = CreateHub(dispatcher: dispatcher.Object, connectionId: "conn-1");
 
-        var result = await hub.Steer("agent-a", requestedSessionId, "nudge", null);
+        var result = await hub.Steer(AgentId.From("agent-a"), SessionId.From(requestedSessionId), "nudge", null);
 
         result.SessionId.ShouldBe(requestedSessionId);
         dispatched.ShouldNotBeNull();
@@ -423,7 +417,7 @@ public sealed class SignalRHubTests
 
         var hub = CreateHub(dispatcher: dispatcher.Object, connectionId: "conn-1");
 
-        var result = await hub.Steer("agent-a", "sess-1", "nudge", "conv-42");
+        var result = await hub.Steer(AgentId.From("agent-a"), SessionId.From("sess-1"), "nudge", "conv-42");
 
         dispatched.ShouldNotBeNull();
         dispatched!.ConversationId.ShouldBe("conv-42");
@@ -446,7 +440,7 @@ public sealed class SignalRHubTests
 
         var hub = CreateHub(clients: clients.Object, sessions: sessions.Object, supervisor: supervisor.Object);
 
-        await hub.ResetSession("agent-a", "session-1");
+        await hub.ResetSession(AgentId.From("agent-a"), SessionId.From("session-1"));
 
         sessions.Verify(value => value.ArchiveAsync("session-1", CancellationToken.None), Times.Once);
         sessions.Verify(value => value.DeleteAsync(It.IsAny<BotNexus.Domain.Primitives.SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -476,7 +470,7 @@ public sealed class SignalRHubTests
             compactor: compactor.Object,
             compactionOptions: new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()));
 
-        var result = await hub.CompactSession("agent-a", "session-1");
+        var result = await hub.CompactSession(AgentId.From("agent-a"), SessionId.From("session-1"));
 
         result.Summarized.ShouldBe(5);
         result.Preserved.ShouldBe(3);
@@ -491,7 +485,7 @@ public sealed class SignalRHubTests
         sessions.Setup(value => value.GetAsync("missing", CancellationToken.None)).ReturnsAsync((GatewaySession?)null);
         var hub = CreateHub(sessions: sessions.Object);
 
-        Func<Task> act = () => hub.CompactSession("agent-a", "missing");
+        Func<Task> act = () => hub.CompactSession(AgentId.From("agent-a"), SessionId.From("missing"));
 
         (await act.ShouldThrowAsync<HubException>())
             .Message.ShouldBe("Session 'missing' not found.");

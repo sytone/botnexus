@@ -158,7 +158,7 @@ public sealed class SessionEndMemoryFlusherTests
         return new Session
         {
             SessionId = SessionId.Create(),
-            AgentId = TestAgent.Value,
+            AgentId = TestAgent,
             SessionType = type
         };
     }

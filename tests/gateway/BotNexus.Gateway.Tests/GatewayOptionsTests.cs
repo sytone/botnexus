@@ -17,7 +17,7 @@ public sealed class GatewayOptionsTests
     {
         var options = new GatewayOptions
         {
-            DefaultAgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a")
+            DefaultAgentId = "agent-a"
         };
 
         options.DefaultAgentId.ShouldBe("agent-a");

@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Configuration;
+using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Tests.Configuration;
@@ -13,7 +14,7 @@ public sealed class SchemaValidationTests
             Gateway = new GatewaySettingsConfig
             {
                 ListenUrl = "http://localhost:5005",
-                DefaultAgentId = BotNexus.Domain.Primitives.AgentId.From("assistant"),
+                DefaultAgentId = "assistant",
                 AgentsDirectory = "agents",
                 SessionsDirectory = "sessions",
                 LogLevel = "Information",

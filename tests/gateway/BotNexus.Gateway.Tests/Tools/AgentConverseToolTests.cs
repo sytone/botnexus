@@ -15,7 +15,7 @@ public sealed class AgentConverseToolTests
     [Fact]
     public void Tool_HasExpectedNameAndLabel()
     {
-        var tool = new AgentConverseTool(Mock.Of<IAgentExchangeService>(), new InMemorySessionStore(), "test-agent", "session-1");
+        var tool = new AgentConverseTool(Mock.Of<IAgentExchangeService>(), new InMemorySessionStore(), AgentId.From("test-agent"), SessionId.From("session-1"));
         tool.Name.ShouldBe("agent_converse");
         tool.Label.ShouldBe("Agent Converse");
     }
@@ -23,7 +23,7 @@ public sealed class AgentConverseToolTests
     [Fact]
     public async Task PrepareArgumentsAsync_WhenRequiredArgsMissing_Throws()
     {
-        var tool = new AgentConverseTool(Mock.Of<IAgentExchangeService>(), new InMemorySessionStore(), "test-agent", "session-1");
+        var tool = new AgentConverseTool(Mock.Of<IAgentExchangeService>(), new InMemorySessionStore(), AgentId.From("test-agent"), SessionId.From("session-1"));
 
         Func<Task> action = () => tool.PrepareArgumentsAsync(new Dictionary<string, object?>());
 
@@ -39,7 +39,7 @@ public sealed class AgentConverseToolTests
             .Callback<AgentExchangeRequest, CancellationToken>((request, _) => captured = request)
             .ReturnsAsync(new AgentExchangeResult
             {
-                SessionId = "nova::agent-agent::leela::abc123",
+                SessionId = SessionId.From("nova::agent-agent::leela::abc123"),
                 Status = "sealed",
                 Turns = 2,
                 FinalResponse = "Done",
@@ -47,11 +47,11 @@ public sealed class AgentConverseToolTests
             });
 
         var store = new InMemorySessionStore();
-        var session = await store.GetOrCreateAsync("session-1", "test-agent");
+        var session = await store.GetOrCreateAsync(SessionId.From("session-1"), AgentId.From("test-agent"));
         session.Metadata["callChain"] = new[] { "alpha", "test-agent" };
         await store.SaveAsync(session);
 
-        var tool = new AgentConverseTool(service.Object, store, "test-agent", "session-1");
+        var tool = new AgentConverseTool(service.Object, store, AgentId.From("test-agent"), SessionId.From("session-1"));
         await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
         {
             ["agentId"] = "agent-c",
@@ -71,7 +71,7 @@ public sealed class AgentConverseToolTests
             .Callback<AgentExchangeRequest, CancellationToken>((request, _) => captured = request)
             .ReturnsAsync(new AgentExchangeResult
             {
-                SessionId = "nova::agent-agent::leela::abc123",
+                SessionId = SessionId.From("nova::agent-agent::leela::abc123"),
                 Status = "sealed",
                 Turns = 2,
                 FinalResponse = "Done",
@@ -79,7 +79,7 @@ public sealed class AgentConverseToolTests
             });
 
         var store = new InMemorySessionStore();
-        var tool = new AgentConverseTool(service.Object, store, "test-agent", "session-1");
+        var tool = new AgentConverseTool(service.Object, store, AgentId.From("test-agent"), SessionId.From("session-1"));
         var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
         {
             ["agentId"] = "agent-c",

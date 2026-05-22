@@ -89,7 +89,7 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
     {
         ArgumentNullException.ThrowIfNull(descriptor);
 
-        var workspacePath = ResolveWorkspaceDirectory(_workspaceManager.GetWorkspacePath(descriptor.AgentId));
+        var workspacePath = ResolveWorkspaceDirectory(_workspaceManager.GetWorkspacePath(descriptor.AgentId.Value));
         var memoryPromptInjection = ResolveMemoryPromptInjection(descriptor.Memory?.PromptInjection);
         var promptFiles = ResolvePromptFiles(descriptor, includeMemoryFile: !IsMemoryPromptInjectionNone(memoryPromptInjection));
         var contextFiles = (await LoadContextFilesAsync(_fileSystem, workspacePath, promptFiles, cancellationToken)).ToList();
@@ -122,7 +122,7 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             ContextFiles = contextFiles,
             Runtime = new RuntimeInfo
             {
-                AgentId = descriptor.AgentId,
+                AgentId = descriptor.AgentId.Value,
                 Host = Environment.MachineName,
                 Os = Environment.OSVersion.ToString(),
                 Provider = descriptor.ApiProvider,

@@ -15,7 +15,7 @@ public sealed class SqliteSessionStoreTests
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
 
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         await store.SaveAsync(session);
         var reloaded = await fixture.CreateStore().GetAsync("s1");
 
@@ -39,7 +39,7 @@ public sealed class SqliteSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.Metadata["tenant"] = "a";
         session.History.Add(new SessionEntry { Role = MessageRole.User, Content = "hello" });
 
@@ -56,7 +56,7 @@ public sealed class SqliteSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.ChannelType = ChannelKey.From("signalr");
         session.CallerId = "caller-a";
         session.Metadata["version"] = 1L;
@@ -83,7 +83,7 @@ public sealed class SqliteSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
 
         session.AddEntries([
             new SessionEntry { Role = MessageRole.System, Content = "boot" },
@@ -104,10 +104,10 @@ public sealed class SqliteSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         await store.SaveAsync(session);
 
-        await store.DeleteAsync("s1");
+        await store.DeleteAsync(SessionId.From("s1"));
 
         (await fixture.CreateStore().GetAsync("s1")).ShouldBeNull();
     }
@@ -117,11 +117,11 @@ public sealed class SqliteSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "hello" });
         await store.SaveAsync(session);
 
-        await store.DeleteAsync("s1");
+        await store.DeleteAsync(SessionId.From("s1"));
 
         await using var connection = new SqliteConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -136,10 +136,10 @@ public sealed class SqliteSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         await store.SaveAsync(session);
 
-        await store.ArchiveAsync("s1");
+        await store.ArchiveAsync(SessionId.From("s1"));
 
         await using var connection = new SqliteConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -154,11 +154,11 @@ public sealed class SqliteSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "keep-me" });
         await store.SaveAsync(session);
 
-        await store.ArchiveAsync("s1");
+        await store.ArchiveAsync(SessionId.From("s1"));
 
         var reloaded = await fixture.CreateStore().GetAsync("s1");
         reloaded.ShouldNotBeNull();
@@ -195,7 +195,7 @@ public sealed class SqliteSessionStoreTests
         await CreateAndSaveAsync(store, "s3", "agent-a");
 
         var allSessions = await store.ListAsync();
-        var filtered = await store.ListAsync("agent-a");
+        var filtered = await store.ListAsync(AgentId.From("agent-a"));
 
         allSessions.Count().ShouldBe(3);
         filtered.ShouldAllBe(s => s.AgentId == "agent-a");
@@ -232,7 +232,7 @@ public sealed class SqliteSessionStoreTests
             AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a")
         });
 
-        var sessions = await store.ListByChannelAsync("agent-a", ChannelKey.From("web chat"));
+        var sessions = await store.ListByChannelAsync(AgentId.From("agent-a"), ChannelKey.From("web chat"));
 
         sessions.Select(s => s.SessionId.Value).ShouldBe(new[] { "s-new", "s-old" }, ignoreOrder: false);
     }
@@ -247,7 +247,7 @@ public sealed class SqliteSessionStoreTests
             .Select(async i =>
             {
                 var sessionId = $"s{i:D2}";
-                var session = await store.GetOrCreateAsync(sessionId, "agent-a");
+                var session = await store.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From("agent-a"));
                 session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"m-{i}" });
                 session.Metadata["index"] = i;
                 await store.SaveAsync(session);
@@ -269,7 +269,7 @@ public sealed class SqliteSessionStoreTests
 
         File.Exists(fixture.DatabasePath).ShouldBeFalse();
 
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         await store.SaveAsync(session);
 
         File.Exists(fixture.DatabasePath).ShouldBeTrue();
@@ -335,7 +335,7 @@ public sealed class SqliteSessionStoreTests
         }
 
         var store = fixture.CreateStore();
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         session.AddEntry(new SessionEntry { Role = MessageRole.System, Content = "summary", IsCompactionSummary = true });
         await store.SaveAsync(session);
 
@@ -390,7 +390,7 @@ public sealed class SqliteSessionStoreTests
 
     private static async Task CreateAndSaveAsync(SqliteSessionStore store, string sessionId, string agentId)
     {
-        var session = await store.GetOrCreateAsync(sessionId, agentId);
+        var session = await store.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From(agentId));
         await store.SaveAsync(session);
     }
 
@@ -403,7 +403,7 @@ public sealed class SqliteSessionStoreTests
 
         var tasks = Enumerable.Range(0, 24).Select(async i =>
         {
-            var session = await store.GetOrCreateAsync($"s{i:D2}", "agent-a");
+            var session = await store.GetOrCreateAsync(SessionId.From($"s{i:D2}"), AgentId.From("agent-a"));
             session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"msg-{i}" });
             await store.SaveAsync(session);
         });
@@ -420,15 +420,15 @@ public sealed class SqliteSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        var a = await store.GetOrCreateAsync("session-a", "agent-a");
-        var b = await store.GetOrCreateAsync("session-b", "agent-b");
+        var a = await store.GetOrCreateAsync(SessionId.From("session-a"), AgentId.From("agent-a"));
+        var b = await store.GetOrCreateAsync(SessionId.From("session-b"), AgentId.From("agent-b"));
         a.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "hello-a" });
         b.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "hello-b" });
 
         await Task.WhenAll(store.SaveAsync(a), store.SaveAsync(b));
 
-        var ra = await store.GetAsync("session-a");
-        var rb = await store.GetAsync("session-b");
+        var ra = await store.GetAsync(SessionId.From("session-a"));
+        var rb = await store.GetAsync(SessionId.From("session-b"));
         ra!.History.Last().Content.ShouldBe("hello-a");
         rb!.History.Last().Content.ShouldBe("hello-b");
     }
@@ -440,7 +440,7 @@ public sealed class SqliteSessionStoreTests
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
         // Trigger DB init
-        var session = await store.GetOrCreateAsync("s1", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         await store.SaveAsync(session);
 
         await using var connection = new SqliteConnection(fixture.ConnectionString);
@@ -458,7 +458,7 @@ public sealed class SqliteSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        var session = await store.GetOrCreateAsync("s-tool", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s-tool"), AgentId.From("agent-a"));
         session.AddEntries([
             new SessionEntry { Role = MessageRole.Tool, Content = "started", ToolName = "search", ToolCallId = "tc1", ToolArgs = "{\"query\":\"dotnet\"}" },
             new SessionEntry { Role = MessageRole.Tool, Content = "result", ToolName = "search", ToolCallId = "tc1", ToolIsError = false }
@@ -479,7 +479,7 @@ public sealed class SqliteSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        var session = await store.GetOrCreateAsync("s-iserr", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s-iserr"), AgentId.From("agent-a"));
         session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = "fail", ToolName = "run", ToolCallId = "tc2", ToolIsError = true });
 
         await store.SaveAsync(session);
@@ -495,7 +495,7 @@ public sealed class SqliteSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        var session = await store.GetOrCreateAsync("s-noerr", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s-noerr"), AgentId.From("agent-a"));
         session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = "ok", ToolName = "run", ToolCallId = "tc3", ToolIsError = false });
 
         await store.SaveAsync(session);
@@ -510,7 +510,7 @@ public sealed class SqliteSessionStoreTests
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        var session = await store.GetOrCreateAsync("s-toolargs", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s-toolargs"), AgentId.From("agent-a"));
         const string args = "{\"key\":\"value\",\"num\":42}";
         session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = "started", ToolName = "fn", ToolCallId = "tc4", ToolArgs = args });
 
@@ -558,7 +558,7 @@ public sealed class SqliteSessionStoreTests
 
         // Open with current store — migration should add the new columns
         var store = fixture.CreateStore();
-        var session = await store.GetOrCreateAsync("s-migrate", "agent-a");
+        var session = await store.GetOrCreateAsync(SessionId.From("s-migrate"), AgentId.From("agent-a"));
         session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = "ok", ToolName = "fn", ToolCallId = "tc5", ToolArgs = "{}", ToolIsError = false });
         await store.SaveAsync(session);
 
