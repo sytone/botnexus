@@ -35,6 +35,7 @@ public sealed class BuiltInModels
         RegisterCopilotModels(modelRegistry);
         RegisterAnthropicModels(modelRegistry);
         RegisterOpenAIModels(modelRegistry);
+        RegisterGitHubModelsModels(modelRegistry);
     }
 
     private static void RegisterCopilotModels(ModelRegistry modelRegistry)
@@ -115,5 +116,17 @@ public sealed class BuiltInModels
             SupportsExtraHighThinking: supportsExtraHighThinking,
             Headers: headers,
             Compat: compat));
+    }
+
+    private const string GitHubModelsBaseUrl = "https://models.inference.ai.azure.com";
+
+    private static void RegisterGitHubModelsModels(ModelRegistry modelRegistry)
+    {
+        Register(modelRegistry, "github-models", "gpt-4o-mini", "GPT-4o mini", "github-models", GitHubModelsBaseUrl, false, ["text"], 128000, 16384);
+        Register(modelRegistry, "github-models", "gpt-4o", "GPT-4o", "github-models", GitHubModelsBaseUrl, false, ["text", "image"], 128000, 4096);
+        Register(modelRegistry, "github-models", "Phi-3.5-mini-instruct", "Phi-3.5 mini instruct", "github-models", GitHubModelsBaseUrl, false, ["text"], 128000, 4096);
+        Register(modelRegistry, "github-models", "Phi-4", "Phi-4", "github-models", GitHubModelsBaseUrl, false, ["text"], 16384, 4096);
+        Register(modelRegistry, "github-models", "Meta-Llama-3.1-8B-Instruct", "Meta Llama 3.1 8B Instruct", "github-models", GitHubModelsBaseUrl, false, ["text"], 128000, 4096);
+        Register(modelRegistry, "github-models", "Mistral-small", "Mistral Small", "github-models", GitHubModelsBaseUrl, false, ["text"], 32000, 4096);
     }
 }
