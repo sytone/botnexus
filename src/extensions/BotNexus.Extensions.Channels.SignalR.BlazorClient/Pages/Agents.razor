@@ -189,6 +189,7 @@
                             <td>@agent.ModelId</td>
                             <td class="agents-actions">
                                 <button class="agents-btn-edit" @onclick="() => EditAgent(agent)" title="Edit @agent.AgentId" aria-label="Edit @agent.AgentId">✏️</button>
+                                <button class="agents-btn-clone" @onclick="() => CloneAgent(agent)" title="Clone @agent.AgentId" aria-label="Clone @agent.AgentId">📋</button>
                                 <button class="agents-btn-delete" @onclick="() => RequestDelete(agent.AgentId!)" title="Delete @agent.AgentId" aria-label="Delete @agent.AgentId">🗑️</button>
                             </td>
                         </tr>
@@ -386,6 +387,25 @@
         _models = [];
         if (!string.IsNullOrEmpty(agent.ApiProvider))
             await LoadModelsAsync(agent.ApiProvider);
+        _showForm = true;
+    }
+
+    private async Task CloneAgent(AgentRow source)
+    {
+        _editingId = null; // Clone always creates a new agent
+        _form = new AgentFormModel(
+            AgentId: "",
+            DisplayName: $"Copy of {source.DisplayName}",
+            Description: source.Description ?? "",
+            ApiProvider: source.ApiProvider,
+            ModelId: source.ModelId,
+            SystemPrompt: source.SystemPrompt);
+        _originalForm = _form with { DisplayName = "" }; // Force IsDirty = true so Save is enabled
+        _formError = null;
+        _fieldErrors.Clear();
+        _models = [];
+        if (!string.IsNullOrEmpty(source.ApiProvider))
+            await LoadModelsAsync(source.ApiProvider);
         _showForm = true;
     }
 

@@ -250,6 +250,83 @@ public sealed class AgentsPageTests : IDisposable
         Assert.Equal("Agent list", table.GetAttribute("aria-label"));
     }
 
+    [Fact]
+    public void Clone_button_renders_in_agent_row()
+    {
+        var agents = JsonSerializer.Serialize(new[]
+        {
+            new { agentId = "bot-1", displayName = "Bot One", description = "", apiProvider = "openai", modelId = "gpt-4", systemPrompt = "" }
+        });
+        _httpHandler.SetupResponse("/api/agents", agents);
+        _httpHandler.SetupResponse("/api/providers", "[]");
+
+        var cut = _ctx.Render<Agents>();
+        cut.WaitForState(() => cut.Markup.Contains("bot-1"));
+
+        Assert.Contains("agents-btn-clone", cut.Markup);
+    }
+
+    [Fact]
+    public void Clone_button_opens_form_with_copy_display_name()
+    {
+        var agents = JsonSerializer.Serialize(new[]
+        {
+            new { agentId = "bot-1", displayName = "Bot One", description = "A bot", apiProvider = "openai", modelId = "gpt-4", systemPrompt = "Be helpful." }
+        });
+        _httpHandler.SetupResponse("/api/agents", agents);
+        _httpHandler.SetupResponse("/api/providers", "[]");
+
+        var cut = _ctx.Render<Agents>();
+        cut.WaitForState(() => cut.Markup.Contains("bot-1"));
+
+        cut.Find("button.agents-btn-clone").Click();
+
+        cut.WaitForState(() => cut.Markup.Contains("Copy of Bot One"));
+        Assert.Contains("Copy of Bot One", cut.Markup);
+    }
+
+    [Fact]
+    public void Clone_form_has_empty_agent_id_field()
+    {
+        var agents = JsonSerializer.Serialize(new[]
+        {
+            new { agentId = "bot-1", displayName = "Bot One", description = "", apiProvider = "openai", modelId = "gpt-4", systemPrompt = "" }
+        });
+        _httpHandler.SetupResponse("/api/agents", agents);
+        _httpHandler.SetupResponse("/api/providers", "[]");
+
+        var cut = _ctx.Render<Agents>();
+        cut.WaitForState(() => cut.Markup.Contains("bot-1"));
+
+        cut.Find("button.agents-btn-clone").Click();
+
+        cut.WaitForState(() => cut.Markup.Contains("Copy of Bot One"));
+        var agentIdInput = cut.Find("#agent-id-input");
+        Assert.Equal("", agentIdInput.GetAttribute("value"));
+        // Agent ID must be editable when cloning (not disabled)
+        Assert.Null(agentIdInput.GetAttribute("disabled"));
+    }
+
+    [Fact]
+    public void Clone_form_copies_provider_and_model()
+    {
+        var agents = JsonSerializer.Serialize(new[]
+        {
+            new { agentId = "bot-1", displayName = "Bot One", description = "", apiProvider = "copilot", modelId = "gpt-4o", systemPrompt = "" }
+        });
+        _httpHandler.SetupResponse("/api/agents", agents);
+        _httpHandler.SetupResponse("/api/providers", "[]");
+
+        var cut = _ctx.Render<Agents>();
+        cut.WaitForState(() => cut.Markup.Contains("bot-1"));
+
+        cut.Find("button.agents-btn-clone").Click();
+
+        cut.WaitForState(() => cut.Markup.Contains("Copy of Bot One"));
+        Assert.Contains("copilot", cut.Markup);
+        Assert.Contains("gpt-4o", cut.Markup);
+    }
+
     private void RaiseAgentsChanged(AgentsChangedPayload payload)
     {
         var field = typeof(GatewayHubConnection).GetField("OnAgentsChanged", BindingFlags.Instance | BindingFlags.NonPublic);
