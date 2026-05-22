@@ -393,19 +393,21 @@ AgentCore and Providers are **independent libraries** — they have no knowledge
 
 ### ADR-005: InProcess Default Isolation
 
-**Decision:** Default isolation strategy is in-process (shared memory).
+**Decision:** Default isolation strategy is in-process (shared memory). Other strategies — sandbox (separate OS process with IPC), container (Docker), and remote (HTTP/gRPC to another machine) — are planned and selected per-agent via `AgentDescriptor.IsolationStrategy`.
 
-**Rationale:**
+**Framing:** Isolation is a **security boundary that protects the user from the agent**. The strategy controls the blast radius if an agent is prompt-injected, executes hostile tool output, or simply makes a mistake. Stricter strategies reduce user exposure at the cost of speed and operational complexity.
+
+**Rationale for in-process as the default:**
 
 - Fastest (<10ms startup)
 - Simplest deployment (no Docker, no network)
-- Suitable for trusted agents
+- Suitable for trusted agents in single-user setups (e.g., a developer's local machine)
 
 **Implications:**
 
-- Security: agents share memory (not suitable for untrusted code)
-- Scaling: limited by single-process resources
-- Future: container/remote isolation for multi-tenancy
+- **Security:** in-process agents share memory and OS identity with the Gateway — they can reach anything the Gateway can. Not suitable for untrusted code or agents that handle data the user must not leak.
+- Scaling: limited by single-process resources.
+- For untrusted agents, multi-tenancy, or sensitive workloads, switch to `sandbox`, `container`, or `remote`.
 
 ---
 

@@ -38,12 +38,16 @@ using GatewayAfterToolCallResult = BotNexus.Gateway.Abstractions.Hooks.AfterTool
 namespace BotNexus.Gateway.Isolation;
 
 /// <summary>
-/// In-process isolation strategy ΓÇö runs agents directly in the Gateway process
-/// by wrapping <see cref="BotNexus.Agent.Core.Agent"/>.
+/// In-process isolation strategy — runs the agent directly inside the Gateway process
+/// by wrapping <see cref="BotNexus.Agent.Core.Agent"/>. No security boundary: the agent
+/// shares memory, file handles, and OS identity with the Gateway and can reach anything
+/// the Gateway can reach.
 /// </summary>
 /// <remarks>
-/// This is the default and fastest strategy. No process or container boundaries.
-/// Suitable for development, testing, and trusted agent deployments.
+/// The default and fastest strategy. Appropriate for development, testing, and trusted
+/// single-user deployments where the operator and the agent are in the same trust domain.
+/// For untrusted agents, multi-tenant hosts, or workloads that handle data the user must
+/// not leak, choose <c>sandbox</c>, <c>container</c>, or <c>remote</c> instead.
 /// </remarks>
 public sealed class InProcessIsolationStrategy : IIsolationStrategy
 {

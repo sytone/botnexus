@@ -179,7 +179,7 @@ Agents reference Locations by name (`@repo-botnexus`) rather than raw paths. Thi
 | Extension Point | Interface | Purpose |
 |----------------|-----------|---------|
 | **Channel Adapters** | `IChannelAdapter` | Connect to communication systems (SignalR, Telegram, TUI) |
-| **Isolation Strategies** | `IIsolationStrategy` | Agent execution environments (in-process, container, remote) |
+| **Isolation Strategies** | `IIsolationStrategy` | Security boundary between agent and user — controls agent blast radius (in-process, sandbox, container, remote) |
 | **Tools** | `IAgentTool` | Agent capabilities (file ops, web, MCP, skills, memory) |
 | **Hooks** | `IHookHandler` | Intercept tool execution (validation, audit, policy) |
 | **Prompt Sections** | `IPromptSection` | Customize system prompts |
