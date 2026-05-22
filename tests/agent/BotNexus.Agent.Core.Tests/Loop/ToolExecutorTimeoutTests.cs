@@ -248,26 +248,26 @@ public sealed class ToolExecutorTimeoutTests
     [Fact]
     public async Task ToolDefaultTimeout_SmallerThanSafetyCap_SafetyCapWins()
     {
-        // Tool declares 50ms default but safety cap is 500ms
-        // Tool runs for 200ms — should complete fine (both limits are above 200ms is wrong)
-        // Actually: safety cap 500ms > tool default 50ms → safety cap wins → tool gets 500ms
-        // Tool finishes in 200ms → success
+        // Tool declares 100ms default but safety cap is 2000ms
+        // Tool runs for 400ms — should complete fine (safety cap wins)
+        // Actually: safety cap 2000ms > tool default 100ms → safety cap wins → tool gets 2000ms
+        // Tool finishes in 400ms → success
         var completedNormally = false;
-        var tool = CreateToolWithDefaultTimeout("quick-tool", TimeSpan.FromMilliseconds(50), async ct =>
+        var tool = CreateToolWithDefaultTimeout("quick-tool", TimeSpan.FromMilliseconds(100), async ct =>
         {
-            await Task.Delay(200, ct);
+            await Task.Delay(400, ct);
             completedNormally = true;
             return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "done")]);
         });
 
         var msg = CreateAssistant("tc-1", "quick-tool");
-        var config = TestHelpers.CreateTestConfig(toolTimeout: TimeSpan.FromMilliseconds(500));
+        var config = TestHelpers.CreateTestConfig(toolTimeout: TimeSpan.FromMilliseconds(2000));
         var context = new AgentContext(null, [], [tool]);
 
         var results = await ToolExecutor.ExecuteAsync(
             context, msg, config, _ => Task.CompletedTask, CancellationToken.None);
 
-        // Safety cap (500ms) > tool default (50ms) → executor uses 500ms → 200ms tool succeeds
+        // Safety cap (2000ms) > tool default (100ms) → executor uses 2000ms → 400ms tool succeeds
         completedNormally.ShouldBeTrue();
         results[0].IsError.ShouldBeFalse();
     }
