@@ -45,13 +45,14 @@
   <Folder Name="/src/domain/">
     <Project Path="src/domain/BotNexus.Domain/BotNexus.Domain.csproj" />
   </Folder>
-  <Folder Name="/tests/">
-    <Project Path="tests/BotNexus.CodingAgent.Tests/BotNexus.CodingAgent.Tests.csproj" />
-    <Project Path="tests/BotNexus.Conversation.Tests/BotNexus.Conversation.Tests.csproj" />
-    <Project Path="tests/BotNexus.E2E.Tests/BotNexus.E2E.Tests.csproj" />
-    <Project Path="tests/BotNexus.Gateway.Conversation.Tests/BotNexus.Gateway.Conversation.Tests.csproj" />
-    <Project Path="tests/BotNexus.Integration.Tests/BotNexus.Integration.Tests.csproj" />
-    <Project Path="tests/BotNexus.Providers.Conformance.Tests/BotNexus.Providers.Conformance.Tests.csproj" />
+  <Folder Name="/tests/e2e/">
+    <Project Path="tests/e2e/BotNexus.E2E.Tests/BotNexus.E2E.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tests/examples/">
+    <Project Path="tests/examples/BotNexus.CodingAgent.Tests/BotNexus.CodingAgent.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tests/integration/">
+    <Project Path="tests/integration/BotNexus.Integration.Tests/BotNexus.Integration.Tests.csproj" />
   </Folder>
   <Folder Name="/tests/agent/">
     <Project Path="tests/agent/BotNexus.Agent.Core.Tests/BotNexus.Agent.Core.Tests.csproj" />
@@ -60,6 +61,7 @@
     <Project Path="tests/agent/BotNexus.Agent.Providers.Core.Tests/BotNexus.Agent.Providers.Core.Tests.csproj" />
     <Project Path="tests/agent/BotNexus.Agent.Providers.OpenAI.Tests/BotNexus.Agent.Providers.OpenAI.Tests.csproj" />
     <Project Path="tests/agent/BotNexus.Agent.Providers.OpenAICompat.Tests/BotNexus.Agent.Providers.OpenAICompat.Tests.csproj" />
+    <Project Path="tests/agent/BotNexus.Providers.Conformance.Tests/BotNexus.Providers.Conformance.Tests.csproj" />
   </Folder>
   <Folder Name="/tests/domain/">
     <Project Path="tests/domain/BotNexus.Domain.Tests/BotNexus.Domain.Tests.csproj" />
@@ -76,7 +78,9 @@
   </Folder>
   <Folder Name="/tests/gateway/">
     <Project Path="tests/gateway/BotNexus.Cli.Tests/BotNexus.Cli.Tests.csproj" />
+    <Project Path="tests/gateway/BotNexus.Conversation.Tests/BotNexus.Conversation.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Cron.Tests/BotNexus.Cron.Tests.csproj" />
+    <Project Path="tests/gateway/BotNexus.Gateway.Conversation.Tests/BotNexus.Gateway.Conversation.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Gateway.Conversations.Tests/BotNexus.Gateway.Conversations.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Gateway.Prompts.Tests/BotNexus.Gateway.Prompts.Tests.csproj" />
     <Project Path="tests/gateway/BotNexus.Gateway.Sessions.Tests/BotNexus.Gateway.Sessions.Tests.csproj" />
