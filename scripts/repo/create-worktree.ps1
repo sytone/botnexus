@@ -12,7 +12,10 @@ param(
 
     [Parameter()]
     [ValidateSet('feat', 'fix', 'refactor', 'docs', 'test', 'chore', 'ci', 'perf', 'build')]
-    [string]$BranchType = 'fix'
+    [string]$BranchType = 'fix',
+
+    [Parameter()]
+    [switch]$DryRun
 )
 
 Set-StrictMode -Version Latest
@@ -38,6 +41,11 @@ function Invoke-Git {
         [string[]]$Arguments
     )
 
+    if ($DryRun) {
+        Write-Host "[dry-run] git $($Arguments -join ' ')"
+        return
+    }
+
     & git @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "git $($Arguments -join ' ') failed with exit code $LASTEXITCODE."
@@ -58,6 +66,11 @@ function Invoke-ScriptCheck {
 
     Write-Host ""
     Write-Host "[$StageName] Running: pwsh -NoProfile $ScriptPath"
+    if ($DryRun) {
+        Write-Host "[dry-run] Skipping execution."
+        return
+    }
+
     & pwsh -NoProfile $ScriptPath
     if ($LASTEXITCODE -ne 0) {
         Write-Host ""
@@ -90,9 +103,15 @@ Suggested flow:
         throw "Worktree path already exists: $worktreePath"
     }
 
-    $existingBranch = (& git branch --list $branchName)
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to check for existing branch '$branchName'."
+    if ($DryRun) {
+        $existingBranch = ''
+        Write-Host "[dry-run] git branch --list $branchName"
+    }
+    else {
+        $existingBranch = (& git branch --list $branchName)
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to check for existing branch '$branchName'."
+        }
     }
 
     if (-not [string]::IsNullOrWhiteSpace($existingBranch)) {
