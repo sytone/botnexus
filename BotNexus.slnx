@@ -1,4 +1,4 @@
-<Solution>
+﻿<Solution>
   <Folder Name="/src/extensions/">
     <Project Path="src/extensions/BotNexus.Extensions.AudioTranscription/BotNexus.Extensions.AudioTranscription.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Skills/BotNexus.Extensions.Skills.csproj" />
@@ -12,6 +12,7 @@
     <Project Path="src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile/BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.Telegram/BotNexus.Extensions.Channels.Telegram.csproj" />
+    <Project Path="src/extensions/BotNexus.Extensions.Channels.Test/BotNexus.Extensions.Channels.Test.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.Tui/BotNexus.Extensions.Channels.Tui.csproj" />
     <Project Path="src/extensions/BotNexus.Extensions.Channels.ServiceBus/BotNexus.Extensions.Channels.ServiceBus.csproj" />
   </Folder>
@@ -73,6 +74,7 @@
     <Project Path="tests/extensions/BotNexus.Extensions.Skills.Tests/BotNexus.Extensions.Skills.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.WebTools.Tests/BotNexus.Extensions.WebTools.Tests.csproj" />
     <Project Path="tests/extensions/BotNexus.Extensions.Channels.ServiceBus.Tests/BotNexus.Extensions.Channels.ServiceBus.Tests.csproj" />
+    <Project Path="tests/extensions/BotNexus.Extensions.Channels.Test.Tests/BotNexus.Extensions.Channels.Test.Tests.csproj" />
   </Folder>
   <Folder Name="/tests/gateway/">
     <Project Path="tests/gateway/BotNexus.Cli.Tests/BotNexus.Cli.Tests.csproj" />

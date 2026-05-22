@@ -1,0 +1,9 @@
+{
+  "id": "botnexus-test-channel",
+  "name": "Test Channel",
+  "description": "In-memory test channel adapter for integration testing of multi-channel scenarios. Never load in production.",
+  "version": "1.0.0",
+  "entryAssembly": "BotNexus.Extensions.Channels.Test.dll",
+  "extensionTypes": ["channel"],
+  "enabled": false
+}
