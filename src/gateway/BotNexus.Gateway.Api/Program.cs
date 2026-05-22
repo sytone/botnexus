@@ -36,6 +36,10 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
     Args = args
 });
 
+// Enable OS service hosting (no-op when running in foreground/CLI mode)
+builder.Host.UseSystemd();
+builder.Host.UseWindowsService();
+
 builder.Host.UseSerilog((context, services, configuration) => configuration
     .ReadFrom.Configuration(context.Configuration)
     .ReadFrom.Services(services)

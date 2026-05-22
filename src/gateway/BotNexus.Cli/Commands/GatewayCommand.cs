@@ -6,15 +6,19 @@ using Spectre.Console;
 namespace BotNexus.Cli.Commands;
 
 /// <summary>
-/// Gateway lifecycle management commands: start, stop, status, restart.
+/// Gateway lifecycle management commands: start, stop, status, restart, install, uninstall.
 /// </summary>
 internal sealed class GatewayCommand
 {
     private readonly IGatewayProcessManager _processManager;
+    private readonly IGatewayServiceInstaller _serviceInstaller;
 
-    public GatewayCommand(IGatewayProcessManager processManager)
+    public GatewayCommand(
+        IGatewayProcessManager processManager,
+        IGatewayServiceInstaller serviceInstaller)
     {
         _processManager = processManager;
+        _serviceInstaller = serviceInstaller;
     }
 
     public Command Build(Option<bool> verboseOption)
@@ -94,10 +98,40 @@ internal sealed class GatewayCommand
             context.ExitCode = await RestartAsync(repoRoot, home, port, verbose, context.GetCancellationToken());
         });
 
+        // Install command
+        var installPortOption = new Option<int>("--port", () => 5005, "Port to listen on.");
+        var installSourceOption = new Option<string?>("--source", () => null, "Path to the BotNexus repository root. Defaults to ~/botnexus.");
+        var installTargetOption = new Option<string?>("--target", () => null, "BotNexus home directory. Defaults to ~/.botnexus.");
+        var installCommand = new Command("install", "Install the gateway as an OS service (systemd / Windows Service / launchd)")
+        {
+            installPortOption,
+            installSourceOption,
+            installTargetOption
+        };
+        installCommand.SetHandler(async context =>
+        {
+            var port = context.ParseResult.GetValueForOption(installPortOption);
+            var source = context.ParseResult.GetValueForOption(installSourceOption);
+            var target = context.ParseResult.GetValueForOption(installTargetOption);
+            var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var repoRoot = CliPaths.ResolveSource(source);
+            var home = CliPaths.ResolveTarget(target);
+            context.ExitCode = await InstallServiceAsync(repoRoot, home, port, verbose, context.GetCancellationToken());
+        });
+
+        // Uninstall command
+        var uninstallCommand = new Command("uninstall", "Remove the gateway OS service registration");
+        uninstallCommand.SetHandler(async context =>
+        {
+            context.ExitCode = await UninstallServiceAsync(context.GetCancellationToken());
+        });
+
         command.AddCommand(startCommand);
         command.AddCommand(stopCommand);
         command.AddCommand(statusCommand);
         command.AddCommand(restartCommand);
+        command.AddCommand(installCommand);
+        command.AddCommand(uninstallCommand);
 
         return command;
     }
@@ -428,5 +462,68 @@ internal sealed class GatewayCommand
         if (uptime.TotalMinutes >= 1)
             return $"{(int)uptime.TotalMinutes}m {uptime.Seconds}s";
         return $"{uptime.Seconds}s";
+    }
+
+    private async Task<int> InstallServiceAsync(
+        string repoRoot, string home, int port, bool verbose, CancellationToken cancellationToken)
+    {
+        var status = await _serviceInstaller.GetStatusAsync(cancellationToken);
+        if (status.IsInstalled)
+        {
+            AnsiConsole.MarkupLine($"[yellow]\u26a0[/] Gateway service is already installed ({status.Platform}).");
+            return 0;
+        }
+
+        var gatewayDll = Path.Combine(
+            repoRoot, "src", "gateway", "BotNexus.Gateway.Api",
+            "bin", "Release", "net10.0", "BotNexus.Gateway.Api.dll");
+
+        if (!File.Exists(gatewayDll))
+        {
+            AnsiConsole.MarkupLine($"[red]\u2715[/] Release build not found. Run [dim]botnexus build[/] first.");
+            AnsiConsole.MarkupLine($"  Expected: [dim]{Markup.Escape(gatewayDll)}[/]");
+            return 1;
+        }
+
+        AnsiConsole.MarkupLine($"[blue][[install]][/] Installing gateway as OS service ({status.Platform})...");
+
+        var result = await _serviceInstaller.InstallAsync(gatewayDll, home, port, cancellationToken);
+
+        if (result.Success)
+        {
+            AnsiConsole.MarkupLine($"[green]\u2713[/] {Markup.Escape(result.Message)}");
+            AnsiConsole.MarkupLine($"  [dim]Use [/][yellow]botnexus gateway status[/][dim] to verify.[/]");
+            return 0;
+        }
+        else
+        {
+            AnsiConsole.MarkupLine($"[red]\u2715[/] {Markup.Escape(result.Message)}");
+            return 1;
+        }
+    }
+
+    private async Task<int> UninstallServiceAsync(CancellationToken cancellationToken)
+    {
+        var status = await _serviceInstaller.GetStatusAsync(cancellationToken);
+        if (!status.IsInstalled)
+        {
+            AnsiConsole.MarkupLine($"[dim]\u25cf Gateway service is not installed.[/]");
+            return 0;
+        }
+
+        AnsiConsole.MarkupLine($"[blue][[uninstall]][/] Removing gateway OS service...");
+
+        var result = await _serviceInstaller.UninstallAsync(cancellationToken);
+
+        if (result.Success)
+        {
+            AnsiConsole.MarkupLine($"[green]\u2713[/] {Markup.Escape(result.Message)}");
+            return 0;
+        }
+        else
+        {
+            AnsiConsole.MarkupLine($"[red]\u2715[/] {Markup.Escape(result.Message)}");
+            return 1;
+        }
     }
 }
