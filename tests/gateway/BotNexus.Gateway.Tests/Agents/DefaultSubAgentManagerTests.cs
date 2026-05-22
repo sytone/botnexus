@@ -381,6 +381,26 @@ public sealed class DefaultSubAgentManagerTests
             await parentHandle.FollowUpAsync($"Sub-agent {subAgentId} completed: {resultSummary}", ct);
         }
 
+        public Task<int> CleanupChildSessionsAsync(SessionId parentSessionId, CancellationToken ct = default)
+        {
+            var killed = entries.Values
+                .Where(e => e.Info.ParentSessionId.Value.Equals(parentSessionId.Value, StringComparison.Ordinal))
+                .ToList();
+
+            foreach (var runtime in killed)
+            {
+                runtime.LifetimeCts.Cancel();
+                UpdateInfo(runtime.Info.SubAgentId, current => current with
+                {
+                    Status = SubAgentStatus.Killed,
+                    CompletedAt = DateTimeOffset.UtcNow,
+                    ResultSummary = "Sub-agent killed: parent session was reset."
+                });
+            }
+
+            return Task.FromResult(killed.Count);
+        }
+
         private async Task MonitorRunAsync(RuntimeEntry runtime, string task, int timeoutSeconds)
         {
             using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));

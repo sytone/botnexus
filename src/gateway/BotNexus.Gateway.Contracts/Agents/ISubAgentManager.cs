@@ -50,4 +50,13 @@ public interface ISubAgentManager
     /// <param name="ct">A cancellation token that can be used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     Task OnCompletedAsync(string subAgentId, string resultSummary, CancellationToken ct = default);
+
+    /// <summary>
+    /// Kills all running sub-agents for the specified parent session and archives their sessions.
+    /// Called when a parent session is reset to prevent orphaned sub-agent sessions.
+    /// </summary>
+    /// <param name="parentSessionId">The parent session whose sub-agents should be cleaned up.</param>
+    /// <param name="ct">A cancellation token that can be used to cancel the operation.</param>
+    /// <returns>The number of sub-agent sessions that were cleaned up.</returns>
+    Task<int> CleanupChildSessionsAsync(SessionId parentSessionId, CancellationToken ct = default);
 }

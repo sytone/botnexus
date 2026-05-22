@@ -386,6 +386,69 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             await CleanupChildAgentAsync(subAgentId, updated.ChildSessionId, CancellationToken.None);
         }
     }
+    /// <inheritdoc />
+    public async Task<int> CleanupChildSessionsAsync(SessionId parentSessionId, CancellationToken ct = default)
+    {
+        if (!_parentChildren.TryGetValue(parentSessionId, out var subAgentIds))
+            return 0;
+
+        var cleaned = 0;
+        foreach (var subAgentId in subAgentIds.ToArray())
+        {
+            if (!_subAgents.TryGetValue(subAgentId, out var info))
+                continue;
+
+            // Cancel the timeout CTS to stop a running sub-agent
+            if (_timeouts.TryRemove(subAgentId, out var timeoutCts))
+            {
+                try { timeoutCts.Cancel(); }
+                catch (ObjectDisposedException) { }
+                timeoutCts.Dispose();
+            }
+
+            // Clean up agent resources
+            await CleanupChildAgentAsync(subAgentId, info.ChildSessionId, ct);
+
+            // Mark as killed if still running
+            TryUpdateSubAgent(
+                subAgentId,
+                current => current.Status is SubAgentStatus.Running
+                    ? current with
+                    {
+                        Status = SubAgentStatus.Killed,
+                        CompletedAt = DateTimeOffset.UtcNow,
+                        ResultSummary = "Sub-agent killed: parent session was reset."
+                    }
+                    : current);
+
+            // Archive the child session in the session store
+            if (_sessionStore is not null)
+            {
+                try
+                {
+                    await _sessionStore.ArchiveAsync(info.ChildSessionId, ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Failed archiving orphaned child session '{ChildSessionId}' for sub-agent '{SubAgentId}'.",
+                        info.ChildSessionId,
+                        subAgentId);
+                }
+            }
+
+            cleaned++;
+            _logger.LogInformation(
+                "Cleaned up orphaned sub-agent '{SubAgentId}' (child session '{ChildSessionId}') after parent session '{ParentSessionId}' reset.",
+                subAgentId,
+                info.ChildSessionId,
+                parentSessionId);
+        }
+
+        return cleaned;
+    }
+
     private async Task RunSubAgentAsync(string subAgentId, IAgentHandle handle, string task, int timeoutSeconds, string? inheritedConversationId = null)
     {
         if (!_timeouts.TryGetValue(subAgentId, out var timeoutCts))

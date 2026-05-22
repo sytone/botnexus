@@ -43,6 +43,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     private readonly IAskUserResponseRegistry? _askUserResponseRegistry;
     private readonly IOptionsMonitor<CompactionOptions> _compactionOptions;
     private readonly ISessionEndMemoryFlusher? _sessionEndFlusher;
+    private readonly ISubAgentManager? _subAgentManager;
     private readonly ILogger<GatewayHub> _logger;
 
     public GatewayHub(
@@ -59,7 +60,8 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         ILogger<GatewayHub> logger,
         IConversationStore? conversationStore = null,
         IAskUserResponseRegistry? askUserResponseRegistry = null,
-        ISessionEndMemoryFlusher? sessionEndFlusher = null)
+        ISessionEndMemoryFlusher? sessionEndFlusher = null,
+        ISubAgentManager? subAgentManager = null)
     {
         _supervisor = supervisor;
         _registry = registry;
@@ -75,6 +77,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         _conversationStore = conversationStore;
         _askUserResponseRegistry = askUserResponseRegistry;
         _sessionEndFlusher = sessionEndFlusher;
+        _subAgentManager = subAgentManager;
     }
 
     /// <summary>
@@ -479,6 +482,24 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         var typedAgentId = NormalizeAgentId(agentId);
         var typedSessionId = NormalizeSessionId(sessionId);
         await _supervisor.StopAsync(typedAgentId, typedSessionId, CancellationToken.None);
+
+        // Clean up any orphaned sub-agent sessions spawned by this session
+        if (_subAgentManager is not null)
+        {
+            try
+            {
+                var cleaned = await _subAgentManager.CleanupChildSessionsAsync(typedSessionId, CancellationToken.None);
+                if (cleaned > 0)
+                    _logger.LogInformation(
+                        "Cleaned up {Count} orphaned sub-agent session(s) for parent session '{SessionId}'.",
+                        cleaned,
+                        typedSessionId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Sub-agent cleanup failed for session '{SessionId}', reset will proceed.", typedSessionId);
+            }
+        }
 
         // Phase 2: session-end memory flush before archiving
         if (_sessionEndFlusher is not null)

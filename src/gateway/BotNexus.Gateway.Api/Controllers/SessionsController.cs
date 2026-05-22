@@ -415,5 +415,14 @@ public sealed class SessionsController : ControllerBase
         /// <returns>The on completed async result.</returns>
         public Task OnCompletedAsync(string subAgentId, string resultSummary, CancellationToken ct = default)
             => Task.CompletedTask;
+
+        /// <summary>
+        /// Executes cleanup child sessions async.
+        /// </summary>
+        /// <param name="parentSessionId">The parent session id.</param>
+        /// <param name="ct">The ct.</param>
+        /// <returns>Always returns 0 (no-op).</returns>
+        public Task<int> CleanupChildSessionsAsync(SessionId parentSessionId, CancellationToken ct = default)
+            => Task.FromResult(0);
     }
 }

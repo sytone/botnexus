@@ -453,6 +453,62 @@ public sealed class SignalRHubTests
     }
 
     [Fact]
+    public async Task ResetSession_CallsSubAgentCleanup_WhenManagerProvided()
+    {
+        var caller = new Mock<IGatewayHubClient>();
+        caller.Setup(proxy => proxy.SessionReset(It.IsAny<SessionResetPayload>()))
+            .Returns(Task.CompletedTask);
+        var clients = new Mock<IHubCallerClients<IGatewayHubClient>>();
+        clients.SetupGet(value => value.Caller).Returns(caller.Object);
+
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(value => value.ArchiveAsync("session-1", CancellationToken.None)).Returns(Task.CompletedTask);
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(value => value.StopAsync(BotNexus.Domain.Primitives.AgentId.From("agent-a"), BotNexus.Domain.Primitives.SessionId.From("session-1"), CancellationToken.None)).Returns(Task.CompletedTask);
+
+        var subAgentManager = new Mock<ISubAgentManager>();
+        subAgentManager
+            .Setup(m => m.CleanupChildSessionsAsync(BotNexus.Domain.Primitives.SessionId.From("session-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(2);
+
+        var hub = CreateHub(
+            clients: clients.Object,
+            sessions: sessions.Object,
+            supervisor: supervisor.Object,
+            subAgentManager: subAgentManager.Object);
+
+        await hub.ResetSession("agent-a", "session-1");
+
+        subAgentManager.Verify(
+            m => m.CleanupChildSessionsAsync(BotNexus.Domain.Primitives.SessionId.From("session-1"), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ResetSession_ProceedsNormally_WhenNoSubAgentManager()
+    {
+        var caller = new Mock<IGatewayHubClient>();
+        caller.Setup(proxy => proxy.SessionReset(It.IsAny<SessionResetPayload>()))
+            .Returns(Task.CompletedTask);
+        var clients = new Mock<IHubCallerClients<IGatewayHubClient>>();
+        clients.SetupGet(value => value.Caller).Returns(caller.Object);
+
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(value => value.ArchiveAsync("session-1", CancellationToken.None)).Returns(Task.CompletedTask);
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(value => value.StopAsync(BotNexus.Domain.Primitives.AgentId.From("agent-a"), BotNexus.Domain.Primitives.SessionId.From("session-1"), CancellationToken.None)).Returns(Task.CompletedTask);
+
+        // No subAgentManager passed -- optional param
+        var hub = CreateHub(clients: clients.Object, sessions: sessions.Object, supervisor: supervisor.Object);
+
+        await Should.NotThrowAsync(() => hub.ResetSession("agent-a", "session-1"));
+
+        sessions.Verify(value => value.ArchiveAsync("session-1", CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
     public async Task CompactSession_Hub_ReturnsCompactionStats()
     {
         var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-1"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a") };
@@ -511,6 +567,7 @@ public sealed class SignalRHubTests
         IConversationDispatcher? conversationDispatcher = null,
         IConversationStore? conversationStore = null,
         IAskUserResponseRegistry? askUserResponseRegistry = null,
+        ISubAgentManager? subAgentManager = null,
         string connectionId = "conn-test")
     {
         var sessionStore = sessions ?? new InMemorySessionStore();
@@ -534,7 +591,8 @@ public sealed class SignalRHubTests
             compactionOptions ?? new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
             NullLogger<GatewayHub>.Instance,
             convStore,
-            askUserResponseRegistry)
+            askUserResponseRegistry,
+            subAgentManager: subAgentManager)
         {
             Clients = clients ?? Mock.Of<IHubCallerClients<IGatewayHubClient>>(),
             Groups = groups ?? Mock.Of<IGroupManager>(),
