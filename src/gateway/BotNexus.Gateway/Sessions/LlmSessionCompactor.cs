@@ -177,47 +177,72 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         return (toSummarize, toPreserve);
     }
 
-    private static string BuildSummarizationPrompt(List<SessionEntry> entries, int maxChars)
+    private static (string systemPrompt, string userMessage) BuildSummarizationPrompt(List<SessionEntry> entries, int maxChars)
     {
-        var builder = new StringBuilder();
-        builder.AppendLine("Summarize the following conversation history. Preserve critical information in a structured format.");
-        builder.AppendLine();
-        builder.AppendLine("Required sections:");
-        builder.AppendLine("## Decisions - Key decisions made");
-        builder.AppendLine("## Open TODOs - Incomplete tasks and follow-ups");
-        builder.AppendLine("## Constraints - Rules or constraints established");
-        builder.AppendLine("## Key Identifiers - File paths, UUIDs, URLs, hashes that must be preserved exactly");
-        builder.AppendLine();
-        builder.AppendLine($"Keep the summary under {maxChars} characters.");
-        builder.AppendLine();
-        builder.AppendLine("Conversation:");
+        var systemPrompt =
+            "You are a concise conversation summarizer. When asked, produce a structured summary of the provided conversation. " +
+            "Required sections: ## Decisions, ## Open TODOs, ## Constraints, ## Key Identifiers. " +
+            $"Keep the summary under {maxChars} characters. Output only the summary — no preamble, no markdown fences.";
 
+        var historyBuilder = new StringBuilder();
+        historyBuilder.AppendLine("Summarize the following conversation history:");
+        historyBuilder.AppendLine();
         foreach (var entry in entries)
         {
-            builder.AppendLine($"[{entry.Role}]: {entry.Content}");
+            historyBuilder.AppendLine($"[{entry.Role}]: {entry.Content}");
         }
 
-        return builder.ToString();
+        return (systemPrompt, historyBuilder.ToString());
     }
 
     private async Task<string> CallLlmForSummaryAsync(
-        string summaryPrompt,
+        (string systemPrompt, string userMessage) prompt,
         CompactionOptions options,
         CancellationToken cancellationToken)
     {
         var model = ResolveModel(options.SummarizationModel, options.SummarizationProvider);
+        var result = await TryGetSummaryAsync(model, prompt, cancellationToken).ConfigureAwait(false);
 
-        // Bug 3: log the resolved model so failures are diagnosable.
+        if (!string.IsNullOrWhiteSpace(result))
+            return result;
+
+        // Primary model returned empty — attempt fallback auto-selection
+        _logger.LogWarning(
+            "Model {ModelId} returned no usable content for compaction summary. Attempting fallback model.",
+            model.Id);
+
+        var fallback = ResolveFallbackModel(model);
+        if (fallback is null)
+        {
+            _logger.LogWarning(
+                "No fallback model available. Compaction aborted for session.");
+            return string.Empty;
+        }
+
+        _logger.LogInformation(
+            "Retrying compaction summary with fallback model {ModelId} (provider {Provider})",
+            fallback.Id,
+            fallback.Provider);
+
+        result = await TryGetSummaryAsync(fallback, prompt, cancellationToken).ConfigureAwait(false);
+        return result;
+    }
+
+    private async Task<string> TryGetSummaryAsync(
+        LlmModel model,
+        (string systemPrompt, string userMessage) prompt,
+        CancellationToken cancellationToken)
+    {
         _logger.LogDebug(
             "Requesting compaction summary via model {ModelId} (provider {Provider})",
             model.Id,
             model.Provider);
 
         var context = new Context(
-            SystemPrompt: null,
+            SystemPrompt: prompt.systemPrompt,
             Messages:
             [
-                new UserMessage(new UserMessageContent(summaryPrompt), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+                new UserMessage(new UserMessageContent(prompt.userMessage), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
             ]);
 
         var completion = await _llmClient
@@ -225,11 +250,12 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             .WaitAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        // Bug 3: log what actually came back before filtering.
         _logger.LogDebug(
-            "Compaction LLM response: {ContentItemCount} content item(s), TextContent items: {TextCount}",
+            "Compaction LLM response from {ModelId}: {ContentItemCount} item(s), TextContent: {TextCount}, types: {Types}",
+            model.Id,
             completion.Content.Count,
-            completion.Content.OfType<TextContent>().Count());
+            completion.Content.OfType<TextContent>().Count(),
+            string.Join(", ", completion.Content.Select(c => c.GetType().Name)));
 
         var result = string.Join(
             Environment.NewLine,
@@ -248,6 +274,30 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Resolves a fallback model when the primary returns empty content.
+    /// Excludes the primary model and prefers the first available from the default list.
+    /// </summary>
+    private LlmModel? ResolveFallbackModel(LlmModel primary)
+    {
+        foreach (var modelId in DefaultSummaryModelIds)
+        {
+            if (string.Equals(modelId, primary.Id, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var candidate = FindModel(modelId);
+            if (candidate is not null)
+                return candidate;
+        }
+
+        // Last resort: any registered model that isn't the primary
+        return _llmClient.Models
+            .GetProviders()
+            .OrderBy(p => p, StringComparer.Ordinal)
+            .SelectMany(p => _llmClient.Models.GetModels(p))
+            .FirstOrDefault(m => !string.Equals(m.Id, primary.Id, StringComparison.OrdinalIgnoreCase));
     }
 
     private LlmModel ResolveModel(string? requestedModelId, string? preferredProvider = null)

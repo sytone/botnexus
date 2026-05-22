@@ -355,4 +355,129 @@ public sealed class LlmSessionCompactorTests
         // 1200 chars / 4 = 300 tokens; threshold = 1200 * 1.0 = 1200; 300 > 1200 = false
         compactor.ShouldCompact(session.Session, options).ShouldBeFalse();
     }
+
+    /// <summary>
+    /// #496: Compaction context must include a system prompt so models like gpt-4.1
+    /// do not refuse the summarization request with empty content.
+    /// </summary>
+    [Fact]
+    public async Task CompactAsync_ContextHasSystemPrompt()
+    {
+        Context? capturedContext = null;
+        var session = CreateSession(
+            ("user", "older"),
+            ("assistant", "older-response"),
+            ("user", "recent"));
+
+        var providers = new ApiProviderRegistry();
+        var models = new ModelRegistry();
+        models.Register(TestModel.Provider, TestModel);
+
+        var provider = new Mock<IApiProvider>();
+        provider.SetupGet(item => item.Api).Returns(TestModel.Api);
+        provider.Setup(item => item.StreamSimple(
+                It.IsAny<LlmModel>(),
+                It.IsAny<Context>(),
+                It.IsAny<SimpleStreamOptions?>()))
+            .Callback<LlmModel, Context, SimpleStreamOptions?>((_, ctx, _) => capturedContext = ctx)
+            .Returns(() => CreateStream("summary"));
+
+        providers.Register(provider.Object);
+        var llmClient = new LlmClient(providers, models);
+        var compactor = new LlmSessionCompactor(llmClient, NullLogger<LlmSessionCompactor>.Instance);
+
+        await compactor.CompactAsync(session.Session, new CompactionOptions
+        {
+            PreservedTurns = 1,
+            SummarizationModel = TestModel.Id
+        });
+
+        capturedContext.ShouldNotBeNull();
+        capturedContext!.SystemPrompt.ShouldNotBeNullOrWhiteSpace("system prompt must be set for compaction");
+    }
+
+    /// <summary>
+    /// #496: When primary model returns empty content, retry with fallback model.
+    /// </summary>
+    [Fact]
+    public async Task CompactAsync_PrimaryReturnsEmpty_RetriesWithFallbackModel()
+    {
+        var session = CreateSession(
+            ("user", "older"),
+            ("assistant", "older-response"),
+            ("user", "recent"));
+
+        var fallbackModel = new LlmModel(
+            Id: "fallback-model",
+            Name: "Fallback Model",
+            Api: "test-api",
+            Provider: "test-provider",
+            BaseUrl: "https://example.com",
+            Reasoning: false,
+            Input: ["text"],
+            Cost: new ModelCost(0, 0, 0, 0),
+            ContextWindow: 32000,
+            MaxTokens: 4096);
+
+        var providers = new ApiProviderRegistry();
+        var models = new ModelRegistry();
+        models.Register(TestModel.Provider, TestModel);
+        models.Register(fallbackModel.Provider, fallbackModel);
+
+        var callCount = 0;
+        var provider = new Mock<IApiProvider>();
+        provider.SetupGet(item => item.Api).Returns(TestModel.Api);
+        provider.Setup(item => item.StreamSimple(
+                It.IsAny<LlmModel>(),
+                It.IsAny<Context>(),
+                It.IsAny<SimpleStreamOptions?>()))
+            .Returns(() =>
+            {
+                callCount++;
+                // First call (primary) returns empty; second call (fallback) returns real summary
+                return callCount == 1 ? CreateStream("") : CreateStream("fallback summary");
+            });
+
+        providers.Register(provider.Object);
+        var llmClient = new LlmClient(providers, models);
+        var compactor = new LlmSessionCompactor(llmClient, NullLogger<LlmSessionCompactor>.Instance);
+
+        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
+        {
+            PreservedTurns = 1,
+            SummarizationModel = TestModel.Id
+        });
+
+        result.Succeeded.ShouldBeTrue("fallback model should produce a successful compaction");
+        result.Summary.ShouldBe("fallback summary");
+        callCount.ShouldBe(2, "should have called LLM twice (primary + fallback)");
+    }
+
+    /// <summary>
+    /// #496: When primary returns empty AND no fallback is available, compaction aborts cleanly.
+    /// </summary>
+    [Fact]
+    public async Task CompactAsync_PrimaryAndNoFallback_AbortsCleanly()
+    {
+        var session = CreateSession(
+            ("user", "older"),
+            ("assistant", "older-response"),
+            ("user", "recent"));
+        var originalHistory = session.GetHistorySnapshot().ToList();
+
+        // CreateCompactor uses a single model (TestModel) — no fallback available
+        var compactor = CreateCompactor(summary: "");
+
+        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
+        {
+            PreservedTurns = 1,
+            SummarizationModel = TestModel.Id
+        });
+
+        result.Succeeded.ShouldBeFalse();
+        result.Summary.ShouldBeEmpty();
+        result.CompactedHistory.ShouldBeNull();
+        // History must be unchanged
+        session.GetHistorySnapshot().Count.ShouldBe(originalHistory.Count);
+    }
 }
