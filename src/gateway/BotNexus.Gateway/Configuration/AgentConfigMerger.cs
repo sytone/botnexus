@@ -65,6 +65,7 @@ public static class AgentConfigMerger
             ToolIds = MergeToolIds(defaults.ToolIds, agent.ToolIds, agentObj),
             Memory = MergeMemory(defaults.Memory, agent.Memory, agentObj),
             Heartbeat = MergeHeartbeat(defaults.Heartbeat, agent.Heartbeat, agentObj),
+            MemoryDreaming = MergeMemoryDreaming(defaults.MemoryDreaming, agent.MemoryDreaming, agentObj),
             FileAccess = MergeFileAccess(defaults.FileAccess, agent.FileAccess, agentObj),
         };
     }
@@ -233,6 +234,46 @@ public static class AgentConfigMerger
             Timezone = PickNullableString("timezone", defaults.Timezone, agent.Timezone, agentQhObj),
         };
     }
+
+    // -------------------------------------------------------------------------
+    // MemoryDreaming
+    // -------------------------------------------------------------------------
+
+    internal static MemoryDreamingConfig? MergeMemoryDreaming(
+        MemoryDreamingConfig? defaults,
+        MemoryDreamingConfig? agent,
+        JsonElement? agentObj)
+    {
+        if (defaults is null)
+            return agent is null ? null : CloneMemoryDreaming(agent);
+        if (agent is null)
+        {
+            if (agentObj is not null && agentObj.Value.TryGetProperty("memoryDreaming", out var dProp) && dProp.ValueKind == JsonValueKind.Null)
+                return null;
+            return CloneMemoryDreaming(defaults);
+        }
+
+        var agentDObj = agentObj is not null && agentObj.Value.TryGetProperty("memoryDreaming", out var drProp) && drProp.ValueKind == JsonValueKind.Object
+            ? drProp : (JsonElement?)null;
+
+        return new MemoryDreamingConfig
+        {
+            Enabled = PickBool("enabled", defaults.Enabled, agent.Enabled, agentDObj),
+            Schedule = PickString("schedule", defaults.Schedule, agent.Schedule, agentDObj),
+            Timezone = PickNullableString("timezone", defaults.Timezone, agent.Timezone, agentDObj),
+            LookbackDays = PickInt("lookbackDays", defaults.LookbackDays, agent.LookbackDays, agentDObj),
+            Prompt = PickNullableString("prompt", defaults.Prompt, agent.Prompt, agentDObj),
+        };
+    }
+
+    private static MemoryDreamingConfig CloneMemoryDreaming(MemoryDreamingConfig src) => new()
+    {
+        Enabled = src.Enabled,
+        Schedule = src.Schedule,
+        Timezone = src.Timezone,
+        LookbackDays = src.LookbackDays,
+        Prompt = src.Prompt
+    };
 
     // -------------------------------------------------------------------------
     // FileAccess

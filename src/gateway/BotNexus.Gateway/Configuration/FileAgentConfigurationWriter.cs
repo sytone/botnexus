@@ -103,6 +103,8 @@ public sealed class FileAgentConfigurationWriter(string directoryPath, BotNexusH
 
         public HeartbeatAgentConfig? Heartbeat { get; init; }
 
+        public MemoryDreamingConfig? MemoryDreaming { get; init; }
+
         public IReadOnlyList<string> SubAgentIds { get; init; } = [];
 
         public static AgentConfigurationFile FromDescriptor(AgentDescriptor descriptor)
@@ -123,6 +125,7 @@ public sealed class FileAgentConfigurationWriter(string directoryPath, BotNexusH
                 IsolationOptions = descriptor.IsolationOptions,
                 Soul = descriptor.Soul,
                 Heartbeat = descriptor.Heartbeat,
+                MemoryDreaming = descriptor.MemoryDreaming,
                 SubAgentIds = descriptor.SubAgentIds
             };
     }

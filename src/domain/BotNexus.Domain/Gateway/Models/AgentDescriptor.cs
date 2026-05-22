@@ -104,6 +104,9 @@ public sealed record AgentDescriptor
     /// <summary>Heartbeat polling configuration for this agent. Null means heartbeat is disabled.</summary>
     public HeartbeatAgentConfig? Heartbeat { get; init; }
 
+    /// <summary>Memory dreaming configuration for this agent. Null means dreaming is disabled.</summary>
+    public MemoryDreamingConfig? MemoryDreaming { get; init; }
+
     /// <summary>Session access level for this agent's session tool. Defaults to "own".</summary>
     public string SessionAccessLevel { get; init; } = "own";
 

@@ -105,6 +105,7 @@ public sealed class PlatformConfigAgentSource(
                 Memory = CloneMemoryConfig(effectiveConfig.Memory),
                 Soul = CloneSoulConfig(effectiveConfig.Soul),
                 Heartbeat = CloneHeartbeatConfig(effectiveConfig.Heartbeat),
+                MemoryDreaming = CloneMemoryDreamingConfig(effectiveConfig.MemoryDreaming),
                 SessionAccessLevel = effectiveConfig.SessionAccess?.Level ?? "own",
                 SessionAllowedAgents = effectiveConfig.SessionAccess?.AllowedAgents?.ToArray() ?? [],
                 ConversationAccessLevel = effectiveConfig.ConversationAccess?.Level ?? effectiveConfig.SessionAccess?.Level ?? "own",
@@ -146,6 +147,7 @@ public sealed class PlatformConfigAgentSource(
                 ToolTimeoutSeconds = config.ToolTimeoutSeconds,
                 Memory = config.Memory,
                 Heartbeat = config.Heartbeat,
+                MemoryDreaming = config.MemoryDreaming,
                 FileAccess = config.FileAccess
             };
         }
@@ -225,6 +227,21 @@ public sealed class PlatformConfigAgentSource(
                     End = heartbeatConfig.QuietHours.End,
                     Timezone = heartbeatConfig.QuietHours.Timezone
                 }
+        };
+    }
+
+    private static MemoryDreamingConfig? CloneMemoryDreamingConfig(MemoryDreamingConfig? cfg)
+    {
+        if (cfg is null)
+            return null;
+
+        return new MemoryDreamingConfig
+        {
+            Enabled = cfg.Enabled,
+            Schedule = cfg.Schedule,
+            Timezone = cfg.Timezone,
+            LookbackDays = cfg.LookbackDays,
+            Prompt = cfg.Prompt
         };
     }
 

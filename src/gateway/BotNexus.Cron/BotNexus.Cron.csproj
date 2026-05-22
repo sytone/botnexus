@@ -15,6 +15,7 @@
     <Compile Include="CronOptions.cs" />
     <Compile Include="HeartbeatCronProvisioner.cs" />
     <Compile Include="IHeartbeatProvisioner.cs" />
+    <Compile Include="MemoryDreamingProvisioner.cs" />
     <Compile Include="CronScheduler.cs" />
     <Compile Include="Prompts\IPromptTemplateResolver.cs" />
     <Compile Include="Prompts\CronOptionsPromptTemplateResolver.cs" />

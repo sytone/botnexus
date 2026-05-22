@@ -440,6 +440,8 @@ public sealed class AgentDefinitionConfig
     public SoulAgentConfig? Soul { get; set; }
     /// <summary>Heartbeat polling configuration.</summary>
     public HeartbeatAgentConfig? Heartbeat { get; set; }
+    /// <summary>Memory dreaming configuration for periodic consolidation of daily notes into MEMORY.md.</summary>
+    public MemoryDreamingConfig? MemoryDreaming { get; set; }
     /// <summary>Session access configuration for this agent's session tool.</summary>
     public SessionAccessConfig? SessionAccess { get; set; }
     /// <summary>Conversation access configuration for this agent's conversation tool.</summary>

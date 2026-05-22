@@ -160,6 +160,7 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
             IsolationOptions = ConvertObject(config.IsolationOptions),
             Soul = CloneSoulConfig(config.Soul),
             Heartbeat = CloneHeartbeatConfig(config.Heartbeat),
+            MemoryDreaming = CloneMemoryDreamingConfig(config.MemoryDreaming),
             FileAccess = MapFileAccessPolicy(config.FileAccess)
         };
     }
@@ -198,6 +199,21 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
                     End = heartbeatConfig.QuietHours.End,
                     Timezone = heartbeatConfig.QuietHours.Timezone
                 }
+        };
+    }
+
+    private static MemoryDreamingConfig? CloneMemoryDreamingConfig(MemoryDreamingConfig? cfg)
+    {
+        if (cfg is null)
+            return null;
+
+        return new MemoryDreamingConfig
+        {
+            Enabled = cfg.Enabled,
+            Schedule = cfg.Schedule,
+            Timezone = cfg.Timezone,
+            LookbackDays = cfg.LookbackDays,
+            Prompt = cfg.Prompt
         };
     }
 
@@ -375,6 +391,8 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
         public SoulAgentConfig? Soul { get; init; }
 
         public HeartbeatAgentConfig? Heartbeat { get; init; }
+
+        public MemoryDreamingConfig? MemoryDreaming { get; init; }
 
         public IReadOnlyList<string>? SubAgents { get; init; }
 

@@ -22,6 +22,9 @@ public sealed class AgentDefaultsConfig
     /// <summary>Default heartbeat configuration inherited by agents.</summary>
     public HeartbeatAgentConfig? Heartbeat { get; set; }
 
+    /// <summary>Default memory dreaming configuration inherited by agents.</summary>
+    public MemoryDreamingConfig? MemoryDreaming { get; set; }
+
     /// <summary>Default file access policy inherited by agents.</summary>
     public FileAccessPolicyConfig? FileAccess { get; set; }
 }
