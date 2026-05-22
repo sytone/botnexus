@@ -37,17 +37,12 @@ window.chatScroll = {
         }, 100);
     },
 
-    /**
-     * Prevents the default Enter key behaviour (newline insertion) on a textarea
-     * so that Blazor's onkeydown handler can send the message without a stray newline.
-     * Shift+Enter still inserts a newline normally.
-     */
     /** Returns true when the viewport matches the mobile breakpoint (≤768px). */
     isMobileView: function () {
         return window.innerWidth <= 768;
     },
 
-        /** Auto-resizes a textarea to fit its content, capped at maxRows rows. */
+    /** Auto-resizes a textarea to fit its content, capped at maxRows rows. */
     autoResizeTextarea: function (element, maxRows) {
         if (!element) return;
         element.style.height = 'auto';
@@ -60,8 +55,13 @@ window.chatScroll = {
     /** Resets a textarea height to its natural (CSS) default. */
     resetTextareaHeight: function (element) {
         if (element) { element.style.height = ''; element.style.overflowY = ''; }
-    }
+    },
 
+    /**
+     * Prevents the default Enter key behaviour (newline insertion) on a textarea
+     * so that Blazor's onkeydown handler can send the message without a stray newline.
+     * Shift+Enter still inserts a newline normally.
+     */
     preventEnterSubmit: function (element) {
         if (!element || typeof element.addEventListener !== 'function' || element._preventEnterBound) return;
         element.addEventListener('keydown', function (e) {
