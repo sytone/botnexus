@@ -17,7 +17,9 @@ permissions:
   pull-requests: read
 
 tracker-id: daily-doc-updater
-engine: claude
+engine:
+  id: copilot
+  model: gpt-5.1-codex-mini
 strict: true
 
 checkout:
