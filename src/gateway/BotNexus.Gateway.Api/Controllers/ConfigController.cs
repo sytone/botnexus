@@ -1,5 +1,6 @@
 using BotNexus.Gateway.Api.Models;
 using BotNexus.Gateway.Configuration;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
@@ -181,6 +182,95 @@ public sealed class ConfigController : ControllerBase
             },
             Sources = sources,
         });
+    }
+
+    /// <summary>
+    /// Get the extension config for a specific agent and extension ID.
+    /// Returns the raw JSON object stored under agents.{agentId}.extensions.{extensionId}.
+    /// Returns 204 if the agent exists but has no config for this extension.
+    /// Returns 404 if the agent is not found.
+    /// </summary>
+    [HttpGet("agents/{agentId}/extensions/{extensionId}")]
+    [ProducesResponseType(typeof(JsonNode), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<JsonNode?>> GetAgentExtensionConfig(
+        string agentId,
+        string extensionId,
+        [FromServices] IOptionsMonitor<PlatformConfig> configOptions,
+        [FromServices] IConfiguration configuration,
+        CancellationToken ct)
+    {
+        var config = configOptions.CurrentValue;
+
+        if (string.Equals(agentId, "defaults", StringComparison.OrdinalIgnoreCase))
+            return NotFound($"Agent '{agentId}' not found.");
+
+        if (config.Agents is null || !config.Agents.TryGetValue(agentId, out var agentConfig))
+        {
+            var fallbackPath = ResolveConfiguredPath(configuration);
+            var fallbackConfig = await new PlatformConfigWriter(
+                fallbackPath,
+                new System.IO.Abstractions.FileSystem()).ReadPlatformConfigAsync(ct);
+            if (fallbackConfig.Agents is null || !fallbackConfig.Agents.TryGetValue(agentId, out agentConfig))
+                return NotFound($"Agent '{agentId}' not found.");
+        }
+
+        if (agentConfig.Extensions is null || !agentConfig.Extensions.TryGetValue(extensionId, out var extElement))
+            return NoContent();
+
+        var node = JsonNode.Parse(extElement.GetRawText());
+        return Ok(node);
+    }
+
+    /// <summary>
+    /// Set the extension config for a specific agent and extension ID.
+    /// Writes the value to agents.{agentId}.extensions.{extensionId} in the platform config file.
+    /// Returns 404 if the agent is not found.
+    /// </summary>
+    [HttpPut("agents/{agentId}/extensions/{extensionId}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> PutAgentExtensionConfig(
+        string agentId,
+        string extensionId,
+        [FromBody] JsonNode value,
+        [FromServices] IOptionsMonitor<PlatformConfig> configOptions,
+        [FromServices] IConfiguration configuration,
+        [FromServices] PlatformConfigWriter writer,
+        CancellationToken ct)
+    {
+        var config = configOptions.CurrentValue;
+
+        if (string.Equals(agentId, "defaults", StringComparison.OrdinalIgnoreCase))
+            return NotFound($"Agent '{agentId}' not found.");
+
+        // Verify the agent exists
+        if (config.Agents is null || !config.Agents.ContainsKey(agentId))
+        {
+            var fallbackPath = ResolveConfiguredPath(configuration);
+            var fallbackConfig = await new PlatformConfigWriter(
+                fallbackPath,
+                new System.IO.Abstractions.FileSystem()).ReadPlatformConfigAsync(ct);
+            if (fallbackConfig.Agents is null || !fallbackConfig.Agents.ContainsKey(agentId))
+                return NotFound($"Agent '{agentId}' not found.");
+        }
+
+        await writer.MutateAsync(root =>
+        {
+            var agents = root["agents"] as JsonObject ?? new JsonObject();
+            root["agents"] = agents;
+
+            var agent = agents[agentId] as JsonObject ?? new JsonObject();
+            agents[agentId] = agent;
+
+            var extensions = agent["extensions"] as JsonObject ?? new JsonObject();
+            agent["extensions"] = extensions;
+
+            extensions[extensionId] = value.DeepClone();
+        }, $"Set agent '{agentId}' extension config for '{extensionId}'", ct);
+
+        return Ok(new { message = $"Extension config '{extensionId}' for agent '{agentId}' updated." });
     }
 
     private static Dictionary<string, string> BuildSources(

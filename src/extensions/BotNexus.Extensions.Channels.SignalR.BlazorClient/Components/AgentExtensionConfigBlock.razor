@@ -1,0 +1,295 @@
+@using System.Net.Http.Json
+@using System.Text.Json
+@using System.Text.Json.Nodes
+@inject HttpClient Http
+@inject NavigationManager Nav
+
+@* 
+    AgentExtensionConfigBlock.razor - Part of #407 Phase 3
+    Renders a collapsible per-agent extension configuration block driven by the extension's declared ConfigSchema.
+    Loads from GET /api/config/agents/{AgentId}/extensions/{ExtensionId}
+    Saves via PUT /api/config/agents/{AgentId}/extensions/{ExtensionId}
+    Hides the section entirely when the extension has no schema fields.
+*@
+
+@if (_schema is not null && _schema.Count > 0)
+{
+    <div class="ext-agent-block">
+        <button class="ext-agent-block-header" @onclick="ToggleExpanded" aria-expanded="@_expanded">
+            <span class="ext-agent-block-name">@ExtensionName</span>
+            <span class="ext-agent-block-id">@ExtensionId</span>
+            @if (!string.IsNullOrEmpty(_statusMessage))
+            {
+                <span class="ext-agent-status @_statusClass" role="status">@_statusMessage</span>
+            }
+            <span class="ext-agent-block-chevron">@(_expanded ? "up" : "down")</span>
+        </button>
+
+        @if (_expanded)
+        {
+            <div class="ext-agent-block-body">
+                @if (_loading)
+                {
+                    <div class="config-loading">
+                        <div class="loading-spinner small"></div>
+                        <span>Loading extension config...</span>
+                    </div>
+                }
+                else if (_error is not null)
+                {
+                    <div class="agents-error" role="alert">@_error <button class="toolbar-btn" @onclick="LoadConfigAsync">Retry</button></div>
+                }
+                else
+                {
+                    <div class="ext-agent-fields">
+                        @foreach (var field in _schema)
+                        {
+                            <div class="ext-agent-field-row">
+                                <label class="ext-agent-field-label" for="@FieldInputId(field.Id)">
+                                    @field.Id
+                                    @if (field.Required)
+                                    {
+                                        <span class="required">*</span>
+                                    }
+                                    @if (field.Sensitive)
+                                    {
+                                        <span class="ext-sensitive-badge" title="Sensitive field">lock</span>
+                                    }
+                                </label>
+                                @if (!string.IsNullOrEmpty(field.Description))
+                                {
+                                    <p class="ext-agent-field-desc">@field.Description</p>
+                                }
+                                @if (field.Type == "bool")
+                                {
+                                    <input type="checkbox" id="@FieldInputId(field.Id)"
+                                           checked="@(GetFieldBool(field.Id))"
+                                           @onchange="e => SetFieldBool(field.Id, (bool)(e.Value ?? false))"
+                                           class="ext-agent-field-checkbox" />
+                                }
+                                else
+                                {
+                                    <input id="@FieldInputId(field.Id)"
+                                           type="@(field.Sensitive ? "password" : "text")"
+                                           class="cfg-input ext-agent-field-input"
+                                           value="@GetFieldString(field.Id)"
+                                           placeholder="@(field.Default ?? string.Empty)"
+                                           @oninput="e => SetFieldString(field.Id, e.Value?.ToString() ?? string.Empty)" />
+                                }
+                            </div>
+                        }
+                    </div>
+
+                    <div class="ext-agent-actions">
+                        <button class="toolbar-btn primary" @onclick="SaveConfigAsync" disabled="@(!IsDirty || _saving)">
+                            @(_saving ? "Saving..." : "Save")
+                        </button>
+                        <button class="toolbar-btn" @onclick="ResetForm" disabled="@_saving">Reset</button>
+                        @if (IsDirty)
+                        {
+                            <span class="agents-dirty-indicator">Unsaved changes</span>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    /// <summary>Agent ID for which to load/save extension config.</summary>
+    [Parameter, EditorRequired] public string AgentId { get; set; } = string.Empty;
+
+    /// <summary>Extension ID (e.g., "botnexus-skills").</summary>
+    [Parameter, EditorRequired] public string ExtensionId { get; set; } = string.Empty;
+
+    /// <summary>Human-readable extension name shown in the block header.</summary>
+    [Parameter] public string? ExtensionName { get; set; }
+
+    /// <summary>Schema fields declared by the extension manifest.</summary>
+    [Parameter] public IReadOnlyList<ExtensionConfigFieldSchemaDto>? Schema { get; set; }
+
+    private IReadOnlyList<ExtensionConfigFieldSchemaDto>? _schema;
+    private Dictionary<string, string> _fields = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, string> _originalFields = new(StringComparer.OrdinalIgnoreCase);
+    private bool _loading;
+    private bool _saving;
+    private bool _expanded;
+    private string? _error;
+    private string? _statusMessage;
+    private string _statusClass = string.Empty;
+    private CancellationTokenSource? _dismissCts;
+
+    private bool IsDirty =>
+        _fields.Count != _originalFields.Count ||
+        _fields.Any(kv => !_originalFields.TryGetValue(kv.Key, out var v) || v != kv.Value);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _schema = Schema;
+        if (_schema is not null && _schema.Count > 0)
+            await LoadConfigAsync();
+    }
+
+    private async Task LoadConfigAsync()
+    {
+        _loading = true;
+        _error = null;
+        StateHasChanged();
+
+        try
+        {
+            var url = Nav.BaseUri.TrimEnd('/') + $"/api/config/agents/{Uri.EscapeDataString(AgentId)}/extensions/{Uri.EscapeDataString(ExtensionId)}";
+            var response = await Http.GetAsync(url);
+
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                _error = $"Agent '{AgentId}' not found.";
+                return;
+            }
+
+            if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
+            {
+                _fields = BuildDefaultFields();
+                _originalFields = new Dictionary<string, string>(_fields, StringComparer.OrdinalIgnoreCase);
+                return;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = $"Load failed: {(int)response.StatusCode}";
+                return;
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            _fields = ParseFields(json);
+            _originalFields = new Dictionary<string, string>(_fields, StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            _error = $"Failed to load: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SaveConfigAsync()
+    {
+        _saving = true;
+        _error = null;
+        try
+        {
+            var payload = BuildPayload();
+            var url = Nav.BaseUri.TrimEnd('/') + $"/api/config/agents/{Uri.EscapeDataString(AgentId)}/extensions/{Uri.EscapeDataString(ExtensionId)}";
+            var response = await Http.PutAsJsonAsync(url, payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                var body = await response.Content.ReadAsStringAsync();
+                _error = $"Save failed {(int)response.StatusCode}: {body}";
+                return;
+            }
+            _originalFields = new Dictionary<string, string>(_fields, StringComparer.OrdinalIgnoreCase);
+            SetStatus("Saved.", "success");
+        }
+        catch (Exception ex)
+        {
+            _error = $"Save error: {ex.Message}";
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void ResetForm()
+    {
+        _fields = new Dictionary<string, string>(_originalFields, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void ToggleExpanded() => _expanded = !_expanded;
+
+    private string FieldInputId(string fieldId) => $"ext-{ExtensionId}-{fieldId}";
+
+    private string GetFieldString(string id) => _fields.GetValueOrDefault(id, string.Empty);
+    private bool GetFieldBool(string id) => _fields.TryGetValue(id, out var v) && v == "true";
+    private void SetFieldString(string id, string value) => _fields[id] = value;
+    private void SetFieldBool(string id, bool value) => _fields[id] = value ? "true" : "false";
+
+    private Dictionary<string, string> BuildDefaultFields()
+    {
+        var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (_schema is null) return d;
+        foreach (var f in _schema)
+            if (f.Default is not null)
+                d[f.Id] = f.Default;
+        return d;
+    }
+
+    private Dictionary<string, string> ParseFields(string json)
+    {
+        var d = BuildDefaultFields();
+        try
+        {
+            var obj = JsonDocument.Parse(json).RootElement;
+            if (obj.ValueKind != JsonValueKind.Object) return d;
+            foreach (var prop in obj.EnumerateObject())
+                d[prop.Name] = prop.Value.ValueKind == JsonValueKind.String
+                    ? prop.Value.GetString() ?? string.Empty
+                    : prop.Value.GetRawText();
+        }
+        catch { /* malformed JSON - use defaults */ }
+        return d;
+    }
+
+    private object BuildPayload()
+    {
+        var dict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var kv in _fields)
+        {
+            var fieldSchema = _schema?.FirstOrDefault(f => f.Id == kv.Key);
+            if (fieldSchema?.Type == "bool")
+                dict[kv.Key] = kv.Value == "true";
+            else if (fieldSchema?.Type == "integer" && int.TryParse(kv.Value, out var n))
+                dict[kv.Key] = n;
+            else
+                dict[kv.Key] = kv.Value;
+        }
+        return dict;
+    }
+
+    private void SetStatus(string message, string cssClass)
+    {
+        _statusMessage = message;
+        _statusClass = cssClass;
+        _dismissCts?.Cancel();
+        _dismissCts?.Dispose();
+        _dismissCts = new CancellationTokenSource();
+        var token = _dismissCts.Token;
+        _ = DismissAfterDelay(token);
+    }
+
+    private async Task DismissAfterDelay(CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(4000, token);
+            _statusMessage = null;
+            _statusClass = string.Empty;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (TaskCanceledException) { }
+    }
+
+    /// <summary>DTO for extension config field schema (matches ExtensionConfigFieldSchema).</summary>
+    public sealed record ExtensionConfigFieldSchemaDto
+    {
+        public string Id { get; init; } = string.Empty;
+        public string Type { get; init; } = "string";
+        public string? Default { get; init; }
+        public bool Required { get; init; }
+        public bool Sensitive { get; init; }
+        public string? Description { get; init; }
+    }
+}
