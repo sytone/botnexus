@@ -15,7 +15,7 @@ Send a Service Bus message to the **inbound queue** (`botnexus-inbound` by defau
 | `agentId` | string | No | Target agent ID. If omitted, the gateway routes to the default agent. |
 | `conversationId` | string | No | Conversation thread identifier. Used as the channel address for session routing, so messages with the same `conversationId` are grouped into the same conversation. |
 | `sessionId` | string | No | Resume a specific existing session by ID. |
-| `senderId` | string | No | Identifier of the sender (user name, service account, etc.). Used for `AllowedSenderIds` filtering. |
+| `senderId` | string | No | Identifier of the sender (user name, service account, etc.). Used for `AllowedSenderIds` filtering and as the wire-level `InboundMessage.SenderId` for audit. The Service Bus adapter resolves this string into a typed `InboundMessage.Sender` (a `CitizenId` of species `User`) at the channel boundary; downstream code routes on `Sender`, not on this raw string. |
 | `role` | string | No | Informational only. Always treated as `"user"` regardless of the value supplied. |
 | `content` | string | **Yes** | The message text to deliver to the agent. |
 | `replyTo` | string | No | Per-message override for the reply queue name. Takes precedence over `DefaultReplyQueueName`. |

@@ -37,7 +37,13 @@ public sealed class ServiceBusInboundEnvelope
     [JsonPropertyName("sessionId")]
     public string? SessionId { get; set; }
 
-    /// <summary>Sender identifier (e.g., user email or system name). Maps to <c>InboundMessage.SenderId</c>.</summary>
+    /// <summary>
+    /// Channel-native wire identifier for the sender (e.g., user email or system name).
+    /// Maps to <c>InboundMessage.SenderId</c> and is used for audit / allow-listing.
+    /// The Service Bus adapter resolves the typed <c>InboundMessage.Sender</c>
+    /// (a <c>CitizenId</c>) from this value at the channel boundary; the wire envelope
+    /// stays primitive-only by design so existing producers don't need a domain dependency.
+    /// </summary>
     [JsonPropertyName("senderId")]
     public string? SenderId { get; set; }
 

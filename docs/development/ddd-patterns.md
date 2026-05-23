@@ -33,7 +33,7 @@ BotNexus is adopting Domain-Driven Design (DDD) patterns to solve three critical
 
 ### Problem: Primitive Obsession
 The codebase uses raw strings for domain concepts—`AgentId = "test-agent"`, `ChannelType = "signalr"`, `Role = "user"`. This makes it easy to:
-- Accidentally swap arguments (`SenderId` and `ReceiverId` both strings)
+- Accidentally swap arguments (two string IDs of different conceptual kinds being passed to the wrong slot)
 - Pass invalid values (empty strings, whitespace)
 - Lose domain intent (what does this string represent?)
 
@@ -69,7 +69,7 @@ Use a value object when:
 - **AgentId** — Every agent reference. 100+ usages. P0.
 - **SessionId** — Every session reference. Needs factory methods for sub-agents. P0.
 - **ChannelKey** — Eliminates `NormalizeChannelKey()` duplication x5. P0.
-- **ConversationId**, **SenderId** — Prevent accidental swap bugs. P1.
+- **ConversationId** — Prevent accidental string-swap bugs. P1. (Done in #517.)
 - **ToolName** — Case-insensitive equality, everywhere tool names are referenced. P1.
 
 ### Code Pattern
@@ -434,8 +434,8 @@ This table tracks all DDD types being introduced in BotNexus. Follow this roadma
 | `AgentId` | Identity | Value Object | ✅ Done | 1.1a | Validates non-empty. Ordinal comparison. |
 | `SessionId` | Identity | Value Object | ✅ Done | 1.1a | Factory methods: `Create()`, `ForSubAgent()`, `ForCrossAgent()`. |
 | `ChannelKey` | Identity | Value Object | ✅ Done | 1.1a | Normalizes at construction (trim + lowercase + alias mapping). Eliminates `NormalizeChannelKey()` duplication. |
-| `ConversationId` | Identity | Value Object | ✅ Done | 1.1a | Prevents `ConversationId`/`SenderId` swap bugs. |
-| `SenderId` | Identity | Value Object | ✅ Done | 1.1a | Prevents `ConversationId`/`SenderId` swap bugs. |
+| `ConversationId` | Identity | Value Object | ✅ Done | 1.1a | Migrated to Vogen in #517. Prevents accidental string swap bugs. |
+| ~~`SenderId`~~ | ~~Identity~~ | ~~Value Object~~ | 🗑️ Removed (#526) | — | Hand-rolled struct deleted. The typed sender now lives on `InboundMessage.Sender` as a `CitizenId` (sum type over `UserId`/`AgentId`); the raw wire-level token stays on `InboundMessage.SenderId` as `string` for audit / allow-list filtering. |
 | `AgentSessionKey` | Composite | Value Object | ✅ Done | 1.1a | Composes `AgentId` + `SessionId`. Replaces `MakeKey()` string concat. |
 | `ToolName` | Identity | Value Object | ✅ Done | 1.1a | Case-insensitive equality. Everywhere tool names referenced. |
 | `MessageRole` | Discriminator | Smart Enum | ✅ Done | 1.1a | Known values: User, Assistant, System, Tool. Extensible. |

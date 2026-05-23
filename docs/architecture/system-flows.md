@@ -18,7 +18,7 @@ Channel → ChannelDispatcher → MessageRouter → AgentSupervisor → AgentHan
 
 1. **Channel receives message** (e.g., SignalR `SendMessage(agentId, channelType, content)`)
 2. **Auto-session resolution**: Channel looks for existing Active session or creates new one
-3. **Channel adapts to InboundMessage**: `{ ChannelType, SenderId, SessionId, TargetAgentId, Content }`
+3. **Channel adapts to InboundMessage**: `{ ChannelType, SenderId, Sender, ChannelAddress, SessionId, TargetAgentId, Content }`. The adapter populates both `SenderId` (channel-native wire token used for audit / allow-listing) and `Sender` (typed domain `CitizenId` carrying the citizen species and identity). They may differ in shape — for example, the sub-agent wake-up uses `SenderId = "subagent:<id>"` while `Sender` carries the typed child agent id.
 4. **Dispatcher routes to MessageRouter**
 5. **Router resolves target agent**: Explicit target → session binding → default agent
 6. **Supervisor gets/creates agent instance** for (agentId, sessionId) pair
