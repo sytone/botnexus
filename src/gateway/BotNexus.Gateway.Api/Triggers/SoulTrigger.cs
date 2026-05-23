@@ -3,6 +3,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Triggers;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using Microsoft.Extensions.Logging;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 
@@ -128,14 +129,12 @@ public sealed class SoulTrigger(
         session.Status = GatewaySessionStatus.Active;
         session.Metadata["soulDate"] = soulDate.ToString("yyyy-MM-dd");
 
-        if (!session.Participants.Any(participant =>
-                participant.Type == ParticipantType.Agent &&
-                string.Equals(participant.Id, agentId.Value, StringComparison.OrdinalIgnoreCase)))
+        var agentCitizenId = CitizenId.Of(agentId);
+        if (!session.Participants.Any(participant => participant.CitizenId == agentCitizenId))
         {
             session.Participants.Add(new SessionParticipant
             {
-                Type = ParticipantType.Agent,
-                Id = agentId.Value
+                CitizenId = agentCitizenId
             });
         }
     }

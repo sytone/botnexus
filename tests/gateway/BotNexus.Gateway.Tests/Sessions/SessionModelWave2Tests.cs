@@ -1,5 +1,6 @@
 using System.Reflection;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Models;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -132,8 +133,8 @@ public sealed class SessionModelWave2Tests
     {
         var session = CreateSession();
         session.CallerId = "user-123";
-        session.Participants.Add(new SessionParticipant { Type = ParticipantType.User, Id = "user-123" });
-        session.Participants.Add(new SessionParticipant { Type = ParticipantType.Agent, Id = "agent-a" });
+        session.Participants.Add(new SessionParticipant { CitizenId = CitizenId.Of(UserId.From("user-123")) });
+        session.Participants.Add(new SessionParticipant { CitizenId = CitizenId.Of(AgentId.From("agent-a")) });
 
         session.CallerId.ShouldBe("user-123");
         session.Participants.Count().ShouldBe(2);
@@ -144,12 +145,12 @@ public sealed class SessionModelWave2Tests
     {
         var session = CreateSession();
         session.CallerId = "caller-1";
-        session.Participants.Add(new SessionParticipant { Type = ParticipantType.User, Id = "caller-1" });
-        session.Participants.Add(new SessionParticipant { Type = ParticipantType.Agent, Id = "agent-a" });
+        session.Participants.Add(new SessionParticipant { CitizenId = CitizenId.Of(UserId.From("caller-1")) });
+        session.Participants.Add(new SessionParticipant { CitizenId = CitizenId.Of(AgentId.From("agent-a")) });
 
-        var firstUser = session.Participants.First(p => p.Type == ParticipantType.User);
+        var firstUser = session.Participants.First(p => p.CitizenId.Kind == CitizenKind.User);
 
-        firstUser.Id.ShouldBe(session.CallerId);
+        firstUser.CitizenId.AsUser!.Value.Value.ShouldBe(session.CallerId);
     }
 
     [Fact]

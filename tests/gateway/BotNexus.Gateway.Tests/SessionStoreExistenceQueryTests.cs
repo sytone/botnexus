@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Sessions;
@@ -175,8 +176,7 @@ public sealed class SessionStoreExistenceQueryTests
             [
                 new SessionParticipant
                 {
-                    Type = ParticipantType.Agent,
-                    Id = "agent-a"
+                    CitizenId = CitizenId.Of(AgentId.From("agent-a"))
                 }
             ],
             CreatedAt = now.AddDays(-2),
@@ -191,8 +191,7 @@ public sealed class SessionStoreExistenceQueryTests
             [
                 new SessionParticipant
                 {
-                    Type = ParticipantType.Agent,
-                    Id = "agent-a"
+                    CitizenId = CitizenId.Of(AgentId.From("agent-a"))
                 }
             ],
             CreatedAt = now.AddDays(-1),

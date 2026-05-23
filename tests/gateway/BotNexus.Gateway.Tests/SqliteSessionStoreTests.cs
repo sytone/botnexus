@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -371,7 +372,7 @@ public sealed class SqliteSessionStoreTests
             SessionType = BotNexus.Domain.Primitives.SessionType.Cron,
             Participants =
             [
-                new BotNexus.Domain.Primitives.SessionParticipant { Type = BotNexus.Domain.Primitives.ParticipantType.Agent, Id = "agent-a" }
+                new BotNexus.Domain.Primitives.SessionParticipant { CitizenId = CitizenId.Of(BotNexus.Domain.Primitives.AgentId.From("agent-a")) }
             ],
             CreatedAt = now.AddDays(-1)
         });
