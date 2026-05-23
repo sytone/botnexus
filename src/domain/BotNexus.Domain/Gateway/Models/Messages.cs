@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 
 namespace BotNexus.Gateway.Abstractions.Models;
 
@@ -10,8 +11,34 @@ public sealed record InboundMessage
     /// <summary>The channel this message arrived from (e.g., "signalr", "telegram").</summary>
     public required ChannelKey ChannelType { get; init; }
 
-    /// <summary>Identifier of the sender within the channel.</summary>
+    /// <summary>
+    /// Channel-native wire token for the sender (connection id, user id from the
+    /// underlying transport, envelope sender id, etc.). Used for logging, allow-listing,
+    /// fan-out exclusion, and channel-level audit. NOT a typed domain identity —
+    /// for that use <see cref="Sender"/>.
+    /// </summary>
     public required string SenderId { get; init; }
+
+    /// <summary>
+    /// Typed domain identity of the citizen that produced this message, resolved at
+    /// the channel boundary. Always populated; never <c>default</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Channel adapters resolve <see cref="Sender"/> from their wire-level
+    /// <see cref="SenderId"/> (typically <c>CitizenId.Of(UserId.From(wireToken))</c>).
+    /// Synthetic producers (e.g. the conversation tool, sub-agent wake-ups) populate
+    /// it directly with the originating agent (<c>CitizenId.Of(agentId)</c>).
+    /// </para>
+    /// <para>
+    /// <see cref="SenderId"/> and <see cref="Sender"/> may differ in shape: for
+    /// example the sub-agent wake-up has <c>SenderId = "subagent:&lt;id&gt;"</c> for
+    /// audit while <see cref="Sender"/> carries the typed child agent id. Downstream
+    /// participant tracking, conversation ownership and species classification must
+    /// use <see cref="Sender"/>, never re-parse <see cref="SenderId"/>.
+    /// </para>
+    /// </remarks>
+    public required CitizenId Sender { get; init; }
 
     /// <summary>
     /// Conversation identifier within the channel (e.g., chat ID, thread ID).
