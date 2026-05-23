@@ -220,32 +220,6 @@ public sealed class PrimitiveBoundaryTests
         a.GetHashCode().ShouldBe(b.GetHashCode());
     }
 
-    // --- SenderId boundary tests ---
-
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData(" ")]
-    public void SenderId_From_WhenEmpty_Throws(string? value)
-    {
-        Action act = () => SenderId.From(value!);
-        act.ShouldThrow<ArgumentException>();
-    }
-
-    [Fact]
-    public void SenderId_From_WithWhitespace_Trims()
-    {
-        var id = SenderId.From("  user-123  ");
-        id.Value.ShouldBe("user-123");
-    }
-
-    [Fact]
-    public void SenderId_From_WithSpecialChars_Preserves()
-    {
-        var id = SenderId.From("user@domain.com");
-        id.Value.ShouldBe("user@domain.com");
-    }
-
     // --- ToolName boundary tests ---
 
     [Theory]
@@ -337,7 +311,6 @@ public sealed class PrimitiveBoundaryTests
         ((Action)(() => AgentId.From(whitespace))).ShouldThrow<Vogen.ValueObjectValidationException>();
         ((Action)(() => SessionId.From(whitespace))).ShouldThrow<Vogen.ValueObjectValidationException>();
         ((Action)(() => ConversationId.From(whitespace))).ShouldThrow<Vogen.ValueObjectValidationException>();
-        ((Action)(() => SenderId.From(whitespace))).ShouldThrow<ArgumentException>();
         ((Action)(() => ToolName.From(whitespace))).ShouldThrow<ArgumentException>();
         ((Action)(() => ChannelKey.From(whitespace))).ShouldThrow<ArgumentException>();
     }
@@ -348,7 +321,6 @@ public sealed class PrimitiveBoundaryTests
         AgentId.From(" x ").Value.ShouldBe("x");
         SessionId.From(" x ").Value.ShouldBe("x");
         ConversationId.From(" x ").Value.ShouldBe("x");
-        SenderId.From(" x ").Value.ShouldBe("x");
         ToolName.From(" x ").Value.ShouldBe("x");
         ChannelKey.From(" x ").Value.ShouldBe("x");
     }
