@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
@@ -183,6 +184,7 @@ public sealed class StreamingPipelineTests
         {
             ChannelType = ChannelKey.From("web"),
             SenderId = "sender-1",
+            Sender = CitizenId.Of(UserId.From("sender-1")),
             ChannelAddress = ChannelAddress.From("conv-1"),
             Content = content,
             SessionId = "session-1"

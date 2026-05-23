@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net.Http;
 using System.Text;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Channels;
@@ -381,6 +382,7 @@ public sealed class TelegramChannelAdapter(
         {
             ChannelType = ChannelType,
             SenderId = senderId,
+            Sender = CitizenId.Of(UserId.From(senderId)),
             ChannelAddress = ChannelAddress.From(chatIdText),
             Content = textContent,
             ContentParts = contentParts,

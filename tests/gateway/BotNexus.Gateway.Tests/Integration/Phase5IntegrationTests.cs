@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Channels;
 using BotNexus.Extensions.Channels.Tui;
 using BotNexus.Gateway;
@@ -185,6 +186,7 @@ public sealed class Phase5IntegrationTests
         {
             ChannelType = ChannelKey.From("web"),
             SenderId = "phase5-tester",
+            Sender = CitizenId.Of(UserId.From("phase5-tester")),
             ChannelAddress = ChannelAddress.From("phase5-live-conv"),
             SessionId = "phase5-live",
             Content = "Reply with a short greeting."

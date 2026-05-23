@@ -1,5 +1,6 @@
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -424,6 +425,7 @@ public sealed class MultiChannelFanOutTests
             {
                 ChannelType = ChannelKey.From(channelType),
                 SenderId = $"sender-{channelType}",
+                Sender = CitizenId.Of(UserId.From($"sender-{channelType}")),
                 ChannelAddress = ChannelAddress.From(channelAddress),
                 Content = content,
                 SessionId = sessionId,

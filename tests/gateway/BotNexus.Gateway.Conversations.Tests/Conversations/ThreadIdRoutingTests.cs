@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -71,6 +72,7 @@ public sealed class ThreadIdRoutingTests
         {
             ChannelType = Channel(),
             SenderId = "user1",
+            Sender = CitizenId.Of(UserId.From("user1")),
             ChannelAddress = ChannelAddress.From("chat1"),
             Content = "hello",
             ThreadId = ThreadId.From("thread-1")
@@ -89,6 +91,7 @@ public sealed class ThreadIdRoutingTests
         {
             ChannelType = Channel("telegram"),
             SenderId = "user1",
+            Sender = CitizenId.Of(UserId.From("user1")),
             ChannelAddress = ChannelAddress.From("chat-789"),
             Content = "hello",
             ThreadId = ThreadId.From("topic-55")

@@ -2,6 +2,7 @@ using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Extensions.Channels.Tui;
@@ -193,6 +194,7 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger)
                 {
                     ChannelType = ChannelType,
                     SenderId = Environment.UserName,
+                    Sender = CitizenId.Of(UserId.From(Environment.UserName)),
                     ChannelAddress = ChannelAddress.From("console"),
                     SessionId = "tui-console",
                     Content = steerContent,
@@ -208,6 +210,7 @@ public sealed class TuiChannelAdapter(ILogger<TuiChannelAdapter> logger)
             {
                 ChannelType = ChannelType,
                 SenderId = Environment.UserName,
+                Sender = CitizenId.Of(UserId.From(Environment.UserName)),
                 ChannelAddress = ChannelAddress.From("console"),
                 SessionId = "tui-console",
                 Content = line

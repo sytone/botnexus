@@ -1,5 +1,6 @@
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
@@ -87,6 +88,7 @@ public sealed class GatewayHostBindingRoutingTests
         {
             ChannelType = ChannelKey.From("telegram"),
             SenderId = "user-1",
+            Sender = CitizenId.Of(UserId.From("user-1")),
             ChannelAddress = ChannelAddress.From("chat-100"),
             ThreadId = ThreadId.From("topic-42"),
             Content = "hello",
@@ -174,6 +176,7 @@ public sealed class GatewayHostBindingRoutingTests
         {
             ChannelType = ChannelKey.From("telegram"),
             SenderId = "user-1",
+            Sender = CitizenId.Of(UserId.From("user-1")),
             ChannelAddress = ChannelAddress.From("chat-200"),
             ThreadId = ThreadId.From("topic-99"),
             Content = "hello",
@@ -245,6 +248,7 @@ public sealed class GatewayHostBindingRoutingTests
         {
             ChannelType = ChannelKey.From("telegram"),
             SenderId = "user-1",
+            Sender = CitizenId.Of(UserId.From("user-1")),
             ChannelAddress = ChannelAddress.From("chat-300"),
             ThreadId = null,
             Content = "hello",

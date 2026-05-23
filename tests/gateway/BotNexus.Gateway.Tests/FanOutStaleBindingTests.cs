@@ -1,5 +1,6 @@
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Extensions.Channels.SignalR;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -42,6 +43,7 @@ public sealed class FanOutStaleBindingTests
         {
             ChannelType = channelType,
             SenderId = "sender-1",
+            Sender = CitizenId.Of(UserId.From("sender-1")),
             ChannelAddress = ChannelAddress.From(conversationId),
             Content = content,
             SessionId = sessionId,
