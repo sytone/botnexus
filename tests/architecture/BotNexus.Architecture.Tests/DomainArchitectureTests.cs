@@ -176,6 +176,40 @@ public sealed class DomainArchitectureTests
             "Implicit operators found: " + string.Join(", ", implicitOperators));
     }
 
+    /// <summary>
+    /// UserId is the canonical Vogen value object for a human user identifier introduced in Phase 1.5
+    /// alongside the Citizen abstraction. Mirrors the AgentId rule — Vogen owns construction, JSON,
+    /// and equality.
+    /// </summary>
+    [Fact]
+    public void UserId_IsVogenValueObject()
+    {
+        var attribute = typeof(UserId).GetCustomAttributes()
+            .FirstOrDefault(a => a.GetType().Name.StartsWith("ValueObjectAttribute", StringComparison.Ordinal));
+
+        attribute.ShouldNotBeNull(
+            "UserId must be annotated with [ValueObject<string>] so Vogen generates the converters and analyser checks.");
+    }
+
+    /// <summary>
+    /// UserId must not expose an implicit conversion to/from string. Phase 1.5 introduced UserId as
+    /// a typed identity for the User species; allowing implicit string conversions would defeat the
+    /// purpose just like it did for the original hand-rolled AgentId / SessionId.
+    /// </summary>
+    [Fact]
+    public void UserId_HasNoImplicitStringConversion()
+    {
+        var implicitOperators = typeof(UserId)
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Where(m => m.Name == "op_Implicit")
+            .Select(m => $"{m.ReturnType.Name}<-{m.GetParameters()[0].ParameterType.Name}")
+            .ToArray();
+
+        implicitOperators.ShouldBeEmpty(
+            "UserId must not expose implicit conversions to/from string. Use .Value and .From() explicitly. " +
+            "Implicit operators found: " + string.Join(", ", implicitOperators));
+    }
+
     private static bool IsFrameworkAssembly(string assemblyName)
         => assemblyName.StartsWith("System.", StringComparison.Ordinal)
         || assemblyName.StartsWith("Microsoft.", StringComparison.Ordinal)
