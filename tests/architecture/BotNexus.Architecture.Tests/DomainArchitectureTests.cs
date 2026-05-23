@@ -111,6 +111,71 @@ public sealed class DomainArchitectureTests
             string.Join(", ", nonStructs.Select(t => t.FullName)));
     }
 
+    /// <summary>
+    /// ConversationId is the canonical Vogen value object for a conversation identifier. Mirrors the
+    /// AgentId rule — Vogen owns construction, JSON, and equality.
+    /// </summary>
+    [Fact]
+    public void ConversationId_IsVogenValueObject()
+    {
+        var attribute = typeof(ConversationId).GetCustomAttributes()
+            .FirstOrDefault(a => a.GetType().Name.StartsWith("ValueObjectAttribute", StringComparison.Ordinal));
+
+        attribute.ShouldNotBeNull(
+            "ConversationId must be annotated with [ValueObject<string>] so Vogen generates the converters and analyser checks.");
+    }
+
+    /// <summary>
+    /// ConversationId must not expose an implicit conversion to/from string. Same rationale as the
+    /// AgentId rule — silent casts on hot identifiers defeat the entire point of strong typing.
+    /// </summary>
+    [Fact]
+    public void ConversationId_HasNoImplicitStringConversion()
+    {
+        var implicitOperators = typeof(ConversationId)
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Where(m => m.Name == "op_Implicit")
+            .Select(m => $"{m.ReturnType.Name}<-{m.GetParameters()[0].ParameterType.Name}")
+            .ToArray();
+
+        implicitOperators.ShouldBeEmpty(
+            "ConversationId must not expose implicit conversions to/from string. Use .Value and .From() explicitly. " +
+            "Implicit operators found: " + string.Join(", ", implicitOperators));
+    }
+
+    /// <summary>
+    /// SessionId is the canonical Vogen value object for a session identifier. Mirrors the
+    /// AgentId rule — Vogen owns construction, JSON, and equality.
+    /// </summary>
+    [Fact]
+    public void SessionId_IsVogenValueObject()
+    {
+        var attribute = typeof(SessionId).GetCustomAttributes()
+            .FirstOrDefault(a => a.GetType().Name.StartsWith("ValueObjectAttribute", StringComparison.Ordinal));
+
+        attribute.ShouldNotBeNull(
+            "SessionId must be annotated with [ValueObject<string>] so Vogen generates the converters and analyser checks.");
+    }
+
+    /// <summary>
+    /// SessionId must not expose an implicit conversion to/from string. The legacy hand-rolled SessionId
+    /// did expose implicit operators and that was the worst offender — the seed PR closed the door, and
+    /// this rule keeps it closed.
+    /// </summary>
+    [Fact]
+    public void SessionId_HasNoImplicitStringConversion()
+    {
+        var implicitOperators = typeof(SessionId)
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Where(m => m.Name == "op_Implicit")
+            .Select(m => $"{m.ReturnType.Name}<-{m.GetParameters()[0].ParameterType.Name}")
+            .ToArray();
+
+        implicitOperators.ShouldBeEmpty(
+            "SessionId must not expose implicit conversions to/from string. Use .Value and .From() explicitly. " +
+            "Implicit operators found: " + string.Join(", ", implicitOperators));
+    }
+
     private static bool IsFrameworkAssembly(string assemblyName)
         => assemblyName.StartsWith("System.", StringComparison.Ordinal)
         || assemblyName.StartsWith("Microsoft.", StringComparison.Ordinal)
