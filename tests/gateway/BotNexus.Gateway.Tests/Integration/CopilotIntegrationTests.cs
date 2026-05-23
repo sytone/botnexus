@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
@@ -213,6 +214,7 @@ public sealed class CopilotIntegrationTests
         {
             ChannelType = ChannelKey.From("web"),
             SenderId = "integration-user",
+            Sender = CitizenId.Of(UserId.From("integration-user")),
             ChannelAddress = ChannelAddress.From("copilot-integration-conversation"),
             Content = content,
             SessionId = "integration-session"

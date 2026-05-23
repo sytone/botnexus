@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Domain.Tests;
@@ -64,6 +65,7 @@ public sealed class InboundMessageContentPartsTests
     {
         ChannelType = ChannelKey.From("signalr"),
         SenderId = "sender-1",
+        Sender = CitizenId.Of(UserId.From("sender-1")),
         ChannelAddress = ChannelAddress.From("conversation-1"),
         Content = "hello"
     };

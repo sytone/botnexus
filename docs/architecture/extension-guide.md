@@ -130,10 +130,15 @@ public class SlackChannelAdapter : IChannelAdapter
     
     private async void HandleSlackMessage(SlackMessage slackMsg)
     {
+        // Channels MUST populate both SenderId (wire-level audit token) and
+        // Sender (typed CitizenId) at the adapter boundary. Downstream code
+        // routes on Sender.Kind, never re-parses SenderId.
         var inbound = new InboundMessage
         {
             ChannelType = ChannelType,
             SenderId = slackMsg.UserId,
+            Sender = CitizenId.Of(UserId.From(slackMsg.UserId)),
+            ChannelAddress = ChannelAddress.From(slackMsg.Channel),
             SessionId = null,  // Will be resolved
             Content = slackMsg.Text,
             Metadata = new Dictionary<string, object?> { ["slackChannel"] = slackMsg.Channel }

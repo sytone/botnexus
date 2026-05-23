@@ -164,6 +164,6 @@ All channel-addressing fields have been migrated to strong types (completed in P
 
 | Field | Location | Note |
 |---|---|---|
-| `InboundMessage.SenderId` | `InboundMessage` | Could become `SenderId` strong type (already exists) — not yet wired |
+| `InboundMessage.SenderId` | `InboundMessage` | Wire-level audit/allow-list token (channel-native, e.g. SignalR connection id). Phase 2c (#526) added the companion `InboundMessage.Sender` of typed `CitizenId`; the legacy hand-rolled `SenderId` value-object struct was deleted in the same change since the typed identity now lives on `Sender`. |
 | `CrossWorldRelayRequest.ChannelAddress` | DTO | Intentionally string for HTTP wire format |
 | Streaming `conversationId` | `IStreamEventChannelAdapter` | Channel-specific encoding; strong type would need format changes |

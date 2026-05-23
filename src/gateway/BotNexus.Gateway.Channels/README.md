@@ -55,12 +55,17 @@ public sealed class DiscordChannelAdapter(ILogger<DiscordChannelAdapter> logger)
 Inside your adapter, call the inherited `DispatchInboundAsync` method to forward received messages into the Gateway routing pipeline:
 
 ```csharp
-// Inside your message handler
+// Inside your message handler. Channel adapters MUST populate BOTH:
+//   - SenderId : channel-native wire token (audit / allow-list / logging)
+//   - Sender   : typed domain CitizenId (species + identity)
+// They may differ in shape (e.g. sub-agent wake-ups use "subagent:<id>" for
+// the wire token while Sender carries the agent's id), but both are required.
 var inbound = new InboundMessage
 {
     ChannelType = ChannelType,
     SenderId = discordUserId,
-    ConversationId = channelId,
+    Sender = CitizenId.Of(UserId.From(discordUserId)),
+    ChannelAddress = ChannelAddress.From(channelId),
     Content = messageText
 };
 await DispatchInboundAsync(inbound, cancellationToken);

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Channels;
@@ -317,6 +318,7 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase
         {
             ChannelType = ChannelType,
             SenderId = senderId,
+            Sender = CitizenId.Of(UserId.From(senderId)),
             ChannelAddress = channelAddress,
             Content = envelope.Content,
             TargetAgentId = envelope.AgentId ?? GetApplicationProperty(applicationProperties, "agentId"),

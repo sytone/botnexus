@@ -80,14 +80,23 @@ IChannelDispatcher.DispatchAsync(InboundMessage)
 ```csharp
 {
     ChannelType: "signalr",
-    SenderId: connectionId,
-    ConversationId: sessionId,
+    SenderId: connectionId,                           // wire-level audit/allow-list token
+    Sender: CitizenId.Of(UserId.From(connectionId)),  // typed domain identity (species + id)
+    ChannelAddress: sessionId,
     SessionId: sessionId,
     TargetAgentId: agentId,  // Optional explicit target
     Content: "user message",
     Metadata: { messageType: "message" }
 }
 ```
+
+**Two-field invariant (`SenderId` vs `Sender`):** Every channel adapter MUST populate both.
+`SenderId` is the channel-native wire token used for audit, allow-list filtering, and
+fan-out exclusion. `Sender` is the typed `CitizenId` carrying the species (User / Agent)
+and identity used by downstream participant tracking and conversation ownership. They
+may differ in shape — for example the sub-agent wake-up uses `SenderId = "subagent:<id>"`
+for audit while `Sender` carries the typed child agent id (`CitizenId.Of(agentId)`).
+Downstream code must NEVER re-parse `SenderId` to infer species; use `Sender.Kind`.
 
 ### 4. Agent Resolution
 

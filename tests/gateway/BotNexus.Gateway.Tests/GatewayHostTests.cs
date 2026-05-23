@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using ChannelAddress = BotNexus.Domain.Primitives.ChannelAddress;
 using ThreadId = BotNexus.Domain.Primitives.ThreadId;
 using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
@@ -685,6 +686,7 @@ public sealed class GatewayHostTests
         {
             ChannelType = BotNexus.Domain.Primitives.ChannelKey.From("internal"),
             SenderId = "subagent:test",
+            Sender = CitizenId.Of(BotNexus.Domain.Primitives.AgentId.From("subagent:test")),
             ChannelAddress = ChannelAddress.From("parent-session"),
             SessionId = "parent-session",
             TargetAgentId = "agent-a",
@@ -745,6 +747,7 @@ public sealed class GatewayHostTests
         {
             ChannelType = BotNexus.Domain.Primitives.ChannelKey.From("internal"),
             SenderId = "subagent:test",
+            Sender = CitizenId.Of(BotNexus.Domain.Primitives.AgentId.From("subagent:test")),
             ChannelAddress = ChannelAddress.From("parent-session"),
             TargetAgentId = "agent-a",
             Content = "subagent completion wake-up",
@@ -1515,6 +1518,7 @@ public sealed class GatewayHostTests
         {
             ChannelType = channelType,
             SenderId = "sender-1",
+            Sender = CitizenId.Of(UserId.From("sender-1")),
             ChannelAddress = ChannelAddress.From(conversationId),
             Content = content,
             SessionId = sessionId,

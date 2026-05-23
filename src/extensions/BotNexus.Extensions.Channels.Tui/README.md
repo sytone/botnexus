@@ -35,7 +35,7 @@ This package provides a terminal/console channel adapter for the BotNexus Gatewa
 - **Input Loop**: Reads from `Console.In` and dispatches user input as `InboundMessage` instances
   - `/quit` — stops the input loop and shuts down the adapter
   - `/clear` — clears the console
-  - Other input → dispatched as inbound messages with `SenderId = Environment.UserName`, `ConversationId = "console"`
+  - Other input → dispatched as inbound messages with `SenderId = Environment.UserName` (wire token for audit/allow-list) and `Sender = CitizenId.Of(UserId.From(Environment.UserName))` (typed domain identity), `ChannelAddress = "console"`
 
 ### What's Planned
 

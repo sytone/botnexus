@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
@@ -45,6 +46,7 @@ public sealed class CitizenMessageThroughVirtualAdapterScenario
         {
             ChannelType = ChannelKey.From(VirtualChannelAdapter.VirtualChannelType),
             SenderId = "alice",
+            Sender = CitizenId.Of(UserId.From("alice")),
             ChannelAddress = ChannelAddress.From("virtual:alice"),
             Content = "hello agent",
         };

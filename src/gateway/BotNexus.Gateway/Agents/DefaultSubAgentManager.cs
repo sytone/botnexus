@@ -9,6 +9,7 @@ using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Security;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -305,6 +306,20 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         }
 
         _parentAgentIds.TryGetValue(subAgentId, out var parentAgentId);
+        // Producer-side species: this wake-up is FROM the child sub-agent TO the parent.
+        // Sender must carry the child's AgentId, not the parent's, so participant
+        // tracking and downstream conversation attribution see the correct originator.
+        // (Fix #526 / sub-agent misclassification.)
+        // Fallback to a synthetic agent id derived from the sub-agent id preserves
+        // species (always Agent) without falling back to the parent — which would
+        // re-introduce the very misclassification this change exists to remove.
+        if (!_childAgentIds.TryGetValue(subAgentId, out var childAgentId))
+        {
+            _logger.LogWarning(
+                "Missing child AgentId for sub-agent '{SubAgentId}' during completion; using synthetic agent id.",
+                subAgentId);
+            childAgentId = AgentId.From($"subagent:{subAgentId}");
+        }
         if (updated.Status == SubAgentStatus.Completed)
         {
             await PublishLifecycleActivityAsync(
@@ -358,6 +373,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             {
                 ChannelType = ChannelKey.From("internal"),
                 SenderId = $"subagent:{subAgentId}",
+                Sender = CitizenId.Of(childAgentId),
                 ChannelAddress = ChannelAddress.From(updated.ParentSessionId.Value),
                 SessionId = updated.ParentSessionId.Value,
                 TargetAgentId = parentAgentId.Value,

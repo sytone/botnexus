@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Scenarios.Harness;
@@ -193,6 +194,7 @@ public sealed class VirtualChannelAdapterConformance
     {
         ChannelType = ChannelKey.From(VirtualChannelAdapter.VirtualChannelType),
         SenderId = "alice",
+        Sender = CitizenId.Of(UserId.From("alice")),
         ChannelAddress = ChannelAddress.From("virtual:alice"),
         Content = content
     };
