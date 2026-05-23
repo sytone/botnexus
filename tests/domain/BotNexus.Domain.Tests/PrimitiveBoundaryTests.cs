@@ -142,7 +142,7 @@ public sealed class PrimitiveBoundaryTests
     public void SessionId_ForSubAgent_EmptyParentId_Throws(string? parentId)
     {
         Action act = () => SessionId.ForSubAgent(parentId!, "child");
-        act.ShouldThrow<ArgumentException>();
+        act.ShouldThrow<Vogen.ValueObjectValidationException>();
     }
 
     [Fact]
@@ -335,8 +335,8 @@ public sealed class PrimitiveBoundaryTests
         // ValueObjectValidationException; the remaining hand-rolled primitives throw
         // ArgumentException. They migrate to Vogen in later batches of the value-object refactor.
         ((Action)(() => AgentId.From(whitespace))).ShouldThrow<Vogen.ValueObjectValidationException>();
-        ((Action)(() => SessionId.From(whitespace))).ShouldThrow<ArgumentException>();
-        ((Action)(() => ConversationId.From(whitespace))).ShouldThrow<ArgumentException>();
+        ((Action)(() => SessionId.From(whitespace))).ShouldThrow<Vogen.ValueObjectValidationException>();
+        ((Action)(() => ConversationId.From(whitespace))).ShouldThrow<Vogen.ValueObjectValidationException>();
         ((Action)(() => SenderId.From(whitespace))).ShouldThrow<ArgumentException>();
         ((Action)(() => ToolName.From(whitespace))).ShouldThrow<ArgumentException>();
         ((Action)(() => ChannelKey.From(whitespace))).ShouldThrow<ArgumentException>();

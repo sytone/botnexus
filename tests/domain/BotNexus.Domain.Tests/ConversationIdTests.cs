@@ -1,70 +1,117 @@
+using System.Reflection;
 using System.Text.Json;
 using BotNexus.Domain.Primitives;
+using Vogen;
 
 namespace BotNexus.Domain.Tests;
 
 public sealed class ConversationIdTests
 {
     [Fact]
-    public void ConversationId_From_WhenValueIsValid_ShouldCreateInstance()
+    public void From_TrimsLeadingAndTrailingWhitespace()
     {
         var result = ConversationId.From(" conversation-1 ");
+
         result.Value.ShouldBe("conversation-1");
     }
 
+    [Fact]
+    public void From_RejectsNull()
+    {
+        Action act = () => ConversationId.From(null!);
+
+        act.ShouldThrow<ValueObjectValidationException>();
+    }
+
     [Theory]
-    [InlineData(null)]
     [InlineData("")]
     [InlineData(" ")]
-    public void ConversationId_From_WhenValueIsEmpty_ShouldThrowArgumentException(string? value)
+    [InlineData("\t")]
+    [InlineData("   \n   ")]
+    public void From_RejectsEmptyOrWhitespace(string value)
     {
-        Action action = () => ConversationId.From(value!);
-        action.ShouldThrow<ArgumentException>();
+        Action act = () => ConversationId.From(value);
+
+        var ex = act.ShouldThrow<ValueObjectValidationException>();
+        ex.Message.ShouldContain("ConversationId");
     }
 
     [Fact]
-    public void ConversationId_Equals_WhenValuesMatch_ShouldBeTrue()
+    public void Equality_MatchesByValue()
     {
-        var left = ConversationId.From("conversation-1");
-        var right = ConversationId.From("conversation-1");
-        left.ShouldBe(right);
+        ConversationId.From("conversation-1").ShouldBe(ConversationId.From("conversation-1"));
+        ConversationId.From("conversation-1").ShouldNotBe(ConversationId.From("conversation-2"));
     }
 
     [Fact]
-    public void ConversationId_Equals_WhenValuesDiffer_ShouldBeFalse()
+    public void ToString_ReturnsRawValue()
     {
-        var left = ConversationId.From("conversation-1");
-        var right = ConversationId.From("conversation-2");
-        left.ShouldNotBe(right);
+        ConversationId.From("conversation-1").ToString().ShouldBe("conversation-1");
     }
 
     [Fact]
-    public void ConversationId_ImplicitConversion_WhenConvertedToString_ShouldReturnValue()
+    public void Create_GeneratesValueWithCPrefix()
     {
-        var id = ConversationId.From("conversation-1");
-        string value = id;
-        value.ShouldBe("conversation-1");
+        var id = ConversationId.Create();
+
+        id.Value.ShouldStartWith("c_");
+        id.Value.Length.ShouldBe("c_".Length + 32);
     }
 
     [Fact]
-    public void ConversationId_ExplicitConversion_WhenConvertedFromString_ShouldCreateInstance()
+    public void Create_GeneratesDistinctValues()
     {
-        var id = (ConversationId)"conversation-1";
-        id.Value.ShouldBe("conversation-1");
+        ConversationId.Create().ShouldNotBe(ConversationId.Create());
     }
 
     [Fact]
-    public void ConversationId_ToString_WhenCalled_ShouldReturnValue()
+    public void Json_SerializesAsBareString()
     {
-        var id = ConversationId.From("conversation-1");
-        id.ToString().ShouldBe("conversation-1");
+        var json = JsonSerializer.Serialize(ConversationId.From("conversation-1"));
+
+        json.ShouldBe("\"conversation-1\"");
     }
 
     [Fact]
-    public void ConversationId_JsonRoundTrip_WhenSerializedAndDeserialized_ShouldBeEqual()
+    public void Json_DeserializesFromBareString()
+    {
+        var id = JsonSerializer.Deserialize<ConversationId>("\"conversation-1\"");
+
+        id.ShouldBe(ConversationId.From("conversation-1"));
+    }
+
+    [Fact]
+    public void Json_RoundTripPreservesValue()
     {
         var original = ConversationId.From("conversation-1");
+
         var roundTrip = JsonSerializer.Deserialize<ConversationId>(JsonSerializer.Serialize(original));
+
         roundTrip.ShouldBe(original);
+    }
+
+    [Fact]
+    public void Json_PropertyOnDtoUsesBareStringWithCamelCase()
+    {
+        var dto = new { conversation = ConversationId.From("conversation-1"), label = "hello" };
+
+        var json = JsonSerializer.Serialize(
+            dto,
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+        json.ShouldBe("{\"conversation\":\"conversation-1\",\"label\":\"hello\"}");
+    }
+
+    [Fact]
+    public void Type_HasNoImplicitStringOperator()
+    {
+        var implicitOperators = typeof(ConversationId)
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Where(m => m.Name == "op_Implicit")
+            .ToArray();
+
+        implicitOperators.ShouldBeEmpty(
+            "ConversationId must not expose implicit conversions to/from string. " +
+            "Use .Value and .From() explicitly.");
     }
 }
