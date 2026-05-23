@@ -139,6 +139,17 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
     /// <inheritdoc />
     public async Task DispatchAsync(InboundMessage message, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(message);
+        // CitizenId is a struct, so `required` can't catch `default`. Every channel
+        // producer must populate Sender with a valid typed citizen (#526).
+        if (!message.Sender.IsValid)
+        {
+            throw new ArgumentException(
+                $"InboundMessage.Sender must be a valid CitizenId; got default(CitizenId). " +
+                $"Channel '{message.ChannelType}' producer must populate it (see #526).",
+                nameof(message));
+        }
+
         var queueKey = GetQueueKey(message);
         var queueState = _sessionQueues.GetOrAdd(queueKey, CreateSessionQueueState);
         var queueItem = new QueuedInboundMessage(message, cancellationToken);
@@ -356,7 +367,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 session.Session.ConversationId = resolution.ConversationId;
             session.CallerId ??= message.SenderId;
             session.SessionType = ResolveSessionType(session, message);
-            EnsureCallerParticipant(session, message.SenderId);
+            EnsureCallerParticipant(session, message.Sender);
             if (ShouldInitializeSystemPrompt(session))
             {
                 session.Metadata[SystemPromptInitializedMetadataKey] = true;
@@ -1037,12 +1048,11 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         base.Dispose();
     }
 
-    private static void EnsureCallerParticipant(GatewaySession session, string? callerId)
+    private static void EnsureCallerParticipant(GatewaySession session, CitizenId callerCitizenId)
     {
-        if (string.IsNullOrWhiteSpace(callerId))
+        if (!callerCitizenId.IsValid)
             return;
 
-        var callerCitizenId = CitizenId.Of(UserId.From(callerId));
         if (session.Participants.Any(p => p.CitizenId == callerCitizenId))
             return;
 
