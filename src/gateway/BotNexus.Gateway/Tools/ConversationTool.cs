@@ -3,6 +3,7 @@ using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
@@ -158,6 +159,7 @@ public sealed class ConversationTool(
             {
                 ChannelType = ChannelKey.From("internal"),
                 SenderId = agentId.Value,
+                Sender = CitizenId.Of(agentId),
                 ChannelAddress = ChannelAddress.From(conversation.AgentId.Value),
                 Content = message.Trim(),
                 TargetAgentId = conversation.AgentId.Value,
@@ -277,6 +279,7 @@ public sealed class ConversationTool(
                     {
                         ChannelType = ChannelKey.From("internal"),
                         SenderId = agentId.Value,
+                        Sender = CitizenId.Of(agentId),
                         ChannelAddress = ChannelAddress.From(targetAgentId.Value),
                         Content = message.Trim(),
                         TargetAgentId = targetAgentId.Value,
