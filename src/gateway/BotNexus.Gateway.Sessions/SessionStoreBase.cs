@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -104,6 +105,8 @@ public abstract class SessionStoreBase : ISessionStore
         => agentId is null ? sessions : sessions.Where(session => session.AgentId == agentId);
 
     private static bool IsParticipant(GatewaySession session, AgentId agentId)
-        => session.Participants.Any(participant =>
-            string.Equals(participant.Id, agentId.Value, StringComparison.OrdinalIgnoreCase));
+    {
+        var citizenId = CitizenId.Of(agentId);
+        return session.Participants.Any(participant => participant.CitizenId == citizenId);
+    }
 }

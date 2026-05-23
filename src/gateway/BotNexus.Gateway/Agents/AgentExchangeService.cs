@@ -1,5 +1,6 @@
 using BotNexus.Domain.AgentExchange;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
@@ -85,14 +86,12 @@ public sealed class AgentExchangeService : IAgentExchangeService
         session.Participants.Clear();
         session.Participants.Add(new SessionParticipant
         {
-            Type = ParticipantType.Agent,
-            Id = request.InitiatorId.Value,
+            CitizenId = CitizenId.Of(request.InitiatorId),
             Role = "initiator"
         });
         session.Participants.Add(new SessionParticipant
         {
-            Type = ParticipantType.Agent,
-            Id = request.TargetId.Value,
+            CitizenId = CitizenId.Of(request.TargetId),
             Role = "target"
         });
 
@@ -182,16 +181,12 @@ public sealed class AgentExchangeService : IAgentExchangeService
         session.Participants.Clear();
         session.Participants.Add(new SessionParticipant
         {
-            Type = ParticipantType.Agent,
-            Id = request.InitiatorId.Value,
-            WorldId = _sourceWorldId,
+            CitizenId = CitizenId.Of(request.InitiatorId),
             Role = "initiator"
         });
         session.Participants.Add(new SessionParticipant
         {
-            Type = ParticipantType.Agent,
-            Id = resolvedTarget.AgentId.Value,
-            WorldId = resolvedTarget.WorldId,
+            CitizenId = CitizenId.Of(resolvedTarget.AgentId),
             Role = "target"
         });
 
@@ -201,6 +196,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
             .ToArray();
         session.Metadata["objective"] = request.Objective;
         session.Metadata["maxTurns"] = request.MaxTurns;
+        session.Metadata["sourceWorldId"] = _sourceWorldId;
         session.Metadata["targetWorldId"] = resolvedTarget.WorldId;
         session.Metadata["conversationId"] = conversationId;
 

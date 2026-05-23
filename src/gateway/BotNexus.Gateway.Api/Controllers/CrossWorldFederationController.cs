@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -71,20 +72,17 @@ public sealed class CrossWorldFederationController(
         session.Participants.Clear();
         session.Participants.Add(new SessionParticipant
         {
-            Type = ParticipantType.Agent,
-            Id = request.SourceAgentId,
-            WorldId = request.SourceWorldId,
+            CitizenId = CitizenId.Of(AgentId.From(request.SourceAgentId)),
             Role = "initiator"
         });
         session.Participants.Add(new SessionParticipant
         {
-            Type = ParticipantType.Agent,
-            Id = targetAgentId.Value,
-            WorldId = _localWorldId,
+            CitizenId = CitizenId.Of(targetAgentId),
             Role = "target"
         });
         session.Metadata["conversationId"] = request.ConversationId;
         session.Metadata["sourceWorldId"] = request.SourceWorldId;
+        session.Metadata["targetWorldId"] = _localWorldId;
         session.Metadata["sourceSessionId"] = request.SourceSessionId;
         session.Status = GatewaySessionStatus.Active;
         session.AddEntry(new SessionEntry

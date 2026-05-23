@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Api.Controllers;
@@ -87,8 +88,10 @@ public sealed class CrossWorldFederationControllerTests
         var savedSession = await sessions.GetAsync(SessionId.From(payload.SessionId));
         savedSession.ShouldNotBeNull();
         savedSession!.ChannelType.ShouldBe(ChannelKey.From("cross-world"));
-        savedSession.Participants.Where(p => p.Id == "test-agent" && p.WorldId == "world-a").ShouldHaveSingleItem();
-        savedSession.Participants.Where(p => p.Id == "agent-c" && p.WorldId == "world-b").ShouldHaveSingleItem();
+        savedSession.Participants.Where(p => p.CitizenId == CitizenId.Of(AgentId.From("test-agent")) && p.Role == "initiator").ShouldHaveSingleItem();
+        savedSession.Participants.Where(p => p.CitizenId == CitizenId.Of(AgentId.From("agent-c")) && p.Role == "target").ShouldHaveSingleItem();
+        savedSession.Metadata["sourceWorldId"].ShouldBe("world-a");
+        savedSession.Metadata["targetWorldId"].ShouldBe("world-b");
     }
 
     [Fact]

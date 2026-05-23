@@ -8,11 +8,12 @@ using BotNexus.Gateway.Dispatching;
 using BotNexus.Gateway.Abstractions.Services;
 using AgentId = BotNexus.Domain.Primitives.AgentId;
 using ChannelKey = BotNexus.Domain.Primitives.ChannelKey;
-using ParticipantType = BotNexus.Domain.Primitives.ParticipantType;
 using SessionId = BotNexus.Domain.Primitives.SessionId;
+using UserId = BotNexus.Domain.Primitives.UserId;
 using ConversationId = BotNexus.Domain.Primitives.ConversationId;
 using ChannelAddress = BotNexus.Domain.Primitives.ChannelAddress;
 using SessionParticipant = BotNexus.Domain.Primitives.SessionParticipant;
+using BotNexus.Domain.World;
 using SessionType = BotNexus.Domain.Primitives.SessionType;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 using Microsoft.AspNetCore.SignalR;
@@ -141,8 +142,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         {
             session.Participants.Add(new SessionParticipant
             {
-                Type = ParticipantType.User,
-                Id = Context.ConnectionId
+                CitizenId = CitizenId.Of(UserId.From(Context.ConnectionId))
             });
             needsSave = true;
         }
@@ -717,8 +717,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         {
             session.Participants.Add(new SessionParticipant
             {
-                Type = ParticipantType.User,
-                Id = Context.ConnectionId
+                CitizenId = CitizenId.Of(UserId.From(Context.ConnectionId))
             });
             needsSave = true;
         }

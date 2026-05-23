@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Security;
 
 namespace BotNexus.Gateway.Abstractions.Models;
@@ -7,13 +8,20 @@ namespace BotNexus.Gateway.Abstractions.Models;
 /// Describes a registered agent — its identity, default configuration, and capabilities.
 /// This is the static descriptor; runtime state lives in <see cref="AgentInstance"/>.
 /// </summary>
-public sealed record AgentDescriptor
+public sealed record AgentDescriptor : ICitizen
 {
     /// <summary>Unique agent identifier (e.g., "coding-agent", "chat-assistant").</summary>
     public required AgentId AgentId { get; init; }
 
     /// <summary>Human-readable display name.</summary>
     public required string DisplayName { get; init; }
+
+    /// <summary>
+    /// Discriminated citizen identity. Always <see cref="CitizenId.Of(AgentId)"/> for an agent —
+    /// satisfies <see cref="ICitizen"/> so the descriptor can flow through cross-cutting code
+    /// that addresses users and agents uniformly without losing the typed <see cref="AgentId"/>.
+    /// </summary>
+    CitizenId ICitizen.Id => CitizenId.Of(AgentId);
 
     /// <summary>Optional emoji that visually identifies this agent in user interfaces.</summary>
     public string? Emoji { get; init; }

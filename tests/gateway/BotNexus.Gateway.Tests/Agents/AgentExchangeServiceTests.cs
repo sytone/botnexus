@@ -1,5 +1,6 @@
 using BotNexus.Domain.AgentExchange;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Channels;
 using System.Net;
 using System.Net.Http.Json;
@@ -57,8 +58,8 @@ public sealed class AgentExchangeServiceTests
         session.ShouldNotBeNull();
         session!.SessionType.ShouldBe(SessionType.AgentAgent);
         session.Status.ShouldBe(GatewaySessionStatus.Sealed);
-        session.Participants.Where(p => p.Type == ParticipantType.Agent && p.Id == "test-agent" && p.Role == "initiator").ShouldHaveSingleItem();
-        session.Participants.Where(p => p.Type == ParticipantType.Agent && p.Id == "agent-c" && p.Role == "target").ShouldHaveSingleItem();
+        session.Participants.Where(p => p.CitizenId == CitizenId.Of(AgentId.From("test-agent")) && p.Role == "initiator").ShouldHaveSingleItem();
+        session.Participants.Where(p => p.CitizenId == CitizenId.Of(AgentId.From("agent-c")) && p.Role == "target").ShouldHaveSingleItem();
 
         var initiatorExistence = await sessionStore.GetExistenceAsync(initiator, new ExistenceQuery());
         var targetExistence = await sessionStore.GetExistenceAsync(target, new ExistenceQuery());
@@ -216,8 +217,10 @@ public sealed class AgentExchangeServiceTests
         var session = await sessionStore.GetAsync(result.SessionId);
         session.ShouldNotBeNull();
         session!.ChannelType.ShouldBe(ChannelKey.From("cross-world"));
-        session.Participants.Where(p => p.Id == "test-agent" && p.WorldId == "world-a").ShouldHaveSingleItem();
-        session.Participants.Where(p => p.Id == "agent-c" && p.WorldId == "world-b").ShouldHaveSingleItem();
+        session.Participants.Where(p => p.CitizenId == CitizenId.Of(AgentId.From("test-agent")) && p.Role == "initiator").ShouldHaveSingleItem();
+        session.Participants.Where(p => p.CitizenId == CitizenId.Of(AgentId.From("agent-c")) && p.Role == "target").ShouldHaveSingleItem();
+        session.Metadata["sourceWorldId"].ShouldBe("world-a");
+        session.Metadata["targetWorldId"].ShouldBe("world-b");
 
         capturedRequest.ShouldNotBeNull();
         capturedRequest!.Headers.TryGetValues("X-Cross-World-Key", out var keys).ShouldBeTrue();

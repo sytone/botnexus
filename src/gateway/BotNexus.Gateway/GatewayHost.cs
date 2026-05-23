@@ -17,9 +17,10 @@ using BotNexus.Gateway.Dispatching;
 using AgentId = BotNexus.Domain.Primitives.AgentId;
 using ChannelKey = BotNexus.Domain.Primitives.ChannelKey;
 using MessageRole = BotNexus.Domain.Primitives.MessageRole;
-using ParticipantType = BotNexus.Domain.Primitives.ParticipantType;
 using SessionId = BotNexus.Domain.Primitives.SessionId;
+using UserId = BotNexus.Domain.Primitives.UserId;
 using SessionParticipant = BotNexus.Domain.Primitives.SessionParticipant;
+using BotNexus.Domain.World;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 using SessionType = BotNexus.Domain.Primitives.SessionType;
 using BotNexus.Gateway.Diagnostics;
@@ -1041,13 +1042,13 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         if (string.IsNullOrWhiteSpace(callerId))
             return;
 
-        if (session.Participants.Any(p => p.Type == ParticipantType.User && string.Equals(p.Id, callerId, StringComparison.Ordinal)))
+        var callerCitizenId = CitizenId.Of(UserId.From(callerId));
+        if (session.Participants.Any(p => p.CitizenId == callerCitizenId))
             return;
 
         session.Participants.Add(new SessionParticipant
         {
-            Type = ParticipantType.User,
-            Id = callerId
+            CitizenId = callerCitizenId
         });
     }
 

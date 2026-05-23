@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Sessions;
 
 namespace BotNexus.Gateway.Tests;
@@ -164,7 +165,7 @@ public sealed class InMemorySessionStoreTests
             SessionType = SessionType.Cron,
             Participants =
             [
-                new SessionParticipant { Type = ParticipantType.Agent, Id = "agent-a" }
+                new SessionParticipant { CitizenId = CitizenId.Of(AgentId.From("agent-a")) }
             ],
             CreatedAt = now.AddDays(-1)
         });
