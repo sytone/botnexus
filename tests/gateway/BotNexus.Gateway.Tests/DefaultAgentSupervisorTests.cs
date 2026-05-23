@@ -276,7 +276,7 @@ public sealed class DefaultAgentSupervisorTests
         strategy.Setup(s => s.CreateAsync(It.IsAny<AgentDescriptor>(), It.IsAny<AgentExecutionContext>(), It.IsAny<CancellationToken>()))
             .Returns((AgentDescriptor _, AgentExecutionContext ctx, CancellationToken _) =>
             {
-                var h = CreateHandleMock("agent-stop", ctx.SessionId);
+                var h = CreateHandleMock("agent-stop", ctx.SessionId.Value);
                 handles.Add(h);
                 return Task.FromResult(h.Object);
             });
@@ -316,7 +316,7 @@ public sealed class DefaultAgentSupervisorTests
         strategy.Setup(s => s.CreateAsync(It.IsAny<AgentDescriptor>(), It.IsAny<AgentExecutionContext>(), It.IsAny<CancellationToken>()))
             .Returns((AgentDescriptor _, AgentExecutionContext ctx, CancellationToken _) =>
             {
-                var h = CreateHandleMock("agent-stop-err", ctx.SessionId);
+                var h = CreateHandleMock("agent-stop-err", ctx.SessionId.Value);
                 var c = Interlocked.Increment(ref callCount);
                 if (c == 2) // Second handle throws on dispose
                     h.Setup(x => x.DisposeAsync()).ThrowsAsync(new InvalidOperationException("Dispose failed"));
@@ -353,7 +353,7 @@ public sealed class DefaultAgentSupervisorTests
         strategy.Setup(s => s.CreateAsync(It.IsAny<AgentDescriptor>(), It.IsAny<AgentExecutionContext>(), It.IsAny<CancellationToken>()))
             .Callback<AgentDescriptor, AgentExecutionContext, CancellationToken>((descriptor, _, _) => createdDescriptors.Add(descriptor))
             .Returns((AgentDescriptor descriptor, AgentExecutionContext context, CancellationToken _) =>
-                Task.FromResult(CreateHandleMock(descriptor.AgentId.Value, context.SessionId).Object));
+                Task.FromResult(CreateHandleMock(descriptor.AgentId.Value, context.SessionId.Value).Object));
 
         var supervisor = new DefaultAgentSupervisor(registry, [strategy.Object], Mock.Of<ISessionStore>(), NullLogger<DefaultAgentSupervisor>.Instance);
 

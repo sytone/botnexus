@@ -92,7 +92,7 @@ public sealed class SubAgentToolTests
         manager.Setup(m => m.SpawnAsync(It.IsAny<SubAgentSpawnRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreateSubAgentInfo(
                 subAgentId: "sub-123",
-                childSessionId: "parent-session::subagent::sub-123",
+                childSessionId: SessionId.From("parent-session::subagent::sub-123"),
                 name: "Research Task"));
         var tool = new SubAgentSpawnTool(manager.Object, AgentId.From("parent-agent"), SessionId.From("parent-session"));
 

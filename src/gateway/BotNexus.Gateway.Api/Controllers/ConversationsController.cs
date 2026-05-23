@@ -7,6 +7,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using System.Diagnostics.CodeAnalysis;
 using SessionId = BotNexus.Domain.Primitives.SessionId;
 using SessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 
@@ -262,7 +263,7 @@ public sealed class ConversationsController : ControllerBase
 
         var boundedLimit = Math.Min(limit, 200);
         if (TryParseVirtualCronConversationId(conversationId, out var virtualSessionId))
-            return await GetVirtualCronHistoryAsync(conversationId, virtualSessionId, boundedLimit, offset, cancellationToken);
+            return await GetVirtualCronHistoryAsync(conversationId, virtualSessionId.Value, boundedLimit, offset, cancellationToken);
 
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
         if (conversation is null)
@@ -341,8 +342,8 @@ public sealed class ConversationsController : ControllerBase
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
         if (conversation is null && TryParseVirtualCronConversationId(conversationId, out var virtualSessionId))
         {
-            virtualCronSessionId = virtualSessionId;
-            var virtualSession = await _sessions.GetAsync(virtualSessionId, cancellationToken);
+            virtualCronSessionId = virtualSessionId.Value;
+            var virtualSession = await _sessions.GetAsync(virtualSessionId.Value, cancellationToken);
             if (virtualSession is null)
                 return NoContent();
 
@@ -351,7 +352,7 @@ public sealed class ConversationsController : ControllerBase
 
             if (conversation is null)
             {
-                await SealSessionAsync(virtualSessionId, cancellationToken);
+                await SealSessionAsync(virtualSessionId.Value, cancellationToken);
                 return NoContent();
             }
         }
@@ -541,7 +542,7 @@ public sealed class ConversationsController : ControllerBase
         return NoContent();
     }
 
-    private static bool TryParseVirtualCronConversationId(string conversationId, out SessionId sessionId)
+    private static bool TryParseVirtualCronConversationId(string conversationId, [NotNullWhen(true)] out SessionId? sessionId)
     {
         const string prefix = "cron-session:";
         if (conversationId.StartsWith(prefix, StringComparison.Ordinal) &&
@@ -551,7 +552,7 @@ public sealed class ConversationsController : ControllerBase
             return true;
         }
 
-        sessionId = default;
+        sessionId = null;
         return false;
     }
 

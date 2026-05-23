@@ -433,7 +433,7 @@ public sealed class SignalRHubTests
         clients.SetupGet(value => value.Caller).Returns(caller.Object);
 
         var sessions = new Mock<ISessionStore>();
-        sessions.Setup(value => value.ArchiveAsync("session-1", CancellationToken.None)).Returns(Task.CompletedTask);
+        sessions.Setup(value => value.ArchiveAsync(SessionId.From("session-1"), CancellationToken.None)).Returns(Task.CompletedTask);
 
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(value => value.StopAsync(BotNexus.Domain.Primitives.AgentId.From("agent-a"), BotNexus.Domain.Primitives.SessionId.From("session-1"), CancellationToken.None)).Returns(Task.CompletedTask);
@@ -442,7 +442,7 @@ public sealed class SignalRHubTests
 
         await hub.ResetSession(AgentId.From("agent-a"), SessionId.From("session-1"));
 
-        sessions.Verify(value => value.ArchiveAsync("session-1", CancellationToken.None), Times.Once);
+        sessions.Verify(value => value.ArchiveAsync(SessionId.From("session-1"), CancellationToken.None), Times.Once);
         sessions.Verify(value => value.DeleteAsync(It.IsAny<BotNexus.Domain.Primitives.SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -451,7 +451,7 @@ public sealed class SignalRHubTests
     {
         var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-1"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a") };
         var sessions = new Mock<ISessionStore>();
-        sessions.Setup(value => value.GetAsync("session-1", CancellationToken.None)).ReturnsAsync(session);
+        sessions.Setup(value => value.GetAsync(SessionId.From("session-1"), CancellationToken.None)).ReturnsAsync(session);
         sessions.Setup(value => value.SaveAsync(session, CancellationToken.None)).Returns(Task.CompletedTask);
 
         var compactor = new Mock<ISessionCompactor>();
@@ -482,7 +482,7 @@ public sealed class SignalRHubTests
     public async Task CompactSession_Hub_SessionNotFound_ThrowsHubException()
     {
         var sessions = new Mock<ISessionStore>();
-        sessions.Setup(value => value.GetAsync("missing", CancellationToken.None)).ReturnsAsync((GatewaySession?)null);
+        sessions.Setup(value => value.GetAsync(SessionId.From("missing"), CancellationToken.None)).ReturnsAsync((GatewaySession?)null);
         var hub = CreateHub(sessions: sessions.Object);
 
         Func<Task> act = () => hub.CompactSession(AgentId.From("agent-a"), SessionId.From("missing"));

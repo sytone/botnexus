@@ -104,7 +104,7 @@ public sealed class ChannelHistoryController : ControllerBase
             {
                 boundaries.Add(new ChannelHistorySessionBoundary(
                     messages.Count,
-                    slice.Session.SessionId,
+                    slice.Session.SessionId.Value,
                     slice.Session.CreatedAt));
             }
 
@@ -113,7 +113,7 @@ public sealed class ChannelHistoryController : ControllerBase
             {
                 messages.Add(new ChannelHistoryMessage(
                     $"{slice.Session.SessionId}:{messageIndex}",
-                    slice.Session.SessionId,
+                    slice.Session.SessionId.Value,
                     entry.Role,
                     StripControlTags(entry.Content),
                     entry.Timestamp,
@@ -173,7 +173,7 @@ public sealed class ChannelHistoryController : ControllerBase
 
         sessionIndex = sessions
             .Select((session, index) => new { session.SessionId, Index = index })
-            .Where(candidate => string.Equals(candidate.SessionId, sessionId, StringComparison.Ordinal))
+            .Where(candidate => string.Equals(candidate.SessionId.Value, sessionId, StringComparison.Ordinal))
             .Select(candidate => candidate.Index)
             .DefaultIfEmpty(-1)
             .First();

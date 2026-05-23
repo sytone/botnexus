@@ -79,7 +79,7 @@ public sealed class MemoryIndexer(
         IMemoryStore store,
         CancellationToken ct)
     {
-        var existing = await store.GetBySessionAsync(sessionId, int.MaxValue, ct).ConfigureAwait(false);
+        var existing = await store.GetBySessionAsync(sessionId.Value, int.MaxValue, ct).ConfigureAwait(false);
         var indexedTurns = existing
             .Where(entry => entry.TurnIndex.HasValue)
             .Select(entry => entry.TurnIndex!.Value)

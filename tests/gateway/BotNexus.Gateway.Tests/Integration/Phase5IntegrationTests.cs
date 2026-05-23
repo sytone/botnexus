@@ -186,7 +186,7 @@ public sealed class Phase5IntegrationTests
             ChannelType = ChannelKey.From("web"),
             SenderId = "phase5-tester",
             ChannelAddress = ChannelAddress.From("phase5-live-conv"),
-            SessionId = BotNexus.Domain.Primitives.SessionId.From("phase5-live"),
+            SessionId = "phase5-live",
             Content = "Reply with a short greeting."
         });
 

@@ -96,7 +96,7 @@ public sealed class CompactionModelTests
         ]);
         await store.SaveAsync(session);
 
-        var reloaded = await fixture.CreateStore().GetAsync("s1");
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s1"));
 
         reloaded.ShouldNotBeNull();
         reloaded!.GetHistorySnapshot().Select(entry => entry.Content)
@@ -118,7 +118,7 @@ public sealed class CompactionModelTests
         ]);
         await store.SaveAsync(session);
 
-        var reloaded = await fixture.CreateStore().GetAsync("s1");
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s1"));
 
         reloaded.ShouldNotBeNull();
         reloaded!.GetHistorySnapshot().Select(entry => entry.Content)
@@ -137,7 +137,7 @@ public sealed class CompactionModelTests
         ]);
         await store.SaveAsync(session);
 
-        var reloaded = await fixture.CreateStore().GetAsync("s1");
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s1"));
 
         reloaded.ShouldNotBeNull();
         reloaded!.GetHistorySnapshot().Select(entry => entry.Content)

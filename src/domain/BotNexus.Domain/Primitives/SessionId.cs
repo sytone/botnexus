@@ -1,128 +1,104 @@
-using System.Text.Json.Serialization;
-using BotNexus.Domain.Serialization;
+using Vogen;
 
 namespace BotNexus.Domain.Primitives;
 
-[JsonConverter(typeof(SessionIdJsonConverter))]
 /// <summary>
-/// Represents struct.
+/// Identifies a single LLM-context-bounded session inside a <see cref="ConversationId"/>.
+/// Construct via <see cref="From(string)"/> for existing values, <see cref="Create"/> for a
+/// new generic session, or one of the role-specific factories below for the structured-id
+/// flavours (sub-agent, agent-agent, soul, cross-agent). The value must be non-null,
+/// non-empty, non-whitespace and is stored trimmed.
 /// </summary>
-public readonly record struct SessionId(string Value) : IComparable<SessionId>
+/// <remarks>
+/// The structured factory outputs (<c>...::subagent::...</c>, <c>...::agent-agent::...</c>,
+/// <c>...::soul::yyyy-MM-dd</c>, <c>xagent::...::...</c>) are part of the persisted wire
+/// format and have format-pinning tests; do not change their shape without coordinated
+/// migration.
+/// </remarks>
+[ValueObject<string>(conversions: Conversions.SystemTextJson)]
+public readonly partial struct SessionId
 {
     /// <summary>
-    /// Executes from.
+    /// Creates a new unique <see cref="SessionId"/> using a 32-character N-formatted GUID.
     /// </summary>
-    /// <param name="value">The value.</param>
-    /// <returns>The from result.</returns>
-    public static SessionId From(string value) =>
-        string.IsNullOrWhiteSpace(value)
-            ? throw new ArgumentException("SessionId cannot be empty", nameof(value))
-            : new(value.Trim());
+    public static SessionId Create() => From(Guid.NewGuid().ToString("N"));
 
     /// <summary>
-    /// Executes create.
+    /// Creates the canonical sub-agent session id <c>{parent}::subagent::{uniqueId}</c>.
     /// </summary>
-    /// <returns>The create result.</returns>
-    public static SessionId Create() => new(Guid.NewGuid().ToString("N"));
-
-    /// <summary>
-    /// Executes for sub agent.
-    /// </summary>
-    /// <param name="parentId">The parent id.</param>
-    /// <param name="uniqueId">The unique id.</param>
-    /// <returns>The for sub agent result.</returns>
     public static SessionId ForSubAgent(string parentId, string uniqueId)
     {
-        var parentSessionId = From(parentId);
+        var parent = From(parentId);
         if (string.IsNullOrWhiteSpace(uniqueId))
             throw new ArgumentException("Sub-agent unique ID cannot be empty", nameof(uniqueId));
 
-        return new($"{parentSessionId.Value}::subagent::{uniqueId.Trim()}");
+        return From($"{parent.Value}::subagent::{uniqueId.Trim()}");
     }
 
     /// <summary>
-    /// Executes for sub agent.
+    /// Convenience overload of <see cref="ForSubAgent(string, string)"/> taking a
+    /// typed parent <see cref="SessionId"/>.
     /// </summary>
-    /// <param name="parentId">The parent id.</param>
-    /// <param name="uniqueId">The unique id.</param>
-    /// <returns>The for sub agent result.</returns>
     public static SessionId ForSubAgent(SessionId parentId, string uniqueId)
         => ForSubAgent(parentId.Value, uniqueId);
 
     /// <summary>
-    /// Executes for agent conversation.
+    /// Creates the canonical agent-to-agent session id
+    /// <c>{initiator}::agent-agent::{target}::{uniqueId}</c>.
     /// </summary>
-    /// <param name="initiatorId">The initiator id.</param>
-    /// <param name="targetId">The target id.</param>
-    /// <param name="uniqueId">The unique id.</param>
-    /// <returns>The for agent conversation result.</returns>
     public static SessionId ForAgentConversation(AgentId initiatorId, AgentId targetId, string uniqueId)
     {
         if (string.IsNullOrWhiteSpace(uniqueId))
             throw new ArgumentException("Conversation unique ID cannot be empty", nameof(uniqueId));
 
-        return new($"{initiatorId}::agent-agent::{targetId}::{uniqueId.Trim()}");
+        return From($"{initiatorId.Value}::agent-agent::{targetId.Value}::{uniqueId.Trim()}");
     }
 
     /// <summary>
-    /// Executes for soul.
+    /// Creates the canonical soul session id <c>{agent}::soul::yyyy-MM-dd</c>.
     /// </summary>
-    /// <param name="agentId">The agent id.</param>
-    /// <param name="date">The date.</param>
-    /// <returns>The for soul result.</returns>
     public static SessionId ForSoul(AgentId agentId, DateOnly date)
-    {
-        return new($"{agentId.Value}::soul::{date:yyyy-MM-dd}");
-    }
+        => From($"{agentId.Value}::soul::{date:yyyy-MM-dd}");
 
     /// <summary>
-    /// Executes for soul.
+    /// Convenience overload that derives the UTC date from a <see cref="DateTimeOffset"/>.
     /// </summary>
-    /// <param name="agentId">The agent id.</param>
-    /// <param name="timestampUtc">The timestamp utc.</param>
-    /// <returns>The for soul result.</returns>
     public static SessionId ForSoul(AgentId agentId, DateTimeOffset timestampUtc)
         => ForSoul(agentId, DateOnly.FromDateTime(timestampUtc.UtcDateTime));
 
     /// <summary>
-    /// Executes for cross agent.
+    /// Creates the canonical cross-agent (legacy) session id
+    /// <c>xagent::{source}::{target}</c>. New code should prefer
+    /// <see cref="ForAgentConversation"/> backed by a real Conversation; this overload
+    /// stays for back-compat reads.
     /// </summary>
-    /// <param name="sourceId">The source id.</param>
-    /// <param name="targetId">The target id.</param>
-    /// <returns>The for cross agent result.</returns>
     public static SessionId ForCrossAgent(string sourceId, string targetId)
     {
-        var sourceSessionId = From(sourceId);
-        var targetSessionId = From(targetId);
-        return new($"xagent::{sourceSessionId.Value}::{targetSessionId.Value}");
+        var source = From(sourceId);
+        var target = From(targetId);
+        return From($"xagent::{source.Value}::{target.Value}");
     }
 
+    /// <summary>
+    /// True when this id matches the <see cref="ForSubAgent(string, string)"/> shape.
+    /// </summary>
     public bool IsSubAgent => Value.Contains("::subagent::", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// True when this id matches the <see cref="ForAgentConversation"/> shape.
+    /// </summary>
     public bool IsAgentConversation => Value.Contains("::agent-agent::", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// True when this id matches the <see cref="ForSoul(AgentId, DateOnly)"/> shape.
+    /// </summary>
     public bool IsSoul => Value.Contains("::soul::", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>
-    /// Performs the declared conversion or operator operation.
-    /// </summary>
-    /// <param name="id">The id.</param>
-    /// <returns>The operator string result.</returns>
-    public static implicit operator string(SessionId id) => id.Value;
-    /// <summary>
-    /// Performs the declared conversion or operator operation.
-    /// </summary>
-    /// <param name="value">The value.</param>
-    /// <returns>The operator session id result.</returns>
-    public static implicit operator SessionId(string value) => From(value);
+    private static Validation Validate(string value) =>
+        string.IsNullOrWhiteSpace(value)
+            ? Validation.Invalid("SessionId cannot be null, empty, or whitespace.")
+            : Validation.Ok;
 
-    /// <summary>
-    /// Executes to string.
-    /// </summary>
-    /// <returns>The to string result.</returns>
-    public override string ToString() => Value;
-    /// <summary>
-    /// Executes compare to.
-    /// </summary>
-    /// <param name="other">The other.</param>
-    /// <returns>The compare to result.</returns>
-    public int CompareTo(SessionId other) => string.Compare(Value, other.Value, StringComparison.Ordinal);
+    private static string NormalizeInput(string input) =>
+        input is null ? input! : input.Trim();
 }

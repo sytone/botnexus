@@ -54,7 +54,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
 
         await store.SaveAsync(session);
 
-        var reloaded = await fixture.CreateStore().GetAsync("compaction-persist");
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("compaction-persist"));
 
         reloaded.ShouldNotBeNull();
         reloaded!.History.Count().ShouldBe(11);
@@ -82,7 +82,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         ]);
 
         await store.SaveAsync(session);
-        var reloaded = await fixture.CreateStore().GetAsync("multi-compaction");
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("multi-compaction"));
 
         reloaded.ShouldNotBeNull();
         reloaded!.History.Select(entry => entry.Content)
@@ -143,7 +143,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
             session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = $"after-{i}" });
 
         await store.SaveAsync(session);
-        var reloaded = await fixture.CreateStore().GetAsync("sqlite-compaction");
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("sqlite-compaction"));
 
         reloaded.ShouldNotBeNull();
         reloaded!.History.Count().ShouldBe(11);
@@ -271,7 +271,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
 
         await store.SaveAsync(session);
 
-        await store.ArchiveAsync(sessionId);
+        await store.ArchiveAsync(SessionId.From(sessionId));
         var newSession = await store.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From("agent-a"));
 
         Directory.GetFiles(storePath, $"{encodedSessionId}.jsonl.archived.*").ShouldHaveSingleItem();
@@ -422,7 +422,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
 
     private static GatewaySession BuildCompactionSession()
     {
-        var session = new GatewaySession { SessionId = Guid.NewGuid().ToString("N"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a") };
+        var session = new GatewaySession { SessionId = SessionId.From(Guid.NewGuid().ToString("N")), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a") };
         session.AddEntries(
         [
             new SessionEntry { Role = MessageRole.User, Content = "older-user" },

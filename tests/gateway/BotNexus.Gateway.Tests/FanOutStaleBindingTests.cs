@@ -44,7 +44,7 @@ public sealed class FanOutStaleBindingTests
             SenderId = "sender-1",
             ChannelAddress = ChannelAddress.From(conversationId),
             Content = content,
-            SessionId = SessionId.From(sessionId),
+            SessionId = sessionId,
             Metadata = new Dictionary<string, object?>()
         };
 

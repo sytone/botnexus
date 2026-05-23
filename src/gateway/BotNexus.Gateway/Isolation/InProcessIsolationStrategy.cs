@@ -367,7 +367,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             GenerationSettings: new SimpleStreamOptions(),
             SteeringMode: QueueMode.All,
             FollowUpMode: QueueMode.All,
-            SessionId: context.SessionId,
+            SessionId: context.SessionId.Value,
             ToolTimeout: ResolveToolTimeout(descriptor));
 
         var agent = new BotNexus.Agent.Core.Agent(options);

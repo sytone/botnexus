@@ -203,7 +203,7 @@ public sealed class SessionSwitchingTests : IAsyncDisposable
         await connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, sessionB, cts.Token);
 
         var store = factory.Services.GetRequiredService<ISessionStore>();
-        var first = await store.GetAsync(sessionA, cts.Token);
+        var first = await store.GetAsync(SessionId.From(sessionA), cts.Token);
         first.ShouldNotBeNull();
         first!.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "hello a" });
         await store.SaveAsync(first, cts.Token);

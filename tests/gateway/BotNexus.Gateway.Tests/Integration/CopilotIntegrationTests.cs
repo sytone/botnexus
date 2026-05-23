@@ -79,7 +79,7 @@ public sealed class CopilotIntegrationTests
         if (ShouldSkipForLiveIssue(harness.Activity))
             return;
 
-        var session = await harness.Sessions.GetAsync("integration-session");
+        var session = await harness.Sessions.GetAsync(SessionId.From("integration-session"));
         session.ShouldNotBeNull();
         session!.History.Select(entry => entry.Role).ToList().ShouldBe(new[] {
             MessageRole.User,
@@ -104,7 +104,7 @@ public sealed class CopilotIntegrationTests
         if (ShouldSkipForLiveIssue(harness.Activity))
             return;
 
-        var session = await harness.Sessions.GetAsync("integration-session");
+        var session = await harness.Sessions.GetAsync(SessionId.From("integration-session"));
         var assistantContent = session?.History.LastOrDefault(entry => entry.Role == MessageRole.Assistant)?.Content;
         assistantContent.ShouldNotBeNullOrWhiteSpace();
         assistantContent.ShouldBe(string.Concat(harness.Channel.StreamDeltas));
@@ -215,7 +215,7 @@ public sealed class CopilotIntegrationTests
             SenderId = "integration-user",
             ChannelAddress = ChannelAddress.From("copilot-integration-conversation"),
             Content = content,
-            SessionId = BotNexus.Domain.Primitives.SessionId.From("integration-session")
+            SessionId = "integration-session"
         };
 
     private static CopilotAuth? TryLoadAuth()

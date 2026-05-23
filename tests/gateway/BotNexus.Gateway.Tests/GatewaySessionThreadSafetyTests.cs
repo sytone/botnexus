@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Gateway.Tests;
@@ -177,6 +178,6 @@ public sealed class GatewaySessionThreadSafetyTests
     }
 
     private static GatewaySession CreateSession()
-        => new() { SessionId = $"session-{Guid.NewGuid():N}", AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a") };
+        => new() { SessionId = SessionId.From($"session-{Guid.NewGuid():N}"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a") };
 }
 

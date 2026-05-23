@@ -1,4 +1,5 @@
 ﻿using System.Reflection;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Sessions;
@@ -256,7 +257,7 @@ public sealed class LlmSessionCompactorTests
     {
         var session = new GatewaySession
         {
-            SessionId = Guid.NewGuid().ToString("N"),
+            SessionId = SessionId.From(Guid.NewGuid().ToString("N")),
             AgentId = BotNexus.Domain.Primitives.AgentId.From("agent")
         };
 

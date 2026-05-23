@@ -94,7 +94,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         if (maxConcurrent > 0)
         {
             var activeCount = _subAgents.Values.Count(info =>
-                string.Equals(info.ParentSessionId, request.ParentSessionId, StringComparison.OrdinalIgnoreCase) &&
+                info.ParentSessionId == request.ParentSessionId &&
                 info.Status == SubAgentStatus.Running);
 
             if (activeCount >= maxConcurrent)
@@ -223,7 +223,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         if (!_subAgents.TryGetValue(subAgentId, out var info))
             return false;
 
-        if (!string.Equals(info.ParentSessionId, requestingSessionId, StringComparison.OrdinalIgnoreCase))
+        if (info.ParentSessionId != requestingSessionId)
             return false;
 
         if (info.Status is SubAgentStatus.Completed or SubAgentStatus.Failed or SubAgentStatus.Killed or SubAgentStatus.TimedOut)
@@ -359,7 +359,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 ChannelType = ChannelKey.From("internal"),
                 SenderId = $"subagent:{subAgentId}",
                 ChannelAddress = ChannelAddress.From(updated.ParentSessionId.Value),
-                SessionId = updated.ParentSessionId,
+                SessionId = updated.ParentSessionId.Value,
                 TargetAgentId = parentAgentId.Value,
                 Content = followUp,
                 Metadata = new Dictionary<string, object?>
@@ -399,7 +399,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 var session = await _sessionStore.GetAsync(handle.SessionId, timeoutCts.Token).ConfigureAwait(false);
                 if (session is not null)
                 {
-                    session.Session.ConversationId = new BotNexus.Domain.Primitives.ConversationId(inheritedConversationId);
+                    session.Session.ConversationId = ConversationId.From(inheritedConversationId);
                     await _sessionStore.SaveAsync(session, timeoutCts.Token).ConfigureAwait(false);
                 }
             }
@@ -491,7 +491,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             {
                 Type = type,
                 AgentId = parentAgentId,
-                SessionId = info.ParentSessionId,
+                SessionId = info.ParentSessionId.Value,
                 Message = message,
                 Data = new Dictionary<string, object?>
                 {

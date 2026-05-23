@@ -185,7 +185,7 @@ public sealed class StreamingPipelineTests
             SenderId = "sender-1",
             ChannelAddress = ChannelAddress.From("conv-1"),
             Content = content,
-            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-1")
+            SessionId = "session-1"
         };
 
     private static async IAsyncEnumerable<AgentStreamEvent> ToAsyncEnumerable(IEnumerable<AgentStreamEvent> events)

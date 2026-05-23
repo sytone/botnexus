@@ -35,7 +35,7 @@ public sealed class SubAgentIntegrationTests
         var manager = CreateManager(supervisor.Object, registry.Object);
 
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
-        var listed = await manager.ListAsync("parent-session");
+        var listed = await manager.ListAsync(SessionId.From("parent-session"));
 
         listed.Where(info => info.SubAgentId == spawned.SubAgentId).ShouldHaveSingleItem();
     }
@@ -83,7 +83,7 @@ public sealed class SubAgentIntegrationTests
         var manager = CreateManager(supervisor.Object, registry.Object);
 
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
-        var killed = await manager.KillAsync(spawned.SubAgentId, "different-session");
+        var killed = await manager.KillAsync(spawned.SubAgentId, SessionId.From("different-session"));
         var updated = await manager.GetAsync(spawned.SubAgentId);
 
         killed.ShouldBeFalse();

@@ -17,7 +17,7 @@ public sealed class SqliteSessionStoreTests
 
         var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
         await store.SaveAsync(session);
-        var reloaded = await fixture.CreateStore().GetAsync("s1");
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s1"));
 
         reloaded.ShouldNotBeNull();
         reloaded!.SessionId.Value.ShouldBe("s1");
@@ -29,7 +29,7 @@ public sealed class SqliteSessionStoreTests
     {
         using var fixture = new StoreFixture();
 
-        var missing = await fixture.CreateStore().GetAsync("missing");
+        var missing = await fixture.CreateStore().GetAsync(SessionId.From("missing"));
 
         missing.ShouldBeNull();
     }
@@ -44,7 +44,7 @@ public sealed class SqliteSessionStoreTests
         session.History.Add(new SessionEntry { Role = MessageRole.User, Content = "hello" });
 
         await store.SaveAsync(session);
-        var reloaded = await fixture.CreateStore().GetAsync("s1");
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s1"));
 
         reloaded.ShouldNotBeNull();
         reloaded!.History.Where(e => e.Content == "hello").ShouldHaveSingleItem();
@@ -67,7 +67,7 @@ public sealed class SqliteSessionStoreTests
         session.Status = BotNexus.Gateway.Abstractions.Models.SessionStatus.Suspended;
         await store.SaveAsync(session);
 
-        var reloaded = await fixture.CreateStore().GetAsync("s1");
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s1"));
         reloaded.ShouldNotBeNull();
         reloaded!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Suspended);
         reloaded.ChannelType.ShouldBe(ChannelKey.From("signalr"));
@@ -93,7 +93,7 @@ public sealed class SqliteSessionStoreTests
 
         await store.SaveAsync(session);
 
-        var reloaded = await fixture.CreateStore().GetAsync("s1");
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s1"));
         reloaded.ShouldNotBeNull();
         reloaded!.GetHistorySnapshot().Select(entry => entry.Content)
             .ToList().ShouldBe(new[] { "boot", "hello", "world" });
@@ -109,7 +109,7 @@ public sealed class SqliteSessionStoreTests
 
         await store.DeleteAsync(SessionId.From("s1"));
 
-        (await fixture.CreateStore().GetAsync("s1")).ShouldBeNull();
+        (await fixture.CreateStore().GetAsync(SessionId.From("s1"))).ShouldBeNull();
     }
 
     [Fact]
@@ -160,7 +160,7 @@ public sealed class SqliteSessionStoreTests
 
         await store.ArchiveAsync(SessionId.From("s1"));
 
-        var reloaded = await fixture.CreateStore().GetAsync("s1");
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s1"));
         reloaded.ShouldNotBeNull();
         reloaded!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
         reloaded.History.ShouldContain(entry => entry.Content == "keep-me");
@@ -251,7 +251,7 @@ public sealed class SqliteSessionStoreTests
                 session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = $"m-{i}" });
                 session.Metadata["index"] = i;
                 await store.SaveAsync(session);
-                return await store.GetAsync(sessionId);
+                return await store.GetAsync(SessionId.From(sessionId));
             });
 
         var reloaded = await Task.WhenAll(operations);
@@ -465,7 +465,7 @@ public sealed class SqliteSessionStoreTests
         ]);
 
         await store.SaveAsync(session);
-        var reloaded = await fixture.CreateStore().GetAsync("s-tool");
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s-tool"));
 
         reloaded.ShouldNotBeNull();
         var startEntry = reloaded!.History.First(e => e.ToolArgs is not null);
@@ -483,7 +483,7 @@ public sealed class SqliteSessionStoreTests
         session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = "fail", ToolName = "run", ToolCallId = "tc2", ToolIsError = true });
 
         await store.SaveAsync(session);
-        var reloaded = await fixture.CreateStore().GetAsync("s-iserr");
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s-iserr"));
 
         reloaded.ShouldNotBeNull();
         reloaded!.History.ShouldHaveSingleItem();
@@ -499,7 +499,7 @@ public sealed class SqliteSessionStoreTests
         session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = "ok", ToolName = "run", ToolCallId = "tc3", ToolIsError = false });
 
         await store.SaveAsync(session);
-        var reloaded = await fixture.CreateStore().GetAsync("s-noerr");
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s-noerr"));
 
         reloaded.ShouldNotBeNull();
         reloaded!.History[0].ToolIsError.ShouldBeFalse();
@@ -515,7 +515,7 @@ public sealed class SqliteSessionStoreTests
         session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = "started", ToolName = "fn", ToolCallId = "tc4", ToolArgs = args });
 
         await store.SaveAsync(session);
-        var reloaded = await fixture.CreateStore().GetAsync("s-toolargs");
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s-toolargs"));
 
         reloaded.ShouldNotBeNull();
         reloaded!.History[0].ToolArgs.ShouldBe(args);
@@ -576,7 +576,7 @@ public sealed class SqliteSessionStoreTests
         columns.ShouldContain("tool_is_error");
 
         // And values were saved
-        var reloaded = await fixture.CreateStore().GetAsync("s-migrate");
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s-migrate"));
         reloaded.ShouldNotBeNull();
         reloaded!.History[0].ToolArgs.ShouldBe("{}");
     }

@@ -32,12 +32,10 @@ public sealed class SessionStoreEdgeCaseTests
     public void SessionId_NullAndEmpty_AreRejectedByValueObject()
     {
         // Validation previously enforced by FileSessionStore has moved into the
-        // SessionId value object; bad ids never reach the store. SessionId is still hand-rolled
-        // and throws ArgumentException; the Vogen migration of SessionId will switch this to
-        // ValueObjectValidationException in a later batch.
-        Should.Throw<ArgumentException>(() => SessionId.From(null!));
-        Should.Throw<ArgumentException>(() => SessionId.From(string.Empty));
-        Should.Throw<ArgumentException>(() => SessionId.From("   "));
+        // SessionId Vogen value object; bad ids never reach the store.
+        Should.Throw<Vogen.ValueObjectValidationException>(() => SessionId.From(null!));
+        Should.Throw<Vogen.ValueObjectValidationException>(() => SessionId.From(string.Empty));
+        Should.Throw<Vogen.ValueObjectValidationException>(() => SessionId.From("   "));
     }
 
     [Fact]

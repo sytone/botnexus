@@ -68,7 +68,7 @@ public sealed class AgentPromptAction : ICronAction
                 triggerRequest)
             .ConfigureAwait(false);
 
-        context.RecordSessionId(sessionId);
+        context.RecordSessionId(sessionId.Value);
 
         // Surface the resolved conversation ID back to the execution context so the
         // scheduler can persist it to the job record, eliminating the lookup on future runs.
