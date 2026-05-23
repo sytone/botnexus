@@ -85,9 +85,9 @@ public sealed class DefaultSubAgentManagerTests
 
         var manager = CreateScaffoldManager(supervisor.Object);
 
-        _ = await manager.SpawnAsync(CreateSpawnRequest(parentSessionId: "parent-a"));
-        _ = await manager.SpawnAsync(CreateSpawnRequest(parentSessionId: "parent-a"));
-        _ = await manager.SpawnAsync(CreateSpawnRequest(parentSessionId: "parent-b"));
+        _ = await manager.SpawnAsync(CreateSpawnRequest(parentSessionId: SessionId.From("parent-a")));
+        _ = await manager.SpawnAsync(CreateSpawnRequest(parentSessionId: SessionId.From("parent-a")));
+        _ = await manager.SpawnAsync(CreateSpawnRequest(parentSessionId: SessionId.From("parent-b")));
 
         var result = await manager.ListAsync(SessionId.From("parent-a"));
 

@@ -545,7 +545,7 @@ public sealed class SessionsControllerTests
 
         await controller.PatchMetadata("s1", patchDocument.RootElement.Clone(), CancellationToken.None);
 
-        var savedSession = await store.GetAsync("s1", CancellationToken.None);
+        var savedSession = await store.GetAsync(SessionId.From("s1"), CancellationToken.None);
         savedSession.ShouldNotBeNull();
         savedSession!.Metadata.ShouldContainKeyAndValue("locale", (object?)"en-US");
     }
@@ -657,7 +657,7 @@ public sealed class SessionsControllerTests
 
         await controller.Seal("parent::subagent::child5", CancellationToken.None);
 
-        var saved = await store.GetAsync("parent::subagent::child5", CancellationToken.None);
+        var saved = await store.GetAsync(SessionId.From("parent::subagent::child5"), CancellationToken.None);
         saved.ShouldNotBeNull();
         saved!.Status.ShouldBe(SessionStatus.Sealed);
     }
@@ -714,7 +714,7 @@ public sealed class SessionsControllerTests
 
         await controller.Seal("parent::subagent::preserve1", CancellationToken.None);
 
-        var saved = await store.GetAsync("parent::subagent::preserve1", CancellationToken.None);
+        var saved = await store.GetAsync(SessionId.From("parent::subagent::preserve1"), CancellationToken.None);
         saved.ShouldNotBeNull();
         saved!.Status.ShouldBe(SessionStatus.Sealed);
         saved.CreatedAt.ShouldBe(originalCreatedAt);

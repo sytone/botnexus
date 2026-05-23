@@ -641,7 +641,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         resetPayload.GetProperty("agentId").GetString().ShouldBe(TestAgentId);
 
         var store = factory.Services.GetRequiredService<ISessionStore>();
-        var session = await store.GetAsync(sessionId, cts.Token);
+        var session = await store.GetAsync(SessionId.From(sessionId), cts.Token);
         session.ShouldBeNull();
     }
 

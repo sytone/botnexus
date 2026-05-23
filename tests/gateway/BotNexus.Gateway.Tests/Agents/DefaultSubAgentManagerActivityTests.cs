@@ -61,7 +61,7 @@ public sealed class DefaultSubAgentManagerActivityTests
         var manager = CreateManager(CreateHangingHandle(), out _, out var activity);
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
 
-        var killed = await manager.KillAsync(spawned.SubAgentId, "parent-session");
+        var killed = await manager.KillAsync(spawned.SubAgentId, SessionId.From("parent-session"));
 
         killed.ShouldBeTrue();
         await WaitUntilAsync(() => activity.Activities.Any(HasLifecycleEvent("subagent_killed")), TimeSpan.FromSeconds(2));

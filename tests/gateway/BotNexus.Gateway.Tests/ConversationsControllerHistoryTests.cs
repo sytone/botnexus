@@ -255,17 +255,17 @@ public sealed class ConversationsControllerHistoryTests
         var conversationId = ConversationId.From("c_archive_seals_all_linked_sessions");
         var sessions = new InMemorySessionStore();
 
-        var firstLinked = await sessions.GetOrCreateAsync("s-linked-1", AgentId.From("assistant"));
+        var firstLinked = await sessions.GetOrCreateAsync(SessionId.From("s-linked-1"), AgentId.From("assistant"));
         firstLinked.Session.ConversationId = conversationId;
         firstLinked.Status = BotNexus.Gateway.Abstractions.Models.SessionStatus.Active;
         await sessions.SaveAsync(firstLinked);
 
-        var secondLinked = await sessions.GetOrCreateAsync("s-linked-2", AgentId.From("assistant"));
+        var secondLinked = await sessions.GetOrCreateAsync(SessionId.From("s-linked-2"), AgentId.From("assistant"));
         secondLinked.Session.ConversationId = conversationId;
         secondLinked.Status = BotNexus.Gateway.Abstractions.Models.SessionStatus.Suspended;
         await sessions.SaveAsync(secondLinked);
 
-        var unrelated = await sessions.GetOrCreateAsync("s-unrelated", AgentId.From("assistant"));
+        var unrelated = await sessions.GetOrCreateAsync(SessionId.From("s-unrelated"), AgentId.From("assistant"));
         unrelated.Session.ConversationId = ConversationId.From("c_other");
         unrelated.Status = BotNexus.Gateway.Abstractions.Models.SessionStatus.Active;
         await sessions.SaveAsync(unrelated);
@@ -277,9 +277,9 @@ public sealed class ConversationsControllerHistoryTests
         var result = await controller.Archive(conversationId.Value, CancellationToken.None);
 
         result.ShouldBeOfType<NoContentResult>();
-        (await sessions.GetAsync("s-linked-1"))!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
-        (await sessions.GetAsync("s-linked-2"))!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
-        (await sessions.GetAsync("s-unrelated"))!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Active);
+        (await sessions.GetAsync(SessionId.From("s-linked-1")))!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
+        (await sessions.GetAsync(SessionId.From("s-linked-2")))!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
+        (await sessions.GetAsync(SessionId.From("s-unrelated")))!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Active);
     }
 
     [Fact]

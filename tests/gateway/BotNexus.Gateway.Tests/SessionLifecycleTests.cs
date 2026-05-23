@@ -114,7 +114,7 @@ public sealed class SessionLifecycleTests
         session.ExpiresAt = DateTimeOffset.UtcNow.AddHours(1);
         await store.SaveAsync(session);
 
-        var reloaded = await fixture.CreateStore().GetAsync("s1");
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s1"));
 
         reloaded!.Status.ShouldBe(SessionStatus.Suspended);
         reloaded.ExpiresAt!.Value.ShouldBe(session.ExpiresAt!.Value, TimeSpan.FromSeconds(1));

@@ -736,7 +736,7 @@ public sealed class CronSchedulerTests
 
         public Task ExecuteAsync(CronExecutionContext context, CancellationToken cancellationToken = default)
         {
-            context.RecordSessionId(SessionId.From(sessionId));
+            context.RecordSessionId(sessionId);
             return Task.CompletedTask;
         }
     }

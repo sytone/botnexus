@@ -286,7 +286,7 @@ public sealed class ProbeRound3GatewayTests
         var conversationStore = new InMemoryConversationStore();
         var sessionStore = new InMemorySessionStore();
         var conv = await conversationStore.CreateAsync(MakeConversation("to-archive"));
-        var session = await sessionStore.GetOrCreateAsync("cron:job-1:run", conv.AgentId);
+        var session = await sessionStore.GetOrCreateAsync(SessionId.From("cron:job-1:run"), conv.AgentId);
         conv.ActiveSessionId = session.SessionId;
         await conversationStore.SaveAsync(conv);
         var controller = CreateConvController(conversationStore, sessionStore);

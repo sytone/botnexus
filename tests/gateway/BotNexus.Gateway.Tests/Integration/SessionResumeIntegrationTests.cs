@@ -71,7 +71,7 @@ public sealed class SessionResumeIntegrationTests : IDisposable
 
         var result = await connection.InvokeAsync<JsonElement>("JoinSession", TestAgentId, "expired-join", cts.Token);
         var store = factory.Services.GetRequiredService<ISessionStore>();
-        var reloaded = await store.GetAsync("expired-join", cts.Token);
+        var reloaded = await store.GetAsync(SessionId.From("expired-join"), cts.Token);
 
         result.GetProperty("isResumed").GetBoolean().ShouldBeTrue();
         result.GetProperty("status").GetString().ShouldBe(SessionStatus.Active.ToString());
@@ -117,14 +117,14 @@ public sealed class SessionResumeIntegrationTests : IDisposable
         var first = await store.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From("agent-a"));
         first.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "first-history" });
         await store.SaveAsync(first);
-        await store.ArchiveAsync(sessionId);
+        await store.ArchiveAsync(SessionId.From(sessionId));
 
         await Task.Delay(1100);
 
         var second = await store.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From("agent-a"));
         second.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "second-history" });
         await store.SaveAsync(second);
-        await store.ArchiveAsync(sessionId);
+        await store.ArchiveAsync(SessionId.From(sessionId));
 
         var active = await store.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From("agent-a"));
         active.History.ShouldBeEmpty();
@@ -246,8 +246,8 @@ public sealed class SessionResumeIntegrationTests : IDisposable
         session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "hello" });
         await store.SaveAsync(session);
 
-        await store.ArchiveAsync(sessionId);
-        Func<Task> act = async () => await store.DeleteAsync(sessionId);
+        await store.ArchiveAsync(SessionId.From(sessionId));
+        Func<Task> act = async () => await store.DeleteAsync(SessionId.From(sessionId));
 
         await act.ShouldNotThrowAsync();
         File.Exists(Path.Combine(storePath, $"{encodedSessionId}.jsonl")).ShouldBeFalse();
@@ -276,7 +276,7 @@ public sealed class SessionResumeIntegrationTests : IDisposable
         ]);
 
         var store = CreateFileStore(storePath);
-        var loaded = await store.GetAsync(sessionId);
+        var loaded = await store.GetAsync(SessionId.From(sessionId));
 
         loaded.ShouldNotBeNull();
         loaded!.History.Count().ShouldBe(2);
@@ -300,7 +300,7 @@ public sealed class SessionResumeIntegrationTests : IDisposable
         await File.WriteAllTextAsync(historyPath, string.Empty);
 
         var store = CreateFileStore(storePath);
-        var loaded = await store.GetAsync(sessionId);
+        var loaded = await store.GetAsync(SessionId.From(sessionId));
 
         loaded.ShouldNotBeNull();
         loaded!.History.ShouldBeEmpty();
@@ -319,7 +319,7 @@ public sealed class SessionResumeIntegrationTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(storePath, $"{encoded}.jsonl"), """{"role":"user","content":"orphan"}""");
 
         var store = CreateFileStore(storePath);
-        var loaded = await store.GetAsync(sessionId);
+        var loaded = await store.GetAsync(SessionId.From(sessionId));
 
         loaded.ShouldBeNull();
     }
@@ -336,7 +336,7 @@ public sealed class SessionResumeIntegrationTests : IDisposable
         session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "hello 🌍" });
         await store.SaveAsync(session);
 
-        var reloaded = await CreateFileStore(storePath).GetAsync(sessionId);
+        var reloaded = await CreateFileStore(storePath).GetAsync(SessionId.From(sessionId));
 
         File.Exists(Path.Combine(storePath, $"{encoded}.jsonl")).ShouldBeTrue();
         File.Exists(Path.Combine(storePath, $"{encoded}.meta.json")).ShouldBeTrue();

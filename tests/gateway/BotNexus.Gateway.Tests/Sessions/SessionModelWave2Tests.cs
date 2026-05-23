@@ -215,6 +215,6 @@ public sealed class SessionModelWave2Tests
     }
 
     private static GatewaySession CreateSession()
-        => new() { SessionId = $"s-{Guid.NewGuid():N}", AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a") };
+        => new() { SessionId = SessionId.From($"s-{Guid.NewGuid():N}"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a") };
 }
 
