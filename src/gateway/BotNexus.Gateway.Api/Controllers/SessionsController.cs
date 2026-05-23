@@ -127,7 +127,8 @@ public sealed class SessionsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult> KillSubAgent(string sessionId, string subAgentId, CancellationToken cancellationToken)
     {
-        var session = await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken);
+        var typedSessionId = SessionId.From(sessionId);
+        var session = await _sessions.GetAsync(typedSessionId, cancellationToken);
         if (session is null)
             return NotFound();
 
@@ -135,10 +136,10 @@ public sealed class SessionsController : ControllerBase
         if (subAgent is null)
             return NotFound();
 
-        if (!string.Equals(subAgent.ParentSessionId, sessionId, StringComparison.OrdinalIgnoreCase))
+        if (subAgent.ParentSessionId != typedSessionId)
             return StatusCode(StatusCodes.Status403Forbidden, new { error = "Sub-agent does not belong to the requested session." });
 
-        var killed = await _subAgentManager.KillAsync(subAgentId, SessionId.From(sessionId), cancellationToken);
+        var killed = await _subAgentManager.KillAsync(subAgentId, typedSessionId, cancellationToken);
         if (!killed)
             return NotFound();
 

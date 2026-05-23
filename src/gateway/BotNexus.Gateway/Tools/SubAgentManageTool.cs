@@ -73,7 +73,7 @@ public sealed class SubAgentManageTool(
         var info = await subAgentManager.GetAsync(subAgentId, cancellationToken).ConfigureAwait(false);
         if (info is null)
             throw new KeyNotFoundException($"Sub-agent '{subAgentId}' was not found.");
-        if (!string.Equals(info.ParentSessionId, sessionId, StringComparison.OrdinalIgnoreCase))
+        if (info.ParentSessionId != sessionId)
             throw new UnauthorizedAccessException("Sub-agent does not belong to the current session.");
 
         var result = JsonSerializer.Serialize(new

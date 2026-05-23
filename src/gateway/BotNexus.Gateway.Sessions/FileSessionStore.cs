@@ -248,8 +248,8 @@ public sealed class FileSessionStore : SessionStoreBase
             cancellationToken).ConfigureAwait(false);
     }
 
-    private string GetHistoryPath(SessionId sessionId) => Path.Combine(_storePath, SessionFileNames.HistoryFileName(sessionId));
-    private string GetMetaPath(SessionId sessionId) => Path.Combine(_storePath, SessionFileNames.MetadataFileName(sessionId));
+    private string GetHistoryPath(SessionId sessionId) => Path.Combine(_storePath, SessionFileNames.HistoryFileName(sessionId.Value));
+    private string GetMetaPath(SessionId sessionId) => Path.Combine(_storePath, SessionFileNames.MetadataFileName(sessionId.Value));
 
     private sealed record SessionMeta(
         AgentId AgentId,

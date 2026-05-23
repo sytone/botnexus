@@ -75,7 +75,7 @@ public sealed class HeartbeatAction : ICronAction
                 })
             .ConfigureAwait(false);
 
-        context.RecordSessionId(sessionId);
+        context.RecordSessionId(sessionId.Value);
     }
 
     /// <summary>

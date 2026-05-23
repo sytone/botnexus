@@ -89,7 +89,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         {
             await Groups.AddToGroupAsync(
                 Context.ConnectionId,
-                GetSessionGroup(session.SessionId),
+                GetSessionGroup(SessionId.From(session.SessionId)),
                 Context.ConnectionAborted);
         }
 
