@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using Microsoft.Data.Sqlite;
@@ -84,6 +85,57 @@ public sealed class SqliteConversationStore : IConversationStore
             : "SELECT id FROM conversations WHERE agent_id = $agentId ORDER BY updated_at DESC";
         if (agentId is not null)
             command.Parameters.AddWithValue("$agentId", agentId.Value.Value);
+
+        var conversations = new List<Conversation>();
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            var id = reader.GetString(0);
+            Conversation conversation;
+            if (_cache.TryGetValue(id, out var cached))
+            {
+                conversation = CloneConversation(cached);
+            }
+            else
+            {
+                conversation = await LoadConversationAsync(connection, ConversationId.From(id), ct).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException($"Conversation '{id}' disappeared during enumeration.");
+                _cache[id] = CloneConversation(conversation);
+            }
+
+            conversations.Add(conversation);
+        }
+
+        return conversations;
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<Conversation>> ListForCitizenAsync(CitizenId citizen, CancellationToken ct = default)
+    {
+        if (!citizen.IsValid)
+            throw new ArgumentException("Citizen must be a valid (non-default) CitizenId.", nameof(citizen));
+
+        using var activity = ActivitySource.StartActivity("conversation.list_for_citizen", ActivityKind.Internal);
+        activity?.SetTag("botnexus.citizen.kind", citizen.Kind.ToString());
+        activity?.SetTag("botnexus.citizen", citizen.ToString());
+
+        await EnsureCreatedAsync(ct).ConfigureAwait(false);
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        // Union semantics: rows whose initiator matches, plus (only for Agent species) rows
+        // whose owning agent matches. The $isAgent flag short-circuits the owner-match for users.
+        command.CommandText = """
+            SELECT id FROM conversations
+            WHERE initiator = $initiator
+               OR ($isAgent = 1 AND agent_id = $agentMatch)
+            ORDER BY updated_at DESC
+            """;
+        command.Parameters.AddWithValue("$initiator", citizen.ToString());
+        command.Parameters.AddWithValue("$isAgent", citizen.Kind == CitizenKind.Agent ? 1 : 0);
+        command.Parameters.AddWithValue("$agentMatch",
+            citizen.Kind == CitizenKind.Agent ? (object)citizen.AsAgent!.Value.Value : DBNull.Value);
 
         var conversations = new List<Conversation>();
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
@@ -381,6 +433,7 @@ public sealed class SqliteConversationStore : IConversationStore
             await EnsurePurposeColumnAsync(connection, ct).ConfigureAwait(false);
             await EnsureInstructionsColumnAsync(connection, ct).ConfigureAwait(false);
             await EnsureCanvasHtmlColumnAsync(connection, ct).ConfigureAwait(false);
+            await EnsureInitiatorColumnAsync(connection, ct).ConfigureAwait(false);
 
             // One-time migration: archive stale signalr:connection-id conversations created
             // before binding-first routing (#148). Those conversations have a title matching
@@ -488,6 +541,58 @@ public sealed class SqliteConversationStore : IConversationStore
         await canvasAlterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 
+    private static async Task EnsureInitiatorColumnAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        await using var tableInfoCommand = connection.CreateCommand();
+        tableInfoCommand.CommandText = "PRAGMA table_info(conversations);";
+
+        var hasColumn = false;
+        await using (var reader = await tableInfoCommand.ExecuteReaderAsync(ct).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                if (string.Equals(reader.GetString(1), "initiator", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasColumn = true;
+                    break;
+                }
+            }
+        }
+
+        if (!hasColumn)
+        {
+            await using var alterCommand = connection.CreateCommand();
+            alterCommand.CommandText = "ALTER TABLE conversations ADD COLUMN initiator TEXT;";
+            await alterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+
+        // Always ensure the index exists (cheap when present).
+        await using var indexCommand = connection.CreateCommand();
+        indexCommand.CommandText = "CREATE INDEX IF NOT EXISTS idx_conversations_initiator ON conversations(initiator);";
+        await indexCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Persistence form for <see cref="Conversation.Initiator"/>. <c>null</c> in returns <c>null</c>;
+    /// a present-but-invalid <see cref="CitizenId"/> (i.e. <c>default(CitizenId)</c>) is a programming
+    /// error and throws — the router contract requires either <c>null</c> or a well-formed citizen.
+    /// </summary>
+    internal static string? SerializeInitiator(CitizenId? initiator)
+    {
+        if (initiator is null)
+            return null;
+        if (!initiator.Value.IsValid)
+            throw new InvalidOperationException("Conversation.Initiator must be null or a valid CitizenId; got default(CitizenId).");
+        return initiator.Value.ToString();
+    }
+
+    private static CitizenId? DeserializeInitiator(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+        return CitizenId.TryParse(raw, out var citizen) ? citizen : null;
+    }
+
     private async Task<Conversation?> LoadConversationAsync(ConversationId conversationId, CancellationToken ct)
     {
         await using var connection = CreateConnection();
@@ -499,7 +604,7 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html
+            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator
             FROM conversations
             WHERE id = $id
             """;
@@ -521,7 +626,8 @@ public sealed class SqliteConversationStore : IConversationStore
             CreatedAt = ParseTimestamp(reader.GetString(8)),
             UpdatedAt = ParseTimestamp(reader.GetString(9)),
             Instructions = reader.IsDBNull(10) ? null : reader.GetString(10),
-            CanvasHtml = reader.FieldCount > 11 && !reader.IsDBNull(11) ? reader.GetString(11) : null
+            CanvasHtml = reader.FieldCount > 11 && !reader.IsDBNull(11) ? reader.GetString(11) : null,
+            Initiator = reader.FieldCount > 12 ? DeserializeInitiator(reader.IsDBNull(12) ? null : reader.GetString(12)) : null
         };
         if (!reader.IsDBNull(6))
             conversation.ActiveSessionId = SessionId.From(reader.GetString(6));
@@ -572,8 +678,8 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Transaction = transaction;
         conversationCommand.CommandText = upsert
             ? """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator)
                 ON CONFLICT(id) DO UPDATE SET
                     agent_id = excluded.agent_id,
                     title = excluded.title,
@@ -585,11 +691,12 @@ public sealed class SqliteConversationStore : IConversationStore
                     created_at = excluded.created_at,
                     updated_at = excluded.updated_at,
                     instructions = excluded.instructions,
-                    canvas_html = excluded.canvas_html
+                    canvas_html = excluded.canvas_html,
+                    initiator = excluded.initiator
                 """
             : """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator)
                 """;
         conversationCommand.Parameters.AddWithValue("$id", conversation.ConversationId.Value);
         conversationCommand.Parameters.AddWithValue("$agentId", conversation.AgentId.Value);
@@ -603,6 +710,7 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Parameters.AddWithValue("$updatedAt", conversation.UpdatedAt.ToString("O"));
         conversationCommand.Parameters.AddWithValue("$instructions", conversation.Instructions is null ? (object)DBNull.Value : conversation.Instructions);
         conversationCommand.Parameters.AddWithValue("$canvasHtml", conversation.CanvasHtml is null ? (object)DBNull.Value : conversation.CanvasHtml);
+        conversationCommand.Parameters.AddWithValue("$initiator", (object?)SerializeInitiator(conversation.Initiator) ?? DBNull.Value);
         await conversationCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
         await using var deleteBindingsCommand = connection.CreateCommand();
@@ -675,6 +783,7 @@ public sealed class SqliteConversationStore : IConversationStore
             Purpose = conversation.Purpose,
             Instructions = conversation.Instructions,
             CanvasHtml = conversation.CanvasHtml,
+            Initiator = conversation.Initiator,
             IsDefault = conversation.IsDefault,
             Status = conversation.Status,
             CreatedAt = conversation.CreatedAt,

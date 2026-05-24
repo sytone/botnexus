@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -38,7 +39,8 @@ public sealed class DefaultConversationRouter : IConversationRouter
         ChannelAddress channelAddress,
         ThreadId? threadId,
         string? conversationId = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        CitizenId? initiator = null)
     {
         // When the caller knows the exact conversation (e.g. portal with active conversation tab),
         // skip binding lookup entirely. This is the fast path that eliminates the thread-binding hack.
@@ -125,7 +127,8 @@ public sealed class DefaultConversationRouter : IConversationRouter
                 ConversationId = ConversationId.Create(),
                 AgentId = agentId,
                 Title = title,
-                IsDefault = false
+                IsDefault = false,
+                Initiator = initiator?.IsValid == true ? initiator : null
             };
             var binding = new ChannelBinding
             {
