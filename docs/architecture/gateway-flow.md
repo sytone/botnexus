@@ -68,8 +68,8 @@ flowchart TD
     C --> E{Conversation\nfound?}
     D --> E
 
-    E -- No  --> F[Create new Conversation + ChannelBinding]
-    E -- Yes --> G[Use existing Conversation]
+    E -- No  --> F[Create new Conversation + ChannelBinding\nstamp Initiator = inbound.Sender]
+    E -- Yes --> G[Use existing Conversation\nInitiator preserved write-once]
     F --> G
 
     G --> H{ActiveSessionId\npresent?}
@@ -167,3 +167,32 @@ All channel-addressing fields have been migrated to strong types (completed in P
 | `InboundMessage.SenderId` | `InboundMessage` | Wire-level audit/allow-list token (channel-native, e.g. SignalR connection id). Phase 2c (#526) added the companion `InboundMessage.Sender` of typed `CitizenId`; the legacy hand-rolled `SenderId` value-object struct was deleted in the same change since the typed identity now lives on `Sender`. |
 | `CrossWorldRelayRequest.ChannelAddress` | DTO | Intentionally string for HTTP wire format |
 | Streaming `conversationId` | `IStreamEventChannelAdapter` | Channel-specific encoding; strong type would need format changes |
+
+---
+
+## Conversation.Initiator (provenance)
+
+Phase 2b (#529) added `Conversation.Initiator` of type `CitizenId?` to record **who first
+caused the conversation to be created**. Distinct from `Conversation.AgentId` (current
+agent owner): `Initiator` is **write-once at creation time** and never overwritten — even
+when an archived conversation is re-opened or the agent assignment changes.
+
+**Stamping path:**
+
+| Producer | Initiator value | Source |
+|---|---|---|
+| Channel-driven inbound (SignalR, Telegram, ServiceBus, TUI, ...) | `inbound.Sender` (always a `CitizenId`) | `DefaultConversationRouter` via `GatewayHost` / `DefaultConversationDispatcher` |
+| `ConversationTool.NewAsync` (agent-initiated) | `CitizenId.Of(agentId)` | `ConversationTool` |
+| `HeartbeatTrigger` / `CronTrigger` (system-initiated for an agent) | `CitizenId.Of(agentId)` | trigger code |
+| `ConversationsController.Create` (REST admin path) | `null` (no trustworthy citizen until #527 lands) | controller; left explicit with `// pending SignalR claims-based auth (#527)` |
+
+**Write-once discipline:** the router only stamps `Initiator` on the create-new-conversation
+branch (Diagram 2 box F). Existing conversations — including the archived-reopen and
+`explicit-ConversationId` fast-path branches — preserve the original `Initiator` even if
+the current inbound message carries a different `Sender`.
+
+**Query path:** `IConversationStore.ListForCitizenAsync(CitizenId)` returns the **union**
+of `Initiator == citizen` and (when the citizen is an agent) `AgentId == citizen.AsAgent`.
+For user citizens the predicate degenerates to the initiator leg only — users do not own
+conversations. SQLite implements this with a single `WHERE` clause so duplicates are
+naturally deduplicated by the row identity.
