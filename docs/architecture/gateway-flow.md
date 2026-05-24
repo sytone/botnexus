@@ -27,7 +27,7 @@ sequenceDiagram
     alt message has explicit ConversationId
         GH->>CR: ResolveInboundByConversationAsync(conversationId, ...)
     else route by channel key
-        GH->>CR: ResolveInboundAsync(agentId, channelType, channelAddress, threadId)
+        GH->>CR: ResolveInboundAsync(agentId, channelType, channelAddress)
     end
 
     CR->>CR: Resolve or create Conversation
@@ -63,7 +63,7 @@ flowchart TD
     A([InboundMessage arrives]) --> B{ConversationId\non message?}
 
     B -- Yes --> C[Direct lookup by ConversationId]
-    B -- No  --> D[Lookup by channelType + channelAddress + threadId]
+    B -- No  --> D[Lookup by channelType + channelAddress]
 
     C --> E{Conversation\nfound?}
     D --> E
@@ -152,12 +152,9 @@ All channel-addressing fields have been migrated to strong types (completed in P
 
 | Field / Parameter | Type | Notes |
 |---|---|---|
-| `ChannelBinding.ChannelAddress` | `ChannelAddress` | Value type; `ChannelAddress.Empty` for addressless channels (e.g. portal SignalR) |
-| `ChannelBinding.ThreadId` | `ThreadId?` | Nullable; `ThreadId.FromNullable()` for optional thread context |
+| `ChannelBinding.ChannelAddress` | `ChannelAddress` | Value type; `ChannelAddress.Empty` for addressless channels (e.g. portal SignalR). Channels with sub-addresses (Telegram forum topics) encode them into the value (e.g. `12345/topic:67`); the core treats it as opaque. |
 | `InboundMessage.ChannelAddress` | `ChannelAddress` | Required on all inbound messages |
-| `InboundMessage.ThreadId` | `ThreadId?` | Nullable thread context |
 | `OutboundMessage.ChannelAddress` | `ChannelAddress` | Required on all outbound messages |
-| `OutboundMessage.ThreadId` | `ThreadId?` | Nullable thread context |
 | `StaleChannelConnectionException.ConversationId` | `ConversationId` | Was `string` — now strong type |
 
 ### Remaining string boundaries

@@ -260,24 +260,21 @@ public sealed class SqliteConversationStore : IConversationStore
         AgentId agentId,
         ChannelKey channelType,
         ChannelAddress channelAddress,
-        ThreadId? threadId,
         CancellationToken ct = default)
     {
         using var activity = ActivitySource.StartActivity("conversation.resolve_by_binding", ActivityKind.Internal);
         activity?.SetTag("botnexus.agent.id", agentId.Value);
         activity?.SetTag("botnexus.channel.type", channelType.Value);
         activity?.SetTag("botnexus.channel.address", channelAddress.Value);
-        if (threadId is not null)
-            activity?.SetTag("botnexus.channel.thread_id", threadId.Value.Value);
 
         await EnsureCreatedAsync(ct).ConfigureAwait(false);
         await using var connection = CreateConnection();
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
         await using var command = connection.CreateCommand();
-        // Use a single query that matches thread_id exactly (including NULL = NULL).
-        // The previous two-branch approach matched any binding when threadId was null,
-        // causing root-chat messages to resolve into thread-specific conversations.
+        // Match binding by (channel_type, channel_address). Native sub-addresses (e.g.
+        // Telegram forum topics) are encoded into channel_address by the adapter, so the
+        // store treats the address as opaque.
         command.CommandText = """
                 SELECT c.id
                 FROM conversations c
@@ -286,12 +283,9 @@ public sealed class SqliteConversationStore : IConversationStore
                   AND c.status = $status
                   AND b.channel_type = $channelType
                   AND lower(b.channel_address) = lower($channelAddress)
-                  AND (($threadId IS NULL AND b.thread_id IS NULL)
-                       OR ($threadId IS NOT NULL AND lower(ifnull(b.thread_id, '')) = lower($threadId)))
                 ORDER BY c.updated_at DESC
                 LIMIT 1
                 """;
-        command.Parameters.AddWithValue("$threadId", (object?)threadId?.Value ?? DBNull.Value);
         command.Parameters.AddWithValue("$agentId", agentId.Value);
         command.Parameters.AddWithValue("$status", ConversationStatus.Active.ToString());
         command.Parameters.AddWithValue("$channelType", channelType.Value);
@@ -414,7 +408,6 @@ public sealed class SqliteConversationStore : IConversationStore
                     conversation_id TEXT NOT NULL,
                     channel_type TEXT NOT NULL,
                     channel_address TEXT NOT NULL,
-                    thread_id TEXT,
                     mode TEXT NOT NULL DEFAULT 'Interactive',
                     threading_mode TEXT NOT NULL DEFAULT 'Single',
                     display_prefix TEXT,
@@ -426,7 +419,7 @@ public sealed class SqliteConversationStore : IConversationStore
 
                 CREATE INDEX IF NOT EXISTS idx_conversations_agent_id ON conversations(agent_id);
                 CREATE INDEX IF NOT EXISTS idx_bindings_conversation_id ON conversation_bindings(conversation_id);
-                CREATE INDEX IF NOT EXISTS idx_bindings_lookup ON conversation_bindings(channel_type, channel_address, thread_id);
+                CREATE INDEX IF NOT EXISTS idx_bindings_lookup ON conversation_bindings(channel_type, channel_address);
                 """;
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
@@ -434,6 +427,7 @@ public sealed class SqliteConversationStore : IConversationStore
             await EnsureInstructionsColumnAsync(connection, ct).ConfigureAwait(false);
             await EnsureCanvasHtmlColumnAsync(connection, ct).ConfigureAwait(false);
             await EnsureInitiatorColumnAsync(connection, ct).ConfigureAwait(false);
+            await MigrateThreadIdIntoChannelAddressAsync(connection, ct).ConfigureAwait(false);
 
             // One-time migration: archive stale signalr:connection-id conversations created
             // before binding-first routing (#148). Those conversations have a title matching
@@ -572,6 +566,104 @@ public sealed class SqliteConversationStore : IConversationStore
         await indexCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 
+    // Migrates legacy conversation_bindings rows with a thread_id column into the composite
+    // channel_address scheme adopted in PR #512 (refactor: drop ThreadId from core contracts).
+    // Idempotent: if the thread_id column has already been dropped, the method is a no-op.
+    // Strategy: detect the old column → BEGIN IMMEDIATE → drop the lookup index (which
+    // references thread_id) → rewrite addresses with thread_id appended as "/topic:<value>" →
+    // rebuild the table without the column (table-rebuild is more portable than DROP COLUMN) →
+    // recreate the lookup index without thread_id → COMMIT → clear the cache (cached
+    // ChannelBinding instances would otherwise still hold the deleted property).
+    private async Task MigrateThreadIdIntoChannelAddressAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        await using var tableInfoCommand = connection.CreateCommand();
+        tableInfoCommand.CommandText = "PRAGMA table_info(conversation_bindings);";
+
+        var hasThreadIdColumn = false;
+        await using (var reader = await tableInfoCommand.ExecuteReaderAsync(ct).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                if (string.Equals(reader.GetString(1), "thread_id", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasThreadIdColumn = true;
+                    break;
+                }
+            }
+        }
+
+        if (!hasThreadIdColumn)
+            return;
+
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
+
+        // Drop the lookup index first — it references thread_id and would block the table rebuild.
+        await using (var dropIndex = connection.CreateCommand())
+        {
+            dropIndex.Transaction = transaction;
+            dropIndex.CommandText = "DROP INDEX IF EXISTS idx_bindings_lookup;";
+            await dropIndex.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+
+        // Fold legacy thread_id values into channel_address using the composite encoding
+        // (adapter-owned; the store treats it as opaque). Non-numeric thread_id values (legacy
+        // REST seed rows accepted any string) are preserved verbatim — the originating adapter
+        // is responsible for parsing them back, and a malformed value fails the adapter's
+        // decode just like any other unrecognised address.
+        await using (var rewrite = connection.CreateCommand())
+        {
+            rewrite.Transaction = transaction;
+            rewrite.CommandText = """
+                UPDATE conversation_bindings
+                SET channel_address = channel_address || '/topic:' || thread_id
+                WHERE thread_id IS NOT NULL;
+                """;
+            await rewrite.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+
+        // Table rebuild — portable across all SQLite versions (ALTER TABLE DROP COLUMN is
+        // only available on 3.35+).
+        await using (var rebuild = connection.CreateCommand())
+        {
+            rebuild.Transaction = transaction;
+            rebuild.CommandText = """
+                CREATE TABLE conversation_bindings_new (
+                    binding_id TEXT PRIMARY KEY,
+                    conversation_id TEXT NOT NULL,
+                    channel_type TEXT NOT NULL,
+                    channel_address TEXT NOT NULL,
+                    mode TEXT NOT NULL DEFAULT 'Interactive',
+                    threading_mode TEXT NOT NULL DEFAULT 'Single',
+                    display_prefix TEXT,
+                    bound_at TEXT NOT NULL,
+                    last_inbound_at TEXT,
+                    last_outbound_at TEXT,
+                    FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+                );
+
+                INSERT INTO conversation_bindings_new
+                    (binding_id, conversation_id, channel_type, channel_address, mode, threading_mode, display_prefix, bound_at, last_inbound_at, last_outbound_at)
+                SELECT binding_id, conversation_id, channel_type, channel_address, mode, threading_mode, display_prefix, bound_at, last_inbound_at, last_outbound_at
+                FROM conversation_bindings;
+
+                DROP TABLE conversation_bindings;
+                ALTER TABLE conversation_bindings_new RENAME TO conversation_bindings;
+
+                CREATE INDEX IF NOT EXISTS idx_bindings_conversation_id ON conversation_bindings(conversation_id);
+                CREATE INDEX IF NOT EXISTS idx_bindings_lookup ON conversation_bindings(channel_type, channel_address);
+                """;
+            await rebuild.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+
+        await transaction.CommitAsync(ct).ConfigureAwait(false);
+
+        // Invalidate cached ChannelBinding instances — they were loaded under the old schema.
+        _cache.Clear();
+
+        _logger.LogInformation(
+            "Migrated conversation_bindings.thread_id column into composite channel_address (PR #512).");
+    }
+
     /// <summary>
     /// Persistence form for <see cref="Conversation.Initiator"/>. <c>null</c> in returns <c>null</c>;
     /// a present-but-invalid <see cref="CitizenId"/> (i.e. <c>default(CitizenId)</c>) is a programming
@@ -641,7 +733,7 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT binding_id, channel_type, channel_address, thread_id, mode, threading_mode, display_prefix, bound_at, last_inbound_at, last_outbound_at
+            SELECT binding_id, channel_type, channel_address, mode, threading_mode, display_prefix, bound_at, last_inbound_at, last_outbound_at
             FROM conversation_bindings
             WHERE conversation_id = $conversationId
             ORDER BY binding_id ASC
@@ -657,13 +749,12 @@ public sealed class SqliteConversationStore : IConversationStore
                 BindingId = BindingId.From(reader.GetString(0)),
                 ChannelType = ChannelKey.From(reader.GetString(1)),
                 ChannelAddress = ChannelAddress.From(reader.GetString(2)),
-                ThreadId = reader.IsDBNull(3) ? null : ThreadId.From(reader.GetString(3)),
-                Mode = ParseBindingMode(reader.GetString(4)),
-                ThreadingMode = ParseThreadingMode(reader.GetString(5)),
-                DisplayPrefix = reader.IsDBNull(6) ? null : reader.GetString(6),
-                BoundAt = ParseTimestamp(reader.GetString(7)),
-                LastInboundAt = reader.IsDBNull(8) ? null : ParseTimestamp(reader.GetString(8)),
-                LastOutboundAt = reader.IsDBNull(9) ? null : ParseTimestamp(reader.GetString(9))
+                Mode = ParseBindingMode(reader.GetString(3)),
+                ThreadingMode = ParseThreadingMode(reader.GetString(4)),
+                DisplayPrefix = reader.IsDBNull(5) ? null : reader.GetString(5),
+                BoundAt = ParseTimestamp(reader.GetString(6)),
+                LastInboundAt = reader.IsDBNull(7) ? null : ParseTimestamp(reader.GetString(7)),
+                LastOutboundAt = reader.IsDBNull(8) ? null : ParseTimestamp(reader.GetString(8))
             });
         }
 
@@ -724,14 +815,13 @@ public sealed class SqliteConversationStore : IConversationStore
             await using var bindingCommand = connection.CreateCommand();
             bindingCommand.Transaction = transaction;
             bindingCommand.CommandText = """
-                INSERT INTO conversation_bindings (binding_id, conversation_id, channel_type, channel_address, thread_id, mode, threading_mode, display_prefix, bound_at, last_inbound_at, last_outbound_at)
-                VALUES ($bindingId, $conversationId, $channelType, $channelAddress, $threadId, $mode, $threadingMode, $displayPrefix, $boundAt, $lastInboundAt, $lastOutboundAt)
+                INSERT INTO conversation_bindings (binding_id, conversation_id, channel_type, channel_address, mode, threading_mode, display_prefix, bound_at, last_inbound_at, last_outbound_at)
+                VALUES ($bindingId, $conversationId, $channelType, $channelAddress, $mode, $threadingMode, $displayPrefix, $boundAt, $lastInboundAt, $lastOutboundAt)
                 """;
             bindingCommand.Parameters.AddWithValue("$bindingId", binding.BindingId.Value);
             bindingCommand.Parameters.AddWithValue("$conversationId", conversation.ConversationId.Value);
             bindingCommand.Parameters.AddWithValue("$channelType", binding.ChannelType.Value);
             bindingCommand.Parameters.AddWithValue("$channelAddress", binding.ChannelAddress.Value);
-            bindingCommand.Parameters.AddWithValue("$threadId", (object?)binding.ThreadId?.Value ?? DBNull.Value);
             bindingCommand.Parameters.AddWithValue("$mode", binding.Mode.ToString());
             bindingCommand.Parameters.AddWithValue("$threadingMode", binding.ThreadingMode.ToString());
             bindingCommand.Parameters.AddWithValue("$displayPrefix", (object?)binding.DisplayPrefix ?? DBNull.Value);
@@ -795,7 +885,6 @@ public sealed class SqliteConversationStore : IConversationStore
                 BindingId = binding.BindingId,
                 ChannelType = binding.ChannelType,
                 ChannelAddress = binding.ChannelAddress,
-                ThreadId = binding.ThreadId,
                 Mode = binding.Mode,
                 ThreadingMode = binding.ThreadingMode,
                 DisplayPrefix = binding.DisplayPrefix,

@@ -36,9 +36,6 @@ public class ConversationBindingTests(LiveGatewayFixture fixture, ITestOutputHel
         doc.GetProperty("channelType").GetString().ShouldBe("telegram");
         doc.GetProperty("channelAddress").GetString().ShouldBe("1234567890");
 
-        doc.TryGetProperty("threadId", out var threadId).ShouldBeTrue();
-        threadId.ValueKind.ShouldBe(JsonValueKind.Null);
-
         doc.GetProperty("mode").GetString().ShouldBe("Interactive");
         doc.GetProperty("threadingMode").GetString().ShouldBe("Single");
     }
@@ -54,29 +51,32 @@ public class ConversationBindingTests(LiveGatewayFixture fixture, ITestOutputHel
     }
 
     [SkippableFact]
-    public async Task AddBinding_NativeThreadWithThreadId_PreservesThreadId()
+    public async Task AddBinding_CompositeAddressWithTopicSuffix_RoundTripsViaRest()
     {
         Skip.If(!fixture.IsAvailable, "Dev gateway not running at localhost:5006");
 
         var convId = await CreateConversationAsync();
+        // Composite address — the channel adapter is responsible for encoding native
+        // thread/topic identifiers into the ChannelAddress before submission. The REST
+        // layer treats the value as opaque.
         var response = await fixture.Conversations.AddBindingFullAsync(
-            convId, "teams", "channel-abc", "thread-xyz", "NativeThread");
+            convId, "teams", "channel-abc/thread:xyz", "Single");
         response.StatusCode.ShouldBe(HttpStatusCode.Created);
 
         var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
-        doc.GetProperty("threadId").GetString().ShouldBe("thread-xyz");
-        doc.GetProperty("threadingMode").GetString().ShouldBe("NativeThread");
+        doc.GetProperty("channelAddress").GetString().ShouldBe("channel-abc/thread:xyz");
+        doc.GetProperty("threadingMode").GetString().ShouldBe("Single");
         var bindingId = doc.GetProperty("bindingId").GetString()!;
 
-        // Fetch conversation and verify binding is preserved
+        // Fetch conversation and verify the composite address survives a round-trip.
         var convResponse = await fixture.Conversations.GetConversationAsync(convId);
         convResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
         var convDoc = JsonDocument.Parse(await convResponse.Content.ReadAsStringAsync()).RootElement;
         var binding = convDoc.GetProperty("bindings").EnumerateArray()
             .FirstOrDefault(b => b.TryGetProperty("bindingId", out var bid) && bid.GetString() == bindingId);
         binding.ValueKind.ShouldNotBe(JsonValueKind.Undefined);
-        binding.GetProperty("threadId").GetString().ShouldBe("thread-xyz");
-        binding.GetProperty("threadingMode").GetString().ShouldBe("NativeThread");
+        binding.GetProperty("channelAddress").GetString().ShouldBe("channel-abc/thread:xyz");
+        binding.GetProperty("threadingMode").GetString().ShouldBe("Single");
     }
 
     // ── GET conversation after add ────────────────────────────────────────────

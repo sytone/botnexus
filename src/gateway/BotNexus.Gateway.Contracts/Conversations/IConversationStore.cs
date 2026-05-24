@@ -74,16 +74,19 @@ public interface IConversationStore
     /// Resolves an active conversation for the given agent and channel binding details.
     /// Returns <c>null</c> if no matching conversation exists.
     /// </summary>
+    /// <remarks>
+    /// Native sub-addresses (e.g. Telegram forum topics) are encoded into
+    /// <paramref name="channelAddress"/> by the originating adapter; the store matches
+    /// on the opaque address only.
+    /// </remarks>
     /// <param name="agentId">The agent identifier.</param>
     /// <param name="channelType">The channel type.</param>
-    /// <param name="channelAddress">The channel-specific address.</param>
-    /// <param name="threadId">The native thread id, or <c>null</c> to match on address only.</param>
+    /// <param name="channelAddress">The channel-specific address (opaque, may be composite).</param>
     /// <param name="ct">Cancellation token.</param>
     Task<Conversation?> ResolveByBindingAsync(
         AgentId agentId,
         ChannelKey channelType,
         ChannelAddress channelAddress,
-        ThreadId? threadId,
         CancellationToken ct = default);
 
     /// <summary>

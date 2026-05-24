@@ -49,7 +49,7 @@ public sealed class PortalReconnectTests
         var router = CreateRouter(store);
 
         // First send with explicit conversationId, no existing binding
-        var result = await router.ResolveInboundAsync(agentId, channel, address, threadId: null, conversationId: conv.ConversationId.Value);
+        var result = await router.ResolveInboundAsync(agentId, channel, address, conversationId: conv.ConversationId.Value);
 
         result.ShouldNotBeNull();
         result.Conversation.ConversationId.ShouldBe(conv.ConversationId);
@@ -90,10 +90,10 @@ public sealed class PortalReconnectTests
         var router = CreateRouter(store);
 
         // First send: explicit conversationId (adds binding)
-        await router.ResolveInboundAsync(agentId, channel, address, threadId: null, conversationId: conv.ConversationId.Value);
+        await router.ResolveInboundAsync(agentId, channel, address, conversationId: conv.ConversationId.Value);
 
         // Reconnect: NO conversationId - must find the same conversation
-        var reconnectResult = await router.ResolveInboundAsync(agentId, channel, address, threadId: null, conversationId: null);
+        var reconnectResult = await router.ResolveInboundAsync(agentId, channel, address, conversationId: null);
 
         reconnectResult.ShouldNotBeNull();
         reconnectResult.Conversation.ConversationId.ShouldBe(conv.ConversationId,
@@ -131,7 +131,7 @@ public sealed class PortalReconnectTests
 
         var router = CreateRouter(store);
 
-        await router.ResolveInboundAsync(agentId, channel, address, threadId: null, conversationId: conv.ConversationId.Value);
+        await router.ResolveInboundAsync(agentId, channel, address, conversationId: conv.ConversationId.Value);
 
         var updated = await store.GetAsync(conv.ConversationId);
         updated.ShouldNotBeNull();
@@ -167,7 +167,7 @@ public sealed class PortalReconnectTests
 
         var router = CreateRouter(store);
 
-        await router.ResolveInboundAsync(agentId, channel, address, threadId: null, conversationId: conv.ConversationId.Value);
+        await router.ResolveInboundAsync(agentId, channel, address, conversationId: conv.ConversationId.Value);
 
         var updated = await store.GetAsync(conv.ConversationId);
         updated.ShouldNotBeNull();

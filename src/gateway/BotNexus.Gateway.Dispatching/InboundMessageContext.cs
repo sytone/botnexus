@@ -33,7 +33,6 @@ public sealed record InboundMessageContext(
             message.ChannelType,
             message.ChannelAddress,
             message.SenderId,
-            message.ThreadId,
             message.BindingId);
         return new InboundMessageContext(agentId, message, source, message.ConversationId);
     }

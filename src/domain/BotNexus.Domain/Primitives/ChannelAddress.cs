@@ -5,9 +5,16 @@ namespace BotNexus.Domain.Primitives;
 
 [JsonConverter(typeof(ChannelAddressJsonConverter))]
 /// <summary>
-/// Strongly-typed channel address, preventing accidental confusion with <c>ThreadId</c>,
-/// <c>BindingId</c>, or other adjacent string parameters.
+/// Strongly-typed channel address, preventing accidental confusion with
+/// <c>BindingId</c> or other adjacent string parameters.
 /// </summary>
+/// <remarks>
+/// The value is opaque to the core router. Channel adapters are free to fold native
+/// sub-addresses (e.g. Telegram forum topics, future Teams/Slack thread ids) into the
+/// address itself using a channel-specific encoding — the core only routes by
+/// <c>(ChannelType, ChannelAddress)</c>. See <c>TelegramChannelAddress</c> in the
+/// Telegram extension for an example encoding (<c>&lt;chatId&gt;/topic:&lt;threadId&gt;</c>).
+/// </remarks>
 public readonly record struct ChannelAddress : IComparable<ChannelAddress>
 {
     /// <summary>Gets the raw string value of this channel address.</summary>

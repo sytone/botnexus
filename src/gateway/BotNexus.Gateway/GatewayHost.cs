@@ -280,7 +280,6 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 message.ChannelType,
                 message.ChannelAddress,
                 message.SenderId,
-                message.ThreadId,
                 message.BindingId,
                 DisplayPrefix: null);
             ConversationSessionResolution? resolution = null;
@@ -309,8 +308,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                 resolvedSource = dispatchResult.Source;
                 message = message with
                 {
-                    BindingId = message.BindingId ?? resolvedSource.BindingId,
-                    ThreadId = message.ThreadId ?? resolvedSource.ThreadId
+                    BindingId = message.BindingId ?? resolvedSource.BindingId
                 };
             }
             else if (_conversationRouter is not null)
@@ -320,7 +318,6 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     AgentId.From(agentId),
                     message.ChannelType,
                     message.ChannelAddress,
-                    threadId: message.ThreadId,
                     conversationId: message.ConversationId,
                     cancellationToken,
                     initiator: message.Sender);
@@ -331,7 +328,6 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     : resolvedSource with
                     {
                         BindingId = originatingBinding.BindingId,
-                        ThreadId = originatingBinding.ThreadId,
                         DisplayPrefix = originatingBinding.DisplayPrefix
                     };
                 resolution = new ConversationSessionResolution(
@@ -340,12 +336,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     IsNewConversation: false,
                     IsNewSession: routingResult.IsNewSession,
                     OriginatingBindingId: resolvedSource.BindingId,
-                    ThreadId: resolvedSource.ThreadId,
                     DisplayPrefix: resolvedSource.DisplayPrefix);
                 message = message with
                 {
-                    BindingId = message.BindingId ?? resolvedSource.BindingId,
-                    ThreadId = message.ThreadId ?? resolvedSource.ThreadId
+                    BindingId = message.BindingId ?? resolvedSource.BindingId
                 };
             }
 
@@ -508,8 +502,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
 
                 if (resolvedChannel is { SupportsStreaming: true } channel)
                 {
-                    // Capture the resolved source for the lambda closure so the
-                    // streaming conversationId includes the ThreadId (fixes #125).
+                    // Streaming uses the message's opaque ChannelAddress as the stream key.
+                    // Adapters that need to disambiguate native sub-addresses (e.g. Telegram
+                    // forum topics) already fold them into the address itself.
                     var streamingSource = resolvedSource;
 
                     // Resolve SignalR observer bindings for cross-channel live update (#332).
@@ -562,13 +557,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                                     : evt;
 
                                 // Build the conversationId that the channel adapter uses to
-                                // route the stream to the correct chat thread/topic.
-                                // For channels like Telegram that support forum topics, the
-                                // bare chatId is not enough — we encode threadId into the key
-                                // so the adapter can split them apart (fixes #125).
-                                 var streamConversationId = streamingSource.ThreadId is not null
-                                     ? $"{message.ChannelAddress}:{streamingSource.ThreadId}"
-                                     : message.ChannelAddress.Value;
+                                // route the stream. The address is opaque to the gateway —
+                                // adapters encode native sub-addresses (e.g. Telegram forum
+                                // topics) into it themselves.
+                                var streamConversationId = message.ChannelAddress.Value;
 
                                 if (enriched.Type == AgentStreamEventType.UserInputRequired)
                                 {
@@ -622,8 +614,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                             Content = response.Content,
                             SessionId = sessionId,
                             // Binding-aware fields from originating binding fix #126:
-                            // ensure replies go to the correct thread/topic and carry decoration.
-                            ThreadId = resolvedSource.ThreadId ?? message.ThreadId,
+                            // ensure replies carry the binding's decoration. Native sub-addresses
+                            // (e.g. Telegram forum topics) are already encoded in ChannelAddress.
                             BindingId = resolvedSource.BindingId,
                             DisplayPrefix = resolvedSource.DisplayPrefix
                         }, cancellationToken);
@@ -898,9 +890,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         CancellationToken cancellationToken)
     {
         var request = streamEvent.UserInputRequest;
-        var sourceConversationId = source.ThreadId is not null
-            ? $"{message.ChannelAddress}:{source.ThreadId}"
-            : message.ChannelAddress.Value;
+        var sourceConversationId = message.ChannelAddress.Value;
 
         if (ResolveChannelAdapter(message.ChannelType) is { } sourceAdapter)
             await SendAskUserToBindingAsync(sourceAdapter, sourceConversationId, source, sessionId, streamEvent, request, cancellationToken);
@@ -919,14 +909,11 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             if (adapter is null)
                 continue;
 
-            var bindingConversationId = binding.ThreadId is not null
-                ? $"{binding.ChannelAddress}:{binding.ThreadId}"
-                : binding.ChannelAddress.Value;
+            var bindingConversationId = binding.ChannelAddress.Value;
             var bindingSource = new ChannelSource(
                 binding.ChannelType,
                 binding.ChannelAddress,
                 message.SenderId,
-                binding.ThreadId,
                 binding.BindingId,
                 binding.DisplayPrefix);
             await SendAskUserToBindingAsync(adapter, bindingConversationId, bindingSource, sessionId, streamEvent, request, cancellationToken);
@@ -957,7 +944,6 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             ChannelAddress = source.ChannelAddress,
             Content = FormatAskUserFallbackPrompt(request),
             SessionId = sessionId,
-            ThreadId = source.ThreadId,
             BindingId = source.BindingId,
             DisplayPrefix = source.DisplayPrefix
         }, cancellationToken);
@@ -1125,9 +1111,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                         ChannelAddress = binding.ChannelAddress,
                         Content = lastAssistantEntry.Content,
                         SessionId = sessionId,
-                        // Binding-aware fields: let the adapter deliver into the right thread/topic
-                        // and render prefix decoration when configured.
-                        ThreadId = binding.ThreadId,
+                        // Binding-aware fields: let the adapter render prefix decoration when
+                        // configured. Native sub-addresses (e.g. Telegram forum topics) are
+                        // already encoded in ChannelAddress by the originating adapter.
                         BindingId = binding.BindingId,
                         DisplayPrefix = binding.DisplayPrefix
                     }, cancellationToken);

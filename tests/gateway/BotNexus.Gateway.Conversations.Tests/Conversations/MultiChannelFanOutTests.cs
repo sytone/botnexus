@@ -153,40 +153,40 @@ public sealed class MultiChannelFanOutTests
     }
 
     [Fact]
-    public async Task TwoThreads_SameChat_IndependentConversations()
+    public async Task TwoTopics_SameChat_IndependentConversations()
     {
         var harness = CreateHarness(responseContent: "threaded");
-        await harness.SeedBindingAsync("telegram", "100", threadId: null);
-        await harness.SeedBindingAsync("telegram", "100", threadId: "42");
+        await harness.SeedBindingAsync("telegram", "100");
+        await harness.SeedBindingAsync("telegram", "100/topic:42");
         harness.ClearOutbound();
 
-        await harness.Host.DispatchAsync(harness.CreateMessage("root", "telegram", "100", threadId: null));
+        await harness.Host.DispatchAsync(harness.CreateMessage("root", "telegram", "100"));
         harness.Telegram.Messages.Count.ShouldBe(1);
-        harness.Telegram.Messages[0].ThreadId.ShouldBeNull(); // root chat, no thread
+        harness.Telegram.Messages[0].ChannelAddress.ShouldBe(ChannelAddress.From("100")); // root chat, bare address
 
         harness.ClearOutbound();
-        await harness.Host.DispatchAsync(harness.CreateMessage("topic", "telegram", "100", threadId: "42"));
+        await harness.Host.DispatchAsync(harness.CreateMessage("topic", "telegram", "100/topic:42"));
         harness.Telegram.Messages.Count.ShouldBe(1);
-        harness.Telegram.Messages[0].ThreadId.ShouldBe(ThreadId.From("42")); // fix #126: ThreadId now correctly set on direct send
+        harness.Telegram.Messages[0].ChannelAddress.ShouldBe(ChannelAddress.From("100/topic:42")); // composite address round-trips
 
         var conversations = await harness.Conversations.ListAsync(BotNexus.Domain.Primitives.AgentId.From(AgentName));
         conversations.Count.ShouldBe(2);
     }
 
     [Fact]
-    public async Task Thread_MessageFromTelegram_FansOutWithCorrectThreadId()
+    public async Task Topic_MessageFromTelegram_FansOutWithCorrectCompositeAddress()
     {
         var harness = CreateHarness(responseContent: "threaded");
-        await harness.SeedBindingAsync("telegram", "100", threadId: "42");
-        await harness.AttachBindingToConversationAsync("signalr", "chat-1", harness.GetConversationFor("telegram", "100", "42").ConversationId, threadId: "42");
+        await harness.SeedBindingAsync("telegram", "100/topic:42");
+        await harness.AttachBindingToConversationAsync("signalr", "chat-1", harness.GetConversationFor("telegram", "100/topic:42").ConversationId);
         harness.ClearOutbound();
 
-        await harness.Host.DispatchAsync(harness.CreateMessage("topic", "telegram", "100", threadId: "42"));
+        await harness.Host.DispatchAsync(harness.CreateMessage("topic", "telegram", "100/topic:42"));
 
         harness.SignalR.Messages.Count.ShouldBe(1);
-        harness.SignalR.Messages[0].ThreadId.ShouldBe(ThreadId.From("42")); // fan-out carries thread
+        harness.SignalR.Messages[0].ChannelAddress.ShouldBe(ChannelAddress.From("chat-1")); // signalr binding uses its own address
         harness.Telegram.Messages.Count.ShouldBe(1);
-        harness.Telegram.Messages[0].ThreadId.ShouldBe(ThreadId.From("42")); // fix #126: direct send now carries ThreadId
+        harness.Telegram.Messages[0].ChannelAddress.ShouldBe(ChannelAddress.From("100/topic:42")); // composite address preserved end-to-end
     }
 
     [Fact]
@@ -195,7 +195,7 @@ public sealed class MultiChannelFanOutTests
         var harness = CreateHarness(responseContent: "muted");
         await harness.SeedBindingAsync("signalr", "chat-1");
         await harness.SeedBindingAsync("telegram", "chat-100");
-        await harness.SetBindingModeAsync("telegram", "chat-100", null, BindingMode.Muted);
+        await harness.SetBindingModeAsync("telegram", "chat-100", BindingMode.Muted);
         harness.ClearOutbound();
 
         await harness.Host.DispatchAsync(harness.CreateMessage("hello", "signalr", "chat-1"));
@@ -420,7 +420,7 @@ public sealed class MultiChannelFanOutTests
         public ChannelRecorder Telegram { get; } = telegram;
         public ChannelRecorder Tui { get; } = tui;
 
-        public InboundMessage CreateMessage(string content, string channelType, string channelAddress, string? threadId = null, string? sessionId = null)
+        public InboundMessage CreateMessage(string content, string channelType, string channelAddress, string? sessionId = null)
             => new()
             {
                 ChannelType = ChannelKey.From(channelType),
@@ -429,7 +429,6 @@ public sealed class MultiChannelFanOutTests
                 ChannelAddress = ChannelAddress.From(channelAddress),
                 Content = content,
                 SessionId = sessionId,
-                ThreadId = ThreadId.FromNullable(threadId),
                 Metadata = new Dictionary<string, object?>()
             };
 
@@ -440,12 +439,13 @@ public sealed class MultiChannelFanOutTests
             Tui.Messages.Clear();
         }
 
-        public async Task SeedBindingAsync(string channelType, string channelAddress, string? threadId = null)
+        public async Task SeedBindingAsync(string channelType, string channelAddress)
         {
             // Dispatch a seed message — the router will find or create the correct conversation
-            // per (channelType, channelAddress, threadId). For fan-out tests that need multiple
+            // per (channelType, channelAddress). Native sub-addresses (e.g. Telegram forum topics)
+            // are folded into the ChannelAddress by the caller. For fan-out tests that need multiple
             // channels in one conversation, use SeedSharedConversationAsync or AttachBindingToConversationAsync directly.
-            await Host.DispatchAsync(CreateMessage($"seed-{channelType}", channelType, channelAddress, threadId));
+            await Host.DispatchAsync(CreateMessage($"seed-{channelType}", channelType, channelAddress));
         }
 
         /// <summary>
@@ -473,33 +473,30 @@ public sealed class MultiChannelFanOutTests
             await Conversations.SaveAsync(conversation);
         }
 
-        public Conversation GetConversationFor(string channelType, string channelAddress, string? threadId)
+        public Conversation GetConversationFor(string channelType, string channelAddress)
             => Conversations.ListAsync(BotNexus.Domain.Primitives.AgentId.From(AgentName)).Result
                 .Single(c => c.ChannelBindings.Any(b =>
                     b.ChannelType == ChannelKey.From(channelType) &&
-                    b.ChannelAddress == ChannelAddress.From(channelAddress) &&
-                    b.ThreadId == ThreadId.FromNullable(threadId)));
+                    b.ChannelAddress == ChannelAddress.From(channelAddress)));
 
-        public async Task AttachBindingToConversationAsync(string channelType, string channelAddress, BotNexus.Domain.Primitives.ConversationId conversationId, string? threadId = null)
+        public async Task AttachBindingToConversationAsync(string channelType, string channelAddress, BotNexus.Domain.Primitives.ConversationId conversationId)
         {
             var conversation = (await Conversations.GetAsync(conversationId))!;
             conversation.ChannelBindings.Add(new ChannelBinding
             {
                 ChannelType = ChannelKey.From(channelType),
                 ChannelAddress = ChannelAddress.From(channelAddress),
-                ThreadId = ThreadId.FromNullable(threadId),
                 Mode = BindingMode.Interactive
             });
             await Conversations.SaveAsync(conversation);
         }
 
-        public async Task SetBindingModeAsync(string channelType, string channelAddress, string? threadId, BindingMode mode)
+        public async Task SetBindingModeAsync(string channelType, string channelAddress, BindingMode mode)
         {
-            var conversation = GetConversationFor(channelType, channelAddress, threadId);
+            var conversation = GetConversationFor(channelType, channelAddress);
             var binding = conversation.ChannelBindings.Single(b =>
                 b.ChannelType == ChannelKey.From(channelType) &&
-                b.ChannelAddress == ChannelAddress.From(channelAddress) &&
-                b.ThreadId == ThreadId.FromNullable(threadId));
+                b.ChannelAddress == ChannelAddress.From(channelAddress));
             binding.Mode = mode;
             await Conversations.SaveAsync(conversation);
         }

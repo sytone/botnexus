@@ -21,11 +21,14 @@ public sealed record ChannelBinding
     /// </summary>
     public string? AdapterId { get; set; }
 
-    /// <summary>Gets or sets the channel-specific address (e.g. chat id, phone number). Use <see cref="ChannelAddress.Empty"/> for addressless channels.</summary>
+    /// <summary>
+    /// Gets or sets the channel-specific address (e.g. chat id, phone number, composite
+    /// adapter-encoded address). Use <see cref="ChannelAddress.Empty"/> for addressless
+    /// channels. Adapters that need to disambiguate native sub-addresses (e.g. Telegram
+    /// forum topics) fold them into the address itself; the core treats the value as
+    /// opaque and routes by <c>(ChannelType, ChannelAddress)</c>.
+    /// </summary>
     public ChannelAddress ChannelAddress { get; set; } = ChannelAddress.Empty;
-
-    /// <summary>Gets or sets the native thread or topic id within the channel, if applicable. Null for channels without thread support.</summary>
-    public ThreadId? ThreadId { get; set; }
 
     /// <summary>Gets or sets the binding mode controlling message fan-out participation.</summary>
     public BindingMode Mode { get; set; } = BindingMode.Interactive;

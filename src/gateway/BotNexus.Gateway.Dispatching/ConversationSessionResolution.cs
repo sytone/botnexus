@@ -12,7 +12,6 @@ namespace BotNexus.Gateway.Dispatching;
 /// <param name="OriginatingBindingId">
 /// Optional binding identity for fan-out exclusion and correlated outbound delivery.
 /// </param>
-/// <param name="ThreadId">Thread/topic resolved for outbound responses.</param>
 /// <param name="DisplayPrefix">Optional display prefix to preserve transport threading semantics.</param>
 public sealed record ConversationSessionResolution(
     ConversationId ConversationId,
@@ -20,5 +19,4 @@ public sealed record ConversationSessionResolution(
     bool IsNewConversation,
     bool IsNewSession,
     BindingId? OriginatingBindingId = null,
-    ThreadId? ThreadId = null,
     string? DisplayPrefix = null);

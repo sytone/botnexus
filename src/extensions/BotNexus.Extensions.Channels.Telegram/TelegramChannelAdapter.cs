@@ -154,7 +154,7 @@ public sealed class TelegramChannelAdapter(
         cancellationToken.ThrowIfCancellationRequested();
         EnsureBotsInitialized();
 
-        if (!TryParseChatId(message.ChannelAddress.Value, out var chatId))
+        if (!TelegramChannelAddress.TryDecode(message.ChannelAddress, out var chatId, out var decodedThreadId))
         {
             _logger.LogWarning(
                 "{DisplayName} send requested with invalid conversation id '{ConversationId}'",
@@ -167,12 +167,8 @@ public sealed class TelegramChannelAdapter(
         EnsureChatAllowed(runtime.Config, chatId);
         var formatted = BuildOutboundText(message.Content, message.Metadata, message.DisplayPrefix);
 
-        int? threadId = null;
-        if (!string.IsNullOrEmpty(message.ThreadId?.Value) && int.TryParse(message.ThreadId.Value.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedThreadId))
-            threadId = parsedThreadId;
-
         foreach (var chunk in SplitMessage(formatted, Math.Max(1, runtime.Config.MaxMessageLength)))
-            await runtime.ApiClient.SendMessageAsync(chatId, chunk, threadId, cancellationToken);
+            await runtime.ApiClient.SendMessageAsync(chatId, chunk, decodedThreadId, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -180,12 +176,12 @@ public sealed class TelegramChannelAdapter(
     {
         cancellationToken.ThrowIfCancellationRequested();
         EnsureBotsInitialized();
-        if (string.IsNullOrEmpty(delta) || !TryParseChatId(conversationId, out var chatId))
+        if (string.IsNullOrEmpty(delta) || !TelegramChannelAddress.TryDecode(ChannelAddress.From(conversationId), out var chatId, out var messageThreadId))
             return;
 
         var runtime = ResolveSingleConfiguredBot();
         EnsureChatAllowed(runtime.Config, chatId);
-        var state = runtime.StreamingStates.GetOrAdd(conversationId, _ => new StreamingState(chatId));
+        var state = runtime.StreamingStates.GetOrAdd(conversationId, _ => new StreamingState(chatId, messageThreadId));
 
         await state.Lock.WaitAsync(cancellationToken);
         try
@@ -208,12 +204,12 @@ public sealed class TelegramChannelAdapter(
     {
         cancellationToken.ThrowIfCancellationRequested();
         EnsureBotsInitialized();
-        if (!TryParseChatId(conversationId, out var chatId))
+        if (!TelegramChannelAddress.TryDecode(ChannelAddress.From(conversationId), out var chatId, out var messageThreadId))
             return;
 
         var runtime = ResolveSingleConfiguredBot();
         EnsureChatAllowed(runtime.Config, chatId);
-        var state = runtime.StreamingStates.GetOrAdd(conversationId, _ => new StreamingState(chatId));
+        var state = runtime.StreamingStates.GetOrAdd(conversationId, _ => new StreamingState(chatId, messageThreadId));
 
         await state.Lock.WaitAsync(cancellationToken);
         try
@@ -338,7 +334,6 @@ public sealed class TelegramChannelAdapter(
             return;
         }
 
-        var chatIdText = chatId.ToString(CultureInfo.InvariantCulture);
         if (message.From is null)
         {
             _logger.LogDebug("bot '{BotName}' ignored message with no sender (updateId={UpdateId})", runtime.BotName, update.UpdateId);
@@ -383,13 +378,10 @@ public sealed class TelegramChannelAdapter(
             ChannelType = ChannelType,
             SenderId = senderId,
             Sender = CitizenId.Of(UserId.From(senderId)),
-            ChannelAddress = ChannelAddress.From(chatIdText),
+            ChannelAddress = TelegramChannelAddress.Encode(chatId, message.MessageThreadId),
             Content = textContent,
             ContentParts = contentParts,
             TargetAgentId = string.IsNullOrWhiteSpace(runtime.Config.AgentId) ? null : runtime.Config.AgentId,
-            ThreadId = message.MessageThreadId.HasValue
-                ? ThreadId.From(message.MessageThreadId.Value.ToString(CultureInfo.InvariantCulture))
-                : null,
             Metadata = new Dictionary<string, object?>
             {
                 ["telegramBotName"] = runtime.BotName,
@@ -436,7 +428,7 @@ public sealed class TelegramChannelAdapter(
     {
         if (state.MessageId is null)
         {
-            var sent = await runtime.ApiClient.SendMessageAsync(state.ChatId, text, cancellationToken);
+            var sent = await runtime.ApiClient.SendMessageAsync(state.ChatId, text, state.MessageThreadId, cancellationToken);
             state.MessageId = sent.MessageId;
             return;
         }
@@ -493,7 +485,7 @@ public sealed class TelegramChannelAdapter(
     }
 
     private static bool TryParseChatId(string conversationId, out long chatId)
-        => long.TryParse(conversationId, NumberStyles.Integer, CultureInfo.InvariantCulture, out chatId);
+        => TelegramChannelAddress.TryDecode(ChannelAddress.From(conversationId), out chatId, out _);
 
     private static bool IsChatAllowed(TelegramBotConfig config, long chatId)
         => config.AllowedChatIds.Count == 0 || config.AllowedChatIds.Contains(chatId);
@@ -609,9 +601,10 @@ public sealed class TelegramChannelAdapter(
         public Task? PollingTask { get; set; }
     }
 
-    private sealed class StreamingState(long chatId)
+    private sealed class StreamingState(long chatId, int? messageThreadId)
     {
         public long ChatId { get; } = chatId;
+        public int? MessageThreadId { get; } = messageThreadId;
         public int? MessageId { get; set; }
         public int PendingCharacterCount { get; set; }
         public DateTimeOffset LastFlushUtc { get; set; } = DateTimeOffset.UtcNow;

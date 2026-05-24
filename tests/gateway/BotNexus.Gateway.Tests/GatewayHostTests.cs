@@ -1,7 +1,6 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using ChannelAddress = BotNexus.Domain.Primitives.ChannelAddress;
-using ThreadId = BotNexus.Domain.Primitives.ThreadId;
 using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Abstractions.Activity;
@@ -666,8 +665,7 @@ public sealed class GatewayHostTests
         {
             BindingId = BotNexus.Domain.Primitives.BindingId.From("binding-source"),
             ChannelType = BotNexus.Domain.Primitives.ChannelKey.From("telegram"),
-            ChannelAddress = ChannelAddress.From("chat-42"),
-            ThreadId = ThreadId.From("42"),
+            ChannelAddress = ChannelAddress.From("chat-42/topic:42"),
             DisplayPrefix = "[topic] ",
             Mode = BindingMode.Interactive
         };
@@ -693,7 +691,6 @@ public sealed class GatewayHostTests
                     sourceBinding.ChannelType,
                     sourceBinding.ChannelAddress,
                     context.Source.SenderId,
-                    sourceBinding.ThreadId,
                     sourceBinding.BindingId,
                     sourceBinding.DisplayPrefix),
                 new ConversationSessionResolution(
@@ -702,7 +699,6 @@ public sealed class GatewayHostTests
                     false,
                     false,
                     sourceBinding.BindingId,
-                    sourceBinding.ThreadId,
                     sourceBinding.DisplayPrefix)));
 
         var channel = CreateChannelAdapter("telegram", supportsStreaming: false);
@@ -715,13 +711,13 @@ public sealed class GatewayHostTests
             conversationDispatcher: conversationDispatcher.Object,
             conversationRouter: conversationRouter.Object);
 
-        await host.DispatchAsync(CreateMessage("hello", channelType: "telegram", conversationId: "chat-42"));
+        await host.DispatchAsync(CreateMessage("hello", channelType: "telegram", conversationId: "chat-42/topic:42"));
 
         channel.Verify(c => c.SendAsync(
                 It.Is<OutboundMessage>(m =>
                     m.ChannelType == BotNexus.Domain.Primitives.ChannelKey.From("telegram") &&
                     m.SessionId == "session-target" &&
-                    m.ThreadId == ThreadId.From("42") &&
+                    m.ChannelAddress == ChannelAddress.From("chat-42/topic:42") &&
                     m.BindingId == sourceBinding.BindingId &&
                     m.DisplayPrefix == "[topic] "),
                 It.IsAny<CancellationToken>()),
@@ -1857,7 +1853,6 @@ public sealed class GatewayHostTests
                 It.IsAny<BotNexus.Domain.Primitives.AgentId>(),
                 It.IsAny<BotNexus.Domain.Primitives.ChannelKey>(),
                 It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(),
-                It.IsAny<BotNexus.Domain.Primitives.ThreadId?>(),
                 It.IsAny<string?>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<BotNexus.Domain.World.CitizenId?>()))
@@ -1949,7 +1944,6 @@ public sealed class GatewayHostTests
                 It.IsAny<BotNexus.Domain.Primitives.AgentId>(),
                 It.IsAny<BotNexus.Domain.Primitives.ChannelKey>(),
                 It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(),
-                It.IsAny<BotNexus.Domain.Primitives.ThreadId?>(),
                 It.IsAny<string?>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<BotNexus.Domain.World.CitizenId?>()))

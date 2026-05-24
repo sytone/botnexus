@@ -147,55 +147,55 @@ public sealed class SqliteConversationStoreTests
         await store.CreateAsync(expected);
         await store.CreateAsync(CreateConversation(Agent("agent-a"), "Other", CreateBinding("telegram", "99999")));
 
-        var resolved = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("telegram"), ChannelAddress.From("12345"), null);
+        var resolved = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("telegram"), ChannelAddress.From("12345"));
 
         resolved.ShouldNotBeNull();
         resolved!.ConversationId.ShouldBe(expected.ConversationId);
     }
 
     [Fact]
-    public async Task ResolveByBindingAsync_WithThreadId_MatchesExactly()
+    public async Task ResolveByBindingAsync_WithCompositeAddress_MatchesExactly()
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        var expected = CreateConversation(Agent("agent-a"), "Threaded", CreateBinding("teams", "channel-1", "thread-42"));
+        var expected = CreateConversation(Agent("agent-a"), "Threaded", CreateBinding("teams", "channel-1/topic:thread-42"));
         await store.CreateAsync(expected);
-        await store.CreateAsync(CreateConversation(Agent("agent-a"), "Other", CreateBinding("teams", "channel-1", "thread-99")));
+        await store.CreateAsync(CreateConversation(Agent("agent-a"), "Other", CreateBinding("teams", "channel-1/topic:thread-99")));
 
-        var resolved = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("teams"), ChannelAddress.From("channel-1"), ThreadId.From("thread-42"));
+        var resolved = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("teams"), ChannelAddress.From("channel-1/topic:thread-42"));
 
         resolved.ShouldNotBeNull();
         resolved!.ConversationId.ShouldBe(expected.ConversationId);
     }
 
     [Fact]
-    public async Task ResolveByBindingAsync_WithNullThreadId_OnlyMatchesNullThreadBinding()
+    public async Task ResolveByBindingAsync_BareAddress_DoesNotMatchCompositeAddress()
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        // Conversation bound to thread-42 only — no null-thread binding
-        var expected = CreateConversation(Agent("agent-a"), "Address", CreateBinding("teams", "channel-1", "thread-42"));
+        // Conversation bound to channel-1/topic:thread-42 only — no bare-address binding
+        var expected = CreateConversation(Agent("agent-a"), "Topic-only", CreateBinding("teams", "channel-1/topic:thread-42"));
         await store.CreateAsync(expected);
 
-        // Querying with null threadId should NOT match the thread-42 binding
-        var resolved = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("teams"), ChannelAddress.From("channel-1"), null);
+        // Querying with the bare chat address should NOT match the composite binding
+        var resolved = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("teams"), ChannelAddress.From("channel-1"));
         resolved.ShouldBeNull();
 
-        // But querying with the actual thread-42 should match
-        var resolvedWithThread = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("teams"), ChannelAddress.From("channel-1"), ThreadId.From("thread-42"));
-        resolvedWithThread.ShouldNotBeNull();
-        resolvedWithThread!.ConversationId.ShouldBe(expected.ConversationId);
+        // But querying with the composite address should match
+        var resolvedWithComposite = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("teams"), ChannelAddress.From("channel-1/topic:thread-42"));
+        resolvedWithComposite.ShouldNotBeNull();
+        resolvedWithComposite!.ConversationId.ShouldBe(expected.ConversationId);
     }
 
     [Fact]
-    public async Task ResolveByBindingAsync_WithNullThreadId_MatchesNullThreadBinding()
+    public async Task ResolveByBindingAsync_BareAddress_MatchesBareAddressBinding()
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
-        var expected = CreateConversation(Agent("agent-a"), "Address", CreateBinding("teams", "channel-1", null));
+        var expected = CreateConversation(Agent("agent-a"), "Bare", CreateBinding("teams", "channel-1"));
         await store.CreateAsync(expected);
 
-        var resolved = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("teams"), ChannelAddress.From("channel-1"), null);
+        var resolved = await fixture.CreateStore().ResolveByBindingAsync(Agent("agent-a"), ChannelKey.From("teams"), ChannelAddress.From("channel-1"));
 
         resolved.ShouldNotBeNull();
         resolved!.ConversationId.ShouldBe(expected.ConversationId);
@@ -210,7 +210,7 @@ public sealed class SqliteConversationStoreTests
             Agent("agent-a"),
             "Summary",
             CreateBinding("telegram", "123"),
-            CreateBinding("teams", "abc", "thread-1"));
+            CreateBinding("teams", "abc/topic:thread-1"));
         await store.CreateAsync(conversation);
 
         var summaries = await fixture.CreateStore().GetSummariesAsync(Agent("agent-a"));
@@ -229,13 +229,13 @@ public sealed class SqliteConversationStoreTests
         var conversation = CreateConversation(Agent("agent-a"), "Bindings", CreateBinding("telegram", "123"));
         await store.CreateAsync(conversation);
 
-        conversation.ChannelBindings.Add(CreateBinding("teams", "abc", "thread-1"));
+        conversation.ChannelBindings.Add(CreateBinding("teams", "abc/topic:thread-1"));
         await store.SaveAsync(conversation);
 
         var loaded = await fixture.CreateStore().GetAsync(conversation.ConversationId);
         loaded.ShouldNotBeNull();
         loaded!.ChannelBindings.Count.ShouldBe(2);
-        loaded.ChannelBindings.Any(b => b.ChannelType == ChannelKey.From("teams") && b.ThreadId == ThreadId.From("thread-1")).ShouldBeTrue();
+        loaded.ChannelBindings.Any(b => b.ChannelType == ChannelKey.From("teams") && b.ChannelAddress == ChannelAddress.From("abc/topic:thread-1")).ShouldBeTrue();
     }
 
     [Fact]
@@ -497,6 +497,110 @@ public sealed class SqliteConversationStoreTests
         roundTrip!.Initiator!.Value.ShouldBe(alice);
     }
 
+    [Fact]
+    public async Task Migration_FoldsLegacyThreadIdColumn_IntoCompositeChannelAddress()
+    {
+        // Seed a database with the pre-#512 schema: conversation_bindings has a thread_id
+        // column. The store must drop the column on first access and rewrite any non-null
+        // thread_id values into the channel_address as "/topic:<value>" so existing bindings
+        // still resolve under the new (channelType, channelAddress)-only matching rule.
+        using var fixture = new StoreFixture();
+
+        await using (var connection = new SqliteConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var seed = connection.CreateCommand();
+            seed.CommandText = """
+                CREATE TABLE conversations (
+                    id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    purpose TEXT,
+                    is_default INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'Active',
+                    active_session_id TEXT,
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    instructions TEXT,
+                    canvas_html TEXT,
+                    initiator TEXT
+                );
+
+                CREATE TABLE conversation_bindings (
+                    binding_id TEXT PRIMARY KEY,
+                    conversation_id TEXT NOT NULL,
+                    channel_type TEXT NOT NULL,
+                    channel_address TEXT NOT NULL,
+                    thread_id TEXT,
+                    mode TEXT NOT NULL DEFAULT 'Interactive',
+                    threading_mode TEXT NOT NULL DEFAULT 'Single',
+                    display_prefix TEXT,
+                    bound_at TEXT NOT NULL,
+                    last_inbound_at TEXT,
+                    last_outbound_at TEXT
+                );
+
+                CREATE INDEX idx_bindings_lookup
+                    ON conversation_bindings(channel_type, channel_address, thread_id);
+
+                INSERT INTO conversations (id, agent_id, title, status, metadata, created_at, updated_at)
+                VALUES ('conv-numeric',     'agent-a', 'Numeric topic',     'Active', '{}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z'),
+                       ('conv-nonnumeric',  'agent-a', 'Non-numeric topic', 'Active', '{}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z'),
+                       ('conv-bare',        'agent-a', 'Bare chat',         'Active', '{}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');
+
+                INSERT INTO conversation_bindings
+                    (binding_id, conversation_id, channel_type, channel_address, thread_id, mode, threading_mode, bound_at)
+                VALUES
+                    ('b-numeric',    'conv-numeric',    'telegram', '12345', '67',         'Interactive', 'Single', '2024-01-01T00:00:00Z'),
+                    ('b-nonnumeric', 'conv-nonnumeric', 'telegram', '12345', 'topic:99',   'Interactive', 'Single', '2024-01-01T00:00:00Z'),
+                    ('b-bare',       'conv-bare',       'telegram', '99999', NULL,         'Interactive', 'Single', '2024-01-01T00:00:00Z');
+                """;
+            await seed.ExecuteNonQueryAsync();
+        }
+
+        var store = fixture.CreateStore();
+
+        // First access triggers EnsureCreatedAsync -> MigrateThreadIdIntoChannelAddressAsync.
+        var numeric = await store.GetAsync(ConversationId.From("conv-numeric"));
+        var nonNumeric = await store.GetAsync(ConversationId.From("conv-nonnumeric"));
+        var bare = await store.GetAsync(ConversationId.From("conv-bare"));
+
+        numeric.ShouldNotBeNull();
+        nonNumeric.ShouldNotBeNull();
+        bare.ShouldNotBeNull();
+
+        numeric!.ChannelBindings.Count.ShouldBe(1);
+        numeric.ChannelBindings[0].ChannelAddress.ShouldBe(ChannelAddress.From("12345/topic:67"));
+
+        nonNumeric!.ChannelBindings.Count.ShouldBe(1);
+        nonNumeric.ChannelBindings[0].ChannelAddress.ShouldBe(ChannelAddress.From("12345/topic:topic:99"));
+
+        bare!.ChannelBindings.Count.ShouldBe(1);
+        bare.ChannelBindings[0].ChannelAddress.ShouldBe(ChannelAddress.From("99999"));
+
+        // The thread_id column must have been dropped — verify against the SQLite schema directly.
+        await using (var verify = new SqliteConnection(fixture.ConnectionString))
+        {
+            await verify.OpenAsync();
+            await using var pragma = verify.CreateCommand();
+            pragma.CommandText = "PRAGMA table_info('conversation_bindings');";
+            await using var reader = await pragma.ExecuteReaderAsync();
+            var columns = new List<string>();
+            while (await reader.ReadAsync())
+                columns.Add(reader.GetString(1));
+
+            columns.ShouldNotContain("thread_id");
+            columns.ShouldContain("channel_address");
+        }
+
+        // Re-running the migration is a no-op: a second instance must not crash on
+        // missing thread_id column nor double-encode existing addresses.
+        var store2 = fixture.CreateStore();
+        var numericAgain = await store2.GetAsync(ConversationId.From("conv-numeric"));
+        numericAgain!.ChannelBindings[0].ChannelAddress.ShouldBe(ChannelAddress.From("12345/topic:67"));
+    }
+
     private static string TempDb()
         => Path.Combine(Path.GetTempPath(), $"bn-conv-test-{Guid.NewGuid():N}.db");
 
@@ -512,16 +616,15 @@ public sealed class SqliteConversationStoreTests
             ChannelBindings = bindings.ToList()
         };
 
-    private static ChannelBinding CreateBinding(string channelType, string channelAddress, string? threadId = null)
+    private static ChannelBinding CreateBinding(string channelType, string channelAddress)
         => new()
         {
             BindingId = BindingId.Create(),
             ChannelType = ChannelKey.From(channelType),
             ChannelAddress = ChannelAddress.From(channelAddress),
-            ThreadId = ThreadId.FromNullable(threadId),
             BoundAt = DateTimeOffset.UtcNow,
             Mode = BindingMode.Interactive,
-            ThreadingMode = threadId is null ? ThreadingMode.Single : ThreadingMode.NativeThread
+            ThreadingMode = ThreadingMode.Single
         };
 
 }

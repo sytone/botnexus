@@ -73,13 +73,6 @@ public sealed record InboundMessage
         new Dictionary<string, object?>();
 
     /// <summary>
-    /// Native thread or topic identifier within the channel address.
-    /// For Telegram group topics, Signal threads, Teams threads, etc.
-    /// When non-null, used to route into a thread-specific conversation binding.
-    /// </summary>
-    public ThreadId? ThreadId { get; init; }
-
-    /// <summary>
     /// The channel binding ID this message arrived on, if known.
     /// Used by fan-out to exclude the originating binding from echo.
     /// </summary>
@@ -88,7 +81,6 @@ public sealed record InboundMessage
     /// <summary>
     /// When set, routes directly to this conversation, bypassing binding lookup.
     /// Used by portal clients that know which conversation they are viewing.
-    /// This avoids the thread-binding hack that caused duplicate bindings and double fan-out.
     /// </summary>
     public string? ConversationId { get; init; }
 }
@@ -109,13 +101,6 @@ public sealed record OutboundMessage
 
     /// <summary>The session this message belongs to.</summary>
     public string? SessionId { get; init; }
-
-    /// <summary>
-    /// Native thread or topic identifier for the target channel.
-    /// When non-null, adapters should deliver the message into the specified thread
-    /// (e.g. Telegram <c>message_thread_id</c>, Teams thread id).
-    /// </summary>
-    public ThreadId? ThreadId { get; init; }
 
     /// <summary>
     /// Stable identifier of the channel binding that this message is being sent to.

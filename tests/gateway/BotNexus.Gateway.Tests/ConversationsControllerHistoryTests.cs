@@ -396,7 +396,7 @@ public sealed class ConversationsControllerHistoryTests
         public Task ArchiveAsync(ConversationId conversationId, CancellationToken ct = default)
             => throw new NotSupportedException();
 
-        public Task<Conversation?> ResolveByBindingAsync(AgentId agentId, ChannelKey channelType, ChannelAddress channelAddress, ThreadId? threadId, CancellationToken ct = default)
+        public Task<Conversation?> ResolveByBindingAsync(AgentId agentId, ChannelKey channelType, ChannelAddress channelAddress, CancellationToken ct = default)
             => throw new NotSupportedException();
 
         public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(AgentId? agentId = null, CancellationToken ct = default)

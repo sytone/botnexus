@@ -28,15 +28,15 @@ public enum BindingMode
 }
 
 /// <summary>
-/// Controls how conversations map to native channel threading models.
+/// Controls how a conversation is rendered on the wire for channels that don't
+/// natively express multiple conversations on a single address. Native sub-thread
+/// routing (e.g. Telegram forum topics) is handled by the channel adapter via
+/// composite <see cref="ChannelAddress"/> encoding and does not need a mode here.
 /// </summary>
 public enum ThreadingMode
 {
     /// <summary>One conversation per channel address (DMs, SMS).</summary>
     Single,
-
-    /// <summary>The conversation maps to a native thread or topic (Teams, Slack, Telegram topics).</summary>
-    NativeThread,
 
     /// <summary>The conversation name is prefixed on messages (iMessage fallback, SMS multi-conversation).</summary>
     Prefix

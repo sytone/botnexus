@@ -203,7 +203,6 @@ public sealed class DefaultConversationRouterTests
             agentId,
             Channel("telegram"),
             ChannelAddress.From("unused"),
-            null,
             conversation.ConversationId.Value);
 
         result.Conversation.ConversationId.ShouldBe(conversation.ConversationId);
@@ -562,7 +561,6 @@ public sealed class DefaultConversationRouterTests
             agentId,
             Channel(),
             ChannelAddress.From("unused"),
-            null,
             conversation.ConversationId.Value,
             ct: default,
             initiator: different);

@@ -36,7 +36,6 @@ public sealed class DefaultConversationDispatcher : IConversationDispatcher
             context.AgentId,
             context.Source.ChannelType,
             context.Source.ChannelAddress,
-            context.Source.ThreadId,
             context.RequestedConversationId,
             cancellationToken,
             initiator: context.Message.Sender);
@@ -46,7 +45,6 @@ public sealed class DefaultConversationDispatcher : IConversationDispatcher
             : context.Source with
             {
                 BindingId = routingResult.OriginatingBinding.BindingId,
-                ThreadId = routingResult.OriginatingBinding.ThreadId,
                 DisplayPrefix = routingResult.OriginatingBinding.DisplayPrefix
             };
 
@@ -56,7 +54,6 @@ public sealed class DefaultConversationDispatcher : IConversationDispatcher
             IsNewConversation: existingConversation is null,
             IsNewSession: routingResult.IsNewSession,
             OriginatingBindingId: resolvedSource.BindingId,
-            ThreadId: resolvedSource.ThreadId,
             DisplayPrefix: resolvedSource.DisplayPrefix);
 
         return new DispatchResult(context, resolvedSource, resolution);
@@ -75,7 +72,6 @@ public sealed class DefaultConversationDispatcher : IConversationDispatcher
             context.AgentId,
             context.Source.ChannelType,
             context.Source.ChannelAddress,
-            context.Source.ThreadId,
             cancellationToken);
     }
 }

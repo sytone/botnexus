@@ -66,11 +66,10 @@ public class ConversationApiClient(HttpClient http)
         string conversationId,
         string channelType,
         string channelAddress,
-        string? threadId,
         string? threadingMode,
         CancellationToken ct = default)
     {
-        var body = JsonSerializer.Serialize(new { channelType, channelAddress, threadId, threadingMode });
+        var body = JsonSerializer.Serialize(new { channelType, channelAddress, threadingMode });
         var content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
         return http.PostAsync($"/api/conversations/{Uri.EscapeDataString(conversationId)}/bindings", content, ct);
     }

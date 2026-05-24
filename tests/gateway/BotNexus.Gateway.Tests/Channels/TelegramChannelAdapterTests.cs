@@ -329,6 +329,79 @@ public sealed class TelegramChannelAdapterTests
     }
 
     [Fact]
+    public async Task SendStreamEventAsync_WithCompositeAddress_RoutesFirstSend_ToForumTopic()
+    {
+        // Regression for PR #512: pre-refactor, streaming replies to Telegram forum topics
+        // landed in the root chat because FlushStreamingStateAsync called the 3-arg
+        // SendMessageAsync overload without a messageThreadId. The composite-address scheme
+        // must carry the topic from SendStreamEventAsync all the way to the API call.
+        var calls = new List<ApiCall>();
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            calls.Add(call);
+            return call.MethodName switch
+            {
+                "sendMessage" => JsonOk(new TelegramMessage { MessageId = 99, Chat = new TelegramChat { Id = 42 } }),
+                "editMessageText" => JsonOk(new TelegramMessage { MessageId = 99, Chat = new TelegramChat { Id = 42 } }),
+                _ => JsonOk(true)
+            };
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            AllowedChatIds = { 42 },
+            StreamingBufferMs = 60000
+        }, handler);
+
+        // Composite address — adapter must decode "/topic:42" and route the initial
+        // streaming sendMessage to the originating forum topic.
+        const string compositeAddress = "42/topic:42";
+        await adapter.SendStreamEventAsync(compositeAddress, new AgentStreamEvent { Type = AgentStreamEventType.MessageStart });
+        await adapter.SendStreamEventAsync(compositeAddress, new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = new string('x', 101) });
+
+        var firstSend = calls.FirstOrDefault(c => c.MethodName == "sendMessage");
+        firstSend.ShouldNotBeNull("streaming flow must issue exactly one initial sendMessage");
+        firstSend!.MessageThreadId.ShouldBe(42,
+            "the first streaming sendMessage must include message_thread_id so the reply lands in the originating forum topic; PR #512 fixed this from being silently dropped");
+    }
+
+    [Fact]
+    public async Task SendStreamDeltaAsync_WithCompositeAddress_RoutesFirstSend_ToForumTopic()
+    {
+        // Companion regression for the older buffered-delta API. Same defect surface:
+        // buffered streaming must thread the composite-address topic through the
+        // adapter's internal SendOrEditStreamingMessageAsync path.
+        var calls = new List<ApiCall>();
+        var handler = new StubHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromRequestAsync(request, cancellationToken);
+            calls.Add(call);
+            return call.MethodName switch
+            {
+                "sendMessage" => JsonOk(new TelegramMessage { MessageId = 7, Chat = new TelegramChat { Id = 42 } }),
+                "editMessageText" => JsonOk(new TelegramMessage { MessageId = 7, Chat = new TelegramChat { Id = 42 } }),
+                _ => JsonOk(true)
+            };
+        });
+
+        var adapter = CreateAdapter(new TelegramGatewayOptions
+        {
+            BotToken = "token",
+            AllowedChatIds = { 42 }
+        }, handler);
+
+        // Send a delta large enough to cross the flush threshold and force a sendMessage.
+        await adapter.SendStreamDeltaAsync("42/topic:67", new string('y', 200));
+
+        var firstSend = calls.FirstOrDefault(c => c.MethodName == "sendMessage");
+        firstSend.ShouldNotBeNull();
+        firstSend!.MessageThreadId.ShouldBe(67,
+            "buffered streaming deltas must carry the composite-address topic into Telegram's message_thread_id field");
+    }
+
+    [Fact]
     public async Task StartAsync_WithoutBotToken_Throws()
     {
         var adapter = CreateAdapter(new TelegramGatewayOptions(), new StubHttpMessageHandler((_, _) => Task.FromResult(JsonOk(true))));
@@ -360,8 +433,7 @@ public sealed class TelegramChannelAdapterTests
         await adapter.SendAsync(new OutboundMessage
         {
             ChannelType = ChannelKey.From("telegram"),
-            ChannelAddress = ChannelAddress.From("42"),
-            ThreadId = ThreadId.From("1"),
+            ChannelAddress = ChannelAddress.From("42/topic:1"),
             Content = "general topic"
         });
 
@@ -390,8 +462,7 @@ public sealed class TelegramChannelAdapterTests
         await adapter.SendAsync(new OutboundMessage
         {
             ChannelType = ChannelKey.From("telegram"),
-            ChannelAddress = ChannelAddress.From("42"),
-            ThreadId = ThreadId.From("42"),
+            ChannelAddress = ChannelAddress.From("42/topic:42"),
             Content = "topic reply"
         });
 

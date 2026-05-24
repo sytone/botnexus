@@ -18,9 +18,10 @@ public sealed class FanOutBindingAwareTests
     private static ChannelKey Channel(string type = "telegram") => ChannelKey.From(type);
 
     [Fact]
-    public async Task FanOut_PassesThreadId_FromBindingToAdapter()
+    public async Task FanOut_PreservesCompositeChannelAddress_FromBindingToAdapter()
     {
-        // Arrange: a conversation with two bindings — originator (no thread) and a target with ThreadId
+        // Arrange: a conversation with two bindings — originator (root signalr) and a target
+        // telegram binding whose composite ChannelAddress includes a topic suffix.
         var conversationStore = new InMemoryConversationStore();
         var sessionStore = new InMemorySessionStore();
         var agentId = Agent();
@@ -37,8 +38,7 @@ public sealed class FanOutBindingAwareTests
         {
             BindingId = BindingId.From("binding-tg"),
             ChannelType = Channel("telegram"),
-            ChannelAddress = ChannelAddress.From("chat-999"),
-            ThreadId = ThreadId.From("topic-77"),
+            ChannelAddress = ChannelAddress.From("chat-999/topic:77"),
             Mode = BindingMode.Interactive
         });
         await conversationStore.SaveAsync(conversation);
@@ -51,11 +51,10 @@ public sealed class FanOutBindingAwareTests
         var router = new DefaultConversationRouter(conversationStore, sessionStore, NullLogger<DefaultConversationRouter>.Instance);
         var bindings = await router.GetOutboundBindingsAsync(sessionId, BindingId.From("binding-src"));
 
-        // The telegram binding with ThreadId should be included
+        // The telegram binding with composite address should be included
         bindings.Count.ShouldBe(1);
         var tgBinding = bindings[0];
-        tgBinding.ChannelAddress.ShouldBe(ChannelAddress.From("chat-999"));
-        tgBinding.ThreadId.ShouldBe(ThreadId.From("topic-77"));
+        tgBinding.ChannelAddress.ShouldBe(ChannelAddress.From("chat-999/topic:77"));
 
         // Build the outbound message as FanOutResponseAsync would
         var outbound = new OutboundMessage
@@ -63,12 +62,11 @@ public sealed class FanOutBindingAwareTests
             ChannelType = tgBinding.ChannelType,
             ChannelAddress = tgBinding.ChannelAddress,
             Content = "response text",
-            ThreadId = tgBinding.ThreadId,
             BindingId = tgBinding.BindingId,
             DisplayPrefix = tgBinding.DisplayPrefix
         };
 
-        outbound.ThreadId.ShouldBe(ThreadId.From("topic-77"));
+        outbound.ChannelAddress.ShouldBe(ChannelAddress.From("chat-999/topic:77"));
         outbound.BindingId?.Value.ShouldBe("binding-tg");
     }
 }
