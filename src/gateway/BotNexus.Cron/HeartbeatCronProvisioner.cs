@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using Microsoft.Extensions.Hosting;
@@ -46,7 +47,7 @@ public sealed class HeartbeatCronProvisioner : IHostedService, IHeartbeatProvisi
     public async Task ProvisionAsync(AgentDescriptor descriptor, CancellationToken cancellationToken)
     {
         var heartbeat = descriptor.Heartbeat;
-        var jobId = $"heartbeat:{descriptor.AgentId}";
+        var jobId = JobId.From($"heartbeat:{descriptor.AgentId.Value}");
 
         if (heartbeat is not { Enabled: true })
         {
@@ -86,7 +87,7 @@ public sealed class HeartbeatCronProvisioner : IHostedService, IHeartbeatProvisi
                 Name = $"Heartbeat \u2014 {descriptor.DisplayName}",
                 Schedule = cronExpression,
                 ActionType = "heartbeat",
-                AgentId = descriptor.AgentId.Value,
+                AgentId = descriptor.AgentId,
                 Message = prompt,
                 Enabled = true,
                 System = true,

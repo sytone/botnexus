@@ -1,4 +1,5 @@
 using System.Text.Json;
+using BotNexus.Domain.Primitives;
 using Microsoft.Data.Sqlite;
 using System.IO.Abstractions;
 using Microsoft.Extensions.Logging;
@@ -140,7 +141,6 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         {
             var created = job with
             {
-                Id = string.IsNullOrWhiteSpace(job.Id) ? Guid.NewGuid().ToString("N") : job.Id,
                 CreatedAt = job.CreatedAt == default ? DateTimeOffset.UtcNow : job.CreatedAt
             };
 
@@ -174,9 +174,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         }
     }
 
-    public async Task<CronJob?> GetAsync(string jobId, CancellationToken ct = default)
+    public async Task<CronJob?> GetAsync(JobId jobId, CancellationToken ct = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(jobId);
         await InitializeAsync(ct).ConfigureAwait(false);
 
         await using var connection = CreateConnection();
@@ -188,7 +187,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             FROM cron_jobs
             WHERE id = $id
             """;
-        command.Parameters.AddWithValue("$id", jobId);
+        command.Parameters.AddWithValue("$id", jobId.Value);
 
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
         return await reader.ReadAsync(ct).ConfigureAwait(false)
@@ -196,7 +195,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             : null;
     }
 
-    public async Task<IReadOnlyList<CronJob>> ListAsync(string? agentId = null, CancellationToken ct = default)
+    public async Task<IReadOnlyList<CronJob>> ListAsync(AgentId? agentId = null, CancellationToken ct = default)
     {
         await InitializeAsync(ct).ConfigureAwait(false);
 
@@ -210,7 +209,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             WHERE $agentId IS NULL OR agent_id = $agentId
             ORDER BY created_at DESC
             """;
-        command.Parameters.AddWithValue("$agentId", (object?)agentId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$agentId", agentId.HasValue ? (object)agentId.Value.Value : DBNull.Value);
 
         List<CronJob> jobs = [];
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
@@ -277,9 +276,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         }
     }
 
-    public async Task DeleteAsync(string jobId, CancellationToken ct = default)
+    public async Task DeleteAsync(JobId jobId, CancellationToken ct = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(jobId);
         await InitializeAsync(ct).ConfigureAwait(false);
 
         await _writeLock.WaitAsync(ct).ConfigureAwait(false);
@@ -290,12 +288,12 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
 
             await using var deleteRuns = connection.CreateCommand();
             deleteRuns.CommandText = "DELETE FROM cron_runs WHERE job_id = $jobId";
-            deleteRuns.Parameters.AddWithValue("$jobId", jobId);
+            deleteRuns.Parameters.AddWithValue("$jobId", jobId.Value);
             await deleteRuns.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
             await using var deleteJob = connection.CreateCommand();
             deleteJob.CommandText = "DELETE FROM cron_jobs WHERE id = $jobId";
-            deleteJob.Parameters.AddWithValue("$jobId", jobId);
+            deleteJob.Parameters.AddWithValue("$jobId", jobId.Value);
             await deleteJob.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             _logger.LogInformation("Deleted cron job '{JobId}'.", jobId);
         }
@@ -305,9 +303,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         }
     }
 
-    public async Task<CronRun> RecordRunStartAsync(string jobId, CancellationToken ct = default)
+    public async Task<CronRun> RecordRunStartAsync(JobId jobId, CancellationToken ct = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(jobId);
         await InitializeAsync(ct).ConfigureAwait(false);
 
         await _writeLock.WaitAsync(ct).ConfigureAwait(false);
@@ -316,7 +313,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             var now = DateTimeOffset.UtcNow;
             var run = new CronRun
             {
-                Id = Guid.NewGuid().ToString("N"),
+                Id = RunId.Create(),
                 JobId = jobId,
                 StartedAt = now,
                 Status = "running"
@@ -330,8 +327,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
                 INSERT INTO cron_runs (id, job_id, started_at, completed_at, status, error, session_id)
                 VALUES ($id, $jobId, $startedAt, $completedAt, $status, $error, $sessionId)
                 """;
-            insertRun.Parameters.AddWithValue("$id", run.Id);
-            insertRun.Parameters.AddWithValue("$jobId", run.JobId);
+            insertRun.Parameters.AddWithValue("$id", run.Id.Value);
+            insertRun.Parameters.AddWithValue("$jobId", run.JobId.Value);
             insertRun.Parameters.AddWithValue("$startedAt", run.StartedAt.ToString("O"));
             insertRun.Parameters.AddWithValue("$completedAt", DBNull.Value);
             insertRun.Parameters.AddWithValue("$status", run.Status);
@@ -348,7 +345,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
                 WHERE id = $jobId
                 """;
             updateJob.Parameters.AddWithValue("$lastRunAt", now.ToString("O"));
-            updateJob.Parameters.AddWithValue("$jobId", jobId);
+            updateJob.Parameters.AddWithValue("$jobId", jobId.Value);
             await updateJob.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
             return run;
@@ -360,13 +357,12 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
     }
 
     public async Task RecordRunCompleteAsync(
-        string runId,
+        RunId runId,
         string status,
         string? error = null,
-        string? sessionId = null,
+        SessionId? sessionId = null,
         CancellationToken ct = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(runId);
         ArgumentException.ThrowIfNullOrWhiteSpace(status);
         await InitializeAsync(ct).ConfigureAwait(false);
 
@@ -388,8 +384,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             command.Parameters.AddWithValue("$completedAt", DateTimeOffset.UtcNow.ToString("O"));
             command.Parameters.AddWithValue("$status", status);
             command.Parameters.AddWithValue("$error", (object?)error ?? DBNull.Value);
-            command.Parameters.AddWithValue("$sessionId", (object?)sessionId ?? DBNull.Value);
-            command.Parameters.AddWithValue("$runId", runId);
+            command.Parameters.AddWithValue("$sessionId", sessionId.HasValue ? (object)sessionId.Value.Value : DBNull.Value);
+            command.Parameters.AddWithValue("$runId", runId.Value);
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }
         finally
@@ -398,9 +394,8 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         }
     }
 
-    public async Task<IReadOnlyList<CronRun>> GetRunHistoryAsync(string jobId, int limit = 20, CancellationToken ct = default)
+    public async Task<IReadOnlyList<CronRun>> GetRunHistoryAsync(JobId jobId, int limit = 20, CancellationToken ct = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(jobId);
         await InitializeAsync(ct).ConfigureAwait(false);
 
         var cappedLimit = Math.Clamp(limit, 1, int.MaxValue);
@@ -414,7 +409,7 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
             ORDER BY started_at DESC
             LIMIT $limit
             """;
-        command.Parameters.AddWithValue("$jobId", jobId);
+        command.Parameters.AddWithValue("$jobId", jobId.Value);
         command.Parameters.AddWithValue("$limit", cappedLimit);
 
         List<CronRun> runs = [];
@@ -429,11 +424,11 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
 
     private static void BindJob(SqliteCommand command, CronJob job)
     {
-        command.Parameters.AddWithValue("$id", job.Id);
+        command.Parameters.AddWithValue("$id", job.Id.Value);
         command.Parameters.AddWithValue("$name", job.Name);
         command.Parameters.AddWithValue("$schedule", job.Schedule);
         command.Parameters.AddWithValue("$actionType", job.ActionType);
-        command.Parameters.AddWithValue("$agentId", (object?)job.AgentId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$agentId", job.AgentId.HasValue ? (object)job.AgentId.Value.Value : DBNull.Value);
         command.Parameters.AddWithValue("$message", (object?)job.Message ?? DBNull.Value);
         command.Parameters.AddWithValue("@templateName", (object?)job.TemplateName ?? DBNull.Value);
         command.Parameters.AddWithValue("@templateParametersJson", SerializeTemplateParameters(job.TemplateParameters));
@@ -458,11 +453,11 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
         var metadataJson = reader.IsDBNull(20) ? null : reader.GetString(20);
         return new CronJob
         {
-            Id = reader.GetString(0),
+            Id = JobId.From(reader.GetString(0)),
             Name = reader.GetString(1),
             Schedule = reader.GetString(2),
             ActionType = reader.GetString(3),
-            AgentId = reader.IsDBNull(4) ? null : reader.GetString(4),
+            AgentId = reader.IsDBNull(4) ? null : AgentId.From(reader.GetString(4)),
             Message = reader.IsDBNull(5) ? null : reader.GetString(5),
             TemplateName = reader.IsDBNull(6) ? null : reader.GetString(6),
             TemplateParameters = DeserializeTemplateParameters(templateParametersJson),
@@ -486,13 +481,13 @@ public sealed class SqliteCronStore(string dbPath, IFileSystem? fileSystem = nul
     {
         return new CronRun
         {
-            Id = reader.GetString(0),
-            JobId = reader.GetString(1),
+            Id = RunId.From(reader.GetString(0)),
+            JobId = JobId.From(reader.GetString(1)),
             StartedAt = ParseDate(reader.GetString(2)),
             CompletedAt = reader.IsDBNull(3) ? null : ParseDate(reader.GetString(3)),
             Status = reader.GetString(4),
             Error = reader.IsDBNull(5) ? null : reader.GetString(5),
-            SessionId = reader.IsDBNull(6) ? null : reader.GetString(6)
+            SessionId = reader.IsDBNull(6) ? null : SessionId.From(reader.GetString(6))
         };
     }
 

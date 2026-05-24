@@ -184,7 +184,7 @@ public sealed class SoulTriggerTests
             "first prompt",
             request: new BotNexus.Gateway.Abstractions.Triggers.InternalTriggerRequest
             {
-                CronJobId = "job-1",
+                CronJobId = JobId.From("job-1"),
                 ModelOverride = "openai/gpt-4.1"
             });
         var second = await trigger.CreateSessionAsync(agentId, "second prompt");

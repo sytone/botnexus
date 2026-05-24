@@ -2,18 +2,17 @@ using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Domain.Primitives;
 
 namespace BotNexus.Cron.Tools;
 
 public sealed class CronTool(
     ICronStore cronStore,
     CronScheduler scheduler,
-    string agentId,
+    AgentId agentId,
     bool allowCrossAgentCron = false) : IAgentTool
 {
-    private readonly string _agentId = string.IsNullOrWhiteSpace(agentId)
-        ? throw new ArgumentException("Agent ID is required.", nameof(agentId))
-        : agentId;
+    private readonly AgentId _agentId = agentId;
 
     public string Name => "cron";
     public string Label => "Cron Job Manager";
@@ -106,8 +105,8 @@ public sealed class CronTool(
         var visible = allowCrossAgentCron
             ? filtered.ToList()
             : filtered.Where(job =>
-                string.Equals(job.CreatedBy, _agentId, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(job.AgentId, _agentId, StringComparison.OrdinalIgnoreCase)).ToList();
+                string.Equals(job.CreatedBy, _agentId.Value, StringComparison.OrdinalIgnoreCase)
+                || (job.AgentId.HasValue && job.AgentId.Value == _agentId)).ToList();
 
         return TextResult(JsonSerializer.Serialize(visible, JsonOptions));
     }
@@ -130,20 +129,25 @@ public sealed class CronTool(
         }
         catch { /* invalid schedule — will be caught by scheduler */ }
 
+        var targetAgentIdString = ReadString(arguments, "agentId");
+        var targetAgentId = string.IsNullOrWhiteSpace(targetAgentIdString)
+            ? _agentId
+            : AgentId.From(targetAgentIdString);
+
         var job = new CronJob
         {
-            Id = Guid.NewGuid().ToString("N"),
+            Id = JobId.From(Guid.NewGuid().ToString("N")),
             Name = ReadRequired(arguments, "name"),
             Schedule = schedule,
             ActionType = "agent-prompt",
-            AgentId = ReadString(arguments, "agentId") ?? _agentId,
+            AgentId = targetAgentId,
             Message = message,
             TemplateName = templateName,
             TemplateParameters = ReadStringMap(arguments, "templateParameters"),
             Model = ReadString(arguments, "model"),
             Enabled = arguments.TryGetValue("enabled", out var enabled) && enabled is bool boolEnabled ? boolEnabled : true,
             TimeZone = timeZone,
-            CreatedBy = _agentId,
+            CreatedBy = _agentId.Value,
             CreatedAt = now,
             NextRunAt = nextRunAt,
             Metadata = new Dictionary<string, object?>()
@@ -155,9 +159,9 @@ public sealed class CronTool(
 
     private async Task<AgentToolResult> UpdateAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken)
     {
-        var jobId = ReadRequired(arguments, "jobId");
+        var jobId = JobId.From(ReadRequired(arguments, "jobId"));
         var existing = await cronStore.GetAsync(jobId, cancellationToken).ConfigureAwait(false)
-            ?? throw new KeyNotFoundException($"Cron job '{jobId}' was not found.");
+            ?? throw new KeyNotFoundException($"Cron job '{jobId.Value}' was not found.");
 
         EnsureCanManage(existing);
 
@@ -169,6 +173,12 @@ public sealed class CronTool(
             ? ReadStringMap(arguments, "templateParameters")
             : existing.TemplateParameters;
         EnsurePromptSource(newMessage, newTemplateName);
+
+        var newAgentIdString = ReadString(arguments, "agentId");
+        var newAgentId = string.IsNullOrWhiteSpace(newAgentIdString)
+            ? existing.AgentId
+            : AgentId.From(newAgentIdString);
+
         var updated = existing with
         {
             Name = ReadString(arguments, "name") ?? existing.Name,
@@ -178,7 +188,7 @@ public sealed class CronTool(
             TemplateName = newTemplateName,
             TemplateParameters = newTemplateParameters,
             Model = ReadString(arguments, "model") ?? existing.Model,
-            AgentId = ReadString(arguments, "agentId") ?? existing.AgentId,
+            AgentId = newAgentId,
             Enabled = arguments.TryGetValue("enabled", out var enabled) && enabled is bool boolEnabled ? boolEnabled : existing.Enabled
         };
 
@@ -204,20 +214,20 @@ public sealed class CronTool(
 
     private async Task<AgentToolResult> DeleteAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken)
     {
-        var jobId = ReadRequired(arguments, "jobId");
+        var jobId = JobId.From(ReadRequired(arguments, "jobId"));
         var existing = await cronStore.GetAsync(jobId, cancellationToken).ConfigureAwait(false)
-            ?? throw new KeyNotFoundException($"Cron job '{jobId}' was not found.");
+            ?? throw new KeyNotFoundException($"Cron job '{jobId.Value}' was not found.");
 
         EnsureCanManage(existing);
         await cronStore.DeleteAsync(jobId, cancellationToken).ConfigureAwait(false);
-        return TextResult($"Deleted cron job '{jobId}'.");
+        return TextResult($"Deleted cron job '{jobId.Value}'.");
     }
 
     private async Task<AgentToolResult> RunAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken)
     {
-        var jobId = ReadRequired(arguments, "jobId");
+        var jobId = JobId.From(ReadRequired(arguments, "jobId"));
         var existing = await cronStore.GetAsync(jobId, cancellationToken).ConfigureAwait(false)
-            ?? throw new KeyNotFoundException($"Cron job '{jobId}' was not found.");
+            ?? throw new KeyNotFoundException($"Cron job '{jobId.Value}' was not found.");
 
         EnsureCanManage(existing);
         var run = await scheduler.RunNowAsync(jobId, cancellationToken).ConfigureAwait(false);
@@ -229,8 +239,8 @@ public sealed class CronTool(
         if (allowCrossAgentCron)
             return;
 
-        var isCreator = string.Equals(job.CreatedBy, _agentId, StringComparison.OrdinalIgnoreCase);
-        var isTarget = string.Equals(job.AgentId, _agentId, StringComparison.OrdinalIgnoreCase);
+        var isCreator = string.Equals(job.CreatedBy, _agentId.Value, StringComparison.OrdinalIgnoreCase);
+        var isTarget = job.AgentId.HasValue && job.AgentId.Value == _agentId;
         if (!isCreator && !isTarget)
             throw new UnauthorizedAccessException("You can only manage cron jobs created by or targeting this agent.");
     }

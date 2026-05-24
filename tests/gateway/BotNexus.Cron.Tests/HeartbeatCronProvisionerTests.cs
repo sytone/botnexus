@@ -18,7 +18,7 @@ public sealed class HeartbeatCronProvisionerTests
 
         registry.Setup(value => value.GetAll()).Returns([descriptor]);
         store.Setup(value => value.InitializeAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        store.Setup(value => value.GetAsync("heartbeat:agent-a", It.IsAny<CancellationToken>())).ReturnsAsync((CronJob?)null);
+        store.Setup(value => value.GetAsync(JobId.From("heartbeat:agent-a"), It.IsAny<CancellationToken>())).ReturnsAsync((CronJob?)null);
         store.Setup(value => value.CreateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
             .Callback<CronJob, CancellationToken>((job, _) => created = job)
             .ReturnsAsync((CronJob job, CancellationToken _) => job);
@@ -28,7 +28,7 @@ public sealed class HeartbeatCronProvisionerTests
         await provisioner.StartAsync(CancellationToken.None);
 
         created.ShouldNotBeNull();
-        created!.Id.ShouldBe("heartbeat:agent-a");
+        created!.Id.Value.ShouldBe("heartbeat:agent-a");
         created.Schedule.ShouldBe("*/30 * * * *");
         created.System.ShouldBeTrue();
     }
@@ -42,7 +42,7 @@ public sealed class HeartbeatCronProvisionerTests
 
         registry.Setup(value => value.GetAll()).Returns([descriptor]);
         store.Setup(value => value.InitializeAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        store.Setup(value => value.GetAsync("heartbeat:agent-a", It.IsAny<CancellationToken>())).ReturnsAsync((CronJob?)null);
+        store.Setup(value => value.GetAsync(JobId.From("heartbeat:agent-a"), It.IsAny<CancellationToken>())).ReturnsAsync((CronJob?)null);
 
         var provisioner = new HeartbeatCronProvisioner(registry.Object, store.Object, NullLogger<HeartbeatCronProvisioner>.Instance);
 
@@ -59,11 +59,11 @@ public sealed class HeartbeatCronProvisionerTests
         var descriptor = CreateDescriptor("agent-a", new HeartbeatAgentConfig { Enabled = true, IntervalMinutes = 15 });
         var existing = new CronJob
         {
-            Id = "heartbeat:agent-a",
+            Id = JobId.From("heartbeat:agent-a"),
             Name = "Heartbeat \u2014 Agent A",
             Schedule = "*/30 * * * *",
             ActionType = "heartbeat",
-            AgentId = "agent-a",
+            AgentId = AgentId.From("agent-a"),
             Message = "old",
             Enabled = true,
             System = true,
@@ -74,7 +74,7 @@ public sealed class HeartbeatCronProvisionerTests
 
         registry.Setup(value => value.GetAll()).Returns([descriptor]);
         store.Setup(value => value.InitializeAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        store.Setup(value => value.GetAsync("heartbeat:agent-a", It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+        store.Setup(value => value.GetAsync(JobId.From("heartbeat:agent-a"), It.IsAny<CancellationToken>())).ReturnsAsync(existing);
         store.Setup(value => value.UpdateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
             .Callback<CronJob, CancellationToken>((job, _) => updated = job)
             .ReturnsAsync((CronJob job, CancellationToken _) => job);
@@ -95,11 +95,11 @@ public sealed class HeartbeatCronProvisionerTests
         var descriptor = CreateDescriptor("agent-a", null);
         var existing = new CronJob
         {
-            Id = "heartbeat:agent-a",
+            Id = JobId.From("heartbeat:agent-a"),
             Name = "Heartbeat \u2014 Agent A",
             Schedule = "*/30 * * * *",
             ActionType = "heartbeat",
-            AgentId = "agent-a",
+            AgentId = AgentId.From("agent-a"),
             Message = "test",
             Enabled = true,
             System = true,
@@ -109,14 +109,14 @@ public sealed class HeartbeatCronProvisionerTests
 
         registry.Setup(value => value.GetAll()).Returns([descriptor]);
         store.Setup(value => value.InitializeAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        store.Setup(value => value.GetAsync("heartbeat:agent-a", It.IsAny<CancellationToken>())).ReturnsAsync(existing);
-        store.Setup(value => value.DeleteAsync("heartbeat:agent-a", It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        store.Setup(value => value.GetAsync(JobId.From("heartbeat:agent-a"), It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+        store.Setup(value => value.DeleteAsync(JobId.From("heartbeat:agent-a"), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         var provisioner = new HeartbeatCronProvisioner(registry.Object, store.Object, NullLogger<HeartbeatCronProvisioner>.Instance);
 
         await provisioner.StartAsync(CancellationToken.None);
 
-        store.Verify(value => value.DeleteAsync("heartbeat:agent-a", It.IsAny<CancellationToken>()), Times.Once);
+        store.Verify(value => value.DeleteAsync(JobId.From("heartbeat:agent-a"), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -129,7 +129,7 @@ public sealed class HeartbeatCronProvisionerTests
 
         registry.Setup(value => value.GetAll()).Returns([descriptor]);
         store.Setup(value => value.InitializeAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        store.Setup(value => value.GetAsync("heartbeat:agent-a", It.IsAny<CancellationToken>())).ReturnsAsync((CronJob?)null);
+        store.Setup(value => value.GetAsync(JobId.From("heartbeat:agent-a"), It.IsAny<CancellationToken>())).ReturnsAsync((CronJob?)null);
         store.Setup(value => value.CreateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
             .Callback<CronJob, CancellationToken>((job, _) => created = job)
             .ReturnsAsync((CronJob job, CancellationToken _) => job);
@@ -157,7 +157,7 @@ public sealed class HeartbeatCronProvisionerTests
 
         registry.Setup(value => value.GetAll()).Returns([descriptor]);
         store.Setup(value => value.InitializeAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        store.Setup(value => value.GetAsync("heartbeat:agent-a", It.IsAny<CancellationToken>())).ReturnsAsync((CronJob?)null);
+        store.Setup(value => value.GetAsync(JobId.From("heartbeat:agent-a"), It.IsAny<CancellationToken>())).ReturnsAsync((CronJob?)null);
         store.Setup(value => value.CreateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
             .Callback<CronJob, CancellationToken>((job, _) => created = job)
             .ReturnsAsync((CronJob job, CancellationToken _) => job);
@@ -185,7 +185,7 @@ public sealed class HeartbeatCronProvisionerTests
 
         registry.Setup(value => value.GetAll()).Returns([descriptor]);
         store.Setup(value => value.InitializeAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        store.Setup(value => value.GetAsync("heartbeat:agent-a", It.IsAny<CancellationToken>())).ReturnsAsync((CronJob?)null);
+        store.Setup(value => value.GetAsync(JobId.From("heartbeat:agent-a"), It.IsAny<CancellationToken>())).ReturnsAsync((CronJob?)null);
 
         var provisioner = new HeartbeatCronProvisioner(registry.Object, store.Object, NullLogger<HeartbeatCronProvisioner>.Instance);
 
@@ -207,11 +207,11 @@ public sealed class HeartbeatCronProvisionerTests
         });
         var existing = new CronJob
         {
-            Id = "heartbeat:agent-a",
+            Id = JobId.From("heartbeat:agent-a"),
             Name = "Heartbeat \u2014 Agent A",
             Schedule = "*/30 * * * *",
             ActionType = "heartbeat",
-            AgentId = "agent-a",
+            AgentId = AgentId.From("agent-a"),
             Message = "Read HEARTBEAT.md if it exists and execute any pending tasks. If nothing needs attention, reply HEARTBEAT_OK.",
             Enabled = true,
             System = true,
@@ -223,7 +223,7 @@ public sealed class HeartbeatCronProvisionerTests
 
         registry.Setup(value => value.GetAll()).Returns([descriptor]);
         store.Setup(value => value.InitializeAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        store.Setup(value => value.GetAsync("heartbeat:agent-a", It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+        store.Setup(value => value.GetAsync(JobId.From("heartbeat:agent-a"), It.IsAny<CancellationToken>())).ReturnsAsync(existing);
         store.Setup(value => value.UpdateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
             .Callback<CronJob, CancellationToken>((job, _) => updated = job)
             .ReturnsAsync((CronJob job, CancellationToken _) => job);

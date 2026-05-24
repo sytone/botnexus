@@ -69,7 +69,7 @@ public sealed class PreCompactionMemoryFlusher : IPreCompactionMemoryFlusher
                 timeoutCt.Token,
                 new InternalTriggerRequest
                 {
-                    ConversationId = session.ConversationId?.Value
+                    ConversationId = session.ConversationId
                 }).ConfigureAwait(false);
 
             // Record that a flush has run for this compaction cycle.

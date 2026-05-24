@@ -36,7 +36,7 @@ public sealed class CronControllerTests
 
         var job = (result.Result as OkObjectResult)?.Value as CronJob;
         job.ShouldNotBeNull();
-        job!.Id.ShouldBe("job-1");
+        job!.Id.Value.ShouldBe("job-1");
     }
 
     [Fact]
@@ -44,13 +44,13 @@ public sealed class CronControllerTests
     {
         var store = new FakeCronStore();
         var controller = CreateController(store, new RecordingAction(), new CronOptions());
-        var request = CreateJob(string.Empty) with { Id = string.Empty };
+        var request = CreateJob("job-create");
 
         var result = await controller.Create(request, CancellationToken.None);
 
         var created = (result.Result as CreatedAtActionResult)?.Value as CronJob;
         created.ShouldNotBeNull();
-        created!.Id.ShouldNotBeNullOrWhiteSpace();
+        created!.Id.Value.ShouldBe("job-create");
         (await store.GetAsync(created.Id)).ShouldNotBeNull();
     }
 
@@ -64,7 +64,7 @@ public sealed class CronControllerTests
         var result = await controller.Delete("job-1", CancellationToken.None);
 
         result.ShouldBeOfType<NoContentResult>();
-        (await store.GetAsync("job-1")).ShouldBeNull();
+        (await store.GetAsync(JobId.From("job-1"))).ShouldBeNull();
     }
 
     [Fact]
@@ -109,7 +109,7 @@ public sealed class CronControllerTests
 
         var jobs = (result.Result as OkObjectResult)?.Value as IReadOnlyList<CronJob>;
         jobs.ShouldNotBeNull();
-        var configured = jobs!.Single(job => job.Id == "config-job");
+        var configured = jobs!.Single(job => job.Id.Value == "config-job");
         configured.ActionType.ShouldBe("agent-prompt");
         configured.Model.ShouldBe("openai/gpt-4.1");
     }
@@ -119,9 +119,8 @@ public sealed class CronControllerTests
     {
         var store = new FakeCronStore();
         var controller = CreateController(store, new RecordingAction(), new CronOptions());
-        var request = CreateJob(string.Empty) with
+        var request = CreateJob("job-norm") with
         {
-            Id = string.Empty,
             ActionType = "agent-chat",
             Model = "openai/gpt-4.1"
         };
@@ -148,11 +147,11 @@ public sealed class CronControllerTests
     private static CronJob CreateJob(string id, string actionType = "agent-prompt")
         => new()
         {
-            Id = id,
+            Id = JobId.From(id),
             Name = "Test Job",
             Schedule = "*/1 * * * *",
             ActionType = actionType,
-            AgentId = "agent-a",
+            AgentId = AgentId.From("agent-a"),
             Message = "run",
             Enabled = true,
             CreatedBy = "tester",
@@ -182,56 +181,55 @@ public sealed class CronControllerTests
         {
             var created = job with
             {
-                Id = string.IsNullOrWhiteSpace(job.Id) ? Guid.NewGuid().ToString("N") : job.Id,
                 CreatedAt = job.CreatedAt == default ? DateTimeOffset.UtcNow : job.CreatedAt
             };
-            _jobs[created.Id] = created;
+            _jobs[created.Id.Value] = created;
             return Task.FromResult(created);
         }
 
-        public Task<CronJob?> GetAsync(string jobId, CancellationToken ct = default)
-            => Task.FromResult(_jobs.GetValueOrDefault(jobId));
+        public Task<CronJob?> GetAsync(JobId jobId, CancellationToken ct = default)
+            => Task.FromResult(_jobs.GetValueOrDefault(jobId.Value));
 
-        public Task<IReadOnlyList<CronJob>> ListAsync(string? agentId = null, CancellationToken ct = default)
+        public Task<IReadOnlyList<CronJob>> ListAsync(AgentId? agentId = null, CancellationToken ct = default)
         {
-            IReadOnlyList<CronJob> jobs = agentId is null
+            IReadOnlyList<CronJob> jobs = !agentId.HasValue
                 ? [.. _jobs.Values]
-                : _jobs.Values.Where(job => string.Equals(job.AgentId, agentId, StringComparison.OrdinalIgnoreCase)).ToList();
+                : _jobs.Values.Where(job => job.AgentId.HasValue && job.AgentId.Value == agentId.Value).ToList();
             return Task.FromResult(jobs);
         }
 
         public Task<CronJob> UpdateAsync(CronJob job, CancellationToken ct = default)
         {
-            _jobs[job.Id] = job;
+            _jobs[job.Id.Value] = job;
             return Task.FromResult(job);
         }
 
-        public Task DeleteAsync(string jobId, CancellationToken ct = default)
+        public Task DeleteAsync(JobId jobId, CancellationToken ct = default)
         {
-            _jobs.Remove(jobId);
-            foreach (var runId in _runs.Values.Where(run => run.JobId == jobId).Select(run => run.Id).ToList())
+            _jobs.Remove(jobId.Value);
+            foreach (var runId in _runs.Values.Where(run => run.JobId == jobId).Select(run => run.Id.Value).ToList())
                 _runs.Remove(runId);
             return Task.CompletedTask;
         }
 
-        public Task<CronRun> RecordRunStartAsync(string jobId, CancellationToken ct = default)
+        public Task<CronRun> RecordRunStartAsync(JobId jobId, CancellationToken ct = default)
         {
             var run = new CronRun
             {
-                Id = Guid.NewGuid().ToString("N"),
+                Id = RunId.Create(),
                 JobId = jobId,
                 StartedAt = DateTimeOffset.UtcNow,
                 Status = "running"
             };
-            _runs[run.Id] = run;
+            _runs[run.Id.Value] = run;
             return Task.FromResult(run);
         }
 
-        public Task RecordRunCompleteAsync(string runId, string status, string? error = null, string? sessionId = null, CancellationToken ct = default)
+        public Task RecordRunCompleteAsync(RunId runId, string status, string? error = null, SessionId? sessionId = null, CancellationToken ct = default)
         {
-            if (_runs.TryGetValue(runId, out var run))
+            if (_runs.TryGetValue(runId.Value, out var run))
             {
-                _runs[runId] = run with
+                _runs[runId.Value] = run with
                 {
                     Status = status,
                     Error = error,
@@ -242,7 +240,7 @@ public sealed class CronControllerTests
             return Task.CompletedTask;
         }
 
-        public Task<IReadOnlyList<CronRun>> GetRunHistoryAsync(string jobId, int limit = 20, CancellationToken ct = default)
+        public Task<IReadOnlyList<CronRun>> GetRunHistoryAsync(JobId jobId, int limit = 20, CancellationToken ct = default)
         {
             var runs = _runs.Values
                 .Where(run => run.JobId == jobId)

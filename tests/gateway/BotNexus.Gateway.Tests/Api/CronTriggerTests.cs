@@ -41,7 +41,7 @@ public sealed class CronTriggerTests
         var sessionId = await trigger.CreateSessionAsync(
             AgentId.From("agent-a"),
             "Scheduled task",
-            request: new InternalTriggerRequest { CronJobId = "job-1", JobName = "Scheduled Maintenance", ModelOverride = "openai/gpt-4.1" });
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-1"), JobName = "Scheduled Maintenance", ModelOverride = "openai/gpt-4.1" });
 
         // Assert: conversation created with human-readable job name as title
         createdConversation.ShouldNotBeNull();
@@ -91,7 +91,7 @@ public sealed class CronTriggerTests
         var sessionId = await trigger.CreateSessionAsync(
             AgentId.From("agent-a"),
             "Scheduled task run 2",
-            request: new InternalTriggerRequest { CronJobId = "job-1", JobName = "Scheduled Maintenance" });
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-1"), JobName = "Scheduled Maintenance" });
 
         // Assert: no new conversation created — existing one reused
         conversationStore.Verify(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -132,7 +132,7 @@ public sealed class CronTriggerTests
         await trigger.CreateSessionAsync(
             AgentId.From("agent-a"),
             "Pinned task",
-            request: new InternalTriggerRequest { CronJobId = "job-2", ConversationId = "conv-pinned" });
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-2"), ConversationId = ConversationId.From("conv-pinned") });
 
         // Assert: no ListAsync (bypassed), no CreateAsync
         conversationStore.Verify(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -181,9 +181,9 @@ public sealed class CronTriggerTests
         var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
 
         var first = await trigger.CreateSessionAsync(AgentId.From("agent-a"), "Run 1",
-            request: new InternalTriggerRequest { CronJobId = "job-1", JobName = "Scheduled Maintenance" });
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-1"), JobName = "Scheduled Maintenance" });
         var second = await trigger.CreateSessionAsync(AgentId.From("agent-a"), "Run 2",
-            request: new InternalTriggerRequest { CronJobId = "job-1", JobName = "Scheduled Maintenance" });
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-1"), JobName = "Scheduled Maintenance" });
 
         // Different session IDs per run
         first.ShouldNotBe(second);
@@ -225,7 +225,7 @@ public sealed class CronTriggerTests
         var sessionId = await trigger.CreateSessionAsync(
             AgentId.From("agent-a"),
             "Scheduled task",
-            request: new InternalTriggerRequest { CronJobId = "job-1", JobName = "Scheduled Maintenance" });
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-1"), JobName = "Scheduled Maintenance" });
 
         sessionId.Value.ShouldStartWith("cron:job-1:");
         conversationStore.Verify(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Once);
@@ -280,7 +280,7 @@ public sealed class CronTriggerTests
         await trigger.CreateSessionAsync(
             AgentId.From("agent-a"),
             "Scheduled task",
-            request: new InternalTriggerRequest { CronJobId = "job-1", JobName = "Scheduled Maintenance" });
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-1"), JobName = "Scheduled Maintenance" });
 
         conversationStore.Verify(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()), Times.Never);
         conversationStore.Verify(s => s.ArchiveAsync(duplicate.ConversationId, It.IsAny<CancellationToken>()), Times.Once);
@@ -312,7 +312,7 @@ public sealed class CronTriggerTests
         await trigger.CreateSessionAsync(
             AgentId.From("agent-a"),
             "Run task",
-            request: new InternalTriggerRequest { CronJobId = "job-abc", JobName = "Autonomous Issue and PR Maintenance" });
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-abc"), JobName = "Autonomous Issue and PR Maintenance" });
 
         // Assert: conversation title is human-readable job name, not the job-id slug
         createdConversation.ShouldNotBeNull();
@@ -340,7 +340,7 @@ public sealed class CronTriggerTests
         await trigger.CreateSessionAsync(
             AgentId.From("agent-a"),
             "Run task",
-            request: new InternalTriggerRequest { CronJobId = "job-1" });
+            request: new InternalTriggerRequest { CronJobId = JobId.From("job-1") });
 
         // Assert: falls back to slug-based title
         createdConversation.ShouldNotBeNull();
@@ -364,7 +364,7 @@ public sealed class CronTriggerTests
 
         var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
 
-        var request = new InternalTriggerRequest { CronJobId = "job-1", JobName = "My Job" };
+        var request = new InternalTriggerRequest { CronJobId = JobId.From("job-1"), JobName = "My Job" };
 
         // Act
         await trigger.CreateSessionAsync(
@@ -373,9 +373,9 @@ public sealed class CronTriggerTests
             request: request);
 
         // Assert: ResolvedConversationId is set so the scheduler can pin it back to the job
-        request.ResolvedConversationId.ShouldNotBeNullOrWhiteSpace();
+        request.ResolvedConversationId!.Value.Value.ShouldNotBeNullOrWhiteSpace();
         createdConversation.ShouldNotBeNull();
-        request.ResolvedConversationId.ShouldBe(createdConversation!.ConversationId.Value);
+        request.ResolvedConversationId!.Value.Value.ShouldBe(createdConversation!.ConversationId.Value);
     }
     // ── Helpers ─────────────────────────────────────────────────────────────
 

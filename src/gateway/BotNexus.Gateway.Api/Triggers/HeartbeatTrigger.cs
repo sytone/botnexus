@@ -104,10 +104,10 @@ public sealed class HeartbeatTrigger(
         else
             session.Metadata["modelOverride"] = request!.ModelOverride;
 
-        if (string.IsNullOrWhiteSpace(request?.CronJobId))
+        if (request?.CronJobId is null)
             session.Metadata.Remove("cronJobId");
         else
-            session.Metadata["cronJobId"] = request!.CronJobId;
+            session.Metadata["cronJobId"] = request.CronJobId.Value.Value;
 
         if (conversation.ActiveSessionId != sessionId)
         {

@@ -57,19 +57,19 @@ public sealed class CronTrigger(
         else
             session.Metadata["modelOverride"] = request!.ModelOverride;
 
-        if (string.IsNullOrWhiteSpace(request?.CronJobId))
+        if (request?.CronJobId is null)
             session.Metadata.Remove("cronJobId");
         else
-            session.Metadata["cronJobId"] = request!.CronJobId;
+            session.Metadata["cronJobId"] = request.CronJobId.Value.Value;
 
         // Resolve the conversation for this run:
         // 1. Explicit ConversationId on the job — always use that conversation
         // 2. Otherwise find/create a stable per-job conversation keyed by job ID
         //    so every run of the same job lands in the same conversation.
         Conversation conversation;
-        if (!string.IsNullOrWhiteSpace(request?.ConversationId))
+        if (request?.ConversationId is { } explicitConversationId)
         {
-            conversation = await conversations.GetAsync(ConversationId.From(request.ConversationId), ct).ConfigureAwait(false)
+            conversation = await conversations.GetAsync(explicitConversationId, ct).ConfigureAwait(false)
                 ?? await GetOrCreateCronConversationAsync(agentId, request.CronJobId, request.JobName, ct).ConfigureAwait(false);
         }
         else
@@ -79,8 +79,8 @@ public sealed class CronTrigger(
 
         // Write back the resolved conversation ID so the caller (e.g. scheduler) can persist it to the job
         // record, enabling subsequent runs to skip the lookup entirely.
-        if (request is not null && string.IsNullOrWhiteSpace(request.ResolvedConversationId))
-            request.ResolvedConversationId = conversation.ConversationId.Value;
+        if (request is not null && request.ResolvedConversationId is null)
+            request.ResolvedConversationId = conversation.ConversationId;
 
         if (session.Session.ConversationId is null || session.Session.ConversationId != conversation.ConversationId)
             session.Session.ConversationId = conversation.ConversationId;
@@ -117,14 +117,15 @@ public sealed class CronTrigger(
     /// All runs of the same job land in the same conversation.
     /// The conversation is identified by its title "cron:{jobId}" or "cron:unnamed" for jobs without an ID.
     /// </summary>
-    private async Task<Conversation> GetOrCreateCronConversationAsync(AgentId agentId, string? jobId, string? jobName, CancellationToken ct)
+    private async Task<Conversation> GetOrCreateCronConversationAsync(AgentId agentId, JobId? jobId, string? jobName, CancellationToken ct)
     {
+        var jobIdString = jobId?.Value;
         // Use human-readable job name as title when available; fall back to job-id slug.
         var title = !string.IsNullOrWhiteSpace(jobName)
             ? jobName
-            : string.IsNullOrWhiteSpace(jobId)
+            : string.IsNullOrWhiteSpace(jobIdString)
                 ? $"cron:{agentId.Value}"
-                : $"cron:{SanitizeSessionIdPart(jobId) ?? agentId.Value}";
+                : $"cron:{SanitizeSessionIdPart(jobIdString) ?? agentId.Value}";
         var stableConversationId = BuildCronConversationId(agentId, jobId);
 
         // Prefer deterministic lookup by stable conversation id.
@@ -252,11 +253,11 @@ public sealed class CronTrigger(
             canonical.ConversationId);
     }
 
-    private static SessionId BuildCronSessionId(string? jobId)
+    private static SessionId BuildCronSessionId(JobId? jobId)
     {
         var timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss");
         var suffix = Guid.NewGuid().ToString("N");
-        var safeJobId = SanitizeSessionIdPart(jobId);
+        var safeJobId = SanitizeSessionIdPart(jobId?.Value);
         return string.IsNullOrWhiteSpace(safeJobId)
             ? SessionId.From($"cron:{timestamp}:{suffix}")
             : SessionId.From($"cron:{safeJobId}:{timestamp}:{suffix}");
@@ -286,10 +287,10 @@ public sealed class CronTrigger(
         return new string(buffer[..length]).Trim('-');
     }
 
-    private static ConversationId BuildCronConversationId(AgentId agentId, string? jobId)
+    private static ConversationId BuildCronConversationId(AgentId agentId, JobId? jobId)
     {
         var safeAgentId = SanitizeSessionIdPart(agentId.Value) ?? "agent";
-        var safeJobId = SanitizeSessionIdPart(jobId) ?? safeAgentId;
+        var safeJobId = SanitizeSessionIdPart(jobId?.Value) ?? safeAgentId;
         return ConversationId.From($"cronconv:{safeAgentId}:{safeJobId}");
     }
 }

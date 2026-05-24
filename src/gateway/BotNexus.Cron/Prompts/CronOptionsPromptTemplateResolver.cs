@@ -1,5 +1,6 @@
 using System.IO.Abstractions;
 using System.Text.Json;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using Microsoft.Extensions.Options;
 
@@ -18,11 +19,8 @@ public sealed class CronOptionsPromptTemplateResolver(
     private readonly IFileSystem _fileSystem = fileSystem ?? new FileSystem();
 
     /// <inheritdoc />
-    public IReadOnlyList<string> ListTemplateNames(string agentId)
+    public IReadOnlyList<string> ListTemplateNames(AgentId agentId)
     {
-        if (string.IsNullOrWhiteSpace(agentId))
-            return [];
-
         var templates = DiscoverTemplates(agentId);
         return templates.Keys
             .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
@@ -31,19 +29,12 @@ public sealed class CronOptionsPromptTemplateResolver(
 
     /// <inheritdoc />
     public bool TryRender(
-        string agentId,
+        AgentId agentId,
         string templateName,
         IReadOnlyDictionary<string, string?>? parameters,
         out string renderedPrompt,
         out string? error)
     {
-        if (string.IsNullOrWhiteSpace(agentId))
-        {
-            renderedPrompt = string.Empty;
-            error = "Agent id is required.";
-            return false;
-        }
-
         if (string.IsNullOrWhiteSpace(templateName))
         {
             renderedPrompt = string.Empty;
@@ -85,7 +76,7 @@ public sealed class CronOptionsPromptTemplateResolver(
             out error);
     }
 
-    private IReadOnlyDictionary<string, ResolvedPromptTemplate> DiscoverTemplates(string agentId)
+    private IReadOnlyDictionary<string, ResolvedPromptTemplate> DiscoverTemplates(AgentId agentId)
     {
         var templates = LoadOptionTemplates();
         foreach (var (directory, source) in ResolveTemplateDirectories(agentId, highestFirst: false))
@@ -151,7 +142,7 @@ public sealed class CronOptionsPromptTemplateResolver(
     }
 
     private bool TryResolveFileTemplate(
-        string agentId,
+        AgentId agentId,
         string templateName,
         out ResolvedPromptTemplate template,
         out string? error)
@@ -229,18 +220,18 @@ public sealed class CronOptionsPromptTemplateResolver(
         return false;
     }
 
-    private IReadOnlyList<(string Directory, TemplateSource Source)> ResolveTemplateDirectories(string agentId, bool highestFirst)
+    private IReadOnlyList<(string Directory, TemplateSource Source)> ResolveTemplateDirectories(AgentId agentId, bool highestFirst)
     {
         var homePath = ResolveBotNexusHomePath();
         var ordered = new List<(string Directory, TemplateSource Source)>
         {
             (_fileSystem.Path.Combine(homePath, "prompts"), TemplateSource.Shared),
-            (_fileSystem.Path.Combine(homePath, "agents", agentId, "prompts"), TemplateSource.Agent)
+            (_fileSystem.Path.Combine(homePath, "agents", agentId.Value, "prompts"), TemplateSource.Agent)
         };
 
         if (_workspaceManager is not null)
         {
-            var workspacePath = _workspaceManager.GetWorkspacePath(agentId);
+            var workspacePath = _workspaceManager.GetWorkspacePath(agentId.Value);
             ordered.Add((_fileSystem.Path.Combine(workspacePath, "prompts"), TemplateSource.Workspace));
         }
 

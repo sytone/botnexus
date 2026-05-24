@@ -141,10 +141,10 @@ internal sealed class CronCommands
             {
                 var enabledMark = job.Enabled ? "[green]\u2713[/]" : "[red]\u2717[/]";
                 table.AddRow(
-                    Markup.Escape(job.Id ?? "-"),
+                    Markup.Escape(job.Id.Value),
                     Markup.Escape(job.Name ?? "-"),
                     Markup.Escape(job.Schedule ?? "-"),
-                    Markup.Escape(job.AgentId ?? "-"),
+                    Markup.Escape(job.AgentId?.Value ?? "-"),
                     enabledMark,
                     Markup.Escape(job.ActionType ?? "-"));
             }
@@ -262,7 +262,7 @@ internal sealed class CronCommands
             }
 
             var run = await response.Content.ReadFromJsonAsync<CronRun>(JsonOpts, ct);
-            AnsiConsole.MarkupLine($"[green]\u2713[/] Cron job [yellow]{Markup.Escape(jobId)}[/] triggered. Run ID: [dim]{Markup.Escape(run?.Id ?? "?")}[/]");
+            AnsiConsole.MarkupLine($"[green]\u2713[/] Cron job [yellow]{Markup.Escape(jobId)}[/] triggered. Run ID: [dim]{Markup.Escape(run?.Id.Value ?? "?")}[/]");
             return 0;
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or OperationCanceledException)
@@ -334,11 +334,11 @@ internal sealed class CronCommands
 
     private static void PrintJob(CronJob job)
     {
-        AnsiConsole.MarkupLine($"[bold]ID:[/]       {Markup.Escape(job.Id ?? "-")}");
+        AnsiConsole.MarkupLine($"[bold]ID:[/]       {Markup.Escape(job.Id.Value)}");
         AnsiConsole.MarkupLine($"[bold]Name:[/]     {Markup.Escape(job.Name ?? "-")}");
         AnsiConsole.MarkupLine($"[bold]Schedule:[/] {Markup.Escape(job.Schedule ?? "-")}");
         AnsiConsole.MarkupLine($"[bold]Type:[/]     {Markup.Escape(job.ActionType ?? "-")}");
-        AnsiConsole.MarkupLine($"[bold]Agent:[/]    {Markup.Escape(job.AgentId ?? "-")}");
+        AnsiConsole.MarkupLine($"[bold]Agent:[/]    {Markup.Escape(job.AgentId?.Value ?? "-")}");
         AnsiConsole.MarkupLine($"[bold]Enabled:[/]  {(job.Enabled ? "[green]yes[/]" : "[red]no[/]")}");
         if (!string.IsNullOrWhiteSpace(job.TimeZone))
             AnsiConsole.MarkupLine($"[bold]TimeZone:[/] {Markup.Escape(job.TimeZone)}");

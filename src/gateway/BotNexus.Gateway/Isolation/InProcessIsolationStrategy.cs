@@ -151,7 +151,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             if (cronStore is not null && cronScheduler is not null)
             {
                 var allowCrossAgentCron = ResolveAllowCrossAgentCron(descriptor);
-                tools.Add(new CronTool(cronStore, cronScheduler, descriptor.AgentId.Value, allowCrossAgentCron));
+                tools.Add(new CronTool(cronStore, cronScheduler, descriptor.AgentId, allowCrossAgentCron));
             }
         }
 

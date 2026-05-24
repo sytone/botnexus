@@ -35,7 +35,7 @@ public sealed record InternalTriggerRequest
     /// <summary>
     /// Optional cron job identifier used for traceability and session-id composition.
     /// </summary>
-    public string? CronJobId { get; init; }
+    public JobId? CronJobId { get; init; }
 
     /// <summary>
     /// Optional model override for this trigger execution.
@@ -47,7 +47,7 @@ public sealed record InternalTriggerRequest
     /// Optional explicit conversation ID to route this trigger run into.
     /// When null, the trigger determines the conversation (e.g. per-job stable conversation for cron).
     /// </summary>
-    public string? ConversationId { get; init; }
+    public ConversationId? ConversationId { get; init; }
 
     /// <summary>
     /// Optional human-readable job name used as the conversation title when the trigger creates a new conversation.
@@ -59,5 +59,5 @@ public sealed record InternalTriggerRequest
     /// Written back by the trigger after the conversation for this run has been resolved or created.
     /// Callers can read this value to persist the conversation ID for fast-path reuse on subsequent runs.
     /// </summary>
-    public string? ResolvedConversationId { get; set; }
+    public ConversationId? ResolvedConversationId { get; set; }
 }

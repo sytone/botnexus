@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using Microsoft.Data.Sqlite;
 using System.IO.Abstractions;
 
@@ -33,11 +34,11 @@ internal sealed class CronStoreTestContext : IAsyncDisposable
     {
         return new CronJob
         {
-            Id = id,
+            Id = JobId.From(id),
             Name = $"Job {id}",
             Schedule = "*/1 * * * *",
             ActionType = actionType,
-            AgentId = agentId,
+            AgentId = AgentId.From(agentId),
             Message = "Run scheduled task",
             Enabled = enabled,
             CreatedBy = "test-agent",

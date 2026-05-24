@@ -24,13 +24,12 @@ public sealed class HeartbeatAction : ICronAction
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        var agentId = context.Job.AgentId;
-        if (string.IsNullOrWhiteSpace(agentId))
-            throw new InvalidOperationException("Heartbeat cron job must define an agent id.");
+        var agentId = context.Job.AgentId
+            ?? throw new InvalidOperationException("Heartbeat cron job must define an agent id.");
 
         var logger = context.Services.GetService<ILogger<HeartbeatAction>>();
         var registry = context.Services.GetService<IAgentRegistry>();
-        var descriptor = registry?.Get(AgentId.From(agentId));
+        var descriptor = registry?.Get(agentId);
 
         // Pre-flight: quiet hours
         var quietHours = descriptor?.Heartbeat?.QuietHours;
@@ -64,7 +63,7 @@ public sealed class HeartbeatAction : ICronAction
 
         var sessionId = await trigger
             .CreateSessionAsync(
-                AgentId.From(agentId),
+                agentId,
                 prompt,
                 cancellationToken,
                 new InternalTriggerRequest
@@ -75,7 +74,7 @@ public sealed class HeartbeatAction : ICronAction
                 })
             .ConfigureAwait(false);
 
-        context.RecordSessionId(sessionId.Value);
+        context.RecordSessionId(sessionId);
     }
 
     /// <summary>
@@ -84,12 +83,12 @@ public sealed class HeartbeatAction : ICronAction
     /// </summary>
     public static async Task<string?> ReadHeartbeatFileAsync(
         IAgentWorkspaceManager workspaceManager,
-        string agentId,
+        AgentId agentId,
         CancellationToken cancellationToken)
     {
         try
         {
-            var workspacePath = workspaceManager.GetWorkspacePath(agentId);
+            var workspacePath = workspaceManager.GetWorkspacePath(agentId.Value);
             var heartbeatPath = Path.Combine(workspacePath, "HEARTBEAT.md");
             if (!File.Exists(heartbeatPath))
                 return null;

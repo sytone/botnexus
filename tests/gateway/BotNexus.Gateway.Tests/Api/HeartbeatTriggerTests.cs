@@ -113,7 +113,7 @@ public sealed class HeartbeatTriggerTests
         await trigger.CreateSessionAsync(agentId, "Heartbeat ping",
             request: new InternalTriggerRequest
             {
-                CronJobId = "heartbeat:agent-a",
+                CronJobId = JobId.From("heartbeat:agent-a"),
                 ModelOverride = "openai/gpt-4.1"
             });
 

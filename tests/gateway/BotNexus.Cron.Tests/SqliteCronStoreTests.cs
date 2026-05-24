@@ -1,4 +1,5 @@
 using BotNexus.Cron.Tests.TestInfrastructure;
+using BotNexus.Domain.Primitives;
 using Microsoft.Data.Sqlite;
 
 namespace BotNexus.Cron.Tests;
@@ -37,12 +38,12 @@ public sealed class SqliteCronStoreTests
         var job = CronStoreTestContext.CreateJob("job-1");
 
         await context.Store.CreateAsync(job);
-        var loaded = await context.Store.GetAsync("job-1");
+        var loaded = await context.Store.GetAsync(JobId.From("job-1"));
 
         loaded.ShouldNotBeNull();
-        loaded!.Id.ShouldBe("job-1");
+        loaded!.Id.Value.ShouldBe("job-1");
         loaded.Name.ShouldBe(job.Name);
-        loaded.AgentId.ShouldBe("agent-a");
+        loaded.AgentId.ShouldBe(AgentId.From("agent-a"));
     }
 
     [Fact]
@@ -55,7 +56,7 @@ public sealed class SqliteCronStoreTests
         var jobs = await context.Store.ListAsync();
 
         jobs.Count().ShouldBe(2);
-        jobs.Select(job => job.Id).OrderBy(id => id).ShouldBe(["job-1", "job-2"]);
+        jobs.Select(job => job.Id.Value).OrderBy(id => id).ShouldBe(["job-1", "job-2"]);
     }
 
     [Fact]
@@ -65,10 +66,10 @@ public sealed class SqliteCronStoreTests
         await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1", "agent-a"));
         await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-2", "agent-b"));
 
-        var filtered = await context.Store.ListAsync("agent-a");
+        var filtered = await context.Store.ListAsync(AgentId.From("agent-a"));
 
         filtered.ShouldHaveSingleItem();
-        filtered[0].Id.ShouldBe("job-1");
+        filtered[0].Id.Value.ShouldBe("job-1");
     }
 
     [Fact]
@@ -85,7 +86,7 @@ public sealed class SqliteCronStoreTests
         };
         await context.Store.UpdateAsync(updated);
 
-        var loaded = await context.Store.GetAsync("job-1");
+        var loaded = await context.Store.GetAsync(JobId.From("job-1"));
         loaded.ShouldNotBeNull();
         loaded!.Name.ShouldBe("Updated Name");
         loaded.Enabled.ShouldBeFalse();
@@ -102,7 +103,7 @@ public sealed class SqliteCronStoreTests
         };
 
         await context.Store.CreateAsync(job);
-        var loaded = await context.Store.GetAsync("job-1");
+        var loaded = await context.Store.GetAsync(JobId.From("job-1"));
 
         loaded.ShouldNotBeNull();
         loaded!.Model.ShouldBe("openai/gpt-4.1");
@@ -123,7 +124,7 @@ public sealed class SqliteCronStoreTests
         };
 
         await context.Store.CreateAsync(job);
-        var loaded = await context.Store.GetAsync("job-1");
+        var loaded = await context.Store.GetAsync(JobId.From("job-1"));
 
         loaded.ShouldNotBeNull();
         loaded!.TemplateName.ShouldBe("daily-status");
@@ -138,9 +139,9 @@ public sealed class SqliteCronStoreTests
         await using var context = await CronStoreTestContext.CreateAsync();
         await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1"));
 
-        await context.Store.DeleteAsync("job-1");
+        await context.Store.DeleteAsync(JobId.From("job-1"));
 
-        (await context.Store.GetAsync("job-1")).ShouldBeNull();
+        (await context.Store.GetAsync(JobId.From("job-1"))).ShouldBeNull();
     }
 
     [Fact]
@@ -149,11 +150,11 @@ public sealed class SqliteCronStoreTests
         await using var context = await CronStoreTestContext.CreateAsync();
         await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1"));
 
-        var run = await context.Store.RecordRunStartAsync("job-1");
+        var run = await context.Store.RecordRunStartAsync(JobId.From("job-1"));
 
-        run.JobId.ShouldBe("job-1");
+        run.JobId.Value.ShouldBe("job-1");
         run.Status.ShouldBe("running");
-        var history = await context.Store.GetRunHistoryAsync("job-1");
+        var history = await context.Store.GetRunHistoryAsync(JobId.From("job-1"));
         var entry = history.ShouldHaveSingleItem();
         entry.Id.ShouldBe(run.Id);
         entry.Status.ShouldBe("running");
@@ -164,14 +165,14 @@ public sealed class SqliteCronStoreTests
     {
         await using var context = await CronStoreTestContext.CreateAsync();
         await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1"));
-        var run = await context.Store.RecordRunStartAsync("job-1");
+        var run = await context.Store.RecordRunStartAsync(JobId.From("job-1"));
 
-        await context.Store.RecordRunCompleteAsync(run.Id, "ok", sessionId: "session-1");
-        var history = await context.Store.GetRunHistoryAsync("job-1");
+        await context.Store.RecordRunCompleteAsync(run.Id, "ok", sessionId: SessionId.From("session-1"));
+        var history = await context.Store.GetRunHistoryAsync(JobId.From("job-1"));
 
         history.ShouldHaveSingleItem();
         history[0].Status.ShouldBe("ok");
-        history[0].SessionId.ShouldBe("session-1");
+        history[0].SessionId!.Value.Value.ShouldBe("session-1");
         history[0].CompletedAt.ShouldNotBeNull();
     }
 
@@ -182,15 +183,15 @@ public sealed class SqliteCronStoreTests
         await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1"));
         await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-2"));
 
-        var run1 = await context.Store.RecordRunStartAsync("job-1");
+        var run1 = await context.Store.RecordRunStartAsync(JobId.From("job-1"));
         await context.Store.RecordRunCompleteAsync(run1.Id, "ok");
-        var run2 = await context.Store.RecordRunStartAsync("job-2");
+        var run2 = await context.Store.RecordRunStartAsync(JobId.From("job-2"));
         await context.Store.RecordRunCompleteAsync(run2.Id, "error", "boom");
 
-        var history = await context.Store.GetRunHistoryAsync("job-1");
+        var history = await context.Store.GetRunHistoryAsync(JobId.From("job-1"));
 
         history.ShouldHaveSingleItem();
-        history[0].JobId.ShouldBe("job-1");
+        history[0].JobId.Value.ShouldBe("job-1");
         history[0].Status.ShouldBe("ok");
     }
 }
