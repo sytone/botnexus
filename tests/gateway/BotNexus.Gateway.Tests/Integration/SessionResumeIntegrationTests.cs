@@ -82,7 +82,7 @@ public sealed class SessionResumeIntegrationTests : IDisposable
     }
 
     [Fact]
-    public async Task ResetSession_ArchivesOldSession_NewSessionIsEmpty()
+    public async Task ResetSession_SealsOldSessionInPlace_PreservingHistory()
     {
         var storePath = CreateStorePath();
         var sessionId = "reset-session";
@@ -99,11 +99,19 @@ public sealed class SessionResumeIntegrationTests : IDisposable
 
         await using var connection = await CreateStartedConnection(factory, cts.Token);
         await connection.InvokeAsync("ResetSession", TestAgentId, sessionId, cts.Token);
-        var newSession = await store.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From(TestAgentId), cts.Token);
 
-        newSession.History.ShouldBeEmpty();
-        Directory.GetFiles(storePath, $"{encodedSessionId}.jsonl.archived.*").ShouldHaveSingleItem();
-        Directory.GetFiles(storePath, $"{encodedSessionId}.meta.json.archived.*").ShouldHaveSingleItem();
+        // The session is sealed in place (Status=Sealed + SaveAsync) so transcript readers
+        // can still see what happened. ArchiveAsync is intentionally NOT used because the
+        // file-store implementation renames files out of normal lookup, breaking history APIs.
+        var reloaded = await store.GetAsync(SessionId.From(sessionId), cts.Token);
+        reloaded.ShouldNotBeNull();
+        reloaded!.Status.ShouldBe(SessionStatus.Sealed);
+        reloaded.History.Count.ShouldBe(10);
+        reloaded.History.Select(e => e.Content).ShouldBe(Enumerable.Range(0, 10).Select(i => $"old-{i}"));
+
+        // No archived-files side-effect — the file remains under its normal name.
+        Directory.GetFiles(storePath, $"{encodedSessionId}.jsonl.archived.*").ShouldBeEmpty();
+        Directory.GetFiles(storePath, $"{encodedSessionId}.meta.json.archived.*").ShouldBeEmpty();
     }
 
     [Fact]

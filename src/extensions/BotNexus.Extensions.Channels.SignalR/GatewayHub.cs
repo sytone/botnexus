@@ -43,7 +43,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     private readonly IConversationStore? _conversationStore;
     private readonly IAskUserResponseRegistry? _askUserResponseRegistry;
     private readonly IOptionsMonitor<CompactionOptions> _compactionOptions;
-    private readonly ISessionEndMemoryFlusher? _sessionEndFlusher;
+    private readonly IConversationResetService? _resetService;
     private readonly ILogger<GatewayHub> _logger;
 
     public GatewayHub(
@@ -60,7 +60,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         ILogger<GatewayHub> logger,
         IConversationStore? conversationStore = null,
         IAskUserResponseRegistry? askUserResponseRegistry = null,
-        ISessionEndMemoryFlusher? sessionEndFlusher = null)
+        IConversationResetService? resetService = null)
     {
         _supervisor = supervisor;
         _registry = registry;
@@ -75,7 +75,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         _logger = logger;
         _conversationStore = conversationStore;
         _askUserResponseRegistry = askUserResponseRegistry;
-        _sessionEndFlusher = sessionEndFlusher;
+        _resetService = resetService;
     }
 
     /// <summary>
@@ -472,36 +472,55 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     }
 
     /// <summary>
-    /// Executes reset session.
+    /// Resets the caller's active session: stops the agent, flushes session-end memory,
+    /// cancels any pending ask-user prompts, seals the session, and clears the
+    /// conversation's <see cref="Conversation.ActiveSessionId"/> so the next inbound
+    /// message creates a fresh session inside the same conversation.
     /// </summary>
+    /// <remarks>
+    /// Delegates to <see cref="IConversationResetService"/> when a conversation is bound,
+    /// guarding against stale <paramref name="sessionId"/> values by passing it as the
+    /// expected active session. Sessions without a conversation (legacy/orphans) are
+    /// sealed in place — no transcript-destroying <see cref="ISessionStore.ArchiveAsync"/>.
+    /// </remarks>
     /// <param name="agentId">The agent id.</param>
-    /// <param name="sessionId">The session id.</param>
-    /// <returns>The reset session result.</returns>
+    /// <param name="sessionId">The session id known to the caller.</param>
+    /// <returns>A task that completes when the caller has been notified.</returns>
     public async Task ResetSession(AgentId agentId, SessionId sessionId)
     {
         var typedAgentId = NormalizeAgentId(agentId);
         var typedSessionId = NormalizeSessionId(sessionId);
-        await _supervisor.StopAsync(typedAgentId, typedSessionId, CancellationToken.None);
 
-        // Phase 2: session-end memory flush before archiving
-        if (_sessionEndFlusher is not null)
+        var gatewaySession = await _sessions.GetAsync(typedSessionId, CancellationToken.None);
+
+        if (gatewaySession?.Session.ConversationId is { } conversationId && _resetService is not null)
         {
-            var gatewaySession = await _sessions.GetAsync(typedSessionId, CancellationToken.None);
-            if (gatewaySession is not null && _sessionEndFlusher.ShouldFlush(gatewaySession.Session, _compactionOptions.CurrentValue))
+            await _resetService.ResetActiveSessionAsync(
+                conversationId,
+                expectedActiveSessionId: typedSessionId,
+                CancellationToken.None).ConfigureAwait(false);
+        }
+        else if (gatewaySession is not null)
+        {
+            // Orphan/legacy session with no conversation link: stop the agent and seal
+            // the session in place (Status=Sealed + SaveAsync). Deliberately avoids
+            // ArchiveAsync because the InMemory implementation deletes the row and the
+            // file store renames files out of normal lookup — both destroy transcript
+            // readability for any UI that lists historical sessions.
+            try
             {
-                try
-                {
-                    await _sessionEndFlusher.FlushAsync(typedAgentId, gatewaySession.Session, _compactionOptions.CurrentValue, CancellationToken.None)
-                        .ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Session-end memory flush failed for session {SessionId}, reset will proceed.", typedSessionId);
-                }
+                await _supervisor.StopAsync(typedAgentId, typedSessionId, CancellationToken.None).ConfigureAwait(false);
             }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Supervisor stop failed for orphan session {SessionId}; reset will proceed.", typedSessionId);
+            }
+
+            gatewaySession.Session.Status = GatewaySessionStatus.Sealed;
+            gatewaySession.Session.UpdatedAt = DateTimeOffset.UtcNow;
+            await _sessions.SaveAsync(gatewaySession, CancellationToken.None).ConfigureAwait(false);
         }
 
-        await _sessions.ArchiveAsync(typedSessionId, CancellationToken.None);
         await Clients.Caller.SessionReset(new SessionResetPayload(typedAgentId.Value, typedSessionId.Value));
     }
 

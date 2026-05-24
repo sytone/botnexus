@@ -424,26 +424,90 @@ public sealed class SignalRHubTests
     }
 
     [Fact]
-    public async Task ResetSession_ArchivesInsteadOfDeleting()
+    public async Task ResetSession_WithConversation_DelegatesToResetService_WithExpectedSessionId()
     {
         var caller = new Mock<IGatewayHubClient>();
-        caller.Setup(proxy => proxy.SessionReset(It.IsAny<SessionResetPayload>()))
-            .Returns(Task.CompletedTask);
+        caller.Setup(proxy => proxy.SessionReset(It.IsAny<SessionResetPayload>())).Returns(Task.CompletedTask);
+        var clients = new Mock<IHubCallerClients<IGatewayHubClient>>();
+        clients.SetupGet(value => value.Caller).Returns(caller.Object);
+
+        var conversationId = ConversationId.From("conv-1");
+        var sessionId = SessionId.From("session-1");
+        var agentId = AgentId.From("agent-a");
+
+        var session = new GatewaySession { SessionId = sessionId, AgentId = agentId };
+        session.Session.ConversationId = conversationId;
+
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetAsync(sessionId, CancellationToken.None)).ReturnsAsync(session);
+
+        var resetService = new Mock<IConversationResetService>();
+        resetService.Setup(s => s.ResetActiveSessionAsync(conversationId, sessionId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConversationResetResult(ConversationResetOutcome.Reset, sessionId, agentId));
+
+        var supervisor = new Mock<IAgentSupervisor>(MockBehavior.Strict);
+
+        var hub = CreateHub(clients: clients.Object, sessions: sessions.Object, supervisor: supervisor.Object, resetService: resetService.Object);
+
+        await hub.ResetSession(agentId, sessionId);
+
+        resetService.Verify(s => s.ResetActiveSessionAsync(conversationId, sessionId, It.IsAny<CancellationToken>()), Times.Once);
+        sessions.Verify(s => s.ArchiveAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
+        sessions.Verify(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()), Times.Never);
+        supervisor.Verify(s => s.StopAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
+        caller.Verify(c => c.SessionReset(It.Is<SessionResetPayload>(p => p.AgentId == "agent-a" && p.SessionId == "session-1")), Times.Once);
+    }
+
+    [Fact]
+    public async Task ResetSession_OrphanSession_NoConversation_SealsInPlace_DoesNotArchive()
+    {
+        var caller = new Mock<IGatewayHubClient>();
+        caller.Setup(proxy => proxy.SessionReset(It.IsAny<SessionResetPayload>())).Returns(Task.CompletedTask);
+        var clients = new Mock<IHubCallerClients<IGatewayHubClient>>();
+        clients.SetupGet(value => value.Caller).Returns(caller.Object);
+
+        var sessionId = SessionId.From("session-orphan");
+        var agentId = AgentId.From("agent-a");
+        var session = new GatewaySession { SessionId = sessionId, AgentId = agentId };
+        // No ConversationId — simulates legacy orphan.
+
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetAsync(sessionId, CancellationToken.None)).ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(session, CancellationToken.None)).Returns(Task.CompletedTask);
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.StopAsync(agentId, sessionId, CancellationToken.None)).Returns(Task.CompletedTask);
+
+        var resetService = new Mock<IConversationResetService>(MockBehavior.Strict);
+
+        var hub = CreateHub(clients: clients.Object, sessions: sessions.Object, supervisor: supervisor.Object, resetService: resetService.Object);
+
+        await hub.ResetSession(agentId, sessionId);
+
+        sessions.Verify(s => s.ArchiveAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
+        sessions.Verify(s => s.SaveAsync(session, CancellationToken.None), Times.Once);
+        supervisor.Verify(s => s.StopAsync(agentId, sessionId, CancellationToken.None), Times.Once);
+        resetService.Verify(s => s.ResetActiveSessionAsync(It.IsAny<ConversationId>(), It.IsAny<SessionId?>(), It.IsAny<CancellationToken>()), Times.Never);
+        session.Session.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
+    }
+
+    [Fact]
+    public async Task ResetSession_UnknownSession_NotifiesCallerWithoutFailing()
+    {
+        var caller = new Mock<IGatewayHubClient>();
+        caller.Setup(proxy => proxy.SessionReset(It.IsAny<SessionResetPayload>())).Returns(Task.CompletedTask);
         var clients = new Mock<IHubCallerClients<IGatewayHubClient>>();
         clients.SetupGet(value => value.Caller).Returns(caller.Object);
 
         var sessions = new Mock<ISessionStore>();
-        sessions.Setup(value => value.ArchiveAsync(SessionId.From("session-1"), CancellationToken.None)).Returns(Task.CompletedTask);
+        sessions.Setup(s => s.GetAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>())).ReturnsAsync((GatewaySession?)null);
 
-        var supervisor = new Mock<IAgentSupervisor>();
-        supervisor.Setup(value => value.StopAsync(BotNexus.Domain.Primitives.AgentId.From("agent-a"), BotNexus.Domain.Primitives.SessionId.From("session-1"), CancellationToken.None)).Returns(Task.CompletedTask);
+        var hub = CreateHub(clients: clients.Object, sessions: sessions.Object);
 
-        var hub = CreateHub(clients: clients.Object, sessions: sessions.Object, supervisor: supervisor.Object);
+        await hub.ResetSession(AgentId.From("agent-a"), SessionId.From("missing"));
 
-        await hub.ResetSession(AgentId.From("agent-a"), SessionId.From("session-1"));
-
-        sessions.Verify(value => value.ArchiveAsync(SessionId.From("session-1"), CancellationToken.None), Times.Once);
-        sessions.Verify(value => value.DeleteAsync(It.IsAny<BotNexus.Domain.Primitives.SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
+        caller.Verify(c => c.SessionReset(It.IsAny<SessionResetPayload>()), Times.Once);
+        sessions.Verify(s => s.ArchiveAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -505,6 +569,7 @@ public sealed class SignalRHubTests
         IConversationDispatcher? conversationDispatcher = null,
         IConversationStore? conversationStore = null,
         IAskUserResponseRegistry? askUserResponseRegistry = null,
+        IConversationResetService? resetService = null,
         string connectionId = "conn-test")
     {
         var sessionStore = sessions ?? new InMemorySessionStore();
@@ -528,7 +593,8 @@ public sealed class SignalRHubTests
             compactionOptions ?? new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
             NullLogger<GatewayHub>.Instance,
             convStore,
-            askUserResponseRegistry)
+            askUserResponseRegistry,
+            resetService)
         {
             Clients = clients ?? Mock.Of<IHubCallerClients<IGatewayHubClient>>(),
             Groups = groups ?? Mock.Of<IGroupManager>(),
