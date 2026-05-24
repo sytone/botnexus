@@ -283,6 +283,16 @@ public sealed record SessionEntry
     /// Sentinels are removed on clean turn completion and must not be forwarded to the LLM.
     /// </summary>
     public bool IsCrashSentinel { get; init; }
+
+    /// <summary>
+    /// True if this entry has been folded into a later compaction summary and must NOT be
+    /// projected into LLM context. Historical entries remain in the session store for
+    /// transcript fidelity, replay, audit, and UI fold/collapse. Orthogonal to
+    /// <see cref="IsCompactionSummary"/>: a compaction summary itself becomes
+    /// <c>IsHistory = true</c> once a newer summary supersedes it, at which point only
+    /// the most recent summary stays LLM-visible.
+    /// </summary>
+    public bool IsHistory { get; init; }
 }
 
 /// <summary>

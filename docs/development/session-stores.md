@@ -132,7 +132,9 @@ CREATE TABLE IF NOT EXISTS session_history (
     timestamp TEXT,
     tool_name TEXT,
     tool_call_id TEXT,
-    is_compaction_summary INTEGER NOT NULL DEFAULT 0
+    is_compaction_summary INTEGER NOT NULL DEFAULT 0,
+    is_crash_sentinel INTEGER NOT NULL DEFAULT 0,
+    is_history INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX idx_sessions_agent_id ON sessions(agent_id);
@@ -142,6 +144,18 @@ CREATE INDEX idx_sessions_created_at ON sessions(created_at);
 ```
 
 **Key behaviors:** Parameterized queries throughout, `INSERT OR REPLACE` for upserts, JSON serialization for complex fields (`participants_json`, `metadata`). Session history stored in the separate `session_history` table. Lazy schema initialization via `EnsureSchemaAsync`, and ISO 8601 date formatting.
+
+### History entry flags
+
+The `session_history` table stores the full transcript — *nothing is ever deleted by compaction*. Three boolean flags determine how the runtime interprets each entry:
+
+| Flag | Set when | Effect |
+| --- | --- | --- |
+| `is_compaction_summary` | Compactor inserts the synthetic summary entry that folds older turns | Sent to the LLM as a `system` message so the model still has the compressed context |
+| `is_crash_sentinel` | Gateway is mid-turn at shutdown and writes a placeholder so the next start can recover | Excluded from the LLM context projection and from any future summarisation prompt |
+| `is_history` | Compactor marks summarised entries — they remain in the store for the transcript but are hidden from the LLM | Excluded from the LLM context projection; not eligible for re-summarisation on later compaction cycles |
+
+On load, `SessionCompaction.ApplyLegacyHistoryProjection` collapses pre-Phase-3a databases forward — any session that has multiple `is_compaction_summary=true` rows with `is_history=false` (the old code applied a load-time slice to hide older summaries) gets all-but-latest summary flipped to `is_history=true` in memory, and the new state persists on the next save. The migration is idempotent.
 
 See [SqliteSessionStore.cs](../../src/gateway/BotNexus.Gateway.Sessions/SqliteSessionStore.cs)
 

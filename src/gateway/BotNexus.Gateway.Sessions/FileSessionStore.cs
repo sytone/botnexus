@@ -210,7 +210,10 @@ public sealed class FileSessionStore : SessionStoreBase
             cancellationToken).ConfigureAwait(false);
         if (entries.Count > 0)
         {
-            session.AddEntries(SessionCompaction.KeepFromLastCompaction(entries));
+            // Phase 3a (#531): preserve every entry; collapse pre-Phase-3a multi-summary
+            // state forward via SessionCompaction.ApplyLegacyHistoryProjection. The LLM-visible
+            // filter (IsHistory + IsCrashSentinel) is applied downstream by the projector.
+            session.AddEntries(SessionCompaction.ApplyLegacyHistoryProjection(entries));
             session.UpdatedAt = meta.UpdatedAt;
         }
 

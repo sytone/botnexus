@@ -141,20 +141,27 @@ Since the full timeline is sent every call, context grows with every turn. BotNe
 
 ### 1. Session Compaction (`LlmSessionCompactor`)
 
-When the estimated token count exceeds a threshold (default: 60% of context window), the compactor:
+When the estimated token count of the **LLM-visible** projection exceeds a threshold (default: 60% of context window), the compactor:
 
-1. **Splits** the history into old entries and recent entries (preserves last N user turns, default: 3)
-2. **Summarizes** the old entries using a cheaper model (e.g., `gpt-4.1-mini`) with a structured prompt requesting decisions, TODOs, constraints, and key identifiers
-3. **Replaces** the old entries with a single system message containing the summary
-4. Subsequent LLM calls send: system prompt + compaction summary + recent messages
+1. **Projects** the session history to the LLM-visible subset: everything that is not already historical (`SessionEntry.IsHistory == false`) and not a crash sentinel. Already-historical entries from earlier compactions are not re-summarised.
+2. **Splits** the visible portion into old entries and recent entries (preserves last N user turns, default: 3).
+3. **Summarises** the old entries using a cheaper model (e.g., `gpt-4.1-mini`) with a structured prompt requesting decisions, TODOs, constraints, and key identifiers.
+4. **Marks** every summarised entry with `IsHistory = true` and **inserts** the new summary entry at the historical→preserved boundary. The original turns remain in the session store for the full-fidelity transcript.
+5. Subsequent LLM calls send: system prompt + latest compaction summary + recent messages. Historical entries are excluded from the projection.
 
 ```text
-Before compaction:
-  [system prompt] + [msg1] + [msg2] + ... + [msg47] + [msg48]  → ~90K tokens
+Before compaction (stored history):
+  [u1] [a1] [u2] [a2] ... [u47] [a47] [u48] [a48]
 
-After compaction:
-  [system prompt] + [compaction summary] + [msg46] + [msg47] + [msg48]  → ~25K tokens
+After compaction (stored history — full transcript preserved):
+  [u1*] [a1*] ... [u45*] [a45*] [summary] [u46] [a46] [u47] [a47] [u48] [a48]
+  *IsHistory = true; excluded from LLM context but visible in the UI transcript
+
+After compaction (LLM-visible projection):
+  [system prompt] + [summary] + [u46] [a46] [u47] [a47] [u48] [a48]  → ~25K tokens
 ```
+
+On the next compaction cycle the previous `summary` entry is itself folded into the new summary and marked `IsHistory = true` — only the latest summary is ever sent to the LLM, but the chain of summaries (and every original turn) stays in the store.
 
 ### 2. Emergency Overflow Recovery
 

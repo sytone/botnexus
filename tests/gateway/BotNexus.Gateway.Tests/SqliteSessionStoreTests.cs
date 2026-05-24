@@ -300,6 +300,7 @@ public sealed class SqliteSessionStoreTests
             columns.Add(columnReader.GetString(1));
 
         columns.ShouldContain("is_compaction_summary");
+        columns.ShouldContain("is_history");
     }
 
     [Fact]
@@ -350,6 +351,63 @@ public sealed class SqliteSessionStoreTests
             columns.Add(columnReader.GetString(1));
 
         columns.ShouldContain("is_compaction_summary");
+        // Phase 3a (#531): legacy DBs must gain the new is_history column on first open.
+        columns.ShouldContain("is_history");
+    }
+
+    [Fact]
+    public async Task GetAsync_PreservesIsHistoryFlag_AcrossRoundTrip()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("history-roundtrip"), AgentId.From("agent-a"));
+        session.AddEntries(new[]
+        {
+            new SessionEntry { Role = MessageRole.User, Content = "old-user", IsHistory = true },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "old-assistant", IsHistory = true },
+            new SessionEntry { Role = MessageRole.System, Content = "summary", IsCompactionSummary = true },
+            new SessionEntry { Role = MessageRole.User, Content = "fresh" }
+        });
+        await store.SaveAsync(session);
+
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("history-roundtrip"));
+
+        reloaded.ShouldNotBeNull();
+        var snapshot = reloaded!.GetHistorySnapshot();
+        snapshot.Count.ShouldBe(4);
+        snapshot.Single(e => e.Content == "old-user").IsHistory.ShouldBeTrue();
+        snapshot.Single(e => e.Content == "old-assistant").IsHistory.ShouldBeTrue();
+        snapshot.Single(e => e.Content == "summary").IsHistory.ShouldBeFalse();
+        snapshot.Single(e => e.Content == "summary").IsCompactionSummary.ShouldBeTrue();
+        snapshot.Single(e => e.Content == "fresh").IsHistory.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task GetAsync_LegacyMultipleSummaries_ForwardMigratesAllButLatest()
+    {
+        // Phase 3a (#531): legacy DBs with multiple IsCompactionSummary rows and IsHistory=false
+        // (because the old code applied a load-time slice) must forward-migrate on load —
+        // all-but-latest summary marked IsHistory=true.
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("legacy-multi"), AgentId.From("agent-a"));
+        session.AddEntries(new[]
+        {
+            new SessionEntry { Role = MessageRole.User, Content = "before-1" },
+            new SessionEntry { Role = MessageRole.System, Content = "summary-1", IsCompactionSummary = true },
+            new SessionEntry { Role = MessageRole.User, Content = "middle" },
+            new SessionEntry { Role = MessageRole.System, Content = "summary-2", IsCompactionSummary = true },
+            new SessionEntry { Role = MessageRole.User, Content = "after" }
+        });
+        await store.SaveAsync(session);
+
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("legacy-multi"));
+
+        reloaded.ShouldNotBeNull();
+        var snapshot = reloaded!.GetHistorySnapshot();
+        snapshot.Count.ShouldBe(5);
+        snapshot.Single(e => e.Content == "summary-1").IsHistory.ShouldBeTrue();
+        snapshot.Single(e => e.Content == "summary-2").IsHistory.ShouldBeFalse();
     }
 
     [Fact]

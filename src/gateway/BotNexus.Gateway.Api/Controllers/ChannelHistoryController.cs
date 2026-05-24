@@ -119,7 +119,9 @@ public sealed class ChannelHistoryController : ControllerBase
                     entry.Timestamp,
                     EmptyMetadata,
                     entry.ToolName,
-                    entry.ToolCallId));
+                    entry.ToolCallId,
+                    entry.IsHistory,
+                    entry.IsCompactionSummary));
                 messageIndex++;
             }
         }
@@ -204,7 +206,11 @@ public sealed record ChannelHistoryResponse(
     IReadOnlyList<ChannelHistorySessionBoundary> SessionBoundaries);
 
 /// <summary>
-/// Channel history message payload.
+/// Channel history message payload. <paramref name="IsHistory"/> and
+/// <paramref name="IsCompactionSummary"/> are populated from the underlying
+/// <c>SessionEntry</c> flags so the UI can render historical (folded) ranges and
+/// compaction-summary markers distinctly from live turns. Both default to <c>false</c>
+/// for backward compatibility with consumers that ignore the new fields.
 /// </summary>
 public sealed record ChannelHistoryMessage(
     string Id,
@@ -214,7 +220,9 @@ public sealed record ChannelHistoryMessage(
     DateTimeOffset Timestamp,
     IReadOnlyDictionary<string, object?> Metadata,
     string? ToolName = null,
-    string? ToolCallId = null);
+    string? ToolCallId = null,
+    bool IsHistory = false,
+    bool IsCompactionSummary = false);
 
 /// <summary>
 /// Session boundary marker in a history page.

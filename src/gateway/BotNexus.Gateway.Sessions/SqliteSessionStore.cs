@@ -264,7 +264,8 @@ public sealed class SqliteSessionStore : SessionStoreBase
                     tool_name TEXT,
                     tool_call_id TEXT,
                     is_compaction_summary INTEGER NOT NULL DEFAULT 0,
-                    is_crash_sentinel INTEGER NOT NULL DEFAULT 0
+                    is_crash_sentinel INTEGER NOT NULL DEFAULT 0,
+                    is_history INTEGER NOT NULL DEFAULT 0
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_session_history_session_id ON session_history(session_id);
@@ -297,7 +298,8 @@ public sealed class SqliteSessionStore : SessionStoreBase
                      ("is_compaction_summary", "INTEGER NOT NULL DEFAULT 0"),
                      ("tool_args", "TEXT"),
                      ("tool_is_error", "INTEGER NOT NULL DEFAULT 0"),
-                     ("is_crash_sentinel", "INTEGER NOT NULL DEFAULT 0")
+                     ("is_crash_sentinel", "INTEGER NOT NULL DEFAULT 0"),
+                     ("is_history", "INTEGER NOT NULL DEFAULT 0")
                  })
         {
             try
@@ -487,7 +489,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
 
         await using var historyCommand = connection.CreateCommand();
         historyCommand.CommandText = """
-            SELECT role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel
+            SELECT role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history
             FROM session_history
             WHERE session_id = $sessionId
             ORDER BY id ASC
@@ -508,13 +510,17 @@ public sealed class SqliteSessionStore : SessionStoreBase
                 IsCompactionSummary = !historyReader.IsDBNull(5) && historyReader.GetInt64(5) != 0,
                 ToolArgs = historyReader.FieldCount > 6 && !historyReader.IsDBNull(6) ? historyReader.GetString(6) : null,
                 ToolIsError = historyReader.FieldCount > 7 && !historyReader.IsDBNull(7) && historyReader.GetInt64(7) != 0,
-                IsCrashSentinel = historyReader.FieldCount > 8 && !historyReader.IsDBNull(8) && historyReader.GetInt64(8) != 0
+                IsCrashSentinel = historyReader.FieldCount > 8 && !historyReader.IsDBNull(8) && historyReader.GetInt64(8) != 0,
+                IsHistory = historyReader.FieldCount > 9 && !historyReader.IsDBNull(9) && historyReader.GetInt64(9) != 0
             });
         }
 
-        var lastCompactionIndex = entries.FindLastIndex(entry => entry.IsCompactionSummary);
-        if (lastCompactionIndex >= 0)
-            entries = entries.GetRange(lastCompactionIndex, entries.Count - lastCompactionIndex);
+        // Phase 3a (#531): the full transcript is preserved in storage; the LLM-visible
+        // projection is computed at runtime via IsHistory/IsCrashSentinel flags. Legacy
+        // pre-Phase-3a databases may contain multiple IsCompactionSummary rows all with
+        // IsHistory=false because the old code applied a load-time slice to hide them;
+        // collapse those forward so only the latest summary is LLM-visible after migration.
+        entries = SessionCompaction.ApplyLegacyHistoryProjection(entries);
 
         if (entries.Count > 0)
             session.AddEntries(entries);
@@ -571,8 +577,8 @@ public sealed class SqliteSessionStore : SessionStoreBase
             await using var insertCommand = connection.CreateCommand();
             insertCommand.Transaction = transaction;
             insertCommand.CommandText = """
-                INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel)
-                VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError, $isCrashSentinel)
+                INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history)
+                VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError, $isCrashSentinel, $isHistory)
                 """;
             insertCommand.Parameters.AddWithValue("$sessionId", session.SessionId.Value);
             insertCommand.Parameters.AddWithValue("$role", entry.Role.Value);
@@ -584,6 +590,7 @@ public sealed class SqliteSessionStore : SessionStoreBase
             insertCommand.Parameters.AddWithValue("$toolArgs", (object?)entry.ToolArgs ?? DBNull.Value);
             insertCommand.Parameters.AddWithValue("$toolIsError", entry.ToolIsError ? 1 : 0);
             insertCommand.Parameters.AddWithValue("$isCrashSentinel", entry.IsCrashSentinel ? 1 : 0);
+            insertCommand.Parameters.AddWithValue("$isHistory", entry.IsHistory ? 1 : 0);
             await insertCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 

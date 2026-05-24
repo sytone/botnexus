@@ -70,8 +70,12 @@ public sealed class LlmSessionCompactorTests
         result.CompactedHistory.ShouldNotBeNull();
         session.ReplaceHistory(result.CompactedHistory!);
 
+        // Phase 3a (#531): summarised entries are kept in the session store with IsHistory=true,
+        // the summary entry sits at the boundary, then the preserved tail follows.
         session.GetHistorySnapshot().Select(entry => entry.Content).ToList().ShouldBe(
-            new[] { "summary-u1", "u2", "a2", "t2", "u3", "a3" }, ignoreOrder: false);
+            new[] { "u1", "a1", "t1", "summary-u1", "u2", "a2", "t2", "u3", "a3" }, ignoreOrder: false);
+        session.GetHistorySnapshot().Take(3).ShouldAllBe(e => e.IsHistory);
+        session.GetHistorySnapshot().Skip(3).ShouldAllBe(e => !e.IsHistory);
     }
 
     [Fact]
@@ -98,7 +102,11 @@ public sealed class LlmSessionCompactorTests
         session.ReplaceHistory(result.CompactedHistory!);
 
         session.GetHistorySnapshot().Select(entry => entry.Content)
-            .ToList().ShouldBe(new[] { "structured summary", "recent", "recent-response" }, ignoreOrder: false);
+            .ToList().ShouldBe(new[] { "older", "older-response", "structured summary", "recent", "recent-response" }, ignoreOrder: false);
+        session.GetHistorySnapshot()[0].IsHistory.ShouldBeTrue();
+        session.GetHistorySnapshot()[1].IsHistory.ShouldBeTrue();
+        session.GetHistorySnapshot()[2].IsCompactionSummary.ShouldBeTrue();
+        session.GetHistorySnapshot()[2].IsHistory.ShouldBeFalse();
     }
 
     [Fact]
@@ -161,9 +169,12 @@ public sealed class LlmSessionCompactorTests
         result.CompactedHistory.ShouldNotBeNull();
         session.ReplaceHistory(result.CompactedHistory!);
 
-        var summaryEntry = session.GetHistorySnapshot().First();
+        // Phase 3a (#531): summary entry now sits at the historical→preserved boundary, not at index 0.
+        var summaryEntry = session.GetHistorySnapshot().Single(e => e.IsCompactionSummary);
         summaryEntry.Role.ShouldBe(MessageRole.System);
         summaryEntry.IsCompactionSummary.ShouldBeTrue();
+        summaryEntry.IsHistory.ShouldBeFalse();
+        summaryEntry.Content.ShouldBe("compacted");
     }
 
     [Fact]
@@ -187,7 +198,7 @@ public sealed class LlmSessionCompactorTests
         result.Summary.Length.ShouldBe(40);
 
         session.ReplaceHistory(result.CompactedHistory!);
-        session.GetHistorySnapshot().First().Content.Length.ShouldBe(40);
+        session.GetHistorySnapshot().Single(e => e.IsCompactionSummary).Content.Length.ShouldBe(40);
     }
 
     /// <summary>
@@ -355,5 +366,176 @@ public sealed class LlmSessionCompactorTests
         var options = new CompactionOptions { ContextWindowTokens = 1200, TokenThresholdRatio = 1.0 };
         // 1200 chars / 4 = 300 tokens; threshold = 1200 * 1.0 = 1200; 300 > 1200 = false
         compactor.ShouldCompact(session.Session, options).ShouldBeFalse();
+    }
+
+    // ─── Phase 3a (#531): mark-not-delete behaviour ─────────────────────────────
+
+    [Fact]
+    public async Task CompactAsync_KeepsSummarisedEntries_WithIsHistoryTrue()
+    {
+        var session = CreateSession(
+            ("user", "u1"),
+            ("assistant", "a1"),
+            ("user", "u2"),
+            ("assistant", "a2"));
+        var compactor = CreateCompactor("summary");
+        var originalCount = session.GetHistorySnapshot().Count;
+
+        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
+        {
+            PreservedTurns = 1,
+            SummarizationModel = TestModel.Id
+        });
+
+        result.Succeeded.ShouldBeTrue();
+        result.CompactedHistory.ShouldNotBeNull();
+        result.CompactedHistory!.Count.ShouldBe(originalCount + 1,
+            "every original entry must remain in the store; only the summary is appended");
+
+        var historyEntries = result.CompactedHistory.Where(e => e.IsHistory).ToList();
+        historyEntries.Count.ShouldBe(2);
+        historyEntries.Select(e => e.Content).ShouldBe(new[] { "u1", "a1" });
+    }
+
+    [Fact]
+    public async Task CompactAsync_OldSummary_BecomesIsHistory_OnNextCompaction()
+    {
+        // Cycle 1: produce a summary at index 2 (after u1,a1 are marked historical)
+        var session = CreateSession(
+            ("user", "u1"),
+            ("assistant", "a1"),
+            ("user", "u2"),
+            ("assistant", "a2"));
+        var compactor = CreateCompactor("summary-1");
+
+        var result1 = await compactor.CompactAsync(session.Session, new CompactionOptions
+        {
+            PreservedTurns = 1,
+            SummarizationModel = TestModel.Id
+        });
+        session.ReplaceHistory(result1.CompactedHistory!);
+
+        // Add more turns
+        session.AddEntries(new[]
+        {
+            new SessionEntry { Role = MessageRole.User, Content = "u3" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "a3" }
+        });
+
+        // Cycle 2: summary-1 is now LLM-visible (IsHistory=false). It must be folded into summary-2 and marked historical.
+        var compactor2 = CreateCompactor("summary-2");
+        var result2 = await compactor2.CompactAsync(session.Session, new CompactionOptions
+        {
+            PreservedTurns = 1,
+            SummarizationModel = TestModel.Id
+        });
+
+        result2.Succeeded.ShouldBeTrue();
+        session.ReplaceHistory(result2.CompactedHistory!);
+
+        var snapshot = session.GetHistorySnapshot();
+        snapshot.Where(e => e.Content == "summary-1").Single().IsHistory.ShouldBeTrue();
+        snapshot.Where(e => e.Content == "summary-2").Single().IsHistory.ShouldBeFalse();
+        // u1/a1/u2/a2 all preserved
+        snapshot.Select(e => e.Content).ShouldContain("u1");
+        snapshot.Select(e => e.Content).ShouldContain("a1");
+        snapshot.Select(e => e.Content).ShouldContain("u2");
+        snapshot.Select(e => e.Content).ShouldContain("a2");
+    }
+
+    [Fact]
+    public async Task CompactAsync_AlreadyHistoricalEntries_NotReSummarised()
+    {
+        var session = CreateSession(
+            ("user", "u1"),
+            ("assistant", "a1"));
+        // Mark u1/a1 as historical to simulate post-cycle-1 state
+        var snapshotEntries = session.GetHistorySnapshot()
+            .Select(e => e with { IsHistory = true })
+            .Concat(new[]
+            {
+                new SessionEntry { Role = MessageRole.User, Content = "u2" },
+                new SessionEntry { Role = MessageRole.Assistant, Content = "a2" },
+                new SessionEntry { Role = MessageRole.User, Content = "u3" },
+                new SessionEntry { Role = MessageRole.Assistant, Content = "a3" }
+            })
+            .ToList();
+        session.ReplaceHistory(snapshotEntries);
+
+        var compactor = CreateCompactor("summary");
+        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
+        {
+            PreservedTurns = 1,
+            SummarizationModel = TestModel.Id
+        });
+
+        result.Succeeded.ShouldBeTrue();
+        // The already-historical u1/a1 must remain IsHistory=true and not be folded again.
+        // Only u2/a2 should be newly marked historical (PreservedTurns=1 keeps the u3/a3 turn).
+        result.EntriesSummarized.ShouldBe(2, "only u2/a2 are newly summarised — u1/a1 were already historical");
+
+        var newHistory = result.CompactedHistory!;
+        newHistory.Single(e => e.Content == "u1").IsHistory.ShouldBeTrue();
+        newHistory.Single(e => e.Content == "a1").IsHistory.ShouldBeTrue();
+        newHistory.Single(e => e.Content == "u2").IsHistory.ShouldBeTrue();
+        newHistory.Single(e => e.Content == "a2").IsHistory.ShouldBeTrue();
+        newHistory.Single(e => e.Content == "u3").IsHistory.ShouldBeFalse();
+        newHistory.Single(e => e.Content == "a3").IsHistory.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task CompactAsync_CrashSentinels_ExcludedFromSummarisationPrompt()
+    {
+        var session = CreateSession(
+            ("user", "u1"),
+            ("assistant", "a1"),
+            ("user", "u2"),
+            ("assistant", "a2"));
+
+        // Insert a crash sentinel in the middle to simulate a survived gateway restart.
+        var entries = session.GetHistorySnapshot().ToList();
+        entries.Insert(2, new SessionEntry
+        {
+            Role = MessageRole.System,
+            Content = "[agent turn in progress — gateway restarted]",
+            IsCrashSentinel = true
+        });
+        session.ReplaceHistory(entries);
+
+        var compactor = CreateCompactor("summary");
+        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
+        {
+            PreservedTurns = 1,
+            SummarizationModel = TestModel.Id
+        });
+
+        result.Succeeded.ShouldBeTrue();
+        // Crash sentinel must remain present in the store, unchanged, never marked IsHistory.
+        var newHistory = result.CompactedHistory!;
+        var sentinel = newHistory.Single(e => e.IsCrashSentinel);
+        sentinel.IsHistory.ShouldBeFalse();
+        // u1/a1 are summarised, marked IsHistory; sentinel and the preserved u2/a2 turn remain LLM-visible.
+        result.EntriesSummarized.ShouldBe(2);
+    }
+
+    [Fact]
+    public void ShouldCompact_OnlyCountsLlmVisibleEntries_HistoricalEntriesExcluded()
+    {
+        // Massive historical entries should NOT trigger compaction — they're hidden from the LLM.
+        var session = CreateSession(("user", "tiny"));
+        var entries = new List<SessionEntry>
+        {
+            new() { Role = MessageRole.User, Content = new string('a', 1_000_000), IsHistory = true },
+            new() { Role = MessageRole.Assistant, Content = new string('b', 1_000_000), IsHistory = true },
+            new() { Role = MessageRole.System, Content = "summary", IsCompactionSummary = true },
+            new() { Role = MessageRole.User, Content = "tiny" }
+        };
+        session.ReplaceHistory(entries);
+
+        var compactor = CreateCompactor("summary");
+        var options = new CompactionOptions { ContextWindowTokens = 100_000, TokenThresholdRatio = 0.5 };
+
+        compactor.ShouldCompact(session.Session, options).ShouldBeFalse(
+            "historical entries must not contribute to the token budget");
     }
 }

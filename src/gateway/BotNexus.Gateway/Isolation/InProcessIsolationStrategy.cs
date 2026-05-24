@@ -334,9 +334,14 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // Tool-role entries are excluded: they become orphaned ToolResultMessages
             // (no matching tool_use in the preceding assistant message) which causes
             // LLM provider rejection. Regular system entries (IsCompactionSummary=false)
-            // are also excluded ΓÇö the agent's system prompt is set separately.
+            // are also excluded — the agent's system prompt is set separately.
+            // Phase 3a (#531): historical entries (IsHistory=true) are preserved in the
+            // session store for transcript fidelity but excluded from LLM context — that
+            // is what the summary entry replaces. Phase 3b will centralise this filter
+            // into a SessionContextProjector.
             initialMessages = context.History
                 .Where(e => !e.IsCrashSentinel
+                         && !e.IsHistory
                          && (e.Role == Domain.Primitives.MessageRole.User
                          || e.Role == Domain.Primitives.MessageRole.Assistant
                          || (e.Role == Domain.Primitives.MessageRole.System && e.IsCompactionSummary)))
