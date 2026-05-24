@@ -23,6 +23,7 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Security;
+using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Tools;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
@@ -329,22 +330,14 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         List<AgentMessage>? initialMessages = null;
         if (context.History.Count > 0)
         {
-            // Inject compaction summary entries as system messages so the LLM retains
-            // summarised context when the handle is recreated (e.g. after a gateway restart).
-            // Tool-role entries are excluded: they become orphaned ToolResultMessages
-            // (no matching tool_use in the preceding assistant message) which causes
-            // LLM provider rejection. Regular system entries (IsCompactionSummary=false)
-            // are also excluded — the agent's system prompt is set separately.
-            // Phase 3a (#531): historical entries (IsHistory=true) are preserved in the
-            // session store for transcript fidelity but excluded from LLM context — that
-            // is what the summary entry replaces. Phase 3b will centralise this filter
-            // into a SessionContextProjector.
-            initialMessages = context.History
-                .Where(e => !e.IsCrashSentinel
-                         && !e.IsHistory
-                         && (e.Role == Domain.Primitives.MessageRole.User
-                         || e.Role == Domain.Primitives.MessageRole.Assistant
-                         || (e.Role == Domain.Primitives.MessageRole.System && e.IsCompactionSummary)))
+            // The cold-start resume projection — what survives a session hydration without
+            // breaking the LLM provider — is owned by SessionContextProjector. Tool entries
+            // are dropped there because Anthropic rejects orphaned tool_result blocks
+            // (the Assistant SessionEntry persists response text but not the paired
+            // tool_use). Phase 3a/#531 added IsHistory; Phase 3b/#534 centralised the
+            // filter so all isolation strategies share it.
+            initialMessages = SessionContextProjector
+                .ProjectForResume(context.History)
                 .Select(ConvertSessionEntryToAgentMessage)
                 .ToList();
 

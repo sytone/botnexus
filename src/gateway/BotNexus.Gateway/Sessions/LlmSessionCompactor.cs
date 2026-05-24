@@ -58,8 +58,9 @@ public sealed class LlmSessionCompactor : ISessionCompactor
 
         // Phase 3a: compaction operates on the "LLM-visible" projection only. Already-historical
         // entries from prior compactions, and crash sentinels, are passed through verbatim and
-        // must never be re-summarised.
-        var visible = history.Where(IsVisibleToLlm).ToList();
+        // must never be re-summarised. The visibility predicate is centralised in
+        // SessionContextProjector (Phase 3b, #534).
+        var visible = history.Where(SessionContextProjector.IsVisibleInLiveContext).ToList();
         var (toSummarize, toPreserve) = SplitHistory(visible, options.PreservedTurns);
         if (toSummarize.Count == 0)
         {
@@ -171,8 +172,6 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             TokensAfter = tokensAfter
         };
     }
-
-    private static bool IsVisibleToLlm(SessionEntry entry) => !entry.IsHistory && !entry.IsCrashSentinel;
 
     private static (List<SessionEntry> toSummarize, List<SessionEntry> toPreserve) SplitHistory(
         IReadOnlyList<SessionEntry> history,
@@ -351,7 +350,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     private static int EstimateVisibleTokenCount(Session session)
     {
         var totalChars = session.History
-            .Where(IsVisibleToLlm)
+            .Where(SessionContextProjector.IsVisibleInLiveContext)
             .Sum(entry => (long)(entry.Content?.Length ?? 0));
         return (int)Math.Min(totalChars / 4, int.MaxValue);
     }
@@ -359,7 +358,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     private static int EstimateVisibleTokenCountFromEntries(IEnumerable<SessionEntry> entries)
     {
         var totalChars = entries
-            .Where(IsVisibleToLlm)
+            .Where(SessionContextProjector.IsVisibleInLiveContext)
             .Sum(entry => (long)(entry.Content?.Length ?? 0));
         return (int)Math.Min(totalChars / 4, int.MaxValue);
     }
