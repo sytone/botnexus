@@ -163,6 +163,15 @@ After compaction (LLM-visible projection):
 
 On the next compaction cycle the previous `summary` entry is itself folded into the new summary and marked `IsHistory = true` — only the latest summary is ever sent to the LLM, but the chain of summaries (and every original turn) stays in the store.
 
+### 1a. Where the projection lives (`SessionContextProjector`)
+
+The "which session entries reach the LLM" rule is **owned by a single type**: `SessionContextProjector` in `BotNexus.Gateway.Sessions`. Two predicates make explicit what was previously two divergent inline filters:
+
+- **`IsVisibleOnResume`** — the strict filter used by isolation strategies when hydrating a cold-resumed session into the initial LLM message list. Excludes `IsHistory`, `IsCrashSentinel`, raw `System` entries, and (importantly) `Tool` entries. Tool entries are dropped on resume because the persisted Assistant `SessionEntry` only carries response text, not the structured `tool_use` blocks that would pair with the following `tool_result`. Without the pair, the `tool_result` becomes orphaned and the Anthropic Messages API rejects the request.
+- **`IsVisibleInLiveContext`** — the broader filter used by `LlmSessionCompactor` for sizing the token budget. Counts `Tool` and non-summary `System` entries because in continuous mid-session operation those *are* sent to the LLM — the agent's in-memory message list still has the tool calls paired with their Assistant `tool_use` blocks, and the provider client serialises them correctly.
+
+Future isolation strategies (sandbox, container, remote) and any other code that turns session history into LLM messages must route through `SessionContextProjector`. An architecture test (`SessionContextProjectorArchitectureTests`) fails the build if a file outside the small allowlist contains both `IsHistory` and `IsCrashSentinel` — that is the canonical signature of an inline re-implementation drifting from the projector.
+
 ### 2. Emergency Overflow Recovery
 
 If the provider rejects a call with a context overflow error (detected by `ContextOverflowDetector`), `AgentLoopRunner.ExecuteWithRetryAsync` does an emergency compact: keeps the last 1/3 of messages (minimum 8) and retries.
