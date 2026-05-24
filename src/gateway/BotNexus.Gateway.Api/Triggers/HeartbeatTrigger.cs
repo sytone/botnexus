@@ -4,6 +4,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Triggers;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using Microsoft.Extensions.Logging;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 
@@ -216,7 +217,9 @@ public sealed class HeartbeatTrigger(
             ConversationId = stableId,
             AgentId = agentId,
             Title = $"heartbeat:{agentId.Value}",
-            IsDefault = false
+            IsDefault = false,
+            // Heartbeat is a self-initiated system flow; the agent itself is the initiator.
+            Initiator = CitizenId.Of(agentId)
         };
         try
         {

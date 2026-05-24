@@ -323,7 +323,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                     message.ChannelAddress,
                     threadId: message.ThreadId,
                     conversationId: message.ConversationId,
-                    cancellationToken);
+                    cancellationToken,
+                    initiator: message.Sender);
                 sessionId = routingResult.SessionId.Value;
                 var originatingBinding = routingResult.OriginatingBinding;
                 resolvedSource = originatingBinding is null

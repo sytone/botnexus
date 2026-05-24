@@ -457,5 +457,118 @@ public sealed class DefaultConversationRouterTests
 
         ex.ShouldBeNull();
     }
+
+    // ── Initiator (CitizenId) ──────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ResolveInbound_NewConversation_StampsInitiator_WhenCitizenProvided()
+    {
+        var store = new InMemoryConversationStore();
+        var router = CreateRouter(store);
+        var user = BotNexus.Domain.World.CitizenId.Of(BotNexus.Domain.Primitives.UserId.From("alice"));
+
+        var result = await router.ResolveInboundAsync(
+            Agent(),
+            Channel(),
+            ChannelAddress.From("chat-init-1"),
+            null,
+            ct: default,
+            initiator: user);
+
+        result.Conversation.Initiator.ShouldNotBeNull();
+        result.Conversation.Initiator!.Value.ShouldBe(user);
+
+        var roundTrip = await store.GetAsync(result.Conversation.ConversationId);
+        roundTrip!.Initiator.ShouldNotBeNull();
+        roundTrip.Initiator!.Value.ShouldBe(user);
+    }
+
+    [Fact]
+    public async Task ResolveInbound_NewConversation_LeavesInitiatorNull_WhenNoCitizenProvided()
+    {
+        var store = new InMemoryConversationStore();
+        var router = CreateRouter(store);
+
+        var result = await router.ResolveInboundAsync(Agent(), Channel(), ChannelAddress.From("chat-init-2"), null);
+
+        result.Conversation.Initiator.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ResolveInbound_ReopensArchivedConversation_DoesNotOverwriteInitiator()
+    {
+        // Initiator is write-once: when the router reopens an archived conversation, it must
+        // preserve the original Initiator even if a different citizen sends the reopening message.
+        var store = new InMemoryConversationStore();
+        var router = CreateRouter(store);
+        var agentId = Agent();
+        var original = BotNexus.Domain.World.CitizenId.Of(BotNexus.Domain.Primitives.UserId.From("alice"));
+        var different = BotNexus.Domain.World.CitizenId.Of(BotNexus.Domain.Primitives.UserId.From("bob"));
+
+        var conversation = new Conversation
+        {
+            ConversationId = ConversationId.Create(),
+            AgentId = agentId,
+            Title = "archived",
+            Status = ConversationStatus.Archived,
+            Initiator = original,
+            ChannelBindings =
+            [
+                new ChannelBinding
+                {
+                    ChannelType = Channel("telegram"),
+                    ChannelAddress = ChannelAddress.From("chat-reopen")
+                }
+            ]
+        };
+        await store.CreateAsync(conversation);
+
+        var result = await router.ResolveInboundAsync(
+            agentId,
+            Channel("telegram"),
+            ChannelAddress.From("chat-reopen"),
+            null,
+            ct: default,
+            initiator: different);
+
+        result.Conversation.Initiator.ShouldNotBeNull();
+        result.Conversation.Initiator!.Value.ShouldBe(original);
+
+        var roundTrip = await store.GetAsync(conversation.ConversationId);
+        roundTrip!.Initiator!.Value.ShouldBe(original);
+    }
+
+    [Fact]
+    public async Task ResolveInbound_WithExplicitConversationId_DoesNotOverwriteInitiator()
+    {
+        // The explicit-conversationId fast path must also preserve the existing Initiator,
+        // even when a citizen is supplied on the call.
+        var store = new InMemoryConversationStore();
+        var router = CreateRouter(store);
+        var agentId = Agent();
+        var original = BotNexus.Domain.World.CitizenId.Of(BotNexus.Domain.Primitives.UserId.From("alice"));
+        var different = BotNexus.Domain.World.CitizenId.Of(BotNexus.Domain.Primitives.UserId.From("bob"));
+
+        var conversation = new Conversation
+        {
+            ConversationId = ConversationId.Create(),
+            AgentId = agentId,
+            Title = "explicit",
+            Initiator = original
+        };
+        await store.CreateAsync(conversation);
+
+        var result = await router.ResolveInboundAsync(
+            agentId,
+            Channel(),
+            ChannelAddress.From("unused"),
+            null,
+            conversation.ConversationId.Value,
+            ct: default,
+            initiator: different);
+
+        result.Conversation.ConversationId.ShouldBe(conversation.ConversationId);
+        result.Conversation.Initiator!.Value.ShouldBe(original);
+    }
 }
 

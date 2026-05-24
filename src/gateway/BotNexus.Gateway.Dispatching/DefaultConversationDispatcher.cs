@@ -38,7 +38,8 @@ public sealed class DefaultConversationDispatcher : IConversationDispatcher
             context.Source.ChannelAddress,
             context.Source.ThreadId,
             context.RequestedConversationId,
-            cancellationToken);
+            cancellationToken,
+            initiator: context.Message.Sender);
 
         var resolvedSource = routingResult.OriginatingBinding is null
             ? context.Source

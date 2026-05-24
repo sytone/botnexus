@@ -246,7 +246,10 @@ public sealed class ConversationTool(
             Purpose = string.IsNullOrWhiteSpace(purpose) ? null : purpose.Trim(),
             Status = ConversationStatus.Active,
             CreatedAt = now,
-            UpdatedAt = now
+            UpdatedAt = now,
+            // The conversation_new tool is invoked by an agent (the caller of this tool), so the
+            // initiating citizen is always the calling agent.
+            Initiator = CitizenId.Of(agentId)
         };
 
         var created = await conversationStore.CreateAsync(conversation, ct).ConfigureAwait(false);

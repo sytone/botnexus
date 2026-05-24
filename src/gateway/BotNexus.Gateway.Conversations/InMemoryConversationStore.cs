@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 
@@ -25,6 +26,28 @@ public sealed class InMemoryConversationStore : IConversationStore
             ? [.. _conversations.Values]
             : [.. _conversations.Values.Where(c => c.AgentId == agentId.Value)];
         return Task.FromResult(results);
+    }
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<Conversation>> ListForCitizenAsync(CitizenId citizen, CancellationToken ct = default)
+    {
+        if (!citizen.IsValid)
+            throw new ArgumentException("Citizen must be a valid (non-default) CitizenId.", nameof(citizen));
+
+        IReadOnlyList<Conversation> results = [.. _conversations.Values.Where(c => MatchesCitizen(c, citizen))];
+        return Task.FromResult(results);
+    }
+
+    private static bool MatchesCitizen(Conversation conversation, CitizenId citizen)
+    {
+        if (conversation.Initiator is { IsValid: true } init && init == citizen)
+            return true;
+
+        // Owner-match: only agent-species citizens own conversations.
+        if (citizen.Kind == CitizenKind.Agent && citizen.AsAgent is { } agent && conversation.AgentId == agent)
+            return true;
+
+        return false;
     }
 
     public Task<Conversation> CreateAsync(Conversation conversation, CancellationToken ct = default)

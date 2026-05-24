@@ -111,7 +111,11 @@ public sealed class ConversationsController : ControllerBase
             Instructions = NormalizeInstructions(request.Instructions),
             Status = ConversationStatus.Active,
             CreatedAt = DateTimeOffset.UtcNow,
-            UpdatedAt = DateTimeOffset.UtcNow
+            UpdatedAt = DateTimeOffset.UtcNow,
+            // Initiator left null: this endpoint is currently unauthenticated, so we cannot
+            // determine which user/agent created the conversation. Once SignalR/portal claims-based
+            // auth lands (see issue #527) this should be populated from the request principal.
+            Initiator = null
         };
 
         var created = await _conversations.CreateAsync(conversation, cancellationToken);

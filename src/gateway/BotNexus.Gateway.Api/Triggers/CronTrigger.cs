@@ -4,6 +4,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Triggers;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Api.Triggers;
@@ -173,7 +174,10 @@ public sealed class CronTrigger(
             ConversationId = stableConversationId,
             AgentId = agentId,
             Title = title,
-            IsDefault = false
+            IsDefault = false,
+            // Cron triggers schedule work for the target agent on its own behalf, so the
+            // initiating citizen is that agent.
+            Initiator = CitizenId.Of(agentId)
         };
         try
         {

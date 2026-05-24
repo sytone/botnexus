@@ -98,6 +98,16 @@ may differ in shape — for example the sub-agent wake-up uses `SenderId = "suba
 for audit while `Sender` carries the typed child agent id (`CitizenId.Of(agentId)`).
 Downstream code must NEVER re-parse `SenderId` to infer species; use `Sender.Kind`.
 
+**Sender → Initiator (Phase 2b, #529):** when the router creates a **new** Conversation,
+`inbound.Sender` is stamped onto `Conversation.Initiator` as the write-once provenance of
+who first caused the conversation to exist. `Initiator` is **never** overwritten — archived-
+reopen and explicit-ConversationId branches preserve the original value even when the
+inbound `Sender` differs. Agent-initiated conversations (`ConversationTool.NewAsync`,
+`HeartbeatTrigger`, `CronTrigger`) set `Initiator = CitizenId.Of(agentId)` directly;
+`ConversationsController.Create` leaves it `null` pending SignalR claims-based auth (#527).
+`IConversationStore.ListForCitizenAsync(citizen)` returns the union of conversations the
+citizen initiated and (for agents only) those they currently own.
+
 ### 4. Agent Resolution
 
 ```text

@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 
 namespace BotNexus.Gateway.Abstractions.Models;
 
@@ -46,4 +47,20 @@ public sealed record Conversation
 
     /// <summary>Gets or sets conversation-scoped instructions injected into the system prompt on session start.</summary>
     public string? Instructions { get; set; }
+
+    /// <summary>
+    /// Gets or sets the citizen that opened this conversation — the user who sent the first
+    /// inbound message, or the agent that programmatically created it (via <c>conversation_new</c>
+    /// tool calls, heartbeats, cron triggers, etc.). Set by the router on creation and treated as
+    /// write-once provenance; producers must not overwrite it on subsequent saves. <c>null</c> for
+    /// legacy conversations created before this field existed and for paths where the creator's
+    /// identity is not yet authenticated (see issue #527 for the HTTP create-endpoint follow-up).
+    /// </summary>
+    /// <remarks>
+    /// This is distinct from <see cref="AgentId"/>, which is the agent that <em>owns</em> the
+    /// conversation. For agent-initiated conversations the two are typically the same citizen, but
+    /// they are not required to be — e.g. a heartbeat-triggered conversation may be initiated by a
+    /// system agent yet owned by the target user-facing agent.
+    /// </remarks>
+    public CitizenId? Initiator { get; set; }
 }

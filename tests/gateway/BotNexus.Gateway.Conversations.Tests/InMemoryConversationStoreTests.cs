@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Conversations;
 
@@ -236,5 +237,110 @@ public sealed class InMemoryConversationStoreTests
         summaries.Count.ShouldBe(1);
         summaries[0].BindingCount.ShouldBe(1);
         summaries[0].AgentId.ShouldBe("summary-agent");
+    }
+
+    // ── Initiator + ListForCitizenAsync ────────────────────────────────────────
+
+    [Fact]
+    public async Task Initiator_NullByDefault_AndRoundTrips_WhenSet()
+    {
+        var store = new InMemoryConversationStore();
+        var agent = Agent();
+        var user = CitizenId.Of(UserId.From("alice"));
+
+        var withoutInitiator = MakeConversation(agent, "no-init");
+        var withInitiator = MakeConversation(agent, "with-init") with { Initiator = user };
+
+        await store.CreateAsync(withoutInitiator);
+        await store.CreateAsync(withInitiator);
+
+        (await store.GetAsync(withoutInitiator.ConversationId))!.Initiator.ShouldBeNull();
+        (await store.GetAsync(withInitiator.ConversationId))!.Initiator!.Value.ShouldBe(user);
+    }
+
+    [Fact]
+    public async Task ListForCitizenAsync_Throws_OnInvalidCitizen()
+    {
+        var store = new InMemoryConversationStore();
+        await Should.ThrowAsync<ArgumentException>(() => store.ListForCitizenAsync(default));
+    }
+
+    [Fact]
+    public async Task ListForCitizenAsync_User_ReturnsOnly_ConversationsTheyInitiated()
+    {
+        var store = new InMemoryConversationStore();
+        var alice = CitizenId.Of(UserId.From("alice"));
+        var bob = CitizenId.Of(UserId.From("bob"));
+
+        var aliceConv = MakeConversation(Agent(), "alice-1") with { Initiator = alice };
+        var bobConv = MakeConversation(Agent(), "bob-1") with { Initiator = bob };
+        var noOne = MakeConversation(Agent(), "no-init");
+
+        await store.CreateAsync(aliceConv);
+        await store.CreateAsync(bobConv);
+        await store.CreateAsync(noOne);
+
+        var aliceList = await store.ListForCitizenAsync(alice);
+        aliceList.Select(c => c.ConversationId).ShouldBe(new[] { aliceConv.ConversationId }, ignoreOrder: true);
+
+        var bobList = await store.ListForCitizenAsync(bob);
+        bobList.Select(c => c.ConversationId).ShouldBe(new[] { bobConv.ConversationId }, ignoreOrder: true);
+    }
+
+    [Fact]
+    public async Task ListForCitizenAsync_Agent_ReturnsUnion_OfInitiatedAndOwned()
+    {
+        var store = new InMemoryConversationStore();
+        var helper = AgentId.From("helper");
+        var other = AgentId.From("other");
+        var alice = CitizenId.Of(UserId.From("alice"));
+        var helperCitizen = CitizenId.Of(helper);
+
+        // Owned by helper, initiated by a user
+        var owned = MakeConversation(helper, "owned-by-helper") with { Initiator = alice };
+        // Owned by other agent, but initiated by helper (agent-to-agent)
+        var initiatedByHelper = MakeConversation(other, "initiated-by-helper") with { Initiator = helperCitizen };
+        // Unrelated to helper entirely
+        var unrelated = MakeConversation(other, "unrelated") with { Initiator = alice };
+
+        await store.CreateAsync(owned);
+        await store.CreateAsync(initiatedByHelper);
+        await store.CreateAsync(unrelated);
+
+        var helperList = await store.ListForCitizenAsync(helperCitizen);
+
+        helperList.Select(c => c.ConversationId).ShouldBe(
+            new[] { owned.ConversationId, initiatedByHelper.ConversationId },
+            ignoreOrder: true);
+    }
+
+    [Fact]
+    public async Task ListForCitizenAsync_DeduplicatesWhenInitiatorAndOwnerAreSameAgent()
+    {
+        var store = new InMemoryConversationStore();
+        var helper = AgentId.From("helper");
+        var helperCitizen = CitizenId.Of(helper);
+
+        var selfStarted = MakeConversation(helper, "self") with { Initiator = helperCitizen };
+        await store.CreateAsync(selfStarted);
+
+        var list = await store.ListForCitizenAsync(helperCitizen);
+        list.Count.ShouldBe(1);
+        list[0].ConversationId.ShouldBe(selfStarted.ConversationId);
+    }
+
+    [Fact]
+    public async Task ListForCitizenAsync_IncludesArchivedConversations()
+    {
+        var store = new InMemoryConversationStore();
+        var alice = CitizenId.Of(UserId.From("alice"));
+
+        var conv = MakeConversation(Agent(), "archived") with { Initiator = alice };
+        await store.CreateAsync(conv);
+        await store.ArchiveAsync(conv.ConversationId);
+
+        var list = await store.ListForCitizenAsync(alice);
+        list.Count.ShouldBe(1);
+        list[0].Status.ShouldBe(ConversationStatus.Archived);
     }
 }

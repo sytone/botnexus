@@ -1,6 +1,7 @@
 using System.IO.Abstractions;
 using System.Text.Json;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using Microsoft.Extensions.Logging;
@@ -56,6 +57,38 @@ public sealed class FileConversationStore : IConversationStore
         await _lock.WaitAsync(ct).ConfigureAwait(false);
         try { return await EnumerateAsync(agentId, ct).ConfigureAwait(false); }
         finally { _lock.Release(); }
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<Conversation>> ListForCitizenAsync(CitizenId citizen, CancellationToken ct = default)
+    {
+        if (!citizen.IsValid)
+            throw new ArgumentException("Citizen must be a valid (non-default) CitizenId.", nameof(citizen));
+
+        // Scope: when the citizen is an Agent we can narrow the enumeration to that agent's
+        // directory because owner-match guarantees AgentId == citizen.AsAgent. For User citizens
+        // we have to scan everything since they could have initiated conversations under any agent.
+        AgentId? scope = citizen.Kind == CitizenKind.Agent ? citizen.AsAgent : null;
+
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var all = await EnumerateAsync(scope, ct).ConfigureAwait(false);
+            IReadOnlyList<Conversation> filtered = [.. all.Where(c => MatchesCitizen(c, citizen))];
+            return filtered;
+        }
+        finally { _lock.Release(); }
+    }
+
+    private static bool MatchesCitizen(Conversation conversation, CitizenId citizen)
+    {
+        if (conversation.Initiator is { IsValid: true } init && init == citizen)
+            return true;
+
+        if (citizen.Kind == CitizenKind.Agent && citizen.AsAgent is { } agent && conversation.AgentId == agent)
+            return true;
+
+        return false;
     }
 
     public async Task<Conversation> CreateAsync(Conversation conversation, CancellationToken ct = default)

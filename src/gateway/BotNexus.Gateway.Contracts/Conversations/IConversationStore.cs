@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Gateway.Abstractions.Conversations;
@@ -26,6 +27,27 @@ public interface IConversationStore
     /// Lists all active conversations, optionally filtered by agent.
     /// </summary>
     Task<IReadOnlyList<Conversation>> ListAsync(AgentId? agentId = null, CancellationToken ct = default);
+
+    /// <summary>
+    /// Lists conversations <em>relevant to</em> the given citizen, in any status (including
+    /// <see cref="ConversationStatus.Archived"/>) to match <see cref="ListAsync"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>The set is the union of:</para>
+    /// <list type="bullet">
+    ///   <item><b>Initiator-match</b>: <c>Conversation.Initiator == citizen</c> — conversations
+    ///     this citizen <em>opened</em>. Applies to both User and Agent species.</item>
+    ///   <item><b>Owner-match</b>: when <c>citizen.Kind == Agent</c>, <c>Conversation.AgentId == citizen.AsAgent</c> —
+    ///     conversations <em>owned</em> by this agent. There is no symmetric owner relationship
+    ///     for User citizens (owning-by-user is not modelled), which makes this method
+    ///     intentionally asymmetric across species.</item>
+    /// </list>
+    /// <para>"Any session participant" semantics — which would require iterating each conversation's
+    /// active session participants — are not provided here; that query lives one layer up.</para>
+    /// </remarks>
+    /// <param name="citizen">The citizen identity to query for; must be <see cref="CitizenId.IsValid"/>.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task<IReadOnlyList<Conversation>> ListForCitizenAsync(CitizenId citizen, CancellationToken ct = default);
 
     /// <summary>
     /// Creates a new conversation. Throws if the ConversationId already exists.
