@@ -1,12 +1,14 @@
+using BotNexus.Domain.Primitives;
+
 namespace BotNexus.Cron;
 
 public sealed record CronJob
 {
-    public required string Id { get; init; }
+    public required JobId Id { get; init; }
     public required string Name { get; init; }
     public required string Schedule { get; init; }
     public required string ActionType { get; init; }
-    public string? AgentId { get; init; }
+    public AgentId? AgentId { get; init; }
     public string? Message { get; init; }
     /// <summary>
     /// Optional named prompt template reference for agent-prompt jobs.
@@ -36,6 +38,6 @@ public sealed record CronJob
     /// When set, every run is linked to this conversation regardless of routing.
     /// When null, a stable per-job conversation is created automatically using the job ID.
     /// </summary>
-    public string? ConversationId { get; init; }
+    public ConversationId? ConversationId { get; init; }
     public IReadOnlyDictionary<string, object?>? Metadata { get; init; }
 }

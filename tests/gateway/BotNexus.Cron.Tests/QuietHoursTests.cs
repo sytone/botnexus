@@ -68,7 +68,7 @@ public sealed class QuietHoursTests
         await action.ExecuteAsync(context);
 
         trigger.Verify(value => value.CreateSessionAsync(AgentId.From("agent-a"), "Ping from heartbeat", It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()), Times.Once);
-        context.SessionId.ShouldBe(sessionId.Value);
+        context.SessionId!.Value.ShouldBe(sessionId);
     }
 
     private static CronExecutionContext CreateHeartbeatContext(IServiceProvider services)
@@ -76,18 +76,18 @@ public sealed class QuietHoursTests
         {
             Job = new CronJob
             {
-                Id = "heartbeat:agent-a",
+                Id = JobId.From("heartbeat:agent-a"),
                 Name = "Heartbeat",
                 Schedule = "*/30 * * * *",
                 ActionType = "heartbeat",
-                AgentId = "agent-a",
+                AgentId = AgentId.From("agent-a"),
                 Message = "Ping from heartbeat",
                 Enabled = true,
                 System = true,
                 CreatedBy = "system:heartbeat",
                 CreatedAt = DateTimeOffset.UtcNow
             },
-            RunId = "run-1",
+            RunId = RunId.From("run-1"),
             TriggeredAt = DateTimeOffset.UtcNow,
             TriggerType = CronTriggerType.Scheduled,
             Services = services

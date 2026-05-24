@@ -1,6 +1,7 @@
 using System.Text.Json;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Cron.Tools;
+using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -15,7 +16,7 @@ public sealed class CronJobSystemFlagTests
     {
         var job = new CronJob
         {
-            Id = "job-1",
+            Id = JobId.From("job-1"),
             Name = "Job 1",
             Schedule = "*/1 * * * *",
             ActionType = "agent-prompt",
@@ -31,7 +32,7 @@ public sealed class CronJobSystemFlagTests
     {
         var job = new CronJob
         {
-            Id = "job-1",
+            Id = JobId.From("job-1"),
             Name = "Job 1",
             Schedule = "*/1 * * * *",
             ActionType = "agent-prompt",
@@ -53,7 +54,7 @@ public sealed class CronJobSystemFlagTests
                 CreateJob("job-1", createdBy: "agent-a", system: false),
                 CreateJob("heartbeat:agent-a", createdBy: "system:heartbeat", system: true)
             ]);
-        var tool = new CronTool(store.Object, scheduler, "agent-a", allowCrossAgentCron: true);
+        var tool = new CronTool(store.Object, scheduler, AgentId.From("agent-a"), allowCrossAgentCron: true);
 
         var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?> { ["action"] = "list" });
         var jobs = JsonSerializer.Deserialize<List<CronJobDto>>(ReadText(result), JsonOptions);
@@ -81,11 +82,11 @@ public sealed class CronJobSystemFlagTests
     private static CronJob CreateJob(string id, string createdBy, bool system)
         => new()
         {
-            Id = id,
+            Id = JobId.From(id),
             Name = $"Job {id}",
             Schedule = "*/1 * * * *",
             ActionType = "agent-prompt",
-            AgentId = "agent-a",
+            AgentId = AgentId.From("agent-a"),
             Message = "Hello",
             Enabled = true,
             System = system,

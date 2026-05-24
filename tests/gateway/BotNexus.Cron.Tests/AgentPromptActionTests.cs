@@ -41,9 +41,9 @@ public sealed class AgentPromptActionTests
         capturedAgentId.ShouldBe(AgentId.From("agent-a"));
         capturedPrompt.ShouldBe("Ping from cron");
         capturedRequest.ShouldNotBeNull();
-        capturedRequest!.CronJobId.ShouldBe("job-1");
+        capturedRequest!.CronJobId!.Value.Value.ShouldBe("job-1");
         capturedRequest.ModelOverride.ShouldBe("openai/gpt-4.1");
-        context.SessionId.ShouldBe(createdSession.Value);
+        context.SessionId!.Value.ShouldBe(createdSession);
         trigger.Verify(value => value.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()), Times.Once);
     }
 
@@ -110,18 +110,18 @@ public sealed class AgentPromptActionTests
         {
             Job = new CronJob
             {
-                Id = "job-1",
+                Id = JobId.From("job-1"),
                 Name = "Cron prompt",
                 Schedule = "*/1 * * * *",
                 ActionType = "agent-prompt",
-                AgentId = "agent-a",
+                AgentId = AgentId.From("agent-a"),
                 Message = "Ping from cron",
                 Model = model,
                 CreatedBy = "tester",
                 CreatedAt = DateTimeOffset.UtcNow,
                 Enabled = true
             },
-            RunId = "run-1",
+            RunId = RunId.From("run-1"),
             TriggeredAt = DateTimeOffset.UtcNow,
             TriggerType = CronTriggerType.Scheduled,
             Services = services
@@ -148,17 +148,17 @@ public sealed class AgentPromptActionTests
         {
             Job = new CronJob
             {
-                Id = "job-pinned",
+                Id = JobId.From("job-pinned"),
                 Name = "Pinned conversation job",
                 Schedule = "*/1 * * * *",
                 ActionType = "agent-prompt",
-                AgentId = "agent-a",
+                AgentId = AgentId.From("agent-a"),
                 Message = "Run in pinned conversation",
-                ConversationId = "conv-explicit-123",
+                ConversationId = ConversationId.From("conv-explicit-123"),
                 CreatedAt = DateTimeOffset.UtcNow,
                 Enabled = true
             },
-            RunId = "run-1",
+            RunId = RunId.From("run-1"),
             TriggeredAt = DateTimeOffset.UtcNow,
             TriggerType = CronTriggerType.Scheduled,
             Services = services
@@ -167,8 +167,8 @@ public sealed class AgentPromptActionTests
         await action.ExecuteAsync(context);
 
         capturedRequest.ShouldNotBeNull();
-        capturedRequest!.ConversationId.ShouldBe("conv-explicit-123");
-        capturedRequest.CronJobId.ShouldBe("job-pinned");
+        capturedRequest!.ConversationId!.Value.Value.ShouldBe("conv-explicit-123");
+        capturedRequest.CronJobId!.Value.Value.ShouldBe("job-pinned");
     }
 
     [Fact]
@@ -184,8 +184,8 @@ public sealed class AgentPromptActionTests
         trigger.Setup(value => value.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()))
             .Callback<AgentId, string, CancellationToken, InternalTriggerRequest?>((_, prompt, _, _) => capturedPrompt = prompt)
             .ReturnsAsync(SessionId.From("cron:templated:run-1"));
-        resolver.Setup(value => value.TryRender("agent-a", "daily-summary", It.IsAny<IReadOnlyDictionary<string, string?>?>(), out It.Ref<string>.IsAny, out It.Ref<string?>.IsAny))
-            .Returns((string _, string __, IReadOnlyDictionary<string, string?>? ___, out string renderedPrompt, out string? error) =>
+        resolver.Setup(value => value.TryRender(AgentId.From("agent-a"), "daily-summary", It.IsAny<IReadOnlyDictionary<string, string?>?>(), out It.Ref<string>.IsAny, out It.Ref<string?>.IsAny))
+            .Returns((AgentId _, string __, IReadOnlyDictionary<string, string?>? ___, out string renderedPrompt, out string? error) =>
             {
                 renderedPrompt = "Rendered prompt";
                 error = null;

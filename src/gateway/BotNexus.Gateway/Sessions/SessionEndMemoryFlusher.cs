@@ -66,7 +66,7 @@ public sealed class SessionEndMemoryFlusher : ISessionEndMemoryFlusher
                 timeoutCts.Token,
                 new InternalTriggerRequest
                 {
-                    ConversationId = session.ConversationId?.Value
+                    ConversationId = session.ConversationId
                 }).ConfigureAwait(false);
 
             _logger.LogInformation(

@@ -20,9 +20,8 @@ public sealed class AgentPromptAction : ICronAction
     public async Task ExecuteAsync(CronExecutionContext context, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(context);
-        var agentId = context.Job.AgentId;
-        if (string.IsNullOrWhiteSpace(agentId))
-            throw new InvalidOperationException("Cron job must define an agent id for agent-prompt actions.");
+        var agentId = context.Job.AgentId
+            ?? throw new InvalidOperationException("Cron job must define an agent id for agent-prompt actions.");
 
         var message = context.Job.Message;
         if (!string.IsNullOrWhiteSpace(context.Job.TemplateName))
@@ -40,7 +39,7 @@ public sealed class AgentPromptAction : ICronAction
             throw new InvalidOperationException("Cron job must define either a message or a templateName for agent-prompt actions.");
 
         var registry = context.Services.GetService<IAgentRegistry>();
-        var descriptor = registry?.Get(AgentId.From(agentId));
+        var descriptor = registry?.Get(agentId);
 
         var preferredTriggerType = descriptor?.Soul?.Enabled == true
             ? TriggerType.Soul
@@ -62,18 +61,18 @@ public sealed class AgentPromptAction : ICronAction
         };
         var sessionId = await trigger
             .CreateSessionAsync(
-                AgentId.From(agentId),
+                agentId,
                 message,
                 cancellationToken,
                 triggerRequest)
             .ConfigureAwait(false);
 
-        context.RecordSessionId(sessionId.Value);
+        context.RecordSessionId(sessionId);
 
         // Surface the resolved conversation ID back to the execution context so the
         // scheduler can persist it to the job record, eliminating the lookup on future runs.
-        if (!string.IsNullOrWhiteSpace(triggerRequest.ResolvedConversationId))
-            context.RecordConversationId(triggerRequest.ResolvedConversationId);
+        if (triggerRequest.ResolvedConversationId is { } resolvedConversationId)
+            context.RecordConversationId(resolvedConversationId);
     }
 
     private static bool IsInQuietHours(QuietHoursConfig config, string timezoneId)

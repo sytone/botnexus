@@ -1,3 +1,5 @@
+using BotNexus.Domain.Primitives;
+
 namespace BotNexus.Cron.Prompts;
 
 /// <summary>
@@ -10,7 +12,7 @@ public interface IPromptTemplateResolver
     /// </summary>
     /// <param name="agentId">Agent identifier used for per-agent and workspace template discovery.</param>
     /// <returns>Sorted template names.</returns>
-    IReadOnlyList<string> ListTemplateNames(string agentId);
+    IReadOnlyList<string> ListTemplateNames(AgentId agentId);
 
     /// <summary>
     /// Renders a named template for the specified agent.
@@ -22,7 +24,7 @@ public interface IPromptTemplateResolver
     /// <param name="error">Deterministic error message when render fails.</param>
     /// <returns><c>true</c> when the template was rendered successfully; otherwise <c>false</c>.</returns>
     bool TryRender(
-        string agentId,
+        AgentId agentId,
         string templateName,
         IReadOnlyDictionary<string, string?>? parameters,
         out string renderedPrompt,

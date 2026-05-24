@@ -20,8 +20,8 @@ public sealed class AgentPromptActionTemplateTests
         trigger.Setup(value => value.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()))
             .Callback<AgentId, string, CancellationToken, InternalTriggerRequest?>((_, prompt, _, _) => capturedPrompt = prompt)
             .ReturnsAsync(SessionId.From("cron:template:run-1"));
-        resolver.Setup(value => value.TryRender("agent-a", "daily-status", It.IsAny<IReadOnlyDictionary<string, string?>?>(), out It.Ref<string>.IsAny, out It.Ref<string?>.IsAny))
-            .Returns((string _, string __, IReadOnlyDictionary<string, string?>? ___, out string rendered, out string? error) =>
+        resolver.Setup(value => value.TryRender(AgentId.From("agent-a"), "daily-status", It.IsAny<IReadOnlyDictionary<string, string?>?>(), out It.Ref<string>.IsAny, out It.Ref<string?>.IsAny))
+            .Returns((AgentId _, string __, IReadOnlyDictionary<string, string?>? ___, out string rendered, out string? error) =>
             {
                 rendered = "Rendered prompt";
                 error = null;
@@ -77,18 +77,18 @@ public sealed class AgentPromptActionTemplateTests
         {
             Job = new CronJob
             {
-                Id = "job-1",
+                Id = JobId.From("job-1"),
                 Name = "Cron prompt",
                 Schedule = "*/1 * * * *",
                 ActionType = "agent-prompt",
-                AgentId = "agent-a",
+                AgentId = AgentId.From("agent-a"),
                 Message = message,
                 TemplateName = templateName,
                 TemplateParameters = new Dictionary<string, string?> { ["owner"] = "Hermes" },
                 CreatedAt = DateTimeOffset.UtcNow,
                 Enabled = true
             },
-            RunId = "run-1",
+            RunId = RunId.From("run-1"),
             TriggeredAt = DateTimeOffset.UtcNow,
             TriggerType = CronTriggerType.Scheduled,
             Services = services

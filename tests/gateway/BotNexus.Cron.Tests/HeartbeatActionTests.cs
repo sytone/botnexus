@@ -102,7 +102,7 @@ public sealed class HeartbeatActionTests
         await action.ExecuteAsync(context);
 
         trigger.Verify(v => v.CreateSessionAsync(AgentId.From("agent-a"), "Heartbeat ping", It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()), Times.Once);
-        context.SessionId.ShouldBe(sessionId.Value);
+        context.SessionId!.Value.ShouldBe(sessionId);
     }
 
     [Fact]
@@ -191,7 +191,7 @@ public sealed class HeartbeatActionTests
         await action.ExecuteAsync(context);
 
         cronTrigger.Verify(v => v.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()), Times.Once);
-        context.SessionId.ShouldBe(sessionId.Value);
+        context.SessionId!.Value.ShouldBe(sessionId);
     }
 
     [Fact]
@@ -233,11 +233,11 @@ public sealed class HeartbeatActionTests
         {
             Job = new CronJob
             {
-                Id = "heartbeat:agent-a",
+                Id = JobId.From("heartbeat:agent-a"),
                 Name = "Heartbeat",
                 Schedule = "*/30 * * * *",
                 ActionType = "heartbeat",
-                AgentId = "agent-a",
+                AgentId = AgentId.From("agent-a"),
                 Message = "Heartbeat ping",
                 Model = "openai/gpt-4.1",
                 Enabled = true,
@@ -245,7 +245,7 @@ public sealed class HeartbeatActionTests
                 CreatedBy = "system:heartbeat",
                 CreatedAt = DateTimeOffset.UtcNow
             },
-            RunId = "run-1",
+            RunId = RunId.From("run-1"),
             TriggeredAt = DateTimeOffset.UtcNow,
             TriggerType = CronTriggerType.Scheduled,
             Services = services
@@ -254,7 +254,7 @@ public sealed class HeartbeatActionTests
         await action.ExecuteAsync(context);
 
         captured.ShouldNotBeNull();
-        captured!.CronJobId.ShouldBe("heartbeat:agent-a");
+        captured!.CronJobId!.Value.Value.ShouldBe("heartbeat:agent-a");
         captured.ModelOverride.ShouldBe("openai/gpt-4.1");
     }
 
@@ -379,7 +379,7 @@ public sealed class HeartbeatActionTests
         workspace.Setup(v => v.GetWorkspacePath("agent-a"))
             .Returns(Path.Combine(Path.GetTempPath(), "botnexus-test-nonexistent-" + Guid.NewGuid()));
 
-        var result = await HeartbeatAction.ReadHeartbeatFileAsync(workspace.Object, "agent-a", CancellationToken.None);
+        var result = await HeartbeatAction.ReadHeartbeatFileAsync(workspace.Object, AgentId.From("agent-a"), CancellationToken.None);
 
         result.ShouldBeNull();
     }
@@ -397,7 +397,7 @@ public sealed class HeartbeatActionTests
 
         try
         {
-            var result = await HeartbeatAction.ReadHeartbeatFileAsync(workspace.Object, "agent-a", CancellationToken.None);
+            var result = await HeartbeatAction.ReadHeartbeatFileAsync(workspace.Object, AgentId.From("agent-a"), CancellationToken.None);
             result.ShouldBe("- [ ] Deploy the thing");
         }
         finally
@@ -418,18 +418,18 @@ public sealed class HeartbeatActionTests
         {
             Job = new CronJob
             {
-                Id = "heartbeat:agent-a",
+                Id = JobId.From("heartbeat:agent-a"),
                 Name = "Heartbeat",
                 Schedule = "*/30 * * * *",
                 ActionType = "heartbeat",
-                AgentId = agentId,
+                AgentId = agentId is null ? null : AgentId.From(agentId),
                 Message = message,
                 Enabled = true,
                 System = true,
                 CreatedBy = "system:heartbeat",
                 CreatedAt = DateTimeOffset.UtcNow
             },
-            RunId = "run-1",
+            RunId = RunId.From("run-1"),
             TriggeredAt = DateTimeOffset.UtcNow,
             TriggerType = CronTriggerType.Scheduled,
             Services = services

@@ -1,4 +1,5 @@
 using BotNexus.Cron;
+using BotNexus.Domain.Primitives;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
@@ -28,7 +29,7 @@ public sealed class CronController(
     public async Task<ActionResult<IReadOnlyList<CronJob>>> List(CancellationToken cancellationToken)
     {
         var persisted = await store.ListAsync(ct: cancellationToken);
-        var merged = persisted.ToDictionary(job => job.Id, StringComparer.OrdinalIgnoreCase);
+        var merged = persisted.ToDictionary(job => job.Id.Value, StringComparer.OrdinalIgnoreCase);
         var configuredJobs = cronOptions.CurrentValue?.Jobs;
         if (configuredJobs is not null)
         {
@@ -46,11 +47,11 @@ public sealed class CronController(
 
                 merged[jobId] = new CronJob
                 {
-                    Id = jobId,
+                    Id = JobId.From(jobId),
                     Name = configured.Name ?? jobId,
                     Schedule = configured.Schedule,
                     ActionType = NormalizeActionType(configured.ActionType),
-                    AgentId = configured.AgentId,
+                    AgentId = string.IsNullOrWhiteSpace(configured.AgentId) ? null : AgentId.From(configured.AgentId),
                     Message = configured.Message,
                     TemplateName = configured.TemplateName,
                     TemplateParameters = configured.TemplateParameters,
@@ -80,7 +81,7 @@ public sealed class CronController(
     [HttpGet("{jobId}")]
     public async Task<ActionResult<CronJob>> Get(string jobId, CancellationToken cancellationToken)
     {
-        var job = await store.GetAsync(jobId, cancellationToken);
+        var job = await store.GetAsync(JobId.From(jobId), cancellationToken);
         return job is null ? NotFound() : Ok(job);
     }
 
@@ -96,14 +97,13 @@ public sealed class CronController(
     {
         var toCreate = request with
         {
-            Id = string.IsNullOrWhiteSpace(request.Id) ? Guid.NewGuid().ToString("N") : request.Id,
             ActionType = NormalizeActionType(request.ActionType),
             CreatedAt = request.CreatedAt == default ? DateTimeOffset.UtcNow : request.CreatedAt
         };
 
         var created = await store.CreateAsync(toCreate, cancellationToken);
-        logger.LogInformation("Cron job created via API: {JobId} ({ActionType})", created.Id, created.ActionType);
-        return CreatedAtAction(nameof(Get), new { jobId = created.Id }, created);
+        logger.LogInformation("Cron job created via API: {JobId} ({ActionType})", created.Id.Value, created.ActionType);
+        return CreatedAtAction(nameof(Get), new { jobId = created.Id.Value }, created);
     }
 
     /// <summary>Updates a cron job.</summary>
@@ -117,19 +117,20 @@ public sealed class CronController(
     [HttpPut("{jobId}")]
     public async Task<ActionResult<CronJob>> Update(string jobId, [FromBody] CronJob request, CancellationToken cancellationToken)
     {
-        var existing = await store.GetAsync(jobId, cancellationToken);
+        var typedJobId = JobId.From(jobId);
+        var existing = await store.GetAsync(typedJobId, cancellationToken);
         if (existing is null)
             return NotFound();
 
         var updated = request with
         {
-            Id = jobId,
+            Id = typedJobId,
             ActionType = NormalizeActionType(request.ActionType),
             CreatedAt = existing.CreatedAt
         };
 
         var saved = await store.UpdateAsync(updated, cancellationToken);
-        logger.LogInformation("Cron job updated via API: {JobId} ({ActionType})", saved.Id, saved.ActionType);
+        logger.LogInformation("Cron job updated via API: {JobId} ({ActionType})", saved.Id.Value, saved.ActionType);
         return Ok(saved);
     }
 
@@ -143,7 +144,7 @@ public sealed class CronController(
     [HttpDelete("{jobId}")]
     public async Task<IActionResult> Delete(string jobId, CancellationToken cancellationToken)
     {
-        await store.DeleteAsync(jobId, cancellationToken);
+        await store.DeleteAsync(JobId.From(jobId), cancellationToken);
         logger.LogInformation("Cron job deleted via API: {JobId}", jobId);
         return NoContent();
     }
@@ -158,11 +159,12 @@ public sealed class CronController(
     [HttpPost("{jobId}/run")]
     public async Task<ActionResult<CronRun>> Run(string jobId, CancellationToken cancellationToken)
     {
-        var existing = await store.GetAsync(jobId, cancellationToken);
+        var typedJobId = JobId.From(jobId);
+        var existing = await store.GetAsync(typedJobId, cancellationToken);
         if (existing is null)
             return NotFound();
 
-        var run = await scheduler.RunNowAsync(jobId, cancellationToken);
+        var run = await scheduler.RunNowAsync(typedJobId, cancellationToken);
         return Accepted(run);
     }
 
@@ -177,11 +179,12 @@ public sealed class CronController(
     [HttpGet("{jobId}/runs")]
     public async Task<ActionResult<IReadOnlyList<CronRun>>> Runs(string jobId, [FromQuery] int limit = 20, CancellationToken cancellationToken = default)
     {
-        var existing = await store.GetAsync(jobId, cancellationToken);
+        var typedJobId = JobId.From(jobId);
+        var existing = await store.GetAsync(typedJobId, cancellationToken);
         if (existing is null)
             return NotFound();
 
-        return Ok(await store.GetRunHistoryAsync(jobId, limit, cancellationToken));
+        return Ok(await store.GetRunHistoryAsync(typedJobId, limit, cancellationToken));
     }
 
     private static string NormalizeActionType(string? actionType)

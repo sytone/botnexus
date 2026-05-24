@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using Cronos;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -21,9 +22,8 @@ public sealed class CronScheduler(
         .GroupBy(action => action.ActionType, StringComparer.OrdinalIgnoreCase)
         .ToDictionary(group => group.Key, group => group.Last(), StringComparer.OrdinalIgnoreCase);
 
-    public async Task<CronRun> RunNowAsync(string jobId, CancellationToken cancellationToken = default)
+    public async Task<CronRun> RunNowAsync(JobId jobId, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(jobId);
         await _cronStore.InitializeAsync(cancellationToken).ConfigureAwait(false);
 
         var job = await _cronStore.GetAsync(jobId, cancellationToken).ConfigureAwait(false)
@@ -147,9 +147,9 @@ public sealed class CronScheduler(
             // Persist the resolved conversation ID back to the job record so subsequent
             // runs skip the conversation lookup and use the fast path directly.
             var resolvedConversationId = context.ConversationId;
-            var needsConversationPinback = !string.IsNullOrWhiteSpace(resolvedConversationId)
-                && (string.IsNullOrWhiteSpace(latest.ConversationId)
-                    || latest.ConversationId != resolvedConversationId);
+            var needsConversationPinback = resolvedConversationId.HasValue
+                && (!latest.ConversationId.HasValue
+                    || latest.ConversationId.Value != resolvedConversationId.Value);
 
             await _cronStore.UpdateAsync(latest with
             {
@@ -224,15 +224,15 @@ public sealed class CronScheduler(
         if (options.Jobs is null || options.Jobs.Count == 0)
             return;
 
-        foreach (var (jobId, configuredJob) in options.Jobs)
+        foreach (var (jobIdString, configuredJob) in options.Jobs)
         {
-            if (string.IsNullOrWhiteSpace(jobId) ||
+            if (string.IsNullOrWhiteSpace(jobIdString) ||
                 string.IsNullOrWhiteSpace(configuredJob.Schedule) ||
                 string.IsNullOrWhiteSpace(configuredJob.ActionType))
             {
                 _logger.LogWarning(
                     "Skipping configured cron job '{JobId}' due to missing required fields (schedule/actionType).",
-                    jobId);
+                    jobIdString);
                 continue;
             }
 
@@ -241,7 +241,7 @@ public sealed class CronScheduler(
             {
                 _logger.LogWarning(
                     "Skipping configured cron job '{JobId}' because action type '{ActionType}' is not registered.",
-                    jobId,
+                    jobIdString,
                     configuredJob.ActionType);
                 continue;
             }
@@ -252,9 +252,14 @@ public sealed class CronScheduler(
             {
                 _logger.LogWarning(
                     "Skipping configured cron job '{JobId}' because agent-prompt jobs require agentId and either message or templateName.",
-                    jobId);
+                    jobIdString);
                 continue;
             }
+
+            var jobId = JobId.From(jobIdString);
+            var agentId = string.IsNullOrWhiteSpace(configuredJob.AgentId)
+                ? (AgentId?)null
+                : AgentId.From(configuredJob.AgentId);
 
             var existing = await _cronStore.GetAsync(jobId, ct).ConfigureAwait(false);
             if (existing is null)
@@ -262,10 +267,10 @@ public sealed class CronScheduler(
                 var seeded = new CronJob
                 {
                     Id = jobId,
-                    Name = configuredJob.Name ?? jobId,
+                    Name = configuredJob.Name ?? jobIdString,
                     Schedule = configuredJob.Schedule,
                     ActionType = normalizedActionType,
-                    AgentId = configuredJob.AgentId,
+                    AgentId = agentId,
                     Message = configuredJob.Message,
                     TemplateName = configuredJob.TemplateName,
                     TemplateParameters = configuredJob.TemplateParameters,
@@ -288,7 +293,7 @@ public sealed class CronScheduler(
                 Name = configuredJob.Name ?? existing.Name,
                 Schedule = configuredJob.Schedule,
                 ActionType = normalizedActionType,
-                AgentId = configuredJob.AgentId,
+                AgentId = agentId,
                 Message = configuredJob.Message,
                 TemplateName = configuredJob.TemplateName,
                 TemplateParameters = configuredJob.TemplateParameters,

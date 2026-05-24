@@ -1,4 +1,5 @@
 using BotNexus.Cron.Prompts;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using Microsoft.Extensions.Options;
 using System.IO.Abstractions.TestingHelpers;
@@ -19,7 +20,7 @@ public sealed class CronOptionsPromptTemplateResolverTests
             }
         });
 
-        resolver.ListTemplateNames("farnsworth").ShouldBe(["Alpha", "zebra"]);
+        resolver.ListTemplateNames(AgentId.From("farnsworth")).ShouldBe(["Alpha", "zebra"]);
     }
 
     [Fact]
@@ -27,7 +28,7 @@ public sealed class CronOptionsPromptTemplateResolverTests
     {
         var resolver = CreateResolver(new CronOptions());
 
-        var ok = resolver.TryRender("farnsworth", "does-not-exist", null, out var rendered, out var error);
+        var ok = resolver.TryRender(AgentId.From("farnsworth"), "does-not-exist", null, out var rendered, out var error);
 
         ok.ShouldBeFalse();
         rendered.ShouldBeEmpty();
@@ -52,8 +53,7 @@ public sealed class CronOptionsPromptTemplateResolverTests
             }
         });
 
-        var ok = resolver.TryRender(
-            "farnsworth",
+        var ok = resolver.TryRender(AgentId.From("farnsworth"),
             "DAILY-STATUS",
             new Dictionary<string, string?> { ["owner"] = "Hermes" },
             out var rendered,
@@ -92,7 +92,7 @@ public sealed class CronOptionsPromptTemplateResolverTests
                 fileSystem,
                 new StubWorkspaceManager(workspacePath));
 
-            var ok = resolver.TryRender("farnsworth", "daily-status", new Dictionary<string, string?> { ["owner"] = "Hermes" }, out var rendered, out var error);
+            var ok = resolver.TryRender(AgentId.From("farnsworth"), "daily-status", new Dictionary<string, string?> { ["owner"] = "Hermes" }, out var rendered, out var error);
 
             ok.ShouldBeTrue();
             error.ShouldBeNull();

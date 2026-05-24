@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Text.Json;
 using BotNexus.Cron;
 using BotNexus.Cron.Prompts;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Options;
 using Spectre.Console;
@@ -201,7 +202,7 @@ internal sealed class PromptCommands
         try
         {
             var resolver = CreateTemplateResolver(config);
-            if (!resolver.TryRender(resolvedAgentId, templateName, parameters, out var rendered, out var error))
+            if (!resolver.TryRender(AgentId.From(resolvedAgentId!), templateName, parameters, out var rendered, out var error))
             {
                 if (!string.IsNullOrWhiteSpace(error))
                     AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(error)}");
@@ -248,7 +249,7 @@ internal sealed class PromptCommands
         try
         {
             var resolver = CreateTemplateResolver(config);
-            var templates = resolver.ListTemplateNames(resolvedAgentId);
+            var templates = resolver.ListTemplateNames(AgentId.From(resolvedAgentId!));
             foreach (var template in templates)
                 Console.WriteLine(template);
             return 0;
@@ -293,7 +294,7 @@ internal sealed class PromptCommands
         try
         {
             var resolver = CreateTemplateResolver(config);
-            if (!resolver.TryRender(resolvedAgentId, templateName, parameters, out renderedPrompt, out var renderError))
+            if (!resolver.TryRender(AgentId.From(resolvedAgentId!), templateName, parameters, out renderedPrompt, out var renderError))
             {
                 if (!string.IsNullOrWhiteSpace(renderError))
                     AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(renderError)}");

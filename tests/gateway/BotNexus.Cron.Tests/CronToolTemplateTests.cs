@@ -1,5 +1,6 @@
 using BotNexus.Agent.Core.Types;
 using BotNexus.Cron.Tools;
+using BotNexus.Domain.Primitives;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -18,7 +19,7 @@ public sealed class CronToolTemplateTests
         store.Setup(value => value.CreateAsync(It.IsAny<CronJob>(), It.IsAny<CancellationToken>()))
             .Callback<CronJob, CancellationToken>((job, _) => created = job)
             .ReturnsAsync((CronJob job, CancellationToken _) => job);
-        var tool = new CronTool(store.Object, scheduler, "agent-a");
+        var tool = new CronTool(store.Object, scheduler, AgentId.From("agent-a"));
 
         await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
         {
@@ -45,7 +46,7 @@ public sealed class CronToolTemplateTests
         var tool = new CronTool(
             Mock.Of<ICronStore>(),
             CreateScheduler(),
-            "agent-a");
+            AgentId.From("agent-a"));
 
         var act = () => tool.ExecuteAsync("call-1", new Dictionary<string, object?>
         {

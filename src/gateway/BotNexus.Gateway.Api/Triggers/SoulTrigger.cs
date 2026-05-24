@@ -65,10 +65,10 @@ public sealed class SoulTrigger(
         else
             session.Metadata["modelOverride"] = request!.ModelOverride;
 
-        if (string.IsNullOrWhiteSpace(request?.CronJobId))
+        if (request?.CronJobId is null)
             session.Metadata.Remove("cronJobId");
         else
-            session.Metadata["cronJobId"] = request!.CronJobId;
+            session.Metadata["cronJobId"] = request.CronJobId.Value.Value;
 
         session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = prompt });
         await sessions.SaveAsync(session, ct).ConfigureAwait(false);

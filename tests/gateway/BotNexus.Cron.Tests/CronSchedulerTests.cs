@@ -26,7 +26,7 @@ public sealed class CronSchedulerTests
         await InvokeProcessTickAsync(scheduler);
 
         action.ExecutionCount.ShouldBe(1);
-        var history = await context.Store.GetRunHistoryAsync("job-1");
+        var history = await context.Store.GetRunHistoryAsync(JobId.From("job-1"));
         history.ShouldHaveSingleItem().Status.ShouldBe("ok");
     }
 
@@ -45,7 +45,7 @@ public sealed class CronSchedulerTests
         await InvokeProcessTickAsync(scheduler);
 
         action.ExecutionCount.ShouldBe(0);
-        (await context.Store.GetRunHistoryAsync("job-1")).ShouldBeEmpty();
+        (await context.Store.GetRunHistoryAsync(JobId.From("job-1"))).ShouldBeEmpty();
     }
 
     [Fact]
@@ -57,13 +57,13 @@ public sealed class CronSchedulerTests
         await context.Store.CreateAsync(job);
         var scheduler = CreateScheduler(context.Store, [action]);
 
-        var run = await scheduler.RunNowAsync("job-1");
+        var run = await scheduler.RunNowAsync(JobId.From("job-1"));
 
         run.Status.ShouldBe("ok");
-        var updated = await context.Store.GetAsync("job-1");
+        var updated = await context.Store.GetAsync(JobId.From("job-1"));
         updated!.LastRunStatus.ShouldBe("ok");
         updated.LastRunError.ShouldBeNull();
-        var history = await context.Store.GetRunHistoryAsync("job-1");
+        var history = await context.Store.GetRunHistoryAsync(JobId.From("job-1"));
         history.ShouldHaveSingleItem().Status.ShouldBe("ok");
     }
 
@@ -76,12 +76,12 @@ public sealed class CronSchedulerTests
         await context.Store.CreateAsync(job);
         var scheduler = CreateScheduler(context.Store, [action]);
 
-        var run = await scheduler.RunNowAsync("job-1");
+        var run = await scheduler.RunNowAsync(JobId.From("job-1"));
 
         run.Status.ShouldBe("ok");
-        run.SessionId.ShouldBe("cron:job-1:session-1");
-        var history = await context.Store.GetRunHistoryAsync("job-1");
-        history.ShouldHaveSingleItem().SessionId.ShouldBe("cron:job-1:session-1");
+        run.SessionId!.Value.Value.ShouldBe("cron:job-1:session-1");
+        var history = await context.Store.GetRunHistoryAsync(JobId.From("job-1"));
+        history.ShouldHaveSingleItem().SessionId!.Value.Value.ShouldBe("cron:job-1:session-1");
     }
 
     [Fact]
@@ -93,15 +93,15 @@ public sealed class CronSchedulerTests
         await context.Store.CreateAsync(job);
         var scheduler = CreateScheduler(context.Store, [action]);
 
-        var run = await scheduler.RunNowAsync("job-1");
+        var run = await scheduler.RunNowAsync(JobId.From("job-1"));
 
         run.Status.ShouldBe("error");
         run.Error.ShouldBe("boom");
-        var updated = await context.Store.GetAsync("job-1");
+        var updated = await context.Store.GetAsync(JobId.From("job-1"));
         updated!.LastRunStatus.ShouldBe("error");
         updated.LastRunError.ShouldNotBeNull();
         updated.LastRunError.ShouldContain("boom");
-        var history = await context.Store.GetRunHistoryAsync("job-1");
+        var history = await context.Store.GetRunHistoryAsync(JobId.From("job-1"));
         var entry = history.ShouldHaveSingleItem();
         entry.Status.ShouldBe("error");
         entry.Error.ShouldBe("boom");
@@ -118,12 +118,12 @@ public sealed class CronSchedulerTests
         await context.Store.CreateAsync(job);
         var scheduler = CreateScheduler(context.Store, [new WebhookAction()]);
 
-        var run = await scheduler.RunNowAsync("job-1");
+        var run = await scheduler.RunNowAsync(JobId.From("job-1"));
 
         run.Status.ShouldBe("error");
         run.Error.ShouldNotBeNull();
         run.Error!.ToLowerInvariant().ShouldContain("not implemented");
-        var history = await context.Store.GetRunHistoryAsync("job-1");
+        var history = await context.Store.GetRunHistoryAsync(JobId.From("job-1"));
         history.ShouldHaveSingleItem().Status.ShouldBe("error");
     }
 
@@ -147,7 +147,7 @@ public sealed class CronSchedulerTests
         // Scheduler should detect the mismatch and correct NextRunAt.
         await InvokeProcessTickAsync(scheduler);
 
-        var updated = await context.Store.GetAsync("job-1");
+        var updated = await context.Store.GetAsync(JobId.From("job-1"));
         updated!.NextRunAt.ShouldNotBeNull();
         updated.NextRunAt!.Value.ShouldBe(DateTimeOffset.UtcNow, TimeSpan.FromMinutes(2),
             "NextRunAt should be corrected to the next occurrence from now");
@@ -173,7 +173,7 @@ public sealed class CronSchedulerTests
         action.ExecutionCount.ShouldBe(0, "corrected NextRunAt is still in the future");
 
         // Simulate time passing: set NextRunAt to the past.
-        var corrected = await context.Store.GetAsync("job-1");
+        var corrected = await context.Store.GetAsync(JobId.From("job-1"));
         corrected.ShouldNotBeNull();
         corrected!.NextRunAt.ShouldNotBeNull();
         corrected.NextRunAt!.Value.ShouldBeLessThan(DateTimeOffset.UtcNow.AddDays(364),
@@ -208,7 +208,7 @@ public sealed class CronSchedulerTests
         await InvokeProcessTickAsync(scheduler);
 
         action.ExecutionCount.ShouldBe(0, "job is not due yet");
-        var updated = await context.Store.GetAsync("job-1");
+        var updated = await context.Store.GetAsync(JobId.From("job-1"));
         updated!.NextRunAt.ShouldBe(nextJan1, "NextRunAt should not change when it matches the schedule");
     }
 
@@ -230,7 +230,7 @@ public sealed class CronSchedulerTests
 
         await InvokeProcessTickAsync(scheduler);
 
-        var updated = await context.Store.GetAsync("job-1");
+        var updated = await context.Store.GetAsync(JobId.From("job-1"));
         updated!.NextRunAt.ShouldNotBeNull();
 
         // The next occurrence in Pacific should be at noon Pacific time.
@@ -257,7 +257,7 @@ public sealed class CronSchedulerTests
 
         await InvokeProcessTickAsync(scheduler);
 
-        var updated = await context.Store.GetAsync("job-1");
+        var updated = await context.Store.GetAsync(JobId.From("job-1"));
         updated!.NextRunAt.ShouldNotBeNull();
         // With UTC fallback, the next occurrence should be at 12:00 UTC
         updated.NextRunAt!.Value.Hour.ShouldBe(12);
@@ -286,9 +286,9 @@ public sealed class CronSchedulerTests
         await context.Store.UpdateAsync(updated);
 
         // Manual run should not clobber the updated NextRunAt
-        await scheduler.RunNowAsync("job-1");
+        await scheduler.RunNowAsync(JobId.From("job-1"));
 
-        var afterRun = await context.Store.GetAsync("job-1");
+        var afterRun = await context.Store.GetAsync(JobId.From("job-1"));
         afterRun!.LastRunStatus.ShouldBe("ok");
         // NextRunAt should reflect the updated "0 0 1 1 *" schedule, not the old "*/5"
         afterRun.NextRunAt.ShouldNotBeNull();
@@ -320,7 +320,7 @@ public sealed class CronSchedulerTests
 
         okAction.ExecutionCount.ShouldBe(1,
             "the second job should still run even though the first threw");
-        var failedRun = await context.Store.GetRunHistoryAsync("job-fail");
+        var failedRun = await context.Store.GetRunHistoryAsync(JobId.From("job-fail"));
         failedRun.ShouldHaveSingleItem().Status.ShouldBe("error");
     }
 
@@ -367,7 +367,7 @@ public sealed class CronSchedulerTests
         await InvokeProcessTickAsync(scheduler);
 
         action.ExecutionCount.ShouldBe(1, "valid job should still fire");
-        var goodHistory = await context.Store.GetRunHistoryAsync("good-job");
+        var goodHistory = await context.Store.GetRunHistoryAsync(JobId.From("good-job"));
         goodHistory.ShouldHaveSingleItem().Status.ShouldBe("ok");
     }
 
@@ -399,7 +399,7 @@ public sealed class CronSchedulerTests
         var action = new RecordingAction("test-action");
         var scheduler = CreateScheduler(context.Store, [action]);
 
-        var act = () => scheduler.RunNowAsync("nonexistent-job");
+        var act = () => scheduler.RunNowAsync(JobId.From("nonexistent-job"));
 
         await act.ShouldThrowAsync<KeyNotFoundException>();
     }
@@ -416,7 +416,7 @@ public sealed class CronSchedulerTests
         await context.Store.CreateAsync(job);
         var scheduler = CreateScheduler(context.Store, [action]);
 
-        var run = await scheduler.RunNowAsync("job-1");
+        var run = await scheduler.RunNowAsync(JobId.From("job-1"));
 
         run.Status.ShouldBe("ok");
         action.ExecutionCount.ShouldBe(1);
@@ -448,7 +448,7 @@ public sealed class CronSchedulerTests
         await InvokeProcessTickAsync(scheduler);
 
         // ProcessTickAsync should detect the mismatch and correct NextRunAt
-        var updated = await context.Store.GetAsync("config-job");
+        var updated = await context.Store.GetAsync(JobId.From("config-job"));
         updated!.NextRunAt.ShouldNotBeNull();
         updated.NextRunAt!.Value.ShouldBe(DateTimeOffset.UtcNow, TimeSpan.FromMinutes(2),
             "scheduler should correct stale NextRunAt after config sync");
@@ -479,7 +479,7 @@ public sealed class CronSchedulerTests
 
         await InvokeSyncConfiguredJobsAsync(scheduler, options);
 
-        var stored = await context.Store.GetAsync("config-job");
+        var stored = await context.Store.GetAsync(JobId.From("config-job"));
         stored.ShouldNotBeNull();
         stored!.ActionType.ShouldBe("agent-prompt");
         stored.Model.ShouldBe("openai/gpt-4.1");
@@ -510,7 +510,7 @@ public sealed class CronSchedulerTests
 
         await InvokeSyncConfiguredJobsAsync(scheduler, options);
 
-        var stored = await context.Store.GetAsync("config-job");
+        var stored = await context.Store.GetAsync(JobId.From("config-job"));
         stored.ShouldNotBeNull();
         stored!.TemplateName.ShouldBe("daily-status");
         stored.TemplateParameters.ShouldNotBeNull();
@@ -624,11 +624,11 @@ public sealed class CronSchedulerTests
         await InvokeProcessTickAsync(scheduler);
 
         okAction.ExecutionCount.ShouldBe(2, "both ok jobs should run despite the first job failing");
-        var failHistory = await context.Store.GetRunHistoryAsync("job-fail");
+        var failHistory = await context.Store.GetRunHistoryAsync(JobId.From("job-fail"));
         failHistory.ShouldHaveSingleItem().Status.ShouldBe("error");
-        var ok1History = await context.Store.GetRunHistoryAsync("job-ok-1");
+        var ok1History = await context.Store.GetRunHistoryAsync(JobId.From("job-ok-1"));
         ok1History.ShouldHaveSingleItem().Status.ShouldBe("ok");
-        var ok2History = await context.Store.GetRunHistoryAsync("job-ok-2");
+        var ok2History = await context.Store.GetRunHistoryAsync(JobId.From("job-ok-2"));
         ok2History.ShouldHaveSingleItem().Status.ShouldBe("ok");
     }
 
@@ -654,7 +654,7 @@ public sealed class CronSchedulerTests
         action.ExecutionCount.ShouldBe(3);
         for (var i = 1; i <= 3; i++)
         {
-            var updated = await context.Store.GetAsync($"job-{i}");
+            var updated = await context.Store.GetAsync(JobId.From($"job-{i}"));
             updated.ShouldNotBeNull();
             updated!.NextRunAt.ShouldNotBeNull(
                 $"job-{i} NextRunAt should be updated after concurrent run");
@@ -736,7 +736,7 @@ public sealed class CronSchedulerTests
 
         public Task ExecuteAsync(CronExecutionContext context, CancellationToken cancellationToken = default)
         {
-            context.RecordSessionId(sessionId);
+            context.RecordSessionId(SessionId.From(sessionId));
             return Task.CompletedTask;
         }
     }
