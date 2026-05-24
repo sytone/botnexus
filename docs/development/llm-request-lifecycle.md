@@ -185,6 +185,22 @@ private static IReadOnlyList<AgentMessage> CompactForOverflow(IReadOnlyList<Agen
 }
 ```
 
+## Conversation Reset (`IConversationResetService`)
+
+In-session compaction keeps the conversation in the **same session**. A user-initiated `/reset` (REST `POST /api/conversations/{id}/reset`, SignalR `ResetSession`, or REST archive) is different: it **seals the active session in place** and lets the next inbound message start a **fresh empty session in the same conversation**, with the system prompt naturally reloaded from workspace files. Memory persists across the boundary via an explicit memory-bridge step.
+
+The canonical reset sequence is owned by **`IConversationResetService.ResetActiveSessionAsync`** (default impl `DefaultConversationResetService`) so REST and SignalR cannot drift. The five steps are:
+
+1. **Stop the agent supervisor handle** for the active session — best-effort. Drops any in-memory handle so the next `GetOrCreateAsync` starts a fresh isolation strategy with a freshly-built system prompt.
+2. **Flush memory via `ISessionEndMemoryFlusher`** — best-effort. The agent gets one final synthetic turn to write a memory bridge (what it learned, decisions made, follow-ups) before the session is sealed, so the next session inherits the agent's intent without inheriting the raw turn history.
+3. **Cancel pending ask-user prompts** — any conversation-scoped `ask_user` waiters are cancelled so they don't block the new session.
+4. **Seal the active session in place** — set `Status = Sealed` and persist. Sessions are *not* archived (`ArchiveAsync` would delete from `InMemorySessionStore` and rename out of lookup in `FileSessionStore`); they remain readable via the session store for transcript/audit, just no longer Active.
+5. **Clear `Conversation.ActiveSessionId`** — persist the conversation. The next inbound through `DefaultConversationRouter` sees no active session and creates a new one.
+
+REST `Archive` runs the same canonical sequence on the active session before archiving the conversation, so both archive and reset paths get the memory-flush bridge.
+
+An architecture fitness function — `NoDirect_ISessionEndMemoryFlusher_FlushAsync_OutsideAllowlist` — fails the build if any file in `src/gateway/` outside the 3-file allowlist (`DefaultConversationResetService.cs` + `SessionEndMemoryFlusher.cs` + the `ISessionEndMemoryFlusher.cs` interface declaration) references both `ISessionEndMemoryFlusher` and `FlushAsync(`. New callers that need to reset must route through `IConversationResetService`.
+
 ## System Prompt Assembly
 
 The system prompt is the largest fixed cost per LLM call. `SystemPromptBuilder.Build()` assembles it from:
@@ -197,6 +213,15 @@ The system prompt is the largest fixed cost per LLM call. `SystemPromptBuilder.B
 6. **Behavioral rules** — silent reply rules, reply tags, messaging guidance
 
 A **cache boundary marker** (`<!-- BOTNEXUS_CACHE_BOUNDARY -->`) separates stable content from dynamic content. Providers that support prompt caching (Anthropic) can cache the stable portion across calls, reducing cost for the repeated system prompt.
+
+### When the system prompt is (re)loaded
+
+`GatewayHost.ShouldInitializeSystemPrompt(session)` returns true exactly when `session.History.Count == 0`. That's the only signal needed — and it's safe because:
+
+- **In-session compaction** marks older entries as `IsHistory = true` rather than deleting them, so a compacted session still has `History.Count > 0` and the prompt is *not* re-initialised mid-conversation.
+- **Conversation reset** (see above) creates a brand-new session in the same conversation with empty `History`, so the prompt *is* re-loaded on the next dispatch, picking up any changes to workspace files (AGENTS.md, SOUL.md, etc.).
+
+There is intentionally no metadata flag: the natural invariant on `Session.History` is the source of truth, enforced by the `NoCode_References_systemPromptInitialized_Literal` architecture fence.
 
 ## Session Warmup and Resumption
 
