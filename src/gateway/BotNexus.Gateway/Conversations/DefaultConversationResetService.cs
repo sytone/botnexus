@@ -81,9 +81,9 @@ internal sealed class DefaultConversationResetService : IConversationResetServic
     public async Task<ConversationResetResult> ResetActiveSessionAsync(
         ConversationId conversationId,
         SessionId? expectedActiveSessionId = null,
-        CancellationToken ct = default)
+        CancellationToken cancellationToken = default)
     {
-        var conversation = await _conversations.GetAsync(conversationId, ct).ConfigureAwait(false);
+        var conversation = await _conversations.GetAsync(conversationId, cancellationToken).ConfigureAwait(false);
         if (conversation is null)
         {
             _logger.LogDebug("Reset requested for unknown conversation {ConversationId}; returning NotFound.", conversationId);
@@ -105,7 +105,7 @@ internal sealed class DefaultConversationResetService : IConversationResetServic
         }
 
         var agentId = conversation.AgentId;
-        var gatewaySession = await _sessions.GetAsync(activeSessionId, ct).ConfigureAwait(false);
+        var gatewaySession = await _sessions.GetAsync(activeSessionId, cancellationToken).ConfigureAwait(false);
         if (gatewaySession is null)
         {
             _logger.LogWarning(
@@ -113,14 +113,14 @@ internal sealed class DefaultConversationResetService : IConversationResetServic
                 conversationId, activeSessionId);
             conversation.ActiveSessionId = null;
             conversation.UpdatedAt = _timeProvider.GetUtcNow();
-            await _conversations.SaveAsync(conversation, ct).ConfigureAwait(false);
+            await _conversations.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
             return new ConversationResetResult(ConversationResetOutcome.NoActiveSession, SealedSessionId: null, AgentId: agentId);
         }
 
         // Step 1: stop the supervisor handle for this session (idempotent — safe if not running).
         try
         {
-            await _supervisor.StopAsync(agentId, activeSessionId, ct).ConfigureAwait(false);
+            await _supervisor.StopAsync(agentId, activeSessionId, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -138,7 +138,7 @@ internal sealed class DefaultConversationResetService : IConversationResetServic
             {
                 try
                 {
-                    await _sessionEndFlusher.FlushAsync(agentId, gatewaySession.Session, compactionOptions, ct).ConfigureAwait(false);
+                    await _sessionEndFlusher.FlushAsync(agentId, gatewaySession.Session, compactionOptions, cancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
@@ -164,12 +164,12 @@ internal sealed class DefaultConversationResetService : IConversationResetServic
         // Step 4: seal the session (Status = Sealed; SaveAsync). Not ArchiveAsync — see class docs.
         gatewaySession.Session.Status = SessionStatus.Sealed;
         gatewaySession.Session.UpdatedAt = _timeProvider.GetUtcNow();
-        await _sessions.SaveAsync(gatewaySession, ct).ConfigureAwait(false);
+        await _sessions.SaveAsync(gatewaySession, cancellationToken).ConfigureAwait(false);
 
         // Step 5: clear ActiveSessionId. The router creates a fresh session on next inbound.
         conversation.ActiveSessionId = null;
         conversation.UpdatedAt = _timeProvider.GetUtcNow();
-        await _conversations.SaveAsync(conversation, ct).ConfigureAwait(false);
+        await _conversations.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
 
         _logger.LogInformation(
             "Reset conversation {ConversationId}: sealed session {SessionId}, cleared ActiveSessionId.",

@@ -47,6 +47,15 @@ public sealed record BindingResponse(
     string? DisplayPrefix,
     DateTimeOffset BoundAt);
 
+/// <summary>Response returned by <c>POST /api/conversations/{id}/reset</c>.</summary>
+/// <param name="ConversationId">The conversation that was reset.</param>
+/// <param name="Outcome">The reset outcome: <c>Reset</c>, <c>NoActiveSession</c>, <c>NotFound</c>, or <c>StaleSessionId</c>.</param>
+/// <param name="SealedSessionId">The session id that was sealed, when <paramref name="Outcome"/> is <c>Reset</c>; otherwise <c>null</c>.</param>
+public sealed record ConversationResetResponse(
+    string ConversationId,
+    string Outcome,
+    string? SealedSessionId);
+
 /// <summary>Paginated conversation history response.</summary>
 public sealed record ConversationHistoryResponse(
     string ConversationId,

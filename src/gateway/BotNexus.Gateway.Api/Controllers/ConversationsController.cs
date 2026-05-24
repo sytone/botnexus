@@ -26,6 +26,7 @@ public sealed class ConversationsController : ControllerBase
     private readonly IReadOnlyList<IConversationChangeNotifier> _conversationChangeNotifiers;
     private readonly ILogger<ConversationsController> _logger;
     private readonly IAskUserResponseRegistry? _askUserResponseRegistry;
+    private readonly IConversationResetService? _resetService;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ConversationsController"/> class.
@@ -35,18 +36,24 @@ public sealed class ConversationsController : ControllerBase
     /// <param name="conversationChangeNotifiers">Publishes conversation lifecycle notifications to connected channel clients.</param>
     /// <param name="logger">Logs best-effort transport notification failures.</param>
     /// <param name="askUserResponseRegistry">Optional registry used to cancel pending ask_user prompts on archive.</param>
+    /// <param name="resetService">Canonical reset service. When supplied (the default in production DI), Archive
+    /// and Reset endpoints delegate the active-session seal + memory flush + ask-user cancel to it. When omitted,
+    /// the controller falls back to a best-effort in-place seal — used only by tests that construct the controller
+    /// directly without DI.</param>
     public ConversationsController(
         IConversationStore conversations,
         ISessionStore sessions,
         IEnumerable<IConversationChangeNotifier>? conversationChangeNotifiers = null,
         ILogger<ConversationsController>? logger = null,
-        IAskUserResponseRegistry? askUserResponseRegistry = null)
+        IAskUserResponseRegistry? askUserResponseRegistry = null,
+        IConversationResetService? resetService = null)
     {
         _conversations = conversations;
         _sessions = sessions;
         _conversationChangeNotifiers = conversationChangeNotifiers?.ToArray() ?? [];
         _logger = logger ?? NullLogger<ConversationsController>.Instance;
         _askUserResponseRegistry = askUserResponseRegistry;
+        _resetService = resetService;
     }
 
     /// <summary>
@@ -337,6 +344,13 @@ public sealed class ConversationsController : ControllerBase
     /// Archived conversations are hidden from active listings and can be reopened automatically
     /// if a bound channel or explicit conversation id starts activity again.
     /// </summary>
+    /// <remarks>
+    /// Performs the canonical reset on the active session (flush memory, cancel pending ask_user
+    /// prompts, seal the session via <c>Status=Sealed + SaveAsync</c>, clear <see cref="Conversation.ActiveSessionId"/>)
+    /// before archiving the conversation. This closes F-2c — the REST archive path used to skip
+    /// the memory flush, so the agent had no chance to write a memory bridge before the session
+    /// was sealed.
+    /// </remarks>
     [HttpDelete("{conversationId}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -367,16 +381,65 @@ public sealed class ConversationsController : ControllerBase
         if (virtualCronSessionId.HasValue)
             await SealSessionAsync(virtualCronSessionId.Value, cancellationToken);
 
-        if (conversation.ActiveSessionId is { } activeSessionId)
-            if (!virtualCronSessionId.HasValue || virtualCronSessionId.Value != activeSessionId)
+        // Canonical reset of the active session (stop supervisor + flush memory bridge +
+        // cancel pending ask_user prompts + seal via SaveAsync + clear ActiveSessionId).
+        // No expectedActiveSessionId — the REST caller doesn't know which session is active.
+        if (_resetService is not null)
+        {
+            await _resetService.ResetActiveSessionAsync(conversation.ConversationId, cancellationToken: cancellationToken);
+        }
+        else
+        {
+            // Defensive fallback used only when DI omitted the service (legacy test harnesses).
+            // Misses the memory-flush bridge, which is the F-2c bug — production DI must wire it.
+            if (conversation.ActiveSessionId is { } activeSessionId &&
+                (!virtualCronSessionId.HasValue || virtualCronSessionId.Value != activeSessionId))
+            {
                 await SealSessionAsync(activeSessionId, cancellationToken);
+            }
 
-        await SealConversationSessionsAsync(conversation.ConversationId, cancellationToken);
+            _askUserResponseRegistry?.CancelAllForConversation(conversation.ConversationId);
+        }
 
         await _conversations.ArchiveAsync(conversation.ConversationId, cancellationToken);
-        _askUserResponseRegistry?.CancelAllForConversation(conversation.ConversationId);
         await NotifyConversationChangedBestEffortAsync("archived", conversation.AgentId.Value, conversation.ConversationId.Value, cancellationToken);
         return NoContent();
+    }
+
+    /// <summary>
+    /// Resets the active session of a conversation without archiving the conversation itself.
+    /// Equivalent to the SignalR <c>ResetSession</c> hub method: stops the supervisor, flushes
+    /// the session-end memory bridge, cancels pending ask_user prompts, seals the active session
+    /// in place, and clears <see cref="Conversation.ActiveSessionId"/> so the next inbound message
+    /// starts a fresh session inside the same conversation with the system prompt re-injected.
+    /// </summary>
+    /// <param name="conversationId">The conversation to reset.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>
+    /// <list type="bullet">
+    ///   <item><description><c>200 OK</c> with the reset outcome and (when applicable) the sealed session id.</description></item>
+    ///   <item><description><c>404 NotFound</c> when the conversation does not exist.</description></item>
+    ///   <item><description><c>503 ServiceUnavailable</c> when the reset service is not registered (DI misconfiguration).</description></item>
+    /// </list>
+    /// </returns>
+    [HttpPost("{conversationId}/reset")]
+    [ProducesResponseType(typeof(ConversationResetResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<ActionResult> Reset(string conversationId, CancellationToken cancellationToken)
+    {
+        if (_resetService is null)
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, "Conversation reset service is not configured.");
+
+        var result = await _resetService.ResetActiveSessionAsync(ConversationId.From(conversationId), cancellationToken: cancellationToken);
+
+        if (result.Outcome == ConversationResetOutcome.NotFound)
+            return NotFound();
+
+        return Ok(new ConversationResetResponse(
+            ConversationId: conversationId,
+            Outcome: result.Outcome.ToString(),
+            SealedSessionId: result.SealedSessionId?.Value));
     }
 
     // ΓöÇΓöÇ Notification helpers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
@@ -443,19 +506,6 @@ public sealed class ConversationsController : ControllerBase
         session.Status = SessionStatus.Sealed;
         session.UpdatedAt = DateTimeOffset.UtcNow;
         await _sessions.SaveAsync(session, cancellationToken);
-    }
-
-    private async Task SealConversationSessionsAsync(ConversationId conversationId, CancellationToken cancellationToken)
-    {
-        var allSessions = await _sessions.ListAsync(cancellationToken: cancellationToken);
-        var linkedSessionIds = allSessions
-            .Where(session => session.Session.ConversationId is { } linkedConversationId &&
-                              linkedConversationId == conversationId)
-            .Select(session => session.SessionId)
-            .ToList();
-
-        foreach (var sessionId in linkedSessionIds)
-            await SealSessionAsync(sessionId, cancellationToken);
     }
 
     private async Task<ActionResult> GetVirtualCronHistoryAsync(

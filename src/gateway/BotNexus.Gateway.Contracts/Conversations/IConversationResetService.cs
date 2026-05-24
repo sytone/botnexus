@@ -86,9 +86,9 @@ public interface IConversationResetService
     /// <see cref="ConversationResetOutcome.StaleSessionId"/>. Pass the caller's last-known
     /// session id (e.g. the one delivered on a SignalR <c>ResetSession</c> call) to avoid
     /// clobbering a newer session that was created by a concurrent inbound.</param>
-    /// <param name="ct">Cancellation token.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     Task<ConversationResetResult> ResetActiveSessionAsync(
         ConversationId conversationId,
         SessionId? expectedActiveSessionId = null,
-        CancellationToken ct = default);
+        CancellationToken cancellationToken = default);
 }

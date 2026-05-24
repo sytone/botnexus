@@ -250,20 +250,25 @@ public sealed class ConversationsControllerHistoryTests
     }
 
     [Fact]
-    public async Task Archive_SealsAllSessionsLinkedToConversation()
+    public async Task Archive_SealsOnlyActiveSession_LeavesOtherSessionsUntouched()
     {
-        var conversationId = ConversationId.From("c_archive_seals_all_linked_sessions");
+        // Phase 3c contract: Archive trusts Conversation.ActiveSessionId and only seals that
+        // session via the reset service. Older sessions in a conversation are already sealed
+        // by the normal lifecycle; unrelated sessions belong to other conversations and must
+        // not be touched. The pre-3c "walk every session matching ConversationId and seal"
+        // pass was a workaround for not trusting ActiveSessionId and is intentionally removed.
+        var conversationId = ConversationId.From("c_archive_seals_active_only");
         var sessions = new InMemorySessionStore();
 
-        var firstLinked = await sessions.GetOrCreateAsync(SessionId.From("s-linked-1"), AgentId.From("assistant"));
-        firstLinked.Session.ConversationId = conversationId;
-        firstLinked.Status = BotNexus.Gateway.Abstractions.Models.SessionStatus.Active;
-        await sessions.SaveAsync(firstLinked);
+        var activeSession = await sessions.GetOrCreateAsync(SessionId.From("s-active"), AgentId.From("assistant"));
+        activeSession.Session.ConversationId = conversationId;
+        activeSession.Status = BotNexus.Gateway.Abstractions.Models.SessionStatus.Active;
+        await sessions.SaveAsync(activeSession);
 
-        var secondLinked = await sessions.GetOrCreateAsync(SessionId.From("s-linked-2"), AgentId.From("assistant"));
-        secondLinked.Session.ConversationId = conversationId;
-        secondLinked.Status = BotNexus.Gateway.Abstractions.Models.SessionStatus.Suspended;
-        await sessions.SaveAsync(secondLinked);
+        var previouslySealed = await sessions.GetOrCreateAsync(SessionId.From("s-old-sealed"), AgentId.From("assistant"));
+        previouslySealed.Session.ConversationId = conversationId;
+        previouslySealed.Status = BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed;
+        await sessions.SaveAsync(previouslySealed);
 
         var unrelated = await sessions.GetOrCreateAsync(SessionId.From("s-unrelated"), AgentId.From("assistant"));
         unrelated.Session.ConversationId = ConversationId.From("c_other");
@@ -271,15 +276,22 @@ public sealed class ConversationsControllerHistoryTests
         await sessions.SaveAsync(unrelated);
 
         var conversationStore = new InMemoryConversationStore();
-        await conversationStore.CreateAsync(CreateConversation(conversationId, "assistant", activeSessionId: SessionId.From("s-linked-1")));
+        await conversationStore.CreateAsync(CreateConversation(conversationId, "assistant", activeSessionId: SessionId.From("s-active")));
         var controller = new ConversationsController(conversationStore, sessions);
 
         var result = await controller.Archive(conversationId.Value, CancellationToken.None);
 
         result.ShouldBeOfType<NoContentResult>();
-        (await sessions.GetAsync(SessionId.From("s-linked-1")))!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
-        (await sessions.GetAsync(SessionId.From("s-linked-2")))!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
+        (await sessions.GetAsync(SessionId.From("s-active")))!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
+        (await sessions.GetAsync(SessionId.From("s-old-sealed")))!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Sealed);
         (await sessions.GetAsync(SessionId.From("s-unrelated")))!.Status.ShouldBe(BotNexus.Gateway.Abstractions.Models.SessionStatus.Active);
+
+        // ActiveSessionId is cleared after archive (next inbound would create a fresh session
+        // if the conversation were re-opened — but archived conversations are hidden from listing).
+        var archivedConversation = await conversationStore.GetAsync(conversationId);
+        archivedConversation.ShouldNotBeNull();
+        archivedConversation!.ActiveSessionId.ShouldBeNull();
+        archivedConversation.Status.ShouldBe(ConversationStatus.Archived);
     }
 
     [Fact]
