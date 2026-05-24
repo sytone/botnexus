@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Gateway.Abstractions.Conversations;
@@ -16,13 +17,28 @@ public interface IConversationRouter
     /// Every channel gets its own conversation on first contact regardless of address.
     /// Stamps Session.ConversationId when creating/resolving sessions.
     /// </summary>
+    /// <param name="agentId">The owning agent for the resolved conversation.</param>
+    /// <param name="channelType">Channel species (e.g. signalr, telegram, tui).</param>
+    /// <param name="channelAddress">Channel-specific address — opaque to the router.</param>
+    /// <param name="threadId">Native sub-thread id when the channel exposes one (deprecated; see #523 Phase 6b).</param>
+    /// <param name="conversationId">Explicit conversation id to bypass binding lookup.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <param name="initiator">
+    /// The citizen who triggered this resolution — typically the inbound message's resolved
+    /// <see cref="Domain.World.CitizenId"/> sender. Stamped onto <see cref="Conversation.Initiator"/>
+    /// when a new conversation is created; ignored for existing conversations to preserve the
+    /// write-once provenance invariant. Pass <c>null</c> when the initiator is unknown (legacy /
+    /// system-system paths); existing conversations also remain <c>null</c> until they are next
+    /// created fresh.
+    /// </param>
     Task<ConversationRoutingResult> ResolveInboundAsync(
         AgentId agentId,
         ChannelKey channelType,
         ChannelAddress channelAddress,
         ThreadId? threadId,
         string? conversationId = null,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        CitizenId? initiator = null);
 
     /// <summary>
     /// Returns channel bindings that should receive outbound fan-out for a session.
