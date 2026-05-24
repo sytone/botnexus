@@ -96,6 +96,52 @@ public readonly struct CitizenId : IEquatable<CitizenId>
         _ => "citizen:<uninitialized>",
     };
 
+    /// <summary>
+    /// Attempts to parse a citizen identity from the canonical persistence-key form produced
+    /// by <see cref="ToString"/> — <c>user:&lt;id&gt;</c> or <c>agent:&lt;id&gt;</c>. The kind
+    /// prefix is matched case-insensitively; the inner identifier is preserved verbatim and
+    /// must be valid for the corresponding inner value object. Returns <c>false</c> for
+    /// <c>null</c>, empty/whitespace, missing-separator, empty-kind, empty-id, unknown kind,
+    /// and the <c>citizen:&lt;uninitialized&gt;</c> sentinel emitted by <c>default(CitizenId)</c>.
+    /// </summary>
+    public static bool TryParse(string? value, out CitizenId citizen)
+    {
+        citizen = default;
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        var separator = value.IndexOf(':');
+        if (separator <= 0 || separator == value.Length - 1)
+            return false;
+
+        var kindPart = value[..separator];
+        var idPart = value[(separator + 1)..];
+
+        if (string.IsNullOrWhiteSpace(kindPart) || string.IsNullOrWhiteSpace(idPart))
+            return false;
+
+        try
+        {
+            if (string.Equals(kindPart, "user", StringComparison.OrdinalIgnoreCase))
+            {
+                citizen = Of(UserId.From(idPart));
+                return true;
+            }
+            if (string.Equals(kindPart, "agent", StringComparison.OrdinalIgnoreCase))
+            {
+                citizen = Of(AgentId.From(idPart));
+                return true;
+            }
+        }
+        catch (Vogen.ValueObjectValidationException)
+        {
+            // Inner value-object validation rejected the id portion.
+            return false;
+        }
+
+        return false;
+    }
+
     /// <inheritdoc/>
     public bool Equals(CitizenId other) => Kind switch
     {

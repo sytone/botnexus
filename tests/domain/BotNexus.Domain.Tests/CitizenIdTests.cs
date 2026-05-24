@@ -175,4 +175,55 @@ public sealed class CitizenIdTests
 
         act.ShouldThrow<JsonException>();
     }
+
+    [Theory]
+    [InlineData("user:alice", CitizenKind.User, "alice")]
+    [InlineData("agent:coding-agent", CitizenKind.Agent, "coding-agent")]
+    [InlineData("USER:alice", CitizenKind.User, "alice")]
+    [InlineData("Agent:bob", CitizenKind.Agent, "bob")]
+    public void TryParse_AcceptsCanonicalFormatCaseInsensitively(string input, CitizenKind expectedKind, string expectedId)
+    {
+        var ok = CitizenId.TryParse(input, out var citizen);
+
+        ok.ShouldBeTrue();
+        citizen.Kind.ShouldBe(expectedKind);
+        citizen.Value.ShouldBe(expectedId);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("user")]
+    [InlineData("user:")]
+    [InlineData(":alice")]
+    [InlineData("alice")]
+    [InlineData("cat:whiskers")]
+    [InlineData("citizen:<uninitialized>")]
+    [InlineData("user: ")]
+    public void TryParse_RejectsMalformedInput(string? input)
+    {
+        var ok = CitizenId.TryParse(input, out var citizen);
+
+        ok.ShouldBeFalse();
+        citizen.IsValid.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void TryParse_RoundTripsWithToString_ForUser()
+    {
+        var original = CitizenId.Of(UserId.From("alice"));
+
+        CitizenId.TryParse(original.ToString(), out var parsed).ShouldBeTrue();
+        parsed.ShouldBe(original);
+    }
+
+    [Fact]
+    public void TryParse_RoundTripsWithToString_ForAgent()
+    {
+        var original = CitizenId.Of(AgentId.From("coding-agent"));
+
+        CitizenId.TryParse(original.ToString(), out var parsed).ShouldBeTrue();
+        parsed.ShouldBe(original);
+    }
 }
