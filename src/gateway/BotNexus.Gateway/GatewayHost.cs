@@ -42,7 +42,6 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
     private const string BusyMessage = "Session is busy processing messages. Please retry shortly.";
     private const string ControlSteer = "steer";
     private const string ControlCompact = "compact";
-    private const string SystemPromptInitializedMetadataKey = "systemPromptInitialized";
 
     private readonly IAgentSupervisor _supervisor;
     private readonly IMessageRouter _router;
@@ -371,7 +370,6 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
             EnsureCallerParticipant(session, message.Sender);
             if (ShouldInitializeSystemPrompt(session))
             {
-                session.Metadata[SystemPromptInitializedMetadataKey] = true;
                 // Force fresh handle creation so isolation strategy rebuilds system prompt from workspace files.
                 var stopTask = _supervisor.StopAsync(AgentId.From(agentId), SessionId.From(sessionId), cancellationToken);
                 if (stopTask is not null)
@@ -863,18 +861,19 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         return !string.IsNullOrWhiteSpace(command);
     }
 
+    /// <summary>
+    /// Indicates whether the system prompt should be (re)loaded for this session's
+    /// next agent invocation. Returns true exactly when the session has no history
+    /// entries — the natural invariant for "no LLM call has been made yet against
+    /// this session." Phase 3d (issue #537) replaced an explicit prompt-initialised
+    /// metadata flag with this invariant; it is safe because compaction now
+    /// <em>marks</em> historical entries rather than deleting them (Phase 3a, #531)
+    /// and reset creates a fresh empty session in the same conversation (Phase 3c,
+    /// #536), so a non-empty <c>History</c> is a reliable signal that prompt
+    /// initialisation has already happened.
+    /// </summary>
     private static bool ShouldInitializeSystemPrompt(GatewaySession session)
-    {
-        if (!session.Metadata.TryGetValue(SystemPromptInitializedMetadataKey, out var value) || value is null)
-            return true;
-
-        return value switch
-        {
-            bool boolValue => !boolValue,
-            string stringValue when bool.TryParse(stringValue, out var parsed) => !parsed,
-            _ => true
-        };
-    }
+        => session.History.Count == 0;
 
     private static bool IsHeartbeatAck(string? response)
     {

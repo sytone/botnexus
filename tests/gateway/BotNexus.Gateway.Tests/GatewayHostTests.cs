@@ -432,8 +432,12 @@ public sealed class GatewayHostTests
     }
 
     [Fact]
-    public async Task DispatchAsync_WhenSystemPromptNotInitialized_StopsExistingHandleBeforePrompt()
+    public async Task DispatchAsync_WhenSessionHasNoHistory_StopsExistingHandleBeforePrompt()
     {
+        // Phase 3d invariant (#537): system prompt is initialised exactly when
+        // session.History.Count == 0. A brand-new session has no entries, so we
+        // expect the supervisor to be told to drop any stale handle so the next
+        // GetOrCreateAsync rebuilds the prompt from workspace files.
         var router = new Mock<IMessageRouter>();
         router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["agent-a"]);
@@ -465,8 +469,12 @@ public sealed class GatewayHostTests
     }
 
     [Fact]
-    public async Task DispatchAsync_WhenSystemPromptInitialized_DoesNotStopExistingHandle()
+    public async Task DispatchAsync_WhenSessionHasHistory_DoesNotStopExistingHandle()
     {
+        // Phase 3d invariant (#537): a session with any history entries has already
+        // had its system prompt initialised on a prior turn, so the supervisor handle
+        // must be reused — re-stopping would force the isolation strategy to rebuild
+        // the prompt from disk and clobber any in-memory continuation state.
         var router = new Mock<IMessageRouter>();
         router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["agent-a"]);
@@ -477,7 +485,78 @@ public sealed class GatewayHostTests
             .ReturnsAsync(handle.Object);
 
         var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-1"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a") };
-        session.Metadata["systemPromptInitialized"] = true;
+        // Pre-existing turn from a previous dispatch — proves the session is not fresh.
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.User,
+            Content = "earlier turn",
+            Timestamp = DateTimeOffset.UtcNow.AddMinutes(-1)
+        });
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.GetAsync(SessionId.From("session-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await using var host = CreateHost(
+            supervisor.Object,
+            router.Object,
+            sessions.Object,
+            new RecordingActivityBroadcaster(),
+            CreateChannelManager());
+
+        await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1"));
+
+        supervisor.Verify(s => s.StopAsync(It.IsAny<BotNexus.Domain.Primitives.AgentId>(), It.IsAny<BotNexus.Domain.Primitives.SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_WhenCompactedSessionHasMarkedHistoryAndSummary_DoesNotStopExistingHandle()
+    {
+        // Phase 3a + Phase 3d interaction (#531 + #537): after in-session compaction,
+        // older turns are marked IsHistory=true (not deleted) and a summary entry is
+        // inserted at the boundary. The session is no longer "fresh" — History.Count > 0 —
+        // so the prompt-init force-stop must not fire, even though the LLM-visible
+        // projection only sees the summary + preserved tail.
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+
+        var handle = CreatePromptHandle("agent-a", "session-1", "ok");
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(BotNexus.Domain.Primitives.AgentId.From("agent-a"), BotNexus.Domain.Primitives.SessionId.From("session-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-1"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a") };
+        // Reproduce the canonical post-compaction shape: [historical..., summary, preserved tail].
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.User,
+            Content = "summarised user turn",
+            IsHistory = true,
+            Timestamp = DateTimeOffset.UtcNow.AddMinutes(-10)
+        });
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.Assistant,
+            Content = "summarised assistant turn",
+            IsHistory = true,
+            Timestamp = DateTimeOffset.UtcNow.AddMinutes(-9)
+        });
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.System,
+            Content = "compaction summary",
+            IsCompactionSummary = true,
+            Timestamp = DateTimeOffset.UtcNow.AddMinutes(-8)
+        });
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.User,
+            Content = "preserved tail user turn",
+            Timestamp = DateTimeOffset.UtcNow.AddMinutes(-1)
+        });
+
         var sessions = new Mock<ISessionStore>();
         sessions.Setup(s => s.GetAsync(SessionId.From("session-1"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(session);
