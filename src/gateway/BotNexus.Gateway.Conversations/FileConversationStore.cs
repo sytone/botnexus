@@ -135,7 +135,6 @@ public sealed class FileConversationStore : IConversationStore
         AgentId agentId,
         ChannelKey channelType,
         ChannelAddress channelAddress,
-        ThreadId? threadId,
         CancellationToken ct = default)
     {
         await _lock.WaitAsync(ct).ConfigureAwait(false);
@@ -146,8 +145,7 @@ public sealed class FileConversationStore : IConversationStore
                 c.Status == ConversationStatus.Active &&
                 c.ChannelBindings.Any(b =>
                     b.ChannelType == channelType &&
-                    b.ChannelAddress == channelAddress &&
-                    b.ThreadId == threadId));
+                    b.ChannelAddress == channelAddress));
         }
         finally { _lock.Release(); }
     }

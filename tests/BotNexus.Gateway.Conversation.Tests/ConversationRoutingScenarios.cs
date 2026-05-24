@@ -22,7 +22,7 @@ namespace BotNexus.Gateway.ConversationTests;
 /// These tests validate the conversation-first routing model introduced by the
 /// refactor/conversation-first-routing branch:
 ///  - InboundMessage.ConversationId bypasses binding lookup (direct routing)
-///  - Binding lookup (channelType, channelAddress, threadId) is the fallback
+///  - Binding lookup (channelType, channelAddress) is the fallback
 ///  - No duplicate bindings, no double fan-out from portal secondary conversations
 /// </summary>
 public sealed class ConversationRoutingScenarios
@@ -101,18 +101,17 @@ public sealed class ConversationRoutingScenarios
 
         // Act — portal sends with explicit conversationId (direct routing path)
         var result = await router.ResolveInboundAsync(
-            agentId, SignalR(), ChannelAddress.From("agent1"), null,
+            agentId, SignalR(), ChannelAddress.From("agent1"),
             conversationId: secondaryConv.ConversationId.Value);
 
         // Assert — routes to the correct conversation with NO new binding added
         result.Conversation.ConversationId.ShouldBe(secondaryConv.ConversationId,
             "explicit conversationId must route directly to that conversation");
         // The critical invariant: a channel address binding IS added (for reconnect),
-        // but NOT a ThreadId=conversationId binding (old design causing double fan-out)
-        // (old design added a binding with ThreadId=conversationId, causing double fan-out)
+        // but no duplicate binding hack is added on top.
         var conv = await convStore.GetAsync(secondaryConv.ConversationId);
         conv!.ChannelBindings.Count.ShouldBe(1,
-            "direct conversationId routing must add exactly one channel-address binding for reconnect, not a ThreadId hack");
+            "direct conversationId routing must add exactly one channel-address binding for reconnect, not a duplicate binding hack");
     }
 
     // ──────────────────────────────────────────────────────────────────────────────
@@ -247,10 +246,11 @@ public sealed class ConversationRoutingScenarios
 
     // ──────────────────────────────────────────────────────────────────────────────
     // Scenario 8: Thread isolation — different forum topics are separate conversations
+    //   (composite address encoding owned by the adapter — core treats it as opaque)
     // ──────────────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task Scenario8_DifferentThreadIds_GetSeparateConversations()
+    public async Task Scenario8_DifferentCompositeAddresses_GetSeparateConversations()
     {
         // Arrange
         var convStore = new InMemoryConversationStore();
@@ -258,19 +258,20 @@ public sealed class ConversationRoutingScenarios
         var router = CreateRouter(convStore, sessionStore);
         var agentId = Agent();
 
-        // Act — same group chat but different topics
-        var result42 = await router.ResolveInboundAsync(agentId, Telegram(), ChannelAddress.From("group-1"), ThreadId.From("42"));
-        var result99 = await router.ResolveInboundAsync(agentId, Telegram(), ChannelAddress.From("group-1"), ThreadId.From("99"));
+        // Act — same group chat but different topics encoded into the channel address
+        // (adapter-owned encoding; the router treats the address as opaque)
+        var result42 = await router.ResolveInboundAsync(agentId, Telegram(), ChannelAddress.From("group-1/topic:42"));
+        var result99 = await router.ResolveInboundAsync(agentId, Telegram(), ChannelAddress.From("group-1/topic:99"));
 
         // Assert — thread isolation: different topics → different conversations
         result42.Conversation.ConversationId.ShouldNotBe(result99.Conversation.ConversationId,
-            "Telegram forum topics 42 and 99 must route to separate conversations");
+            "Telegram forum topics 42 and 99 must route to separate conversations via composite address");
 
-        // Verify bindings have correct thread IDs
+        // Verify bindings carry the composite channel addresses
         result42.OriginatingBinding.ShouldNotBeNull();
-        result42.OriginatingBinding!.ThreadId.ShouldBe(ThreadId.From("42"));
+        result42.OriginatingBinding!.ChannelAddress.ShouldBe(ChannelAddress.From("group-1/topic:42"));
         result99.OriginatingBinding.ShouldNotBeNull();
-        result99.OriginatingBinding!.ThreadId.ShouldBe(ThreadId.From("99"));
+        result99.OriginatingBinding!.ChannelAddress.ShouldBe(ChannelAddress.From("group-1/topic:99"));
     }
 
     // ──────────────────────────────────────────────────────────────────────────────
@@ -300,10 +301,10 @@ public sealed class ConversationRoutingScenarios
         await convStore.SaveAsync(convB);
 
         // Act — send to conversation B by explicit ID
-        // Note: (SignalR, "agent1", null) binding points to conversation A,
+        // Note: (SignalR, "agent1") binding points to conversation A,
         // but we override with conversationId=B
         var resultB = await router.ResolveInboundAsync(
-            agentId, SignalR(), ChannelAddress.From("agent1"), null,
+            agentId, SignalR(), ChannelAddress.From("agent1"),
             conversationId: convB.ConversationId.Value);
 
         // Assert — routed to conversation B, not A

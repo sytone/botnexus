@@ -17,7 +17,6 @@ public sealed record PatchConversationRequest(string? Title = null, string? Purp
 public sealed record AddBindingRequest(
     string ChannelType,
     string? ChannelAddress,
-    string? ThreadId,
     string? Mode,
     string? ThreadingMode,
     string? DisplayPrefix);
@@ -41,7 +40,6 @@ public sealed record BindingResponse(
     string BindingId,
     string ChannelType,
     string ChannelAddress,
-    string? ThreadId,
     string Mode,
     string ThreadingMode,
     string? DisplayPrefix,

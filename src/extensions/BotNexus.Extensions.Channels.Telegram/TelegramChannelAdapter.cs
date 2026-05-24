@@ -167,12 +167,8 @@ public sealed class TelegramChannelAdapter(
         EnsureChatAllowed(runtime.Config, chatId);
         var formatted = BuildOutboundText(message.Content, message.Metadata, message.DisplayPrefix);
 
-        var threadId = decodedThreadId;
-        if (!string.IsNullOrEmpty(message.ThreadId?.Value) && int.TryParse(message.ThreadId.Value.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedThreadId))
-            threadId = parsedThreadId;
-
         foreach (var chunk in SplitMessage(formatted, Math.Max(1, runtime.Config.MaxMessageLength)))
-            await runtime.ApiClient.SendMessageAsync(chatId, chunk, threadId, cancellationToken);
+            await runtime.ApiClient.SendMessageAsync(chatId, chunk, decodedThreadId, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -338,7 +334,6 @@ public sealed class TelegramChannelAdapter(
             return;
         }
 
-        var chatIdText = chatId.ToString(CultureInfo.InvariantCulture);
         if (message.From is null)
         {
             _logger.LogDebug("bot '{BotName}' ignored message with no sender (updateId={UpdateId})", runtime.BotName, update.UpdateId);
@@ -383,13 +378,10 @@ public sealed class TelegramChannelAdapter(
             ChannelType = ChannelType,
             SenderId = senderId,
             Sender = CitizenId.Of(UserId.From(senderId)),
-            ChannelAddress = ChannelAddress.From(chatIdText),
+            ChannelAddress = TelegramChannelAddress.Encode(chatId, message.MessageThreadId),
             Content = textContent,
             ContentParts = contentParts,
             TargetAgentId = string.IsNullOrWhiteSpace(runtime.Config.AgentId) ? null : runtime.Config.AgentId,
-            ThreadId = message.MessageThreadId.HasValue
-                ? ThreadId.From(message.MessageThreadId.Value.ToString(CultureInfo.InvariantCulture))
-                : null,
             Metadata = new Dictionary<string, object?>
             {
                 ["telegramBotName"] = runtime.BotName,

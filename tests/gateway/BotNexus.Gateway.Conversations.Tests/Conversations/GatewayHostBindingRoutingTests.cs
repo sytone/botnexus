@@ -17,8 +17,9 @@ using Moq;
 namespace BotNexus.Gateway.Conversations.Tests.Conversations;
 
 /// <summary>
-/// Tests proving that the originating ChannelBinding fields (ThreadId, BindingId, DisplayPrefix)
-/// are carried through to both streaming and non-streaming direct sends.
+/// Tests proving that the originating ChannelBinding fields (BindingId, DisplayPrefix) are
+/// carried through to both streaming and non-streaming direct sends, and that the channel
+/// address (which may include a composite suffix like /topic:N) is preserved end-to-end.
 /// Covers issues #125, #126, and #123 cleanup.
 /// </summary>
 public sealed class GatewayHostBindingRoutingTests
@@ -27,18 +28,18 @@ public sealed class GatewayHostBindingRoutingTests
     private const string SessionIdStr = "session-bind-1";
 
     // ──────────────────────────────────────────────────────────────────────
-    // #126 — Non-streaming direct send must include ThreadId, BindingId, DisplayPrefix
+    // #126 — Non-streaming direct send must include BindingId, DisplayPrefix
+    // and preserve the composite channel address (no separate ThreadId field).
     // ──────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task NonStreamingPath_MessageWithThreadId_DirectSendIncludesThreadId()
+    public async Task NonStreamingPath_MessageWithCompositeAddress_DirectSendIncludesBindingFields()
     {
         var binding = new ChannelBinding
         {
             BindingId = BindingId.From("bind-tg-1"),
             ChannelType = ChannelKey.From("telegram"),
-            ChannelAddress = ChannelAddress.From("chat-100"),
-            ThreadId = ThreadId.From("topic-42"),
+            ChannelAddress = ChannelAddress.From("chat-100/topic:42"),
             DisplayPrefix = "[Bot]",
             Mode = BindingMode.Interactive
         };
@@ -60,7 +61,7 @@ public sealed class GatewayHostBindingRoutingTests
         convRouter
             .Setup(r => r.ResolveInboundAsync(
                 It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(),
-                It.IsAny<BotNexus.Domain.Primitives.ThreadId?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<BotNexus.Domain.World.CitizenId?>()))
+                It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<BotNexus.Domain.World.CitizenId?>()))
             .ReturnsAsync(routingResult);
         convRouter
             .Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<BindingId?>(), It.IsAny<CancellationToken>()))
@@ -89,31 +90,29 @@ public sealed class GatewayHostBindingRoutingTests
             ChannelType = ChannelKey.From("telegram"),
             SenderId = "user-1",
             Sender = CitizenId.Of(UserId.From("user-1")),
-            ChannelAddress = ChannelAddress.From("chat-100"),
-            ThreadId = ThreadId.From("topic-42"),
+            ChannelAddress = ChannelAddress.From("chat-100/topic:42"),
             Content = "hello",
             Metadata = new Dictionary<string, object?>()
         });
 
         capturedOutbound.ShouldNotBeNull("adapter.SendAsync should have been called for non-streaming path");
-        capturedOutbound!.ThreadId.ShouldBe(ThreadId.From("topic-42"), "ThreadId from originating binding must be stamped on direct send");
+        capturedOutbound!.ChannelAddress.ShouldBe(ChannelAddress.From("chat-100/topic:42"), "composite ChannelAddress must round-trip on direct send");
         capturedOutbound.BindingId?.Value.ShouldBe("bind-tg-1", "BindingId from originating binding must be stamped on direct send");
         capturedOutbound.DisplayPrefix.ShouldBe("[Bot]", "DisplayPrefix from originating binding must be stamped on direct send");
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    // #125 — Streaming direct send must use ThreadId-aware conversationId
+    // #125 — Streaming direct send must use the composite channel address verbatim
     // ──────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task StreamingPath_MessageWithThreadId_StreamingUsesCorrectConversationId()
+    public async Task StreamingPath_MessageWithCompositeAddress_StreamingUsesCorrectConversationId()
     {
         var binding = new ChannelBinding
         {
             BindingId = BindingId.From("bind-tg-2"),
             ChannelType = ChannelKey.From("telegram"),
-            ChannelAddress = ChannelAddress.From("chat-200"),
-            ThreadId = ThreadId.From("topic-99"),
+            ChannelAddress = ChannelAddress.From("chat-200/topic:99"),
             Mode = BindingMode.Interactive
         };
 
@@ -134,7 +133,7 @@ public sealed class GatewayHostBindingRoutingTests
         convRouter
             .Setup(r => r.ResolveInboundAsync(
                 It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(),
-                It.IsAny<BotNexus.Domain.Primitives.ThreadId?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<BotNexus.Domain.World.CitizenId?>()))
+                It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<BotNexus.Domain.World.CitizenId?>()))
             .ReturnsAsync(routingResult);
         convRouter
             .Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<BindingId?>(), It.IsAny<CancellationToken>()))
@@ -177,17 +176,17 @@ public sealed class GatewayHostBindingRoutingTests
             ChannelType = ChannelKey.From("telegram"),
             SenderId = "user-1",
             Sender = CitizenId.Of(UserId.From("user-1")),
-            ChannelAddress = ChannelAddress.From("chat-200"),
-            ThreadId = ThreadId.From("topic-99"),
+            ChannelAddress = ChannelAddress.From("chat-200/topic:99"),
             Content = "hello",
             Metadata = new Dictionary<string, object?>()
         });
 
         capturedStreamConversationIds.ShouldNotBeEmpty("SendStreamDeltaAsync must be called");
-        // The conversationId must encode the thread context, not just the bare chatId.
+        // The conversationId is the composite ChannelAddress verbatim — adapters fold the
+        // topic suffix into it themselves before the gateway ever sees it.
         capturedStreamConversationIds.ShouldAllBe(
-            cid => cid.Contains("topic-99"),
-            "Streaming conversationId must include ThreadId so Telegram sends to the correct topic");
+            cid => cid == "chat-200/topic:99",
+            "Streaming conversationId must be the composite ChannelAddress so the adapter can route to the correct topic");
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -202,7 +201,6 @@ public sealed class GatewayHostBindingRoutingTests
             BindingId = BindingId.From("bind-origin"),
             ChannelType = ChannelKey.From("telegram"),
             ChannelAddress = ChannelAddress.From("chat-300"),
-            ThreadId = null,
             Mode = BindingMode.Interactive
         };
 
@@ -224,7 +222,7 @@ public sealed class GatewayHostBindingRoutingTests
         convRouter
             .Setup(r => r.ResolveInboundAsync(
                 It.IsAny<AgentId>(), It.IsAny<ChannelKey>(), It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(),
-                It.IsAny<BotNexus.Domain.Primitives.ThreadId?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<BotNexus.Domain.World.CitizenId?>()))
+                It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<BotNexus.Domain.World.CitizenId?>()))
             .ReturnsAsync(routingResult);
         convRouter
             .Setup(r => r.GetOutboundBindingsAsync(It.IsAny<SessionId>(), It.IsAny<BindingId?>(), It.IsAny<CancellationToken>()))
@@ -250,7 +248,6 @@ public sealed class GatewayHostBindingRoutingTests
             SenderId = "user-1",
             Sender = CitizenId.Of(UserId.From("user-1")),
             ChannelAddress = ChannelAddress.From("chat-300"),
-            ThreadId = null,
             Content = "hello",
             Metadata = new Dictionary<string, object?>()
         });

@@ -6,7 +6,7 @@ namespace BotNexus.Domain.Primitives;
 [JsonConverter(typeof(BindingIdJsonConverter))]
 /// <summary>
 /// Strongly-typed identifier for a <c>ChannelBinding</c>, preventing accidental confusion
-/// with <c>ChannelAddress</c>, <c>ThreadId</c>, or other adjacent string parameters.
+/// with <c>ChannelAddress</c> or other adjacent string parameters.
 /// </summary>
 public readonly record struct BindingId : IComparable<BindingId>
 {

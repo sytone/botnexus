@@ -37,7 +37,6 @@ public sealed record ConversationBindingDto(
     [property: JsonPropertyName("bindingId")] string BindingId,
     [property: JsonPropertyName("channelType")] string ChannelType,
     [property: JsonPropertyName("channelAddress")] string ChannelAddress,
-    [property: JsonPropertyName("threadId")] string? ThreadId,
     [property: JsonPropertyName("mode")] string Mode,
     [property: JsonPropertyName("threadingMode")] string ThreadingMode,
     [property: JsonPropertyName("displayPrefix")] string? DisplayPrefix,

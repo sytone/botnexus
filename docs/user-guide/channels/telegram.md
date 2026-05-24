@@ -148,15 +148,15 @@ In a **group**, `chat.id` is the group's ID (a large negative number) and `from.
 
 ## Conversation model
 
-Each Telegram chat maps to its own **conversation** in BotNexus. Conversations are keyed by `(telegram, chatId)` and optionally `threadId` for forum topics.
+Each Telegram chat maps to its own **conversation** in BotNexus. Conversations are keyed by `(telegram, channelAddress)`, where the adapter encodes forum-topic IDs into the address itself (e.g. `-1001234567890/topic:67` for topic 67 inside that supergroup).
 
-- **DM** — one conversation per user
+- **DM** — one conversation per user (address = chat ID, no topic suffix)
 - **Group chat** — one conversation per group
-- **Forum topic** — one conversation per topic thread
+- **Forum topic** — one conversation per topic (address = `<chatId>/topic:<topicId>`)
 
 Conversations persist across gateway restarts. History is stored in `~/.botnexus/sessions.sqlite`.
 
-If the SignalR portal is also connected, messages from Telegram appear there too (fan-out). Messages sent from the portal fan out to Telegram.
+If the SignalR portal is also connected, messages from Telegram appear there too (fan-out). Messages sent from the portal fan out to Telegram. Streaming replies follow the same routing rule and now land in the originating forum topic (previous behaviour incorrectly routed streamed replies to the root chat).
 
 ---
 
@@ -193,4 +193,4 @@ The SignalR connection may have dropped. Refresh the portal page — history loa
 
 **Bot responding to wrong thread in a group**
 
-Ensure you are on the latest release (fix for ThreadId in direct responses was added in v0.1.x).
+Forum-topic routing is keyed off the composite channel address (`<chatId>/topic:<topicId>`) that the adapter writes on inbound. Ensure you are on the latest release; the topic field is now preserved end-to-end including for streaming replies.

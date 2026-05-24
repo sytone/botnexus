@@ -37,13 +37,12 @@ public sealed class DefaultConversationRouter : IConversationRouter
         AgentId agentId,
         ChannelKey channelType,
         ChannelAddress channelAddress,
-        ThreadId? threadId,
         string? conversationId = null,
         CancellationToken ct = default,
         CitizenId? initiator = null)
     {
         // When the caller knows the exact conversation (e.g. portal with active conversation tab),
-        // skip binding lookup entirely. This is the fast path that eliminates the thread-binding hack.
+        // skip binding lookup entirely.
         if (conversationId is not null)
         {
             var convId = ConversationId.From(conversationId);
@@ -76,7 +75,6 @@ public sealed class DefaultConversationRouter : IConversationRouter
                     {
                         ChannelType = channelType,
                         ChannelAddress = channelAddress,
-                        ThreadId = threadId,
                         Mode = BindingMode.Interactive
                     });
                     reactivated = true;
@@ -107,26 +105,24 @@ public sealed class DefaultConversationRouter : IConversationRouter
 
         // 1. Try to find an existing conversation by binding
         var conversation = await _conversationStore.ResolveByBindingAsync(
-            agentId, channelType, channelAddress, threadId, ct);
+            agentId, channelType, channelAddress, ct);
 
         var addedBinding = false;
         if (conversation is null)
         {
-            conversation = await TryReopenArchivedConversationAsync(agentId, channelType, channelAddress, threadId, ct);
+            conversation = await TryReopenArchivedConversationAsync(agentId, channelType, channelAddress, ct);
         }
         if (conversation is null)
         {
-            // Every unique (channelType, channelAddress, threadId) gets its own conversation.
+            // Every unique (channelType, channelAddress) gets its own conversation; adapters encode
+            // any sub-address (e.g. forum topic) into the channel address themselves.
             // There is no special "default" conversation for addressless channels -- an empty
             // address is a valid stable identity (e.g. a future channel with no external ID).
-            var title = threadId is not null
-                ? $"{channelType}:{channelAddress}/{threadId}"
-                : $"{channelType}:{channelAddress}";
             conversation = new Conversation
             {
                 ConversationId = ConversationId.Create(),
                 AgentId = agentId,
-                Title = title,
+                Title = $"{channelType}:{channelAddress}",
                 IsDefault = false,
                 Initiator = initiator?.IsValid == true ? initiator : null
             };
@@ -134,14 +130,13 @@ public sealed class DefaultConversationRouter : IConversationRouter
             {
                 ChannelType = channelType,
                 ChannelAddress = channelAddress,
-                ThreadId = threadId,
                 Mode = BindingMode.Interactive
             };
             conversation.ChannelBindings.Add(binding);
             addedBinding = true;
             _logger.LogDebug(
-                "Creating new conversation for agent={AgentId} channel={ChannelType} address={ChannelAddress} thread={ThreadId}",
-                agentId, channelType, channelAddress, threadId);
+                "Creating new conversation for agent={AgentId} channel={ChannelType} address={ChannelAddress}",
+                agentId, channelType, channelAddress);
         }
 
         // 3. Resolve or create the active session
@@ -160,8 +155,7 @@ public sealed class DefaultConversationRouter : IConversationRouter
         var originatingBinding = conversation.ChannelBindings
             .FirstOrDefault(b =>
                 b.ChannelType == channelType &&
-                b.ChannelAddress == channelAddress &&
-                b.ThreadId == threadId);
+                b.ChannelAddress == channelAddress);
 
         return new ConversationRoutingResult(conversation, sessionId, isNewSession, originatingBinding);
     }
@@ -359,7 +353,6 @@ public sealed class DefaultConversationRouter : IConversationRouter
         AgentId agentId,
         ChannelKey channelType,
         ChannelAddress channelAddress,
-        ThreadId? threadId,
         CancellationToken ct)
     {
         var conversations = await _conversationStore.ListAsync(agentId, ct);
@@ -367,8 +360,7 @@ public sealed class DefaultConversationRouter : IConversationRouter
             .Where(c => c.Status == ConversationStatus.Archived)
             .Where(c => c.ChannelBindings.Any(b =>
                 b.ChannelType == channelType &&
-                b.ChannelAddress == channelAddress &&
-                b.ThreadId == threadId))
+                b.ChannelAddress == channelAddress))
             .OrderByDescending(c => c.UpdatedAt)
             .FirstOrDefault();
 
@@ -381,8 +373,8 @@ public sealed class DefaultConversationRouter : IConversationRouter
         await _conversationStore.SaveAsync(archived, ct);
 
         _logger.LogInformation(
-            "Reopened archived conversation {ConversationId} for agent={AgentId} channel={ChannelType} address={ChannelAddress} thread={ThreadId}",
-            archived.ConversationId, agentId, channelType, channelAddress, threadId);
+            "Reopened archived conversation {ConversationId} for agent={AgentId} channel={ChannelType} address={ChannelAddress}",
+            archived.ConversationId, agentId, channelType, channelAddress);
 
         return archived;
     }

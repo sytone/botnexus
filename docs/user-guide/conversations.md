@@ -43,8 +43,7 @@ Conversation: "Support thread with Jon"
 A **channel binding** connects a conversation to a specific address on a specific channel. Each binding records:
 
 - `channelType` — e.g. `telegram`, `signalr`, `teams`
-- `channelAddress` — e.g. a Telegram chat ID, a Teams channel ID
-- `threadId` — optional; for forum topics, Teams threads, etc.
+- `channelAddress` — the channel's native routing key. For channels with sub-addresses (Telegram forum topics, future Teams/Slack threads), the adapter encodes the topic into the address itself (e.g. `12345/topic:67`) — the core sees one opaque identifier.
 - `mode` — controls fan-out participation (see below)
 
 One conversation can have many bindings. This is how a single dialogue can be visible on Telegram and in the web portal at the same time.
@@ -55,11 +54,10 @@ One conversation can have many bindings. This is how a single dialogue can be vi
 
 When a message arrives from any channel, the gateway resolves which conversation it belongs to:
 
-1. **Find an existing binding** — look for a `ChannelBinding` that matches `(channelType, channelAddress, threadId)`. If found, use that conversation.
-2. **Thread fallback** — if no binding found and `threadId` is non-null, create a new conversation for this thread.
-3. **Default conversation** — if no binding found and `threadId` is null, use the agent's default conversation and add this channel as a new binding.
+1. **Find an existing binding** — look for a `ChannelBinding` that matches `(channelType, channelAddress)`. If found, use that conversation.
+2. **Default conversation** — if no binding is found, use the agent's default conversation and add this channel as a new binding.
 
-This means **the first message from a new channel auto-attaches to the agent's default conversation**. Subsequent messages from the same address always route to the same conversation.
+This means **the first message from a new channel auto-attaches to the agent's default conversation**. Subsequent messages from the same address always route to the same conversation. Channels that disambiguate sub-addresses (e.g. Telegram forum topics) do so by encoding the sub-address into `channelAddress` itself — the routing rule is uniform across all channels.
 
 ---
 
@@ -153,7 +151,7 @@ If multiple users message the same Telegram bot, each user's chat ID is a differ
 - Create new conversations for subsequent users (if no existing binding matches)
 
 ::: tip For a personal bot
-Set `allowedUserIds` and `allowedChatIds` in the Telegram config to ensure only your ID can create bindings. See [Telegram — Security](./telegram#security).
+Set `allowedUserIds` and `allowedChatIds` in the Telegram config to ensure only your ID can create bindings. See [Telegram — Security](./channels/telegram#security).
 :::
 
 ### Multiple conversations with one agent
@@ -164,23 +162,22 @@ An agent can have multiple conversations — one per channel address, or one per
 
 ## Threading
 
-Some channels support native threads or topics (Telegram forum groups, Teams channels, Slack threads). BotNexus maps each thread to its own conversation with a `threadId` binding:
+Some channels support native threads or topics (Telegram forum groups, Teams channels, Slack threads). BotNexus maps each thread to its own conversation; the originating channel adapter encodes the native thread identifier into the `channelAddress` so the core can treat all addresses uniformly:
 
 ```
 Telegram group: chat-id-100
-├── General topic     → Conversation A  (threadId: null)
-├── Topic: Help       → Conversation B  (threadId: "42")
-└── Topic: Dev        → Conversation C  (threadId: "99")
+├── General topic     → Conversation A  (channelAddress: "-100")
+├── Topic: Help       → Conversation B  (channelAddress: "-100/topic:42")
+└── Topic: Dev        → Conversation C  (channelAddress: "-100/topic:99")
 ```
 
-A message posted in the "Help" topic only routes to Conversation B. The other topics are independent.
+A message posted in the "Help" topic only routes to Conversation B. The other topics are independent. The composite-address format is adapter-private — different channels (Teams, Slack) may pick different encodings; the gateway never parses these strings.
 
-The `ThreadingMode` on a binding controls this:
+The `ThreadingMode` on a binding controls outbound formatting:
 
 | Mode | Behaviour |
 |---|---|
-| `Single` | One conversation per channel address (DMs, SMS) |
-| `NativeThread` | Maps to a native thread or topic |
+| `Single` | One conversation per channel address (DMs, SMS, plus native topics encoded in the address) |
 | `Prefix` | Prepends the conversation name to messages (SMS fallback) |
 
 ---

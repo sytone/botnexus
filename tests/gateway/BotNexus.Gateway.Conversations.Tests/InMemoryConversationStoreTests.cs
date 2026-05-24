@@ -167,35 +167,38 @@ public sealed class InMemoryConversationStoreTests
         };
         await store.CreateAsync(conv);
 
-        var result = await store.ResolveByBindingAsync(agentId, ChannelKey.From("telegram"), ChannelAddress.From("12345"), null);
+        var result = await store.ResolveByBindingAsync(agentId, ChannelKey.From("telegram"), ChannelAddress.From("12345"));
 
         result.ShouldNotBeNull();
         result!.ConversationId.ShouldBe(conv.ConversationId);
     }
 
     [Fact]
-    public async Task ResolveByBindingAsync_MatchesOnThreadId()
+    public async Task ResolveByBindingAsync_DifferentCompositeAddresses_ResolveDistinctConversations()
     {
+        // Composite addresses (e.g. <chatId>/topic:<N>) are opaque to the store —
+        // it matches by (channelType, channelAddress) exact equality. Different
+        // composite addresses for the same underlying chat → different conversations.
         var store = new InMemoryConversationStore();
         var agentId = Agent();
-        var conv = MakeConversation(agentId) with
+        var convA = MakeConversation(agentId) with
         {
             ChannelBindings =
             [
                 new ChannelBinding
                 {
                     ChannelType = ChannelKey.From("teams"),
-                    ChannelAddress = ChannelAddress.From("team-channel"),
-                    ThreadId = ThreadId.From("thread-42")
+                    ChannelAddress = ChannelAddress.From("team-channel/topic:thread-42")
                 }
             ]
         };
-        await store.CreateAsync(conv);
+        await store.CreateAsync(convA);
 
-        var match = await store.ResolveByBindingAsync(agentId, ChannelKey.From("teams"), ChannelAddress.From("team-channel"), ThreadId.From("thread-42"));
-        var noMatch = await store.ResolveByBindingAsync(agentId, ChannelKey.From("teams"), ChannelAddress.From("team-channel"), ThreadId.From("wrong-thread"));
+        var match = await store.ResolveByBindingAsync(agentId, ChannelKey.From("teams"), ChannelAddress.From("team-channel/topic:thread-42"));
+        var noMatch = await store.ResolveByBindingAsync(agentId, ChannelKey.From("teams"), ChannelAddress.From("team-channel/topic:wrong-thread"));
 
         match.ShouldNotBeNull();
+        match!.ConversationId.ShouldBe(convA.ConversationId);
         noMatch.ShouldBeNull();
     }
 
@@ -218,7 +221,7 @@ public sealed class InMemoryConversationStoreTests
         await store.CreateAsync(conv);
         await store.ArchiveAsync(conv.ConversationId);
 
-        var result = await store.ResolveByBindingAsync(agentId, ChannelKey.From("telegram"), ChannelAddress.From("99999"), null);
+        var result = await store.ResolveByBindingAsync(agentId, ChannelKey.From("telegram"), ChannelAddress.From("99999"));
         result.ShouldBeNull();
     }
 

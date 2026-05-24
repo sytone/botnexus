@@ -12,15 +12,19 @@ public interface IConversationRouter
 {
     /// <summary>
     /// Resolves or creates the conversation for an inbound message.
-    /// Uses (AgentId, ChannelType, ChannelAddress, ThreadId?) as the lookup key when conversationId is null.
+    /// Uses (AgentId, ChannelType, ChannelAddress) as the lookup key when conversationId is null.
     /// When conversationId is provided, routes directly to that conversation, bypassing binding lookup.
     /// Every channel gets its own conversation on first contact regardless of address.
     /// Stamps Session.ConversationId when creating/resolving sessions.
     /// </summary>
+    /// <remarks>
+    /// Native sub-addresses (e.g. Telegram forum topics) are encoded into
+    /// <paramref name="channelAddress"/> by the originating adapter — the router treats
+    /// the address as opaque.
+    /// </remarks>
     /// <param name="agentId">The owning agent for the resolved conversation.</param>
     /// <param name="channelType">Channel species (e.g. signalr, telegram, tui).</param>
     /// <param name="channelAddress">Channel-specific address — opaque to the router.</param>
-    /// <param name="threadId">Native sub-thread id when the channel exposes one (deprecated; see #523 Phase 6b).</param>
     /// <param name="conversationId">Explicit conversation id to bypass binding lookup.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <param name="initiator">
@@ -35,7 +39,6 @@ public interface IConversationRouter
         AgentId agentId,
         ChannelKey channelType,
         ChannelAddress channelAddress,
-        ThreadId? threadId,
         string? conversationId = null,
         CancellationToken ct = default,
         CitizenId? initiator = null);
@@ -86,9 +89,9 @@ public interface IConversationRouter
 /// <param name="SessionId">The session to dispatch the message into.</param>
 /// <param name="IsNewSession">True if a new session was created for this message.</param>
 /// <param name="OriginatingBinding">
-/// The specific <see cref="ChannelBinding"/> that matched the inbound message's channel type,
-/// address, and thread id. Null when no exact binding match was found (e.g. new default conversation).
-/// Callers use this to stamp BindingId, ThreadId, and DisplayPrefix on outbound responses without
+/// The specific <see cref="ChannelBinding"/> that matched the inbound message's channel type
+/// and address. Null when no exact binding match was found (e.g. new default conversation).
+/// Callers use this to stamp BindingId and DisplayPrefix on outbound responses without
 /// a second lookup into the conversation's binding list.
 /// </param>
 public sealed record ConversationRoutingResult(
