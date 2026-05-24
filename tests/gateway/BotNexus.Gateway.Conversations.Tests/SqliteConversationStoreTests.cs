@@ -1,7 +1,9 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Conversations;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BotNexus.Gateway.Conversations.Tests;
@@ -326,6 +328,174 @@ public sealed class SqliteConversationStoreTests
     }
 
     private static AgentId Agent(string id) => AgentId.From(id);
+
+    // ── Initiator + ListForCitizenAsync ────────────────────────────────────────
+
+    [Fact]
+    public async Task Initiator_RoundTrips_Null_User_And_Agent()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var alice = CitizenId.Of(UserId.From("alice"));
+        var helper = CitizenId.Of(Agent("helper"));
+
+        var noInit = CreateConversation(Agent("agent-a"), "no-init");
+        var userInit = CreateConversation(Agent("agent-a"), "user-init");
+        userInit.Initiator = alice;
+        var agentInit = CreateConversation(Agent("agent-b"), "agent-init");
+        agentInit.Initiator = helper;
+
+        await store.CreateAsync(noInit);
+        await store.CreateAsync(userInit);
+        await store.CreateAsync(agentInit);
+
+        var fresh = fixture.CreateStore();
+        (await fresh.GetAsync(noInit.ConversationId))!.Initiator.ShouldBeNull();
+        (await fresh.GetAsync(userInit.ConversationId))!.Initiator!.Value.ShouldBe(alice);
+        (await fresh.GetAsync(agentInit.ConversationId))!.Initiator!.Value.ShouldBe(helper);
+    }
+
+    [Fact]
+    public async Task ListForCitizenAsync_Throws_OnInvalidCitizen()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        await Should.ThrowAsync<ArgumentException>(() => store.ListForCitizenAsync(default));
+    }
+
+    [Fact]
+    public async Task ListForCitizenAsync_User_ReturnsOnly_ConversationsTheyInitiated()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var alice = CitizenId.Of(UserId.From("alice"));
+        var bob = CitizenId.Of(UserId.From("bob"));
+
+        var aliceConv = CreateConversation(Agent("a1"), "alice-conv");
+        aliceConv.Initiator = alice;
+        var bobConv = CreateConversation(Agent("a1"), "bob-conv");
+        bobConv.Initiator = bob;
+        var noInit = CreateConversation(Agent("a1"), "no-init");
+
+        await store.CreateAsync(aliceConv);
+        await store.CreateAsync(bobConv);
+        await store.CreateAsync(noInit);
+
+        var fresh = fixture.CreateStore();
+        var aliceList = await fresh.ListForCitizenAsync(alice);
+        aliceList.Select(c => c.ConversationId).ShouldBe(new[] { aliceConv.ConversationId }, ignoreOrder: true);
+    }
+
+    [Fact]
+    public async Task ListForCitizenAsync_Agent_ReturnsUnion_OfInitiatedAndOwned()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var helper = Agent("helper");
+        var other = Agent("other");
+        var alice = CitizenId.Of(UserId.From("alice"));
+        var helperCitizen = CitizenId.Of(helper);
+
+        var owned = CreateConversation(helper, "owned-by-helper");
+        owned.Initiator = alice;
+        var initiatedByHelper = CreateConversation(other, "initiated-by-helper");
+        initiatedByHelper.Initiator = helperCitizen;
+        var unrelated = CreateConversation(other, "unrelated");
+        unrelated.Initiator = alice;
+
+        await store.CreateAsync(owned);
+        await store.CreateAsync(initiatedByHelper);
+        await store.CreateAsync(unrelated);
+
+        var fresh = fixture.CreateStore();
+        var list = await fresh.ListForCitizenAsync(helperCitizen);
+
+        list.Select(c => c.ConversationId).ShouldBe(
+            new[] { owned.ConversationId, initiatedByHelper.ConversationId },
+            ignoreOrder: true);
+    }
+
+    [Fact]
+    public async Task ListForCitizenAsync_IncludesArchivedConversations()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var alice = CitizenId.Of(UserId.From("alice"));
+
+        var conv = CreateConversation(Agent("a1"), "archived");
+        conv.Initiator = alice;
+        await store.CreateAsync(conv);
+        await store.ArchiveAsync(conv.ConversationId);
+
+        var list = await fixture.CreateStore().ListForCitizenAsync(alice);
+        list.Count.ShouldBe(1);
+        list[0].Status.ShouldBe(ConversationStatus.Archived);
+    }
+
+    [Fact]
+    public async Task Migration_AddsInitiatorColumn_ToPreExistingDatabase_WithoutDataLoss()
+    {
+        // Seed a database with the schema as it existed before the initiator column was added
+        // (the canvas_html column was the prior-most migration). The store must add the column
+        // on first access and not lose any existing conversation rows.
+        using var fixture = new StoreFixture();
+
+        await using (var connection = new SqliteConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var seed = connection.CreateCommand();
+            seed.CommandText = """
+                CREATE TABLE conversations (
+                    id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    purpose TEXT,
+                    is_default INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'Active',
+                    active_session_id TEXT,
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    instructions TEXT,
+                    canvas_html TEXT
+                );
+
+                CREATE TABLE conversation_bindings (
+                    binding_id TEXT PRIMARY KEY,
+                    conversation_id TEXT NOT NULL,
+                    channel_type TEXT NOT NULL,
+                    channel_address TEXT NOT NULL,
+                    thread_id TEXT,
+                    mode TEXT NOT NULL DEFAULT 'Interactive',
+                    threading_mode TEXT NOT NULL DEFAULT 'Single',
+                    display_prefix TEXT,
+                    bound_at TEXT NOT NULL,
+                    last_inbound_at TEXT,
+                    last_outbound_at TEXT
+                );
+
+                INSERT INTO conversations (id, agent_id, title, status, metadata, created_at, updated_at)
+                VALUES ('legacy-1', 'agent-a', 'pre-migration', 'Active', '{}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');
+                """;
+            await seed.ExecuteNonQueryAsync();
+        }
+
+        var store = fixture.CreateStore();
+        // First access triggers EnsureCreatedAsync -> EnsureInitiatorColumnAsync.
+        var loaded = await store.GetAsync(ConversationId.From("legacy-1"));
+
+        loaded.ShouldNotBeNull();
+        loaded!.Title.ShouldBe("pre-migration");
+        loaded.Initiator.ShouldBeNull();
+
+        // Save with an Initiator to prove the new column is writable + readable end-to-end.
+        var alice = CitizenId.Of(UserId.From("alice"));
+        loaded.Initiator = alice;
+        await store.SaveAsync(loaded);
+
+        var roundTrip = await fixture.CreateStore().GetAsync(ConversationId.From("legacy-1"));
+        roundTrip!.Initiator!.Value.ShouldBe(alice);
+    }
 
     private static string TempDb()
         => Path.Combine(Path.GetTempPath(), $"bn-conv-test-{Guid.NewGuid():N}.db");

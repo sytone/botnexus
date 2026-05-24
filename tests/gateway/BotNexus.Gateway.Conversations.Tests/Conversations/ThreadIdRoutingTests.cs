@@ -117,7 +117,8 @@ internal sealed class CapturingConversationRouter : IConversationRouter
 
     public Task<ConversationRoutingResult> ResolveInboundAsync(
         AgentId agentId, ChannelKey channelType, ChannelAddress channelAddress,
-        ThreadId? threadId, string? conversationId = null, CancellationToken ct = default)
+        ThreadId? threadId, string? conversationId = null, CancellationToken ct = default,
+        BotNexus.Domain.World.CitizenId? initiator = null)
     {
         CapturedThreadId = threadId;
         var conv = new Conversation { AgentId = agentId };

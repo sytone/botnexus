@@ -1780,7 +1780,8 @@ public sealed class GatewayHostTests
                 It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(),
                 It.IsAny<BotNexus.Domain.Primitives.ThreadId?>(),
                 It.IsAny<string?>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<CancellationToken>(),
+                It.IsAny<BotNexus.Domain.World.CitizenId?>()))
             .ReturnsAsync(new ConversationRoutingResult(routingConversation, BotNexus.Domain.Primitives.SessionId.From("session-1"), false));
         conversationRouter.Setup(r => r.GetOutboundBindingsAsync(
                 It.IsAny<BotNexus.Domain.Primitives.SessionId>(),
@@ -1871,7 +1872,8 @@ public sealed class GatewayHostTests
                 It.IsAny<BotNexus.Domain.Primitives.ChannelAddress>(),
                 It.IsAny<BotNexus.Domain.Primitives.ThreadId?>(),
                 It.IsAny<string?>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<CancellationToken>(),
+                It.IsAny<BotNexus.Domain.World.CitizenId?>()))
             .ReturnsAsync(new ConversationRoutingResult(routingConversation2, BotNexus.Domain.Primitives.SessionId.From("session-1"), false));
         conversationRouter.Setup(r => r.GetOutboundBindingsAsync(
                 It.IsAny<BotNexus.Domain.Primitives.SessionId>(),
