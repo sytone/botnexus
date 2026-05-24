@@ -32,7 +32,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
 
     public bool ShouldCompact(Session session, CompactionOptions options)
     {
-        var estimatedTokens = EstimateTokenCount(session);
+        var estimatedTokens = EstimateVisibleTokenCount(session);
         var threshold = (int)(options.ContextWindowTokens * options.TokenThresholdRatio);
         return estimatedTokens > threshold;
     }
@@ -56,7 +56,11 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             };
         }
 
-        var (toSummarize, toPreserve) = SplitHistory(history, options.PreservedTurns);
+        // Phase 3a: compaction operates on the "LLM-visible" projection only. Already-historical
+        // entries from prior compactions, and crash sentinels, are passed through verbatim and
+        // must never be re-summarised.
+        var visible = history.Where(IsVisibleToLlm).ToList();
+        var (toSummarize, toPreserve) = SplitHistory(visible, options.PreservedTurns);
         if (toSummarize.Count == 0)
         {
             return new CompactionResult
@@ -65,12 +69,12 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 Succeeded = false,
                 EntriesSummarized = 0,
                 EntriesPreserved = toPreserve.Count,
-                TokensBefore = EstimateTokenCount(session),
-                TokensAfter = EstimateTokenCount(session)
+                TokensBefore = EstimateVisibleTokenCount(session),
+                TokensAfter = EstimateVisibleTokenCount(session)
             };
         }
 
-        var tokensBefore = EstimateTokenCount(session);
+        var tokensBefore = EstimateVisibleTokenCount(session);
         var summaryPrompt = BuildSummarizationPrompt(toSummarize, options.MaxSummaryChars);
         var summary = await CallLlmForSummaryAsync(summaryPrompt, options, cancellationToken).ConfigureAwait(false);
 
@@ -79,7 +83,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         {
             _logger.LogWarning(
                 "Compaction aborted for session {SessionId}: LLM returned an empty summary. " +
-                "History is unchanged. Summarized {Count} entries would have been deleted.",
+                "History is unchanged. Summarized {Count} entries would have been marked as historical.",
                 session.SessionId,
                 toSummarize.Count);
 
@@ -111,16 +115,44 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             Timestamp = DateTimeOffset.UtcNow
         };
 
-        // Bug 4: do NOT assign session.History directly — return the new list so the caller
-        // can apply it via GatewaySession.ReplaceHistory() which routes through the runtime lock.
-        var newHistory = new List<SessionEntry> { compactionEntry };
-        newHistory.AddRange(toPreserve);
+        // Phase 3a: build the new history by walking the ORIGINAL history. Entries in toSummarize
+        // are marked IsHistory=true (folded); all other entries — pre-existing historical entries
+        // from prior compactions, crash sentinels, and the preserved tail — pass through verbatim.
+        // The new summary is inserted at the index immediately AFTER the last toSummarize entry's
+        // original position so chronological order is preserved for transcript readers.
+        var toSummarizeSet = new HashSet<SessionEntry>(toSummarize, ReferenceEqualityComparer.Instance);
+        var newHistory = new List<SessionEntry>(history.Count + 1);
+        var summaryInserted = false;
+        var summarizedSeen = 0;
+        for (var i = 0; i < history.Count; i++)
+        {
+            var entry = history[i];
+            if (toSummarizeSet.Contains(entry))
+            {
+                newHistory.Add(entry with { IsHistory = true });
+                summarizedSeen++;
+                if (summarizedSeen == toSummarize.Count && !summaryInserted)
+                {
+                    newHistory.Add(compactionEntry);
+                    summaryInserted = true;
+                }
+            }
+            else
+            {
+                newHistory.Add(entry);
+            }
+        }
 
-        var tokensAfter = EstimateTokenCountFromEntries(newHistory);
+        // Defensive: if for any reason the summary wasn't inserted (shouldn't happen — toSummarize
+        // comes from the iteration above) prepend it so it's still LLM-visible.
+        if (!summaryInserted)
+            newHistory.Insert(0, compactionEntry);
+
+        var tokensAfter = EstimateVisibleTokenCountFromEntries(newHistory);
 
         _logger.LogInformation(
-            "Compacted session {SessionId}: {Summarized} entries summarized, {Preserved} preserved, " +
-            "tokens {Before}→{After} (delta {Delta})",
+            "Compacted session {SessionId}: {Summarized} entries marked historical, {Preserved} preserved, " +
+            "tokens {Before}→{After} (delta {Delta}) — full history retained in store",
             session.SessionId,
             toSummarize.Count,
             toPreserve.Count,
@@ -139,6 +171,8 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             TokensAfter = tokensAfter
         };
     }
+
+    private static bool IsVisibleToLlm(SessionEntry entry) => !entry.IsHistory && !entry.IsCrashSentinel;
 
     private static (List<SessionEntry> toSummarize, List<SessionEntry> toPreserve) SplitHistory(
         IReadOnlyList<SessionEntry> history,
@@ -314,15 +348,19 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         return null;
     }
 
-    private static int EstimateTokenCount(Session session)
+    private static int EstimateVisibleTokenCount(Session session)
     {
-        var totalChars = session.History.Sum(entry => (long)(entry.Content?.Length ?? 0));
+        var totalChars = session.History
+            .Where(IsVisibleToLlm)
+            .Sum(entry => (long)(entry.Content?.Length ?? 0));
         return (int)Math.Min(totalChars / 4, int.MaxValue);
     }
 
-    private static int EstimateTokenCountFromEntries(IEnumerable<SessionEntry> entries)
+    private static int EstimateVisibleTokenCountFromEntries(IEnumerable<SessionEntry> entries)
     {
-        var totalChars = entries.Sum(entry => (long)(entry.Content?.Length ?? 0));
+        var totalChars = entries
+            .Where(IsVisibleToLlm)
+            .Sum(entry => (long)(entry.Content?.Length ?? 0));
         return (int)Math.Min(totalChars / 4, int.MaxValue);
     }
 }
