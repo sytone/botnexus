@@ -38,11 +38,18 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     }
 
     public async Task<CompactionResult> CompactAsync(
-        Session session,
+        GatewaySession session,
         CompactionOptions options,
         CancellationToken cancellationToken = default)
     {
-        var history = session.History;
+        ArgumentNullException.ThrowIfNull(session);
+
+        // Atomic snapshot: history copy + destructive-mutation version + count, all
+        // captured under the runtime lock. The compactor operates only on this
+        // immutable snapshot below; live `session.History` is not read again until
+        // the caller applies the result via TryReplaceHistoryFromSnapshot (#532).
+        var snap = session.SnapshotHistoryForCompaction();
+        var history = snap.Entries;
         if (history.Count == 0)
         {
             return new CompactionResult
@@ -52,7 +59,9 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 EntriesSummarized = 0,
                 EntriesPreserved = 0,
                 TokensBefore = 0,
-                TokensAfter = 0
+                TokensAfter = 0,
+                SnapshotDestructiveVersion = snap.DestructiveVersion,
+                SnapshotHistoryCount = snap.Count
             };
         }
 
@@ -64,18 +73,21 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         var (toSummarize, toPreserve) = SplitHistory(visible, options.PreservedTurns);
         if (toSummarize.Count == 0)
         {
+            var visibleTokens = EstimateVisibleTokenCountFromEntries(history);
             return new CompactionResult
             {
                 Summary = string.Empty,
                 Succeeded = false,
                 EntriesSummarized = 0,
                 EntriesPreserved = toPreserve.Count,
-                TokensBefore = EstimateVisibleTokenCount(session),
-                TokensAfter = EstimateVisibleTokenCount(session)
+                TokensBefore = visibleTokens,
+                TokensAfter = visibleTokens,
+                SnapshotDestructiveVersion = snap.DestructiveVersion,
+                SnapshotHistoryCount = snap.Count
             };
         }
 
-        var tokensBefore = EstimateVisibleTokenCount(session);
+        var tokensBefore = EstimateVisibleTokenCountFromEntries(history);
         var summaryPrompt = BuildSummarizationPrompt(toSummarize, options.MaxSummaryChars);
         var summary = await CallLlmForSummaryAsync(summaryPrompt, options, cancellationToken).ConfigureAwait(false);
 
@@ -95,7 +107,9 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 EntriesSummarized = 0,
                 EntriesPreserved = history.Count,
                 TokensBefore = tokensBefore,
-                TokensAfter = tokensBefore
+                TokensAfter = tokensBefore,
+                SnapshotDestructiveVersion = snap.DestructiveVersion,
+                SnapshotHistoryCount = snap.Count
             };
         }
 
@@ -169,7 +183,9 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             EntriesSummarized = toSummarize.Count,
             EntriesPreserved = toPreserve.Count,
             TokensBefore = tokensBefore,
-            TokensAfter = tokensAfter
+            TokensAfter = tokensAfter,
+            SnapshotDestructiveVersion = snap.DestructiveVersion,
+            SnapshotHistoryCount = snap.Count
         };
     }
 

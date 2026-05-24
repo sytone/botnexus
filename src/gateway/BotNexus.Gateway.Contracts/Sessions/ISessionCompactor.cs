@@ -13,11 +13,14 @@ public interface ISessionCompactor
     bool ShouldCompact(Session session, CompactionOptions options);
 
     /// <summary>
-    /// Compacts the session history: summarizes older messages, preserves recent turns,
-    /// and returns the result. The session's history is modified in place.
+    /// Compacts the session history: snapshots history atomically together with the
+    /// destructive-mutation version, summarises older messages off-lock, and returns
+    /// the new history plus the snapshot's version + count so the caller can apply
+    /// the result via <c>TryReplaceHistoryFromSnapshot</c> with optimistic-concurrency
+    /// detection. The compactor never mutates <paramref name="session"/> directly.
     /// </summary>
     Task<CompactionResult> CompactAsync(
-        Session session,
+        GatewaySession session,
         CompactionOptions options,
         CancellationToken cancellationToken = default);
 }

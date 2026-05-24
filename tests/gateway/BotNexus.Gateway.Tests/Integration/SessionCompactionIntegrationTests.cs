@@ -166,7 +166,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         session.AddEntries(originalEntries);
 
         var compactor = CreateCompactor("fixed-summary");
-        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
+        var result = await compactor.CompactAsync(session, new CompactionOptions
         {
             PreservedTurns = 3,
             SummarizationModel = TestModel.Id
@@ -202,7 +202,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         ]);
 
         var compactor = CreateCompactor("tool-summary");
-        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
+        var result = await compactor.CompactAsync(session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
@@ -230,7 +230,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         ]);
 
         var compactor = CreateCompactor("coherent-summary");
-        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
+        var result = await compactor.CompactAsync(session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
@@ -273,7 +273,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
 
         // Cycle 1.
         var compactor1 = CreateCompactor("summary-c1");
-        var result1 = await compactor1.CompactAsync(session.Session, new CompactionOptions
+        var result1 = await compactor1.CompactAsync(session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
@@ -294,7 +294,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
 
         // Cycle 2.
         var compactor2 = CreateCompactor("summary-c2");
-        var result2 = await compactor2.CompactAsync(session.Session, new CompactionOptions
+        var result2 = await compactor2.CompactAsync(session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
@@ -332,7 +332,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         ]);
 
         var compactor = CreateCompactor("archived-summary");
-        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
+        var result = await compactor.CompactAsync(session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
@@ -358,7 +358,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         var session = BuildCompactionSession();
         var compactor = CreateCompactor(new string('x', 50_000));
 
-        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
+        var result = await compactor.CompactAsync(session, new CompactionOptions
         {
             PreservedTurns = 1,
             MaxSummaryChars = 16_000,
@@ -385,7 +385,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         var originalContents = session.GetHistorySnapshot().Select(e => e.Content).ToList();
         var compactor = CreateCompactor(string.Empty);
 
-        Func<Task> act = async () => await compactor.CompactAsync(session.Session, new CompactionOptions
+        Func<Task> act = async () => await compactor.CompactAsync(session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
@@ -433,7 +433,7 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         }
 
         var compactor = CreateCompactor("concurrent-summary");
-        var compactTask = compactor.CompactAsync(session.Session, new CompactionOptions
+        var compactTask = compactor.CompactAsync(session, new CompactionOptions
         {
             PreservedTurns = 2,
             SummarizationModel = TestModel.Id

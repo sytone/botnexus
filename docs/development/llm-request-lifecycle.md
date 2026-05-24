@@ -163,7 +163,20 @@ After compaction (LLM-visible projection):
 
 On the next compaction cycle the previous `summary` entry is itself folded into the new summary and marked `IsHistory = true` — only the latest summary is ever sent to the LLM, but the chain of summaries (and every original turn) stays in the store.
 
-### 1a. Where the projection lives (`SessionContextProjector`)
+### 1a. Concurrent additions during the LLM summary window (`HistoryReplaceOutcome`)
+
+The summary LLM call runs **outside** the runtime lock — otherwise every new inbound message would block waiting for compaction to finish. To stay safe under concurrent `AddEntry` (a new user/assistant turn) or `RemoveCrashSentinels` (post-restart cleanup) calls that land while the summary is in flight, the compactor uses optimistic concurrency:
+
+1. **Snapshot**: `GatewaySession.SnapshotHistoryForCompaction()` takes a defensive copy of the entries plus the destructive-mutation version counter, all under the lock. The compactor operates on the immutable snapshot from this point on — `session.History` is not read again.
+2. **Summarise off-lock**: the LLM call happens in user space using the snapshot.
+3. **Apply**: the caller invokes `session.TryApplyCompactionResult(result)`, which calls `TryReplaceHistoryFromSnapshot`. The runtime decides between three outcomes:
+   - **`Applied`** — fast path: no mutations happened during the summary window. The new history is swapped in verbatim.
+   - **`Rebased`** — only additions happened (one or more `AddEntry` calls). The compacted history is applied with the concurrent tail appended afterwards so no new turns are dropped. `TokensAfter` becomes approximate.
+   - **`Aborted`** — a destructive change happened (another compaction, or a crash-sentinel removal that actually removed something). The apply is refused; live history is left unchanged. Callers should log the conflict and may retry from a fresh snapshot.
+
+The destructive-version counter is bumped on `ReplaceHistory` always, and on `RemoveCrashSentinels` only when it actually removed at least one entry — so common no-op sentinel scrubs after every clean turn do **not** cause spurious aborts.
+
+### 1b. Where the projection lives (`SessionContextProjector`)
 
 The "which session entries reach the LLM" rule is **owned by a single type**: `SessionContextProjector` in `BotNexus.Gateway.Sessions`. Two predicates make explicit what was previously two divergent inline filters:
 

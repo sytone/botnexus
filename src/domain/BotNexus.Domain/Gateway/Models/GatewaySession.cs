@@ -169,6 +169,28 @@ public sealed class GatewaySession
     /// <summary>Replaces the session history with a compacted version.</summary>
     public void ReplaceHistory(IReadOnlyList<SessionEntry> compactedEntries) => Runtime.ReplaceHistory(compactedEntries);
 
+    /// <summary>
+    /// Atomically captures an immutable history snapshot together with the
+    /// destructive-mutation version observed at snapshot time. Compactors must
+    /// operate on the returned <see cref="HistorySnapshot"/> rather than on
+    /// <see cref="Session"/>.<c>History</c> directly, then call
+    /// <see cref="TryReplaceHistoryFromSnapshot"/> to apply the result safely
+    /// under the runtime lock.
+    /// </summary>
+    public HistorySnapshot SnapshotHistoryForCompaction() => Runtime.SnapshotHistoryForCompaction();
+
+    /// <summary>
+    /// Optimistically applies a replacement history derived from an earlier
+    /// snapshot. See <see cref="HistoryReplaceOutcome"/> for outcomes; see
+    /// <see cref="GatewaySessionRuntime.TryReplaceHistoryFromSnapshot"/> for
+    /// the full contract.
+    /// </summary>
+    public HistoryReplaceOutcome TryReplaceHistoryFromSnapshot(
+        IReadOnlyList<SessionEntry> replacement,
+        long expectedDestructiveVersion,
+        int expectedHistoryCount)
+        => Runtime.TryReplaceHistoryFromSnapshot(replacement, expectedDestructiveVersion, expectedHistoryCount);
+
     /// <summary>Returns a snapshot of the history (safe to iterate).</summary>
     public IReadOnlyList<SessionEntry> GetHistorySnapshot() => Runtime.GetHistorySnapshot();
 

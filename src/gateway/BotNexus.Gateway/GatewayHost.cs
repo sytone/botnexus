@@ -452,11 +452,27 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
                             _logger.LogWarning(flushEx, "Pre-compaction memory flush failed for session {SessionId}, compaction will proceed", sessionId);
                         }
                     }
-                    var result = await _compactor.CompactAsync(session.Session, _compactionOptions.CurrentValue, cancellationToken);
+                    var result = await _compactor.CompactAsync(session, _compactionOptions.CurrentValue, cancellationToken);
                     if (result.Succeeded && result.CompactedHistory is not null)
                     {
-                        session.ReplaceHistory(result.CompactedHistory);
-                        session.Session.UpdatedAt = DateTimeOffset.UtcNow;
+                        var outcome = session.TryApplyCompactionResult(result);
+                        switch (outcome)
+                        {
+                            case HistoryReplaceOutcome.Applied:
+                                session.Session.UpdatedAt = DateTimeOffset.UtcNow;
+                                break;
+                            case HistoryReplaceOutcome.Rebased:
+                                session.Session.UpdatedAt = DateTimeOffset.UtcNow;
+                                _logger.LogInformation(
+                                    "Session {SessionId} auto-compaction rebased over concurrent additions; " +
+                                    "TokensAfter is approximate.", sessionId);
+                                break;
+                            case HistoryReplaceOutcome.Aborted:
+                                _logger.LogWarning(
+                                    "Session {SessionId} auto-compaction aborted: history was destructively " +
+                                    "modified during the summary call. History is unchanged.", sessionId);
+                                break;
+                        }
                     }
                     await _sessions.SaveAsync(session, cancellationToken);
                     _logger.LogInformation(
@@ -820,17 +836,35 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         string sessionId,
         CancellationToken cancellationToken)
     {
-        var result = await _compactor.CompactAsync(session.Session, _compactionOptions.CurrentValue, cancellationToken);
+        var result = await _compactor.CompactAsync(session, _compactionOptions.CurrentValue, cancellationToken);
+        var outcome = HistoryReplaceOutcome.Applied;
         if (result.Succeeded && result.CompactedHistory is not null)
         {
-            session.ReplaceHistory(result.CompactedHistory);
-            session.Session.UpdatedAt = DateTimeOffset.UtcNow;
+            outcome = session.TryApplyCompactionResult(result);
+            if (outcome != HistoryReplaceOutcome.Aborted)
+            {
+                session.Session.UpdatedAt = DateTimeOffset.UtcNow;
+            }
         }
         await _sessions.SaveAsync(session, cancellationToken);
 
-        var feedback = result.Succeeded
-            ? $"Session compacted: {result.EntriesSummarized} entries summarized, {result.EntriesPreserved} preserved."
-            : "Compaction aborted: the summarization model returned an empty response. Session history was not modified.";
+        string feedback;
+        if (!result.Succeeded)
+        {
+            feedback = "Compaction aborted: the summarization model returned an empty response. Session history was not modified.";
+        }
+        else if (outcome == HistoryReplaceOutcome.Aborted)
+        {
+            feedback = "Compaction conflicted with a concurrent change to the session. Session history was not modified — please try again.";
+        }
+        else
+        {
+            var rebasedNote = outcome == HistoryReplaceOutcome.Rebased
+                ? " (rebased over concurrent additions)"
+                : string.Empty;
+            feedback = $"Session compacted: {result.EntriesSummarized} entries summarized, {result.EntriesPreserved} preserved{rebasedNote}.";
+        }
+
         if (ResolveChannelAdapter(message.ChannelType) is { } channel)
         {
             await channel.SendAsync(new OutboundMessage
