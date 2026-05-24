@@ -146,6 +146,7 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<ISessionCompactor, LlmSessionCompactor>();
         services.AddSingleton<IPreCompactionMemoryFlusher, PreCompactionMemoryFlusher>();
         services.AddSingleton<ISessionEndMemoryFlusher, SessionEndMemoryFlusher>();
+        services.AddSingleton<IConversationResetService, DefaultConversationResetService>();
         services.AddSingleton<IMediaPipeline, MediaPipeline>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICommandContributor, BuiltInCommandContributor>());
         services.TryAddSingleton<CommandRegistry>();

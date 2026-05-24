@@ -622,7 +622,7 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Hub_ResetSession_DeletesSessionAndNotifiesClient()
+    public async Task Hub_ResetSession_SealsSessionAndNotifiesClient()
     {
         await using var factory = CreateTestFactory();
         using var cts = CreateTimeout();
@@ -640,9 +640,13 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         resetPayload.GetProperty("sessionId").GetString().ShouldBe(sessionId);
         resetPayload.GetProperty("agentId").GetString().ShouldBe(TestAgentId);
 
+        // Session is sealed in place — Status flips to Sealed, the row stays in the store so
+        // transcript readers still see the conversation history. ArchiveAsync is intentionally
+        // not used (it deletes in InMemorySessionStore, hides files in FileSessionStore).
         var store = factory.Services.GetRequiredService<ISessionStore>();
         var session = await store.GetAsync(SessionId.From(sessionId), cts.Token);
-        session.ShouldBeNull();
+        session.ShouldNotBeNull();
+        session!.Status.ShouldBe(SessionStatus.Sealed);
     }
 
     [Fact]
