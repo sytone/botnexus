@@ -56,20 +56,76 @@ public sealed class SessionPrimitivesTests
     }
 
     [Fact]
-    public void SessionCompaction_KeepFromLastCompaction_ReturnsSuffix()
+    public void SessionCompaction_ApplyLegacyHistoryProjection_NoSummaries_ReturnsUnchanged()
     {
         var entries = new[]
         {
             new SessionEntry { Role = MessageRole.User, Content = "one" },
-            new SessionEntry { Role = MessageRole.Assistant, Content = "summary", IsCompactionSummary = true },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "two" }
+        };
+
+        var projected = SessionCompaction.ApplyLegacyHistoryProjection(entries);
+
+        projected.Count.ShouldBe(2);
+        projected.ShouldAllBe(e => !e.IsHistory);
+    }
+
+    [Fact]
+    public void SessionCompaction_ApplyLegacyHistoryProjection_SingleSummary_ReturnsUnchanged()
+    {
+        var entries = new[]
+        {
+            new SessionEntry { Role = MessageRole.User, Content = "one" },
+            new SessionEntry { Role = MessageRole.System, Content = "summary", IsCompactionSummary = true },
             new SessionEntry { Role = MessageRole.User, Content = "two" }
         };
 
-        var compacted = SessionCompaction.KeepFromLastCompaction(entries);
+        var projected = SessionCompaction.ApplyLegacyHistoryProjection(entries);
 
-        compacted.Count().ShouldBe(2);
-        compacted[0].IsCompactionSummary.ShouldBeTrue();
-        compacted[1].Content.ShouldBe("two");
+        projected.Count.ShouldBe(3);
+        projected.ShouldAllBe(e => !e.IsHistory);
+    }
+
+    [Fact]
+    public void SessionCompaction_ApplyLegacyHistoryProjection_MultipleSummaries_MarksAllButLatestAsHistory()
+    {
+        var entries = new[]
+        {
+            new SessionEntry { Role = MessageRole.User, Content = "before-1" },
+            new SessionEntry { Role = MessageRole.System, Content = "summary-1", IsCompactionSummary = true },
+            new SessionEntry { Role = MessageRole.User, Content = "between" },
+            new SessionEntry { Role = MessageRole.System, Content = "summary-2", IsCompactionSummary = true },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "after" }
+        };
+
+        var projected = SessionCompaction.ApplyLegacyHistoryProjection(entries);
+
+        projected.Count.ShouldBe(5);
+        projected[0].IsHistory.ShouldBeFalse();
+        projected[1].IsCompactionSummary.ShouldBeTrue();
+        projected[1].IsHistory.ShouldBeTrue();
+        projected[2].IsHistory.ShouldBeFalse();
+        projected[3].IsCompactionSummary.ShouldBeTrue();
+        projected[3].IsHistory.ShouldBeFalse();
+        projected[4].IsHistory.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void SessionCompaction_ApplyLegacyHistoryProjection_AlreadyMigrated_IsIdempotent()
+    {
+        var entries = new[]
+        {
+            new SessionEntry { Role = MessageRole.System, Content = "summary-1", IsCompactionSummary = true, IsHistory = true },
+            new SessionEntry { Role = MessageRole.User, Content = "between" },
+            new SessionEntry { Role = MessageRole.System, Content = "summary-2", IsCompactionSummary = true },
+            new SessionEntry { Role = MessageRole.User, Content = "after" }
+        };
+
+        var projected = SessionCompaction.ApplyLegacyHistoryProjection(entries);
+
+        projected.Count.ShouldBe(4);
+        projected[0].IsHistory.ShouldBeTrue();
+        projected[2].IsHistory.ShouldBeFalse();
     }
 
     private sealed record TestMetadata(string SessionId, string AgentId, DateTimeOffset UpdatedAt);

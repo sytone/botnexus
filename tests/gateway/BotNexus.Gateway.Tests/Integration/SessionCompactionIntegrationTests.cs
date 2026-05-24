@@ -56,14 +56,14 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
 
         var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("compaction-persist"));
 
+        // Phase 3a (#531): full transcript preserved; single active summary stays LLM-visible.
         reloaded.ShouldNotBeNull();
-        reloaded!.History.Count().ShouldBe(11);
-        reloaded.History[0].IsCompactionSummary.ShouldBeTrue();
-        reloaded.History[0].Content.ShouldBe("compaction-summary");
+        reloaded!.History.Count.ShouldBe(21);
+        reloaded.History.Single(e => e.IsCompactionSummary).Content.ShouldBe("compaction-summary");
     }
 
     [Fact]
-    public async Task MultipleCompactions_OnlyLastSummaryKept()
+    public async Task MultipleCompactions_OnlyLatestSummaryRemainsLlmVisible()
     {
         using var fixture = new MockFileStoreFixture();
         var store = fixture.CreateStore();
@@ -84,10 +84,12 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         await store.SaveAsync(session);
         var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("multi-compaction"));
 
+        // Phase 3a (#531): legacy multi-summary state is forward-migrated — all-but-latest summary marked IsHistory.
         reloaded.ShouldNotBeNull();
-        reloaded!.History.Select(entry => entry.Content)
-            .ShouldBe(new[] { "summary-2", "tail-1", "tail-2" }, ignoreOrder: false);
-        reloaded.History.Count().ShouldBe(3);
+        reloaded!.History.Count.ShouldBe(8);
+        reloaded.History.Single(e => e.Content == "summary-1").IsHistory.ShouldBeTrue();
+        reloaded.History.Single(e => e.Content == "summary-2").IsHistory.ShouldBeFalse();
+        reloaded.History.Single(e => e.Content == "summary-2").IsCompactionSummary.ShouldBeTrue();
     }
 
     [Fact]
@@ -145,10 +147,10 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         await store.SaveAsync(session);
         var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("sqlite-compaction"));
 
+        // Phase 3a (#531): full transcript preserved through SQLite roundtrip.
         reloaded.ShouldNotBeNull();
-        reloaded!.History.Count().ShouldBe(11);
-        reloaded.History[0].IsCompactionSummary.ShouldBeTrue();
-        reloaded.History[0].Content.ShouldBe("sqlite-summary");
+        reloaded!.History.Count.ShouldBe(21);
+        reloaded.History.Single(e => e.IsCompactionSummary).Content.ShouldBe("sqlite-summary");
     }
 
     [Fact]
@@ -175,13 +177,14 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         session.ReplaceHistory(result.CompactedHistory!);
 
         var history = session.GetHistorySnapshot();
-        history.Count().ShouldBe(7);
-        history[0].IsCompactionSummary.ShouldBeTrue();
-        history.Skip(1).Select(entry => entry.Content)
+        // Phase 3a (#531): original 20 entries preserved + 1 summary appended at boundary = 21 total.
+        history.Count.ShouldBe(21);
+        // Summarised entries (14) marked historical, then summary, then 6 preserved.
+        history.Take(14).ShouldAllBe(e => e.IsHistory);
+        history[14].IsCompactionSummary.ShouldBeTrue();
+        history[14].IsHistory.ShouldBeFalse();
+        history.Skip(15).Select(entry => entry.Content)
             .ShouldBe(new[] { "user-8", "assistant-8", "user-9", "assistant-9", "user-10", "assistant-10" }, ignoreOrder: false);
-
-        history.Skip(1).Select(entry => entry.Content)
-            .ShouldBe(originalEntries.Skip(14).Select(entry => entry.Content));
     }
 
     [Fact]
@@ -209,8 +212,9 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         result.CompactedHistory.ShouldNotBeNull();
         session.ReplaceHistory(result.CompactedHistory!);
 
+        // Phase 3a (#531): summarised entries preserved as historical; summary at boundary; preserved tail after.
         session.GetHistorySnapshot().Select(entry => entry.Content)
-            .ShouldBe(new[] { "tool-summary", "u2", "a2", "tool-call", "tool-result" }, ignoreOrder: false);
+            .ShouldBe(new[] { "u1", "a1", "tool-summary", "u2", "a2", "tool-call", "tool-result" }, ignoreOrder: false);
     }
 
     [Fact]
@@ -239,8 +243,76 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "u3" });
         session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "a3" });
 
+        // Phase 3a (#531): full transcript including newly-historical entries remains coherent.
         session.GetHistorySnapshot().Select(entry => entry.Content)
-            .ShouldBe(new[] { "coherent-summary", "u2", "a2", "u3", "a3" }, ignoreOrder: false);
+            .ShouldBe(new[] { "u1", "a1", "coherent-summary", "u2", "a2", "u3", "a3" }, ignoreOrder: false);
+    }
+
+    [Fact]
+    public async Task MultiCycleCompaction_PreservesAllOriginalTurns_InStore()
+    {
+        // Phase 3a (#531): the canonical promise. After N compaction cycles every
+        // originally-inserted turn must still exist in the session store — only the
+        // LLM-visible projection shrinks via IsHistory marking.
+        var session = new GatewaySession
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("multi-cycle"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-a")
+        };
+
+        var insertedContents = new List<string>();
+        for (var i = 1; i <= 4; i++)
+        {
+            var u = $"cycle0-u{i}";
+            var a = $"cycle0-a{i}";
+            session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = u });
+            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = a });
+            insertedContents.Add(u);
+            insertedContents.Add(a);
+        }
+
+        // Cycle 1.
+        var compactor1 = CreateCompactor("summary-c1");
+        var result1 = await compactor1.CompactAsync(session.Session, new CompactionOptions
+        {
+            PreservedTurns = 1,
+            SummarizationModel = TestModel.Id
+        });
+        result1.Succeeded.ShouldBeTrue();
+        session.ReplaceHistory(result1.CompactedHistory!);
+
+        // Add more turns to drive cycle 2.
+        for (var i = 1; i <= 4; i++)
+        {
+            var u = $"cycle1-u{i}";
+            var a = $"cycle1-a{i}";
+            session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = u });
+            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = a });
+            insertedContents.Add(u);
+            insertedContents.Add(a);
+        }
+
+        // Cycle 2.
+        var compactor2 = CreateCompactor("summary-c2");
+        var result2 = await compactor2.CompactAsync(session.Session, new CompactionOptions
+        {
+            PreservedTurns = 1,
+            SummarizationModel = TestModel.Id
+        });
+        result2.Succeeded.ShouldBeTrue();
+        session.ReplaceHistory(result2.CompactedHistory!);
+
+        var snapshot = session.GetHistorySnapshot();
+
+        // Every originally-inserted turn is still present.
+        foreach (var content in insertedContents)
+            snapshot.Select(e => e.Content).ShouldContain(content,
+                $"original turn '{content}' must survive across compaction cycles");
+
+        // Two summaries on disk; older one is historical.
+        snapshot.Single(e => e.Content == "summary-c1").IsHistory.ShouldBeTrue();
+        snapshot.Single(e => e.Content == "summary-c2").IsHistory.ShouldBeFalse();
+        snapshot.Single(e => e.Content == "summary-c2").IsCompactionSummary.ShouldBeTrue();
     }
 
     [Fact]
@@ -384,8 +456,9 @@ public sealed class SessionCompactionIntegrationTests : IDisposable
         }
 
         history.Count(entry => entry.IsCompactionSummary).ShouldBeLessThanOrEqualTo(1);
+        // Phase 3a (#531): summary no longer sits at index 0; check it exists and is not marked historical.
         if (history.Any(entry => entry.IsCompactionSummary))
-            history.First().IsCompactionSummary.ShouldBeTrue();
+            history.Single(entry => entry.IsCompactionSummary).IsHistory.ShouldBeFalse();
     }
 
     [Fact]

@@ -83,7 +83,54 @@ public sealed class CompactionModelTests
     }
 
     [Fact]
-    public async Task FileSessionStore_LoadWithCompactionEntry_SkipsBefore()
+    public void SessionEntry_IsHistory_DefaultFalse()
+    {
+        var entry = new SessionEntry { Role = MessageRole.User, Content = "hello" };
+
+        entry.IsHistory.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void SessionEntry_IsHistory_SerializesCorrectly()
+    {
+        var original = new SessionEntry
+        {
+            Role = MessageRole.User,
+            Content = "historicized",
+            IsHistory = true
+        };
+
+        var json = JsonSerializer.Serialize(original, JsonOptions);
+        var roundTrip = JsonSerializer.Deserialize<SessionEntry>(json, JsonOptions);
+
+        roundTrip.ShouldNotBeNull();
+        roundTrip!.IsHistory.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void SessionEntry_IsHistory_OrthogonalTo_IsCompactionSummary()
+    {
+        var entry = new SessionEntry
+        {
+            Role = MessageRole.System,
+            Content = "old summary folded into newer one",
+            IsCompactionSummary = true,
+            IsHistory = true
+        };
+
+        entry.IsCompactionSummary.ShouldBeTrue();
+        entry.IsHistory.ShouldBeTrue();
+
+        var json = JsonSerializer.Serialize(entry, JsonOptions);
+        var roundTrip = JsonSerializer.Deserialize<SessionEntry>(json, JsonOptions);
+
+        roundTrip.ShouldNotBeNull();
+        roundTrip!.IsCompactionSummary.ShouldBeTrue();
+        roundTrip.IsHistory.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task FileSessionStore_LoadWithCompactionEntry_PreservesAllEntries()
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
@@ -98,13 +145,16 @@ public sealed class CompactionModelTests
 
         var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s1"));
 
+        // Phase 3a (#531): the full transcript is preserved in storage. With a single
+        // active summary, no legacy projection is applied.
         reloaded.ShouldNotBeNull();
         reloaded!.GetHistorySnapshot().Select(entry => entry.Content)
-            .ShouldBe(new[] { "summary", "after-1" }, ignoreOrder: false);
+            .ShouldBe(new[] { "before-1", "before-2", "summary", "after-1" }, ignoreOrder: false);
+        reloaded.GetHistorySnapshot().ShouldAllBe(e => !e.IsHistory);
     }
 
     [Fact]
-    public async Task FileSessionStore_LoadWithMultipleCompactions_UsesLastOne()
+    public async Task FileSessionStore_LoadWithMultipleCompactions_MarksOlderSummariesAsHistory()
     {
         using var fixture = new StoreFixture();
         var store = fixture.CreateStore();
@@ -120,9 +170,13 @@ public sealed class CompactionModelTests
 
         var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s1"));
 
+        // Phase 3a (#531): legacy multi-summary state migrates forward — all-but-latest summary marked IsHistory.
         reloaded.ShouldNotBeNull();
-        reloaded!.GetHistorySnapshot().Select(entry => entry.Content)
-            .ShouldBe(new[] { "summary-2", "after" }, ignoreOrder: false);
+        var snapshot = reloaded!.GetHistorySnapshot();
+        snapshot.Select(entry => entry.Content).ShouldBe(
+            new[] { "before-1", "summary-1", "between", "summary-2", "after" }, ignoreOrder: false);
+        snapshot.Single(e => e.Content == "summary-1").IsHistory.ShouldBeTrue();
+        snapshot.Single(e => e.Content == "summary-2").IsHistory.ShouldBeFalse();
     }
 
     [Fact]
