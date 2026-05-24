@@ -858,7 +858,7 @@ public sealed class GatewayHostTests
             .Returns(Task.CompletedTask);
         var compactor = new Mock<ISessionCompactor>();
         compactor.Setup(c => c.ShouldCompact(session.Session, It.IsAny<CompactionOptions>())).Returns(true);
-        compactor.Setup(c => c.CompactAsync(session.Session, It.IsAny<CompactionOptions>(), It.IsAny<CancellationToken>()))
+        compactor.Setup(c => c.CompactAsync(session, It.IsAny<CompactionOptions>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new CompactionResult { Summary = string.Empty });
 
         await using var host = CreateHost(
@@ -871,7 +871,7 @@ public sealed class GatewayHostTests
 
         await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1"));
 
-        compactor.Verify(c => c.CompactAsync(session.Session, It.IsAny<CompactionOptions>(), It.IsAny<CancellationToken>()), Times.Once);
+        compactor.Verify(c => c.CompactAsync(session, It.IsAny<CompactionOptions>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -903,7 +903,7 @@ public sealed class GatewayHostTests
 
         await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1"));
 
-        compactor.Verify(c => c.CompactAsync(session.Session, It.IsAny<CompactionOptions>(), It.IsAny<CancellationToken>()), Times.Never);
+        compactor.Verify(c => c.CompactAsync(session, It.IsAny<CompactionOptions>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -924,7 +924,7 @@ public sealed class GatewayHostTests
             .Returns(Task.CompletedTask);
         var compactor = new Mock<ISessionCompactor>();
         compactor.Setup(c => c.ShouldCompact(session.Session, It.IsAny<CompactionOptions>())).Returns(true);
-        compactor.Setup(c => c.CompactAsync(session.Session, It.IsAny<CompactionOptions>(), It.IsAny<CancellationToken>()))
+        compactor.Setup(c => c.CompactAsync(session, It.IsAny<CompactionOptions>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("compaction failed"));
         var channel = CreateChannelAdapter("web", supportsStreaming: false);
 

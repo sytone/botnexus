@@ -28,6 +28,24 @@ public sealed record CompactionResult
     public IReadOnlyList<SessionEntry>? CompactedHistory { get; init; }
 
     /// <summary>
+    /// Destructive-mutation version observed at snapshot time (#532). Captured
+    /// by <c>SnapshotHistoryForCompaction</c> and used by
+    /// <c>TryReplaceHistoryFromSnapshot</c> to detect concurrent destructive
+    /// changes (other compactions, heartbeat history restores, crash-sentinel
+    /// removals with effect) and choose the safe apply path. Always populated
+    /// when <see cref="Succeeded"/> is true.
+    /// </summary>
+    public long SnapshotDestructiveVersion { get; init; }
+
+    /// <summary>
+    /// Length of the history snapshot at the moment compaction started (#532).
+    /// Used together with <see cref="SnapshotDestructiveVersion"/> to detect
+    /// concurrent appends and rebase the result. Always populated when
+    /// <see cref="Succeeded"/> is true.
+    /// </summary>
+    public int SnapshotHistoryCount { get; init; }
+
+    /// <summary>
     /// Number of entries that were folded into the new summary and marked
     /// <c>IsHistory = true</c>. They remain present in <see cref="CompactedHistory"/> for
     /// transcript fidelity but are excluded from the LLM context projection.

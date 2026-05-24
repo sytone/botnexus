@@ -9,6 +9,18 @@ public sealed class GatewaySessionRuntime
     private readonly Lock _lock = new();
     private readonly SessionReplayBuffer _replayBuffer = new();
 
+    // Optimistic-concurrency counters for the compaction-rebase protocol (#532).
+    // _additionVersion increments on append-only mutations (AddEntry/AddEntries).
+    // _destructiveVersion increments on any mutation that removes or replaces
+    // entries (ReplaceHistory, RemoveCrashSentinels with effect,
+    // TryReplaceHistoryFromSnapshot with Applied/Rebased outcomes).
+    // Compactors capture (snapshot, destructiveVersion, count) atomically, do
+    // their slow LLM work, then re-acquire the lock to apply: if the
+    // destructive version is unchanged they can either fast-path (counts
+    // match) or rebase (count grew). If destructive changed they must abort.
+    private long _additionVersion;
+    private long _destructiveVersion;
+
     public GatewaySessionRuntime(Session session)
     {
         Session = session ?? throw new ArgumentNullException(nameof(session));
@@ -38,6 +50,7 @@ public sealed class GatewaySessionRuntime
         lock (_lock)
         {
             Session.History.Add(entry);
+            _additionVersion++;
             Session.UpdatedAt = DateTimeOffset.UtcNow;
         }
     }
@@ -51,6 +64,7 @@ public sealed class GatewaySessionRuntime
         lock (_lock)
         {
             Session.History.AddRange(entries);
+            _additionVersion++;
             Session.UpdatedAt = DateTimeOffset.UtcNow;
         }
     }
@@ -65,6 +79,7 @@ public sealed class GatewaySessionRuntime
         {
             Session.History.Clear();
             Session.History.AddRange(compactedEntries);
+            _destructiveVersion++;
             Session.UpdatedAt = DateTimeOffset.UtcNow;
         }
     }
@@ -78,7 +93,86 @@ public sealed class GatewaySessionRuntime
     {
         lock (_lock)
         {
-            Session.History.RemoveAll(static e => e.IsCrashSentinel);
+            // Only bump the destructive version when removal actually had effect.
+            // A no-op scrub must not force concurrent compactions to abort.
+            var removed = Session.History.RemoveAll(static e => e.IsCrashSentinel);
+            if (removed > 0)
+                _destructiveVersion++;
+        }
+    }
+
+    /// <summary>
+    /// Atomically captures (a) an immutable snapshot of the current history,
+    /// (b) the destructive-mutation version observed at snapshot time, and
+    /// (c) the snapshot length. Compactors operate on the returned snapshot —
+    /// not on <see cref="Session"/>.<c>History</c> — and pass the captured
+    /// version+count back to <see cref="TryReplaceHistoryFromSnapshot"/> so the
+    /// runtime can detect concurrent mutations and pick the safe apply path.
+    /// </summary>
+    public HistorySnapshot SnapshotHistoryForCompaction()
+    {
+        lock (_lock)
+        {
+            // Defensive copy: callers must not be able to mutate live history through
+            // the returned list, and additions made after this call must not be
+            // observable through the snapshot itself (only via Count/_additionVersion).
+            var snapshot = Session.History.ToArray();
+            return new HistorySnapshot(snapshot, _destructiveVersion, snapshot.Length);
+        }
+    }
+
+    /// <summary>
+    /// Optimistically replaces the history with <paramref name="replacement"/>,
+    /// gated on the snapshot's destructive-version + count being current.
+    /// See <see cref="HistoryReplaceOutcome"/> for the three possible outcomes:
+    /// fast-path apply, rebased apply (concurrent additions appended), or
+    /// aborted (concurrent destructive mutation detected — live history
+    /// unchanged).
+    /// </summary>
+    public HistoryReplaceOutcome TryReplaceHistoryFromSnapshot(
+        IReadOnlyList<SessionEntry> replacement,
+        long expectedDestructiveVersion,
+        int expectedHistoryCount)
+    {
+        ArgumentNullException.ThrowIfNull(replacement);
+        if (expectedHistoryCount < 0)
+            throw new ArgumentOutOfRangeException(nameof(expectedHistoryCount), "Snapshot count cannot be negative.");
+
+        lock (_lock)
+        {
+            if (_destructiveVersion != expectedDestructiveVersion)
+                return HistoryReplaceOutcome.Aborted;
+
+            var currentCount = Session.History.Count;
+            if (currentCount == expectedHistoryCount)
+            {
+                Session.History.Clear();
+                Session.History.AddRange(replacement);
+                _destructiveVersion++;
+                Session.UpdatedAt = DateTimeOffset.UtcNow;
+                return HistoryReplaceOutcome.Applied;
+            }
+
+            // Destructive version unchanged but count grew — only AddEntry/AddEntries
+            // ran during the work window. Append the concurrent tail after the
+            // replacement so additions are preserved.
+            if (currentCount > expectedHistoryCount)
+            {
+                var concurrentTail = new SessionEntry[currentCount - expectedHistoryCount];
+                Session.History.CopyTo(expectedHistoryCount, concurrentTail, 0, concurrentTail.Length);
+                Session.History.Clear();
+                Session.History.AddRange(replacement);
+                Session.History.AddRange(concurrentTail);
+                _destructiveVersion++;
+                Session.UpdatedAt = DateTimeOffset.UtcNow;
+                return HistoryReplaceOutcome.Rebased;
+            }
+
+            // currentCount < expectedHistoryCount with destructive version unchanged
+            // is unreachable in current code paths (only RemoveCrashSentinels and
+            // ReplaceHistory shrink, both of which bump _destructiveVersion when
+            // they have effect). Treat as a conflict for safety.
+            return HistoryReplaceOutcome.Aborted;
         }
     }
 

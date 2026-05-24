@@ -542,11 +542,14 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         var compactor = requestServices?.GetService<ISessionCompactor>() ?? _compactor;
         var options = requestServices?.GetService<IOptionsMonitor<CompactionOptions>>()?.CurrentValue ?? _compactionOptions.CurrentValue;
 
-        var result = await compactor.CompactAsync(session.Session, options, CancellationToken.None);
+        var result = await compactor.CompactAsync(session, options, CancellationToken.None);
         if (result.Succeeded && result.CompactedHistory is not null)
         {
-            session.ReplaceHistory(result.CompactedHistory);
-            session.Session.UpdatedAt = DateTimeOffset.UtcNow;
+            var outcome = session.TryApplyCompactionResult(result);
+            if (outcome != HistoryReplaceOutcome.Aborted)
+            {
+                session.Session.UpdatedAt = DateTimeOffset.UtcNow;
+            }
         }
         await _sessions.SaveAsync(session, CancellationToken.None);
 

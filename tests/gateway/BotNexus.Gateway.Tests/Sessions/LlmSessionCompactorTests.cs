@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -60,7 +60,7 @@ public sealed class LlmSessionCompactorTests
             ("assistant", "a3"));
         var compactor = CreateCompactor("summary-u1");
 
-        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
+        var result = await compactor.CompactAsync(session, new CompactionOptions
         {
             PreservedTurns = 2,
             SummarizationModel = TestModel.Id
@@ -88,7 +88,7 @@ public sealed class LlmSessionCompactorTests
             ("assistant", "recent-response"));
         var compactor = CreateCompactor("structured summary");
 
-        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
+        var result = await compactor.CompactAsync(session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
@@ -115,7 +115,7 @@ public sealed class LlmSessionCompactorTests
         var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("s1"), AgentId = BotNexus.Domain.Primitives.AgentId.From("a1") };
         var compactor = CreateCompactor("summary");
 
-        var result = await compactor.CompactAsync(session.Session, new CompactionOptions());
+        var result = await compactor.CompactAsync(session, new CompactionOptions());
 
         result.Summary.ShouldBeEmpty();
         result.Succeeded.ShouldBeFalse();
@@ -136,7 +136,7 @@ public sealed class LlmSessionCompactorTests
         var originalHistory = session.GetHistorySnapshot().ToList();
         var compactor = CreateCompactor("unused");
 
-        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
+        var result = await compactor.CompactAsync(session, new CompactionOptions
         {
             PreservedTurns = 3,
             SummarizationModel = TestModel.Id
@@ -159,7 +159,7 @@ public sealed class LlmSessionCompactorTests
             ("user", "recent"));
         var compactor = CreateCompactor("compacted");
 
-        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
+        var result = await compactor.CompactAsync(session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
@@ -187,7 +187,7 @@ public sealed class LlmSessionCompactorTests
             ("user", "recent"));
         var compactor = CreateCompactor(longSummary);
 
-        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
+        var result = await compactor.CompactAsync(session, new CompactionOptions
         {
             PreservedTurns = 1,
             MaxSummaryChars = 40,
@@ -219,7 +219,7 @@ public sealed class LlmSessionCompactorTests
         // Simulate LLM returning empty text
         var compactor = CreateCompactor(summary: "");
 
-        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
+        var result = await compactor.CompactAsync(session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
@@ -381,7 +381,7 @@ public sealed class LlmSessionCompactorTests
         var compactor = CreateCompactor("summary");
         var originalCount = session.GetHistorySnapshot().Count;
 
-        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
+        var result = await compactor.CompactAsync(session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
@@ -408,7 +408,7 @@ public sealed class LlmSessionCompactorTests
             ("assistant", "a2"));
         var compactor = CreateCompactor("summary-1");
 
-        var result1 = await compactor.CompactAsync(session.Session, new CompactionOptions
+        var result1 = await compactor.CompactAsync(session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
@@ -424,7 +424,7 @@ public sealed class LlmSessionCompactorTests
 
         // Cycle 2: summary-1 is now LLM-visible (IsHistory=false). It must be folded into summary-2 and marked historical.
         var compactor2 = CreateCompactor("summary-2");
-        var result2 = await compactor2.CompactAsync(session.Session, new CompactionOptions
+        var result2 = await compactor2.CompactAsync(session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
@@ -463,7 +463,7 @@ public sealed class LlmSessionCompactorTests
         session.ReplaceHistory(snapshotEntries);
 
         var compactor = CreateCompactor("summary");
-        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
+        var result = await compactor.CompactAsync(session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
@@ -503,7 +503,7 @@ public sealed class LlmSessionCompactorTests
         session.ReplaceHistory(entries);
 
         var compactor = CreateCompactor("summary");
-        var result = await compactor.CompactAsync(session.Session, new CompactionOptions
+        var result = await compactor.CompactAsync(session, new CompactionOptions
         {
             PreservedTurns = 1,
             SummarizationModel = TestModel.Id
