@@ -67,6 +67,41 @@ public interface ISessionStore
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Lists sessions belonging to a specific conversation, in chronological
+    /// (ascending CreatedAt) order. Includes both Active and Sealed sessions
+    /// — conversation history requires the full timeline.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the canonical "give me the sessions for conversation X" API.
+    /// Replaces the previous load-all-then-filter pattern
+    /// (<c>ListAsync(...).Where(s =&gt; s.ConversationId == ...)</c>) which was
+    /// pinned by issue F-7.
+    /// </para>
+    /// <para>
+    /// Behavioural contract (must be honoured by every implementation):
+    /// </para>
+    /// <list type="bullet">
+    ///   <item>Returns an empty list (never <c>null</c>) when no sessions match.</item>
+    ///   <item>Excludes sessions whose <c>ConversationId</c> is <c>null</c>.</item>
+    ///   <item>Ordered by <c>CreatedAt</c> ascending; ties broken by
+    ///   <c>SessionId</c> ascending so the order is fully deterministic.</item>
+    ///   <item>Includes sessions with <c>Status == Sealed</c> and
+    ///   <c>Status == Active</c> alike; conversation history needs the full sequence.</item>
+    /// </list>
+    /// </remarks>
+    /// <param name="conversationId">The conversation to query.</param>
+    /// <param name="agentId">
+    /// Optional agent filter. When set, only sessions owned by this agent are returned.
+    /// Useful for access-control-shaped callers and cron normalisation.
+    /// </param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<IReadOnlyList<GatewaySession>> ListByConversationAsync(
+        ConversationId conversationId,
+        AgentId? agentId = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Lists sessions where the agent either owns the session or is listed as a participant.
     /// </summary>
     Task<IReadOnlyList<GatewaySession>> GetExistenceAsync(

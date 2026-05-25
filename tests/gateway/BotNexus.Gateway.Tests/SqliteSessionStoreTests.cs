@@ -640,6 +640,166 @@ public sealed class SqliteSessionStoreTests
         reloaded!.History[0].ToolArgs.ShouldBe("{}");
     }
 
+    // --- ListByConversationAsync: F-7 contract pins (SqliteSessionStore) ---
+    //
+    // Same 5 invariants as InMemory + File. ALSO verifies:
+    //   - the idx_sessions_conversation_agent index exists on the table after init
+    //   - the indexed query is actually used (loose smoke test: query runs without
+    //     a full-scan plan would require EXPLAIN QUERY PLAN; we settle for "returns
+    //     the right rows" + "index is present" which is what regression would catch).
+
+    private static async Task SeedSqliteConversationFixtureAsync(SqliteSessionStore store, DateTimeOffset baseTime)
+    {
+        var convA = ConversationId.From("conv-a");
+        var convB = ConversationId.From("conv-b");
+
+        await store.SaveAsync(new GatewaySession
+        {
+            SessionId = SessionId.From("s-a-active"),
+            AgentId = AgentId.From("agent-x"),
+            CreatedAt = baseTime.AddMinutes(10),
+            Status = SessionStatus.Active,
+            Session = { ConversationId = convA }
+        });
+        await store.SaveAsync(new GatewaySession
+        {
+            SessionId = SessionId.From("s-a-sealed"),
+            AgentId = AgentId.From("agent-x"),
+            CreatedAt = baseTime,
+            Status = SessionStatus.Sealed,
+            Session = { ConversationId = convA }
+        });
+        await store.SaveAsync(new GatewaySession
+        {
+            SessionId = SessionId.From("s-a-other-agent"),
+            AgentId = AgentId.From("agent-y"),
+            CreatedAt = baseTime.AddMinutes(5),
+            Status = SessionStatus.Active,
+            Session = { ConversationId = convA }
+        });
+        await store.SaveAsync(new GatewaySession
+        {
+            SessionId = SessionId.From("s-b"),
+            AgentId = AgentId.From("agent-x"),
+            CreatedAt = baseTime.AddMinutes(20),
+            Status = SessionStatus.Active,
+            Session = { ConversationId = convB }
+        });
+        await store.SaveAsync(new GatewaySession
+        {
+            SessionId = SessionId.From("s-orphan"),
+            AgentId = AgentId.From("agent-x"),
+            CreatedAt = baseTime.AddMinutes(15),
+            Status = SessionStatus.Active
+        });
+    }
+
+    [Fact]
+    public async Task EnsureCreatedAsync_CreatesConversationAgentIndex_ForListByConversationLookups()
+    {
+        // Pin the index exists. If a future schema change removes it, this fails first.
+        using var fixture = new StoreFixture();
+        // Trigger schema creation by a no-op read.
+        _ = await fixture.CreateStore().GetAsync(SessionId.From("warm"));
+
+        await using var verifyConnection = new SqliteConnection(fixture.ConnectionString);
+        await verifyConnection.OpenAsync();
+        await using var cmd = verifyConnection.CreateCommand();
+        cmd.CommandText = "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'sessions'";
+
+        var indexes = new List<string>();
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            indexes.Add(reader.GetString(0));
+
+        indexes.ShouldContain(
+            "idx_sessions_conversation_agent",
+            "Missing index — ListByConversationAsync degrades to a full table scan");
+    }
+
+    [Fact]
+    public async Task ListByConversationAsync_AcrossReload_ReturnsActiveAndSealed_InCreatedAtAscOrder()
+    {
+        using var fixture = new StoreFixture();
+        var baseTime = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        await SeedSqliteConversationFixtureAsync(fixture.CreateStore(), baseTime);
+
+        var sessions = await fixture.CreateStore()
+            .ListByConversationAsync(ConversationId.From("conv-a"));
+
+        sessions.Select(s => s.SessionId.Value)
+            .ShouldBe(new[] { "s-a-sealed", "s-a-other-agent", "s-a-active" }, ignoreOrder: false);
+    }
+
+    [Fact]
+    public async Task ListByConversationAsync_AcrossReload_ExcludesOtherConversations_AndOrphans()
+    {
+        using var fixture = new StoreFixture();
+        var baseTime = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        await SeedSqliteConversationFixtureAsync(fixture.CreateStore(), baseTime);
+
+        var sessions = await fixture.CreateStore()
+            .ListByConversationAsync(ConversationId.From("conv-a"));
+
+        sessions.Select(s => s.SessionId.Value).ShouldNotContain("s-b");
+        sessions.Select(s => s.SessionId.Value).ShouldNotContain("s-orphan");
+    }
+
+    [Fact]
+    public async Task ListByConversationAsync_ReturnsEmptyList_ForUnknownConversation()
+    {
+        using var fixture = new StoreFixture();
+
+        var sessions = await fixture.CreateStore()
+            .ListByConversationAsync(ConversationId.From("ghost"));
+
+        sessions.ShouldNotBeNull();
+        sessions.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ListByConversationAsync_AcrossReload_WithAgentFilter_NarrowsToOwner()
+    {
+        using var fixture = new StoreFixture();
+        var baseTime = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        await SeedSqliteConversationFixtureAsync(fixture.CreateStore(), baseTime);
+
+        var sessions = await fixture.CreateStore()
+            .ListByConversationAsync(ConversationId.From("conv-a"), agentId: AgentId.From("agent-x"));
+
+        sessions.Select(s => s.SessionId.Value)
+            .ShouldBe(new[] { "s-a-sealed", "s-a-active" }, ignoreOrder: false);
+    }
+
+    [Fact]
+    public async Task ListByConversationAsync_HandlesSameCreatedAt_WithSessionIdTieBreaker()
+    {
+        using var fixture = new StoreFixture();
+        var same = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        var convId = ConversationId.From("conv-tie");
+        var store = fixture.CreateStore();
+
+        await store.SaveAsync(new GatewaySession
+        {
+            SessionId = SessionId.From("s-z"),
+            AgentId = AgentId.From("agent-x"),
+            CreatedAt = same,
+            Session = { ConversationId = convId }
+        });
+        await store.SaveAsync(new GatewaySession
+        {
+            SessionId = SessionId.From("s-a"),
+            AgentId = AgentId.From("agent-x"),
+            CreatedAt = same,
+            Session = { ConversationId = convId }
+        });
+
+        var sessions = await fixture.CreateStore().ListByConversationAsync(convId);
+
+        sessions.Select(s => s.SessionId.Value)
+            .ShouldBe(new[] { "s-a", "s-z" }, ignoreOrder: false);
+    }
+
     private sealed class StoreFixture : IDisposable
     {
         public StoreFixture()

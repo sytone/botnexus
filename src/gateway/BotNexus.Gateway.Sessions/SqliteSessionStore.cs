@@ -223,6 +223,49 @@ public sealed class SqliteSessionStore : SessionStoreBase
         return sessions;
     }
 
+    /// <summary>
+    /// Returns sessions for a single conversation, using the
+    /// <c>idx_sessions_conversation_agent</c> index to avoid loading the
+    /// full session table. Honours the same chronological-ascending /
+    /// SessionId-tiebreaker contract as <see cref="SessionStoreBase.ListByConversationAsync"/>.
+    /// </summary>
+    public override async Task<IReadOnlyList<GatewaySession>> ListByConversationAsync(
+        ConversationId conversationId,
+        AgentId? agentId = null,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id
+            FROM sessions
+            WHERE conversation_id = $conversationId
+              AND ($agentId IS NULL OR agent_id = $agentId)
+            ORDER BY created_at ASC, id ASC
+            """;
+        command.Parameters.AddWithValue("$conversationId", conversationId.Value);
+        command.Parameters.AddWithValue("$agentId", (object?)agentId?.Value ?? DBNull.Value);
+
+        var sessions = new List<GatewaySession>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var sessionId = SessionId.From(reader.GetString(0));
+            var session = _cache.GetValueOrDefault(sessionId)
+                ?? await LoadSessionAsync(connection, sessionId, _redactor, cancellationToken).ConfigureAwait(false);
+            if (session is not null)
+            {
+                _cache[sessionId] = session;
+                sessions.Add(session);
+            }
+        }
+
+        return sessions;
+    }
+
     private async Task EnsureCreatedAsync(CancellationToken cancellationToken)
     {
         if (_initialized) return;
@@ -276,6 +319,13 @@ public sealed class SqliteSessionStore : SessionStoreBase
 
             // Migrate: add tool columns to existing databases
             await MigrateAsync(connection, cancellationToken).ConfigureAwait(false);
+
+            // Conversation-routing index. MUST run AFTER MigrateAsync because legacy
+            // schemas may lack the conversation_id column until migration adds it.
+            await using var convIndexCmd = connection.CreateCommand();
+            convIndexCmd.CommandText =
+                "CREATE INDEX IF NOT EXISTS idx_sessions_conversation_agent ON sessions(conversation_id, agent_id, created_at);";
+            await convIndexCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
             // Migrate: link orphaned sessions to their agent's default conversation
             if (_conversationStore is not null)

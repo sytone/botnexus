@@ -300,6 +300,115 @@ public sealed class FileSessionStoreTests
         reloaded.ShouldNotBeNull();
     }
 
+    // --- ListByConversationAsync: F-7 contract pins (FileSessionStore) ---
+    //
+    // These exercise the SAME 5 invariants as InMemorySessionStoreTests but go through
+    // the on-disk round-trip (which is exactly where F-7 originated). Two-store-reload
+    // pattern proves the invariants survive a process restart.
+
+    private static async Task SeedConversationFixtureAsync(FileSessionStore store, DateTimeOffset baseTime)
+    {
+        var convA = ConversationId.From("conv-a");
+        var convB = ConversationId.From("conv-b");
+
+        await store.SaveAsync(new GatewaySession
+        {
+            SessionId = SessionId.From("s-a-active"),
+            AgentId = AgentId.From("agent-x"),
+            CreatedAt = baseTime.AddMinutes(10),
+            Status = SessionStatus.Active,
+            Session = { ConversationId = convA }
+        });
+        await store.SaveAsync(new GatewaySession
+        {
+            SessionId = SessionId.From("s-a-sealed"),
+            AgentId = AgentId.From("agent-x"),
+            CreatedAt = baseTime,
+            Status = SessionStatus.Sealed,
+            Session = { ConversationId = convA }
+        });
+        await store.SaveAsync(new GatewaySession
+        {
+            SessionId = SessionId.From("s-a-other-agent"),
+            AgentId = AgentId.From("agent-y"),
+            CreatedAt = baseTime.AddMinutes(5),
+            Status = SessionStatus.Active,
+            Session = { ConversationId = convA }
+        });
+        await store.SaveAsync(new GatewaySession
+        {
+            SessionId = SessionId.From("s-b"),
+            AgentId = AgentId.From("agent-x"),
+            CreatedAt = baseTime.AddMinutes(20),
+            Status = SessionStatus.Active,
+            Session = { ConversationId = convB }
+        });
+        await store.SaveAsync(new GatewaySession
+        {
+            SessionId = SessionId.From("s-orphan"),
+            AgentId = AgentId.From("agent-x"),
+            CreatedAt = baseTime.AddMinutes(15),
+            Status = SessionStatus.Active
+        });
+    }
+
+    [Fact]
+    public async Task ListByConversationAsync_AcrossReload_ReturnsActiveAndSealedSessions_InCreatedAtAscOrder()
+    {
+        // Invariants 1+3 combined, on disk: includes Active+Sealed AND chronological order
+        // survives a full second-store reload (the F-7 originating scenario).
+        using var fixture = new StoreFixture();
+        var baseTime = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        await SeedConversationFixtureAsync(fixture.CreateStore(), baseTime);
+
+        var reloadedStore = fixture.CreateStore();
+        var sessions = await reloadedStore.ListByConversationAsync(ConversationId.From("conv-a"));
+
+        sessions.Select(s => s.SessionId.Value)
+            .ShouldBe(new[] { "s-a-sealed", "s-a-other-agent", "s-a-active" }, ignoreOrder: false,
+                customMessage: "FileSessionStore ListByConversationAsync did not return chronological Active+Sealed slice after reload");
+    }
+
+    [Fact]
+    public async Task ListByConversationAsync_AcrossReload_ExcludesOtherConversations_AndOrphans()
+    {
+        using var fixture = new StoreFixture();
+        var baseTime = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        await SeedConversationFixtureAsync(fixture.CreateStore(), baseTime);
+
+        var sessions = await fixture.CreateStore()
+            .ListByConversationAsync(ConversationId.From("conv-a"));
+
+        sessions.Select(s => s.SessionId.Value).ShouldNotContain("s-b");
+        sessions.Select(s => s.SessionId.Value).ShouldNotContain("s-orphan");
+    }
+
+    [Fact]
+    public async Task ListByConversationAsync_ReturnsEmptyList_ForUnknownConversation()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+
+        var sessions = await store.ListByConversationAsync(ConversationId.From("nope"));
+
+        sessions.ShouldNotBeNull();
+        sessions.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ListByConversationAsync_AcrossReload_WithAgentFilter_NarrowsToOwner()
+    {
+        using var fixture = new StoreFixture();
+        var baseTime = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        await SeedConversationFixtureAsync(fixture.CreateStore(), baseTime);
+
+        var sessions = await fixture.CreateStore()
+            .ListByConversationAsync(ConversationId.From("conv-a"), agentId: AgentId.From("agent-x"));
+
+        sessions.Select(s => s.SessionId.Value)
+            .ShouldBe(new[] { "s-a-sealed", "s-a-active" }, ignoreOrder: false);
+    }
+
     [Fact]
     public async Task GetExistenceAsync_ReturnsOwnedAndParticipantSessions_WithFiltersApplied()
     {
