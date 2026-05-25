@@ -6,6 +6,7 @@ using SessionId = BotNexus.Domain.Primitives.SessionId;
 using ChannelKey = BotNexus.Domain.Primitives.ChannelKey;
 using SessionType = BotNexus.Domain.Primitives.SessionType;
 using SessionParticipant = BotNexus.Domain.Primitives.SessionParticipant;
+using ConversationId = BotNexus.Domain.Primitives.ConversationId;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -193,7 +194,8 @@ public sealed class FileSessionStore : SessionStoreBase
             CreatedAt = meta.CreatedAt,
             UpdatedAt = meta.UpdatedAt,
             Status = meta.Status,
-            ExpiresAt = meta.ExpiresAt
+            ExpiresAt = meta.ExpiresAt,
+            ConversationId = meta.ConversationId
         }, _redactor)
         {
             CallerId = meta.CallerId
@@ -242,7 +244,8 @@ public sealed class FileSessionStore : SessionStoreBase
             session.Status,
             session.ExpiresAt,
             session.NextSequenceId,
-            [.. session.GetStreamEventSnapshot()]);
+            [.. session.GetStreamEventSnapshot()],
+            session.Session.ConversationId);
         await SessionMetadataSidecar.WriteAsync(
             _fileSystem,
             metaPath,
@@ -265,5 +268,6 @@ public sealed class FileSessionStore : SessionStoreBase
         SessionStatus Status = SessionStatus.Active,
         DateTimeOffset? ExpiresAt = null,
         long NextSequenceId = 1,
-        List<GatewaySessionStreamEvent>? StreamEvents = null);
+        List<GatewaySessionStreamEvent>? StreamEvents = null,
+        ConversationId? ConversationId = null);
 }

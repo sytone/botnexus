@@ -11,6 +11,48 @@ namespace BotNexus.Gateway.Tests;
 public sealed class FileSessionStoreTests
 {
     [Fact]
+    public async Task SaveAsync_PreservesConversationId_AcrossReload()
+    {
+        // Regression pin (F-7): FileSessionStore historically dropped Session.ConversationId
+        // on round-trip because the SessionMeta sidecar record didn't include the field.
+        // After a server restart with FileSessionStore, every session became orphaned
+        // (ConversationId == null), severing the conversation -> sessions linkage.
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var conversationId = ConversationId.Create();
+
+        var session = await store.GetOrCreateAsync(SessionId.From("s-with-conv"), AgentId.From("agent-a"));
+        session.Session.ConversationId = conversationId;
+        await store.SaveAsync(session);
+
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s-with-conv"));
+
+        reloaded.ShouldNotBeNull();
+        reloaded.Session.ConversationId.ShouldNotBeNull(
+            "FileSessionStore lost ConversationId on round-trip — sessions go orphan on restart (F-7)");
+        reloaded.Session.ConversationId!.Value.ShouldBe(
+            conversationId,
+            "FileSessionStore corrupted ConversationId on round-trip");
+    }
+
+    [Fact]
+    public async Task SaveAsync_PreservesNullConversationId_AcrossReload()
+    {
+        // Companion to the above — a session saved with null ConversationId must
+        // round-trip as null (not as some sentinel string, not as an exception).
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+
+        var session = await store.GetOrCreateAsync(SessionId.From("s-no-conv"), AgentId.From("agent-a"));
+        await store.SaveAsync(session);
+
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s-no-conv"));
+
+        reloaded.ShouldNotBeNull();
+        reloaded.Session.ConversationId.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task GetOrCreateAsync_WithUnknownSession_CreatesAndPersistsSession()
     {
         using var fixture = new StoreFixture();
