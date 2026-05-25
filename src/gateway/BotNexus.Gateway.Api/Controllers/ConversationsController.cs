@@ -279,14 +279,11 @@ public sealed class ConversationsController : ControllerBase
         if (conversation is null)
             return NotFound();
 
-        // Get all sessions belonging to this conversation, ordered by CreatedAt ascending
-        var allSessions = await _sessions.ListAsync(cancellationToken: cancellationToken);
+        // Get all sessions belonging to this conversation, ordered by CreatedAt ascending.
+        // ListByConversationAsync guarantees Active+Sealed inclusion + the ordering contract,
+        // and goes through the indexed Sqlite path -- no full-table scan (F-7).
         var convId = ConversationId.From(conversationId);
-        var linkedSessions = allSessions
-            .Where(s => s.Session.ConversationId.HasValue &&
-                        s.Session.ConversationId.Value == convId)
-            .OrderBy(s => s.CreatedAt)
-            .ToList();
+        var linkedSessions = await _sessions.ListByConversationAsync(convId, cancellationToken: cancellationToken);
 
         // Assemble flat list of history entries with boundary markers between sessions
         var allEntries = new List<ConversationHistoryEntry>();

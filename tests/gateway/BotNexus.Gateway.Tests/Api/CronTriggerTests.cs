@@ -272,8 +272,15 @@ public sealed class CronTriggerTests
             .Setup(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<Conversation> { canonical, duplicate });
         sessionStore
-            .Setup(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.ListByConversationAsync(duplicate.ConversationId, It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<GatewaySession> { legacySession });
+        // After SaveAsync rewrites ConversationId, the canonical lookup should return the
+        // (now-rewritten) session so latestLinked is the legacy session.
+        sessionStore
+            .Setup(s => s.ListByConversationAsync(canonical.ConversationId, It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => legacySession.Session.ConversationId == canonical.ConversationId
+                ? new List<GatewaySession> { legacySession }
+                : new List<GatewaySession>());
 
         var trigger = new CronTrigger(supervisor.Object, conversationStore.Object, sessionStore.Object, NullLogger<CronTrigger>.Instance);
 

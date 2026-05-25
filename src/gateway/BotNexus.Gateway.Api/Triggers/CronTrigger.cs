@@ -222,10 +222,14 @@ public sealed class CronTrigger(
         if (duplicateActive.Count == 0)
             return;
 
-        var agentSessions = await sessions.ListAsync(agentId, ct).ConfigureAwait(false);
+        // Per-duplicate: only fetch sessions in that conversation -- avoids loading the full
+        // agent-scoped session table just to filter it down to one conversation (F-7).
         foreach (var duplicate in duplicateActive)
         {
-            foreach (var session in agentSessions.Where(s => s.Session.ConversationId == duplicate.ConversationId))
+            var duplicateSessions = await sessions
+                .ListByConversationAsync(duplicate.ConversationId, agentId, ct)
+                .ConfigureAwait(false);
+            foreach (var session in duplicateSessions)
             {
                 session.Session.ConversationId = canonical.ConversationId;
                 await sessions.SaveAsync(session, ct).ConfigureAwait(false);
@@ -234,8 +238,13 @@ public sealed class CronTrigger(
             await conversations.ArchiveAsync(duplicate.ConversationId, ct).ConfigureAwait(false);
         }
 
-        var latestLinked = agentSessions
-            .Where(s => s.Session.ConversationId == canonical.ConversationId)
+        // After rewriting, find the newest session linked to canonical to pin ActiveSessionId.
+        // ListByConversationAsync orders ASC by CreatedAt; we want the latest by UpdatedAt
+        // (sessions may have been re-pointed; CreatedAt won't necessarily match recency).
+        var canonicalSessions = await sessions
+            .ListByConversationAsync(canonical.ConversationId, agentId, ct)
+            .ConfigureAwait(false);
+        var latestLinked = canonicalSessions
             .OrderByDescending(s => s.UpdatedAt)
             .FirstOrDefault();
 
