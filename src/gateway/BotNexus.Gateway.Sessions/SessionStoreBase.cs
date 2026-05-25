@@ -52,6 +52,25 @@ public abstract class SessionStoreBase : ISessionStore
             .ToList();
     }
 
+    public virtual async Task<IReadOnlyList<GatewaySession>> ListByConversationAsync(
+        ConversationId conversationId,
+        AgentId? agentId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var sessions = await EnumerateSessionsAsync(cancellationToken).ConfigureAwait(false);
+        IEnumerable<GatewaySession> result = sessions
+            .Where(session => session.Session.ConversationId is not null
+                && session.Session.ConversationId.Value == conversationId);
+        if (agentId is not null)
+        {
+            result = result.Where(session => session.AgentId == agentId);
+        }
+        return result
+            .OrderBy(session => session.CreatedAt)
+            .ThenBy(session => session.SessionId.Value, StringComparer.Ordinal)
+            .ToList();
+    }
+
     public async Task<IReadOnlyList<GatewaySession>> GetExistenceAsync(
         AgentId agentId,
         ExistenceQuery query,
