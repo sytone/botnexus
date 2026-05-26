@@ -41,7 +41,6 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
         typeof(IAgentChangeNotifier),
         typeof(IConversationChangeNotifier),
         typeof(IAgentCanvasNotifier),
-        typeof(IAgentCommunicator),
         typeof(IAgentToolContributor),
         typeof(IActivityBroadcaster),
         typeof(IAgentTool),

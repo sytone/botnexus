@@ -114,7 +114,6 @@ public static class GatewayServiceCollectionExtensions
          services.AddSingleton<ICitizenRegistry, DefaultCitizenRegistry>();
          services.TryAddSingleton<IAgentConfigurationWriter, NoOpAgentConfigurationWriter>();
         services.AddSingleton<IAgentSupervisor, DefaultAgentSupervisor>();
-        services.AddSingleton<IAgentCommunicator, DefaultAgentCommunicator>();
         services.AddSingleton<IAgentExchangeService, AgentExchangeService>();
         services.AddSingleton<CrossWorldInboundAuthService>();
         services.TryAddSingleton<CrossWorldChannelOptions>();

@@ -15,7 +15,6 @@ This is a leaf dependency — it references no other BotNexus packages.
 | Type | Namespace | Description |
 |------|-----------|-------------|
 | `IActivityBroadcaster` | Activity | Publishes and subscribes to real-time gateway activity events via fan-out channels. |
-| `IAgentCommunicator` | Agents | Enables sub-agent (local) and cross-agent (remote, Phase 2) calls between agents. |
 | `IAgentConfigurationSource` | Agents | Loads agent descriptors from external configuration and watches for changes. |
 | `IAgentHandle` | Agents | Interaction surface for a running agent instance — prompt, stream, steer, abort, and follow-up. |
 | `IAgentRegistry` | Agents | Thread-safe registry ("phone book") of static agent descriptors. |
