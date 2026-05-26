@@ -321,11 +321,12 @@ public sealed class SqliteConversationStore : IConversationStore
                     c.created_at,
                     c.updated_at,
                     COUNT(b.binding_id),
-                    c.instructions
+                    c.instructions,
+                    c.kind
                 FROM conversations c
                 LEFT JOIN conversation_bindings b ON b.conversation_id = c.id
                 WHERE c.status = 'Active'
-                GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at, c.instructions
+                GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at, c.instructions, c.kind
                 ORDER BY c.updated_at DESC
                 """
             : """
@@ -340,11 +341,12 @@ public sealed class SqliteConversationStore : IConversationStore
                     c.created_at,
                     c.updated_at,
                     COUNT(b.binding_id),
-                    c.instructions
+                    c.instructions,
+                    c.kind
                 FROM conversations c
                 LEFT JOIN conversation_bindings b ON b.conversation_id = c.id
                 WHERE c.agent_id = $agentId AND c.status = 'Active'
-                GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at, c.instructions
+                GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at, c.instructions, c.kind
                 ORDER BY c.updated_at DESC
                 """;
         if (agentId is not null)
@@ -364,7 +366,10 @@ public sealed class SqliteConversationStore : IConversationStore
                 checked((int)reader.GetInt64(9)),
                 ParseTimestamp(reader.GetString(7)),
                 ParseTimestamp(reader.GetString(8)),
-                reader.IsDBNull(3) ? null : reader.GetString(3)));
+                reader.IsDBNull(3) ? null : reader.GetString(3),
+                reader.FieldCount > 11 && !reader.IsDBNull(11)
+                    ? reader.GetString(11)
+                    : ConversationKind.HumanAgent.ToString()));
         }
 
         return summaries;
@@ -427,6 +432,7 @@ public sealed class SqliteConversationStore : IConversationStore
             await EnsureInstructionsColumnAsync(connection, ct).ConfigureAwait(false);
             await EnsureCanvasHtmlColumnAsync(connection, ct).ConfigureAwait(false);
             await EnsureInitiatorColumnAsync(connection, ct).ConfigureAwait(false);
+            await EnsureKindColumnAsync(connection, ct).ConfigureAwait(false);
             await MigrateThreadIdIntoChannelAddressAsync(connection, ct).ConfigureAwait(false);
 
             // One-time migration: archive stale signalr:connection-id conversations created
@@ -566,6 +572,35 @@ public sealed class SqliteConversationStore : IConversationStore
         await indexCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 
+    // Adds the `kind` column to existing databases for the Phase 4 / F-3 discriminator.
+    // Pre-Phase-4 rows have NULL here; the loader maps NULL to ConversationKind.HumanAgent
+    // (the historical default), so back-compat is preserved automatically.
+    private static async Task EnsureKindColumnAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        await using var tableInfoCommand = connection.CreateCommand();
+        tableInfoCommand.CommandText = "PRAGMA table_info(conversations);";
+
+        var hasColumn = false;
+        await using (var reader = await tableInfoCommand.ExecuteReaderAsync(ct).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                if (string.Equals(reader.GetString(1), "kind", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasColumn = true;
+                    break;
+                }
+            }
+        }
+
+        if (!hasColumn)
+        {
+            await using var alterCommand = connection.CreateCommand();
+            alterCommand.CommandText = "ALTER TABLE conversations ADD COLUMN kind TEXT;";
+            await alterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+    }
+
     // Migrates legacy conversation_bindings rows with a thread_id column into the composite
     // channel_address scheme adopted in PR #512 (refactor: drop ThreadId from core contracts).
     // Idempotent: if the thread_id column has already been dropped, the method is a no-op.
@@ -696,7 +731,7 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator
+            SELECT id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind
             FROM conversations
             WHERE id = $id
             """;
@@ -719,7 +754,8 @@ public sealed class SqliteConversationStore : IConversationStore
             UpdatedAt = ParseTimestamp(reader.GetString(9)),
             Instructions = reader.IsDBNull(10) ? null : reader.GetString(10),
             CanvasHtml = reader.FieldCount > 11 && !reader.IsDBNull(11) ? reader.GetString(11) : null,
-            Initiator = reader.FieldCount > 12 ? DeserializeInitiator(reader.IsDBNull(12) ? null : reader.GetString(12)) : null
+            Initiator = reader.FieldCount > 12 ? DeserializeInitiator(reader.IsDBNull(12) ? null : reader.GetString(12)) : null,
+            Kind = reader.FieldCount > 13 ? ParseConversationKind(reader.IsDBNull(13) ? null : reader.GetString(13)) : ConversationKind.HumanAgent
         };
         if (!reader.IsDBNull(6))
             conversation.ActiveSessionId = SessionId.From(reader.GetString(6));
@@ -783,11 +819,12 @@ public sealed class SqliteConversationStore : IConversationStore
                     updated_at = excluded.updated_at,
                     instructions = excluded.instructions,
                     canvas_html = excluded.canvas_html,
-                    initiator = excluded.initiator
+                    initiator = excluded.initiator,
+                    kind = excluded.kind
                 """
             : """
-                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator)
-                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator)
+                INSERT INTO conversations (id, agent_id, title, purpose, is_default, status, active_session_id, metadata, created_at, updated_at, instructions, canvas_html, initiator, kind)
+                VALUES ($id, $agentId, $title, $purpose, $isDefault, $status, $activeSessionId, $metadata, $createdAt, $updatedAt, $instructions, $canvasHtml, $initiator, $kind)
                 """;
         conversationCommand.Parameters.AddWithValue("$id", conversation.ConversationId.Value);
         conversationCommand.Parameters.AddWithValue("$agentId", conversation.AgentId.Value);
@@ -802,6 +839,7 @@ public sealed class SqliteConversationStore : IConversationStore
         conversationCommand.Parameters.AddWithValue("$instructions", conversation.Instructions is null ? (object)DBNull.Value : conversation.Instructions);
         conversationCommand.Parameters.AddWithValue("$canvasHtml", conversation.CanvasHtml is null ? (object)DBNull.Value : conversation.CanvasHtml);
         conversationCommand.Parameters.AddWithValue("$initiator", (object?)SerializeInitiator(conversation.Initiator) ?? DBNull.Value);
+        conversationCommand.Parameters.AddWithValue("$kind", conversation.Kind.ToString());
         await conversationCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
         await using var deleteBindingsCommand = connection.CreateCommand();
@@ -846,6 +884,11 @@ public sealed class SqliteConversationStore : IConversationStore
             ? parsed
             : ConversationStatus.Active;
 
+    private static ConversationKind ParseConversationKind(string? value)
+        => Enum.TryParse<ConversationKind>(value, ignoreCase: true, out var parsed)
+            ? parsed
+            : ConversationKind.HumanAgent;
+
     private static BindingMode ParseBindingMode(string? value)
         => Enum.TryParse<BindingMode>(value, ignoreCase: true, out var parsed)
             ? parsed
@@ -874,6 +917,7 @@ public sealed class SqliteConversationStore : IConversationStore
             Instructions = conversation.Instructions,
             CanvasHtml = conversation.CanvasHtml,
             Initiator = conversation.Initiator,
+            Kind = conversation.Kind,
             IsDefault = conversation.IsDefault,
             Status = conversation.Status,
             CreatedAt = conversation.CreatedAt,

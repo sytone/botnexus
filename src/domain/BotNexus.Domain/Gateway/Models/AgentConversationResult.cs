@@ -10,6 +10,14 @@ public sealed record AgentExchangeResult
     /// <summary>Conversation session identifier.</summary>
     public required SessionId SessionId { get; init; }
 
+    /// <summary>
+    /// Identifier of the <see cref="Conversation"/> the exchange created (one new conversation
+    /// per <c>ConverseAsync</c> call — agent-to-agent exchanges are one-shot bounded loops).
+    /// Callers can use this to retrieve the persisted transcript via
+    /// <c>IConversationStore.GetAsync</c> or <c>ISessionStore.ListByConversationAsync</c>.
+    /// </summary>
+    public required ConversationId ConversationId { get; init; }
+
     /// <summary>Final conversation status.</summary>
     public required string Status { get; init; }
 

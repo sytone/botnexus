@@ -9,6 +9,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -38,6 +39,7 @@ public sealed class AgentExchangeServiceTests
             registry.Object,
             supervisor.Object,
             sessionStore,
+            new InMemoryConversationStore(),
             Options.Create(new GatewayOptions()),
             NullLogger<AgentExchangeService>.Instance);
 
@@ -77,6 +79,7 @@ public sealed class AgentExchangeServiceTests
             registry.Object,
             Mock.Of<IAgentSupervisor>(),
             new InMemorySessionStore(),
+            new InMemoryConversationStore(),
             Options.Create(new GatewayOptions()),
             NullLogger<AgentExchangeService>.Instance);
 
@@ -100,6 +103,7 @@ public sealed class AgentExchangeServiceTests
             registry.Object,
             Mock.Of<IAgentSupervisor>(),
             new InMemorySessionStore(),
+            new InMemoryConversationStore(),
             Options.Create(new GatewayOptions { AgentConversationMaxDepth = 4 }),
             NullLogger<AgentExchangeService>.Instance);
 
@@ -125,6 +129,7 @@ public sealed class AgentExchangeServiceTests
             registry.Object,
             Mock.Of<IAgentSupervisor>(),
             new InMemorySessionStore(),
+            new InMemoryConversationStore(),
             Options.Create(new GatewayOptions { AgentConversationMaxDepth = 2 }),
             NullLogger<AgentExchangeService>.Instance);
 
@@ -172,6 +177,7 @@ public sealed class AgentExchangeServiceTests
             registry.Object,
             Mock.Of<IAgentSupervisor>(),
             sessionStore,
+            new InMemoryConversationStore(),
             Options.Create(new GatewayOptions()),
             NullLogger<AgentExchangeService>.Instance,
             Options.Create(new PlatformConfig
@@ -239,6 +245,7 @@ public sealed class AgentExchangeServiceTests
             registry.Object,
             Mock.Of<IAgentSupervisor>(),
             new InMemorySessionStore(),
+            new InMemoryConversationStore(),
             Options.Create(new GatewayOptions()),
             NullLogger<AgentExchangeService>.Instance,
             Options.Create(new PlatformConfig
@@ -313,6 +320,7 @@ public sealed class AgentExchangeServiceTests
             registry.Object,
             supervisor.Object,
             sessionStore,
+            new InMemoryConversationStore(),
             Options.Create(new GatewayOptions()),
             NullLogger<AgentExchangeService>.Instance);
 
@@ -349,6 +357,7 @@ public sealed class AgentExchangeServiceTests
             registry.Object,
             supervisor.Object,
             sessionStore,
+            new InMemoryConversationStore(),
             Options.Create(new GatewayOptions()),
             NullLogger<AgentExchangeService>.Instance);
 
@@ -383,6 +392,7 @@ public sealed class AgentExchangeServiceTests
             registry.Object,
             supervisor.Object,
             new InMemorySessionStore(),
+            new InMemoryConversationStore(),
             Options.Create(new GatewayOptions()),
             NullLogger<AgentExchangeService>.Instance);
 
@@ -417,6 +427,7 @@ public sealed class AgentExchangeServiceTests
             registry.Object,
             supervisor.Object,
             new InMemorySessionStore(),
+            new InMemoryConversationStore(),
             Options.Create(new GatewayOptions()),
             NullLogger<AgentExchangeService>.Instance);
 
@@ -452,6 +463,7 @@ public sealed class AgentExchangeServiceTests
             registry.Object,
             supervisor.Object,
             new InMemorySessionStore(),
+            new InMemoryConversationStore(),
             Options.Create(new GatewayOptions()),
             NullLogger<AgentExchangeService>.Instance);
 
@@ -503,6 +515,7 @@ public sealed class AgentExchangeServiceTests
             registry.Object,
             supervisor.Object,
             sessionStore,
+            new InMemoryConversationStore(),
             Options.Create(new GatewayOptions()),
             NullLogger<AgentExchangeService>.Instance);
 
@@ -558,6 +571,7 @@ public sealed class AgentExchangeServiceTests
             registry.Object,
             supervisor.Object,
             sessionStore,
+            new InMemoryConversationStore(),
             Options.Create(new GatewayOptions()),
             NullLogger<AgentExchangeService>.Instance);
 
@@ -600,6 +614,7 @@ public sealed class AgentExchangeServiceTests
             registry.Object,
             Mock.Of<IAgentSupervisor>(),
             new InMemorySessionStore(),
+            new InMemoryConversationStore(),
             Options.Create(new GatewayOptions()),
             NullLogger<AgentExchangeService>.Instance);
 
@@ -632,6 +647,7 @@ public sealed class AgentExchangeServiceTests
             registry.Object,
             supervisor.Object,
             sessionStore,
+            new InMemoryConversationStore(),
             Options.Create(new GatewayOptions()),
             NullLogger<AgentExchangeService>.Instance);
 

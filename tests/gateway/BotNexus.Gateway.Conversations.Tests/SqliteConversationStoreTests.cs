@@ -356,6 +356,43 @@ public sealed class SqliteConversationStoreTests
     }
 
     [Fact]
+    public async Task Kind_RoundTrips_AllValues_AcrossProcessRestart()
+    {
+        // Regression: Conversation.Kind was added for Phase 4 / F-3 but the original SqliteConversationStore
+        // did not include it in the INSERT/SELECT SQL or in CloneConversation. Every kind was silently
+        // demoted to HumanAgent on the first cache hit and again on every restart. This pin catches a
+        // regression of either path: an in-process GetAsync (clone), and a fresh-store reload (SQL).
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+
+        var human = CreateConversation(Agent("agent-a"), "human");
+        human.Kind = ConversationKind.HumanAgent;
+        var agentAgent = CreateConversation(Agent("agent-b"), "agent-agent");
+        agentAgent.Kind = ConversationKind.AgentAgent;
+        var subAgent = CreateConversation(Agent("agent-c"), "sub-agent");
+        subAgent.Kind = ConversationKind.AgentSubAgent;
+
+        await store.CreateAsync(human);
+        await store.CreateAsync(agentAgent);
+        await store.CreateAsync(subAgent);
+
+        // In-process: validates CloneConversation copies Kind through the cache.
+        (await store.GetAsync(human.ConversationId))!.Kind.ShouldBe(ConversationKind.HumanAgent);
+        (await store.GetAsync(agentAgent.ConversationId))!.Kind.ShouldBe(ConversationKind.AgentAgent,
+            customMessage: "CloneConversation must copy Kind. If it returns HumanAgent here, the discriminator " +
+                "is lost on every in-process GetAsync after the first.");
+        (await store.GetAsync(subAgent.ConversationId))!.Kind.ShouldBe(ConversationKind.AgentSubAgent);
+
+        // Fresh store: validates the SQL writes and reads back through LoadConversationAsync.
+        var fresh = fixture.CreateStore();
+        (await fresh.GetAsync(human.ConversationId))!.Kind.ShouldBe(ConversationKind.HumanAgent);
+        (await fresh.GetAsync(agentAgent.ConversationId))!.Kind.ShouldBe(ConversationKind.AgentAgent,
+            customMessage: "SQLite schema must store Kind. If it returns HumanAgent here, the discriminator is " +
+                "lost on every gateway restart -- Phase 4 / F-3 contract is broken in production.");
+        (await fresh.GetAsync(subAgent.ConversationId))!.Kind.ShouldBe(ConversationKind.AgentSubAgent);
+    }
+
+    [Fact]
     public async Task ListForCitizenAsync_Throws_OnInvalidCitizen()
     {
         using var fixture = new StoreFixture();

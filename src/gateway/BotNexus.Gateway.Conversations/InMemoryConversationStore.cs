@@ -120,5 +120,6 @@ public sealed class InMemoryConversationStore : IConversationStore
             c.ChannelBindings.Count,
             c.CreatedAt,
             c.UpdatedAt,
-            c.Purpose);
+            c.Purpose,
+            c.Kind.ToString());
 }

@@ -13,7 +13,8 @@ public sealed record ConversationSummaryDto(
     [property: JsonPropertyName("activeSessionId")] string? ActiveSessionId,
     [property: JsonPropertyName("bindingCount")] int BindingCount,
     [property: JsonPropertyName("createdAt")] DateTimeOffset CreatedAt,
-    [property: JsonPropertyName("updatedAt")] DateTimeOffset UpdatedAt);
+    [property: JsonPropertyName("updatedAt")] DateTimeOffset UpdatedAt,
+    [property: JsonPropertyName("kind")] string Kind = "HumanAgent");
 
 public sealed record CreateConversationRequestDto(
     [property: JsonPropertyName("agentId")] string AgentId,
