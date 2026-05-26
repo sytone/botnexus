@@ -53,4 +53,25 @@ public sealed record CrossWorldRelayResponse
     /// Gets or sets the session id.
     /// </summary>
     public required string SessionId { get; init; }
+
+    /// <summary>
+    /// Whether the target agent invoked the <c>finish_agent_exchange</c> tool to signal
+    /// completion of the exchange (Phase 8 / F-11). When <c>true</c>, the sender should
+    /// stop iterating and return control to the initiating agent. Defaults to <c>false</c>
+    /// so older receiver builds without this flag continue to drive turns until
+    /// <c>MaxTurns</c> is reached.
+    /// </summary>
+    public bool ExchangeFinished { get; init; }
+
+    /// <summary>
+    /// Optional <c>reason</c> argument the target agent supplied to <c>finish_agent_exchange</c>.
+    /// Present only when <see cref="ExchangeFinished"/> is <c>true</c>.
+    /// </summary>
+    public string? FinishReason { get; init; }
+
+    /// <summary>
+    /// Optional <c>summary</c> argument the target agent supplied to <c>finish_agent_exchange</c>.
+    /// Present only when <see cref="ExchangeFinished"/> is <c>true</c>.
+    /// </summary>
+    public string? FinishSummary { get; init; }
 }

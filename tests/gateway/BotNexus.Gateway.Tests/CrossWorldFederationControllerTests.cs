@@ -693,6 +693,211 @@ public sealed class CrossWorldFederationControllerTests
     private static System.Text.Json.JsonElement JsonElementString(string value)
         => System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(value)).RootElement.Clone();
 
+    // ── Phase 8 (F-11) propagation pins ─────────────────────────────────────────────────
+    //
+    // The receiver owns finish-tool detection because the target agent runs in the receiver
+    // process. The sender's AgentExchangeService.ConverseCrossWorldAsync loop reads
+    // CrossWorldRelayResponse.ExchangeFinished (NOT substring match on Response) to decide
+    // whether to terminate. These tests pin the receiver's stamping contract.
+
+    [Fact]
+    public async Task RelayAsync_TargetInvokesFinishTool_PropagatesExchangeFinishedAndReason()
+    {
+        var (controller, sessions, _, _) = BuildControllerWithToolCalledFinish(
+            replyContent: "Done.",
+            finishReason: "objective met",
+            finishSummary: "All requested files reviewed.");
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var response = await controller.RelayAsync(BuildRequest(), CancellationToken.None);
+
+        var ok = response.Result.ShouldBeOfType<OkObjectResult>();
+        var payload = ok.Value.ShouldBeOfType<CrossWorldRelayResponse>();
+        payload.ExchangeFinished.ShouldBeTrue(
+            "Receiver must stamp ExchangeFinished=true when the target agent invokes " +
+            "finish_agent_exchange successfully. Otherwise the sender loops to MaxTurns.");
+        payload.FinishReason.ShouldBe("objective met");
+        payload.FinishSummary.ShouldBe("All requested files reviewed.");
+        // MEDIUM-3 (bug-hunt PR #553): on a successful finish the receiver must seal the
+        // session AND surface a non-"active" wire status so the sender's loop sees the
+        // closed state and ResolveSessionAsync rejects any reuse attempt.
+        payload.Status.ShouldBe("sealed");
+
+        // Reload the persisted session to confirm seal.
+        var stored = await sessions.GetAsync(SessionId.From(payload.SessionId), CancellationToken.None);
+        stored.ShouldNotBeNull();
+        stored!.Status.ShouldBe(GatewaySessionStatus.Sealed,
+            "After ExchangeFinished=true the receiver session MUST be Sealed so any " +
+            "follow-up RemoteSessionId reuse hits the 409 sealed-session guard.");
+    }
+
+    [Fact]
+    public async Task RelayAsync_ResponseContainsObjectiveMetButNoToolCall_DoesNotPropagateExchangeFinished()
+    {
+        // F-11 XPIA regression: a target agent (or a malicious upstream RAG hit) that emits
+        // "OBJECTIVE MET" as plain text — without invoking the finish tool — must NOT cause
+        // the receiver to stamp ExchangeFinished=true. The sender would otherwise be misled
+        // into terminating early.
+        var (controller, _, _, _) = BuildController(replyContent: "All done. OBJECTIVE MET.");
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var response = await controller.RelayAsync(BuildRequest(), CancellationToken.None);
+
+        var ok = response.Result.ShouldBeOfType<OkObjectResult>();
+        var payload = ok.Value.ShouldBeOfType<CrossWorldRelayResponse>();
+        payload.ExchangeFinished.ShouldBeFalse();
+        payload.FinishReason.ShouldBeNull();
+        payload.FinishSummary.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task RelayAsync_FinishToolReportedWithIsError_DoesNotPropagateExchangeFinished()
+    {
+        // Defence in depth on the receiver side: even if the model surfaces a finish tool call,
+        // an IsError=true result means the tool refused (e.g. no active exchange id, validation
+        // failure). The receiver must NOT honour a failed call as a successful completion.
+        var (controller, _, _, _) = BuildControllerCustom(makeResponse: _ => new AgentResponse
+        {
+            Content = "I tried to finish but the tool errored.",
+            ToolCalls = [new AgentToolCallInfo("call-1", "finish_agent_exchange", IsError: true)]
+        });
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var response = await controller.RelayAsync(BuildRequest(), CancellationToken.None);
+
+        var ok = response.Result.ShouldBeOfType<OkObjectResult>();
+        var payload = ok.Value.ShouldBeOfType<CrossWorldRelayResponse>();
+        payload.ExchangeFinished.ShouldBeFalse(
+            "An IsError=true finish_agent_exchange call must not be honoured — the tool " +
+            "refused (e.g. guard rejection). Honouring it would let a tool execution failure " +
+            "accidentally terminate the cross-world exchange.");
+    }
+
+    [Fact]
+    public async Task RelayAsync_FinishToolReportedWithIsErrorAndMatchingPayload_DoesNotPropagate_MutationGuard()
+    {
+        // Mutation guard (bug-hunt PR #553 missing-test #4): the receiver gate is "tool-call AND
+        // payload-id-match AND not-IsError". A naive implementation that only checks
+        // "payload-id-match" (dropping the IsError check) would accept this scenario — a tool call
+        // is reported with IsError=true, but the matching payload IS written. Without the AND-
+        // IsError check this would falsely terminate the exchange. Pin both checks.
+        var (controller, sessions, _, _) = BuildControllerWithFinishWritePlusFlags(
+            replyContent: "wrote payload but tool errored",
+            finishReason: "should not be honoured",
+            finishSummary: null,
+            isError: true);
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var response = await controller.RelayAsync(BuildRequest(), CancellationToken.None);
+
+        var ok = response.Result.ShouldBeOfType<OkObjectResult>();
+        var payload = ok.Value.ShouldBeOfType<CrossWorldRelayResponse>();
+        payload.ExchangeFinished.ShouldBeFalse(
+            "IsError=true MUST short-circuit even when a payload matching the active id has " +
+            "been persisted. The two gates are AND, not OR.");
+        payload.FinishReason.ShouldBeNull();
+        payload.Status.ShouldBe("active",
+            "Session must NOT be sealed when the finish call errored — the sender may retry.");
+
+        var stored = await sessions.GetAsync(SessionId.From(payload.SessionId), CancellationToken.None);
+        stored.ShouldNotBeNull();
+        stored!.Status.ShouldBe(GatewaySessionStatus.Active);
+    }
+
+    [Fact]
+    public async Task RelayAsync_FinishToolReportedWithMismatchedExchangeIdInPayload_DoesNotPropagate_MutationGuard()
+    {
+        // Mutation guard (bug-hunt PR #553 missing-test #2): if the equality check on
+        // finishedAgentExchangeId were mutated to "any non-null value" or "Contains", a malicious
+        // (or buggy) target that wrote a payload for a DIFFERENT exchange id would still
+        // trigger completion. Force the agent to write a payload with the WRONG id and assert
+        // the receiver rejects it.
+        var sessions = new InMemorySessionStore();
+        var conversations = new InMemoryConversationStore();
+
+        var handle = new Mock<IAgentHandle>();
+        SessionId? capturedSessionId = null;
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                if (capturedSessionId is { } sid)
+                {
+                    var s = sessions.GetAsync(sid, CancellationToken.None).GetAwaiter().GetResult();
+                    if (s is not null)
+                    {
+                        // Deliberately write a finishedAgentExchangeId that does NOT match the
+                        // activeAgentExchangeId — simulates a confused/malicious tool writing a
+                        // payload from an unrelated exchange (or a previous turn's id).
+                        s.Metadata["finishedAgentExchangeId"] = "an-unrelated-exchange-id";
+                        s.Metadata["finishedAgentExchangeReason"] = "should not be honoured";
+                        sessions.SaveAsync(s, CancellationToken.None).GetAwaiter().GetResult();
+                    }
+                }
+                return new AgentResponse
+                {
+                    Content = "Tool wrote a wrong-id payload.",
+                    ToolCalls = [new AgentToolCallInfo("call-1", "finish_agent_exchange", IsError: false)]
+                };
+            });
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor
+            .Setup(s => s.GetOrCreateAsync(AgentId.From(TargetAgentId), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .Callback<AgentId, SessionId, CancellationToken>((_, sid, _) => capturedSessionId = sid)
+            .ReturnsAsync(handle.Object);
+
+        var controller = BuildControllerCore(sessions, conversations, supervisor.Object);
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var response = await controller.RelayAsync(BuildRequest(), CancellationToken.None);
+
+        var ok = response.Result.ShouldBeOfType<OkObjectResult>();
+        var payload = ok.Value.ShouldBeOfType<CrossWorldRelayResponse>();
+        payload.ExchangeFinished.ShouldBeFalse(
+            "Receiver MUST require strict equality between activeAgentExchangeId and the " +
+            "persisted finishedAgentExchangeId. Any other id (stale, unrelated, attacker-supplied) " +
+            "must NOT satisfy the gate.");
+        payload.Status.ShouldBe("active");
+    }
+
+    [Fact]
+    public async Task RelayAsync_SecondCallReusingSessionAfterExchangeFinished_Returns409()
+    {
+        // State-machine closure (bug-hunt PR #553 missing-test #5): the FIRST relay completes
+        // successfully via finish_agent_exchange. The receiver must seal the session so a
+        // SECOND relay reusing the same RemoteSessionId is rejected with 409 — preventing the
+        // sender from continuing an exchange the target explicitly closed.
+        var (controller, sessions, _, _) = BuildControllerWithToolCalledFinish(
+            replyContent: "Done.",
+            finishReason: "task complete",
+            finishSummary: "Wrapped up.");
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        // First call — terminates with ExchangeFinished=true and seals the session.
+        var first = await controller.RelayAsync(BuildRequest(), CancellationToken.None);
+        var firstOk = first.Result.ShouldBeOfType<OkObjectResult>();
+        var firstPayload = firstOk.Value.ShouldBeOfType<CrossWorldRelayResponse>();
+        firstPayload.ExchangeFinished.ShouldBeTrue();
+
+        var sealedSessionId = firstPayload.SessionId;
+        var stored = await sessions.GetAsync(SessionId.From(sealedSessionId), CancellationToken.None);
+        stored.ShouldNotBeNull();
+        stored!.Status.ShouldBe(GatewaySessionStatus.Sealed,
+            "PRECONDITION: first relay must have sealed the session.");
+
+        // Second call — same RemoteSessionId. Receiver must refuse reuse.
+        var secondRequest = BuildRequest(remoteSessionId: sealedSessionId);
+        var second = await controller.RelayAsync(secondRequest, CancellationToken.None);
+        var conflict = second.Result.ShouldBeOfType<ConflictObjectResult>(
+            "After a target explicitly invokes finish_agent_exchange the receiver session is " +
+            "Sealed. A sender that supplies the now-sealed RemoteSessionId on a follow-up turn " +
+            "must hit the existing ResolveSessionAsync sealed-session 409 guard, NOT silently " +
+            "reactivate the terminated exchange.");
+
+        // Status code should be 409 Conflict, not 200 OK.
+        conflict.StatusCode.ShouldBe(StatusCodes.Status409Conflict);
+    }
+
     // ---- helpers ----
 
     private static (CrossWorldFederationController Controller, InMemorySessionStore Sessions,
@@ -705,6 +910,129 @@ public sealed class CrossWorldFederationControllerTests
         var handle = new Mock<IAgentHandle>();
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = replyContent });
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(AgentId.From(TargetAgentId), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var controller = BuildControllerCore(sessions, conversations, supervisor.Object);
+        return (controller, sessions, conversations, supervisor);
+    }
+
+    /// <summary>
+    /// Builds a controller whose target agent simulates a successful <c>finish_agent_exchange</c>
+    /// tool call: the agent surfaces the tool-call entry AND writes the matching exchange-id
+    /// payload to <see cref="GatewaySession.Metadata"/> (mirroring what the real tool does
+    /// against the shared session store).
+    /// </summary>
+    private static (CrossWorldFederationController Controller, InMemorySessionStore Sessions,
+        InMemoryConversationStore Conversations, Mock<IAgentSupervisor> Supervisor)
+        BuildControllerWithToolCalledFinish(string replyContent, string finishReason, string? finishSummary)
+    {
+        var sessions = new InMemorySessionStore();
+        var conversations = new InMemoryConversationStore();
+
+        var handle = new Mock<IAgentHandle>();
+        SessionId? capturedSessionId = null;
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                if (capturedSessionId is { } sid)
+                {
+                    var s = sessions.GetAsync(sid, CancellationToken.None).GetAwaiter().GetResult();
+                    if (s is not null
+                        && s.Metadata.TryGetValue("activeAgentExchangeId", out var v)
+                        && v is string activeId)
+                    {
+                        s.Metadata["finishedAgentExchangeId"] = activeId;
+                        s.Metadata["finishedAgentExchangeReason"] = finishReason;
+                        if (!string.IsNullOrEmpty(finishSummary))
+                            s.Metadata["finishedAgentExchangeSummary"] = finishSummary;
+                        sessions.SaveAsync(s, CancellationToken.None).GetAwaiter().GetResult();
+                    }
+                }
+                return new AgentResponse
+                {
+                    Content = replyContent,
+                    ToolCalls = [new AgentToolCallInfo("call-1", "finish_agent_exchange", IsError: false)]
+                };
+            });
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor
+            .Setup(s => s.GetOrCreateAsync(AgentId.From(TargetAgentId), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .Callback<AgentId, SessionId, CancellationToken>((_, sid, _) => capturedSessionId = sid)
+            .ReturnsAsync(handle.Object);
+
+        var controller = BuildControllerCore(sessions, conversations, supervisor.Object);
+        return (controller, sessions, conversations, supervisor);
+    }
+
+    /// <summary>
+    /// Builds a controller whose target agent writes the matching finish payload AND surfaces a
+    /// finish_agent_exchange tool-call entry with the supplied <paramref name="isError"/> flag.
+    /// Used by mutation-guard tests that pin "tool-call AND payload AND not-IsError" as an AND,
+    /// not OR — proves an IsError=true cannot be honoured even when the payload matches.
+    /// </summary>
+    private static (CrossWorldFederationController Controller, InMemorySessionStore Sessions,
+        InMemoryConversationStore Conversations, Mock<IAgentSupervisor> Supervisor)
+        BuildControllerWithFinishWritePlusFlags(
+            string replyContent, string finishReason, string? finishSummary, bool isError)
+    {
+        var sessions = new InMemorySessionStore();
+        var conversations = new InMemoryConversationStore();
+
+        var handle = new Mock<IAgentHandle>();
+        SessionId? capturedSessionId = null;
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                if (capturedSessionId is { } sid)
+                {
+                    var s = sessions.GetAsync(sid, CancellationToken.None).GetAwaiter().GetResult();
+                    if (s is not null
+                        && s.Metadata.TryGetValue("activeAgentExchangeId", out var v)
+                        && v is string activeId)
+                    {
+                        s.Metadata["finishedAgentExchangeId"] = activeId;
+                        s.Metadata["finishedAgentExchangeReason"] = finishReason;
+                        if (!string.IsNullOrEmpty(finishSummary))
+                            s.Metadata["finishedAgentExchangeSummary"] = finishSummary;
+                        sessions.SaveAsync(s, CancellationToken.None).GetAwaiter().GetResult();
+                    }
+                }
+                return new AgentResponse
+                {
+                    Content = replyContent,
+                    ToolCalls = [new AgentToolCallInfo("call-1", "finish_agent_exchange", IsError: isError)]
+                };
+            });
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor
+            .Setup(s => s.GetOrCreateAsync(AgentId.From(TargetAgentId), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .Callback<AgentId, SessionId, CancellationToken>((_, sid, _) => capturedSessionId = sid)
+            .ReturnsAsync(handle.Object);
+
+        var controller = BuildControllerCore(sessions, conversations, supervisor.Object);
+        return (controller, sessions, conversations, supervisor);
+    }
+
+    /// <summary>
+    /// Builds a controller whose target agent returns whatever response the test provides,
+    /// including ToolCalls. Use this when the test needs to verify the receiver's reaction
+    /// to specific tool-call shapes (e.g. IsError=true, missing payload).
+    /// </summary>
+    private static (CrossWorldFederationController Controller, InMemorySessionStore Sessions,
+        InMemoryConversationStore Conversations, Mock<IAgentSupervisor> Supervisor)
+        BuildControllerCustom(Func<string, AgentResponse> makeResponse)
+    {
+        var sessions = new InMemorySessionStore();
+        var conversations = new InMemoryConversationStore();
+
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string prompt, CancellationToken _) => makeResponse(prompt));
 
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.GetOrCreateAsync(AgentId.From(TargetAgentId), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))

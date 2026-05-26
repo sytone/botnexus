@@ -249,6 +249,19 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 tools.Add(new AgentConverseTool(conversationService, sessionStore, descriptor.AgentId, context.SessionId));
         }
 
+        // Phase 8 (F-11): register finish_agent_exchange when this is an agent-to-agent session.
+        // Bypasses effectiveToolIds because this is a system control tool, not an agent-configured
+        // capability — without it the substring-based completion heuristic that issue #379 patched
+        // around would have nothing to replace it.
+        if (sessionStore is not null)
+        {
+            var sessionForFinishTool = await sessionStore.GetAsync(context.SessionId, cancellationToken).ConfigureAwait(false);
+            if (sessionForFinishTool is not null && sessionForFinishTool.SessionType == SessionType.AgentAgent)
+            {
+                tools.Add(new FinishAgentExchangeTool(sessionStore, context.SessionId));
+            }
+        }
+
         var agentRegistry = _serviceProvider.GetService<IAgentRegistry>();
         if (agentRegistry is not null)
         {

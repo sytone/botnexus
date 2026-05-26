@@ -4,8 +4,10 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Federation;
+using BotNexus.Gateway.Tools;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -115,6 +117,14 @@ public sealed class CrossWorldFederationController(
 
         try
         {
+            // Phase 8 (F-11) cross-world receiver: pin a fresh active-exchange id and clear stale
+            // finish payload BEFORE invoking the agent so a previous turn's payload cannot satisfy
+            // the equality gate in this turn. The receiver is single-prompt (no loop) but receivers
+            // can reuse a session across many sender turns, so the per-call clear is mandatory.
+            var exchangeId = Guid.NewGuid().ToString("N");
+            AgentExchangeCompletionGate.PrepareTurn(session.Metadata, exchangeId);
+            await sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
+
             var handle = await supervisor.GetOrCreateAsync(targetAgentId, sessionId, cancellationToken).ConfigureAwait(false);
             var response = await handle.PromptAsync(request.Message, cancellationToken).ConfigureAwait(false);
             session.AddEntry(new SessionEntry
@@ -122,18 +132,62 @@ public sealed class CrossWorldFederationController(
                 Role = MessageRole.Assistant,
                 Content = response.Content ?? string.Empty
             });
+
+            // Reload the session — the FinishAgentExchangeTool (if invoked by the target agent
+            // during the turn) writes its payload through its own ISessionStore handle, so the
+            // in-memory copy here may be stale.
+            var refreshed = await sessionStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false)
+                ?? session;
+
+            // Same authoritative gate the sender uses (AgentExchangeCompletionGate) so both
+            // call sites share one implementation — see plan-vs-impl critique NB-2 / bug-hunt
+            // missing-test #2 on PR #553.
+            var exchangeFinished = AgentExchangeCompletionGate.TryConsume(
+                response,
+                refreshed.Metadata,
+                exchangeId,
+                out var finishReason,
+                out var finishSummary);
+
+            // Clear the active-exchange id regardless of outcome so a follow-up turn for the same
+            // session starts from a clean slate.
+            session.Metadata.Remove(FinishAgentExchangeTool.ActiveExchangeIdKey);
+            if (exchangeFinished)
+            {
+                // Echo the consumed payload onto the persisted session metadata for diagnostics
+                // and for any downstream walker that lists sessions for this conversation.
+                session.Metadata[FinishAgentExchangeTool.FinishedExchangeIdKey] = exchangeId;
+                if (finishReason is not null)
+                    session.Metadata[FinishAgentExchangeTool.FinishedReasonKey] = finishReason;
+                if (!string.IsNullOrEmpty(finishSummary))
+                    session.Metadata[FinishAgentExchangeTool.FinishedSummaryKey] = finishSummary;
+                // State-machine closure (bug-hunt MEDIUM-3 on PR #553): once the target agent has
+                // explicitly signalled completion via finish_agent_exchange, the receiver-side
+                // session is terminated. ResolveSessionAsync's sealed-session guard then refuses
+                // any further sender turn that tries to reuse this RemoteSessionId, so the
+                // sender cannot accidentally continue an exchange the target said was done.
+                session.Status = GatewaySessionStatus.Sealed;
+                session.Metadata["conversationStatus"] = "sealed";
+            }
             await sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
 
             // Leave the session Active so the sender can continue the exchange by supplying
             // RemoteSessionId on the next turn; clear ActiveSessionId so portal stops rendering
-            // the conversation as "in flight" while the sender pauses between turns.
+            // the conversation as "in flight" while the sender pauses between turns. When the
+            // exchange has finished, the session is already Sealed above and ResolveSessionAsync
+            // will reject any further reuse.
             await ClearActiveSessionAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
 
             return Ok(new CrossWorldRelayResponse
             {
                 Response = response.Content ?? string.Empty,
-                Status = "active",
-                SessionId = sessionId.Value
+                // Surface the finish state on the wire so the sender's loop sees a non-"active"
+                // status when the target has explicitly closed the exchange.
+                Status = exchangeFinished ? "sealed" : "active",
+                SessionId = sessionId.Value,
+                ExchangeFinished = exchangeFinished,
+                FinishReason = exchangeFinished ? finishReason : null,
+                FinishSummary = exchangeFinished ? finishSummary : null
             });
         }
         catch (Exception ex)
@@ -141,6 +195,7 @@ public sealed class CrossWorldFederationController(
             logger.LogWarning(ex,
                 "Cross-world relay failed for session '{SessionId}' on agent '{TargetAgentId}'.",
                 sessionId, targetAgentId);
+            session.Metadata.Remove(FinishAgentExchangeTool.ActiveExchangeIdKey);
             session.Status = GatewaySessionStatus.Sealed;
             session.Metadata["error"] = ex.Message;
             await sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);

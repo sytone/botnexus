@@ -33,12 +33,26 @@ public sealed record AgentExchangeResult
     /// <summary>
     /// Why the conversation loop ended.
     /// <list type="bullet">
-    ///   <item><c>objectiveMet</c> — target agent signalled "OBJECTIVE MET"</item>
+    ///   <item><c>exchangeFinished</c> — the target agent invoked the <c>finish_agent_exchange</c>
+    ///   tool successfully (Phase 8 / F-11 — replaces the deprecated <c>objectiveMet</c> substring
+    ///   heuristic from issue #379).</item>
     ///   <item><c>maxTurnsReached</c> — loop exhausted all turns without a completion signal</item>
     ///   <item><c>error</c> — an exception was thrown during the exchange</item>
     /// </list>
     /// </summary>
     public string? CompletionReason { get; init; }
+
+    /// <summary>
+    /// Caller-supplied <c>reason</c> from the <c>finish_agent_exchange</c> tool call when
+    /// <see cref="CompletionReason"/> is <c>exchangeFinished</c>; <c>null</c> otherwise.
+    /// </summary>
+    public string? FinishReason { get; init; }
+
+    /// <summary>
+    /// Caller-supplied <c>summary</c> from the <c>finish_agent_exchange</c> tool call when
+    /// <see cref="CompletionReason"/> is <c>exchangeFinished</c>; <c>null</c> otherwise.
+    /// </summary>
+    public string? FinishSummary { get; init; }
 }
 
 /// <summary>A single transcript entry from an agent-to-agent conversation.</summary>

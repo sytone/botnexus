@@ -269,20 +269,71 @@ public sealed class AgentExchangeConversationTests
     [Fact]
     public async Task ConverseAsync_MultiTurn_AllTurnsLandOnSameConversation()
     {
-        var (service, conversationStore, sessionStore, supervisor) = BuildService(
-            initialReply: "still working",
-            finalReply: "Done. OBJECTIVE MET.");
+        // Phase 8 (F-11): completion is signalled by a structured finish_agent_exchange tool
+        // call (and a matching active-exchange-id payload), not by an "OBJECTIVE MET" substring.
+        // This test pins the multi-turn-stays-on-one-conversation invariant by simulating both
+        // the tool call AND the metadata write the tool would normally do server-side.
+        var initiator = AgentId.From("initiator-agent");
+        var target = AgentId.From("target-agent");
+        var registry = CreateRegistry(initiator, target, [target.Value]);
+        var sessionStore = new InMemorySessionStore();
+        var conversationStore = new InMemoryConversationStore();
+
+        SessionId? capturedSessionId = null;
+        var turnCounter = 0;
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                turnCounter++;
+                if (turnCounter == 1)
+                    return new AgentResponse { Content = "still working" };
+
+                if (capturedSessionId is { } sid)
+                {
+                    var s = sessionStore.GetAsync(sid, CancellationToken.None).GetAwaiter().GetResult();
+                    if (s is not null
+                        && s.Metadata.TryGetValue("activeAgentExchangeId", out var v)
+                        && v is string activeId)
+                    {
+                        s.Metadata["finishedAgentExchangeId"] = activeId;
+                        s.Metadata["finishedAgentExchangeReason"] = "shipped";
+                        sessionStore.SaveAsync(s, CancellationToken.None).GetAwaiter().GetResult();
+                    }
+                }
+
+                return new AgentResponse
+                {
+                    Content = "Done.",
+                    ToolCalls = [new AgentToolCallInfo("call-1", "finish_agent_exchange", IsError: false)]
+                };
+            });
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor
+            .Setup(s => s.GetOrCreateAsync(target, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .Callback<AgentId, SessionId, CancellationToken>((_, sid, _) => capturedSessionId = sid)
+            .ReturnsAsync(handle.Object);
+
+        var service = new AgentExchangeService(
+            registry.Object,
+            supervisor.Object,
+            sessionStore,
+            conversationStore,
+            Options.Create(new GatewayOptions()),
+            NullLogger<AgentExchangeService>.Instance);
 
         var result = await service.ConverseAsync(new AgentExchangeRequest
         {
-            InitiatorId = AgentId.From("initiator-agent"),
-            TargetId = AgentId.From("target-agent"),
+            InitiatorId = initiator,
+            TargetId = target,
             Message = "Solve this",
             Objective = "ship it",
             MaxTurns = 3
         });
 
-        result.CompletionReason.ShouldBe("objectiveMet");
+        result.CompletionReason.ShouldBe("exchangeFinished");
+        result.FinishReason.ShouldBe("shipped");
         var allSessions = await sessionStore.ListByConversationAsync(result.ConversationId);
         allSessions.ShouldHaveSingleItem(
             customMessage: "Multi-turn exchange must stay in one session pinned to one conversation; " +
