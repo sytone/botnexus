@@ -199,9 +199,12 @@ public sealed class AgentExchangeService : IAgentExchangeService
             ?? throw new InvalidOperationException(
                 $"No cross-world peer configured for world '{resolvedTarget.WorldId}'.");
 
-        // Phase 4 / F-3 (cross-world variant): create a real Conversation on the sender side too.
-        // The receiver (CrossWorldFederationController) will receive the ConversationId via metadata
-        // and create/reuse its own Conversation row with the same id (Phase 4 item 1b — separate PR).
+        // Phase 4 / F-3 (cross-world variant): create a real Conversation on the sender side.
+        // The receiver (CrossWorldFederationController.RelayAsync) creates its OWN local Conversation
+        // owned by the target agent and pins its receiver session to that conversation's id (not this
+        // sender-side ConversationId). Source identity is preserved on the receiver's
+        // Conversation.Metadata for audit; ConversationIds are NOT shared across worlds because
+        // doing so would force two worlds' stores to agree on a global id space.
         var conversation = await CreateExchangeConversationAsync(
             request.InitiatorId,
             resolvedTarget.AgentId,
