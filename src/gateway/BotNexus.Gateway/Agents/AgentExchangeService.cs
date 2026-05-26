@@ -128,13 +128,13 @@ public sealed class AgentExchangeService : IAgentExchangeService
         await _conversationStore.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
 
         var transcript = new List<AgentExchangeTranscriptEntry>();
-        var targetHandle = await _supervisor.GetOrCreateAsync(request.TargetId, sessionId, cancellationToken).ConfigureAwait(false);
-
         var message = request.Message;
         var finalResponse = string.Empty;
         var objectiveMet = false;
         try
         {
+            var targetHandle = await _supervisor.GetOrCreateAsync(request.TargetId, sessionId, cancellationToken).ConfigureAwait(false);
+
             for (var turn = 0; turn < request.MaxTurns; turn++)
             {
                 AddTurn(MessageRole.User, message, transcript, session);
@@ -158,7 +158,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
             session.Status = GatewaySessionStatus.Sealed;
             session.Metadata["conversationStatus"] = "sealed";
             await _sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
-            await ClearActiveSessionAsync(conversation, CancellationToken.None).ConfigureAwait(false);
+            await ClearActiveSessionAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -167,7 +167,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
             session.Metadata["conversationStatus"] = "error";
             session.Metadata["error"] = ex.Message;
             await _sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
-            await ClearActiveSessionAsync(conversation, CancellationToken.None).ConfigureAwait(false);
+            await ClearActiveSessionAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
             throw;
         }
 
@@ -296,7 +296,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
             session.Metadata["conversationStatus"] = "sealed";
             session.Metadata["remoteSessionId"] = remoteSessionId;
             await _sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
-            await ClearActiveSessionAsync(conversation, CancellationToken.None).ConfigureAwait(false);
+            await ClearActiveSessionAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -305,7 +305,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
             session.Metadata["conversationStatus"] = "error";
             session.Metadata["error"] = ex.Message;
             await _sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
-            await ClearActiveSessionAsync(conversation, CancellationToken.None).ConfigureAwait(false);
+            await ClearActiveSessionAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
             throw;
         }
 
@@ -358,13 +358,26 @@ public sealed class AgentExchangeService : IAgentExchangeService
     /// <see cref="ConversationStatus.Active"/> so it remains visible to the portal/list APIs —
     /// archiving is a separate operator-driven action.
     /// </summary>
-    private async Task ClearActiveSessionAsync(Conversation conversation, CancellationToken cancellationToken)
+    /// <remarks>
+    /// Only clears if the latest persisted <see cref="Conversation.ActiveSessionId"/> still equals
+    /// <paramref name="expectedSessionId"/>. If a newer caller has already reassigned the pointer
+    /// (concurrent <see cref="ConverseAsync"/> call sharing the same conversation), we must NOT
+    /// clobber their newer pointer — that would mark a live exchange as not-in-flight.
+    /// </remarks>
+    private async Task ClearActiveSessionAsync(Conversation conversation, SessionId expectedSessionId, CancellationToken cancellationToken)
     {
         try
         {
             var latest = await _conversationStore.GetAsync(conversation.ConversationId, cancellationToken).ConfigureAwait(false);
             if (latest is null)
                 return;
+            if (latest.ActiveSessionId != expectedSessionId)
+            {
+                _logger.LogDebug(
+                    "Skipping ActiveSessionId clear for conversation '{ConversationId}': pointer is now '{Current}', expected '{Expected}'.",
+                    conversation.ConversationId, latest.ActiveSessionId, expectedSessionId);
+                return;
+            }
             latest.ActiveSessionId = null;
             latest.UpdatedAt = DateTimeOffset.UtcNow;
             await _conversationStore.SaveAsync(latest, cancellationToken).ConfigureAwait(false);

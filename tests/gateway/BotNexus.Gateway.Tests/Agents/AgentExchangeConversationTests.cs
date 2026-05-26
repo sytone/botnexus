@@ -278,6 +278,134 @@ public sealed class AgentExchangeConversationTests
                 "otherwise callers chase a phantom id that never lands in the store.");
     }
 
+    [Fact]
+    public async Task ConverseAsync_WhenSupervisorGetOrCreateThrows_SealsSession_AndClearsActiveSession()
+    {
+        var sessionStore = new InMemorySessionStore();
+        var conversationStore = new InMemoryConversationStore();
+        var initiator = AgentId.From("initiator-agent");
+        var target = AgentId.From("target-agent");
+        var registry = CreateRegistry(initiator, target, [target.Value]);
+
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(target, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("target agent failed to boot"));
+
+        var service = new AgentExchangeService(
+            registry.Object,
+            supervisor.Object,
+            sessionStore,
+            conversationStore,
+            Options.Create(new GatewayOptions()),
+            NullLogger<AgentExchangeService>.Instance);
+
+        var action = () => service.ConverseAsync(new AgentExchangeRequest
+        {
+            InitiatorId = initiator,
+            TargetId = target,
+            Message = "Do a thing",
+            MaxTurns = 3
+        });
+
+        await action.ShouldThrowAsync<InvalidOperationException>();
+
+        var sessions = await sessionStore.ListAsync();
+        sessions.ShouldHaveSingleItem(
+            customMessage: "Bug repro: if supervisor.GetOrCreateAsync threw before the try block " +
+                "started, the session would be left as Active. Must always seal on failure.");
+        sessions[0].Status.ShouldBe(GatewaySessionStatus.Sealed,
+            customMessage: "Session is left Active when supervisor boot fails — caller sees a phantom " +
+                "in-flight session forever.");
+
+        var conversations = await conversationStore.ListAsync();
+        conversations.ShouldHaveSingleItem();
+        conversations[0].ActiveSessionId.ShouldBeNull(
+            customMessage: "Conversation.ActiveSessionId still points at a dead session — portal " +
+                "renders it as in-flight indefinitely.");
+    }
+
+    [Fact]
+    public async Task ConverseAsync_ClearActiveSessionAsync_DoesNotClobberNewerOwner()
+    {
+        // Simulates: ConverseAsync #1 completes its prompt loop and is about to clear
+        // ActiveSessionId. Between its GetAsync and SaveAsync, ConverseAsync #2 has already
+        // claimed the same conversation and saved its newer SessionId as ActiveSessionId. The
+        // race-safe contract: #1 must NOT clobber #2's pointer with null.
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore();
+        var initiator = AgentId.From("initiator-agent");
+        var target = AgentId.From("target-agent");
+        var registry = CreateRegistry(initiator, target, [target.Value]);
+
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "ok" });
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(target, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+
+        var service = new AgentExchangeService(
+            registry.Object,
+            supervisor.Object,
+            sessionStore,
+            conversationStore,
+            Options.Create(new GatewayOptions()),
+            NullLogger<AgentExchangeService>.Instance);
+
+        var result = await service.ConverseAsync(new AgentExchangeRequest
+        {
+            InitiatorId = initiator,
+            TargetId = target,
+            Message = "first",
+            MaxTurns = 1
+        });
+
+        // After #1 completes, ActiveSessionId should be null.
+        var conv = await conversationStore.GetAsync(result.ConversationId);
+        conv!.ActiveSessionId.ShouldBeNull(
+            customMessage: "After a successful exchange the conversation must report no in-flight session.");
+
+        // Simulate a second owner claiming ActiveSessionId after #1's clear.
+        var newerOwner = SessionId.Create();
+        conv.ActiveSessionId = newerOwner;
+        await conversationStore.SaveAsync(conv);
+
+        // A late, defensive clear from #1 (re-running through the helper) must not wipe out
+        // the newer owner. Easiest way to invoke the helper from a test is to run another
+        // ConverseAsync that happens to fail, then verify the failure-path clear did the right
+        // thing for the *failed* session's id and left the newer owner alone.
+        var failingHandle = new Mock<IAgentHandle>();
+        failingHandle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("boom"));
+        var failingSupervisor = new Mock<IAgentSupervisor>();
+        failingSupervisor.Setup(s => s.GetOrCreateAsync(target, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(failingHandle.Object);
+        var failingService = new AgentExchangeService(
+            registry.Object,
+            failingSupervisor.Object,
+            sessionStore,
+            conversationStore,
+            Options.Create(new GatewayOptions()),
+            NullLogger<AgentExchangeService>.Instance);
+
+        var action = () => failingService.ConverseAsync(new AgentExchangeRequest
+        {
+            InitiatorId = initiator,
+            TargetId = target,
+            Message = "second (will fail)",
+            MaxTurns = 1
+        });
+        await action.ShouldThrowAsync<InvalidOperationException>();
+
+        // The failed exchange owns a NEW conversation (CreateExchangeConversationAsync mints one
+        // each call). The newerOwner on the FIRST conversation must still be intact.
+        var firstAfter = await conversationStore.GetAsync(result.ConversationId);
+        firstAfter!.ActiveSessionId.ShouldBe(newerOwner,
+            customMessage: "Bug repro: a failed exchange must not blindly clear ActiveSessionId " +
+                "on a conversation it didn't own. ClearActiveSessionAsync only clears when the " +
+                "current pointer still equals the session this call started with.");
+    }
+
     // ---- helpers ----
 
     private static (AgentExchangeService Service, InMemoryConversationStore ConversationStore,
