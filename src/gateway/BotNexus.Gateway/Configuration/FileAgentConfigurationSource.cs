@@ -67,7 +67,7 @@ public sealed class FileAgentConfigurationSource(string directoryPath, ILogger<F
             }
 
             var descriptor = BuildDescriptor(jsonConfig);
-            var validationErrors = AgentDescriptorValidator.Validate(descriptor);
+            var validationErrors = AgentDescriptorValidator.ValidateForConfig(descriptor);
             if (validationErrors.Count > 0)
             {
                 _logger.LogWarning(

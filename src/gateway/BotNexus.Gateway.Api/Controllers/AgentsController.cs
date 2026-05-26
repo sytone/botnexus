@@ -1,4 +1,5 @@
 using BotNexus.Cron;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
@@ -59,6 +60,14 @@ public sealed class AgentsController : ControllerBase
     [HttpPost]
     public async Task<ActionResult> Register([FromBody] AgentDescriptor descriptor, CancellationToken cancellationToken)
     {
+        if (descriptor.Kind == AgentKind.SubAgent)
+        {
+            return BadRequest(new
+            {
+                error = "Kind = SubAgent is reserved for runtime-spawned sub-agents and may not be registered via the REST API."
+            });
+        }
+
         try
         {
             _registry.Register(descriptor);
@@ -90,6 +99,14 @@ public sealed class AgentsController : ControllerBase
             return BadRequest(new
             {
                 error = $"Route agentId '{agentId}' does not match payload agentId '{descriptor.AgentId}'."
+            });
+        }
+
+        if (descriptor.Kind == AgentKind.SubAgent)
+        {
+            return BadRequest(new
+            {
+                error = "Kind = SubAgent is reserved for runtime-spawned sub-agents and may not be set via the REST API."
             });
         }
 

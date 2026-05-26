@@ -117,7 +117,7 @@ public sealed class PlatformConfigAgentSource(
                     effectiveConfig.Extensions)
             };
 
-            var validationErrors = AgentDescriptorValidator.Validate(descriptor);
+            var validationErrors = AgentDescriptorValidator.ValidateForConfig(descriptor);
             if (validationErrors.Count > 0)
             {
                 _logger.LogWarning(
