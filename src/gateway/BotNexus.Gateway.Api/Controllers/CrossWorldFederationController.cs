@@ -4,6 +4,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Federation;
 using BotNexus.Gateway.Tools;
@@ -121,10 +122,7 @@ public sealed class CrossWorldFederationController(
             // the equality gate in this turn. The receiver is single-prompt (no loop) but receivers
             // can reuse a session across many sender turns, so the per-call clear is mandatory.
             var exchangeId = Guid.NewGuid().ToString("N");
-            session.Metadata[FinishAgentExchangeTool.ActiveExchangeIdKey] = exchangeId;
-            session.Metadata.Remove(FinishAgentExchangeTool.FinishedExchangeIdKey);
-            session.Metadata.Remove(FinishAgentExchangeTool.FinishedReasonKey);
-            session.Metadata.Remove(FinishAgentExchangeTool.FinishedSummaryKey);
+            AgentExchangeCompletionGate.PrepareTurn(session.Metadata, exchangeId);
             await sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
 
             var handle = await supervisor.GetOrCreateAsync(targetAgentId, sessionId, cancellationToken).ConfigureAwait(false);
@@ -141,22 +139,15 @@ public sealed class CrossWorldFederationController(
             var refreshed = await sessionStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false)
                 ?? session;
 
-            var exchangeFinished = false;
-            string? finishReason = null;
-            string? finishSummary = null;
-            var toolFiredSuccessfully = response.ToolCalls.Any(tc =>
-                !tc.IsError
-                && string.Equals(tc.ToolName, "finish_agent_exchange", StringComparison.OrdinalIgnoreCase));
-            if (toolFiredSuccessfully)
-            {
-                var finishedExchangeId = MetadataString(refreshed.Metadata, FinishAgentExchangeTool.FinishedExchangeIdKey);
-                if (string.Equals(finishedExchangeId, exchangeId, StringComparison.Ordinal))
-                {
-                    exchangeFinished = true;
-                    finishReason = MetadataString(refreshed.Metadata, FinishAgentExchangeTool.FinishedReasonKey);
-                    finishSummary = MetadataString(refreshed.Metadata, FinishAgentExchangeTool.FinishedSummaryKey);
-                }
-            }
+            // Same authoritative gate the sender uses (AgentExchangeCompletionGate) so both
+            // call sites share one implementation — see plan-vs-impl critique NB-2 / bug-hunt
+            // missing-test #2 on PR #553.
+            var exchangeFinished = AgentExchangeCompletionGate.TryConsume(
+                response,
+                refreshed.Metadata,
+                exchangeId,
+                out var finishReason,
+                out var finishSummary);
 
             // Clear the active-exchange id regardless of outcome so a follow-up turn for the same
             // session starts from a clean slate.
@@ -170,18 +161,29 @@ public sealed class CrossWorldFederationController(
                     session.Metadata[FinishAgentExchangeTool.FinishedReasonKey] = finishReason;
                 if (!string.IsNullOrEmpty(finishSummary))
                     session.Metadata[FinishAgentExchangeTool.FinishedSummaryKey] = finishSummary;
+                // State-machine closure (bug-hunt MEDIUM-3 on PR #553): once the target agent has
+                // explicitly signalled completion via finish_agent_exchange, the receiver-side
+                // session is terminated. ResolveSessionAsync's sealed-session guard then refuses
+                // any further sender turn that tries to reuse this RemoteSessionId, so the
+                // sender cannot accidentally continue an exchange the target said was done.
+                session.Status = GatewaySessionStatus.Sealed;
+                session.Metadata["conversationStatus"] = "sealed";
             }
             await sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
 
             // Leave the session Active so the sender can continue the exchange by supplying
             // RemoteSessionId on the next turn; clear ActiveSessionId so portal stops rendering
-            // the conversation as "in flight" while the sender pauses between turns.
+            // the conversation as "in flight" while the sender pauses between turns. When the
+            // exchange has finished, the session is already Sealed above and ResolveSessionAsync
+            // will reject any further reuse.
             await ClearActiveSessionAsync(conversation, sessionId, CancellationToken.None).ConfigureAwait(false);
 
             return Ok(new CrossWorldRelayResponse
             {
                 Response = response.Content ?? string.Empty,
-                Status = "active",
+                // Surface the finish state on the wire so the sender's loop sees a non-"active"
+                // status when the target has explicitly closed the exchange.
+                Status = exchangeFinished ? "sealed" : "active",
                 SessionId = sessionId.Value,
                 ExchangeFinished = exchangeFinished,
                 FinishReason = exchangeFinished ? finishReason : null,

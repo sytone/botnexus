@@ -149,7 +149,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
                 // (registered when SessionType == AgentAgent) reads activeAgentExchangeId and writes
                 // finishedAgentExchangeId only if they match.
                 var exchangeId = Guid.NewGuid().ToString("N");
-                PrepareExchangeTurn(session, exchangeId);
+                AgentExchangeCompletionGate.PrepareTurn(session.Metadata, exchangeId);
                 await _sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
 
                 var response = await targetHandle.PromptAsync(message, cancellationToken).ConfigureAwait(false);
@@ -161,7 +161,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
                 var refreshed = await _sessionStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false)
                     ?? session;
 
-                if (TryConsumeFinishSignal(response, refreshed, exchangeId, out finishReason, out finishSummary))
+                if (AgentExchangeCompletionGate.TryConsume(response, refreshed.Metadata, exchangeId, out finishReason, out finishSummary))
                 {
                     exchangeFinished = true;
                     // Mirror the consumed payload back onto the working session so the post-turn
@@ -493,66 +493,6 @@ public sealed class AgentExchangeService : IAgentExchangeService
             Role = role,
             Content = content
         });
-    }
-
-    private static bool TryConsumeFinishSignal(
-        AgentResponse response,
-        GatewaySession refreshed,
-        string expectedExchangeId,
-        out string? reason,
-        out string? summary)
-    {
-        reason = null;
-        summary = null;
-
-        // Authoritative signal: the AgentResponse must carry a successful finish_agent_exchange
-        // tool call. A response Content string containing "OBJECTIVE MET", "finish_agent_exchange",
-        // etc. is NOT a completion signal and must not terminate the loop — this is the F-11 fix.
-        var toolCalled = response.ToolCalls.Any(tc =>
-            !tc.IsError
-            && string.Equals(tc.ToolName, "finish_agent_exchange", StringComparison.OrdinalIgnoreCase));
-        if (!toolCalled)
-            return false;
-
-        // Defence in depth: even if the tool reported success, only honour it when the
-        // tool's persisted payload references THIS turn's active exchange id. Without this
-        // gate a stale write from a previous turn (e.g. tool fires after the service moved on)
-        // could be replayed.
-        var finishedExchangeId = MetadataString(refreshed.Metadata, FinishAgentExchangeTool.FinishedExchangeIdKey);
-        if (!string.Equals(finishedExchangeId, expectedExchangeId, StringComparison.Ordinal))
-            return false;
-
-        reason = MetadataString(refreshed.Metadata, FinishAgentExchangeTool.FinishedReasonKey);
-        summary = MetadataString(refreshed.Metadata, FinishAgentExchangeTool.FinishedSummaryKey);
-        return true;
-    }
-
-    private static void PrepareExchangeTurn(GatewaySession session, string exchangeId)
-    {
-        session.Metadata[FinishAgentExchangeTool.ActiveExchangeIdKey] = exchangeId;
-        // Wipe any stale finish payload from a previous turn so it cannot satisfy the equality
-        // gate in TryConsumeFinishSignal on this turn.
-        session.Metadata.Remove(FinishAgentExchangeTool.FinishedExchangeIdKey);
-        session.Metadata.Remove(FinishAgentExchangeTool.FinishedReasonKey);
-        session.Metadata.Remove(FinishAgentExchangeTool.FinishedSummaryKey);
-    }
-
-    /// <summary>
-    /// JsonElement-tolerant metadata read. <c>SqliteSessionStore</c> and <c>FileSessionStore</c>
-    /// round-trip <c>object?</c> metadata as <see cref="System.Text.Json.JsonElement"/>, so a
-    /// plain <c>as string</c> cast silently returns <c>null</c>.
-    /// </summary>
-    private static string? MetadataString(IDictionary<string, object?> metadata, string key)
-    {
-        if (!metadata.TryGetValue(key, out var value) || value is null)
-            return null;
-        return value switch
-        {
-            string s => s,
-            System.Text.Json.JsonElement element when element.ValueKind == System.Text.Json.JsonValueKind.String
-                => element.GetString(),
-            _ => null
-        };
     }
 
     private static string BuildFollowUpMessage(string? objective, string latestResponse)
