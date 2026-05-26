@@ -4,6 +4,7 @@ using BotNexus.Domain.World;
 using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Configuration;
@@ -22,6 +23,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
     private readonly IAgentRegistry _registry;
     private readonly IAgentSupervisor _supervisor;
     private readonly ISessionStore _sessionStore;
+    private readonly IConversationStore _conversationStore;
     private readonly IOptions<Gateway.Configuration.GatewayOptions> _options;
     private readonly ILogger<AgentExchangeService> _logger;
     private readonly IOptions<PlatformConfig> _platformConfigOptions;
@@ -32,6 +34,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
         IAgentRegistry registry,
         IAgentSupervisor supervisor,
         ISessionStore sessionStore,
+        IConversationStore conversationStore,
         IOptions<Gateway.Configuration.GatewayOptions> options,
         ILogger<AgentExchangeService> logger,
         IOptions<PlatformConfig>? platformConfigOptions = null,
@@ -40,6 +43,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
         _registry = registry;
         _supervisor = supervisor;
         _sessionStore = sessionStore;
+        _conversationStore = conversationStore;
         _options = options;
         _logger = logger;
         _platformConfigOptions = platformConfigOptions ?? Options.Create(new PlatformConfig());
@@ -77,8 +81,23 @@ public sealed class AgentExchangeService : IAgentExchangeService
         if (!isLocalTarget && parsedCrossWorldTarget is not null)
             return await ConverseCrossWorldAsync(request, parsedCrossWorldTarget, normalizedChain, cancellationToken).ConfigureAwait(false);
 
-        var sessionId = SessionId.ForAgentConversation(request.InitiatorId, request.TargetId, Guid.NewGuid().ToString("N"));
+        // Phase 4 / F-3: create a real Conversation via IConversationStore so the exchange is
+        // discoverable by ListByConversationAsync, the portal, and any future routing/permissions
+        // walks. The conversation owns the lifecycle; the session is just one bounded LLM context
+        // inside it.
+        var conversation = await CreateExchangeConversationAsync(
+            request.InitiatorId,
+            request.TargetId,
+            channelType: null,
+            request.Objective,
+            cancellationToken).ConfigureAwait(false);
+
+        var sessionId = SessionId.Create();
         var session = await _sessionStore.GetOrCreateAsync(sessionId, request.InitiatorId, cancellationToken).ConfigureAwait(false);
+
+        // F-6 eager-pin pattern (PR #547): set ConversationId and save BEFORE any path that could
+        // observe the child session, so it is never visible to ListByConversationAsync as an orphan.
+        session.Session.ConversationId = conversation.ConversationId;
         session.SessionType = SessionType.AgentAgent;
         session.ChannelType = null;
         session.CallerId = null;
@@ -101,6 +120,12 @@ public sealed class AgentExchangeService : IAgentExchangeService
             .ToArray();
         session.Metadata["objective"] = request.Objective;
         session.Metadata["maxTurns"] = request.MaxTurns;
+        session.Metadata["conversationId"] = conversation.ConversationId.Value;
+
+        await _sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
+
+        conversation.ActiveSessionId = sessionId;
+        await _conversationStore.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
 
         var transcript = new List<AgentExchangeTranscriptEntry>();
         var targetHandle = await _supervisor.GetOrCreateAsync(request.TargetId, sessionId, cancellationToken).ConfigureAwait(false);
@@ -133,6 +158,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
             session.Status = GatewaySessionStatus.Sealed;
             session.Metadata["conversationStatus"] = "sealed";
             await _sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
+            await ClearActiveSessionAsync(conversation, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -141,12 +167,14 @@ public sealed class AgentExchangeService : IAgentExchangeService
             session.Metadata["conversationStatus"] = "error";
             session.Metadata["error"] = ex.Message;
             await _sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
+            await ClearActiveSessionAsync(conversation, CancellationToken.None).ConfigureAwait(false);
             throw;
         }
 
         return new AgentExchangeResult
         {
             SessionId = sessionId,
+            ConversationId = conversation.ConversationId,
             Status = "sealed",
             Turns = transcript.Count,
             FinalResponse = finalResponse,
@@ -171,9 +199,19 @@ public sealed class AgentExchangeService : IAgentExchangeService
             ?? throw new InvalidOperationException(
                 $"No cross-world peer configured for world '{resolvedTarget.WorldId}'.");
 
-        var conversationId = $"{request.InitiatorId.Value}::cross::{resolvedTarget.WorldId}:{resolvedTarget.AgentId.Value}::{Guid.NewGuid():N}";
-        var sessionId = SessionId.ForAgentConversation(request.InitiatorId, request.TargetId, Guid.NewGuid().ToString("N"));
+        // Phase 4 / F-3 (cross-world variant): create a real Conversation on the sender side too.
+        // The receiver (CrossWorldFederationController) will receive the ConversationId via metadata
+        // and create/reuse its own Conversation row with the same id (Phase 4 item 1b — separate PR).
+        var conversation = await CreateExchangeConversationAsync(
+            request.InitiatorId,
+            resolvedTarget.AgentId,
+            channelType: ChannelKey.From("cross-world"),
+            request.Objective,
+            cancellationToken).ConfigureAwait(false);
+
+        var sessionId = SessionId.Create();
         var session = await _sessionStore.GetOrCreateAsync(sessionId, request.InitiatorId, cancellationToken).ConfigureAwait(false);
+        session.Session.ConversationId = conversation.ConversationId;
         session.SessionType = SessionType.AgentAgent;
         session.ChannelType = ChannelKey.From("cross-world");
         session.CallerId = null;
@@ -198,7 +236,12 @@ public sealed class AgentExchangeService : IAgentExchangeService
         session.Metadata["maxTurns"] = request.MaxTurns;
         session.Metadata["sourceWorldId"] = _sourceWorldId;
         session.Metadata["targetWorldId"] = resolvedTarget.WorldId;
-        session.Metadata["conversationId"] = conversationId;
+        session.Metadata["conversationId"] = conversation.ConversationId.Value;
+
+        await _sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
+
+        conversation.ActiveSessionId = sessionId;
+        await _conversationStore.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
 
         var transcript = new List<AgentExchangeTranscriptEntry>();
         var message = request.Message;
@@ -226,7 +269,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
                             ["sourceWorldId"] = _sourceWorldId,
                             ["sourceAgentId"] = request.InitiatorId.Value,
                             ["targetAgentId"] = resolvedTarget.AgentId.Value,
-                            ["conversationId"] = conversationId,
+                            ["conversationId"] = conversation.ConversationId.Value,
                             ["sourceSessionId"] = sessionId.Value,
                             ["remoteSessionId"] = remoteSessionId
                         }
@@ -253,6 +296,7 @@ public sealed class AgentExchangeService : IAgentExchangeService
             session.Metadata["conversationStatus"] = "sealed";
             session.Metadata["remoteSessionId"] = remoteSessionId;
             await _sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
+            await ClearActiveSessionAsync(conversation, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -261,18 +305,78 @@ public sealed class AgentExchangeService : IAgentExchangeService
             session.Metadata["conversationStatus"] = "error";
             session.Metadata["error"] = ex.Message;
             await _sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
+            await ClearActiveSessionAsync(conversation, CancellationToken.None).ConfigureAwait(false);
             throw;
         }
 
         return new AgentExchangeResult
         {
             SessionId = sessionId,
+            ConversationId = conversation.ConversationId,
             Status = "sealed",
             Turns = transcript.Count,
             FinalResponse = finalResponse,
             Transcript = transcript,
             CompletionReason = objectiveMet ? "objectiveMet" : "maxTurnsReached"
         };
+    }
+
+    /// <summary>
+    /// Creates and persists a fresh <see cref="ConversationKind.AgentAgent"/> conversation for
+    /// this exchange. Each <c>ConverseAsync</c> call is a bounded one-shot loop and gets its
+    /// own conversation — they are never reused across calls.
+    /// </summary>
+    private async Task<Conversation> CreateExchangeConversationAsync(
+        AgentId initiatorId,
+        AgentId targetId,
+        ChannelKey? channelType,
+        string? objective,
+        CancellationToken cancellationToken)
+    {
+        var conversation = new Conversation
+        {
+            ConversationId = ConversationId.Create(),
+            AgentId = initiatorId,
+            Kind = ConversationKind.AgentAgent,
+            Initiator = CitizenId.Of(initiatorId),
+            Title = $"{initiatorId.Value} \u2194 {targetId.Value}",
+            Purpose = string.IsNullOrWhiteSpace(objective) ? null : objective,
+            Status = ConversationStatus.Active
+        };
+
+        if (channelType is { } ct)
+        {
+            conversation.Metadata["channelType"] = ct.Value;
+        }
+
+        return await _conversationStore.CreateAsync(conversation, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Clears <see cref="Conversation.ActiveSessionId"/> after the exchange loop terminates so the
+    /// conversation is no longer reported as "in flight". The conversation itself stays
+    /// <see cref="ConversationStatus.Active"/> so it remains visible to the portal/list APIs —
+    /// archiving is a separate operator-driven action.
+    /// </summary>
+    private async Task ClearActiveSessionAsync(Conversation conversation, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var latest = await _conversationStore.GetAsync(conversation.ConversationId, cancellationToken).ConfigureAwait(false);
+            if (latest is null)
+                return;
+            latest.ActiveSessionId = null;
+            latest.UpdatedAt = DateTimeOffset.UtcNow;
+            await _conversationStore.SaveAsync(latest, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // ActiveSessionId is a derived diagnostic; failing to clear it must not propagate as a
+            // ConverseAsync failure — the conversation is still queryable through the session store.
+            _logger.LogWarning(ex,
+                "Failed to clear ActiveSessionId on conversation '{ConversationId}' after exchange.",
+                conversation.ConversationId);
+        }
     }
 
     private static void AddTurn(
