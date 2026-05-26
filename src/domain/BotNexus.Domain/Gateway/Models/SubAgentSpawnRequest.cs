@@ -89,4 +89,17 @@ public sealed record SubAgentSpawnRequest
     /// callers cannot forget to supply it.
     /// </summary>
     public required ConversationId InheritedConversationId { get; init; }
+
+    /// <summary>
+    /// The spawn mode: <see cref="Embody"/> a role with optional customisations, or
+    /// <see cref="Mirror"/> a registered named agent. Introduced in Phase 5 / F-6
+    /// step 3 (#562) to replace the bag of optional top-level fields
+    /// (<see cref="TargetAgentId"/> / <see cref="SystemPromptOverride"/> / etc.)
+    /// with an explicit discriminated union.
+    ///
+    /// <para>OPTIONAL during the migration window. When set, supersedes the
+    /// equivalent top-level fields. Will become <c>required</c> once all
+    /// callers are migrated (step 5 of the migration).</para>
+    /// </summary>
+    public SubAgentSpawnMode? Mode { get; init; }
 }
