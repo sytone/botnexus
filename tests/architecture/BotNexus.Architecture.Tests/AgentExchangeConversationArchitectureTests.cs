@@ -140,8 +140,13 @@ public sealed class AgentExchangeConversationArchitectureTests
     private static List<(string Name, string Body, int StartIndex)> SplitIntoMethodBodies(string source)
     {
         var methods = new List<(string, string, int)>();
+        // Match: <access-modifier> [async|static|...]* <return-type> <name> (
+        // The return-type segment uses [\w<>?,\.\[\]\s]+? to support generic return types like
+        // Task<AgentExchangeResult> and arrays/nullable annotations. An earlier version used
+        // \w+\s+\w+ which silently skipped every method with a generic return type — including
+        // ConverseAsync and ConverseCrossWorldAsync, the two methods this fence exists to police.
         var headerPattern = new System.Text.RegularExpressions.Regex(
-            @"^\s*(?:public|private|protected|internal)(?:\s+\w+)*\s+\w+\s+(?<name>\w+)\s*\([^)]*\)",
+            @"^\s*(?:public|private|protected|internal)(?:\s+(?:async|static|override|virtual|sealed|new|partial|readonly|extern|unsafe))*\s+[\w<>?,\.\[\]\s]+?\s+(?<name>\w+)\s*\(",
             System.Text.RegularExpressions.RegexOptions.Multiline
             | System.Text.RegularExpressions.RegexOptions.Compiled);
 
@@ -188,6 +193,32 @@ public sealed class AgentExchangeConversationArchitectureTests
             "supply the real ConversationId, which means callers (AgentConverseTool, " +
             "tests, federation receivers) cannot accidentally drop the link.\n" +
             "File: " + path);
+    }
+
+    /// <summary>
+    /// Self-test for <see cref="SplitIntoMethodBodies"/>. If the method-splitter regex ever
+    /// regresses such that it stops matching <c>ConverseAsync</c> or
+    /// <c>ConverseCrossWorldAsync</c> (e.g. someone changes it to require non-generic return
+    /// types again), the prompt-ordering fence above would silently pass without checking the
+    /// only two methods that actually matter. This self-test makes that failure mode loud.
+    /// </summary>
+    [Fact]
+    public void SplitIntoMethodBodies_FindsTheTwoMethodsTheFenceMustPolice()
+    {
+        var path = LocateAgentExchangeServiceFile();
+        var source = File.ReadAllText(path);
+        var methods = SplitIntoMethodBodies(source);
+        var names = methods.Select(m => m.Name).ToList();
+
+        names.ShouldContain("ConverseAsync",
+            "ConverseAsync is the local named↔named branch and is the primary subject of the " +
+            "lexical-ordering fence. If the method splitter cannot find it, the fence is not " +
+            "actually checking anything for the local branch. Method splitter found: " +
+            string.Join(", ", names));
+        names.ShouldContain("ConverseCrossWorldAsync",
+            "ConverseCrossWorldAsync is the cross-world sender branch. If the method splitter " +
+            "cannot find it, regressions in that branch slip through. Method splitter found: " +
+            string.Join(", ", names));
     }
 
     private static string LocateAgentExchangeServiceFile()
