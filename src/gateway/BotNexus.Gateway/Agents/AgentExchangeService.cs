@@ -326,6 +326,18 @@ public sealed class AgentExchangeService : IAgentExchangeService
     /// this exchange. Each <c>ConverseAsync</c> call is a bounded one-shot loop and gets its
     /// own conversation — they are never reused across calls.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Security:</strong> the caller-supplied <c>objective</c> is intentionally NOT
+    /// stored in <see cref="Conversation.Purpose"/>. <c>Purpose</c> is consumed by
+    /// <c>SystemPromptBuilder.BuildConversationContextSection</c> and injected into the target
+    /// agent's system prompt as a trusted "## Conversation Context" instruction. Promoting
+    /// caller-controlled text into that privileged position is an XPIA vector
+    /// (initiator → target via Purpose). The objective is preserved on
+    /// <c>Session.Metadata["objective"]</c> for diagnostics, where it is not consumed by the
+    /// prompt pipeline.
+    /// </para>
+    /// </remarks>
     private async Task<Conversation> CreateExchangeConversationAsync(
         AgentId initiatorId,
         AgentId targetId,
@@ -340,13 +352,20 @@ public sealed class AgentExchangeService : IAgentExchangeService
             Kind = ConversationKind.AgentAgent,
             Initiator = CitizenId.Of(initiatorId),
             Title = $"{initiatorId.Value} \u2194 {targetId.Value}",
-            Purpose = string.IsNullOrWhiteSpace(objective) ? null : objective,
+            Purpose = null,
             Status = ConversationStatus.Active
         };
 
         if (channelType is { } ct)
         {
             conversation.Metadata["channelType"] = ct.Value;
+        }
+
+        // Stash the (untrusted) objective on the conversation metadata for diagnostics — this
+        // does NOT enter the target agent's system prompt.
+        if (!string.IsNullOrWhiteSpace(objective))
+        {
+            conversation.Metadata["objective"] = objective;
         }
 
         return await _conversationStore.CreateAsync(conversation, cancellationToken).ConfigureAwait(false);
