@@ -24,8 +24,12 @@ namespace BotNexus.Architecture.Tests;
 /// These fences make the regression structurally impossible:
 /// 1. <c>CrossWorldFederationController.cs</c> may not call <c>SessionId.ForAgentConversation(</c>.
 /// 2. <c>CrossWorldFederationController.cs</c> must import <c>IConversationStore</c>.
-/// 3. Every <c>.ConversationId =</c> assignment must lexically precede every
-///    <c>PromptAsync(</c> call (mirrors the sender's F-6 lexical-ordering fence).
+/// 3. Inside <c>RelayAsync</c>, every <c>.ConversationId =</c> assignment must lexically precede
+///    the first <c>.PromptAsync(</c>; AND no helper method called from <c>RelayAsync</c> AFTER
+///    the first <c>.PromptAsync(</c> may contain a <c>.ConversationId =</c> mutation. This
+///    "compound" check catches the helper-extraction bypass that a per-method fence would miss
+///    AND avoids the false-positive of a naive cross-file check on helpers defined later in
+///    the file (PR #549 critique sweep — bug-hunt BLOCKING #6 / plan-vs-impl HIGH).
 /// 4. The constructor must accept an <c>IConversationStore</c> parameter — if someone
 ///    removes the dep, every other invariant collapses.
 /// </para>
@@ -82,76 +86,209 @@ public sealed class CrossWorldReceiverArchitectureTests
     }
 
     /// <summary>
-    /// In <c>CrossWorldFederationController.cs</c>, within EACH method body, every
-    /// <c>.ConversationId =</c> mutation must lexically precede every <c>PromptAsync(</c>
-    /// invocation in that same method. Catches both inline regressions (assigning
-    /// ConversationId after the prompt loop starts) and the helper-method shape (assignment
-    /// moved into a helper called after the supervisor handle is acquired). Mirrors the F-6
-    /// fence in <see cref="SubAgentEagerPinArchitectureTests"/> and the F-3 sender fence.
+    /// Compound fence that catches the helper-method bypass (PR #549 critique sweep —
+    /// bug-hunt BLOCKING #6, plan-vs-impl HIGH):
+    /// (a) Within <c>RelayAsync</c> itself, every inline <c>.ConversationId =</c> mutation
+    ///     must lexically precede the first <c>.PromptAsync(</c> call.
+    /// (b) For every helper method <c>H</c> defined in this file and invoked from
+    ///     <c>RelayAsync</c> AFTER the first <c>.PromptAsync(</c>, <c>H</c>'s body must NOT
+    ///     contain <c>.ConversationId =</c>. This kills the helper-extraction shape where
+    ///     someone moves the assignment into <c>PinAndSaveAsync(...)</c> and calls it after
+    ///     the supervisor handle is acquired.
+    /// A naive cross-file "every assignment before every prompt" check false-positives on
+    /// legitimate helpers (like <c>ResolveSessionAsync</c>) that are defined later in the
+    /// file but called before the prompt loop.
     /// </summary>
     [Fact]
-    public void NoConversationIdMutation_AfterFirstPromptAsync_InRelayAsync()
+    public void NoConversationIdMutation_AfterFirstPromptAsync_InRelayAsync_OrAnyHelperCalledAfter()
+    {
+        var source = File.ReadAllText(LocateControllerFile());
+        var methods = SplitIntoMethodBodies(source);
+
+        var relay = methods.FirstOrDefault(m => m.Name == "RelayAsync");
+        relay.Name.ShouldBe("RelayAsync",
+            "Method splitter could not find RelayAsync — fence is vacuous. Method splitter found: " +
+            string.Join(", ", methods.Select(m => m.Name)));
+
+        var inlineFailures = FindInlineLateAssignments(relay.Body);
+        var firstPromptInRelay = FindFirstPromptIndex(relay.Body);
+        firstPromptInRelay.ShouldBeGreaterThanOrEqualTo(0,
+            "RelayAsync has no .PromptAsync( call — fence is vacuous. Either the controller " +
+            "stopped invoking the supervisor or the API was renamed.");
+
+        var helpersWithAssignments = methods
+            .Where(m => m.Name != "RelayAsync")
+            .Where(m => System.Text.RegularExpressions.Regex.IsMatch(m.Body, @"\.ConversationId\s*="))
+            .Select(m => m.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var postPromptHelperCalls = FindHelperInvocationsAfter(relay.Body, firstPromptInRelay, helpersWithAssignments);
+
+        var failureMessage = new List<string>();
+        foreach (var (line, name) in inlineFailures)
+            failureMessage.Add($"  inline assignment at line {LineNumberAt(source, relay.StartIndex + line)} (first PromptAsync at line {LineNumberAt(source, relay.StartIndex + firstPromptInRelay)})");
+        foreach (var (line, name) in postPromptHelperCalls)
+            failureMessage.Add($"  RelayAsync calls helper '{name}()' at line {LineNumberAt(source, relay.StartIndex + line)} AFTER first .PromptAsync — and {name}() mutates .ConversationId");
+
+        failureMessage.ShouldBeEmpty(
+            "CrossWorldFederationController.RelayAsync has a .ConversationId mutation path that " +
+            "runs AFTER .PromptAsync. The receiver contract requires the receiver-side session's " +
+            "ConversationId to be pinned eagerly BEFORE the supervisor handle is acquired " +
+            "(supervisor.GetOrCreateAsync, handle.PromptAsync). Otherwise the session is briefly " +
+            "visible in the store with ConversationId == null and is invisible to " +
+            "ISessionStore.ListByConversationAsync, the portal, and any fan-out that filters by " +
+            "conversation.\n" +
+            string.Join("\n", failureMessage));
+    }
+
+    /// <summary>
+    /// Vacuity guard: confirm the fence is actually scanning something. Without this check,
+    /// renaming <c>.ConversationId</c> or <c>.PromptAsync(</c> would silently turn the fence
+    /// into a no-op (the failure mode the original per-method fence shipped in this PR).
+    /// </summary>
+    [Fact]
+    public void Fence_IsNonVacuous_FindsAtLeastOneAssignmentAndOnePromptCall()
     {
         var source = File.ReadAllText(LocateControllerFile());
 
-        var methods = SplitIntoMethodBodies(source);
-        methods.ShouldNotBeEmpty(
-            "Expected to find at least one method body in CrossWorldFederationController.cs " +
-            "but the regex split returned zero matches. The fence regex may need to be updated " +
-            "for a method-shape change in the file.");
+        var assignments = System.Text.RegularExpressions.Regex.Matches(source, @"\.ConversationId\s*=").Count;
+        var prompts = System.Text.RegularExpressions.Regex.Matches(source, @"\.PromptAsync\s*\(").Count;
 
-        var failures = new List<string>();
-        foreach (var (methodName, body, methodStartIndex) in methods)
-        {
-            var assignmentIndexes = new System.Text.RegularExpressions.Regex(
-                @"\.ConversationId\s*=",
-                System.Text.RegularExpressions.RegexOptions.Compiled)
-                .Matches(body)
-                .Select(match => match.Index)
-                .ToArray();
+        assignments.ShouldBeGreaterThan(0,
+            "Fence expected to find at least one '.ConversationId =' assignment in " +
+            "CrossWorldFederationController.cs but found zero. The fence is vacuously passing.");
+        prompts.ShouldBeGreaterThan(0,
+            "Fence expected to find at least one '.PromptAsync(' call in " +
+            "CrossWorldFederationController.cs but found zero. The fence cannot detect ordering " +
+            "violations because there is nothing to order against.");
+    }
 
-            var promptIndexes = new System.Text.RegularExpressions.Regex(
-                @"\.PromptAsync\s*\(",
-                System.Text.RegularExpressions.RegexOptions.Compiled)
-                .Matches(body)
-                .Select(match => match.Index)
-                .ToArray();
-
-            if (assignmentIndexes.Length == 0 || promptIndexes.Length == 0)
-                continue;
-
-            var firstPrompt = promptIndexes.Min();
-            var lateAssignments = assignmentIndexes
-                .Where(idx => idx > firstPrompt)
-                .Select(idx => LineNumberAt(source, methodStartIndex + idx))
-                .ToArray();
-
-            if (lateAssignments.Length > 0)
+    /// <summary>
+    /// Scanner self-test on a synthetic violation: prove the helper-bypass detector CATCHES the
+    /// shape where a helper called after PromptAsync mutates ConversationId. This is the exact
+    /// bypass that the per-method fence shipped in this PR would have silently allowed.
+    /// </summary>
+    [Fact]
+    public void HelperBypass_OnSyntheticViolation_IsDetected()
+    {
+        var synthetic = """
+            public sealed class FakeController
             {
-                failures.Add(
-                    $"  {methodName}: late .ConversationId = assignments at lines " +
-                    string.Join(", ", lateAssignments) +
-                    " (first .PromptAsync at line " +
-                    LineNumberAt(source, methodStartIndex + firstPrompt) + ")");
+                public async Task RelayAsync()
+                {
+                    await handle.PromptAsync("hi", ct);
+                    await PinAndSaveAsync(session);
+                }
+
+                private async Task PinAndSaveAsync(GatewaySession s)
+                {
+                    s.Session.ConversationId = ConversationId.Create();
+                }
+            }
+            """;
+
+        var methods = SplitIntoMethodBodies(synthetic);
+        var relay = methods.First(m => m.Name == "RelayAsync");
+        var firstPromptInRelay = FindFirstPromptIndex(relay.Body);
+        var helpersWithAssignments = methods
+            .Where(m => m.Name != "RelayAsync")
+            .Where(m => System.Text.RegularExpressions.Regex.IsMatch(m.Body, @"\.ConversationId\s*="))
+            .Select(m => m.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        var postPromptHelperCalls = FindHelperInvocationsAfter(relay.Body, firstPromptInRelay, helpersWithAssignments);
+
+        postPromptHelperCalls.ShouldNotBeEmpty(
+            "Helper-bypass detector failed to flag a synthetic violation where a helper that " +
+            "mutates ConversationId is called from RelayAsync AFTER the first PromptAsync. The " +
+            "scanner is broken — production fence will not catch real regressions.");
+    }
+
+    /// <summary>
+    /// Scanner self-test on a synthetic CLEAN file with helpers defined later that are called
+    /// BEFORE the prompt (the shape that broke the naive cross-file scanner): assert no
+    /// false-positive.
+    /// </summary>
+    [Fact]
+    public void HelperBypass_OnSyntheticCleanFile_ReportsNoFailures()
+    {
+        var synthetic = """
+            public sealed class FakeController
+            {
+                public async Task RelayAsync()
+                {
+                    var s = await Resolve();
+                    await handle.PromptAsync("hi", ct);
+                }
+
+                private async Task<GatewaySession> Resolve()
+                {
+                    var s = new GatewaySession();
+                    s.Session.ConversationId = ConversationId.Create();
+                    return s;
+                }
+            }
+            """;
+
+        var methods = SplitIntoMethodBodies(synthetic);
+        var relay = methods.First(m => m.Name == "RelayAsync");
+        var firstPromptInRelay = FindFirstPromptIndex(relay.Body);
+        var helpersWithAssignments = methods
+            .Where(m => m.Name != "RelayAsync")
+            .Where(m => System.Text.RegularExpressions.Regex.IsMatch(m.Body, @"\.ConversationId\s*="))
+            .Select(m => m.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        var postPromptHelperCalls = FindHelperInvocationsAfter(relay.Body, firstPromptInRelay, helpersWithAssignments);
+        var inlineFailures = FindInlineLateAssignments(relay.Body);
+
+        postPromptHelperCalls.ShouldBeEmpty(
+            "False positive: helper 'Resolve' is called BEFORE PromptAsync but the bypass " +
+            "detector flagged it. This was the bug in the naive cross-file scanner.");
+        inlineFailures.ShouldBeEmpty(
+            "False positive on inline check: RelayAsync has no inline assignments.");
+    }
+
+    private static int FindFirstPromptIndex(string body)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(body, @"\.PromptAsync\s*\(");
+        return match.Success ? match.Index : -1;
+    }
+
+    private static List<(int Index, string Marker)> FindInlineLateAssignments(string relayBody)
+    {
+        var firstPrompt = FindFirstPromptIndex(relayBody);
+        if (firstPrompt < 0) return [];
+        return System.Text.RegularExpressions.Regex.Matches(relayBody, @"\.ConversationId\s*=")
+            .Where(m => m.Index > firstPrompt)
+            .Select(m => (m.Index, ".ConversationId ="))
+            .ToList();
+    }
+
+    private static List<(int Index, string HelperName)> FindHelperInvocationsAfter(
+        string relayBody,
+        int firstPromptIndex,
+        HashSet<string> helpersWithAssignments)
+    {
+        if (firstPromptIndex < 0) return [];
+        var hits = new List<(int, string)>();
+        foreach (var helper in helpersWithAssignments)
+        {
+            // Match `Helper(` or `await Helper(` or `this.Helper(` — any invocation form.
+            var pattern = $@"\b{System.Text.RegularExpressions.Regex.Escape(helper)}\s*\(";
+            foreach (System.Text.RegularExpressions.Match m in
+                System.Text.RegularExpressions.Regex.Matches(relayBody, pattern))
+            {
+                if (m.Index > firstPromptIndex)
+                    hits.Add((m.Index, helper));
             }
         }
-
-        failures.ShouldBeEmpty(
-            "CrossWorldFederationController.cs has at least one method whose .ConversationId = " +
-            "assignment occurs AFTER the first .PromptAsync(...) call IN THE SAME METHOD. " +
-            "The receiver contract requires the receiver-side session's ConversationId to be " +
-            "pinned eagerly BEFORE any code path observes the session (supervisor.GetOrCreateAsync, " +
-            "handle.PromptAsync). Otherwise the session is briefly visible in the store with " +
-            "ConversationId == null and is invisible to ISessionStore.ListByConversationAsync, " +
-            "the portal, and any fan-out that filters by conversation.\n" +
-            string.Join("\n", failures));
+        return hits;
     }
 
     /// <summary>
     /// Self-test for <see cref="SplitIntoMethodBodies"/>. If the method-splitter regex ever
-    /// regresses such that it stops matching <c>RelayAsync</c>, the prompt-ordering fence
-    /// above would silently pass without checking the only method that actually matters.
-    /// This self-test makes that failure mode loud (lesson learned from PR #548).
+    /// regresses such that it stops matching <c>RelayAsync</c>, the helper-bypass fence above
+    /// would silently fail to find the method and the vacuity check would catch it — but this
+    /// test makes the splitter regression itself loud.
     /// </summary>
     [Fact]
     public void SplitIntoMethodBodies_FindsRelayAsync()
@@ -162,10 +299,8 @@ public sealed class CrossWorldReceiverArchitectureTests
         var names = methods.Select(m => m.Name).ToList();
 
         names.ShouldContain("RelayAsync",
-            "RelayAsync is the cross-world receiver entry point and the subject of the " +
-            "lexical-ordering fence. If the method splitter cannot find it, the fence is " +
-            "not actually checking anything. Method splitter found: " +
-            string.Join(", ", names));
+            "RelayAsync is the cross-world receiver entry point. If the method splitter cannot " +
+            "find it, fences cannot inspect it. Method splitter found: " + string.Join(", ", names));
     }
 
     private static List<(string Name, string Body, int StartIndex)> SplitIntoMethodBodies(string source)
