@@ -40,6 +40,7 @@ public sealed class AgentConverseToolTests
             .ReturnsAsync(new AgentExchangeResult
             {
                 SessionId = SessionId.From("nova::agent-agent::leela::abc123"),
+                ConversationId = ConversationId.Create(),
                 Status = "sealed",
                 Turns = 2,
                 FinalResponse = "Done",
@@ -72,6 +73,7 @@ public sealed class AgentConverseToolTests
             .ReturnsAsync(new AgentExchangeResult
             {
                 SessionId = SessionId.From("nova::agent-agent::leela::abc123"),
+                ConversationId = ConversationId.Create(),
                 Status = "sealed",
                 Turns = 2,
                 FinalResponse = "Done",
