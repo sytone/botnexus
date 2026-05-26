@@ -51,6 +51,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
     private readonly ISessionCompactor _compactor;
     private readonly IOptionsMonitor<CompactionOptions> _compactionOptions;
     private readonly ILogger<GatewayHost> _logger;
+    private readonly IAgentRegistry? _registry;
     private readonly IMediaPipeline? _mediaPipeline;
     private readonly IConversationDispatcher? _conversationDispatcher;
     private readonly IConversationRouter? _conversationRouter;
@@ -74,7 +75,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         IConversationDispatcher? conversationDispatcher = null,
         IConversationRouter? conversationRouter = null,
         PendingAskUserInterceptor? pendingAskUserInterceptor = null,
-        IPreCompactionMemoryFlusher? memoryFlusher = null)
+        IPreCompactionMemoryFlusher? memoryFlusher = null,
+        IAgentRegistry? registry = null)
     {
         _supervisor = supervisor;
         _router = router;
@@ -90,6 +92,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         _sessionLifecycleEvents = sessionLifecycleEvents;
         _pendingAskUserInterceptor = pendingAskUserInterceptor;
         _memoryFlusher = memoryFlusher;
+        _registry = registry;
         SessionQueueCapacity = Math.Max(sessionQueueCapacity, 1);
     }
 
@@ -1082,9 +1085,17 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IAsyncD
         });
     }
 
-    private static SessionType ResolveSessionType(GatewaySession session, InboundMessage message)
+    private SessionType ResolveSessionType(GatewaySession session, InboundMessage message)
     {
-        if (session.SessionId.IsSubAgent)
+        // Phase 5 / F-6 step 2 (#554): sub-agent classification is driven by the
+        // typed AgentDescriptor.Kind signal sourced from IAgentRegistry rather than
+        // the legacy SessionId.IsSubAgent substring check. When the registry has no
+        // descriptor for this agent (test composition or transient deregister race)
+        // we default to UserAgent rather than parsing the SessionId — the substring
+        // path has been deleted from this method as a hard architecture invariant
+        // pinned by AgentKindArchitectureTests.
+        var descriptor = _registry?.Get(session.AgentId);
+        if (descriptor is { Kind: AgentKind.SubAgent })
             return SessionType.AgentSubAgent;
 
         if (session.SessionId.IsSoul)
