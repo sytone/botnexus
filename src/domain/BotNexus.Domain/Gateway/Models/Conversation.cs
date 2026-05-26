@@ -63,4 +63,18 @@ public sealed record Conversation
     /// system agent yet owned by the target user-facing agent.
     /// </remarks>
     public CitizenId? Initiator { get; set; }
+
+    /// <summary>
+    /// Gets or sets the citizen-pairing discriminator for this conversation. Defaults to
+    /// <see cref="ConversationKind.HumanAgent"/> so pre-Phase-4 rows deserialize unchanged.
+    /// Set explicitly when a non-default pairing creates the conversation (e.g.
+    /// <c>IAgentExchangeService.ConverseAsync</c> sets <see cref="ConversationKind.AgentAgent"/>;
+    /// sub-agent spawn sets <see cref="ConversationKind.AgentSubAgent"/>).
+    /// </summary>
+    /// <remarks>
+    /// Authoritative replacement for the historical "infer pairing from <c>SessionId</c> substring"
+    /// shape (see F-3). Read by the portal/list/permission layers without having to walk session
+    /// ids.
+    /// </remarks>
+    public ConversationKind Kind { get; set; } = ConversationKind.HumanAgent;
 }
