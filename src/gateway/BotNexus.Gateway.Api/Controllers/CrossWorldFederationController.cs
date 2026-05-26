@@ -6,6 +6,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Federation;
+using BotNexus.Gateway.Tools;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -115,6 +116,17 @@ public sealed class CrossWorldFederationController(
 
         try
         {
+            // Phase 8 (F-11) cross-world receiver: pin a fresh active-exchange id and clear stale
+            // finish payload BEFORE invoking the agent so a previous turn's payload cannot satisfy
+            // the equality gate in this turn. The receiver is single-prompt (no loop) but receivers
+            // can reuse a session across many sender turns, so the per-call clear is mandatory.
+            var exchangeId = Guid.NewGuid().ToString("N");
+            session.Metadata[FinishAgentExchangeTool.ActiveExchangeIdKey] = exchangeId;
+            session.Metadata.Remove(FinishAgentExchangeTool.FinishedExchangeIdKey);
+            session.Metadata.Remove(FinishAgentExchangeTool.FinishedReasonKey);
+            session.Metadata.Remove(FinishAgentExchangeTool.FinishedSummaryKey);
+            await sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
+
             var handle = await supervisor.GetOrCreateAsync(targetAgentId, sessionId, cancellationToken).ConfigureAwait(false);
             var response = await handle.PromptAsync(request.Message, cancellationToken).ConfigureAwait(false);
             session.AddEntry(new SessionEntry
@@ -122,6 +134,43 @@ public sealed class CrossWorldFederationController(
                 Role = MessageRole.Assistant,
                 Content = response.Content ?? string.Empty
             });
+
+            // Reload the session — the FinishAgentExchangeTool (if invoked by the target agent
+            // during the turn) writes its payload through its own ISessionStore handle, so the
+            // in-memory copy here may be stale.
+            var refreshed = await sessionStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false)
+                ?? session;
+
+            var exchangeFinished = false;
+            string? finishReason = null;
+            string? finishSummary = null;
+            var toolFiredSuccessfully = response.ToolCalls.Any(tc =>
+                !tc.IsError
+                && string.Equals(tc.ToolName, "finish_agent_exchange", StringComparison.OrdinalIgnoreCase));
+            if (toolFiredSuccessfully)
+            {
+                var finishedExchangeId = MetadataString(refreshed.Metadata, FinishAgentExchangeTool.FinishedExchangeIdKey);
+                if (string.Equals(finishedExchangeId, exchangeId, StringComparison.Ordinal))
+                {
+                    exchangeFinished = true;
+                    finishReason = MetadataString(refreshed.Metadata, FinishAgentExchangeTool.FinishedReasonKey);
+                    finishSummary = MetadataString(refreshed.Metadata, FinishAgentExchangeTool.FinishedSummaryKey);
+                }
+            }
+
+            // Clear the active-exchange id regardless of outcome so a follow-up turn for the same
+            // session starts from a clean slate.
+            session.Metadata.Remove(FinishAgentExchangeTool.ActiveExchangeIdKey);
+            if (exchangeFinished)
+            {
+                // Echo the consumed payload onto the persisted session metadata for diagnostics
+                // and for any downstream walker that lists sessions for this conversation.
+                session.Metadata[FinishAgentExchangeTool.FinishedExchangeIdKey] = exchangeId;
+                if (finishReason is not null)
+                    session.Metadata[FinishAgentExchangeTool.FinishedReasonKey] = finishReason;
+                if (!string.IsNullOrEmpty(finishSummary))
+                    session.Metadata[FinishAgentExchangeTool.FinishedSummaryKey] = finishSummary;
+            }
             await sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
 
             // Leave the session Active so the sender can continue the exchange by supplying
@@ -133,7 +182,10 @@ public sealed class CrossWorldFederationController(
             {
                 Response = response.Content ?? string.Empty,
                 Status = "active",
-                SessionId = sessionId.Value
+                SessionId = sessionId.Value,
+                ExchangeFinished = exchangeFinished,
+                FinishReason = exchangeFinished ? finishReason : null,
+                FinishSummary = exchangeFinished ? finishSummary : null
             });
         }
         catch (Exception ex)
@@ -141,6 +193,7 @@ public sealed class CrossWorldFederationController(
             logger.LogWarning(ex,
                 "Cross-world relay failed for session '{SessionId}' on agent '{TargetAgentId}'.",
                 sessionId, targetAgentId);
+            session.Metadata.Remove(FinishAgentExchangeTool.ActiveExchangeIdKey);
             session.Status = GatewaySessionStatus.Sealed;
             session.Metadata["error"] = ex.Message;
             await sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
