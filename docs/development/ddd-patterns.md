@@ -432,7 +432,7 @@ This table tracks all DDD types being introduced in BotNexus. Follow this roadma
 | Type | Category | Pattern | Status | Phase Intro | Notes |
 |------|----------|---------|--------|------------|-------|
 | `AgentId` | Identity | Value Object | ✅ Done | 1.1a | Validates non-empty. Ordinal comparison. |
-| `SessionId` | Identity | Value Object | ✅ Done | 1.1a | Factory methods: `Create()`, `ForSubAgent()`, `ForCrossAgent()`. |
+| `SessionId` | Identity | Value Object | ✅ Done | 1.1a | Factory methods: `Create()`, `ForSubAgent()`, `ForSoul()`. |
 | `ChannelKey` | Identity | Value Object | ✅ Done | 1.1a | Normalizes at construction (trim + lowercase + alias mapping). Eliminates `NormalizeChannelKey()` duplication. |
 | `ConversationId` | Identity | Value Object | ✅ Done | 1.1a | Migrated to Vogen in #517. Prevents accidental string swap bugs. |
 | ~~`SenderId`~~ | ~~Identity~~ | ~~Value Object~~ | 🗑️ Removed (#526) | — | Hand-rolled struct deleted. The typed sender now lives on `InboundMessage.Sender` as a `CitizenId` (sum type over `UserId`/`AgentId`); the raw wire-level token stays on `InboundMessage.SenderId` as `string` for audit / allow-list filtering. |

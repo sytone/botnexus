@@ -91,29 +91,6 @@ public sealed class SessionIdTests
     }
 
     [Fact]
-    public void ForAgentConversation_UsesPinnedFormat()
-    {
-        var sessionId = SessionId.ForAgentConversation(
-            AgentId.From("agent-a"),
-            AgentId.From("agent-b"),
-            "abc123");
-
-        sessionId.Value.ShouldBe("agent-a::agent-agent::agent-b::abc123");
-        sessionId.IsAgentConversation.ShouldBeTrue();
-    }
-
-    [Fact]
-    public void ForAgentConversation_WhenUniqueIdIsEmpty_ShouldThrow()
-    {
-        Action act = () => SessionId.ForAgentConversation(
-            AgentId.From("agent-a"),
-            AgentId.From("agent-b"),
-            " ");
-
-        act.ShouldThrow<ArgumentException>();
-    }
-
-    [Fact]
     public void ForSoul_UsesPinnedFormat()
     {
         var sessionId = SessionId.ForSoul(AgentId.From("agent-a"), new DateOnly(2026, 1, 15));
@@ -134,11 +111,14 @@ public sealed class SessionIdTests
     }
 
     [Fact]
-    public void ForCrossAgent_UsesPinnedFormat()
+    public void IsAgentConversation_OnLegacyEncodedId_StillReturnsTrue_ForBackCompatRead()
     {
-        var sessionId = SessionId.ForCrossAgent("source-id", "target-id");
+        // Phase 4 / 1b deleted SessionId.ForAgentConversation, but the IsAgentConversation
+        // predicate is retained because SessionStoreBase.InferSessionType still reads it to
+        // bucket pre-migration sessions persisted with the `::agent-agent::` encoding.
+        var legacy = SessionId.From("agent-a::agent-agent::agent-b::abc123");
 
-        sessionId.Value.ShouldBe("xagent::source-id::target-id");
+        legacy.IsAgentConversation.ShouldBeTrue();
     }
 
     [Fact]

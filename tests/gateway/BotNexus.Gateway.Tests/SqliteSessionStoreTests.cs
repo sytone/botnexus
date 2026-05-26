@@ -101,6 +101,51 @@ public sealed class SqliteSessionStoreTests
     }
 
     [Fact]
+    public async Task SaveAsync_StringMetadata_RoundTripsThroughJsonElement_AcrossReload()
+    {
+        // Documentation pin (PR #549 critique sweep — bug-hunt BLOCKING #1): SqliteSessionStore
+        // deserializes session metadata into `Dictionary<string, object?>` via System.Text.Json,
+        // which boxes string values as JsonElement (kind=String). Readers using `value as string`
+        // silently get null after a restart — exactly the bug in CrossWorldFederationController.
+        // MetadataString. Other readers in this repo already handle JsonElement explicitly (see
+        // AgentConverseTool.ResolveCallChainAsync, PreCompactionMemoryFlusher.GetLastFlushCycle).
+        //
+        // This test pins:
+        // 1. The value DOES round-trip (the bytes survive).
+        // 2. The value comes back as either System.String OR JsonElement(kind=String) — both
+        //    extractable, but `value as string` fails on the JsonElement case.
+        // The controller-side regression test
+        // CrossWorldFederationControllerTests.RelayAsync_WhenSessionMetadataIsJsonElement_StillReusesSession
+        // pins the MetadataString fix that makes the controller robust to the JsonElement case.
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("s1"), AgentId.From("agent-a"));
+        session.Metadata["sourceWorldId"] = "world-a";
+        await store.SaveAsync(session);
+
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s1"));
+        reloaded.ShouldNotBeNull();
+
+        var value = reloaded.Metadata["sourceWorldId"];
+        value.ShouldNotBeNull(
+            customMessage: "Metadata value evaporated on round-trip — SqliteSessionStore lost the entry.");
+
+        // EITHER raw string (if the storage layer ever normalises) OR JsonElement (current shape).
+        // Both must extract back to "world-a". This documents the two acceptable shapes so a future
+        // change to the storage layer is a deliberate decision, not an accident.
+        var extracted = value switch
+        {
+            string s => s,
+            System.Text.Json.JsonElement element when element.ValueKind == System.Text.Json.JsonValueKind.String
+                => element.GetString(),
+            _ => null
+        };
+        extracted.ShouldBe("world-a",
+            customMessage: $"Unexpected metadata shape on Sqlite round-trip: {value?.GetType().FullName}. " +
+                "Update the controller's MetadataString helper and any other readers to handle the new shape.");
+    }
+
+    [Fact]
     public async Task DeleteAsync_WithExistingSession_RemovesSession()
     {
         using var fixture = new StoreFixture();

@@ -161,23 +161,6 @@ public sealed class PrimitiveBoundaryTests
         id.IsAgentConversation.ShouldBeFalse();
     }
 
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("   ")]
-    public void SessionId_ForAgentConversation_EmptyUniqueId_Throws(string? uniqueId)
-    {
-        Action act = () => SessionId.ForAgentConversation(AgentId.From("agent-a"), AgentId.From("agent-b"), uniqueId!);
-        act.ShouldThrow<ArgumentException>();
-    }
-
-    [Fact]
-    public void SessionId_ForCrossAgent_WithSameSourceAndTarget_Works()
-    {
-        var id = SessionId.ForCrossAgent("session-1", "session-1");
-        id.Value.ShouldBe("xagent::session-1::session-1");
-    }
-
     [Fact]
     public void SessionId_From_WithUnicode_PreservesCharacters()
     {

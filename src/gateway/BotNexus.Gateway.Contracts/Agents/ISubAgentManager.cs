@@ -5,7 +5,6 @@ namespace BotNexus.Gateway.Abstractions.Agents;
 
 /// <summary>
 /// Manages background sub-agent sessions spawned by parent agents.
-/// Distinct from <see cref="IAgentCommunicator" />, which handles synchronous sub/cross-agent calls.
 /// </summary>
 public interface ISubAgentManager
 {

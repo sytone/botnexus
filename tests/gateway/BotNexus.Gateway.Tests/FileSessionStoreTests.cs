@@ -53,6 +53,70 @@ public sealed class FileSessionStoreTests
     }
 
     [Fact]
+    public async Task SaveAsync_PreservesSessionMetadata_AcrossReload()
+    {
+        // Regression pin (PR #549 critique sweep — bug-hunt BLOCKING #2): FileSessionStore.SessionMeta
+        // historically OMITTED the Metadata field, so Session.Metadata silently disappeared on disk
+        // round-trip. Cross-world federation receiver depends on Session.Metadata["sourceWorldId"] +
+        // ["sourceAgentId"] to validate RemoteSessionId ownership (OwnedByRequester in
+        // CrossWorldFederationController.RelayAsync). Without the round-trip, every cross-world relay
+        // returns 409 after the gateway restarts on a FileSessionStore-backed deployment.
+        //
+        // Like SqliteSessionStore, FileSessionStore deserializes object? values as JsonElement (see
+        // SqliteSessionStoreTests.SaveAsync_StringMetadata_RoundTripsThroughJsonElement_AcrossReload
+        // for the matching docs-pin). Accept both shapes — the controller's MetadataString helper
+        // normalises them.
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+
+        var session = await store.GetOrCreateAsync(SessionId.From("s-with-metadata"), AgentId.From("agent-a"));
+        session.Metadata["sourceWorldId"] = "world-a";
+        session.Metadata["sourceAgentId"] = "agent-source";
+        session.Metadata["sourceSessionId"] = "sender-session-42";
+        session.Metadata["channelType"] = "cross-world";
+        await store.SaveAsync(session);
+
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s-with-metadata"));
+
+        reloaded.ShouldNotBeNull();
+        reloaded.Metadata.ShouldContainKey("sourceWorldId",
+            customMessage: "FileSessionStore.SessionMeta dropped Session.Metadata on disk round-trip. " +
+                "Cross-world receiver cannot validate RemoteSessionId ownership after a restart.");
+        ExtractMetadataString(reloaded.Metadata["sourceWorldId"]).ShouldBe("world-a");
+        ExtractMetadataString(reloaded.Metadata["sourceAgentId"]).ShouldBe("agent-source");
+        ExtractMetadataString(reloaded.Metadata["sourceSessionId"]).ShouldBe("sender-session-42");
+        ExtractMetadataString(reloaded.Metadata["channelType"]).ShouldBe("cross-world");
+    }
+
+    private static string? ExtractMetadataString(object? value)
+        => value switch
+        {
+            null => null,
+            string s => s,
+            System.Text.Json.JsonElement element when element.ValueKind == System.Text.Json.JsonValueKind.String
+                => element.GetString(),
+            _ => null
+        };
+
+    [Fact]
+    public async Task SaveAsync_PreservesEmptyMetadata_AcrossReload()
+    {
+        // Companion: a session saved with no metadata must reload as an empty (non-null) dict so
+        // callers can `session.Metadata[k] = v` without first having to null-check the dict itself.
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+
+        var session = await store.GetOrCreateAsync(SessionId.From("s-no-meta"), AgentId.From("agent-a"));
+        await store.SaveAsync(session);
+
+        var reloaded = await fixture.CreateStore().GetAsync(SessionId.From("s-no-meta"));
+
+        reloaded.ShouldNotBeNull();
+        reloaded.Metadata.ShouldNotBeNull();
+        reloaded.Metadata.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task GetOrCreateAsync_WithUnknownSession_CreatesAndPersistsSession()
     {
         using var fixture = new StoreFixture();
