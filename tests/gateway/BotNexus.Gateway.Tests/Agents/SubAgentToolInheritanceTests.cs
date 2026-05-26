@@ -160,7 +160,7 @@ public sealed class SubAgentToolInheritanceTests
             ParentSessionId = SessionId.From("root-session"),
             Task = "Do something",
             TimeoutSeconds = 600,
-            ToolIds = toolIds,
+            Mode = new Embody(SubAgentArchetype.General, EmbodyCustomizations.Default with { ToolIds = toolIds }),
             InheritedConversationId = ConversationId.From("inherited-conv")
         };
 

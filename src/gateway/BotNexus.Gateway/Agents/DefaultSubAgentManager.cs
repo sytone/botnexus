@@ -62,6 +62,11 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     public async Task<SubAgentInfo> SpawnAsync(SubAgentSpawnRequest request, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        // Defence in depth: `required` is a compile-time guarantee only —
+        // callers using `null!` (or producing a null Mode via reflection / JSON
+        // deserialization quirks) would otherwise reach the default arm and
+        // hit a NullReferenceException dereferencing request.Mode.GetType().
+        ArgumentNullException.ThrowIfNull(request.Mode);
 
         var parentDescriptor = _registry.Get(request.ParentAgentId)
             ?? throw new KeyNotFoundException($"Parent agent '{request.ParentAgentId}' is not registered.");
@@ -74,21 +79,6 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             if (depth >= maxDepth)
                 throw new InvalidOperationException(
                     $"Cannot spawn sub-agent: parent session depth {depth} has reached the maximum depth of {maxDepth}.");
-        }
-
-        // Validate tool grants against parent's deny-list (privilege escalation prevention)
-        if (_policyProvider is not null && request.ToolIds is { Count: > 0 })
-        {
-            var parentDenyList = _policyProvider.GetEffectiveDenyList(request.ParentAgentId.Value);
-            if (parentDenyList.Count > 0)
-            {
-                var denied = request.ToolIds
-                    .Where(t => parentDenyList.Contains(t, StringComparer.OrdinalIgnoreCase))
-                    .ToList();
-                if (denied.Count > 0)
-                    throw new InvalidOperationException(
-                        $"Sub-agent cannot be granted tools denied to the parent: {string.Join(", ", denied)}");
-            }
         }
 
         var maxConcurrent = _options.CurrentValue.SubAgents.MaxConcurrentPerSession;
@@ -104,21 +94,73 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         }
 
         var uniqueId = Guid.NewGuid().ToString("N");
-        var archetype = request.Archetype ?? SubAgentArchetype.General;
-        var childSessionId = SessionId.ForSubAgent(request.ParentSessionId, uniqueId);
         var subAgentId = uniqueId;
-        var childAgentId = AgentId.From($"{request.ParentAgentId}--subagent--{archetype.Value}--{uniqueId}");
+        var childSessionId = SessionId.ForSubAgent(request.ParentSessionId, uniqueId);
 
+        // Phase 5 / F-6 (#562): pattern-match on the required Mode discriminated
+        // union. Mode is `required` on SubAgentSpawnRequest as of step 5, so the
+        // null case is structurally unreachable — the default arm exists only to
+        // catch a future third subclass of SubAgentSpawnMode being added without
+        // updating this switch.
+        SubAgentArchetype archetype;
         AgentDescriptor baseDescriptor;
-        if (!string.IsNullOrWhiteSpace(request.TargetAgentId))
+        AgentId childAgentId;
+        string? name;
+        string? modelOverride;
+        string? apiProviderOverride;
+        IReadOnlyList<string>? toolIds;
+        string? systemPromptOverride;
+
+        switch (request.Mode)
         {
-            var targetId = AgentId.From(request.TargetAgentId);
-            baseDescriptor = _registry.Get(targetId)
-                ?? throw new KeyNotFoundException($"Target agent '{request.TargetAgentId}' is not registered.");
+            case Embody embody:
+                archetype = embody.Role;
+                baseDescriptor = parentDescriptor;
+                childAgentId = AgentId.From($"{request.ParentAgentId}--subagent--{archetype.Value}--{uniqueId}");
+                name = embody.Customizations.Name;
+                modelOverride = embody.Customizations.ModelOverride;
+                apiProviderOverride = embody.Customizations.ApiProviderOverride;
+                toolIds = embody.Customizations.ToolIds;
+                systemPromptOverride = embody.Customizations.SystemPromptOverride;
+                break;
+
+            case Mirror mirror:
+                // Mirror is strict pass-through of the target's descriptor. The
+                // archetype slot in the child agent id is filled with the target
+                // id (locked design #562) so the child surfaces the mirrored
+                // identity rather than a generic role label.
+                archetype = SubAgentArchetype.General;
+                baseDescriptor = _registry.Get(mirror.TargetAgentId)
+                    ?? throw new KeyNotFoundException($"Target agent '{mirror.TargetAgentId}' is not registered.");
+                childAgentId = AgentId.From($"{request.ParentAgentId}--subagent--{mirror.TargetAgentId.Value}--{uniqueId}");
+                name = null;
+                modelOverride = null;
+                apiProviderOverride = null;
+                toolIds = null;
+                systemPromptOverride = null;
+                break;
+
+            default:
+                throw new InvalidOperationException(
+                    $"Unknown SubAgentSpawnMode subclass '{request.Mode.GetType().FullName}'. "
+                    + "Embody and Mirror are the only legal modes — see SubAgentSpawnMode.");
         }
-        else
+
+        // Validate tool grants against parent's deny-list (privilege escalation
+        // prevention). Runs AFTER the switch so it reads the typed `toolIds`
+        // local resolved from Mode, not a deleted top-level request field.
+        if (_policyProvider is not null && toolIds is { Count: > 0 })
         {
-            baseDescriptor = parentDescriptor;
+            var parentDenyList = _policyProvider.GetEffectiveDenyList(request.ParentAgentId.Value);
+            if (parentDenyList.Count > 0)
+            {
+                var denied = toolIds
+                    .Where(t => parentDenyList.Contains(t, StringComparer.OrdinalIgnoreCase))
+                    .ToList();
+                if (denied.Count > 0)
+                    throw new InvalidOperationException(
+                        $"Sub-agent cannot be granted tools denied to the parent: {string.Join(", ", denied)}");
+            }
         }
 
         if (!_registry.Contains(childAgentId))
@@ -158,9 +200,9 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             SubAgentId = subAgentId,
             ParentSessionId = request.ParentSessionId,
             ChildSessionId = childSessionId,
-            Name = request.Name,
+            Name = name,
             Task = request.Task,
-            Model = request.ModelOverride ?? configuredDefaultModel ?? parentDescriptor.ModelId,
+            Model = modelOverride ?? configuredDefaultModel ?? baseDescriptor.ModelId,
             Archetype = archetype,
             Status = SubAgentStatus.Running,
             StartedAt = DateTimeOffset.UtcNow,

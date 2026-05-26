@@ -276,6 +276,7 @@ public sealed class SubAgentIntegrationTests
             ParentSessionId = BotNexus.Domain.Primitives.SessionId.From("parent-session"),
             Task = "Investigate flaky test",
             TimeoutSeconds = timeoutSeconds,
+            Mode = new Embody(SubAgentArchetype.General),
             InheritedConversationId = ConversationId.From("inherited-conv")
         };
 

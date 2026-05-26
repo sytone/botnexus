@@ -101,7 +101,7 @@ public sealed class SubAgentKindTests
             ParentSessionId = SessionId.From("parent-session"),
             Task = "Investigate via mirror of researcher-prime",
             TimeoutSeconds = 600,
-            TargetAgentId = "researcher-prime",
+            Mode = new Mirror(AgentId.From("researcher-prime")),
             InheritedConversationId = ConversationId.From("inherited-conv")
         });
 
@@ -330,6 +330,7 @@ public sealed class SubAgentKindTests
             ParentSessionId = SessionId.From("parent-session"),
             Task = "Investigate flaky test",
             TimeoutSeconds = 600,
+            Mode = new Embody(SubAgentArchetype.General),
             InheritedConversationId = ConversationId.From("inherited-conv")
         };
 

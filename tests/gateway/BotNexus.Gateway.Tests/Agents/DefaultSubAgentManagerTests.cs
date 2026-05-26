@@ -223,6 +223,7 @@ public sealed class DefaultSubAgentManagerTests
             ParentSessionId = parentSessionId ?? BotNexus.Domain.Primitives.SessionId.From("parent-session"),
             Task = "Investigate timeout",
             TimeoutSeconds = timeoutSeconds,
+            Mode = new Embody(SubAgentArchetype.General),
             InheritedConversationId = ConversationId.From("inherited-conv")
         };
 
@@ -304,14 +305,15 @@ public sealed class DefaultSubAgentManagerTests
             var startedAt = DateTimeOffset.UtcNow;
             var timeoutSeconds = request.TimeoutSeconds > 0 ? request.TimeoutSeconds : options.DefaultTimeoutSeconds;
 
+            var customizations = (request.Mode as Embody)?.Customizations ?? EmbodyCustomizations.Default;
             var info = new SubAgentInfo
             {
                 SubAgentId = subAgentId,
                 ParentSessionId = request.ParentSessionId,
                 ChildSessionId = childSessionId,
-                Name = request.Name,
+                Name = customizations.Name,
                 Task = request.Task,
-                Model = request.ModelOverride ?? options.DefaultModel,
+                Model = customizations.ModelOverride ?? options.DefaultModel,
                 Status = SubAgentStatus.Running,
                 StartedAt = startedAt
             };
